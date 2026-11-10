@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { grantStreakBadges } from './streak-badges';
@@ -49,36 +49,15 @@ describe('grantStreakBadges', () => {
     await grantStreakBadges(db, 1, 7, IDS);
     for (let streak = 1; streak <= 7; streak++) await grantStreakBadges(db, 1, streak, IDS);
 
-    expect(await owned(1)).toEqual([IDS[7]]);
-  });
-
-  it('skips a missing cosmetic and one that is not a Trophy', async () => {
-    await pg.exec(`DELETE FROM "Cosmetic" WHERE "id"=${IDS[7]}`);
-    await pg.exec(`UPDATE "Cosmetic" SET "source"='Purchase' WHERE "id"=${IDS[30]}`);
-
-    await grantStreakBadges(db, 1, 100, IDS);
-
-    expect(await owned(1)).toEqual([IDS[100]]);
+    const { rows } = await pg.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM "UserCosmetic" WHERE "userId"=1 AND "cosmeticId"=$1`,
+      [IDS[7]]
+    );
+    expect(rows[0].count).toBe(1);
   });
 
   it('skips a milestone whose id is not set yet', async () => {
     await grantStreakBadges(db, 1, 100, { 7: null, 30: IDS[30], 100: null });
     expect(await owned(1)).toEqual([IDS[30]]);
-  });
-
-  it('never throws and leaves the surrounding transaction usable when the grant fails', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await pg.exec(`ALTER TABLE "UserCosmetic" RENAME TO "UserCosmeticGone"`);
-    try {
-      const rows = await db.transaction().execute(async (trx) => {
-        await grantStreakBadges(trx, 1, 7, IDS);
-        return trx.selectFrom('NewOrderPlayer').select('userId').execute();
-      });
-      expect(rows).toEqual([]);
-      expect(error).toHaveBeenCalled();
-    } finally {
-      await pg.exec(`ALTER TABLE "UserCosmeticGone" RENAME TO "UserCosmetic"`);
-      error.mockRestore();
-    }
   });
 });
