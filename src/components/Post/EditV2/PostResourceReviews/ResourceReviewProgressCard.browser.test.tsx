@@ -124,20 +124,26 @@ describe('ResourceReviewProgressCard', () => {
     expect(page.getByText(/resources? rated|been muted/).elements()).toHaveLength(0);
   });
 
-  test('"Next unrated" scrolls to the first image that uses an unrated resource', async () => {
-    const scroll = vi
-      .spyOn(Element.prototype, 'scrollIntoView')
-      .mockImplementation(() => undefined);
+  test('"Next unrated" scrolls the page container so the image lands just below the sticky sub-nav', async () => {
     await renderWithProviders(
       <>
-        <div data-image-id="1" />
-        <div data-image-id="2" />
+        <div
+          className="scroll-area"
+          style={{ height: 300, overflow: 'auto', position: 'relative' }}
+        >
+          <div data-subnav="" style={{ position: 'sticky', top: 0, height: 100 }} />
+          <div data-image-id="1" style={{ height: 400 }} />
+          <div data-image-id="2" style={{ height: 400 }} />
+        </div>
         <ResourceReviewProgressCard postId={1} ownerId={7} />
       </>
     );
+    const container = document.querySelector<HTMLElement>('.scroll-area')!;
+    const scrollTo = vi.spyOn(container, 'scrollTo').mockImplementation(() => undefined);
     await page.getByRole('button', { name: /Next unrated/ }).click();
-    await expect.poll(() => scroll.mock.contexts.length).toBe(1);
-    expect((scroll.mock.contexts[0] as HTMLElement).dataset.imageId).toBe('2');
+    // Image 2 starts 500px into the content; the sub-nav covers the top 100px plus an 8px gap.
+    await expect.poll(() => scrollTo.mock.calls.length).toBe(1);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 392, behavior: 'smooth' });
   });
 
   test('"Review the rest" opens the stepper with a snapshot of the post images', async () => {

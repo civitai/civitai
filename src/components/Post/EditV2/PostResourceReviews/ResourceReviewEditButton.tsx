@@ -1,7 +1,7 @@
 import { ActionIcon } from '@mantine/core';
 import { IconPencil } from '@tabler/icons-react';
 import { openResourceReviewStepper } from '~/components/Post/EditV2/PostResourceReviews/openResourceReviewStepper';
-import type { StepperImage } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewStepper';
+import { useStepperImagesGetter } from '~/components/Post/EditV2/PostResourceReviews/useStepperImages';
 import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 
 export function ResourceReviewEditButton({
@@ -9,16 +9,14 @@ export function ResourceReviewEditButton({
   ownerId,
   modelVersionId,
   modelName,
-  getImages,
 }: {
   postId: number;
   ownerId: number;
   modelVersionId: number;
   modelName?: string | null;
-  /** Read on click, so the row does not re-render with every image edit. */
-  getImages: () => StepperImage[];
 }) {
   const { canReview, byModelVersionId } = usePostResourceReviews({ postId, ownerId });
+  const getImages = useStepperImagesGetter();
   const review = byModelVersionId.get(modelVersionId);
   if (!canReview || !review) return null;
 

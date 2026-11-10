@@ -6,6 +6,7 @@ import {
   Drawer,
   Group,
   Modal,
+  Progress,
   Select,
   Stack,
   Text,
@@ -37,6 +38,9 @@ export type ResourceReviewStepperProps = {
   modelVersionId?: number;
   images: StepperImage[];
 };
+
+/** Past this many resources the per-resource segments shrink to a dotted line. */
+const MAX_SEGMENTS = 12;
 
 const schema = z.object({ details: z.string().optional() });
 
@@ -81,6 +85,7 @@ export function ResourceReviewStepper({
   const [index, setIndex] = useState(() => startIndex(reviews, modelVersionId));
   const [saving, setSaving] = useState(false);
   const drafts = useRef(new Map<number, string>());
+  const railRef = useRef<HTMLDivElement>(null);
 
   const last = reviews.length - 1;
   const current: Review | undefined = reviews[Math.min(index, last)];
@@ -93,6 +98,10 @@ export function ResourceReviewStepper({
     form.reset({ details: drafts.current.get(currentId) ?? saved });
   }, [currentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    railRef.current?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [index]);
+
   if (!canReview || !current || currentId == null) return null;
 
   const comment = form.watch('details') ?? '';
@@ -100,6 +109,7 @@ export function ResourceReviewStepper({
   const busy = saving || isPending(currentId);
   const usedIn = images.filter((image) => image.modelVersionIds.includes(currentId));
   const isLast = index >= last;
+  const ratedCount = reviews.filter((r) => r.reviewRecommended != null).length;
 
   const goTo = (next: number) => {
     drafts.current.set(currentId, form.getValues('details') ?? '');
@@ -141,7 +151,7 @@ export function ResourceReviewStepper({
   );
 
   const rail = (
-    <Stack gap={2} w={250} p="sm" className="shrink-0 overflow-y-auto">
+    <Stack ref={railRef} gap={2} w={250} p="sm" className="shrink-0 overflow-y-auto">
       {reviews.map((review, i) => (
         <UnstyledButton
           key={review.modelVersionId}
@@ -150,9 +160,14 @@ export function ResourceReviewStepper({
           className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-gray-1 hover:dark:bg-dark-5"
         >
           <StateIcon review={review} current={i === index} />
-          <Text size="sm" lineClamp={1} fw={i === index ? 600 : undefined}>
-            {review.modelName}
-          </Text>
+          <div className="min-w-0">
+            <Text size="sm" lineClamp={1} fw={i === index ? 600 : undefined}>
+              {review.modelName}
+            </Text>
+            <Text size="xs" c="dimmed" lineClamp={1}>
+              {review.modelVersionName}
+            </Text>
+          </div>
         </UnstyledButton>
       ))}
     </Stack>
@@ -162,19 +177,32 @@ export function ResourceReviewStepper({
     <Stack gap="md" p="md" className="min-w-0 flex-1 overflow-y-auto">
       <Group justify="space-between" wrap="nowrap">
         <Stack gap={6} className="flex-1">
-          <Group gap={4} wrap="nowrap">
-            {reviews.map((review, i) => (
-              <Box
-                key={review.modelVersionId}
-                h={4}
-                className="flex-1 rounded-full"
-                bg={i <= index || review.reviewRecommended != null ? 'blue.6' : 'dark.4'}
-              />
-            ))}
-          </Group>
-          <Text size="xs" c="dimmed">
-            {index + 1} of {reviews.length}
-          </Text>
+          {!isMobile && (
+            <>
+              {reviews.length <= MAX_SEGMENTS ? (
+                <Group gap={4} wrap="nowrap">
+                  {reviews.map((review, i) => (
+                    <Box
+                      key={review.modelVersionId}
+                      h={4}
+                      className="flex-1 rounded-full"
+                      bg={i <= index || review.reviewRecommended != null ? 'blue.6' : 'dark.4'}
+                    />
+                  ))}
+                </Group>
+              ) : (
+                <Progress
+                  value={(ratedCount / reviews.length) * 100}
+                  size={4}
+                  aria-label="Resources rated"
+                />
+              )}
+              <Text size="xs" c="dimmed">
+                {index + 1} of {reviews.length}
+                {reviews.length > MAX_SEGMENTS && ` · ${ratedCount} rated`}
+              </Text>
+            </>
+          )}
         </Stack>
         <ActionIcon variant="subtle" color="gray" aria-label="Close" onClick={dialog.onClose}>
           <IconX size={18} />
@@ -235,7 +263,13 @@ export function ResourceReviewStepper({
         <Text size="sm" fw={600}>
           Comment (optional)
         </Text>
-        <Form form={form} onSubmit={() => undefined}>
+        <Form
+          form={form}
+          onSubmit={() => undefined}
+          className={
+            isMobile ? '[&_.ProseMirror]:!min-h-[140px]' : '[&_.ProseMirror]:!min-h-[160px]'
+          }
+        >
           <InputRTE
             key={currentId}
             name="details"
@@ -258,6 +292,7 @@ export function ResourceReviewStepper({
     <Group
       justify="space-between"
       p="md"
+      pb={isMobile ? 'calc(env(safe-area-inset-bottom) + 12px)' : undefined}
       className="shrink-0 border-0 border-t border-solid border-gray-3 dark:border-dark-4"
     >
       <Button variant="subtle" color="gray" onClick={advance} disabled={busy}>

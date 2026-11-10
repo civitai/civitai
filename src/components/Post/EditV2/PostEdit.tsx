@@ -5,7 +5,6 @@ import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV
 import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
 import { PostImageCards } from '~/components/Post/EditV2/PostImageCards/PostImageCards';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
-import { ResourceReviewProgressCard } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewProgressCard';
 import { PostResourceReviewsSync } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 import { PostReorderImages } from '~/components/Post/EditV2/PostReorderImages';
 import { StorylineEditorHeader } from '~/components/Storyline/editor/StorylineEditorHeader';
@@ -56,7 +55,6 @@ export function PostEdit() {
               style={{ top: 'calc(var(--header-height))' }}
             >
               <PostEditSidebar post={post} />
-              <ResourceReviewProgressCard postId={post.id} ownerId={post.user.id} />
             </div>
             {/*<PostCollaboratorSelection post={post} />*/}
           </div>

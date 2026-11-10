@@ -95,7 +95,25 @@ beforeEach(() => {
   upsert.mockImplementation(async (input: object) => ({ id: 99, details: null, ...input }));
 });
 
+const manyResources = (count: number) =>
+  Array.from({ length: count }, (_, i) => resourceRow(100 + i, `Model ${i + 1}`));
+
 describe('ResourceReviewStepper', () => {
+  test('a post with few resources shows one segment each and no rated bar', async () => {
+    await open();
+    await expect.element(page.getByText('1 of 2')).toBeVisible();
+    expect(page.getByRole('progressbar').elements()).toHaveLength(0);
+  });
+
+  test('a post with many resources shows one continuous rated bar instead of segments', async () => {
+    client.setQueryData(key, manyResources(13));
+    await open();
+    await expect
+      .element(page.getByRole('progressbar', { name: 'Resources rated' }))
+      .toBeInTheDocument();
+    await expect.element(page.getByText('1 of 13 · 0 rated')).toBeVisible();
+  });
+
   test('rating, commenting and Save & next saves the comment and shows the next resource', async () => {
     await open();
     await expect.element(page.getByRole('heading', { name: 'Cool LoRA' })).toBeVisible();

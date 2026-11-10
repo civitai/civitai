@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { openResourceReviewStepper } from '~/components/Post/EditV2/PostResourceReviews/openResourceReviewStepper';
 import { focusReviewTarget } from '~/components/Post/EditV2/PostResourceReviews/reviewFocus';
+import { useStepperImagesGetter } from '~/components/Post/EditV2/PostResourceReviews/useStepperImages';
 import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 
 export function ResourceReviewProgressCard({
@@ -17,6 +18,7 @@ export function ResourceReviewProgressCard({
     postId,
     ownerId,
   });
+  const getImages = useStepperImagesGetter();
   const storeImages = usePostEditStore((state) => state.images);
   const images = useMemo(
     () =>
@@ -43,12 +45,7 @@ export function ResourceReviewProgressCard({
       postId,
       ownerId,
       modelVersionId,
-      images: images.map((image) => ({
-        id: image.id,
-        url: image.url,
-        type: image.type,
-        modelVersionIds: image.resourceHelper.map((r) => r.modelVersionId),
-      })),
+      images: getImages(),
     });
 
   const goToNextUnrated = () => {

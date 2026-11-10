@@ -674,14 +674,6 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
           ownerId={ownerId}
           modelVersionId={modelVersionId}
           modelName={modelName}
-          getImages={() =>
-            [image, ...otherImages].map((img) => ({
-              id: img.id,
-              url: img.url,
-              type: img.type,
-              modelVersionIds: img.resourceHelper.map((r) => r.modelVersionId),
-            }))
-          }
         />
       )}
 
