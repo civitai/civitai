@@ -3,7 +3,6 @@ import {
   DndContext,
   KeyboardSensor,
   PointerSensor,
-  TouchSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -89,15 +88,12 @@ export function BatchReviewTable({
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    // A short hold, so a swipe on the thumbnails still scrolls the list on a phone.
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
     const from = String(active.id);
     const to = String(over.id);
-    // Within one post only: an image dropped on another post's thumbnail stays where it was.
     const owner = posts.find(
       (post) => post.media.some((m) => m.url === from) && post.media.some((m) => m.url === to)
     );

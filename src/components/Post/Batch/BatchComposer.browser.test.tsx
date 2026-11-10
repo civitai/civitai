@@ -362,12 +362,15 @@ describe('BatchComposer', () => {
       // Keyboard drag: lift image 3, move it two places earlier, drop. The browser test renders
       // without Tailwind, so the thumbs stack in a column and "earlier" is up, not left.
       page.getByTestId('batch-review-thumb').nth(2).element().focus();
+      const lifted = page.getByTestId('batch-review-thumb').nth(2).element();
       await userEvent.keyboard('{Space}');
-      await new Promise((r) => setTimeout(r, 300));
-      await userEvent.keyboard('{ArrowUp}');
-      await new Promise((r) => setTimeout(r, 300));
-      await userEvent.keyboard('{ArrowUp}');
-      await new Promise((r) => setTimeout(r, 300));
+      await vi.waitFor(() => expect(lifted.getAttribute('aria-pressed')).toBe('true'));
+      // dnd-kit announces each move in its live region; wait for it before the next key.
+      const announced = () => document.querySelector('[aria-live]')?.textContent ?? '';
+      for (const target of [2, 1]) {
+        await userEvent.keyboard('{ArrowUp}');
+        await vi.waitFor(() => expect(announced()).toContain(`key-render-${target}.png.`));
+      }
       await userEvent.keyboard('{Space}');
       await expect.poll(() => thumbUrls()).toEqual(names([3, 1, 2, 4]));
       await schedule();
