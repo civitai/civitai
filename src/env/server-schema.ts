@@ -541,6 +541,8 @@ export const serverSchema = z
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
+    // The orchestrator's own credential for the mini model-version endpoint's epoch arm. Unset: inert.
+    ORCHESTRATOR_SERVICE_TOKEN: z.string().optional(),
     // Local-dev opt-in for /api/training-studio/host to hand the shared ORCHESTRATOR_ACCESS_TOKEN
     // (the ORCHESTRATOR_MODE=dev arm of getOrchestratorToken) to the browser. Never set in prod.
     ALLOW_DEV_ORCHESTRATOR_TOKEN_PASSTHROUGH: zc.booleanString.optional().default(false),

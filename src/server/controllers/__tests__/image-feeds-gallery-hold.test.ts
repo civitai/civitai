@@ -31,6 +31,7 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: heldLevel,
   getHeldLevelsByPost: heldByPost,
+  isModelGalleryWithheld: async () => false,
 }));
 
 const { getInfiniteImagesHandler } = await import('~/server/controllers/image.controller');
