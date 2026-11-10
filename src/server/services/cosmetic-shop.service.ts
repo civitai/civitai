@@ -272,13 +272,17 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
   return cosmetic;
 };
 
-/** Knights of New Order sells its own shop cosmetics and grants its badges as Trophies; the main shop must not sell either. */
+/** Refuses a Trophy, or a creatorless cosmetic any Knights of New Order shop item (active or retired) references. */
 async function assertNotKnightsCosmetic(cosmeticId: number) {
-  const [cosmetic, knightsItem] = await Promise.all([
-    dbWrite.cosmetic.findUnique({ where: { id: cosmeticId }, select: { source: true } }),
-    dbWrite.knightsShopItem.findFirst({ where: { cosmeticId }, select: { id: true } }),
-  ]);
-  if (knightsItem || cosmetic?.source === 'Trophy')
+  const cosmetic = await dbWrite.cosmetic.findUnique({
+    where: { id: cosmeticId },
+    select: { source: true, createdById: true },
+  });
+  const knightsExclusive =
+    cosmetic?.source === 'Trophy' ||
+    (cosmetic?.createdById == null &&
+      !!(await dbWrite.knightsShopItem.findFirst({ where: { cosmeticId }, select: { id: true } })));
+  if (knightsExclusive)
     throw new Error(
       'This cosmetic belongs to Knights of New Order and cannot be listed in the shop'
     );
