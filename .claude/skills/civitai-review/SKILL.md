@@ -19,12 +19,15 @@ pre-authorisation lives here so it travels with the skill rather than through a 
 tell a real global ruling from a mistaken one by reading someone's summary of it, so twice on 2026-08-19
 agents correctly declined a relayed "he already said yes" and raised it instead.
 
-This complements the built-in `/code-review`, which already handles generic correctness. What these five
+This complements the built-in `/code-review`, which already handles generic correctness. What these lanes
 add is Civitai-specific: *which* service, *which* component, *which* trap.
 
 ## 0. Recording, the PR and its base — before the review worktree
 
-**Recording is on whenever your `hq` token can record.** Nothing needs configuring. Check once:
+**Recording is on whenever your `hq` token can record.** Nothing needs configuring, and nothing
+asks: when step 0's stop list passes, it rebases and pushes a draft (or a branch with no PR) and
+opens the draft PR without confirmation. That is deliberate, so a local review leaves an HQ record
+with no extra step. Check once:
 
 ```bash
 hq --json whoami | jq -e '.token.scopes | any(. == "ack" or . == "bot" or . == "admin")'
@@ -47,6 +50,11 @@ review on a current base, recorded or not).
 A recorded lane is imported by the hosted review instead of being run again there (correctness always
 re-runs hosted). An unrecorded local review means every lane runs twice on the shared usage, or HQ
 has no record of the review at all.
+
+🔴 **Step 0's writes (rebase, push, opening a draft) are the implementer's only:** run them only when
+this session wrote the branch's work. A findings-only reviewer (step 5) skips them, even under the
+author's `gh` identity: it reviews `headRefOid` as is, records there if the PR exists, and asks the
+implementer to rebase if the base is stale.
 
 Then, in the **implementer's tree** (the branch under review, not the review worktree), read the state.
 Nothing here writes yet:
@@ -288,7 +296,7 @@ conversation. It is the only one whose input is not in the repo, so it is the on
 by accident.
 
 **Solo mode is deliberately not offered.** Running one adversarial reviewer over everything was
-considered and rejected in favour of five parallel lanes — the lanes hold different concrete knowledge
+considered and rejected in favour of parallel lanes — the lanes hold different concrete knowledge
 (which service, which trap, which measurement) and one agent carrying all of it dilutes each. This is a
 decision, not an omission; do not helpfully collapse them.
 
