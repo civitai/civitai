@@ -57,7 +57,7 @@ beforeAll(async () => {
   );
 });
 
-function call(query: Record<string, string>) {
+async function call(query: Record<string, string>) {
   const req = { method: 'POST', query: { token: 'test-token', ...query }, headers: {} } as never;
   let statusCode = 0;
   const res = {
@@ -70,7 +70,8 @@ function call(query: Record<string, string>) {
     setHeader: () => res,
     end: () => res,
   };
-  return handler(req, res as never).then(() => statusCode);
+  await handler(req, res as never);
+  return statusCode;
 }
 
 describe('/api/admin/temp/queue-takendown-models-reindex', () => {
