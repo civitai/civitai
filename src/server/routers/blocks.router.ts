@@ -60,6 +60,7 @@ import {
   isKnownBlockScope,
   PRIVATE_RUN_BUZZ_CAP,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
+  REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
@@ -3906,7 +3907,7 @@ export const blocksRouter = router({
         // Same bounds as `grantScopes`, deliberately: the two procedures describe the same
         // vocabulary and a viewer toggling a row off should not hit a different limit from
         // the one that turned it on.
-        scopes: z.array(z.string().min(1).max(64)).min(1).max(32),
+        scopes: z.array(z.string().min(1).max(64)).min(1).max(REVOKE_SCOPES_MAX_PER_CALL),
       })
     )
     .mutation(async ({ ctx, input }) => {

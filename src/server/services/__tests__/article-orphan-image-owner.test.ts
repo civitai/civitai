@@ -338,9 +338,10 @@ describe('deleteArticleById', () => {
     await expect(deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR })).resolves.toEqual({
       coverId: OWN_COVER.id,
     });
-    expect(queueUpdate).toHaveBeenCalledWith([
-      { id: ARTICLE_ID, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
+    expect(queueUpdate).toHaveBeenCalledWith(
+      [{ id: ARTICLE_ID, action: SearchIndexUpdateQueueAction.Delete }],
+      { reason: 'delete' }
+    );
     expect(deletedIds()).toEqual([]);
   });
 });
