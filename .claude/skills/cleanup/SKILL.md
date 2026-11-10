@@ -1,9 +1,9 @@
 ---
 name: cleanup
-description: "Runs the three no-gate review lanes over everything this session touched, consolidates them, and APPLIES the fixes: comment-review (comment necessity + false claims), docs-drift-review (docs the session made wrong) and claim-review (behaviour the session's prose asserts, traced to the code). Session-scoped, not segment-scoped. Use partway through a long session, before opening a PR, and whenever a pushback has turned up an overstatement."
+description: "Runs the three review lanes that no build or test covers over everything this session touched, consolidates them, and APPLIES the fixes: comment-review (comment necessity + false claims), docs-drift-review (docs the session made wrong) and claim-review (behaviour the session's prose asserts, traced to the code). Session-scoped, not segment-scoped. Use partway through a long session, before opening a PR, and whenever a pushback has turned up an overstatement."
 ---
 
-# Cleanup — the three lanes nothing else checks
+# Cleanup — the three lanes no build or test covers
 
 Runs **`comment-review`**, **`docs-drift-review`** and **`claim-review`** over the whole session's work,
 consolidates them into one list, and **applies the fixes** — the lanes produce exact replacement text, so
@@ -15,9 +15,11 @@ a run that stops at a list has done the expensive half and skipped the useful on
 | `docs-drift-review` | Docs the session made wrong — stale paths, done checklist items, contradictions — plus padding |
 | `claim-review` | Claims about behaviour — consequences, absences, "already does" — traced to the line that decides them, in docs, comments, commit messages and PR bodies |
 
-All three lanes are read-only and none has an automated gate — comments aren't type-checked, docs are
-never executed, and a PR body is never read by a tool, so typecheck, lint, prettier and every test suite
-pass over all of them. That is the whole reason this exists.
+All three lanes are read-only, and no build or test checks what they check — comments aren't
+type-checked, docs are never executed, and a PR body is never read by a tool, so typecheck, lint,
+prettier and every test suite pass over all of them. That is the whole reason this exists.
+`comment-review` alone also runs as the hosted PR review's `comments` lane, and `civitai-review` runs
+it locally when recording; that covers a PR's diff, not the session's whole work.
 
 The first two check text against **names**; only `claim-review` follows a described behaviour to where it
 is decided. A sentence whose every symbol resolves can still claim a consequence the caller never

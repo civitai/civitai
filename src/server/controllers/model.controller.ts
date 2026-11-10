@@ -236,7 +236,11 @@ import { logToAxiom } from '~/server/logging/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
-import { trainingDataOwnerView } from '~/server/services/training-data-restricted.service';
+import {
+  trainingDataOwnerView,
+  withoutEpochUrls,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -751,13 +755,14 @@ export const getModelsPagedSimpleHandler = async ({
       name: true,
       nsfw: true,
       meta: true,
-      modelVersions: input.needsReview
-        ? {
-            select: { id: true, name: true, meta: true },
-            where: { meta: { path: ['needsReview'], equals: true } },
-            take: 1,
-          }
-        : false,
+      modelVersions:
+        input.needsReview && ctx.user?.isModerator
+          ? {
+              select: { id: true, name: true, meta: true },
+              where: { meta: { path: ['needsReview'], equals: true } },
+              take: 1,
+            }
+          : false,
     },
   });
 
@@ -1311,7 +1316,9 @@ export const getDownloadCommandHandler = async ({
       throw throwAuthorizationError();
     }
 
-    const { model, files } = modelVersion;
+    const { model } = modelVersion;
+    // The command hands out model files only, to everyone.
+    const files = modelVersion.files.filter((f) => f.type !== 'Training Data');
     const castedFiles = files as Array<
       Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
     >;
@@ -1547,6 +1554,7 @@ export const getMyTrainingModelsHandler = async ({
             id: true,
             name: true,
             status: true,
+            mode: true,
             // `_count: { select: { modelVersions: true } }` intentionally
             // omitted — see getMyDraftModelsHandler: Prisma compiles it to a
             // full-table grouped subquery (~1344ms) instead of pushing the id
@@ -1603,9 +1611,13 @@ export const getMyTrainingModelsHandler = async ({
       ...results,
       items: results.items.map((item) => {
         const version = applyTrainingWorkflowOverlay(item, overlay);
+        const ownerFiles = trainingDataOwnerView(version.files);
         return {
           ...version,
-          files: trainingDataOwnerView(version.files),
+          files:
+            isModelDeletedOrTakenDown(item.model) && !ctx.user.isModerator
+              ? withoutEpochUrls(ownerFiles)
+              : ownerFiles,
           model: {
             ...item.model,
             _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },

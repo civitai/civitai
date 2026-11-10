@@ -19,7 +19,9 @@ const mocks = vi.hoisted(() => ({
     dailyLimit: 100,
     perDay: [] as { day: string; existing: number; incoming: number }[],
   },
-  scheduleCalls: [] as { posts: { clientKey?: string; publishedAt: Date }[] }[],
+  scheduleCalls: [] as {
+    posts: { clientKey?: string; publishedAt: Date; images?: { url: string }[] }[];
+  }[],
   /** Throws on these call numbers (1-based), as a call the client stopped waiting for would. */
   throwOnCalls: [] as number[],
   throwMessage: '',
@@ -321,5 +323,58 @@ describe('BatchComposer', () => {
     await expect
       .element(page.getByTestId('batch-recognised'))
       .toHaveTextContent(formatDate(original, 'MMM D, h:mm A'));
+  });
+
+  describe('review: image order', () => {
+    async function openReviewOfOnePost() {
+      await uploadPosts(4);
+      await userEvent.click(page.getByRole('radio', { name: 'Several images per post' }));
+      await userEvent.fill(page.getByTestId('batch-images-per-post'), '4');
+      await expect.element(page.getByTestId('batch-grouping-summary')).toHaveTextContent('1 post');
+      await userEvent.click(page.getByTestId('batch-review-button'));
+      await expect.poll(() => thumbUrls()).toHaveLength(4);
+    }
+    const thumbUrls = () =>
+      page
+        .getByTestId('batch-review-thumb')
+        .elements()
+        .map((el) => el.getAttribute('data-url'));
+    const sentUrls = () =>
+      mocks.scheduleCalls.flatMap((c) => c.posts.flatMap((p) => p.images!.map((i) => i.url)));
+    const names = (n: number[]) => n.map((i) => `key-render-${i}.png`);
+
+    async function schedule() {
+      const button = page.getByTestId('batch-schedule-button');
+      await expect.element(button).toBeEnabled();
+      await userEvent.click(button);
+      await expect.element(page.getByTestId('batch-success-summary')).toBeInTheDocument();
+    }
+
+    test('without a drag the images are scheduled in upload order (control)', async () => {
+      await openReviewOfOnePost();
+      expect(thumbUrls()).toEqual(names([1, 2, 3, 4]));
+      await schedule();
+      expect(sentUrls()).toEqual(names([1, 2, 3, 4]));
+    });
+
+    test('dragging an image to a new place changes the order that is scheduled', async () => {
+      await openReviewOfOnePost();
+      // Keyboard drag: lift image 3, move it two places earlier, drop. The browser test renders
+      // without Tailwind, so the thumbs stack in a column and "earlier" is up, not left.
+      page.getByTestId('batch-review-thumb').nth(2).element().focus();
+      const lifted = page.getByTestId('batch-review-thumb').nth(2).element();
+      await userEvent.keyboard('{Space}');
+      await vi.waitFor(() => expect(lifted.getAttribute('aria-pressed')).toBe('true'));
+      // dnd-kit announces each move in its live region; wait for it before the next key.
+      const announced = () => document.querySelector('[aria-live]')?.textContent ?? '';
+      for (const target of [2, 1]) {
+        await userEvent.keyboard('{ArrowUp}');
+        await vi.waitFor(() => expect(announced()).toContain(`key-render-${target}.png.`));
+      }
+      await userEvent.keyboard('{Space}');
+      await expect.poll(() => thumbUrls()).toEqual(names([3, 1, 2, 4]));
+      await schedule();
+      expect(sentUrls()).toEqual(names([3, 1, 2, 4]));
+    });
   });
 });

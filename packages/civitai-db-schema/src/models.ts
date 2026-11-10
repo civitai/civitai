@@ -260,7 +260,7 @@ export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
 export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
-export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
+export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion" | "Comic";
 
 export type StorylineStatus = "Ongoing" | "Complete";
 

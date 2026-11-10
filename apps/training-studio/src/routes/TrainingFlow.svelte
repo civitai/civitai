@@ -74,6 +74,8 @@
   // The trigger the current Review params were seeded with.
   let paramsSeedTrigger = '';
   let presetType = $state('');
+  let openAdvanced = $state('');
+  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
@@ -320,6 +322,8 @@
       bind:prompts={samplePrompts}
       bind:params={runParams}
       bind:presetType
+      bind:openAdvanced
+      bind:acknowledgedAdvanced
       imageCount={trainableCount}
       {trainsPairs}
       {matureCount}

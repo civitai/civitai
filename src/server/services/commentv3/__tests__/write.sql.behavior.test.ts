@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { ltree } from '@electric-sql/pglite/contrib/ltree';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { SqlRunner } from '~/server/services/comment-v3-backfill.service';
+import type { SqlRunner } from '~/server/services/commentv3/write.service';
 import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixture';
 import {
   deleteComments,
@@ -28,6 +28,7 @@ beforeAll(async () => {
   await pg.exec(migration('20261110120000_comment_v3_schema'));
   await pg.exec(migration('20261120120000_comment_v3_mirror'));
   await pg.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
+  await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
   db = {
     query: async <R extends Record<string, unknown>>(sql: string, params?: unknown[]) =>
       (await pg.query<R>(sql, params)) as { rows: R[] },
@@ -247,114 +248,38 @@ describe('comment v3 writes', () => {
     expect(await isTopicMuted(db, { ...topic, entityType: 'post', userId: 8 })).toBe(false);
   });
 
-  it('an old-table update copies only what it changed, so it never undoes a CommentV3 edit', async () => {
+  it('a comment lock toggles, and refuses replies anywhere below it', async () => {
+    await pg.exec(`INSERT INTO "Article" VALUES (34)`);
+    const root = await post(34, 1);
+    const reply = await post(34, 2, root.id);
+    expect(await toggleCommentLock(db, root.id)).toEqual({ id: root.id, locked: true });
+    await expect(post(34, 3, reply.id)).rejects.toThrow('comment thread locked');
+    expect(await toggleCommentLock(db, root.id)).toEqual({ id: root.id, locked: false });
+    await expect(post(34, 3, reply.id)).resolves.toMatchObject({ parentId: reply.id });
+  });
+
+  // The old tables no longer follow CommentV3, so a write still reaching one (a cascade, a hand-run
+  // fix) must not copy its stale row back over the live comment.
+  it('a write to an old comment row leaves the CommentV3 comment as it is', async () => {
+    const live = await post(2, 1, undefined, 'live');
     const thread = await one<{ id: number }>(
       `INSERT INTO "Thread"("articleId") VALUES (2) RETURNING id`
     );
-    const old = await one<{ id: number }>(
-      `INSERT INTO "CommentV2"(content, "userId", "threadId") VALUES ('in v2', 1, ${thread.id}) RETURNING id`
+    await pg.exec(
+      `INSERT INTO "CommentV2"(id, content, "userId", "threadId") VALUES (${live.id}, 'stale', 1, ${thread.id});
+       UPDATE "CommentV2" SET content = 'stale edit', hidden = true WHERE id = ${live.id}`
     );
-    await updateCommentContent(db, { id: old.id, content: 'edited in v3' });
-    await pg.exec(`UPDATE "CommentV2" SET hidden = true, "updatedAt" = now() WHERE id = ${old.id}`);
-    expect(await getStoredComment(db, old.id)).toMatchObject({
-      content: 'edited in v3',
-      hidden: true,
-    });
-    await pg.exec(`UPDATE "CommentV2" SET content = 'edited in v2' WHERE id = ${old.id}`);
-    expect(await getStoredComment(db, old.id)).toMatchObject({
-      content: 'edited in v2',
-      hidden: true,
-    });
+    expect(await getStoredComment(db, live.id)).toMatchObject({ content: 'live', hidden: false });
   });
 
-  // A stale CommentV2 row would keep serving what was removed, and an update to it would make the
-  // mirror copy a deleted comment back.
-  it('keeps a comment’s CommentV2 row in step: edits, flags, and gone with the comment', async () => {
-    const thread = await one<{ id: number }>(
-      `INSERT INTO "Thread"("articleId") VALUES (3) RETURNING id`
-    );
-    const old = await one<{ id: number }>(
-      `INSERT INTO "CommentV2"(content, "userId", "threadId") VALUES ('in v2', 1, ${thread.id}) RETURNING id`
-    );
-    const v2 = () =>
-      one<{ content: string; tosViolation: boolean; pinnedAt: Date | null }>(
-        `SELECT content, "tosViolation", "pinnedAt" FROM "CommentV2" WHERE id = ${old.id}`
-      );
-
-    await updateCommentContent(db, { id: old.id, content: 'edited' });
-    expect(await setCommentFlags(db, [old.id], { tosViolation: true, pinned: true })).toHaveLength(
-      1
-    );
-    expect(await v2()).toMatchObject({ content: 'edited', tosViolation: true });
-    expect((await v2())?.pinnedAt).not.toBeNull();
-    expect(await getStoredComment(db, old.id)).toMatchObject({
-      content: 'edited',
-      tosViolation: true,
-    });
-
-    await deleteComments(db, [old.id]);
-    expect(await v2()).toBeUndefined();
-    expect(await getStoredComment(db, old.id)).toBeUndefined();
-  });
-
-  it('keeps a pre-flip v2 comment’s reply-thread lock in step with its lock', async () => {
-    await pg.exec(`INSERT INTO "Article" VALUES (34)`);
-    const thread = await one<{ id: number }>(
-      `INSERT INTO "Thread"("articleId") VALUES (34) RETURNING id`
-    );
-    const old = await one<{ id: number }>(
-      `INSERT INTO "CommentV2"(content, "userId", "threadId") VALUES ('in v2', 1, ${thread?.id}) RETURNING id`
-    );
-    const replies = await one<{ id: number }>(
-      `INSERT INTO "Thread"("commentId", "rootThreadId") VALUES (${old?.id}, ${thread?.id}) RETURNING id`
-    );
-    const lockedThread = async () =>
-      (await one<{ locked: boolean }>(`SELECT locked FROM "Thread" WHERE id = ${replies?.id}`))
-        ?.locked;
-
-    expect(await toggleCommentLock(db, old?.id ?? 0)).toMatchObject({ locked: true });
-    expect(await lockedThread()).toBe(true);
-    expect(await toggleCommentLock(db, old?.id ?? 0)).toMatchObject({ locked: false });
-    expect(await lockedThread()).toBe(false);
-  });
-
-  // A model comment written before the model flip keeps its v1 row for a rollback, in step as above.
-  it('keeps a pre-flip model comment’s v1 row in step, and only blanks it as a tombstone', async () => {
-    await pg.exec(`INSERT INTO "Model" VALUES (501)`);
-    const root = await one<{ id: number }>(
-      `INSERT INTO "Comment"(content, "userId", "modelId") VALUES ('in v1', 1, 501) RETURNING id`
-    );
-    const reply = await one<{ id: number }>(
-      `INSERT INTO "Comment"(content, "userId", "modelId", "parentId") VALUES ('reply', 2, 501, ${root?.id}) RETURNING id`
-    );
-    const v3Id = async (legacy?: number) =>
-      (await one<{ id: number }>(`SELECT id FROM "CommentV3" WHERE "legacyV1Id" = ${legacy}`))
-        ?.id ?? 0;
-    const [rootV3, replyV3] = [await v3Id(root?.id), await v3Id(reply?.id)];
-    const v1 = (id?: number) =>
-      one<{ content: string; hidden: boolean; pinnedAt: Date | null; locked: boolean }>(
-        `SELECT content, hidden, "pinnedAt", locked FROM "Comment" WHERE id = ${id}`
-      );
-
-    await updateCommentContent(db, { id: rootV3, content: 'edited' });
-    await setCommentFlags(db, [rootV3], { hidden: true, pinned: true });
-    expect(await toggleCommentLock(db, rootV3)).toMatchObject({ locked: true });
-    expect(await v1(root?.id)).toMatchObject({ content: 'edited', hidden: true, locked: true });
-    expect((await v1(root?.id))?.pinnedAt).not.toBeNull();
-    // The v1 update fires the mirror, which must leave the CommentV3 row as written.
-    expect(await getStoredComment(db, rootV3)).toMatchObject({ content: 'edited', hidden: true });
-
-    // Deleting the v1 row would cascade to the reply's, and through the mirror to the live reply.
-    await deleteComments(db, [rootV3]);
-    expect(await v1(root?.id)).toMatchObject({ content: '' });
-    expect(await getStoredComment(db, replyV3)).toMatchObject({
-      deletedAt: null,
-      content: 'reply',
-    });
-
-    await deleteComments(db, [replyV3]);
-    expect(await v1(reply?.id)).toBeUndefined();
-    expect(await getStoredComment(db, replyV3)).toBeUndefined();
+  it('delete: a pinned comment kept as a tombstone loses its pin', async () => {
+    await pg.exec(`INSERT INTO "Article" VALUES (35)`);
+    const root = await post(35, 1);
+    await post(35, 2, root.id);
+    await setCommentFlags(db, [root.id], { pinned: true });
+    expect((await getStoredComment(db, root.id))?.pinnedAt).not.toBeNull();
+    await deleteComments(db, [root.id]);
+    expect(await getStoredComment(db, root.id)).toMatchObject({ content: '', pinnedAt: null });
   });
 
   it('an edit is refused under a locked ancestor or topic, as the update handler asks', async () => {
@@ -370,5 +295,73 @@ describe('comment v3 writes', () => {
     await pg.exec(`UPDATE "CommentV3" SET locked = false WHERE id = ${root.id}`);
     await toggleTopicLock(db, { entityType: 'article', entityId: 33 });
     expect(await locked()).toBe(true);
+  });
+});
+
+describe('20270101120000_comment_v3_old_table_triggers_off', () => {
+  const OLD_TABLES = [
+    'Thread',
+    'CommentV2',
+    'Comment',
+    'CommentV2Reaction',
+    'CommentReaction',
+    'CommentV2Report',
+    'CommentReport',
+    'ThreadMute',
+  ];
+  let old: PGlite;
+  // The old count trigger stays until Phase 6; only the mirror and the moderation scans go.
+  const triggersOn = async (table: string) =>
+    (
+      await old.query<{ tgname: string }>(
+        `SELECT tgname FROM pg_trigger WHERE tgrelid = $1::regclass
+           AND (tgname = 'commentv3_mirror' OR tgname LIKE 'trg_moderation%') ORDER BY tgname`,
+        [`"${table}"`]
+      )
+    ).rows.map((r) => r.tgname);
+  const v3Reactions = async () =>
+    (
+      await old.query<{ userId: number; reaction: string }>(
+        `SELECT "userId", reaction FROM "CommentV3Reaction" ORDER BY "userId"`
+      )
+    ).rows;
+
+  beforeAll(async () => {
+    old = new PGlite({ extensions: { ltree } });
+    await old.exec(FIXTURE);
+    await old.exec(migration('20261110120000_comment_v3_schema'));
+    await old.exec(migration('20261120120000_comment_v3_mirror'));
+    await old.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
+    // Stand-ins for the old tables' moderation triggers (20250521094141_add_clavata_moderation).
+    await old.exec(`
+      CREATE FUNCTION fake_moderation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+      CREATE TRIGGER trg_moderation_comment AFTER INSERT ON "Comment" FOR EACH ROW EXECUTE FUNCTION fake_moderation();
+      CREATE TRIGGER trg_moderation_commentv2 AFTER INSERT ON "CommentV2" FOR EACH ROW EXECUTE FUNCTION fake_moderation();
+      INSERT INTO "Thread"("articleId") VALUES (1);
+      INSERT INTO "CommentV2"(id, content, "userId", "threadId") VALUES (500, 'old', 1, 1);
+      INSERT INTO "CommentV2Reaction"("commentId", "userId", reaction) VALUES (500, 2, 'Like');
+    `);
+  });
+  afterAll(async () => {
+    await old.close();
+  });
+
+  it('starts from the mirror following every old table, and the moderation triggers in place', async () => {
+    for (const table of OLD_TABLES) expect(await triggersOn(table)).toContain('commentv3_mirror');
+    expect(await triggersOn('Comment')).toContain('trg_moderation_comment');
+    expect(await triggersOn('CommentV2')).toContain('trg_moderation_commentv2');
+    expect(await v3Reactions()).toEqual([{ userId: 2, reaction: 'Like' }]);
+  });
+
+  it('leaves no mirror or moderation trigger on an old table, and an old reaction write no longer reaches CommentV3', async () => {
+    await old.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
+    await old.exec(`
+      INSERT INTO "CommentV2Reaction"("commentId", "userId", reaction) VALUES (500, 3, 'Heart');
+      DELETE FROM "CommentV2Reaction" WHERE "userId" = 2;
+    `);
+    expect(await v3Reactions()).toEqual([{ userId: 2, reaction: 'Like' }]);
+
+    const left = await Promise.all(OLD_TABLES.map(async (t) => [t, await triggersOn(t)]));
+    expect(left).toEqual(OLD_TABLES.map((t) => [t, []]));
   });
 });

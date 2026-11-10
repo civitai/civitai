@@ -1,14 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { env } from '~/env/server';
-import {
-  ensureFliptInitialized,
-  FLIPT_FEATURE_FLAGS,
-  getFliptClientSync,
-  isFliptSync,
-} from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { isNextDataRequest } from '~/server/prom/ssr-cpu.metrics';
 import { applyShellPrivateHeaders } from '~/server/shell/shell-response';
-import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
+import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { getRegion, isRegionBlocked, isRegionRestricted } from '~/server/utils/region-blocking';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isHostForColor } from '~/server/utils/server-domain';
@@ -17,10 +12,7 @@ import {
   BOT_CACHE_PREFETCH_FAILED_REQ_KEY,
   BOT_CACHE_REQ_KEY,
 } from '~/shared/constants/bot-cache.constants';
-import type {
-  BotCacheRouteName,
-  BotCacheRoutePattern,
-} from '~/server/bot-cache/bot-cache-routes';
+import type { BotCacheRouteName, BotCacheRoutePattern } from '~/server/bot-cache/bot-cache-routes';
 import { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache-routes';
 
 /**
@@ -38,10 +30,7 @@ import { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache-routes';
  */
 
 export { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache-routes';
-export type {
-  BotCacheRouteName,
-  BotCacheRoutePattern,
-} from '~/server/bot-cache/bot-cache-routes';
+export type { BotCacheRouteName, BotCacheRoutePattern } from '~/server/bot-cache/bot-cache-routes';
 
 /** Set by the edge on a verified crawler's request, to `CF_VERIFIED_BOT_HEADER_SECRET`. */
 export const CF_VERIFIED_BOT_HEADER = 'x-civ-cf-verified-bot';
@@ -66,11 +55,7 @@ type BotCacheRequest = IncomingMessage & {
   query?: Record<string, string | string[] | undefined>;
 };
 
-const readSwitch = () => {
-  const on = isFliptSync(FLIPT_FEATURE_FLAGS.BOT_HTML_EDGE_CACHE);
-  if (on === null && !getFliptClientSync()) void ensureFliptInitialized().catch(() => undefined);
-  return on;
-};
+const readSwitch = readFliptSwitch(() => FLIPT_FEATURE_FLAGS.BOT_HTML_EDGE_CACHE);
 let flagGate = createCachedFlagGate(readSwitch);
 
 /** Tests only: forget the cached switch read so the next request re-reads Flipt. */

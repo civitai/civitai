@@ -280,11 +280,32 @@ describe("a provider's file selectors", () => {
 });
 
 describe('a provider download is labelled public only when anyone could download the file', () => {
+  // On, so each nonpublic row below is decided by its own condition, not by sign-in.
+  beforeEach(() => setEnv({ UNAUTHENTICATED_DOWNLOAD: true }));
+
   it('public for a public file anyone can download', async () => {
-    setEnv({ UNAUTHENTICATED_DOWNLOAD: true });
     const id = version();
     expect(await asAnonymous(id)).toMatchObject({ ok: true });
     expect(await asProvider(id)).toMatchObject({ ok: true, isPublic: true });
+  });
+
+  it('public for a public file requested by id', async () => {
+    const id = version({}, [{}, { visibility: 'Private' }]);
+    expect(await asProvider(id, { fileId: id * 100 })).toMatchObject({ ok: true, isPublic: true });
+  });
+
+  it('nonpublic for a private file requested by id', async () => {
+    const id = version({}, [{}, { visibility: 'Private' }]);
+    expect(await asProvider(id, { fileId: id * 100 + 1 })).toMatchObject({
+      ok: true,
+      isPublic: false,
+    });
+  });
+
+  it('nonpublic for an early-access version', async () => {
+    const id = version();
+    world.paidAccess.set(id, { endsAt: null });
+    expect(await asProvider(id)).toMatchObject({ ok: true, isPublic: false });
   });
 
   it('nonpublic for every file while downloads require sign-in', async () => {
@@ -296,6 +317,7 @@ describe('a provider download is labelled public only when anyone could download
     ['private', { availability: 'Private' }],
     ['unpublished', { status: 'Unpublished' }],
     ['generation-only', { usageControl: 'Generation' }],
+    ['sign-in-required', { requireAuth: true }],
   ])('nonpublic for a %s version', async (_label, overrides) => {
     expect(await asProvider(version(overrides))).toMatchObject({ ok: true, isPublic: false });
   });

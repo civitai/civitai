@@ -150,6 +150,7 @@ import {
 import {
   enqueueCollectionRebuild,
   getCollectionIdsForModelCascade,
+  getCollectionIdsForModelImages,
 } from '~/server/services/collection-media-index';
 import {
   getCosmeticsForEntity,
@@ -2117,11 +2118,16 @@ export const updateModelById = async ({
    */
   meta?: (stored: ModelMeta | null, row: LockedModelRow) => ModelMeta;
 }) => {
+  let written = typeof data === 'function' ? undefined : data;
+  // The mode before this write; undefined when the write locked no row to read it from.
+  let priorMode: ModelModifier | null | undefined;
   const model =
     meta || typeof data === 'function'
       ? await dbWrite.$transaction(async (tx) => {
           const row = await lockModelRow(tx, id);
+          priorMode = row?.mode ?? null;
           const fields = typeof data === 'function' ? data(row) : data;
+          written = fields;
           return tx.model.update({
             where: { id },
             data: meta
@@ -2157,6 +2163,22 @@ export const updateModelById = async ({
   // through here, and the cached body's images/files/downloadUrl depend on
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
+  // A taken-down model's search document carries no images, so a change of mode rewrites it.
+  if (written && 'mode' in written) {
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
+    // Not awaited: the lookup reads every image on the model.
+    const writtenMode =
+      written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
+    if (
+      writtenMode === ModelModifier.TakenDown ||
+      priorMode === ModelModifier.TakenDown ||
+      priorMode === undefined
+    )
+      void getCollectionIdsForModelImages({ modelId: id })
+        .then((found) => enqueueCollectionRebuild({ ...found, source: 'model-mode-change' }))
+        .catch(() => undefined);
+  }
 
   return withoutModeratorOnlyMeta(model);
 };
@@ -4967,17 +4989,6 @@ export const publishModelById = async ({
           throw throwAuthorizationError('You are not authorized to publish this model version');
       }
 
-      // Anti-bump guard: publishedAt is immutable once a model has gone
-      // public. Allowed transitions: NULL (Draft) -> set, or future
-      // (Scheduled) -> reschedule. Republish of an already-public model is a
-      // no-op for this column. Mirrors the Post guard below.
-      await tx.$executeRaw`
-        UPDATE "Model"
-        SET "publishedAt" = ${publishedAt}
-        WHERE id = ${id}
-        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
-      `;
-
       // Validate NSFW + restricted base model combination
       if (model.nsfw) {
         const hasRestrictedBaseModel = model.modelVersions.some((version) =>
@@ -5021,11 +5032,12 @@ export const publishModelById = async ({
             tx,
           });
         } else if (status === ModelStatus.Scheduled) {
-          // Schedule model versions. Status flips unconditionally, but
-          // publishedAt only flips while the row is mutable (Draft or
-          // future-Scheduled) — anti-bump guard via raw SQL.
+          // Schedule model versions. A version already live stays live: put back to Scheduled with
+          // its past date, the job would re-release it at once and take the model with it.
+          // publishedAt only flips while the row is mutable (Draft or future-Scheduled) — anti-bump
+          // guard via raw SQL.
           await tx.modelVersion.updateMany({
-            where: { id: { in: versionIds }, modelId: id },
+            where: { id: { in: versionIds }, modelId: id, status: { not: ModelStatus.Published } },
             data: { status },
           });
           await tx.$executeRaw`
@@ -5063,6 +5075,21 @@ export const publishModelById = async ({
         `;
         movedPostIds = movedPosts.map((post) => post.id);
       }
+
+      // Never later than the earliest still-future scheduled version: a live version may have been
+      // published at once, ahead of the model's date. Must run after the version writes.
+      await tx.$executeRaw`
+        UPDATE "Model" m
+        SET "publishedAt" = LEAST(
+          ${publishedAt},
+          (
+            SELECT MIN(mv."publishedAt") FROM "ModelVersion" mv
+            WHERE mv."modelId" = m.id AND mv.status = 'Scheduled' AND mv."publishedAt" > NOW()
+          )
+        )
+        WHERE m.id = ${id}
+        AND (m."publishedAt" IS NULL OR m."publishedAt" > NOW())
+      `;
       await updateModelLastVersionAt({ id, tx, onlyForward: republishing });
 
       return model;
@@ -6248,6 +6275,28 @@ export async function isModelGalleryWithheld(selector: ImageModelSelector, viewe
 }
 
 /**
+ * Of the named versions, those whose model is taken down and not owned by the viewer. A version
+ * not found serves no images, so it is not returned. Moderators are the caller's to exempt.
+ */
+export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?: number) {
+  const withheld = new Set<number>();
+  if (!modelVersionIds.length) return withheld;
+  const versions = await versionModelCache().fetch(uniq(modelVersionIds));
+  const modelIds = uniq(Object.values(versions).map((version) => version.modelId));
+  if (!modelIds.length) return withheld;
+  const models = await dbRead.model.findMany({
+    where: { id: { in: modelIds } },
+    select: { id: true, userId: true, mode: true },
+  });
+  const withheldModelIds = new Set(
+    models.filter((m) => isModelWithheld(m) && m.userId !== viewerId).map((m) => m.id)
+  );
+  for (const id of modelVersionIds)
+    if (versions[id] && withheldModelIds.has(versions[id].modelId)) withheld.add(id);
+  return withheld;
+}
+
+/**
  * For each post on a minor or SFW-only model, the level its images may be served at and the model's
  * owner, who sees them whole. A post on no held model, or not yet on the replica, is absent.
  */
@@ -6405,7 +6454,6 @@ export async function getModelsWithVersions({
   ignoreBrowsingAddons,
   ownerUserId,
   publicVersionsOnly,
-  bypassImagesL1,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -6420,12 +6468,6 @@ export async function getModelsWithVersions({
   ownerUserId?: number;
   /** See `getModelsRaw`. */
   publicVersionsOnly?: boolean;
-  /**
-   * Read the showcase images past this process's L1 (`getImagesForModelVersionCache`), for a
-   * caller that caches what it returns: a version edit refreshes Redis and then clears that
-   * caller's cache, so a rebuild from another process's older L1 copy would put it back.
-   */
-  bypassImagesL1?: boolean;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
@@ -6439,9 +6481,7 @@ export async function getModelsWithVersions({
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
   const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
-  const images = await getImagesForModelVersionCache(modelVersionIds, {
-    bypassLocal: bypassImagesL1,
-  });
+  const images = await getImagesForModelVersionCache(modelVersionIds);
   // const images = await getImagesForModelVersion({
   //   modelVersionIds,
   //   imagesPerVersion: 10,

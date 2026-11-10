@@ -8,7 +8,10 @@ import {
   SCOPE_WITHHELD_NOTE,
 } from '~/components/Apps/scopeConsentRows';
 import { blockScopeTitle } from '~/components/Apps/listingPermissions';
-import { BLOCK_SPEND_SCOPE } from '~/shared/constants/block-scope.constants';
+import {
+  BLOCK_SPEND_SCOPE,
+  REVOKE_SCOPES_MAX_PER_CALL,
+} from '~/shared/constants/block-scope.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -107,6 +110,62 @@ export function ScopeRevokeConfirmBody({ appName, scope }: { appName: string; sc
       <Text size="sm" c="dimmed">
         This does not uninstall the app or remove anything it has already saved — those are separate
         from the permission.
+      </Text>
+    </Stack>
+  );
+}
+
+/** The pending marker for a Remove all, which is no single row's scope. */
+const REMOVE_ALL_PENDING = '*';
+
+/**
+ * The confirm for removing every permission the viewer may withdraw in one go. It says what the
+ * single-permission confirm says (immediate, may be asked again, may sign the app out, does not
+ * uninstall) and adds the two things only a bulk action raises: which permissions go, and that
+ * the ones that cannot be withdrawn stay.
+ */
+export function ScopeRevokeAllConfirmBody({
+  appName,
+  scopes,
+  keptCount,
+}: {
+  appName: string;
+  scopes: string[];
+  keptCount: number;
+}) {
+  return (
+    <Stack gap="xs" data-testid="scope-revoke-all-confirm-body">
+      <Text size="sm">
+        <strong>{appName}</strong> loses these straight away — including in a session you already
+        have open:
+      </Text>
+      <ul style={{ margin: 0, paddingLeft: 20 }}>
+        {scopes.map((scope) => (
+          <li key={scope}>
+            <Text size="sm">{blockScopeTitle(scope)}</Text>
+          </li>
+        ))}
+      </ul>
+      {keptCount > 0 ? (
+        <Text size="sm" data-testid="scope-revoke-all-kept-note">
+          {keptCount === 1
+            ? '1 other permission stays: it cannot be removed.'
+            : `${keptCount} other permissions stay: they cannot be removed.`}
+        </Text>
+      ) : null}
+      {scopes.includes(BLOCK_SPEND_SCOPE) ? (
+        <Text size="sm">
+          This also clears the daily Buzz limit you set for this app, which bounds nothing once it
+          can no longer spend.
+        </Text>
+      ) : null}
+      <Text size="sm">
+        The app may ask you for these again the next time you open it. That ask is a prompt you have
+        to accept, and accepting it gives the permission back. If this app signs you in with
+        Civitai, removing permissions also signs it out — you may need to sign in to it again.
+      </Text>
+      <Text size="sm" c="dimmed">
+        This does not uninstall the app or remove anything it has already saved.
       </Text>
     </Stack>
   );
@@ -441,7 +500,74 @@ export function useScopeRevoke({
     });
   };
 
-  return { requestRevoke, pendingScope, failure, justRevoked };
+  /**
+   * One `revokeScopes` call. The server refuses the whole batch with BAD_REQUEST if another tab
+   * already removed one, so retry once with the still-held subset.
+   */
+  const requestRevokeAll = (scopes: string[], keptCount: number) => {
+    if (scopes.length === 0 || scopes.length > REVOKE_SCOPES_MAX_PER_CALL) return;
+    openConfirmModal({
+      title: `Remove ${scopes.length} permission${scopes.length === 1 ? '' : 's'}?`,
+      children: (
+        <ScopeRevokeAllConfirmBody appName={appName} scopes={scopes} keptCount={keptCount} />
+      ),
+      labels: { confirm: 'Remove all', cancel: 'Keep them' },
+      confirmProps: { color: 'red', 'data-testid': 'scope-revoke-all-confirm' },
+      cancelProps: { 'data-testid': 'scope-revoke-all-cancel' },
+      onConfirm: () => {
+        setFailure(null);
+        setPendingScope(REMOVE_ALL_PENDING);
+        const send = (list: string[]) => mutation.mutateAsync({ appBlockId, scopes: list });
+        send(scopes)
+          .catch(async (error: { data?: { code?: string } }) => {
+            if (error?.data?.code !== 'BAD_REQUEST') throw error;
+            // `staleTime: 0`: the app-wide default is Infinity, which would hand back the very list
+            // this batch was built from.
+            const fresh = (
+              await utils.blocks.listMyScopeGrants.fetch(undefined, { staleTime: 0 })
+            ).find((g) => g.appBlockId === appBlockId);
+            const held = new Set(fresh?.grantedScopes ?? []);
+            const allowed = new Set(fresh?.revokableScopes ?? []);
+            // Only what the viewer confirmed: a permission granted since the dialog was drawn is
+            // not theirs to lose here.
+            const again = scopes.filter((s) => held.has(s) && allowed.has(s));
+            if (again.length === 0) throw error;
+            // Before the call: a 503 on the retry still means THESE were written.
+            scopes = again;
+            return send(again);
+          })
+          .then(
+            () => {
+              setJustRevoked((prev) => [...new Set([...prev, ...scopes])]);
+              showSuccessNotification({
+                title: 'Permissions removed',
+                message: `${appName} no longer has ${scopes.length} permission${
+                  scopes.length === 1 ? '' : 's'
+                }.`,
+              });
+              void utils.blocks.listMyScopeGrants.invalidate();
+            },
+            (error: { data?: { code?: string }; message?: string }) => {
+              const code = error?.data?.code;
+              const degraded = code === 'SERVICE_UNAVAILABLE';
+              const message = error?.message ?? 'The permissions could not be removed just now.';
+              setFailure({ message, degraded });
+              if (degraded) {
+                showWarningNotification({ title: 'Permissions removed', message });
+                setJustRevoked((prev) => [...new Set([...prev, ...scopes])]);
+              }
+              if (code !== 'PRECONDITION_FAILED') void utils.blocks.listMyScopeGrants.invalidate();
+            }
+          )
+          .finally(() => setPendingScope(null))
+          .catch(() => {
+            /* the outcome was already reported by the arm that threw */
+          });
+      },
+    });
+  };
+
+  return { requestRevoke, requestRevokeAll, pendingScope, failure, justRevoked };
 }
 
 /**

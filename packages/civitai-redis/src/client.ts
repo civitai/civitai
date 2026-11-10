@@ -3240,6 +3240,10 @@ const REDIS_KEYS_UNPREFIXED = {
     CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
     // Contest entries per image; see src/server/services/contest-collection-items.cache.ts.
     CONTEST_COLLECTION_ITEMS: 'packed:caches:contest-collection-items',
+    // Which host images have any remix-gallery placement, so the card and gallery reads skip
+    // the database for the hosts that have none; see
+    // src/server/services/remix-gallery-hosts.cache.ts.
+    REMIX_GALLERY_HOSTS: 'packed:caches:remix-gallery-hosts',
     // Async contest-scoring runs: per-run state, the per-collection pointer to the
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.

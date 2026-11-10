@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
-import { OWNED_REPORT_ENTITIES, chatReportSubject, reportLinkFilter } from './report-entities';
+import { OWNED_REPORT_ENTITIES, chatReportSubject } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { legacyStrikeId, legacyStrikeIssuerName } from '$lib/legacy-strike-import';
 import { getModeratorContact, type ModeratorContact } from './user-signals.service';
@@ -689,55 +689,33 @@ async function getModelFlags(userId: number) {
   ].filter((f) => f.count > 0);
 }
 
-/**
- * "Model comments" are comments on models (the lists' split); "Image comments" is Retool's label for
- * everything else. Tombstones keep their `userId`, so are excluded.
- */
-async function getCommentCounts(userId: number) {
+/** One row for every comment, on any surface, with its flags. Tombstones keep their `userId`, so are
+ *  excluded. */
+async function getCommentCount(userId: number) {
   const r = await dbRead
     .selectFrom('CommentV3')
     .select((eb) => [
-      eb.fn.count<string>(sql`CASE WHEN "entityType" = 'model' THEN 1 END`).as('model'),
-      eb.fn.count<string>(sql`CASE WHEN "entityType" <> 'model' THEN 1 END`).as('other'),
-    ])
-    .where('userId', '=', userId)
-    .where('deletedAt', 'is', null)
-    .executeTakeFirst();
-  return [
-    {
-      label: 'Model comments',
-      count: Number(r?.model ?? 0),
-      profilePath: null,
-      appSection: 'comments',
-    },
-    {
-      label: 'Image comments',
-      count: Number(r?.other ?? 0),
-      profilePath: null,
-      appSection: 'comments',
-    },
-  ];
-}
-
-async function getCommentFlags(userId: number) {
-  const r = await dbRead
-    .selectFrom('CommentV3')
-    .select((eb) => [
+      eb.fn.countAll<string>().as('count'),
       eb.fn.count<string>(sql`CASE WHEN "tosViolation" THEN 1 END`).as('tos'),
       eb.fn.count<string>(sql`CASE WHEN "hidden" THEN 1 END`).as('hidden'),
     ])
     .where('userId', '=', userId)
-    .where('entityType', '=', 'model')
     .where('deletedAt', 'is', null)
     .executeTakeFirst();
-  return [
-    { label: 'ToS', count: Number(r?.tos ?? 0) },
-    { label: 'hidden', count: Number(r?.hidden ?? 0) },
-  ].filter((f) => f.count > 0);
+  return {
+    label: 'Comments',
+    count: Number(r?.count ?? 0),
+    profilePath: null,
+    appSection: 'comments',
+    flags: [
+      { label: 'ToS', count: Number(r?.tos ?? 0) },
+      { label: 'hidden', count: Number(r?.hidden ?? 0) },
+    ].filter((f) => f.count > 0),
+  };
 }
 
 export async function getCounts(userId: number): Promise<UserCounts> {
-  const [tableCounts, commentCounts, modelFlags, commentFlags] = await Promise.all([
+  const [tableCounts, comments, modelFlags] = await Promise.all([
     Promise.all(
       COUNT_SOURCES.map(async ([label, table, profilePath, appSection]) => {
         const r = await dbRead
@@ -748,20 +726,13 @@ export async function getCounts(userId: number): Promise<UserCounts> {
         return { label, count: Number(r?.count ?? 0), profilePath, appSection };
       })
     ),
-    getCommentCounts(userId),
+    getCommentCount(userId),
     getModelFlags(userId),
-    getCommentFlags(userId),
   ]);
   const after = tableCounts.findIndex((c) => c.label === 'Collections') + 1;
-  const counts = [...tableCounts.slice(0, after), ...commentCounts, ...tableCounts.slice(after)];
+  const counts = [...tableCounts.slice(0, after), comments, ...tableCounts.slice(after)];
 
-  return counts.map((c) =>
-    c.label === 'Models'
-      ? { ...c, flags: modelFlags }
-      : c.label === 'Model comments'
-      ? { ...c, flags: commentFlags }
-      : c
-  );
+  return counts.map((c) => (c.label === 'Models' ? { ...c, flags: modelFlags } : c));
 }
 
 async function getStats(userId: number): Promise<UserStats | null> {
@@ -856,7 +827,6 @@ export async function getReportedContent(userId: number): Promise<ReportedConten
             .as('count')
         )
         .where(`${table}.${ownerColumn}` as 'Image.userId', '=', userId)
-        .where(reportLinkFilter(e, `${reportTable}.reportId`))
         .executeTakeFirst();
       return { label, count: Number(r?.count ?? 0) };
     })

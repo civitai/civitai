@@ -91,7 +91,7 @@ describe('quoteRun', () => {
       draft: true,
     });
     expect(deps.quoteTexts).toHaveBeenCalledWith(
-      'CommentV2',
+      'CommentV3',
       expect.arrayContaining([expect.objectContaining({ fields: expect.any(Array) })]),
       { 'label:scam': 'synthetic draft' }
     );
@@ -133,7 +133,7 @@ describe('quoteRun', () => {
         db,
         {
           setId,
-          entityType: 'CommentV2',
+          entityType: 'CommentV3',
           entityId: 71,
           authorId: null,
           sourceRef: null,
@@ -163,7 +163,7 @@ describe('quoteRun', () => {
   it('refuses more than 500 cases before calling the harness', async () => {
     await pg.exec(
       `INSERT INTO text_scan_test_case (set_id, entity_type, fields, text_hash, origin, added_by, updated_by)
-       SELECT ${setId}, 'CommentV2', '[{"heading":"Comment","text":"synthetic"}]'::jsonb, 'h' || g, 'try', 1, 1
+       SELECT ${setId}, 'CommentV3', '[{"heading":"Comment","text":"synthetic"}]'::jsonb, 'h' || g, 'try', 1, 1
        FROM generate_series(1, 501) g`
     );
     const { deps } = makeDeps();

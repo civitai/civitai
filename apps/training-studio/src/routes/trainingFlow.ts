@@ -847,12 +847,10 @@ export function mergeAutoLabel(
   return { tags: img.tags, caption };
 }
 
-// Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is
-// NaN, which JSON-serializes to null, and the orchestrator rejects a null `lr`. The seeds are per-model
-// (PARAM_DEFAULTS); this is only the last-resort fallback if a field is cleared.
-function num(value: NumericInput, fallback: number): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
+// Number('') is 0, not NaN, so a cleared field needs its own check or a cleared LR would train at 0.
+function num(value: NumericInput, fallback: NumericInput): number {
+  const n = typeof value === 'string' && !value.trim() ? NaN : Number(value);
+  return Number.isFinite(n) ? n : Number(fallback);
 }
 
 /** Assemble the Start payload: one run per training run, each carrying the shared uploaded-blob dataset
@@ -898,6 +896,12 @@ export function buildTrainingRuns(
     // ones on video — go out as 0/off whatever the form holds, so a value edited before a model or
     // label-mode switch can't ride into a run that hangs or misreads it.
     const tags = caps.shuffleTokens.supported;
+    // A cleared field falls back to the model's default, with LRs taken for the chosen optimizer (Prodigy ~1).
+    const defaults = defaultRunParams(run, t);
+    const d = {
+      ...defaults,
+      ...optimizerLrParams(run, { ...defaults, optimizer: params.optimizer }),
+    };
     return {
       ecosystem: version.ecosystem,
       modelVariant: version.modelVariant,
@@ -907,18 +911,18 @@ export function buildTrainingRuns(
       customModel: isCustom(run) ? run.customAir?.trim() : undefined,
       steps: params.steps,
       epochs: params.epochs,
-      unetLr: num(params.unetLr, 0.0004),
-      textEncoderLr: teLocked(run) ? 0 : num(params.textEncoderLr, 0.00005),
-      networkDim: num(params.networkDim, 32),
-      networkAlpha: num(params.networkAlpha, 16),
-      resolution: num(params.resolution, 1024),
-      batchSize: num(params.batchSize, 2),
+      unetLr: num(params.unetLr, d.unetLr),
+      textEncoderLr: teLocked(run) ? 0 : num(params.textEncoderLr, d.textEncoderLr),
+      networkDim: num(params.networkDim, d.networkDim),
+      networkAlpha: num(params.networkAlpha, d.networkAlpha),
+      resolution: num(params.resolution, d.resolution),
+      batchSize: num(params.batchSize, d.batchSize),
       lrScheduler: params.lrScheduler,
       optimizer: params.optimizer,
       shuffleTokens: tags && params.shuffleTokens,
-      keepTokens: tags ? Math.max(0, Math.round(num(params.keepTokens, 0))) : 0,
-      minSnrGamma: caps.minSnrGamma.supported ? num(params.minSnrGamma, 0) : undefined,
-      noiseOffset: caps.noiseOffset.supported ? num(params.noiseOffset, 0) : 0,
+      keepTokens: tags ? Math.max(0, Math.round(num(params.keepTokens, d.keepTokens))) : 0,
+      minSnrGamma: caps.minSnrGamma.supported ? num(params.minSnrGamma, d.minSnrGamma) : undefined,
+      noiseOffset: caps.noiseOffset.supported ? num(params.noiseOffset, d.noiseOffset) : 0,
       flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
       trigger: t,
       items,
