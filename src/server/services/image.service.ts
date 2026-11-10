@@ -310,6 +310,7 @@ import {
   ImageIngestionStatus,
   JobQueueType,
   MediaType,
+  ModelModifier,
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -2009,6 +2010,8 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   postIdsInRequestedSort?: boolean;
   // Server-only: a hub's held models do not hold this viewer (a moderator on a full credential).
   holdExempt?: boolean;
+  // Server-only: the viewer a hub still shows their own taken-down models to (session or full key).
+  galleryOwnerId?: number;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -2021,7 +2024,10 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
 // `Omit<..., IMAGE_INFINITE_DROPPED_FIELDS>`. Any consumer that reads a dropped field
 // (client component or internal server caller) is a compile error. See
 // `~/server/utils/image-infinite-wire.ts`.
-export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
+export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0] & {
+  /** Only in the Hat Turf feed of the viewer's own hats: when their hat on it was placed. */
+  turfPlacedAt?: Date;
+};
 
 // Per-call ceiling for the image-feed raw query. The `civitai` postgres role
 // has statement_timeout=0 (overriding the cluster's 300s), so a single slow
@@ -3956,6 +3962,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   currentUserId?: number;
   isModerator?: boolean;
   holdExempt?: boolean;
+  galleryOwnerId?: number;
   offset?: number;
   entry?: number;
   blockedFor?: string[];
@@ -4333,6 +4340,7 @@ async function resolvedHubSources(input: ImageSearchInput) {
     userId: input.currentUserId,
     isModerator: input.isModerator,
     holdExempt: input.holdExempt,
+    galleryOwnerId: input.galleryOwnerId,
     excludedSources: input.hubExcludedSources,
   });
 }
@@ -7574,6 +7582,13 @@ export const getEntityCoverImage = async ({
     i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
   )`;
 
+  // A taken-down model's images are its owner's and moderators' alone. Also true with no model
+  // (a NULL mode), so the image and post arms keep images on no model version.
+  const modelNotWithheld = Prisma.sql`(
+    m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
+    OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
+  )`;
+
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
   const imagesRaw = await dbRead.$queryRaw<GetEntityImageRaw[]>`
@@ -7641,6 +7656,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'Model'
+          AND ${modelNotWithheld}
           -- The version and post rules sit before DISTINCT ON so a hidden first version or post
           -- falls back to the next visible one rather than leaving the model without a cover.
           AND (
@@ -7681,6 +7697,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND (p."userId" = m."userId" OR m."userId" = -1)
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'ModelVersion'
+          AND ${modelNotWithheld}
           -- canViewModelVersionStatus plus the private-version rule; access grantees are not resolved here.
           AND (
             (
@@ -7714,8 +7731,11 @@ export const getEntityCoverImage = async ({
         FROM entities e
         JOIN "Image" i ON i.id = e."entityId"
         LEFT JOIN "Post" p ON p.id = i."postId"
+        LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+        LEFT JOIN "Model" m ON m.id = mv."modelId"
         WHERE e."entityType" = 'Image'
           AND ${imageVisible}
+          AND ${modelNotWithheld}
 
         UNION
         -- ARTICLES
@@ -7755,8 +7775,10 @@ export const getEntityCoverImage = async ({
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
           LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
+          LEFT JOIN "Model" m ON m.id = mv."modelId"
           JOIN "Image" i ON i."postId" = p.id
           WHERE e."entityType" = 'Post'
+            AND ${modelNotWithheld}
             AND (
               (p."publishedAt" < now() AND p.availability <> 'Private')
               OR (${signedIn}::boolean AND p."userId" = ${viewerId}) OR ${isModerator}::boolean

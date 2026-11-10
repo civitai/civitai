@@ -35,6 +35,8 @@ import * as nodeHttp from 'node:http';
 import * as nodeHttps from 'node:https';
 import { readFile } from 'node:fs/promises';
 import { env } from '~/env/server';
+import { constants } from '~/server/common/constants';
+import { signReviewAccessToken } from '~/server/services/blocks/review-session';
 
 // ---------- shared HTTP helpers --------------------------------------------
 
@@ -227,7 +229,8 @@ function defaultOriginProbe(
         host: u.hostname,
         port: u.port ? Number(u.port) : isHttps ? 443 : 80,
         method: init.method,
-        path: u.pathname || '/',
+        // The query rides along: the shared-server review probe carries its `?mr=` token in it.
+        path: `${u.pathname || '/'}${u.search}`,
         headers: init.headers,
         ...(isHttps ? { rejectUnauthorized: false } : {}),
       },
@@ -359,11 +362,14 @@ export async function waitForReviewHostReachable(
     // fetch impl for the DoH query; defaults to fetchImpl ?? fetch.
     dohFetchImpl?: typeof fetch;
     // The preview is on the shared static server (`app-blocks-review-shared-server`). Its route
-    // already exists and is moderator-gated: a request with no `Sec-Fetch-Dest` counts as an
-    // ENTRY request and is denied, so "not 404" proves nothing. Probe instead as a non-entry
-    // request (`Sec-Fetch-Dest: empty`, which the gate lets through) and require 200: a 404
-    // means the server has not read the published meta yet (it re-reads every 5s). No DNS wait:
-    // the wildcard record already covers review hosts. Retries every 1s for 15s by default.
+    // already exists and is moderator-gated, so "not 404" proves nothing: the gate answers 401
+    // before anything is published. Probe instead the way a moderator's browser loads the
+    // preview — an ENTRY request (`Sec-Fetch-Dest: document`) for `/?mr=<token>` with a freshly
+    // minted, host-bound entry token — and require 200: a 404 means the server has not read the
+    // published meta yet (it re-reads every 5s). A non-entry dest does NOT get `/` past the gate:
+    // its PATH arm treats every path that is not a static subresource shape as entry, whatever
+    // the dest (see waitForSharedReviewHost). No DNS wait: the wildcard record already covers
+    // review hosts. Retries every 1s for 15s by default.
     sharedServer?: boolean;
   } = {}
 ): Promise<boolean> {
@@ -457,8 +463,30 @@ export async function waitForReviewHostReachable(
   }
 }
 
-/** The request a shared-server review probe makes: a non-entry GET that the mod gate admits. */
-export const SHARED_REVIEW_PROBE_HEADERS = { 'Sec-Fetch-Dest': 'empty' } as const;
+/**
+ * The headers a shared-server review probe sends: an ENTRY request, as a moderator's browser
+ * makes when it loads the preview iframe. The mod gate admits it only with a valid `mr` token.
+ *
+ * 🔴 NOT `Sec-Fetch-Dest: empty`: the gate classifies `/` as an entry request whatever the dest,
+ * so it would answer 401. Pinned by the mod-gate seam test.
+ */
+export const SHARED_REVIEW_PROBE_HEADERS = { 'Sec-Fetch-Dest': 'document' } as const;
+
+/**
+ * The user id the probe's entry token is bound to: the system actor (a negative id no real user
+ * has), so the probe is not attributed to a moderator. The token carries no authority by id.
+ */
+export const SHARED_REVIEW_PROBE_MOD_USER_ID = constants.system.user.id;
+
+/**
+ * The request target for one probe attempt: `/` with a FRESH entry token. Minted per attempt
+ * (120s TTL, bound to this one host) so a long retry never sends an expired one. The token is
+ * a credential: never log the returned path.
+ */
+function sharedReviewProbePath(host: string): string {
+  const token = signReviewAccessToken({ modUserId: SHARED_REVIEW_PROBE_MOD_USER_ID, host });
+  return `/?mr=${encodeURIComponent(token)}`;
+}
 
 async function waitForSharedReviewHost(
   host: string,
@@ -486,15 +514,16 @@ async function waitForSharedReviewHost(
   for (;;) {
     let status = 0;
     try {
+      const path = sharedReviewProbePath(host);
       if (originIp) {
-        ({ status } = await originProbe(`http://${originIp}/`, {
+        ({ status } = await originProbe(`http://${originIp}${path}`, {
           method: 'GET',
           headers: { Host: host, ...SHARED_REVIEW_PROBE_HEADERS },
           redirect: 'manual',
           signal: signalFactory(attemptTimeoutMs),
         }));
       } else {
-        ({ status } = await doFetch(`https://${host}/`, {
+        ({ status } = await doFetch(`https://${host}${path}`, {
           method: 'GET',
           headers: { ...SHARED_REVIEW_PROBE_HEADERS },
           redirect: 'manual',

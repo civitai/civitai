@@ -376,6 +376,43 @@ describe('retired base', () => {
     );
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
+
+  const wanSource = (model: string) => ({
+    data: {
+      steps: [
+        {
+          $type: 'training',
+          input: {
+            engine: 'ai-toolkit',
+            ecosystem: 'wan',
+            modelVariant: '2.1',
+            model,
+            epochs: 10,
+            steps: 2000,
+          },
+          output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+        },
+      ],
+    },
+  });
+  const wanOpts = { workflowId: 'wf-wan-src', fromEpoch: 10, addEpochs: 5 };
+
+  it('refuses to keep training a Hunyuan run, whose ecosystem (wan) is still offered', async () => {
+    getWorkflow.mockResolvedValue(wanSource(hunyuan.air));
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(continueTrainingWhatIf(client, wanOpts)).rejects.toThrow(/no longer offered/);
+    await expect(continueTraining(client, wanOpts, { checkText })).rejects.toThrow(
+      /no longer offered/
+    );
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('still keeps training a Wan 2.1 run', async () => {
+    getWorkflow.mockResolvedValue(wanSource(wan21.air));
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-wan-next' } });
+    await continueTraining(client, wanOpts, { checkText });
+    expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(wan21.air);
+  });
 });
 
 describe('sample input images', () => {

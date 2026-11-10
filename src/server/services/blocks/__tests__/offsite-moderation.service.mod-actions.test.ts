@@ -177,7 +177,9 @@ const live = vi.hoisted(() => ({
 }));
 vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
   takeDownLiveApp: async (slug: string) => (await live.takeDown(slug)) ?? {},
-  restoreLiveApp: async (input: { slug: string; appBlockId: string }) => live.restore(input),
+  restoreLiveAppSoon: (input: { slug: string; appBlockId: string }) => {
+    void Promise.resolve(live.restore(input)).catch(() => undefined);
+  },
 }));
 // Assert owner-notification emission without pulling the notifications client graph.
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
@@ -2613,6 +2615,7 @@ describe('live unpublish on takedown', () => {
       reviewerUserId: REVIEWER,
     });
     expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(live.takeDown).toHaveBeenCalledWith(SLUG);
   });
 
   it('ON-SITE owner unpublish: takes the app down after the takedown commits', async () => {
@@ -2677,6 +2680,19 @@ describe('live restore on relist', () => {
     expect(live.restore.mock.invocationCallOrder[0]).toBeGreaterThan(
       mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
     );
+  });
+
+  it('a failing live restore never fails the relist', async () => {
+    live.restore.mockRejectedValueOnce(new Error('k8s down'));
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    const res = await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
+    // The rejection is handled where the restore is started: nothing is left unhandled.
+    await new Promise((r) => setTimeout(r, 0));
   });
 
   it('OFF-SITE mod relist: nothing to restore', async () => {

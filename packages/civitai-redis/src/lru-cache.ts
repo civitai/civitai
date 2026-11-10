@@ -152,10 +152,14 @@ export function createLruCache<K, V extends NonNullable<unknown>>(options: LruCa
       return cache.get(key);
     },
 
-    /** Manually set a value in cache */
-    set(input: K, value: V): void {
+    /**
+     * Manually set a value in cache. `ttlMs` overrides the cache's `ttl` for this entry only, for a
+     * caller whose TTL is decided at runtime (see `localTtl` in ./cached-array).
+     */
+    set(input: K, value: V, ttlMs?: number): void {
       const key = keyFn(input);
-      cache.set(key, value);
+      if (ttlMs === undefined) cache.set(key, value);
+      else cache.set(key, value, { ttl: ttlMs });
     },
 
     /** Delete a value from cache */

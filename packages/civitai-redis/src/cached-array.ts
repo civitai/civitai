@@ -60,7 +60,19 @@ export type CachedLookupOptions<T extends object> = {
   // per-entity caches whose Redis TTL already tolerates far more staleness than `localTtl` adds, AND
   // that do not gate content visibility / auth. Keep `localTtl` SHORT (5–30s) and strictly < the Redis
   // `ttl`. Only positive results are L1-cached, so the L1 never pins a negative.
-  localTtl?: number;
+  //
+  // A FUNCTION makes the L1 switchable at runtime (a flag). It is asked once per fetch, must be cheap
+  // and synchronous, and its answer is that fetch's L1 TTL in seconds; `undefined`, 0 or a throw turns
+  // the L1 off for that fetch, so it reads and writes Redis exactly as a cache without `localTtl`
+  // does. Whenever the answer changes, this pod's L1 is emptied, so an entry written under one TTL is
+  // never served under another (switching off takes effect on the next fetch, not when entries
+  // expire). Busts drop ids from this pod's L1 either way.
+  localTtl?: number | (() => number | undefined);
+  // How a value is copied into and out of the L1 (default: a shallow `{ ...value }`). A cache whose
+  // values hold nested arrays or objects that a caller might mutate passes a deeper copy here, so one
+  // request's mutation cannot reach the next request through the shared L1 entry. Runs on every L1
+  // write and hit, so keep it proportionate.
+  localClone?: (value: T) => T;
   // Belt-and-suspenders ENTRY cap for the per-pod L1 (default 10000).
   localMax?: number;
   // 🔴 HARD HEAP CAP: byte budget for this cache's L1. Set this on every L1-enabled cache so the pod's
@@ -102,6 +114,13 @@ export type CachedFetchOptions = {
    * where the write only costs memory.
    */
   writeBack?: boolean;
+  /**
+   * `true` skips this pod's L1 READ for the call: every id goes to Redis as on a cache without an L1.
+   * What Redis returns still refreshes the L1. For a caller that needs Redis-fresh values from a cache
+   * other callers read through an L1 (a cross-pod bust reaches Redis at once, but another pod's L1
+   * only when its entry expires).
+   */
+  bypassLocal?: boolean;
 };
 
 /** The slice of the redis client this module needs. */
@@ -231,6 +250,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     localTtl,
     localMax = 10000,
     localMaxBytes,
+    localClone = (value: T) => ({ ...value }),
     compress = false,
   }: CachedLookupOptions<T>) {
     // Resolved ONCE and passed to every redis.packed call below except the not-found marker's
@@ -254,34 +274,63 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // Driven with get/set rather than its wrapping .fetch — the access pattern here is a batch mGet,
     // not a per-id fetch — so fetchFn is unreachable and throws if it is ever called, and no metrics
     // are passed (this module reports its own L1 hit/miss below).
+    // A switchable L1 (`localTtl` is a function) always has its LRU, and each fetch asks the function
+    // whether to use it and with which TTL; a static one has an LRU only when its TTL is positive.
+    const localTtlFn = typeof localTtl === 'function' ? localTtl : undefined;
+    const staticLocalTtl = typeof localTtl === 'number' && localTtl > 0 ? localTtl : undefined;
     const localCache =
-      localTtl && localTtl > 0
+      localTtlFn || staticLocalTtl
         ? createLruCache<number, T>({
             name: `${key}:l1`,
             max: localMax,
             maxSize: localMaxBytes,
-            ttl: localTtl * 1000,
+            // A switchable L1 passes each entry's TTL on `set`; this default is never relied on.
+            ttl: (staticLocalTtl ?? 1) * 1000,
             keyFn: (id) => String(id),
             fetchFn: () => {
               throw new Error(`createCachedArray L1 fetchFn must not be called [${key}]`);
             },
           })
         : null;
+    // The switchable L1's TTL as of the last fetch, so a change empties the L1 (see `localTtl`).
+    let lastLocalTtl: number | undefined;
 
-    // Store a SHALLOW CLONE in L1 (and hand out shallow clones on read) so a caller mutating its
-    // returned object cannot corrupt the shared L1 instance.
-    // 🔴 INVARIANT: shallow only protects TOP-LEVEL fields — nested refs are shared with the L1 copy,
-    // so consumers MUST treat returned values as read-only for nested fields. `skip` lets a caller
+    // This fetch's L1 TTL in seconds, or undefined for no L1.
+    function resolveLocalTtl(): number | undefined {
+      if (!localCache) return undefined;
+      if (!localTtlFn) return staticLocalTtl;
+      let next: number | undefined;
+      try {
+        next = localTtlFn();
+      } catch {
+        next = undefined;
+      }
+      if (!(typeof next === 'number' && next > 0)) next = undefined;
+      if (next !== lastLocalTtl) {
+        localCache.clear();
+        lastLocalTtl = next;
+      }
+      return next;
+    }
+
+    // Store a CLONE in L1 (and hand out clones on read) so a caller mutating its returned object
+    // cannot corrupt the shared L1 instance.
+    // 🔴 INVARIANT: the default clone is shallow and only protects TOP-LEVEL fields — nested refs are
+    // shared with the L1 copy, so consumers MUST treat returned values as read-only for nested fields
+    // unless the cache passes a deeper `localClone`. `skip` lets a caller
     // withhold ids the Redis layer itself deliberately did NOT cache (debounce window / dontCacheFn).
     // While Redis is healthy L1 never pins a value Redis chose not to persist, and a writeBack:false
     // fetch writes no L1 at all. The degraded path (Redis read failed) is the exception: it
     // backfills even for writeBack:false, because the L1 is what bounds the DB herd then.
-    function backfillLocal(items: T[], skip?: (x: T) => boolean) {
-      if (!localCache) return;
+    function backfillLocal(items: T[], ttlSeconds: number | undefined, skip?: (x: T) => boolean) {
+      if (!localCache || !ttlSeconds) return;
+      // A fetch that started before the switchable TTL changed would otherwise refill the emptied L1
+      // under the old TTL.
+      if (localTtlFn && ttlSeconds !== lastLocalTtl) return;
       for (const x of items) {
         if (skip?.(x)) continue;
         const id = x[idKey] as unknown as number;
-        if (id !== undefined && id !== null) localCache.set(id, { ...x });
+        if (id !== undefined && id !== null) localCache.set(id, localClone(x), ttlSeconds * 1000);
       }
     }
 
@@ -393,19 +442,24 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       });
     }
 
-    async function fetch(ids: number[], { writeBack = true }: CachedFetchOptions = {}) {
+    async function fetch(
+      ids: number[],
+      { writeBack = true, bypassLocal = false }: CachedFetchOptions = {}
+    ) {
       if (!ids.length) return [] as T[];
       let distinctIds = [...new Set(ids)];
 
       // --- L1 (per-pod) read ---------------------------------------------------------------------
       // Serve hot ids from the in-process LRU and drop them from the Redis fan-out, so a full L1 hit
-      // returns without a single Redis command.
+      // returns without a single Redis command. `l1Ttl` undefined (no L1, or a switchable one that is
+      // off) makes every L1 step below a no-op for this fetch.
+      const l1Ttl = resolveLocalTtl();
       const l1Hits: T[] = [];
-      if (localCache) {
+      if (localCache && l1Ttl && !bypassLocal) {
         const l1Misses: number[] = [];
         for (const id of distinctIds) {
           const hit = localCache.get(id);
-          if (hit !== undefined) l1Hits.push({ ...hit });
+          if (hit !== undefined) l1Hits.push(localClone(hit));
           else l1Misses.push(id);
         }
         if (l1Hits.length) metrics.hit(key, 'lruCache', l1Hits.length);
@@ -436,8 +490,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         // Backfill L1 even during a wedge (short TTL; helps bound the DB herd) and merge any ids
         // already served from L1 before the read failed. Honor dontCacheFn (dontCache is a Redis-hit
         // concept, not reachable on this path).
-        backfillLocal(degraded, dontCacheFn ? (x) => !!dontCacheFn(x) : undefined);
-        return localCache ? [...l1Hits, ...degraded] : degraded;
+        backfillLocal(degraded, l1Ttl, dontCacheFn ? (x) => !!dontCacheFn(x) : undefined);
+        return l1Hits.length ? [...l1Hits, ...degraded] : degraded;
       }
       const cacheArray = cacheResults.filter((x) => x !== null) as T[];
       const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x])) as Record<string, any>;
@@ -651,9 +705,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       if (writeBack)
         backfillLocal(
           final,
+          l1Ttl,
           (x) => dontCache.has(x[idKey] as unknown as number) || !!dontCacheFn?.(x)
         );
-      return localCache ? [...l1Hits, ...final] : final;
+      return l1Hits.length ? [...l1Hits, ...final] : final;
     }
 
     async function bust(id: number | number[], options: { debounceTime?: number } = {}) {

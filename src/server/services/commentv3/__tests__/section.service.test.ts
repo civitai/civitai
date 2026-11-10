@@ -18,7 +18,7 @@ vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => (
   isTopicMuted: m.topicMuted,
 }));
 
-const { getSectionMuted, getThreadMuted, toggleSectionMute, toggleThreadMute } = await import(
+const { getSectionMuted, getCommentMuted, toggleSectionMute, toggleCommentMute } = await import(
   '~/server/services/commentv3/section.service'
 );
 
@@ -79,17 +79,17 @@ describe('a section mute status', () => {
 describe('a thread mute', () => {
   it('mutes a live comment for the caller', async () => {
     m.stored.mockResolvedValueOnce({ id: 5, tosViolation: false });
-    await expect(toggleThreadMute({ commentId: 5, userId: 7 })).resolves.toEqual({ muted: true });
+    await expect(toggleCommentMute({ commentId: 5, userId: 7 })).resolves.toEqual({ muted: true });
     expect(m.commentMute).toHaveBeenCalledWith(expect.anything(), { userId: 7, commentId: 5 });
   });
 
   it('takes a comment the caller already read without reading it again', async () => {
     const comment = { id: 5, tosViolation: false } as never;
-    await toggleThreadMute({ commentId: 5, userId: 7 }, { comment });
+    await toggleCommentMute({ commentId: 5, userId: 7 }, { comment });
     expect(m.stored).not.toHaveBeenCalled();
     expect(m.commentMute).toHaveBeenCalledTimes(1);
     await expect(
-      toggleThreadMute({ commentId: 5, userId: 7 }, { comment: undefined })
+      toggleCommentMute({ commentId: 5, userId: 7 }, { comment: undefined })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(m.stored).not.toHaveBeenCalled();
   });
@@ -99,7 +99,7 @@ describe('a thread mute', () => {
     ['removed for ToS', { id: 5, tosViolation: true }],
   ])('answers a %s comment as not found, writing nothing', async (_, row) => {
     m.stored.mockResolvedValueOnce(row);
-    await expect(toggleThreadMute({ commentId: 5, userId: 7 })).rejects.toMatchObject({
+    await expect(toggleCommentMute({ commentId: 5, userId: 7 })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
     expect(m.commentMute).not.toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe('a thread mute', () => {
 describe('a thread mute status', () => {
   it('takes a comment the caller already read without reading it again', async () => {
     await expect(
-      getThreadMuted({ commentId: 5, userId: 7 }, { comment: undefined })
+      getCommentMuted({ commentId: 5, userId: 7 }, { comment: undefined })
     ).resolves.toMatchObject({ canMute: false });
     expect(m.stored).not.toHaveBeenCalled();
   });
@@ -120,7 +120,7 @@ describe('a thread mute status', () => {
     ['removed for ToS', { id: 5, tosViolation: true }],
   ])('offers nothing for a %s comment', async (_, row) => {
     m.stored.mockResolvedValueOnce(row);
-    await expect(getThreadMuted({ commentId: 5, userId: 7 })).resolves.toEqual({
+    await expect(getCommentMuted({ commentId: 5, userId: 7 })).resolves.toEqual({
       muted: false,
       viaAncestor: false,
       canMute: false,

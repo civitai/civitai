@@ -15,6 +15,7 @@ import type * as DevTunnelModule from '~/server/services/blocks/dev-tunnel.servi
 import type * as BlockWorkflowsModule from '~/server/services/blocks/block-workflows.service';
 import type * as SurfaceModule from '~/server/services/blocks/user-app-surface.service';
 import type * as WorkflowsModule from '~/server/services/orchestrator/workflows';
+import type * as FliptModule from '~/server/flipt/client';
 
 /**
  * `kind:'workflow'` end to end through `blocksRouter`: estimate, submit, poll and
@@ -29,6 +30,9 @@ import type * as WorkflowsModule from '~/server/services/orchestrator/workflows'
  * 64 is above one budget (37) and below three; 110 + a fee of 5 is above three
  * and below four (148).
  */
+
+/** The external-host refusal flag; every other flag reads as it does unmocked. */
+const flags = vi.hoisted(() => ({ refuseExternal: false, refuseExternalApp: true }));
 
 const h = vi.hoisted(() => ({
   authorize: vi.fn(),
@@ -63,6 +67,19 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagModule>()),
   isAppBlocksAuthorFeeEnabled: (...a: unknown[]) => h.authorFeeFlag(...(a as [])),
 }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptModule>();
+  const isFlipt = (async (flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS
+      ? flags.refuseExternal
+      : flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
+      ? flags.refuseExternalApp
+      : (actual.isFlipt as (...a: unknown[]) => Promise<boolean>)(
+          flag,
+          ...rest
+        )) as typeof actual.isFlipt;
+  return { ...actual, isFlipt };
+});
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: () => h.getOrchestratorToken(),
 }));
@@ -135,7 +152,12 @@ import { envMock } from '~/__tests__/mocks/env.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { PlatformInternalStepTypeError } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { formatStepTimeout } from '~/server/services/blocks/workflow.service';
-import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generation-input-urls';
+import {
+  GENERATION_EXTERNAL_IMAGE_MESSAGE,
+  GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+} from '~/server/services/generation-input-urls';
+import * as z from 'zod';
+import { getBlockTool } from '~/server/services/blocks/tools/registry';
 import { ANON_SUBJECT } from '~/server/services/block-token-subject';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 
@@ -341,6 +363,7 @@ async function submit(b: Record<string, unknown> = body(), idempotencyKey?: stri
 }
 
 beforeEach(() => {
+  flags.refuseExternalApp = true;
   // Only the submit's account-restriction read gets a row; other user reads keep the default.
   dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
     select?: Record<string, boolean>;
@@ -1923,10 +1946,20 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
   const BLOB = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg';
 
   /** The image row the gate reads for KEY: owner and visibility as given. */
-  function givenImage(owner: number, visible: boolean) {
+  function givenImage(owner: number, visible: boolean, scanComplete = true) {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('').includes('FROM "Image" i')
-        ? [{ url: KEY, userId: owner, visible, blocked: false }]
+        ? [
+            {
+              url: KEY,
+              userId: owner,
+              visible,
+              blocked: false,
+              scanComplete,
+              scanPending: !scanComplete,
+              held: false,
+            },
+          ]
         : []) as never);
   }
   afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
@@ -1968,10 +2001,13 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
   );
 
   it.each(ARMS.slice(0, 2))(
-    '%s: an external host is counted, not refused, while the external-host flag is off',
+    '%s: an external host is refused while the external-host flag is off',
     async (_, make) => {
-      await estimate(make('https://example.com/a.png')).catch(() => undefined);
-      expect(whatifs().length).toBeGreaterThan(0);
+      await expect(estimate(make('https://example.com/a.png'))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('hosted outside Civitai'),
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
     }
   );
 
@@ -1994,10 +2030,28 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   };
 
-  it('refuses a url with a control byte inside, where the same url without it is counted', async () => {
-    await refusedBeforeTheOrchestrator(passThroughWith('https://example.com/a\u0001.png'));
+  it.each(ARMS)(
+    '%s: an own upload still being scanned is a failed snapshot with a code to retry on, before any orchestrator call',
+    async (_, make) => {
+      givenImage(VIEWER, false, false);
+      for (const call of [estimate, submit]) {
+        await expect(call(make(CDN))).resolves.toMatchObject({
+          snapshot: { status: 'failed', errorCode: 'source-scan-pending' },
+        });
+      }
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
+
+  it('an external host is allowed and counted while the app external-source refusal is off', async () => {
+    flags.refuseExternalApp = false;
     await estimate(passThroughWith('https://example.com/a.png')).catch(() => undefined);
     expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it('refuses a url with a control byte inside as unavailable, not as an external host', async () => {
+    await refusedBeforeTheOrchestrator(passThroughWith('https://example.com/a\u0001.png'));
   });
 
   it("refuses another user's private image in a step input, not only in arguments", async () => {
@@ -2060,6 +2114,99 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     const refusal = { code: 'BAD_REQUEST', message: 'step input is too large to check' };
     await expect(estimate(make())).rejects.toMatchObject(refusal);
     await expect(submit(make())).rejects.toMatchObject(refusal);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a captioning step’s media',
+      { $type: 'mediaCaptioning', input: { mediaUrl: 'https://example.com/a.png' } },
+    ],
+    [
+      'a transcription step’s media',
+      { $type: 'transcription', input: { mediaUrl: 'https://example.com/a.mp3' } },
+    ],
+    [
+      'an image part of a chat message',
+      {
+        $type: 'chatCompletion',
+        input: {
+          model: 'm',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'what is this?' },
+                { type: 'image_url', image_url: { url: 'https://example.com/a.png' } },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  ])('refuses an external url in %s, which the orchestrator fetches', async (_, step) => {
+    await expect(estimate({ kind: 'step' as const, ...step, maxBuzz: 30 })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('hosted outside Civitai'),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same external link in a generation step input is refused', async () => {
+    await expect(
+      estimate({
+        kind: 'step' as const,
+        $type: 'videoGen',
+        input: { engine: 'wan', prompt: 'x', images: ['https://example.com/a.png'] },
+        maxBuzz: 30,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('hosted outside Civitai'),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  const chatWithWholeUrls = () => ({
+    model: 'm',
+    messages: [
+      { role: 'user', content: 'https://example.com/page' },
+      {
+        role: 'assistant',
+        tool_calls: [{ id: 'c1', arguments: 'https://example.com/args' }],
+      },
+    ],
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'f',
+          parameters: { $schema: 'https://json-schema.org/draft/2020-12/schema' },
+        },
+      },
+    ],
+  });
+
+  it('accepts whole external urls in a lone chat step’s message text, tool calls and tool schemas', async () => {
+    await estimate({
+      kind: 'step' as const,
+      $type: 'chatCompletion',
+      input: chatWithWholeUrls(),
+      maxBuzz: 30,
+    }).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it('CONTROL: the same chat input in a workflow is read whole, and refused', async () => {
+    await expect(
+      estimate({
+        kind: 'workflow' as const,
+        steps: [{ name: 'chat', $type: 'chatCompletion', input: chatWithWholeUrls() }],
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('hosted outside Civitai'),
+    });
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
@@ -2142,6 +2289,63 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
       await refusedBeforeTheOrchestrator(chatStep(`what is in this picture?\n${CDN}`));
     });
 
+    describe('with the external-host refusal ON', () => {
+      beforeEach(() => {
+        flags.refuseExternal = true;
+      });
+      afterEach(() => {
+        flags.refuseExternal = false;
+      });
+
+      // 🔴 THE PRODUCTION REPRO: a chat block that declares a registry tool, with `parameters` as
+      // `z.toJSONSchema` emits it (the `$schema` dialect url included), saying "hello".
+      const zodParameters = () =>
+        z.toJSONSchema(getBlockTool('search_models')!.argsSchema, {
+          io: 'input',
+          unrepresentable: 'any',
+        });
+      const senseiBody = () => ({
+        kind: 'step' as const,
+        step: 'chat-completion',
+        params: {
+          model: 'deepseek/deepseek-chat',
+          messages: [{ role: 'user', content: 'hello' }],
+          maxTokens: 128,
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'search_models',
+                description: getBlockTool('search_models')!.description,
+                parameters: zodParameters(),
+              },
+            },
+          ],
+        },
+      });
+
+      it('accepts a plain message whose declared tool schema carries $schema', async () => {
+        expect(zodParameters().$schema).toBe('https://json-schema.org/draft/2020-12/schema');
+        const error = await estimate(senseiBody()).then(
+          () => undefined,
+          (e: unknown) => e
+        );
+        expect(error).not.toMatchObject({ message: GENERATION_EXTERNAL_IMAGE_MESSAGE });
+        expect(whatifs().length).toBeGreaterThan(0);
+      });
+
+      it('POSITIVE CONTROL: the refusal is live — the same schema in a workflow, read whole, is refused', async () => {
+        const refusal = { code: 'BAD_REQUEST', message: GENERATION_EXTERNAL_IMAGE_MESSAGE };
+        const passThrough = {
+          kind: 'workflow' as const,
+          steps: [{ name: 'chat', $type: 'chatCompletion', input: senseiBody().params }],
+        };
+        await expect(estimate(passThrough)).rejects.toMatchObject(refusal);
+        await expect(submit(passThrough)).rejects.toMatchObject(refusal);
+        expect(h.submitWorkflow).not.toHaveBeenCalled();
+      });
+    });
+
     it('a workflow still reads a link in a $ref-wired text field as an image input', async () => {
       const [gen, , transcode] = body().steps;
       const upscale = {
@@ -2155,10 +2359,10 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     });
   });
 
-  it('the registry step still refuses an external host (its own param schema)', async () => {
+  it('the registry step refuses an external host', async () => {
     const error = await estimate(registryWith('https://example.com/a.png')).catch((e) => e);
     expect(error).toMatchObject({ code: 'BAD_REQUEST' });
-    expect(String(error.message)).toContain('Civitai-hosted https image URL');
+    expect(String(error.message)).toContain('hosted outside Civitai');
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 

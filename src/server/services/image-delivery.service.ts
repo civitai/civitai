@@ -1,5 +1,6 @@
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordImageDeliveryBustFailure } from '~/server/prom/image-delivery.metrics';
@@ -89,15 +90,21 @@ export const imageDeliveryStatement = (url: string) => Prisma.sql`
   LIMIT 1
 `;
 
-// Origin read, with the dbRead -> dbWrite (primary) fallback so a read-replica error still
-// resolves. Only an error falls back: an empty result from the replica is a not-found.
+// Origin read, with the replica -> primary fallback so a read-replica error still resolves. Only
+// an error falls back: an empty result from the replica is a not-found.
+//
+// Through Kysely over the pg pools, not Prisma's `$queryRaw`: same statement text and parameters
+// (`queryPrismaSql`), without the query engine's per-statement cost on one of the hottest reads.
+// Every selected column is int4, text, boolean or an enum, which both executors parse alike.
 const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMetadata | null> => {
-  const [image] = await dbRead
-    .$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url))
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
-      return dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url));
-    });
+  const { kyselyRead, kyselyWrite } = await loadKyselyDb();
+  const [image] = await queryPrismaSql<ImageDeliveryMetadataRow>(
+    kyselyRead,
+    imageDeliveryStatement(url)
+  ).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
+    return queryPrismaSql<ImageDeliveryMetadataRow>(kyselyWrite, imageDeliveryStatement(url));
+  });
 
   if (!image) return null;
 
@@ -120,7 +127,7 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
 // scanning) that are untouched.
 //
 // Fail-open like `fetchThroughCache`: on any Redis error we degrade to the origin query
-// (this is a hot path — ~9.2 req/s at peak — so a Redis stall must not 500). No distributed
+// (this is one of the hottest internal paths, so a Redis stall must not 500). No distributed
 // stampede lock: the origin is a single-row indexed lookup that at worst runs once per url
 // per TTL, so a brief cold-key stampede is trivially cheap — not worth the lock's extra
 // Redis round-trips on the hot read (mirrors `getTagWithModelCount`).
@@ -129,16 +136,44 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
 // registered image resolves immediately (no register-then-deliver staleness). This also
 // shrinks invalidation to writers that change an EXISTING image's cached shape.
 //
-// STALENESS: `hideMeta` can flip. The privacy-sensitive direction (false -> true, the owner
-// hiding their prompt) is busted explicitly in `updatePostImage` (first step of
-// `invalidateHiddenImageMetadata`), so an app-path flip takes effect at once. An out-of-band
-// flip (mod tooling / direct DB) lags at most TTL; because the delivered image BYTES are
-// still separately purged/CDN-managed and this value only gates embedded-metadata
-// visibility, a bounded ≤TTL window is acceptable. TTL is deliberately short (3 min) to keep
-// that window tight. `type`/`mimeType` need no bust of their own: they are set when the
-// media row is created and no writer in this repo updates them afterwards, so the existing
-// hideMeta bust plus the TTL already covers every way a cached entry can go stale.
-// `ingestion` moving to NotFound is not busted either; a cached row lingers at most TTL.
+// STALENESS: `hideMeta` can flip, and `updatePostImage` is the only writer in this repo that
+// flips it on an existing image. It busts in BOTH directions: hiding through
+// `invalidateHiddenImageMetadata` (whose first step is this bust), showing directly. A bust is a
+// plain DEL and the fill a plain SET from the REPLICA, so a bust does NOT make a flip take effect
+// at once: a fill that read the replica before the flip replicated, or whose SET lands after the
+// DEL, re-caches the pre-flip value, and that stale entry then lives for its whole TTL. So does
+// one written while a bust failed (`bustImageDeliveryMetadataCache` never throws), or before an
+// out-of-band flip (direct DB).
+//
+// That is why the TTL depends on the value cached. The image-cacher reads `hideMeta: false` as
+// "the original may be served with its metadata", so a stale false is the leak direction: those
+// entries keep the short TTL (`CacheTTL.sm`, 3 minutes, what every entry had before), so a stale
+// false for an owner's just-hidden metadata lives in this cache for at most 3 minutes after it
+// is written (itself within a replica lag of the flip), the same bound as before the TTL was
+// raised. That bounds this cache entry only: bytes a downstream cache fills from it during that
+// window are kept for that cache's own TTL, which this one does not shorten.
+// `hideMeta: true` entries get the hour: a stale true only withholds metadata the owner has just
+// un-hidden (fail-closed) for at most an hour. A tombstone written by the bust and respected by
+// the fill (SET NX) would shorten both windows further, but a tombstone under this key would be
+// read as a metadata row by a release that predates it, so it needs a key bump; not done here.
+//
+// `type`/`mimeType`/`url` need no bust of their own: they are set when the media row is created
+// and no writer in this repo updates them afterwards. `ingestion` moving to NotFound is not
+// written by any path in this repo, so it is not busted; a cached row lingers at most its TTL,
+// and the caller then converts an original that turns out to be gone, as it did before the row
+// was marked.
+export const IMAGE_DELIVERY_METADATA_TTL = {
+  /** `hideMeta: false`: a stale entry leaks hidden metadata, so this bounds that window. */
+  visible: CacheTTL.sm,
+  /** `hideMeta: true`: a stale entry only withholds metadata (fail-closed). */
+  hidden: CacheTTL.hour,
+} as const;
+
+const imageDeliveryMetadataTtl = (metadata: ImageDeliveryMetadata) =>
+  metadata.hideMeta === true
+    ? IMAGE_DELIVERY_METADATA_TTL.hidden
+    : IMAGE_DELIVERY_METADATA_TTL.visible;
+
 export const getCachedImageDeliveryMetadata = async (
   url: string
 ): Promise<ImageDeliveryMetadata | null> => {
@@ -155,7 +190,7 @@ export const getCachedImageDeliveryMetadata = async (
 
   if (result) {
     try {
-      await redis.packed.set(key, result, { EX: CacheTTL.sm });
+      await redis.packed.set(key, result, { EX: imageDeliveryMetadataTtl(result) });
     } catch {
       // Best-effort cache write; a Redis stall here never fails the request.
     }
@@ -168,6 +203,8 @@ export const getCachedImageDeliveryMetadata = async (
 // negatives, deleting the key means the next read re-queries and re-populates the fresh row.
 // Called by `updatePostImage` when `hideMeta` changes, inside the user's save: so it is bounded by
 // one deadline across both attempts, and it never throws (the TTL still bounds a missed bust).
+// A DEL cannot stop a racing fill from re-caching the pre-flip value: see STALENESS above for
+// what bounds that.
 export const bustImageDeliveryMetadataCache = async (url: string) => {
   const key = getImageDeliveryMetadataCacheKey(url);
   const deadline = Date.now() + BUST_DEADLINE_MS;

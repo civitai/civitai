@@ -71,7 +71,8 @@ beforeEach(async () => {
 });
 
 describe('delete-user-images on the feedback capture account', () => {
-  it('deletes only the captures nothing keeps', async () => {
+  // Its images are every reporter's page captures; each one is acted on as an image instead.
+  it('refuses, deleting nothing', async () => {
     const res = { statusCode: 200, body: undefined as unknown };
     Object.assign(res, {
       status: (code: number) => Object.assign(res, { statusCode: code }),
@@ -79,8 +80,8 @@ describe('delete-user-images on the feedback capture account', () => {
     });
     await deleteUserImages({ query: { userId: String(CAPTURE) } } as never, res as never);
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(400);
     const left = await holder.db.query<{ id: number }>(`SELECT id FROM "Image" ORDER BY id`);
-    expect(left.rows.map((r) => r.id)).toEqual([1, 2]);
+    expect(left.rows.map((r) => r.id)).toEqual([1, 2, 3]);
   });
 });
