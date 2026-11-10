@@ -71,7 +71,7 @@ import {
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
-import { restoreLiveApp } from '~/server/services/blocks/live-unpublish.service';
+import { restoreLiveAppSoon } from '~/server/services/blocks/live-unpublish.service';
 import {
   applyListingMediaSplitDecision,
   applyRevisionRedSlots,
@@ -3761,12 +3761,9 @@ export async function approveExternalRequest(opts: {
 
   // Catalog bust: approve puts the listing INTO the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
-  // The block is approved again: when this platform took the app off the shared static server
-  // (`app-blocks-live-unpublish`), put it back, as the owner-republish immediate arm does.
-  // Fire-and-forget; it never fails the approve. Widened explicitly: TypeScript cannot see the
-  // assignment inside the transaction callback.
+  // Widened explicitly: TypeScript cannot see the assignment inside the transaction callback.
   const restore = liveRestore as { slug: string; appBlockId: string } | null;
-  if (restore) void restoreLiveApp(restore).catch(() => undefined);
+  if (restore) restoreLiveAppSoon(restore);
 
   return { publishRequestId, listingId: appListingId, slug: request.slug };
 }

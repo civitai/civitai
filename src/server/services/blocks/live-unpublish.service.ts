@@ -239,7 +239,7 @@ export async function takeDownLiveApp(
 /**
  * After a relist COMMITS and the block is approved again: put the app back, but ONLY when this
  * platform attempted a takedown of it (the takedown marker), whatever the flag says now. With no
- * marker it does nothing else at all. Fire-and-forget at the call site; never throws.
+ * marker it does nothing else at all. Never throws.
  */
 export async function restoreLiveApp(
   input: { slug: string; appBlockId: string },
@@ -257,6 +257,11 @@ export async function restoreLiveApp(
     return 'not-taken-down';
   }
   return syncLivePointer(input.slug, opts);
+}
+
+/** `restoreLiveApp`, not awaited and never failing the caller; a failed restore keeps the marker. */
+export function restoreLiveAppSoon(input: { slug: string; appBlockId: string }): void {
+  void restoreLiveApp(input).catch(() => undefined);
 }
 
 /**
