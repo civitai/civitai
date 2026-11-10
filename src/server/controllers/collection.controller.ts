@@ -37,6 +37,7 @@ import {
   getCollectionById,
   getCollectionCoverImages,
   getCollectionItemById,
+  getCollectionEntryCount,
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
@@ -607,6 +608,19 @@ export const collectionItemsInfiniteHandler = async ({
     collectionItems: result.items,
   };
 };
+
+export const getCollectionEntryCountHandler = ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) =>
+  getCollectionEntryCount({
+    collectionId: input.id,
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+  });
 
 export const updateCollectionItemsStatusHandler = async ({
   input,

@@ -104,11 +104,17 @@ describe('collection items of a collection the viewer may not read', () => {
     }
   });
 
-  it('lists Public and Unlisted collections to anyone (control)', async () => {
-    for (const read of ['Public', 'Unlisted']) {
-      collectionIs({ read });
-      expect((await listItems(COLLECTION_ID, STRANGER)).items.length).toBeGreaterThan(0);
-    }
+  it('lists Public and Unlisted collections to anyone, signed out too (control)', async () => {
+    for (const read of ['Public', 'Unlisted'])
+      for (const user of [STRANGER, undefined]) {
+        collectionIs({ read });
+        expect((await listItems(COLLECTION_ID, user)).items.length).toBeGreaterThan(0);
+      }
+  });
+
+  it('lists a Private collection anyone may add to (write), as collection.getById shows it', async () => {
+    collectionIs({ read: 'Private', write: 'Public' });
+    expect((await listItems(COLLECTION_ID, STRANGER)).items.length).toBeGreaterThan(0);
   });
 });
 
