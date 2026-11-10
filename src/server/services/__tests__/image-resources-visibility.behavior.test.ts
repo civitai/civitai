@@ -29,6 +29,17 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 import { getImageResourcesHandler } from '~/server/controllers/image.controller';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
+
 const OWNER = 10;
 const BLOCKED = 40;
 const viewers = {
