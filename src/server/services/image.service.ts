@@ -1,3 +1,4 @@
+import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import { Prisma } from '@prisma/client';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
@@ -7174,7 +7175,7 @@ export async function createImage({
     throw new Error('createImage: blockProvenance requires an appId');
   }
   if (image.type === MediaType.audio && !allowAudio)
-    throw throwAuthorizationError('Songs are not available yet.');
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
   if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });
 
   /**
@@ -7469,9 +7470,9 @@ export async function checkEntityImageKeys({
 }
 
 /** Entity writes insert rows without `createImage`, so they refuse songs themselves. */
-function assertNoNewAudio(images: ImageReferenceInput[]) {
-  if (images.some((i) => !i.id && i.type === MediaType.audio))
-    throw throwAuthorizationError('Songs are not available yet.');
+function assertNoAudio(images: ImageReferenceInput[]) {
+  if (images.some((i) => i.type === MediaType.audio))
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
 }
 
 export const createEntityImages = async ({
@@ -7496,7 +7497,8 @@ export const createEntityImages = async ({
     return [];
   }
 
-  assertNoNewAudio(images);
+  // Every entry is inserted (an `id` is dropped by pickClientImageColumns), so none may be a song.
+  assertNoAudio(images);
   await assertClientImageUrlsUsable({ urls: images.map((i) => i.url), userId, db: dbClient });
   await assertClientKeysIssuedToCaller({
     urls: uncheckedUrls(images, keysCheckedFor),
@@ -7977,7 +7979,8 @@ export const updateEntityImages = async ({
   keysCheckedFor?: string[];
 }) => {
   const dbClient = tx ?? dbWrite;
-  assertNoNewAudio(images);
+  // An entry with an `id` is linked, not inserted.
+  assertNoAudio(images.filter((i) => !i.id));
   const connections = await dbClient.imageConnection.findMany({
     select: { imageId: true },
     where: {

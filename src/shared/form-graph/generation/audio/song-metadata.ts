@@ -1,5 +1,8 @@
 import type { AudioMetadata } from '~/server/schema/media.schema';
 
+/** The refusal when a user without the music flag tries to store a song. */
+export const SONGS_UNAVAILABLE_MESSAGE = 'Songs are not available yet.';
+
 export type SongDetails = Partial<Pick<AudioMetadata, 'title' | 'lyrics' | 'bpm' | 'key'>>;
 
 /** What a simple-mode song's drafting chat step decided; the form never holds these. */

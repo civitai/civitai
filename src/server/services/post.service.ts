@@ -127,16 +127,17 @@ import { enqueueJobs } from '~/server/services/job-queue.service';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { readImageUploadObjectHead } from '~/utils/s3-utils';
+import type { UserWorkflow } from '~/server/services/orchestrator/remix-provenance';
 import {
+  readUserWorkflow,
   resolveVerifiedSourceImageIds,
   sanitizeProvenance,
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { audioMetadataSchema } from '~/server/schema/media.schema';
 import {
+  SONGS_UNAVAILABLE_MESSAGE,
   buildSongDetails,
   readSongConcept,
 } from '~/shared/form-graph/generation/audio/song-metadata';
@@ -1581,34 +1582,26 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
 
 const UPLOAD_METADATA_READ_BYTES = 8 * 1024 * 1024;
 
+/** The one rule for who may store a song: the `music` flag. */
+export function assertCanStoreSongs(user: SessionUser) {
+  if (!getFeatureFlagsLazy({ user }).music)
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+}
+
+// A song's lyrics are a nicety on a post request, so a slow orchestrator must not hold it.
+const SONG_WORKFLOW_READ_TIMEOUT_MS = 5_000;
+
 /**
  * The song's metadata as stored: only the audio fields, whatever else the client sent. A
  * simple-mode song's lyrics, bpm and key exist only in its drafting chat step, which the client
- * never receives, so they are read from the workflow; what the client sent wins.
+ * never receives, so they come from the workflow when it was read; what the client sent wins.
  */
-async function resolveAudioMetadata({
-  metadata,
-  userId,
-  workflowId,
-}: {
-  metadata: unknown;
-  userId: number;
-  workflowId?: string;
-}) {
+function resolveAudioMetadata(metadata: unknown, workflow: UserWorkflow | null) {
   const parsed = audioMetadataSchema.safeParse(metadata);
   if (!parsed.success) throw throwBadRequestError('Invalid audio metadata');
   const audio = parsed.data;
-  if (audio.lyrics || !workflowId) return audio;
-
-  try {
-    const token = await getOrchestratorToken(userId, {} as never);
-    const workflow = await getWorkflow({ token, path: { workflowId } });
-    const drafted = buildSongDetails({}, readSongConcept(workflow?.steps));
-    return { ...drafted, ...audio };
-  } catch (error) {
-    handleLogError(error as Error);
-    return audio;
-  }
+  if (audio.lyrics || !workflow) return audio;
+  return { ...buildSongDetails({}, readSongConcept(workflow.steps)), ...audio };
 }
 
 export const addPostImage = async ({
@@ -1629,8 +1622,11 @@ export const addPostImage = async ({
   serverMintedUrl?: boolean;
 }) => {
   // Songs are mod-only for now. Checked first: nothing below may run for a user who can't post one.
-  if (props.type === MediaType.audio && !getFeatureFlagsLazy({ user }).music)
-    throw throwAuthorizationError('Songs are not available yet.');
+  let allowAudio = false;
+  if (props.type === MediaType.audio) {
+    assertCanStoreSongs(user);
+    allowAudio = true;
+  }
 
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
@@ -1717,24 +1713,29 @@ export const addPostImage = async ({
   }
 
   const { generationWorkflowId, ...imageProps } = props;
-  const audioMetadata =
-    props.type === MediaType.audio
-      ? await resolveAudioMetadata({
-          metadata: props.metadata,
+  // One read serves the song details and the provenance check.
+  const songWorkflow =
+    allowAudio && generationWorkflowId
+      ? await readUserWorkflow({
           userId: user.id,
           workflowId: generationWorkflowId,
+          timeoutMs: SONG_WORKFLOW_READ_TIMEOUT_MS,
         })
       : undefined;
+  const audioMetadata = allowAudio
+    ? resolveAudioMetadata(props.metadata, songWorkflow ?? null)
+    : undefined;
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
     provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
     workflowId: generationWorkflowId,
+    workflow: songWorkflow,
   });
 
   const partialResult = await createImage({
     ...imageProps,
     metadata: audioMetadata ?? imageProps.metadata,
-    allowAudio: !!audioMetadata,
+    allowAudio,
     meta,
     verifiedSourceImageIds,
     assertPostOwnedBy,

@@ -71,11 +71,30 @@ describe('entity image writes — audio', () => {
     expect(dbMock.dbWrite.image.createMany).not.toHaveBeenCalled();
   });
 
+  it('createEntityImages inserts every entry, so a song carrying an id is refused too', async () => {
+    const withId = { url: KEY, type: 'audio', id: 5 } as never;
+    await expect(createEntityImages({ images: [withId], userId: 1 })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(dbMock.dbWrite.image.createMany).not.toHaveBeenCalled();
+  });
+
   it('updateEntityImages refuses a new song without writing it', async () => {
     dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
     await expect(
       updateEntityImages({ entityId: 1, entityType: 'Bounty', images: [song], userId: 1 })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(dbMock.dbWrite.image.createMany).not.toHaveBeenCalled();
+  });
+
+  it('updateEntityImages still links a song the owner already has: an id is linked, not inserted', async () => {
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
+    dbMock.dbWrite.image.count.mockResolvedValue(1 as never);
+    const existing = { url: KEY, type: 'audio', id: 5 } as never;
+    await updateEntityImages({ entityId: 1, entityType: 'Bounty', images: [existing], userId: 1 });
+    expect(dbMock.dbWrite.image.createMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.imageConnection.createMany).toHaveBeenCalledWith({
+      data: [{ imageId: 5, entityId: 1, entityType: 'Bounty' }],
+    });
   });
 });

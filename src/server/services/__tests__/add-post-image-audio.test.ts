@@ -221,4 +221,26 @@ describe('addPostImage — audio', () => {
     await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('stop after create');
     expect(mocks.createImage.mock.calls[0][0].metadata).toEqual(song);
   });
+
+  it('reads the workflow once for both the song details and the provenance', async () => {
+    mocks.music = true;
+    await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('stop after create');
+    expect(mocks.getWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a slow orchestrator hold the post: it falls back to the client metadata', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.music = true;
+      mocks.getWorkflow.mockReturnValue(new Promise(() => undefined));
+      const pending = expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow(
+        'stop after create'
+      );
+      await vi.advanceTimersByTimeAsync(10_000);
+      await pending;
+      expect(mocks.createImage.mock.calls[0][0].metadata).toEqual(song);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
