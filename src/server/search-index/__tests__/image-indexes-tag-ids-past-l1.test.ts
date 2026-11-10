@@ -37,7 +37,11 @@ const ctx = { db: {}, logger: () => undefined, indexName: 'test-index' } as neve
 const batch = { type: 'update', ids: IMAGES } as never;
 const prevData = () => ({ images: IMAGES.map((id) => ({ id })) });
 
-beforeEach(() => tagIdsFetch.mockClear());
+// A block body, not `() => tagIdsFetch.mockClear()`: mockClear returns the mock, and Vitest calls a
+// function returned from beforeEach as that test's cleanup, i.e. tagIdsFetch() with no ids.
+beforeEach(() => {
+  tagIdsFetch.mockClear();
+});
 
 describe("image search indexes read tag ids past this process's L1", () => {
   it('images index, tag step', async () => {
