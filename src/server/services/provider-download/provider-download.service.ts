@@ -19,6 +19,9 @@ export type ProviderRefusal = { status: number; body: { error: string } };
 /**
  * Resolves a provider token to its provider and takes one download from its hourly ceiling. A
  * token that matches no live token is a 401, never an anonymous download.
+ *
+ * The ceiling is taken before the version and file are checked, so it counts every request on a
+ * valid token, including those then refused (not found, in review).
  */
 export async function authorizeProviderToken(
   token: string
