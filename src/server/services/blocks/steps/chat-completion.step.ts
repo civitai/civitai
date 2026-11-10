@@ -1542,9 +1542,9 @@ export const chatCompletionStep = {
   // sent to the model, a schema's `$schema`/`$id` url included. A `{ $ref }`-shaped object in
   // `parameters` only writes into the schema the model is shown (this arm's body has no
   // `arguments` and no other step). Keys and links naming one of our images there are still
-  // checked. Sound because `chatToolSchema`
-  // is `.strict()` with `type` the literal 'function' (no server-side tool type, such as a web
-  // fetch, can be declared); pinned by "free-text param paths".
+  // checked. Sound because `chatToolSchema` is `.strict()` with `type` the literal 'function'
+  // (no server-side tool type, such as a web fetch, can be declared); pinned by "free-text
+  // param paths".
   freeTextParamPaths: ['messages[].content', 'tools[].function.**'],
   paramSchema: chatCompletionParamsSchema,
   // Models AS variants: the allowlist, the price key and the audit row's
