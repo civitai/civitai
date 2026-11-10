@@ -16,14 +16,13 @@ async function run(reg: Registry, next: Next) {
 }
 
 async function countFor(reg: Registry, status: string) {
-  const metric = await reg.getSingleMetric('semantic_search_request_seconds')!.get();
-  const sample = metric.values.find(
-    (v) =>
-      v.metricName === 'semantic_search_request_seconds_count' &&
-      v.labels.index === 'images' &&
-      v.labels.status === status
-  );
-  return sample?.value ?? 0;
+  const text = await reg.getSingleMetricAsString('semantic_search_request_seconds');
+  const line = text
+    .split('\n')
+    .find((l) =>
+      l.startsWith(`semantic_search_request_seconds_count{index="images",status="${status}"}`)
+    );
+  return line ? Number(line.split(' ').pop()) : 0;
 }
 
 describe('timeSemanticSearch', () => {
