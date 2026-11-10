@@ -209,7 +209,7 @@ describe('the csam gate in the harness', () => {
   const scanTexts = (extra: Record<string, unknown> = {}) =>
     run({
       action: 'scanTexts',
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       texts: [{ key: 'a', fields: [{ heading: 'Body', text: 'placeholder' }] }],
       promptOverrides: { 'label:csam': 'CSAM DEF' },
       ...extra,
@@ -221,7 +221,7 @@ describe('the csam gate in the harness', () => {
 
   beforeEach(() => {
     registerTextScanProfile({
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       labels: ['nsfw', 'csam'],
       load: async () => new Map(),
     });

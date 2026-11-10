@@ -5,6 +5,13 @@ together: the model page's cards and thread dialog read `commentv3`, every write
 the v1 `comment` router is deleted. A read-only adapter (v1-shaped payloads from CommentV3 through the
 `comment` router) was built first and dropped unshipped.
 
+> **Superseded in part by `comments-v3-phase5.md`.** Phase 5 removes the old-row sync
+> (`syncOldRows`), the surface switches (`v3ReadSurfaces`/`v3WriteSurfaces`), the reverse copy and
+> the parity job, so there is no rollback to the old tables; drops the mirror triggers; deletes the
+> CommentV2 event-engine handler, the `Comment`/`CommentV2` text-scan types and queue entries; and
+> renames the mod endpoints' `commentV2Ids` to `commentIds`. The sections below describe the flip as
+> built.
+
 ## Decisions (Briant, 2026-11-06)
 
 1. **Hidden comments stay out of the list** (Briant revised "inline" after a dev check, 2026-11-06: a
@@ -84,14 +91,14 @@ the v1 `comment` router is deleted. A read-only adapter (v1-shaped payloads from
   that copy is a no-op; a new write that skips the v1 sync would be reverted by the next v1 write.
 - **Moderation by CommentV3 id.** Every model comment is moderated by its CommentV3 id, on the path
   the other surfaces use:
-  - The mod endpoints `comment/bulk-delete`, `remove-as-tos` and `restore-from-tos` take only
-    `commentV2Ids` (CommentV3 ids; the field keeps its name). The v1 `commentIds` list is gone, and a
-    call that sends only it is refused for an empty `commentV2Ids`. The bulk delete is
-    `bulkDeleteCommentsV2`, CommentV3 first.
+  - The mod endpoints `comment/bulk-delete`, `remove-as-tos` and `restore-from-tos` took only
+    `commentV2Ids` (CommentV3 ids) after this flip; the v1 `commentIds` list was dropped. Phase 5
+    renamed the field to `commentIds` (CommentV3 ids) and the bulk delete to `bulkDeleteComments`.
   - The moderator app lists a user's model comments by CommentV3 id (`entityType = 'model'`, not
     `legacyV1Id`) and links them through `/comments/<id>`, whose model URL now carries `commentId`
     for the thread dialog.
-  - Ids that predate the flip are resolved through `legacyV1Id` (`commentV3IdsByOldId`): a CSAM hold
+  - Ids that predate the flip are resolved through `legacyV1Id` (`commentV3IdsByOldId`, removed in
+    Phase 5, whose hand-run SQL rewrites the stored records to CommentV3 ids instead): a CSAM hold
     on a `Comment` (the decision, and the moderator app's list, context and link), a scam review's
     `Comment` subject, and a scam-cleanup record of kind `comments`, which the overturn restores on
     CommentV3; no new record of that kind is written. A Clavata or text-scan verdict on a `Comment` row runs the `commentsV2` cleanup.
@@ -106,6 +113,8 @@ the v1 `comment` router is deleted. A read-only adapter (v1-shaped payloads from
   entry in `entity-moderation.ts`, the Clavata cutover target and the `Comment` text-scan profile),
   since a v1 row synced from a CommentV3 edit still queues a scan there; and `removeAllContent`'s
   delete of v1 rows with no CommentV3 twin, the only path that removes such a row when its author's content is removed.
+  Phase 5 removed all of these but the `Comment` table itself (the mirror trigger and
+  `trg_moderation_comment` by migration, the function kept).
 
 ## Client
 
@@ -131,7 +140,7 @@ longer read and are refused; deployed first, it sends CommentV3 ids that the old
 in CommentV2: they find nothing for a comment written to the v1 table, which is every model comment
 but the few on old v2 model threads, and the app reports nothing affected. Before it ships, a read-only check that every live v1 model comment has
 its v3 row (2 orphan replies whose parents are gone were the only gap on 2026-11-06). Rollback is the
-reverse copy over `model`, then reverting the release.
+reverse copy over `model`, then reverting the release (until Phase 5, which removes the reverse copy).
 
 Soak checks after deploy:
 - New model comments are v3-only.
@@ -141,4 +150,5 @@ Soak checks after deploy:
 - `ModelMetric.commentCount` moves on a new comment.
 - Write errors on `commentv3.*` stay at zero.
 
-After the soak, Phase 6 can drop the old tables.
+After the soak, Phase 5 removes the transition code (`comments-v3-phase5.md`) and Phase 6 can drop
+the old tables.

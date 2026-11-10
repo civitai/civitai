@@ -81,16 +81,13 @@ describe('reporting a comment', () => {
       ctx,
     });
 
-  it.each([ReportEntity.CommentV3, ReportEntity.CommentV2])(
-    'refuses a %s report the comment gate refuses, filing nothing',
-    async (type) => {
-      commentGate.mockRejectedValueOnce(new TRPCError({ code: 'NOT_FOUND' }));
-      await expect(report(type)).rejects.toMatchObject({ code: 'NOT_FOUND' });
-      expect(commentGate).toHaveBeenCalledTimes(1);
-      expect(commentGate).toHaveBeenCalledWith(17, ctx);
-      expect(createReport).not.toHaveBeenCalled();
-    }
-  );
+  it('refuses a report the comment gate refuses, filing nothing', async () => {
+    commentGate.mockRejectedValueOnce(new TRPCError({ code: 'NOT_FOUND' }));
+    await expect(report(ReportEntity.CommentV3)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(commentGate).toHaveBeenCalledTimes(1);
+    expect(commentGate).toHaveBeenCalledWith(17, ctx);
+    expect(createReport).not.toHaveBeenCalled();
+  });
 
   it('leaves reports on other content to their own checks', async () => {
     createReport.mockResolvedValue(storedReport);

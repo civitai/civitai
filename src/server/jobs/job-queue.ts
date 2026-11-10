@@ -32,8 +32,6 @@ const jobQueueMap = {
   [EntityType.Collection]: 'collectionIds',
   [EntityType.Model]: 'modelIds',
   [EntityType.ModelVersion]: 'modelVersionIds',
-  [EntityType.Comment]: 'commentIds', // unused
-  [EntityType.CommentV2]: 'commentV2Ids', // unused
   [EntityType.CommentV3]: 'commentV3Ids', // unused
   [EntityType.User]: 'userIds', // unused
   [EntityType.UserProfile]: 'userProfileIds', // unused
@@ -53,7 +51,11 @@ export function reduceJobQueueToIds(jobs: { entityId: number; entityType: Entity
     jobIds[jobQueueMap[key as keyof JobQueueMap]] = [];
   }
   for (const job of jobs) {
-    const key = jobQueueMap[job.entityType];
+    // An entity type that no longer queues (Comment, CommentV2) has no ids to collect.
+    const key = jobQueueMap[job.entityType as keyof JobQueueMap] as
+      | JobQueueMap[keyof JobQueueMap]
+      | undefined;
+    if (!key) continue;
     if (!jobIds[key]) jobIds[key] = [];
     jobIds[key]!.push(job.entityId);
   }
