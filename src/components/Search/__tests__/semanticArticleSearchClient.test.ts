@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createSemanticArticleSearch,
-  setSemanticArticleSearchEnabled,
   withSemanticArticleSearch,
 } from '~/components/Search/semanticArticleSearchClient';
+import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
 import { ARTICLES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 
 type SearchClient = Parameters<typeof withSemanticArticleSearch>[0];
@@ -102,5 +102,21 @@ describe('article search request and hits', () => {
       },
     ]);
     expect(result.nbPages).toBe(2);
+  });
+});
+
+describe('article search paging', () => {
+  it('starts page 1 at the offset page 0 returned, not page × hitsPerPage', async () => {
+    const search = vi.fn(async (input: { cursor?: number }) => ({
+      items: [],
+      nextCursor: input.cursor === undefined ? 37 : undefined,
+      correctedQuery: undefined,
+      latencyMs: 1,
+    }));
+    const searchArticles = createSemanticArticleSearch({ search: search as never });
+    const params = { query: 'guide', hitsPerPage: 20 };
+    await searchArticles(ARTICLES_SEARCH_INDEX, { ...params, page: 0 });
+    await searchArticles(ARTICLES_SEARCH_INDEX, { ...params, page: 1 });
+    expect(search.mock.calls.map(([input]) => input.cursor)).toEqual([undefined, 37]);
   });
 });

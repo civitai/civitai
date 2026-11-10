@@ -9,6 +9,7 @@ import {
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpcVanilla } from '~/utils/trpc';
+import { isSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
 
 /**
  * Article search answers from the semantic search while the `semanticArticleSearch` flag is on.
@@ -21,12 +22,6 @@ type SearchClient = NonNullable<InstantSearchProps['searchClient']>;
 type SearchRequests = Parameters<SearchClient['search']>[0];
 type SearchInput = Parameters<typeof trpcVanilla.semanticArticleSearch.search.query>[0];
 type SearchOutput = Awaited<ReturnType<typeof trpcVanilla.semanticArticleSearch.search.query>>;
-
-// The provider writes it while rendering (browser only), so InstantSearch's first searches see it.
-let enabled = false;
-export function setSemanticArticleSearchEnabled(value: boolean) {
-  enabled = value;
-}
 
 /** Relevance order only: the semantic search cannot sort by stats or date. */
 export const isSemanticArticleIndex = (indexName: string) => indexName === ARTICLES_SEARCH_INDEX;
@@ -94,7 +89,7 @@ export function createSemanticArticleSearch({
 export function withSemanticArticleSearch(
   client: SearchClient,
   searchArticles = createSemanticArticleSearch(),
-  isEnabled = () => enabled
+  isEnabled = isSemanticArticleSearchEnabled
 ): SearchClient {
   return {
     ...client,

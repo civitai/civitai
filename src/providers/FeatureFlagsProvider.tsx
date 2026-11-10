@@ -4,7 +4,7 @@ import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
 import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
 import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
-import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchClient';
+import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
 import { OverlayFastPathContext } from '~/components/MantineOverlays/overlayFastPathContext';
 
 const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
