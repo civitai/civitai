@@ -14,6 +14,7 @@ import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { isModelTakenDown } from '~/server/utils/model-version-gates';
 import { resolveActorFor } from '~/utils/resolve-attribution';
 import { getGetUrlByKey } from '~/utils/s3-utils';
 import { getVaultState } from '~/utils/vault';
@@ -90,6 +91,7 @@ export default AuthedEndpoint(
 
     const modelVersion = await dbRead.modelVersion.findUnique({
       where: { id: vaultItem.modelVersionId },
+      include: { model: { select: { status: true, mode: true } } },
     });
 
     const [access] = await hasEntityAccess({
@@ -120,6 +122,9 @@ export default AuthedEndpoint(
         const files = (vaultItem.files ?? []) as VaultItemFilesSchema;
         const file = input.fileId ? files.find((f) => f.id === input.fileId) : files[0];
         if (!file || !file.url) return onError(404, 'File not found');
+        // Unlike a deleted version, a taken-down model's files are moderators-only, vault included.
+        if (modelVersion && isModelTakenDown(modelVersion) && !user.isModerator)
+          return onError(404, 'File not found');
         if (!user.isModerator) {
           const scan = await dbRead.modelFile.findUnique({
             where: { id: file.id },

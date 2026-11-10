@@ -5369,19 +5369,15 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
   if (!claim.claimed) {
     throw new Error(`can only preview a pending request (${params.publishRequestId} changed)`);
   }
-  // The replaced preview is unpublished inside startClaimedReviewBuild, once the new sha is known.
   return startClaimedReviewBuild(claim.claimed, params.actor, {
     replacedDeployDetail: claim.replacedDeployDetail,
   });
 }
 
 /**
- * A rebuild (a start over a row that already had a preview) REPLACES the row's deploy detail, and
- * that detail is the only record that the old build was published to the shared static server's
- * review lane. So unpublish it here, from the detail the claim replaced, in whatever state it was
- * left: a `preview-failed` preview can be published too (the publish succeeded and a later step
- * failed). Without this the old meta stays served behind the mod-gate until the bucket lifecycle
- * expires it.
+ * A rebuild REPLACES the row's deploy detail, the only record that the old build was published to
+ * the shared static server's review lane, so unpublish from the detail the claim replaced, in
+ * whatever state it was left (a `preview-failed` preview can be published too).
  *
  * Only for a detail that RECORDS `sharedServer: true` and a full sha: a per-preview preview, or
  * one whose serving mode was never recorded (its build never reached the apply step, so nothing
@@ -5416,9 +5412,9 @@ async function unpublishReplacedSharedPreview(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
-      `[previewRequest] unpublish of the replaced shared-server preview failed (id=${request.id}): ${
-        err instanceof Error ? err.message : String(err)
-      }`
+      `[previewRequest] unpublish of the replaced shared-server preview failed (id=${
+        request.id
+      }): ${err instanceof Error ? err.message : String(err)}`
     );
   }
 }
@@ -5457,7 +5453,6 @@ export async function startClaimedReviewBuild(
   try {
     sha = await resolveReviewSourceSha(request);
   } catch (err) {
-    // No new build will publish anything, so the replaced shared preview is unpublished.
     await unpublishReplacedSharedPreview(request, opts.replacedDeployDetail, undefined);
     await markReviewPreviewState(
       request.id,

@@ -73,8 +73,7 @@ export type ReviewBuildSlotClaim =
       claimed: ClaimedReviewRequest;
       /**
        * `request` claims only: the deploy detail the claim overwrote, read in the same
-       * transaction. The caller unpublishes a shared-server preview it records (the claim erases
-       * the only record of it). Absent for `next-queued`, whose row is a queued, never-built one.
+       * transaction. Absent for `next-queued`.
        */
       replacedDeployDetail?: string | null;
     }

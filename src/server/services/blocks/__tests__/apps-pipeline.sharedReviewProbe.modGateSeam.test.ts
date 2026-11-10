@@ -16,13 +16,8 @@ import modGateHandler from '~/pages/api/internal/mod-gate';
  * SEAM: the shared-server review reachability probe (`waitForReviewHostReachable` with
  * `sharedServer: true`) against the REAL review forwardAuth gate (`/api/internal/mod-gate`).
  *
- * Why this file exists: the probe and the gate were each tested on their own, and both suites were
- * green while every shared-server review preview was marked `preview-failed`. The probe asked for
- * `GET /` with `Sec-Fetch-Dest: empty` and required 200; the gate treats `/` as an ENTRY request
- * whatever the dest (its PATH arm: `/` is not a static subresource path), so it answered 401 on
- * every attempt. Nothing ever fed the probe's actual request into the gate.
- *
- * So these cases do exactly that. The probe's request is turned into the forwardAuth subrequest
+ * Each side is tested alone elsewhere; these cases feed the probe's actual request into the gate.
+ * The probe's request is turned into the forwardAuth subrequest
  * Traefik would make (X-Forwarded-Host = the request Host, X-Forwarded-Uri = the request target
  * path+query, Sec-Fetch-Dest passed through) and handed to the real gate handler with a real secret.
  * Only when the gate admits it does the stand-in static server answer, with 200 for a published
