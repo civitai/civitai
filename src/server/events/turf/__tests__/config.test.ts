@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { applyTurfOverride, type EventTurfConfig } from '~/server/events/turf/config';
+import {
+  applyTurfOverride,
+  overrideSchema,
+  type EventTurfConfig,
+} from '~/server/events/turf/config';
 
 const BASE: EventTurfConfig = {
   mode: 'live',
@@ -77,6 +81,11 @@ describe('applyTurfOverride: sticker lifetime and team-relative credit', () => {
   });
 
   it('reads a hand-written minute-precision rollout as :00 instead of dropping the override', () => {
+    // Only the string before the Date coercion shows the padding: a bare datetime check passes
+    // `12:00Z` through unchanged below zod 4.6, and rejects it from 4.6.
+    expect(overrideSchema.shape.rolloutAt.unwrap().in.parse('2026-11-08T12:00Z')).toBe(
+      '2026-11-08T12:00:00Z'
+    );
     const raw = JSON.stringify({ ...ENABLE, rolloutAt: '2026-11-08T12:00Z' });
     const { config, invalid } = applyTurfOverride(BASE, raw);
     expect(invalid).toBe(false);

@@ -52,7 +52,7 @@ const catchUpStep = z.object({
   min: z.number().min(0).max(1),
   gap: z.number().positive(),
 });
-const overrideSchema = z
+export const overrideSchema = z
   .object({
     mode: z.enum(TURF_MODES),
     testerFlag: z.string().min(1),

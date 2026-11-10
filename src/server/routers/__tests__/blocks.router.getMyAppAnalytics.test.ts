@@ -183,19 +183,32 @@ beforeEach(() => {
   });
 });
 
-describe('getMyAppAnalytics — gate', () => {
-  it('takes a minute-precision range, read as :00', async () => {
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await caller.getMyAppAnalytics({
-      appBlockId: 'apb_1',
-      from: '2026-09-01T00:00Z',
-      to: '2026-09-30T00:00Z',
-    });
-    const args = mockGetMyAppAnalytics.mock.calls[0][0] as { from?: Date; to?: Date };
-    expect(args.from).toEqual(new Date('2026-09-01T00:00:00Z'));
-    expect(args.to).toEqual(new Date('2026-09-30T00:00:00Z'));
-  });
+describe('app-developer ranges', () => {
+  // Each procedure turns the range into a Date, which is the same instant with or without the
+  // padding, so the procedure's own input parser is what shows the helper ran.
+  it.each(['getMyRevenue', 'getMyAppAnalytics', 'getMyAppCustomEvents'] as const)(
+    '%s reads a minute-precision range as :00',
+    (name) => {
+      const proc = blocksRouter._def.procedures[name] as unknown as {
+        _def: { inputs: Array<{ parse: (v: unknown) => { from?: string; to?: string } }> };
+      };
+      const parsed = proc._def.inputs.reduce<Record<string, unknown>>(
+        (acc, input) => ({
+          ...acc,
+          ...input.parse({
+            appBlockId: 'apb_1',
+            from: '2026-09-01T00:00Z',
+            to: '2026-09-30T00:00Z',
+          }),
+        }),
+        {}
+      );
+      expect(parsed).toMatchObject({ from: '2026-09-01T00:00:00Z', to: '2026-09-30T00:00:00Z' });
+    }
+  );
+});
 
+describe('getMyAppAnalytics — gate', () => {
   it('moderator: gate passes, service called with the session user id', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const result = await caller.getMyAppAnalytics({ appBlockId: 'apb_1' });
@@ -385,14 +398,6 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     const revenueArgs = mockGetRevenueForOwner.mock.calls[0]?.[0] as { from?: Date; to?: Date };
     expect(revenueArgs.from).toEqual(from);
     expect(revenueArgs.to).toEqual(to);
-  });
-
-  it('takes a minute-precision range, read as :00', async () => {
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await caller.getMyRevenue({ from: '2026-09-01T00:00Z', to: '2026-09-30T00:00Z' });
-    const revenueArgs = mockGetRevenueForOwner.mock.calls[0]?.[0] as { from?: Date; to?: Date };
-    expect(revenueArgs.from).toEqual(new Date('2026-09-01T00:00:00Z'));
-    expect(revenueArgs.to).toEqual(new Date('2026-09-30T00:00:00Z'));
   });
 
   it('UNREADABLE goods table: the rail is flagged, the rest of the payload survives', async () => {
