@@ -2063,11 +2063,9 @@ const readPostResourceRows = (id: number) =>
   dbRead.postResourceHelper.findMany({ where: { postId: id }, orderBy: { modelName: 'asc' } });
 
 /**
- * The resources of the post's images the viewer may open (`getImageIdsVisibleToViewer`), from
- * models they may see (`getModelIdsVisibleToViewer`). The view keeps one row per resource from any
- * of the post's images, so for anyone but the post's owner or a moderator a row stays only when a
- * visible image uses that version, and it names that image. The owner gets rows from all their
- * images, still only of models they may see.
+ * Moderators get every row. Anyone else gets rows of models they may see
+ * (`getModelIdsVisibleToViewer`; a row with no model is dropped). The post's owner gets them from
+ * all its images; others only from images they may open, each row naming such an image.
  */
 export const getPostResources = async ({
   id,

@@ -32,6 +32,19 @@ export async function getModelVisibleToViewer(
   return { userId: model.userId };
 }
 
+/**
+ * Whether `viewer` may open the model as its page does: `getModelVisibleToViewer`, and not when its
+ * owner has blocked the viewer (`getModelHandler`'s owner-block check). Moderators always may.
+ */
+export async function canViewerOpenModel(modelId: number, viewer?: Viewer): Promise<boolean> {
+  const model = await getModelVisibleToViewer(modelId, viewer);
+  if (!model) return false;
+  if (!viewer?.id || !model.userId || model.userId === viewer.id) return true;
+  // Imported here: user.service sits in the tag.service import cycle.
+  const { amIBlockedByUser } = await import('~/server/services/user.service');
+  return !(await amIBlockedByUser({ userId: viewer.id, targetUserId: model.userId }));
+}
+
 /** The ids among `modelIds` that `viewer` may see (`isModelVisibleTo`); every id for a moderator. */
 export async function getModelIdsVisibleToViewer(modelIds: number[], viewer?: Viewer) {
   const ids = [...new Set(modelIds)];
@@ -44,7 +57,11 @@ export async function getModelIdsVisibleToViewer(modelIds: number[], viewer?: Vi
   return new Set(models.filter((model) => isModelVisibleTo(model, viewer)).map((m) => m.id));
 }
 
-/** The ids among `modelIds` that `viewer` may not see (see `canViewPoiModel`). */
+/**
+ * The ids among `modelIds` that are `poi` and not the viewer's (`canViewPoiModel`). Only the poi
+ * rule, unlike `getModelIdsVisibleToViewer`: it serves `getHiddenModelVersionIds`, which adds the
+ * Private rule and does not test publish status.
+ */
 export async function getHiddenModelIds(modelIds: number[], viewer?: Viewer) {
   const ids = [...new Set(modelIds)];
   if (!ids.length || viewer?.isModerator) return new Set<number>();
