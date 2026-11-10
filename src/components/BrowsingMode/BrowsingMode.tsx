@@ -20,7 +20,6 @@ const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const { isRestricted } = useIsRegionRestricted();
-  const knightsLink = getKnightsLink(features);
 
   return (
     <Popover zIndex={301 + 1} withArrow withinPortal>
@@ -57,6 +56,7 @@ export function BrowsingModeMenu({
   const setState = useBrowsingSettings((x) => x.setState);
   const userBrowsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const features = useFeatureFlags();
+  const knightsLink = getKnightsLink(features);
   const { isRestricted } = useIsRegionRestricted();
   const hasMatureLevelSelected = Flags.intersects(userBrowsingLevel, nsfwBrowsingLevelsFlag);
 
