@@ -997,6 +997,67 @@ describe('review-build-callback with directPublish: true', () => {
     }
   });
 
+  // A FAILED direct build may also have published before failing; on a row torn down or decided
+  // mid-build that teardown's unpublish may have run before the publish landed. Unpublish its sha
+  // (not waiting on it), leave the row alone, release the slot as before.
+  it('failure for a preview torn down mid-build: unpublishes its sha, without waiting on it', async () => {
+    mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'pending', deployState: null });
+    let finish: (v: { name: string }) => void = () => undefined;
+    mockReviewUnpublish.mockImplementationOnce(
+      () => new Promise<{ name: string }>((r) => (finish = r))
+    );
+    const { req, res } = makeReqRes(directBody({ status: 'Failed' }));
+    const done = handler(req, res);
+    try {
+      await vi.waitFor(() => expect(res.statusCode).toBe(200), { timeout: 1000 });
+      expect(res.body).toMatchObject({
+        applied: false,
+        reason: 'preview no longer active (torn down or decided)',
+      });
+      expect(mockReviewUnpublish.mock.calls).toEqual([
+        [{ slug: SLUG, sha: SHA, publishRequestId: PUBREQ }],
+      ]);
+      expect(mockMarkPreview).not.toHaveBeenCalled();
+      expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA });
+    } finally {
+      finish({ name: 'review-unpub-1' });
+      await done;
+    }
+  });
+
+  it('failure for a decided preview: a rejected unpublish does not fail the callback', async () => {
+    mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'rejected', deployState: null });
+    mockReviewUnpublish.mockRejectedValueOnce(new Error('k8s down'));
+    const { req, res } = makeReqRes(directBody({ status: 'Failed' }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockReviewUnpublish).toHaveBeenCalledTimes(1);
+    expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA });
+  });
+
+  // GUARD (green before and after): a superseded run's late failure on a torn-down row does not
+  // unpublish — a newer run of the same sha may have published.
+  it('failure from a SUPERSEDED direct run on a torn-down row: no unpublish, slot still released', async () => {
+    mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'pending', deployState: null });
+    mockSuperseded.mockResolvedValueOnce(true);
+    const { req, res } = makeReqRes(directBody({ status: 'Failed', runId: 'old-run' }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockReviewUnpublish).not.toHaveBeenCalled();
+    expect(mockMarkPreview).not.toHaveBeenCalled();
+    expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA });
+  });
+
+  // INVARIANT GUARD (green before and after): a failed build without the field on a torn-down
+  // row published nothing to the shared server, so nothing is unpublished.
+  it('failure without the field for a torn-down preview: no unpublish', async () => {
+    mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'pending', deployState: null });
+    const { req, res } = makeReqRes(directBody({ status: 'Failed', directPublish: undefined }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockReviewUnpublish).not.toHaveBeenCalled();
+  });
+
   // INVARIANT GUARDS (green before the change too): the old body is still the old path.
   it('without the field, a torn-down preview is NOT unpublished by its build callback', async () => {
     mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'pending', deployState: null });
