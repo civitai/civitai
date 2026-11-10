@@ -63,7 +63,15 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
   bulkSetReportStatus,
 }));
 
-const { fileCsamReport } = await import('~/server/controllers/csam.controller');
+const createExternalCsamReport = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined));
+vi.mock('~/server/services/csam.service-new', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  createExternalCsamReport,
+}));
+
+const { createExternalCsamReportHandler, fileCsamReport } = await import(
+  '~/server/controllers/csam.controller'
+);
 
 const OWNER = 20;
 const OTHER_OWNER = 21;
@@ -164,6 +172,40 @@ describe('fileCsamReport with attached text', () => {
     ).rejects.toThrow(/image report only/);
     expect(createCsamReport).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['the subject', { userId: -2 }],
+    ['the secondary user', { userId: OWNER, details: { secondaryUserId: -2 } }],
+  ])('refuses the feedback capture account as %s, filing nothing', async (_label, named) => {
+    await expect(
+      fileCsamReport({ imageIds: [], type: 'Image', reportedById: MOD, ...named } as never)
+    ).rejects.toThrow(/feedback page captures/);
+    expect(createCsamReport).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the subject', { userId: -2 }],
+    ['the secondary user', { userId: OWNER, secondaryUserId: -2 }],
+  ])(
+    'refuses the feedback capture account as %s of an external report, filing nothing',
+    async (_label, named) => {
+      const ctx = { user: { id: MOD } } as never;
+      await expect(
+        createExternalCsamReportHandler({
+          input: { email: 'x@example.com', ...named } as never,
+          ctx,
+        })
+      ).rejects.toThrow(/feedback page captures/);
+      expect(createExternalCsamReport).not.toHaveBeenCalled();
+      // Control: an ordinary subject is filed.
+      await createExternalCsamReportHandler({
+        input: { email: 'x@example.com', userId: OWNER } as never,
+        ctx,
+      });
+      expect(createExternalCsamReport).toHaveBeenCalledTimes(1);
+      createExternalCsamReport.mockClear();
+    }
+  );
 
   it('files a supplemental report with the copied text', async () => {
     const copied = [{ source: 'comment', id: 11, text: 'copied' }];

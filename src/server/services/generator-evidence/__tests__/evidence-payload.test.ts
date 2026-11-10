@@ -1,6 +1,11 @@
 import { createHash } from 'crypto';
 import { describe, expect, it } from 'vitest';
-import { readVerifiedEvidence } from '~/server/services/generator-evidence/evidence-payload';
+import {
+  promptFileDetails,
+  readVerifiedEvidence,
+  trimEdgeSymbols,
+} from '~/server/services/generator-evidence/evidence-payload';
+import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 
 /** Reading a preserved copy back for a send or a view. Bytes and keys are invented. */
@@ -97,5 +102,43 @@ describe('readVerifiedEvidence', () => {
     );
 
     expect(read).toEqual({ ok: false, reason: 'read failed: connection reset' });
+  });
+});
+
+describe('the EXIF trim', () => {
+  // Word characters, symbols, whitespace, non-Latin text, an astral emoji and a lone surrogate.
+  const alphabet = ['a', 'Z', '0', '_', '!', '<', ' ', '\n', '漢', '😀', '\uD800', '…'];
+
+  it('returns what trimNonAlphanumeric returns, on every input tried', () => {
+    let seed = 7;
+    const next = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) >>> 16;
+    const inputs = [
+      undefined,
+      '',
+      '!!!',
+      'abc',
+      '  a  ',
+      '😀',
+      '!a!',
+      '漢字 ok 漢字',
+      '_',
+      '!_x_!',
+    ];
+    for (let i = 0; i < 5_000; i++)
+      inputs.push(
+        Array.from({ length: next() % 12 }, () => alphabet[next() % alphabet.length]).join('')
+      );
+
+    for (const input of inputs) expect(trimEdgeSymbols(input)).toBe(trimNonAlphanumeric(input));
+  });
+
+  it('takes linear time on a generation prompt that is a long run of symbols', () => {
+    const long = `a${'!'.repeat(200_000)}b`;
+
+    const started = Date.now();
+    const { details } = promptFileDetails({ prompt: long });
+
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(details?.[0].valuePair[0].value).toBe(long);
   });
 });

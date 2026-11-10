@@ -19,7 +19,7 @@ import {
 } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
-  auditMetaData,
+  auditPostImageMeta,
   getTagsFromPrompt,
   includesInappropriate,
   includesPoi,
@@ -821,9 +821,23 @@ async function auditScanResults(args: {
 
   let blockedFor: string | undefined;
   if (nsfw && prompt) {
-    const auditResult = auditMetaData({ prompt }, nsfw);
+    // The post editor's own verdict, so the scan never blocks what the editor let through.
+    const auditResult = auditPostImageMeta({ prompt }, nsfw);
     if (!auditResult.success)
       blockedFor = auditResult.blockedFor.join(',') ?? 'Failed audit, no explanation';
+    else if (auditResult.softBlockedFor?.length)
+      logToAxiom({
+        name: 'image-prompt-soft-block-pass',
+        type: 'info',
+        userId: args.userId,
+        imageId: args.imageId,
+        details: {
+          triggers: auditResult.softBlockedFor.map((word) => ({
+            category: 'nsfw_blocklist',
+            matchedWord: word,
+          })),
+        },
+      }).catch(() => null);
   }
 
   return {

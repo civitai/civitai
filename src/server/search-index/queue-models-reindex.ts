@@ -1,15 +1,11 @@
-import * as z from 'zod';
+import type * as z from 'zod';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { modelsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
-import { booleanString } from '~/utils/zod-helpers';
+import { queueModelsReindexSchema } from '~/server/search-index/queue-models-reindex.schema';
 
-/** The endpoints' query: `dryRun` (default true) queues nothing; `chunkSize` ids per queueUpdate call. */
-export const queueModelsReindexSchema = z.object({
-  dryRun: booleanString().default(true),
-  chunkSize: z.coerce.number().min(1).max(10000).default(1000),
-});
+export { queueModelsReindexSchema };
 
 const QUEUE_ACTION = SearchIndexUpdateQueueAction.Update;
 

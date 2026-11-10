@@ -61,6 +61,14 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   deleteImageFromS3: mockDeleteImageFromS3,
 }));
 
+const { announceReviewsInBackground } = vi.hoisted(() => ({
+  announceReviewsInBackground: vi.fn(),
+}));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  announceReviewsInBackground,
+}));
+
 import { deletePost } from '../post.service';
 import { userImageVideoCountCaches } from '~/server/redis/caches';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -144,6 +152,27 @@ describe('deletePost orphan de-indexing', () => {
       select: { storylineId: true },
     });
     expect(onStorySparkLost).toHaveBeenCalledWith(9);
+  });
+
+  it('announces the unreleased reviews written from the post, read before the post goes', async () => {
+    primeQueries([OWNER_IMAGE]);
+    const base = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      sqlTextOf(strings).includes('"releasedAt" IS NULL')
+        ? Promise.resolve([{ id: 77 }])
+        : base(strings)) as never);
+
+    await deletePost({ id: POST_ID });
+
+    expect(announceReviewsInBackground).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ reviewIds: [77] })
+    );
+    const { calls, invocationCallOrder } = dbMock.dbWrite.$queryRaw.mock;
+    const order = (needle: string) =>
+      invocationCallOrder[
+        calls.findIndex((call) => sqlTextOf(call[0] as string[]).includes(needle))
+      ];
+    expect(order('"releasedAt" IS NULL')).toBeLessThan(order('DELETE FROM "Post"'));
   });
 
   it('touches no event points for a post that starts no story', async () => {

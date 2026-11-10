@@ -17,7 +17,7 @@ type FacetRequests = Parameters<NonNullable<SearchClient['searchForFacetValues']
 type SearchInput = Parameters<typeof trpcVanilla.semanticImageSearch.search.query>[0];
 type SearchOutput = Awaited<ReturnType<typeof trpcVanilla.semanticImageSearch.search.query>>;
 
-type RequestParams = {
+export type RequestParams = {
   query?: string;
   page?: number;
   hitsPerPage?: number;
@@ -38,12 +38,12 @@ export function isImageSearchIndex(indexName: string) {
   return indexName === IMAGES_SEARCH_INDEX || indexName.startsWith(`${IMAGES_SEARCH_INDEX}:`);
 }
 
-function asList<T>(value: T | T[] | undefined): T[] {
+export function asList<T>(value: T | T[] | undefined): T[] {
   return value === undefined ? [] : Array.isArray(value) ? value : [value];
 }
 
 /** `facetFilters` → `{ attribute: values }`; an inner array is OR, each outer entry AND. */
-function readFacetFilters(facetFilters: RequestParams['facetFilters']) {
+export function readFacetFilters(facetFilters: RequestParams['facetFilters']) {
   const byAttribute = new Map<string, string[]>();
   for (const group of asList(facetFilters)) {
     for (const filter of asList(group)) {
@@ -73,13 +73,13 @@ function readPostedRange(numericFilters: RequestParams['numericFilters']) {
 }
 
 /** The browsing level `BrowsingLevelFilter` wrote into `filters` as `nsfwLevel=N OR …`. */
-function readBrowsingLevel(filters: string | undefined) {
+export function readBrowsingLevel(filters: string | undefined) {
   let flags = 0;
   for (const match of (filters ?? '').matchAll(BROWSING_LEVEL_CLAUSE)) flags |= Number(match[1]);
   return flags || undefined;
 }
 
-function emptyResult(indexName: string, params: RequestParams) {
+export function emptyResult(indexName: string, params: RequestParams) {
   return {
     index: indexName,
     hits: [],
@@ -124,12 +124,62 @@ function toHit(item: SearchOutput['items'][number]) {
   };
 }
 
+type PagedResult<I> = {
+  items: I[];
+  nextCursor?: number;
+  correctedQuery?: string;
+  latencyMs: number;
+};
+
+/**
+ * InstantSearch pages by number; the semantic search pages by an offset into its ranking, because
+ * hydration drops candidates. The offset each page starts at is remembered per query, and the
+ * result is shaped as a Meilisearch page.
+ */
+export function createOffsetPager() {
+  const pageCursors = new Map<string, number | undefined>();
+
+  return async function fetchPage<F extends object, I, H>({
+    query,
+    filters,
+    hitsPerPage,
+    page = 0,
+    search,
+    toHit,
+  }: {
+    query: string;
+    filters: F;
+    hitsPerPage: number;
+    page?: number;
+    search: (
+      input: F & { query: string; limit: number; cursor?: number }
+    ) => Promise<PagedResult<I>>;
+    toHit: (item: I) => H;
+  }) {
+    const key = JSON.stringify([query, filters, hitsPerPage]);
+    const cursor = page === 0 ? undefined : pageCursors.get(`${key}:${page}`);
+    // A deep link to page N whose earlier pages were never fetched: approximate the offset.
+    const offset = page === 0 ? undefined : cursor ?? page * hitsPerPage;
+
+    const result = await search({ ...filters, query, limit: hitsPerPage, cursor: offset });
+    if (result.nextCursor !== undefined) pageCursors.set(`${key}:${page + 1}`, result.nextCursor);
+    const shown = page * hitsPerPage + result.items.length;
+
+    return {
+      hits: result.items.map(toHit),
+      nbHits: result.nextCursor !== undefined ? shown + hitsPerPage : shown,
+      nbPages: result.nextCursor !== undefined ? page + 2 : page + 1,
+      processingTimeMS: result.latencyMs,
+      exhaustiveNbHits: false,
+      userData: result.correctedQuery ? [{ correctedQuery: result.correctedQuery }] : undefined,
+    };
+  };
+}
+
 export function createSemanticImageSearch({
   search = (input: SearchInput) => trpcVanilla.semanticImageSearch.search.query(input),
 }: { search?: (input: SearchInput) => Promise<SearchOutput> } = {}) {
-  // InstantSearch pages by number; the search pages by an offset into its ranking, because
-  // hydration drops candidates. The offset each page starts at is remembered per query.
-  const pageCursors = new Map<string, number | undefined>();
+  const fetchPage = createOffsetPager();
 
   return async function searchImages(indexName: string, params: RequestParams) {
     const query = params.query?.trim();
@@ -154,25 +204,15 @@ export function createSemanticImageSearch({
       types: refined.get('type') as MediaType[] | undefined,
       ...readPostedRange(params.numericFilters),
     };
-    const key = JSON.stringify([query, filters, hitsPerPage]);
-    const page = params.page ?? 0;
-    const cursor = page === 0 ? undefined : pageCursors.get(`${key}:${page}`);
-    // A deep link to page N whose earlier pages were never fetched: approximate the offset.
-    const offset = page === 0 ? undefined : cursor ?? page * hitsPerPage;
-
-    const result = await search({ query, ...filters, limit: hitsPerPage, cursor: offset });
-    if (result.nextCursor !== undefined) pageCursors.set(`${key}:${page + 1}`, result.nextCursor);
-    const shown = page * hitsPerPage + result.items.length;
-
-    return {
-      ...empty,
-      hits: result.items.map(toHit),
-      nbHits: result.nextCursor !== undefined ? shown + hitsPerPage : shown,
-      nbPages: result.nextCursor !== undefined ? page + 2 : page + 1,
-      processingTimeMS: result.latencyMs,
-      exhaustiveNbHits: false,
-      userData: result.correctedQuery ? [{ correctedQuery: result.correctedQuery }] : undefined,
-    };
+    const page = await fetchPage({
+      query,
+      filters,
+      hitsPerPage,
+      page: params.page,
+      search,
+      toHit,
+    });
+    return { ...empty, ...page };
   };
 }
 

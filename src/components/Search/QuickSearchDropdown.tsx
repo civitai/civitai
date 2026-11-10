@@ -1,8 +1,10 @@
 import type { AutocompleteProps } from '@mantine/core';
 import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
+import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -50,10 +52,49 @@ import { searchHitName } from '~/shared/utils/model-sfw-face';
 // instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
 // banner) — the header quick-search just shows nothing during a blip.
 const meilisearch = withUserHydration(
+  createResilientSearchClient(createInstantMeiliSearch({ primaryKey: 'id' }))
+);
+// The semantic search is flag-protected on the server: without `imageSearch` it rejects, and the
+// resilient wrapper turns that into an empty dropdown. Images go to Meili for everyone else.
+const semanticMeilisearch = withUserHydration(
   createResilientSearchClient(
-    withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
+    withSemanticArticleSearch(
+      withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
+    )
   )
 );
+
+// Caps the option list's scroll area at the room left in the window, so its last row stays
+// reachable. Mantine's `size: true` would cap the outer dropdown instead and clip the scroll area.
+// Cleared on close: Combobox keeps the closed dropdown mounted (display: none) and reuses it, and
+// `flip` measures it at its current height, so a stale small value would keep it cramped.
+const MAX_DROPDOWN_HEIGHT = 300;
+const AVAILABLE_HEIGHT_VAR = '--quick-search-available-height';
+const viewportMiddlewares = (floatingRef: React.MutableRefObject<HTMLElement | null>) => ({
+  flip: true,
+  shift: true,
+  size: {
+    padding: 8,
+    apply({
+      availableHeight,
+      elements,
+    }: {
+      availableHeight: number;
+      elements: { floating: HTMLElement };
+    }) {
+      floatingRef.current = elements.floating;
+      const style = getComputedStyle(elements.floating);
+      const chrome = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce(
+        (sum, key) => sum + (parseFloat(style[key as keyof CSSStyleDeclaration] as string) || 0),
+        0
+      );
+      elements.floating.style.setProperty(
+        AVAILABLE_HEIGHT_VAR,
+        `${Math.max(availableHeight - chrome, 0)}px`
+      );
+    },
+  },
+});
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
 // const useStyles = createStyles((theme) => ({
@@ -146,6 +187,12 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   placeholder?: string;
   disableInitialSearch?: boolean;
   /**
+   * Keeps images on Meilisearch even when semantic image search is on. For a caller whose
+   * `filters` scope images to one owner: the semantic search ignores the `filters` string, so it
+   * would offer everyone's images, and it answers nothing for an empty query.
+   */
+  imagesFromIndex?: boolean;
+  /**
    * The ids currently on offer, whenever that set changes. OPTIONAL and inert by default.
    *
    * Exists so a caller whose selection GRANTS something can screen the candidates against the
@@ -162,6 +209,7 @@ const QuickSearchDropdownInner = ({
   startingIndex,
   disableInitialSearch,
   showIndexSelect = true,
+  imagesFromIndex,
   ...props
 }: QuickSearchDropdownProps) => {
   const features = useFeatureFlags();
@@ -276,7 +324,13 @@ const QuickSearchDropdownInner = ({
         // previous index's parameters: react-instantsearch sets the new index and searches in its
         // render body, before the children that own `filters` have re-rendered.
         key={indexName}
-        searchClient={disableInitialSearch ? searchClient : meilisearch}
+        searchClient={
+          disableInitialSearch
+            ? searchClient
+            : features.imageSearch && !imagesFromIndex
+            ? semanticMeilisearch
+            : meilisearch
+        }
         indexName={indexName}
         future={{ preserveSharedStateOnUnmount: true }}
       >
@@ -320,6 +374,11 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const isSubmittingOptionRef = useRef(false);
   const showSfwFace = useShowsSfwFace();
+  // The dropdown portals at Mantine's popover z-index (300), but a registry dialog stacked on
+  // another sits at 300 + index and would cover it.
+  const dialogZIndex = useDialogContext().zIndex;
+  const floatingRef = useRef<HTMLElement | null>(null);
+  const middlewares = useMemo(() => viewportMiddlewares(floatingRef), []);
 
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
@@ -406,7 +465,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       classNames={classes}
       placeholder={placeholder ?? 'Search Civitai'}
       type="search"
-      maxDropdownHeight={300}
+      maxDropdownHeight={`min(${MAX_DROPDOWN_HEIGHT}px, var(${AVAILABLE_HEIGHT_VAR}, ${MAX_DROPDOWN_HEIGHT}px))`}
       // TODO: Mantine7
       // nothingFound={
       //   !hits.length ? (
@@ -456,6 +515,15 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       clearable={query.length > 0}
       loading={loading}
       {...autocompleteProps}
+      comboboxProps={{
+        zIndex: dialogZIndex ? dialogZIndex + 1 : undefined,
+        middlewares,
+        ...autocompleteProps.comboboxProps,
+      }}
+      onDropdownClose={() => {
+        floatingRef.current?.style.removeProperty(AVAILABLE_HEIGHT_VAR);
+        autocompleteProps.onDropdownClose?.();
+      }}
     />
   );
 }

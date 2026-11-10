@@ -6,7 +6,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getCollectionByIdRow } from '@civitai/db-queries/hot-reads-10';
 import { Kysely, PostgresDialect, type CompiledQuery } from 'kysely';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import {
   compiledRelations,
@@ -395,13 +395,15 @@ describe.skipIf(!parityUrl)('hot reads 10: Kysely returns exactly what Prisma re
   it('one statement where Prisma issues one per relation', async () => {
     prismaStatements.length = 0;
     await readCollectionByIdViaPrisma(prisma, C_FULL);
-    const prismaCount = prismaStatements.length;
     kyselyStatements.length = 0;
     await readCollectionByIdViaKysely(logged, C_FULL);
     expect(kyselyStatements).toHaveLength(1);
+    // Prisma's query events lag the awaited read (8 of 10 seen at once): wait for them, then count.
+    await vi.waitFor(() => expect(prismaStatements.length).toBeGreaterThanOrEqual(10));
+    await new Promise((done) => setTimeout(done, 50));
     // The collection, its cover image, the cover's tags and their tags, the collection's tags and
     // their tags, the owner, the owner's picture, and the owner's cosmetics and their cosmetics.
-    expect(prismaCount, prismaStatements.join('\n')).toBe(10);
+    expect(prismaStatements.length, prismaStatements.join('\n')).toBe(10);
   });
 
   // "TagsOnImageDetails" is a VIEW. It is a per-row projection (no GROUP BY, no UNION), so Postgres

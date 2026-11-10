@@ -30,6 +30,9 @@ export const L1_CACHE_BYTE_BUDGETS = {
   // tagCache (basic-tags) — { id, name, type, nsfwLevel, unlisted? }; tiny values,
   // sized to hold the hot tag catalog for a near-100% feed hit ratio.
   basicTags: 20 * MB,
+  // cosmeticCache (cosmetics2) — { id, name, type, data, source, flags } per cosmetic, the
+  // catalog every avatar, badge and sticker lookup reads. Only used while its switch is on.
+  cosmetics: 2 * MB,
 } as const;
 
 /**
