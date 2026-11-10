@@ -102,8 +102,5 @@ Each push runs the whole review again, so don't push just to see a round go gree
 
 ## Related
 
-- `civitai-review`: the same lanes, run locally. When the `hq` CLI is signed in it records every lane
-  it runs, opening a draft PR first if there is none, and records the intent (step 1) if it is
-  missing. When it recorded a lane exactly (same head, lane prompt and model, complete), the hosted
-  review uses that record instead of running the lane again. Correctness always runs hosted.
-  `svelte-review` runs are not recorded or imported.
+- `civitai-review`: the same lanes, run locally. When and how it records them for this review to
+  import is its step 0 and step 3a.

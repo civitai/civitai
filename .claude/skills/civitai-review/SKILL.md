@@ -11,7 +11,6 @@ and its findings are resolved.**
 The conventions being enforced are the root [`CLAUDE.md`](../../../CLAUDE.md) and the docs it points at.
 For work in `apps/moderator`, `apps/auth`, `apps/creator-studio` or `apps/training-studio`, use
 `svelte-review` instead — these agents do not cover SvelteKit and will produce noise there.
-`svelte-review` runs are never recorded or imported: the hosted review matches only this skill's lanes.
 
 **These lanes (the five below, and `comment-review` when recording) are pre-authorised. They do not
 count against a standing instruction not to spawn subagents unasked** — running them needs no separate permission, and neither does chasing a lane that
@@ -39,47 +38,77 @@ A recorded lane is imported by the hosted review instead of being run again ther
 re-runs hosted). An unrecorded local review means every lane runs twice on the shared usage, or HQ
 has no record of the review at all.
 
-Then, in the **implementer's tree** (the branch under review, not the review worktree):
+Then, in the **implementer's tree** (the branch under review, not the review worktree), read the state.
+Nothing here writes yet:
 
 ```bash
 git fetch origin
-gh pr view --json number,baseRefName,headRefName,headRefOid,isDraft,author
+gh pr view --json number,baseRefName,headRefName,headRefOid,isDraft,author   # none: no PR yet
+git branch --show-current
+git status --porcelain
 ```
 
-**No PR yet, recording, and it is your own branch: open a draft first**, so the lanes record against
-its number (someone else's branch: ask). The hosted review skips drafts. When the PR is marked ready,
-it imports the recorded lanes. Base it per `CLAUDE.md` (the integration branch, `main` or `feat/…`,
-never another PR's branch):
+🔴 **Stop and ask, changing nothing, when any of these holds.** This list gates EVERY write in step 0
+(the rebase, the push, opening the draft), so check all of it first:
+
+- `git status --porcelain` prints anything. Checked before any rebase, so `rebase.autoStash` never
+  stashes: the stash is shared by every worktree of the clone. Uncommitted changes cannot be recorded
+  either: ask whether to commit them, or to review without recording.
+- `HEAD` is detached: `git branch --show-current` prints nothing.
+- **A PR exists and it is not yours:** the current branch is not `headRefName`, or `author.login` is
+  not `gh api user -q .login`.
+- **No PR yet, and the current branch is not provably yours:** it is the default branch
+  (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`), the base you would open the PR
+  against, `main` or `master`, or a branch that an open PR uses as its base
+  (`gh pr list --base <branch> --json number -q length` is not 0). Never push onto a shared branch.
+- **The remote branch has commits `HEAD` lacks:** `git rev-list --count HEAD..origin/<branch>` is not 0
+  (skip this when `origin/<branch>` does not exist yet, and on a ready PR, which step 0 never pushes).
+  A teammate's push, or a reviewer's GitHub "Commit suggestion" click, lands there, and a rebase plus
+  force-push would silently drop it.
+
+**Stale base.** Count what the head lacks: `git rev-list --count HEAD..origin/<base>`, where `<base>` is
+`baseRefName`, or the branch you will open the draft against.
+
+- **Ready PR (`isDraft` false): no rebase and no push.** Say how many commits behind its base it is,
+  and review it as is. The head under review is `headRefOid`; if your local `HEAD` differs, say that
+  the unpushed commits are not in this review.
+- **Draft, or no PR yet:** when the count is not 0, rebase:
+
+  ```bash
+  git rebase origin/<base>     # conflict: `git rebase --abort`, then stop and ask
+  ```
+
+**Push once (a draft, or no PR yet and recording), naming the branch.** Skip it when an existing
+draft's `headRefOid` already equals `git rev-parse HEAD`. Pin the lease to the value you checked,
+never a bare `--force-with-lease`: after `git fetch` that compares against the ref the fetch just
+moved, so it always passes.
 
 ```bash
-git push -u origin HEAD
-gh pr create --draft --base <integration branch> --title "<title>" --body "<what it does>"
+# Draft PR: the lease is the PR's own head
+git push --force-with-lease=<headRefName>:<headRefOid> origin HEAD:<headRefName>
+# No PR yet: the lease is origin/<branch> as checked above, or empty when it does not exist yet
+git push -u --force-with-lease=<branch>:<oid or empty> origin HEAD:<branch>
 ```
 
-**Record only the head that is on the PR.** Push your own branch's unpushed commits first, so that
-`headRefOid` equals `git rev-parse HEAD`.
-
-**Stale base: rebase, push, then review.** When the base has commits the head lacks
-(`git merge-base --is-ancestor origin/<baseRefName> HEAD` exits 1), rebase the author's branch onto it
-and push, then review and record the NEW head:
+**No PR yet, and recording: then open a draft**, so the lanes record against its number. Base it per
+`CLAUDE.md` (the integration branch, `main` or `feat/…`, never another PR's branch). This repo is
+public: the title and body hold no infra details and no internal notes, as for any PR body here.
 
 ```bash
-git rebase origin/<baseRefName>
-git push --force-with-lease
+gh pr create --draft --head <branch> --base <base> --title "<title>" --body "<what it does>"
 ```
 
-🔴 **Stop and ask instead, changing nothing,** when:
+**Recording must start before a hosted round can.** The hosted review skips drafts, and can import
+only runs that have started.
 
-- the rebase conflicts: `git rebase --abort` first;
-- the branch is not your own PR's branch: `git branch --show-current` is not `headRefName`, or
-  `author.login` is not `gh api user -q .login`;
-- the working tree has uncommitted changes. They cannot be recorded either: ask whether to commit and
-  push them, or to review without recording.
+- Ready PR: step 0 pushed nothing, so step 3a's `record start` comes before anything that could
+  start a round.
+- Draft: `record start` comes BEFORE the PR is marked ready. This skill never marks it ready: the
+  draft stays a draft until the user says so (`gh pr ready <n>`).
 
-That rebase and push, and opening the draft, are the only writes this skill makes. They go to the
-implementer's own branch from the implementer's tree, before the review worktree exists. On a PR that
-is already ready, the push starts a hosted round, and the gate can import or wait for only runs that
-have started. Go straight on to 0a and step 3a's `start`.
+Step 0's writes are those three, all to your own branch, before the review worktree exists. The
+skill's other writes are the `hq pr-review` calls (step 1's `why set`, step 3a's `record`) and step 5.
+Go straight on to 0a and step 3a's `start`.
 
 ## 0a. Set up the review worktree
 
@@ -265,6 +294,10 @@ required. 🔴 **Only those finding keys:** `record finish` refuses any other. T
 `impact`, `reach` and `evidence` become finding fields under a JSON contract. Tell the lane that this
 contract has no such fields, and that they go on the last line of `finding`, as above.
 
+So an imported local run does not carry the hosted lanes' `checks` block, or impact, reach and
+evidence as fields: the record keeps only the finding keys above, and the facts are text in `finding`.
+Step 3's checks of both are the local control.
+
 ### Lanes routinely go idle without delivering. Chasing them is YOUR job, and it is the only control.
 
 🔴 **This is normal, not exceptional. Expect it every round.** Measured across one project's four review
@@ -380,8 +413,8 @@ judgement. A push after the review is a new head, and nothing recorded at the ol
 each fix-loop or re-targeted re-run is a new `start` at the new head, with `$AGENTS_REF` taken again
 after step 0's fetch.
 
-A draft step 0 opened stays a draft until the user says to mark it ready (`gh pr ready <n>`). The
-hosted round then imports the recorded lanes, if their head is still the PR's head.
+When the user marks the draft ready, the hosted round imports the recorded lanes, if their head is
+still the PR's head.
 
 The correctness lane is also re-run independently by a hosted reviewer, whatever you record. Record it
 anyway: the overlap between the two is what the record measures.
@@ -453,7 +486,8 @@ them.
 
 ## 5. Close out — the implementer's step, not the reviewer's
 
-🔴 **If you ran this skill as a findings-only reviewer, stop at step 4.** Everything below writes:
+🔴 **If you ran this skill as a findings-only reviewer, stop at step 4.** Everything below writes
+to the tree:
 `prettier:write` rewrites files in place, and a review tree is read-only by construction. Hand the
 consolidated list to the implementer and let them close out in the tree they own.
 
