@@ -168,7 +168,7 @@
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
     "@grafana/faro-web-sdk": "2.8.2",
     "@grafana/faro-web-tracing": "2.8.2",
-    "@grpc/grpc-js": "1.13.4",
+    "@grpc/grpc-js": "1.13.6",
     "@headlessui/react": "2.2",
     "@hookform/resolvers": "^5.1.1",
     "@mantine/core": "^7.17.7",
@@ -347,6 +347,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.6",
+    "@electric-sql/pglite-socket": "0.1.6",
     "@faker-js/faker": "^9.0.3",
     "@ladle/react": "^5.1.1",
     "@playwright/test": "^1.57.0",
