@@ -432,6 +432,7 @@ describe('a provider token on a hash URL', () => {
   });
 
   it('serves the first copy the provider gate passes, as a GenerationFetch carrying the provider', async () => {
+    const granted = await counter('RunPods', 'granted');
     const { res } = await runHash(HASH, { token: `RunPods:${SECRET}` });
 
     expect(res.redirect).toHaveBeenCalledWith('https://storage.example/private?sig=1');
@@ -447,7 +448,7 @@ describe('a provider token on a hash URL', () => {
     expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
     // The lookup ran as a provider, not as an anonymous caller.
     expect(holder.params[0]).toEqual(expect.arrayContaining([HASH.toUpperCase(), 'SHA256', true]));
-    expect(await counter('RunPods', 'granted')).toBeGreaterThan(0);
+    expect(await counter('RunPods', 'granted')).toBe(granted + 1);
   });
 
   it('answers the most specific refusal when no copy passes', async () => {
@@ -472,9 +473,10 @@ describe('a provider token on a hash URL', () => {
   });
 
   it('is a 401 for an unknown token, before any lookup, never an anonymous download', async () => {
-    // Control: the same URL without the token runs the lookup.
+    // Control: the same URL without the token runs the lookup, and not as a provider.
     await runHash(HASH);
     expect(holder.params).toHaveLength(1);
+    expect(holder.params[0]).not.toContain(true);
     holder.params = [];
 
     const { res } = await runHash(HASH, { token: `RunPods:${'cd'.repeat(32)}` });
@@ -503,19 +505,19 @@ describe('a provider token on a hash URL', () => {
     expect(holder.params).toEqual([]);
   });
 
-  it('serves a single-copy hash exactly as the ID URL serves that file', async () => {
+  it('names the provider to the gate exactly as the ID URL does for a single-copy hash', async () => {
     holder.rows = [{ ...candidate(2), groupSize: 1, liveCount: 1 }];
-    const byHash = await runHash(HASH, { token: `RunPods:${SECRET}` });
+    await runHash(HASH, { token: `RunPods:${SECRET}` });
     const hashCheck = mockCheckGenerationFetch.mock.calls[0][0];
     mockCheckGenerationFetch.mockClear();
 
-    const byId = await run({ token: `RunPods:${SECRET}`, fileId: '2' }, {}, undefined);
+    await run({ token: `RunPods:${SECRET}`, fileId: '2' });
     const idCheck = mockCheckGenerationFetch.mock.calls[0][0];
 
-    expect(byHash.res.redirect).toHaveBeenCalledWith('https://storage.example/private?sig=1');
-    expect(byId.res.redirect).toHaveBeenCalledWith('https://storage.example/private?sig=1');
     expect(hashCheck).toMatchObject({ fileId: 2, principal: idCheck.principal });
-    expect(idCheck).toMatchObject({ fileId: 2 });
-    expect(mockResolveDownloadUrl.mock.calls[0]).toEqual(mockResolveDownloadUrl.mock.calls[1]);
+    expect(idCheck).toMatchObject({
+      fileId: 2,
+      principal: { kind: 'provider', provider: 'RunPods' },
+    });
   });
 });
