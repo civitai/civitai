@@ -116,6 +116,7 @@ import {
   getPostImageCounts,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
 import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
@@ -1067,10 +1068,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
       });
     }
 
-    return {
+    // One `user` object per creator on the wire (`image-feed-shared-users`, dark): the decoded
+    // response is unchanged, devalue writes each creator once. See `feed-shared-users.ts`.
+    return withSharedFeedUsers({
       nextCursor: cursor,
       items: results,
-    };
+    });
   } catch (error) {
     console.log({ error });
     if (error instanceof TRPCError) throw error;
