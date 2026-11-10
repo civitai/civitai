@@ -92,6 +92,52 @@ describe('assertEmailAllowed', () => {
     expect((caught as TRPCError).code).toBe('BAD_REQUEST');
   });
 
+  describe('accepts only a plain address', () => {
+    it.each([
+      'someone@blocked-plain.test(x).ok.test',
+      'someone@blocked-plain.test .ok.test',
+      '"someone"@blocked-plain.test',
+      'Name <someone@ok.test>',
+      'a@ok.test, b@blocked-plain.test',
+      'someone@blocked-plain.tes\u0000t',
+      'someone@blocked-plain.test\u0001.ok.test',
+      'u@ｍａｉｌｉｎａｔｏｒ.test',
+      'u@mail­inator.test',
+      'u@mail​inator.test',
+      'u@mailinator。test',
+      'u@ⓜailinator.test',
+      'u@bücher.de',
+    ])('rejects %j with the invalid-address error', async (email) => {
+      setBlockedDomains(['blocked-plain.test']);
+
+      const caught = await reject(email);
+
+      expect(caught).toBeInstanceOf(TRPCError);
+      expect((caught as TRPCError).message).toBe('Please provide a valid email address');
+      expect(resolveMx).not.toHaveBeenCalled();
+    });
+
+    it('rejects a plain blocklisted address with the same error as before', async () => {
+      setBlockedDomains(['blocked-plain.test']);
+
+      const caught = await reject('someone@blocked-plain.test');
+
+      expect((caught as TRPCError).message).toBe('Please use a different email address');
+    });
+
+    it.each([
+      'someone@ok.test',
+      'first.last+tag@sub.example.co.uk',
+      'someone@xn--bcher-kva.de',
+      'First.Last@Example.COM',
+      '  someone@ok.test  ',
+    ])('allows %j', async (email) => {
+      setBlockedDomains(['blocked-plain.test']);
+
+      await expect(assertEmailAllowed(email)).resolves.toBeUndefined();
+    });
+  });
+
   it('rejects a blocklisted domain whose LIST ENTRY is mixed case', async () => {
     // The upstream sync writes lowercase, but the same row is hand-edited by moderators. Comparing
     // raw would make one capital letter silently match nothing.

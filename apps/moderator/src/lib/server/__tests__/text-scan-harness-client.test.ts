@@ -596,7 +596,7 @@ describe('quoteTexts', () => {
 
   it('prices texts at concurrency 8 under the given credential, sending prompt overrides only when there are some', async () => {
     callAs.mockResolvedValue({ ok: true, body: { count: 2, quoted: 2, maxCostTotal: 1 } });
-    expect(await quoteTexts('CommentV2', texts(2), undefined, credential)).toEqual({
+    expect(await quoteTexts('CommentV3', texts(2), undefined, credential)).toEqual({
       count: 2,
       quoted: 2,
       maxCostTotal: 1,
@@ -605,11 +605,11 @@ describe('quoteTexts', () => {
     expect(callAs.mock.calls[0][0]).toBe(credential);
     expect(callAs.mock.calls[0][2]).toEqual({
       action: 'quoteTexts',
-      entityType: 'CommentV2',
+      entityType: 'CommentV3',
       texts: texts(2),
       concurrency: 8,
     });
-    await quoteTexts('CommentV2', texts(1), { 'label:scam': 'synthetic draft' }, credential);
+    await quoteTexts('CommentV3', texts(1), { 'label:scam': 'synthetic draft' }, credential);
     expect(callAs.mock.calls[1][2]).toMatchObject({
       promptOverrides: { 'label:scam': 'synthetic draft' },
     });
@@ -617,7 +617,7 @@ describe('quoteTexts', () => {
 
   it('throws LabHarnessError when the harness refuses', async () => {
     callAs.mockResolvedValue({ ok: false, error: 'Text-scan quote returned 400.', status: 400 });
-    await expect(quoteTexts('CommentV2', texts(1), undefined, credential)).rejects.toBeInstanceOf(
+    await expect(quoteTexts('CommentV3', texts(1), undefined, credential)).rejects.toBeInstanceOf(
       LabHarnessError
     );
   });

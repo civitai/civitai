@@ -6,8 +6,8 @@ import type { StoredCommentV3 } from '~/server/services/commentv3/write.service'
 import type * as ReactionService from '~/server/services/reaction.service';
 import type * as Rewards from '~/server/rewards';
 
-// A comment on a surface that writes CommentV3 directly (articles) has no CommentV2 row. The
-// reaction gate read only CommentV2, so every reaction on one answered "No comment with id".
+// The reaction gate reads the comment from CommentV3 alone: a live one reaches the reaction, and a
+// deleted, ToS-hidden or missing one is not found to a member.
 
 const { mockToggleReaction } = vi.hoisted(() => ({ mockToggleReaction: vi.fn() }));
 
@@ -22,7 +22,6 @@ vi.mock('~/server/rewards', async (importOriginal) => ({
 }));
 
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
-import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
 
 const COMMENT_ID = 3869052;
 
@@ -67,12 +66,11 @@ const react = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   mockToggleReaction.mockResolvedValue('created');
-  dbMock.dbWrite.commentV2.findUnique.mockResolvedValue(null as never);
   // The article the comment is on; an unpublished one would gate the section.
   dbMock.dbRead.article.findUnique.mockResolvedValue({ userId: 1, status: 'Published' } as never);
 });
 
-describe('reaction.toggle on a comment that exists only in CommentV3', () => {
+describe('reaction.toggle on a comment', () => {
   it('reaches the reaction for a live article comment', async () => {
     storeV3(v3Row());
     await expect(react()).resolves.toBe('created');
@@ -84,21 +82,10 @@ describe('reaction.toggle on a comment that exists only in CommentV3', () => {
   it.each([
     ['deleted', v3Row({ deletedAt: new Date() })],
     ['hidden for ToS', v3Row({ tosViolation: true })],
-    ['on a surface that does not write CommentV3', v3Row({ entityType: 'model3dReview' })],
-    ['missing from both tables', undefined],
+    ['missing', undefined],
   ])('answers not found when the comment is %s', async (_, row) => {
     storeV3(row);
     await expect(react()).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<TRPCError>);
     expect(mockToggleReaction).not.toHaveBeenCalled();
-  });
-});
-
-describe('isCommentGoneForMembers', () => {
-  it('keeps the CommentV2 answer when that row exists', async () => {
-    storeV3(v3Row({ deletedAt: new Date() }));
-    dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: false } as never);
-    await expect(isCommentGoneForMembers(COMMENT_ID)).resolves.toBe(false);
-    dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: true } as never);
-    await expect(isCommentGoneForMembers(COMMENT_ID)).resolves.toBe(true);
   });
 });

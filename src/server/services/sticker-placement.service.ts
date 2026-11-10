@@ -229,7 +229,7 @@ export type CreateStickerPlacement = {
 /**
  * A placer's optional note travels with the placement it belongs to.
  *
- * Not a `CommentV2` thread: this is one immutable line bought with the
+ * Not a comment: this is one immutable line bought with the
  * placement, and giving it the comment system's identity would give it that
  * system's edit, reply and notification behaviour — none of which anyone asked
  * for, all of which would then need their own answer to "the owner accepted the
