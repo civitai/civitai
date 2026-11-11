@@ -1826,6 +1826,17 @@ export const ingestImage = async ({
     type,
     callbackUrl,
     priority: lowPriority ? 'low' : undefined,
+  }).catch((error: unknown) => {
+    // A song's submit also reads and writes the database. A throw must still stamp the attempt, or the
+    // cron sees a song that was never sent and re-sends it every run without limit.
+    if (type !== MediaType.audio) throw error;
+    return {
+      data: undefined,
+      error,
+      status: undefined,
+      retryAfter: undefined,
+      useImageScanning: false,
+    };
   });
   const lane = useImageScanning ? 'imageScanning' : 'new';
   if (!workflowResponse) {

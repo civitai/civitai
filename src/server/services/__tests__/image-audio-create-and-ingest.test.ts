@@ -83,6 +83,21 @@ describe('ingestImage — audio', () => {
   });
 });
 
+describe('ingestImage — a song whose submit throws', () => {
+  const song = { id: 4242, url: KEY, type: 'audio' as never, width: null, height: null };
+
+  it('still records the attempt, so the cron does not re-send it every run without limit', async () => {
+    mockCreateImageIngestionRequest.mockRejectedValue(new Error('connection reset'));
+
+    const sent = await ingestImage({ image: song });
+
+    expect(sent).toBe(false);
+    const [, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0] as unknown[];
+    expect(values.some((v) => v instanceof Date)).toBe(true);
+    expect(values.some((v) => typeof v === 'string' && v.includes('send-fail'))).toBe(true);
+  });
+});
+
 describe('entity image writes — audio', () => {
   const song = { url: KEY, type: 'audio' } as never;
 
