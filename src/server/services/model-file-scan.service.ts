@@ -28,6 +28,7 @@ import {
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
 } from '~/server/services/orchestrator/orchestrator.service';
+import { SCAN_ONLY_RESCAN_OP } from '~/server/services/orchestrator/model-scan-ops';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
@@ -286,15 +287,9 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   }
 
   if (outcome.pickleScan) {
-    const { unread: reason } = outcome.pickleScan;
-    const unread =
-      LOADABLE_FILE_TYPES.includes(file.type) &&
-      (reason === 'unknown-format' ||
-        (reason === 'nothing-read' && !file.name.toLowerCase().endsWith('.zip')));
-    data.pickleScanResult = unread ? ScanResultCode.Error : outcome.pickleScan.result;
-    data.pickleScanMessage = unread
-      ? PICKLE_NOT_READ_MESSAGE
-      : stripNul(outcome.pickleScan.message);
+    const verdict = pickleVerdictFor(outcome.pickleScan, file);
+    data.pickleScanResult = verdict.result;
+    data.pickleScanMessage = verdict.message;
   }
 
   // Stripped once: SSHS_12 below is derived from this header and lands in a text column too.
@@ -532,6 +527,100 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       ).catch(() => undefined)
     );
 }
+
+function pickleVerdictFor(
+  pickleScan: NonNullable<ScanOutcome['pickleScan']>,
+  file: { type: string; name: string }
+) {
+  const { unread: reason } = pickleScan;
+  const unread =
+    LOADABLE_FILE_TYPES.includes(file.type) &&
+    (reason === 'unknown-format' ||
+      (reason === 'nothing-read' && !file.name.toLowerCase().endsWith('.zip')));
+  return unread
+    ? { result: ScanResultCode.Error, message: PICKLE_NOT_READ_MESSAGE }
+    : { result: pickleScan.result, message: stripNul(pickleScan.message) };
+}
+
+/**
+ * The result of a scan-only rescan: only the pickle verdict is written, the virus verdict only when
+ * it finds something, and nothing acts on it. A Pending result writes nothing, so the file stays
+ * selected for the next run. Every Danger is logged for a moderator to decide.
+ */
+export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> {
+  const { fileId } = outcome;
+  const file = await dbWrite.modelFile.findUnique({
+    where: { id: fileId },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      modelVersionId: true,
+      pickleScanResult: true,
+      virusScanResult: true,
+      hashes: { select: { type: true, hash: true } },
+      modelVersion: { select: { status: true, modelId: true } },
+    },
+  });
+  const log = (type: 'info' | 'warning', fields: Record<string, unknown>) =>
+    logToAxiom({ type, name: 'scan-only-rescan', fileId, ...fields }, 'webhooks').catch(
+      () => undefined
+    );
+  if (!file || file.type === 'Training Data') return void log('warning', { skipped: 'file' });
+
+  const pickle = outcome.pickleScan && pickleVerdictFor(outcome.pickleScan, file);
+  const virusDanger = outcome.virusScan?.result === ScanResultCode.Danger;
+  if (!pickle || pickle.result === ScanResultCode.Pending) {
+    return void log('warning', { kept: file.pickleScanResult, result: pickle?.result ?? null });
+  }
+
+  const data: Prisma.ModelFileUpdateInput = {
+    scannedAt: new Date(),
+    pickleScanResult: pickle.result,
+    pickleScanMessage: pickle.message,
+    rawScanResult: stripNul(outcome.rawScanResult) as Prisma.InputJsonValue,
+  };
+  if (virusDanger) {
+    data.virusScanResult = ScanResultCode.Danger;
+    data.virusScanMessage = stripNul(outcome.virusScan?.message ?? null);
+  }
+  await dbWrite.modelFile.update({ where: { id: fileId }, data });
+
+  const stored = (type: ModelHashType) => file.hashes.find((h) => h.type === type)?.hash;
+  const differs = (type: ModelHashType) => {
+    const next = outcome.hashes?.[type];
+    return !!next && next.toLowerCase() !== stored(type)?.toLowerCase();
+  };
+  const danger = pickle.result === ScanResultCode.Danger || virusDanger;
+  log(danger ? 'warning' : 'info', {
+    modelVersionId: file.modelVersionId,
+    live: LIVE_STATUSES.includes(file.modelVersion.status),
+    before: { pickle: file.pickleScanResult, virus: file.virusScanResult },
+    after: {
+      pickle: pickle.result,
+      virus: virusDanger ? ScanResultCode.Danger : file.virusScanResult,
+    },
+    danger,
+    sha256Changed: differs(ModelHashType.SHA256),
+    autoV2Changed: differs(ModelHashType.AutoV2),
+  });
+
+  const changed =
+    pickle.result !== file.pickleScanResult ||
+    (virusDanger && file.virusScanResult !== ScanResultCode.Danger);
+  if (!changed) return;
+  await deleteFilesForModelVersionCache(file.modelVersionId);
+  await modelsSearchIndex.queueUpdate([
+    { id: file.modelVersion.modelId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+  if (LOADABLE_FILE_TYPES.includes(file.type))
+    await Promise.all([
+      resourceDataCache.bust([file.modelVersionId]),
+      bustOrchestratorModelCache(file.modelVersionId),
+    ]).catch((e) => log('warning', { bust: String(e) }));
+}
+
+const LIVE_STATUSES: ModelStatus[] = [ModelStatus.Published, ModelStatus.Scheduled];
 
 const FAILURE_BUST_TTL_SECONDS = 60 * 60;
 
@@ -1039,7 +1128,9 @@ async function handleScanWorkflow(event: WorkflowEvent) {
     }
   }
 
-  await applyScanOutcome(outcome);
+  await (data.metadata?.op === SCAN_ONLY_RESCAN_OP ? applyScanOnlyOutcome : applyScanOutcome)(
+    outcome
+  );
 
   logToAxiom(
     {

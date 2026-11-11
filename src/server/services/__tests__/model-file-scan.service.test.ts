@@ -1820,6 +1820,72 @@ describe('model-file-scan.service', () => {
       });
     });
 
+    describe('a scan-only rescan', () => {
+      const stored = {
+        id: 1,
+        name: 'model.ckpt',
+        type: 'Model',
+        modelVersionId: 100,
+        pickleScanResult: ScanResultCode.Success,
+        virusScanResult: ScanResultCode.Success,
+        hashes: [{ type: ModelHashType.SHA256, hash: SHA256_FIXTURE }],
+        modelVersion: { status: 'Published', modelId: 200 },
+        url: 's3://k',
+        sizeKB: 4096,
+      };
+      async function rescan(
+        steps: unknown[],
+        metadata: Record<string, unknown> = { op: 'scan-only-rescan' }
+      ) {
+        mockDbWrite.modelFile.findUnique.mockResolvedValue(stored);
+        mockGetWorkflow.mockResolvedValue({
+          data: { metadata: { fileId: 1, ...metadata }, steps },
+        });
+        await processModelFileScanResult(
+          makeReq({ workflowId: 'wf-scan-only', type: 'workflow', status: 'succeeded' })
+        );
+        return mockDbWrite.modelFile.update.mock.calls[0]?.[0]?.data;
+      }
+      const pickle = (output: Record<string, unknown>) => ({ $type: 'modelPickleScan', output });
+      const DANGER = pickle({ status: 'dangerousImportsFound', dangerousImportsFound: true });
+      const CLAM_LIMITS = { $type: 'modelClamScan', output: { status: 'limitsExceeded' } };
+      const HASH = { $type: 'modelHash', output: { sha256: SHA256_FIXTURE } };
+
+      it('writes the pickle verdict and leaves the virus verdict as stored', async () => {
+        const data = await rescan([CLAM_LIMITS, pickle({ status: 'clean' }), HASH]);
+
+        expect(data).toMatchObject({ pickleScanResult: ScanResultCode.Error });
+        expect(data).not.toHaveProperty('virusScanResult');
+      });
+
+      it('writes a virus Danger', async () => {
+        const clam = { $type: 'modelClamScan', output: { status: 'infected', infected: true } };
+        const data = await rescan([clam, pickle({ status: 'clean', scannedFileCount: 1 })]);
+
+        expect(data).toMatchObject({ virusScanResult: ScanResultCode.Danger });
+      });
+
+      it('acts on nothing: no unpublish, hash rebuild or hash checks', async () => {
+        expect(await rescan([DANGER, HASH])).toMatchObject({
+          pickleScanResult: ScanResultCode.Danger,
+        });
+        expect(mockUnpublishModelById).not.toHaveBeenCalled();
+        expect(mockDbWrite.modelFileHash.deleteMany).not.toHaveBeenCalled();
+        expect(mockCheckDuplicateHashOnScan).not.toHaveBeenCalled();
+        expect(findOfficialFileByHash).not.toHaveBeenCalled();
+      });
+
+      it('keeps the stored verdict on a result it cannot read', async () => {
+        expect(await rescan([pickle({ status: 'somethingNew' })])).toBeUndefined();
+      });
+
+      it('runs the full path for a scan the rescan did not submit', async () => {
+        await rescan([DANGER, HASH], {});
+
+        expect(mockDbWrite.modelFileHash.deleteMany).toHaveBeenCalled();
+      });
+    });
+
     it('parses metadata JSON and stores it in headerData', async () => {
       mockGetWorkflow.mockResolvedValue({
         data: {

@@ -1,0 +1,172 @@
+/**
+ * Re-submits to the orchestrator scan every loadable model file whose stored pickle verdict is
+ * Success although the scan read nothing: the legacy scanner's summary says it read no files, or the
+ * orchestrator's step skipped an unrecognised format or could not parse it. The scans are marked
+ * scan-only: their results write only the verdicts (applyScanOnlyOutcome) and trigger nothing else.
+ * A written result replaces `rawScanResult`, so the file leaves the selection; one that came back
+ * Pending, failed, or is still in flight stays in it for the next run.
+ *
+ * Usage:
+ *   pnpm run tsscript scripts/oneoffs/rescan-unread-pickle-files.ts            # dry run
+ *   pnpm run tsscript scripts/oneoffs/rescan-unread-pickle-files.ts --execute --target=production [--limit=500]
+ *
+ * Options:
+ *   --execute       Submit scans. Without it nothing is written or sent.
+ *   --target=T      Required with --execute: production or non-production, and it must match the
+ *                   DATABASE_ENVIRONMENT this run is configured for.
+ *   --limit=N       Submit at most N files this run (default: all selected).
+ *   --concurrency=N Parallel submissions (default 5).
+ *   --file-ids=a,b  Only these files (still subject to the selection).
+ */
+import { Prisma } from '@prisma/client';
+import { dbRead } from '~/server/db/client';
+import { env } from '~/env/server';
+import { resolveDatabaseEnvironment } from '~/env/database-target';
+import {
+  createModelFileScanRequest,
+  ModelFileScanSubmissionError,
+} from '~/server/services/orchestrator/orchestrator.service';
+import { SCAN_ONLY_RESCAN_OP } from '~/server/services/orchestrator/model-scan-ops';
+import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import type { ModelType } from '~/shared/utils/prisma/enums';
+
+const args = process.argv.slice(2);
+const flag = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
+const execute = args.includes('--execute');
+const limit = flag('limit') ? Number(flag('limit')) : Infinity;
+const concurrency = Number(flag('concurrency') ?? 5);
+const fileIds = flag('file-ids')?.split(',').map(Number);
+
+// A submission inside this window is still in flight; submitting again would only double the work.
+const IN_FLIGHT_MS = 24 * 60 * 60 * 1000;
+const PAGE = 1000;
+const RESCAN_TYPES = [...LOADABLE_FILE_TYPES, 'Text Encoder'];
+// Safetensors and GGUF honestly read no pickle; 'null' is a file with no recorded format.
+const PICKLE_CAPABLE_FORMATS = ['PickleTensor', 'pt', 'Diffusers', 'Other', 'null'];
+
+type Row = {
+  id: number;
+  type: string;
+  url: string;
+  sizeKB: number;
+  modelVersionId: number;
+  baseModel: string;
+  modelId: number;
+  modelType: ModelType;
+};
+
+function selectPage(afterId: number) {
+  const inFlightSince = new Date(Date.now() - IN_FLIGHT_MS);
+  return dbRead.$queryRaw<Row[]>`
+    SELECT mf.id, mf.type, mf.url, mf."sizeKB", mv.id AS "modelVersionId", mv."baseModel",
+      m.id AS "modelId", m.type AS "modelType"
+    FROM "ModelFile" mf
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mf.id > ${afterId}
+      AND mf.type IN (${Prisma.join(RESCAN_TYPES)})
+      AND mf."pickleScanResult" = 'Success'
+      AND (
+        (mf."rawScanResult"->>'picklescanOutput' LIKE '%Scanned files: 0%'
+          AND coalesce(mf.metadata->>'format', 'null') IN (${Prisma.join(PICKLE_CAPABLE_FORMATS)}))
+        OR mf."rawScanResult"->'steps'->1->'output'->>'status' IN ('skipped', 'parseError')
+      )
+      AND mf.exists IS NOT FALSE
+      AND (mf."scanRequestedAt" IS NULL OR mf."scanRequestedAt" < ${inFlightSince})
+      ${fileIds?.length ? Prisma.sql`AND mf.id IN (${Prisma.join(fileIds)})` : Prisma.empty}
+    ORDER BY mf.id
+    LIMIT ${PAGE}`;
+}
+
+/** Every reason this run must not submit: results would be faked, or land in another environment. */
+function executeRefusals() {
+  const refusals: string[] = [];
+  const target = flag('target');
+  const database = resolveDatabaseEnvironment();
+  // Outside production without a token, the scan request writes a fake Success instead of scanning.
+  if (!env.ORCHESTRATOR_ACCESS_TOKEN) refusals.push('ORCHESTRATOR_ACCESS_TOKEN is not set');
+  if (target !== 'production' && target !== 'non-production')
+    refusals.push('--target must be production or non-production');
+  if (target !== database) refusals.push(`--target=${target} but the database is ${database}`);
+  const callback = new URL(env.NEXTAUTH_URL);
+  const localCallback = ['localhost', '127.0.0.1'].includes(callback.hostname);
+  if (target === 'production' && localCallback)
+    refusals.push(`results would be delivered to ${callback.origin}, not the production site`);
+  return refusals;
+}
+
+async function main() {
+  if (execute) {
+    const refusals = executeRefusals();
+    if (refusals.length) throw new Error(`Refusing to submit:\n- ${refusals.join('\n- ')}`);
+  }
+
+  const byType = new Map<string, { files: number; kb: number }>();
+  const submitted: number[] = [];
+  const failed: { id: number; reason: string }[] = [];
+  let afterId = 0;
+  let selected = 0;
+
+  while (selected < limit) {
+    const page = await selectPage(afterId);
+    if (!page.length) break;
+    afterId = page[page.length - 1].id;
+    const batch = page.slice(0, Math.max(0, limit - selected));
+    selected += batch.length;
+
+    for (const row of batch) {
+      const t = byType.get(row.type) ?? { files: 0, kb: 0 };
+      byType.set(row.type, { files: t.files + 1, kb: t.kb + row.sizeKB });
+    }
+    if (!execute) continue;
+
+    await limitConcurrency(
+      batch.map((row) => async () => {
+        try {
+          await createModelFileScanRequest({
+            fileId: row.id,
+            modelVersionId: row.modelVersionId,
+            modelId: row.modelId,
+            modelType: row.modelType,
+            baseModel: row.baseModel,
+            url: row.url,
+            priority: 'normal',
+            op: SCAN_ONLY_RESCAN_OP,
+          });
+          submitted.push(row.id);
+        } catch (e) {
+          const reason =
+            e instanceof ModelFileScanSubmissionError ? e.code : (e as Error).message ?? String(e);
+          failed.push({ id: row.id, reason });
+        }
+      }),
+      concurrency
+    );
+    console.log(
+      `submitted through file ${afterId}: ${submitted.length} ok, ${failed.length} failed`
+    );
+  }
+
+  const totalKB = [...byType.values()].reduce((sum, t) => sum + t.kb, 0);
+  console.log(
+    JSON.stringify(
+      {
+        mode: execute ? 'execute' : 'dry-run',
+        selected,
+        totalBytes: Math.round(totalKB * 1024),
+        byType: Object.fromEntries(byType),
+        ...(execute && { submitted: submitted.length, failed }),
+      },
+      null,
+      2
+    )
+  );
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
