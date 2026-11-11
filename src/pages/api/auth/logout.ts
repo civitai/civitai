@@ -19,8 +19,7 @@ import { resolveSelfOrigin } from '~/server/auth/oauth-bridge';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 // Main-app logout for the hub flow. Clears BOTH the hub's civ-token AND the legacy next-auth session cookie
-// (`civitai-token`) — getServerAuthSession's hybrid path falls back to the legacy cookie, so leaving it would
-// keep a legacy-cookie user logged in — plus the orchestrator cookie AND the device cookie (`civ-device`) that
+// (`civitai-token`), which a PR preview still signs in with, plus the orchestrator cookie AND the device cookie (`civ-device`) that
 // gates seamless multi-account switching (HttpOnly, so the client can't clear it; on a shared machine the
 // "switch back without re-login" set would otherwise survive logout). Best-effort revokes the token at the
 // hub, then finishes through the hub's logout. Reached via handleSignOut when the hub is configured. See docs/main-app-auth-cutover.md (B).

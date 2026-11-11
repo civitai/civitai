@@ -20,11 +20,22 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe('decodePreviewSessionCookie outside a preview', () => {
+describe('decodePreviewSessionCookie outside a preview on a scratch database', () => {
   it.each([[undefined], ['false'], ['TRUE'], ['1'], ['']])(
     'returns null when IS_PREVIEW is %s',
     async (value) => {
       vi.stubEnv('IS_PREVIEW', value);
+      vi.stubEnv('DATABASE_ENVIRONMENT', 'non-production');
+      const token = await mintLegacy({ sub: '7', user: { id: 7 } });
+      expect(await decodePreviewSessionCookie(token, SECRET)).toBeNull();
+    }
+  );
+
+  it.each([[undefined], ['production'], ['']])(
+    'returns null on a preview when DATABASE_ENVIRONMENT is %s',
+    async (value) => {
+      vi.stubEnv('IS_PREVIEW', 'true');
+      vi.stubEnv('DATABASE_ENVIRONMENT', value);
       const token = await mintLegacy({ sub: '7', user: { id: 7 } });
       expect(await decodePreviewSessionCookie(token, SECRET)).toBeNull();
     }
@@ -34,6 +45,7 @@ describe('decodePreviewSessionCookie outside a preview', () => {
 describe('decodePreviewSessionCookie on a preview', () => {
   beforeEach(() => {
     vi.stubEnv('IS_PREVIEW', 'true');
+    vi.stubEnv('DATABASE_ENVIRONMENT', 'non-production');
   });
 
   it('round-trips a next-auth-style JWE (dir/A256GCM, hkdf-derived key)', async () => {

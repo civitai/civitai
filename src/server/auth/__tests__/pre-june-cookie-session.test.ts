@@ -110,9 +110,32 @@ describe('getServerAuthSession and the pre-June cookie format', () => {
     expect(session?.user).toMatchObject({ id: USER });
   });
 
-  it('keeps the preview test sign-in when IS_PREVIEW is true', async () => {
-    vi.stubEnv('IS_PREVIEW', 'true');
-    const session = await read({ [legacySessionCookieName()]: await preJuneCookie() });
-    expect(session?.user).toMatchObject({ id: USER });
+  it.each([[undefined], ['production']])(
+    'refuses the old session cookie on a preview when DATABASE_ENVIRONMENT is %s',
+    async (value) => {
+      vi.stubEnv('IS_PREVIEW', 'true');
+      vi.stubEnv('DATABASE_ENVIRONMENT', value);
+      expect(await read({ [legacySessionCookieName()]: await preJuneCookie() })).toBeNull();
+      expect(h.getSessionUserById).not.toHaveBeenCalled();
+    }
+  );
+
+  describe('on a preview with a scratch database', () => {
+    beforeEach(() => {
+      vi.stubEnv('IS_PREVIEW', 'true');
+      vi.stubEnv('DATABASE_ENVIRONMENT', 'non-production');
+    });
+
+    it('keeps the test sign-in, resolving the user from the hub', async () => {
+      const session = await read({ [legacySessionCookieName()]: await preJuneCookie() });
+      expect(session?.user).toMatchObject({ id: USER });
+      expect(h.getSessionUserById).toHaveBeenCalledWith(USER);
+    });
+
+    it('falls back to the embedded user when the hub has no row for it', async () => {
+      h.getSessionUserById.mockResolvedValue(null);
+      const session = await read({ [legacySessionCookieName()]: await preJuneCookie() });
+      expect(session?.user).toEqual({ id: USER, username: 'seven' });
+    });
   });
 });
