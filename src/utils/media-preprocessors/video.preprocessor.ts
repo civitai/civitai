@@ -13,8 +13,7 @@ const hasAudio = (video: any): boolean => {
 const errorMessage =
   'Failed to load video. This may indicate that the file is poorly encoded for use on the web.';
 
-// A seek the browser can't complete fires neither `seeked` nor, always, an error; without a limit
-// the upload's loading state never ends.
+// A stuck seek may fire neither seeked nor error; without this limit the upload's loading state never ends.
 export const SEEK_TIMEOUT_MS = 15000;
 
 function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {

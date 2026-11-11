@@ -2,19 +2,13 @@ import type { FileRejection } from '@mantine/dropzone';
 import { formatBytes } from '~/utils/number-helpers';
 
 type Limits = {
-  /** Extensions shown to the user, e.g. `.mp4`. */
   extensions: string[];
-  /** Set when the dropzone takes video; the video limits are named in the message. */
   video?: { maxSize: number; seconds: number; maxDimension: number };
-  /** Per-file cap the dropzone itself enforces, when it has one. */
   maxSize?: number;
   maxFiles?: number;
 };
 
-/**
- * Mantine routes a file failing `accept` or `maxSize` to `onReject` and never calls `onDrop`, so
- * without a message the file just vanishes. Returns the text for the first rejection.
- */
+/** The message for the first rejection. */
 export function describeMediaRejection(
   rejections: FileRejection[],
   { extensions, video, maxSize, maxFiles }: Limits

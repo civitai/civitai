@@ -10,6 +10,8 @@ import { preprocessVideo, SEEK_TIMEOUT_MS } from '~/utils/media-preprocessors/vi
 const FIXTURES = join(__dirname, '..', '..', 'metadata', '__tests__', 'fixtures', 'video');
 
 /** A `<video>` stand-in: happy-dom never decodes media, so load and seek events are fired by hand. */
+let seekStarted: () => void = () => undefined;
+
 function fakeVideo(seek: 'fires' | 'never' | 'errors' = 'fires') {
   const video = {
     onerror: null as null | (() => void),
@@ -23,6 +25,7 @@ function fakeVideo(seek: 'fires' | 'never' | 'errors' = 'fires') {
       queueMicrotask(() => video.onloadeddata?.());
     },
     set currentTime(_: number) {
+      seekStarted();
       if (seek === 'fires') queueMicrotask(() => video.onseeked?.());
       if (seek === 'errors') queueMicrotask(() => video.onerror?.());
     },
@@ -70,8 +73,10 @@ describe('preprocessVideo', () => {
       seeking('never');
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       try {
-        const result = preprocessVideo(file());
-        const outcome = expect(result).rejects.toMatch(/poorly encoded/);
+        // The seek timer is armed before currentTime is set, so it is pending once the seek starts.
+        const started = new Promise<void>((resolve) => (seekStarted = resolve));
+        const outcome = expect(preprocessVideo(file())).rejects.toMatch(/poorly encoded/);
+        await started;
         await vi.advanceTimersByTimeAsync(SEEK_TIMEOUT_MS + 1);
         await outcome;
       } finally {

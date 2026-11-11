@@ -16,8 +16,6 @@ import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 // eslint-disable-next-line import/first
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 
-// Mantine sends a file failing `accept` to onReject and never to onDrop: with no onReject the file
-// used to disappear without a word.
 describe('MediaDropzone — a file it does not accept', () => {
   test('says which formats and limits it takes, and does not hand the file on', async () => {
     const onDrop = vi.fn();
