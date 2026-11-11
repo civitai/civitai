@@ -61,7 +61,7 @@ export function ReviewCard({
       radius="md"
       p={isShort ? 'sm' : 'md'}
       className={clsx(
-        'relative flex flex-col gap-3 transition-colors hover:bg-gray-0 dark:hover:bg-dark-5',
+        'relative flex w-full flex-col gap-3 transition-colors hover:bg-gray-0 dark:hover:bg-dark-5',
         isShort && 'flex-row items-center'
       )}
       data-testid="model-written-review"
