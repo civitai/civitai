@@ -1,5 +1,5 @@
 import type { NextApiRequest } from 'next';
-import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/comment.schema';
+import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/commentv3.schema';
 import { POST_CREATE_RATE_LIMIT_KEY } from '~/server/schema/post.schema';
 import { calendarWindow, usageLimitCounters } from '~/server/services/usage-limit-counters';
 import {

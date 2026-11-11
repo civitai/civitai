@@ -2640,40 +2640,10 @@ export type ComicReferenceImage = {
   position: Generated<number>;
   createdAt: Generated<Timestamp>;
 };
-export type Comment = {
-  id: Generated<number>;
-  content: string;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-  nsfw: Generated<boolean>;
-  tosViolation: Generated<boolean>;
-  parentId: number | null;
-  userId: number;
-  modelId: number;
-  locked: Generated<boolean | null>;
-  hidden: Generated<boolean | null>;
-  pinnedAt: Timestamp | null;
-  /**
-   * No longer set; only the reverse copy reads it. Kept until a migration drops it.
-   */
-  removedByAuthor: Generated<boolean>;
-};
 export type CommentMute = {
   userId: number;
   commentId: number;
   mutedAt: Generated<Timestamp>;
-};
-export type CommentReaction = {
-  id: Generated<number>;
-  commentId: number;
-  userId: number;
-  reaction: ReviewReactions;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-};
-export type CommentReport = {
-  commentId: number;
-  reportId: number;
 };
 export type CommentTopic = {
   entityType: CommentEntityType;
@@ -2686,32 +2656,6 @@ export type CommentTopicMute = {
   entityType: CommentEntityType;
   entityId: number;
   mutedAt: Generated<Timestamp>;
-};
-export type CommentV2 = {
-  id: Generated<number>;
-  content: string;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-  nsfw: Generated<boolean>;
-  tosViolation: Generated<boolean>;
-  userId: number;
-  threadId: number;
-  metadata: unknown | null;
-  hidden: Generated<boolean | null>;
-  pinnedAt: Timestamp | null;
-  reactionCount: Generated<number>;
-};
-export type CommentV2Reaction = {
-  id: Generated<number>;
-  commentId: number;
-  userId: number;
-  reaction: ReviewReactions;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-};
-export type CommentV2Report = {
-  commentV2Id: number;
-  reportId: number;
 };
 export type CommentV3 = {
   id: Generated<number>;
@@ -2732,7 +2676,6 @@ export type CommentV3 = {
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;
   legacyV1Id: number | null;
-  removedByAuthor: Generated<boolean>;
 };
 export type CommentV3Reaction = {
   id: Generated<number>;
@@ -6066,38 +6009,6 @@ export type TextScanPrompt = {
   createdById: number | null;
   createdAt: Generated<Timestamp>;
 };
-export type Thread = {
-  id: Generated<number>;
-  locked: Generated<boolean>;
-  parentThreadId: number | null;
-  rootThreadId: number | null;
-  questionId: number | null;
-  answerId: number | null;
-  imageId: number | null;
-  postId: number | null;
-  reviewId: number | null;
-  commentId: number | null;
-  modelId: number | null;
-  articleId: number | null;
-  bountyId: number | null;
-  bountyEntryId: number | null;
-  clubPostId: number | null;
-  comicProjectId: number | null;
-  comicChapterPosition: number | null;
-  challengeId: number | null;
-  model3dId: number | null;
-  model3dReviewId: number | null;
-  appListingId: number | null;
-  crucibleId: number | null;
-  storylineId: number | null;
-  metadata: Generated<unknown>;
-  commentCount: Generated<number>;
-};
-export type ThreadMute = {
-  userId: number;
-  threadId: number;
-  mutedAt: Generated<Timestamp>;
-};
 export type TipConnection = {
   transactionId: string;
   entityId: number;
@@ -6699,15 +6610,9 @@ export type DB = {
   ComicProjectReport: ComicProjectReport;
   ComicReference: ComicReference;
   ComicReferenceImage: ComicReferenceImage;
-  Comment: Comment;
   CommentMute: CommentMute;
-  CommentReaction: CommentReaction;
-  CommentReport: CommentReport;
   CommentTopic: CommentTopic;
   CommentTopicMute: CommentTopicMute;
-  CommentV2: CommentV2;
-  CommentV2Reaction: CommentV2Reaction;
-  CommentV2Report: CommentV2Report;
   CommentV3: CommentV3;
   CommentV3Reaction: CommentV3Reaction;
   CommentV3Report: CommentV3Report;
@@ -6957,8 +6862,6 @@ export type DB = {
   Technique: Technique;
   TextScanHold: TextScanHold;
   TextScanPrompt: TextScanPrompt;
-  Thread: Thread;
-  ThreadMute: ThreadMute;
   TipConnection: TipConnection;
   Tool: Tool;
   TrustedSpokeDomain: TrustedSpokeDomain;
