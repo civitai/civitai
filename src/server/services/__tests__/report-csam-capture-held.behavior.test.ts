@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
