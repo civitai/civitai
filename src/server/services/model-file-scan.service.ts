@@ -899,12 +899,13 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       }))
     ) {
       // Not confirmed as the object that was scanned: it stays Pending, and the self-heal scans it again.
-      await dbWrite.modelFile.updateMany({
+      const { count: reset } = await dbWrite.modelFile.updateMany({
         where: {
           id: fileId,
           url: trainingDataUrl,
           type: 'Training Data',
-          virusScanResult: { not: ScanResultCode.Danger },
+          // A Danger stands; an Error the self-heal gave up on stays given up.
+          virusScanResult: { notIn: [ScanResultCode.Danger, ScanResultCode.Error] },
         },
         data: {
           virusScanResult: ScanResultCode.Pending,
@@ -912,8 +913,12 @@ async function handleScanWorkflow(event: WorkflowEvent) {
           scanRequestedAt: new Date(),
         },
       });
-      if (data.metadata?.op === HEAL_OP)
-        await uncountUnconfirmedResubmit({ fileId, url: trainingDataUrl });
+      if (reset && data.metadata?.op === HEAL_OP)
+        await uncountUnconfirmedResubmit({
+          fileId,
+          url: trainingDataUrl,
+          workflowId: event.workflowId,
+        });
       logToAxiom(
         {
           type: 'warning',

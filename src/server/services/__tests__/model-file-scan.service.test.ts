@@ -1365,7 +1365,7 @@ describe('model-file-scan.service', () => {
             id: 1,
             url: ZIP,
             type: 'Training Data',
-            virusScanResult: { not: ScanResultCode.Danger },
+            virusScanResult: { notIn: [ScanResultCode.Danger, ScanResultCode.Error] },
           },
           data: expect.objectContaining({
             virusScanResult: ScanResultCode.Pending,
@@ -1404,7 +1404,22 @@ describe('model-file-scan.service', () => {
         await deliver();
 
         expect(mockUncount).toHaveBeenCalledTimes(calls);
-        if (calls) expect(mockUncount).toHaveBeenCalledWith({ fileId: 1, url: ZIP });
+        if (calls)
+          expect(mockUncount).toHaveBeenCalledWith({ fileId: 1, url: ZIP, workflowId: 'wf-1' });
+      });
+
+      it('takes nothing back when the reset wrote nothing (a Danger or a given-up Error stands)', async () => {
+        mockUncount.mockReset();
+        mockTrainingDataObjectUnchanged.mockResolvedValue(false);
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
+        scanned(
+          { scannedFileCount: 12 },
+          { scan: 'training-data-blob', url: ZIP, etag: '"e1"', size: 2048, op: 'self-heal' }
+        );
+
+        await deliver();
+
+        expect(mockUncount).not.toHaveBeenCalled();
       });
 
       it('records a Danger verdict without the check', async () => {

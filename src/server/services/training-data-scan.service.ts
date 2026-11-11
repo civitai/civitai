@@ -345,8 +345,8 @@ const HEAL_MAX_RESUBMITS = 3;
 const HEAL_ATTEMPTS_TTL_SECONDS = 14 * 24 * 60 * 60;
 
 /**
- * Definite "can't read the zip" answers before it is given up on. A transient submit failure never
- * counts; a resubmit whose verdict could not be confirmed counts as accepted.
+ * Definite "can't read the zip" answers before it is given up on, counting a clean verdict that could
+ * not be confirmed against the object. A transient submit failure never counts.
  */
 const HEAL_MAX_UNREADABLE = 24;
 
@@ -358,6 +358,37 @@ const healAttemptsKey = (file: PendingZip) =>
 const healUnreadableKey = (file: PendingZip) =>
   zipKey(REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_UNREADABLE, file);
 
+export const HEAL_OP = 'self-heal';
+
+/**
+ * Moves a self-heal resubmit whose clean verdict could not be confirmed against the object off the
+ * resubmit count and onto the unreadable one: it was answered, but by an object that doesn't hold
+ * still. Once per workflow, so a callback delivered twice is counted once.
+ */
+export async function uncountUnconfirmedResubmit({
+  fileId,
+  url,
+  workflowId,
+}: {
+  fileId: number;
+  url: string;
+  workflowId: string;
+}) {
+  const zip = { id: fileId, url, modelVersionId: 0 };
+  const once = `${REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_TAKEN_BACK}:${workflowId}` as const;
+  try {
+    if ((await sysRedis.incrBy(once, 1)) !== 1) return;
+    await sysRedis.expire(once, HEAL_ATTEMPTS_TTL_SECONDS);
+    const accepted = healAttemptsKey(zip);
+    if ((await sysRedis.decrBy(accepted, 1)) < 0) await sysRedis.incrBy(accepted, 1);
+    const unreadable = healUnreadableKey(zip);
+    await sysRedis.incrBy(unreadable, 1);
+    await sysRedis.expire(unreadable, HEAL_ATTEMPTS_TTL_SECONDS);
+  } catch {
+    // An uncounted take-back only brings the give-up one resubmit nearer.
+  }
+}
+
 /**
  * Resubmits Training Data zips that were submitted over an hour ago and still have no verdict,
  * oldest first. A zip that was never submitted is left to the upload paths and the mod requeue.
@@ -365,21 +396,6 @@ const healUnreadableKey = (file: PendingZip) =>
  * `HEAL_MAX_UNREADABLE` definite answers that it can't be read. Any other failed resubmit (an outage)
  * is not counted: the zip comes back once its claim is an hour old.
  */
-export const HEAL_OP = 'self-heal';
-
-/**
- * Takes back a self-heal resubmit whose verdict could not be confirmed against the object (a failed
- * or transient re-check): it was answered, so it is not a resubmit that went unanswered.
- */
-export async function uncountUnconfirmedResubmit({ fileId, url }: { fileId: number; url: string }) {
-  const key = healAttemptsKey({ id: fileId, url, modelVersionId: 0 });
-  try {
-    if ((await sysRedis.decrBy(key, 1)) < 0) await sysRedis.incrBy(key, 1);
-  } catch {
-    // An uncounted take-back only brings the give-up one resubmit nearer.
-  }
-}
-
 export async function healStalledTrainingDataScans() {
   const files = await dbWrite.modelFile.findMany({
     where: {

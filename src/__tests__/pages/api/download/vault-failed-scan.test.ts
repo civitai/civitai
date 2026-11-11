@@ -133,10 +133,14 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
     ],
   ])('judges a deleted file by a live row holding the same bytes: %s', async (_, live, status) => {
     dbMock.dbRead.modelFile.findUnique.mockResolvedValue(null);
-    dbMock.dbRead.modelFile.findFirst.mockResolvedValue(live as never);
+    // A clean sibling first: any row holding the bytes decides, not the first one returned.
+    dbMock.dbRead.modelFile.findMany.mockResolvedValue([
+      { type: 'Model', pickleScanResult: 'Success', virusScanResult: 'Success' },
+      live,
+    ] as never);
     const { promise, res } = run();
     await promise;
-    expect(dbMock.dbRead.modelFile.findFirst).toHaveBeenCalledWith(
+    expect(dbMock.dbRead.modelFile.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { url: 'files/model.safetensors' } })
     );
     expect(res.status).toHaveBeenCalledWith(status);
@@ -152,7 +156,7 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
       files: [{ id: 1, url: 'files/data.zip', displayName: 'Training Data' }],
     });
     dbMock.dbRead.modelFile.findUnique.mockResolvedValue(null);
-    dbMock.dbRead.modelFile.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
     const { promise, res } = run();
     await promise;
     expect(res.status).toHaveBeenCalledWith(404);
@@ -161,7 +165,7 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
 
   it('still serves a model file whose version was deleted', async () => {
     dbMock.dbRead.modelFile.findUnique.mockResolvedValue(null);
-    dbMock.dbRead.modelFile.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
     const { promise, res } = run();
     await promise;
     expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');

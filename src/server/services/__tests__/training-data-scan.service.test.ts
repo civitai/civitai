@@ -485,7 +485,11 @@ describe('healStalledTrainingDataScans', () => {
         await healStalledTrainingDataScans();
         expect(h.submitWorkflow.mock.calls[run][0].body.metadata.op).toBe('self-heal');
         // The verdict's re-check failed: the webhook takes the resubmit back.
-        await uncountUnconfirmedResubmit({ fileId: stalled.id, url: stalled.url });
+        await uncountUnconfirmedResubmit({
+          fileId: stalled.id,
+          url: stalled.url,
+          workflowId: `wf-${run}`,
+        });
       }
 
       expect(gaveUp()).toBe(false);
@@ -493,8 +497,43 @@ describe('healStalledTrainingDataScans', () => {
     });
 
     it('takes back no more than it counted', async () => {
-      await uncountUnconfirmedResubmit({ fileId: stalled.id, url: stalled.url });
+      await uncountUnconfirmedResubmit({
+        fileId: stalled.id,
+        url: stalled.url,
+        workflowId: 'wf-x',
+      });
       for (let run = 0; run < 3; run++) await healStalledTrainingDataScans();
+      await healStalledTrainingDataScans();
+
+      expect(gaveUp()).toBe(true);
+    });
+
+    it('takes a workflow back once, however often its callback comes', async () => {
+      for (let run = 0; run < 2; run++) await healStalledTrainingDataScans();
+      for (let i = 0; i < 3; i++)
+        await uncountUnconfirmedResubmit({
+          fileId: stalled.id,
+          url: stalled.url,
+          workflowId: 'wf-0',
+        });
+      for (let run = 0; run < 2; run++) await healStalledTrainingDataScans();
+      expect(gaveUp()).toBe(false);
+      await healStalledTrainingDataScans();
+
+      // 2 accepted, 1 taken back, 2 more accepted: the next claim reaches the cap of 3.
+      expect(gaveUp()).toBe(true);
+    });
+
+    it('a clean scan that never confirms, 24 times, is marked Error', async () => {
+      for (let run = 0; run < 24; run++) {
+        await healStalledTrainingDataScans();
+        await uncountUnconfirmedResubmit({
+          fileId: stalled.id,
+          url: stalled.url,
+          workflowId: `wf-${run}`,
+        });
+      }
+      expect(gaveUp()).toBe(false);
       await healStalledTrainingDataScans();
 
       expect(gaveUp()).toBe(true);
