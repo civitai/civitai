@@ -536,8 +536,8 @@ function perReviewCapUsd(env: { AGENT_REVIEW_COST_CAP_USD: string }): number {
  * refused; a moderator can still start one by hand. Never throws.
  */
 export type AgentAutostartDeps = {
-  autostartOn: () => Promise<boolean>;
-  agentReviewOn: () => Promise<boolean>;
+  /** The shared switch pair, `isAgentReviewAutomationEnabled`. */
+  automationOn: () => Promise<boolean>;
   startAgentReview: (args: { publishRequestId: string; modUserId: null }) => Promise<unknown>;
 };
 
@@ -548,20 +548,15 @@ export async function maybeAutoStartAgentReview(
 ): Promise<AgentReviewAutostartOutcome> {
   try {
     const d: AgentAutostartDeps = {
-      autostartOn: async () =>
-        (
-          await import('~/server/services/app-blocks-flag')
-        ).isAppBlocksAgenticReviewAutostartEnabled(),
-      agentReviewOn: async () =>
-        (await import('~/server/services/app-blocks-flag')).isAppBlocksAgenticReviewEnabled(),
+      automationOn: async () =>
+        (await import('~/server/services/app-blocks-flag')).isAgentReviewAutomationEnabled(),
       startAgentReview: async (args) =>
         (await import('./agent-review.service')).startAgentReview(args),
       ...deps,
     };
     // Both: the autostart flag AND the agent-review feature flag's base value. While agent review
     // is dark (base off) no pod is provisioned automatically, whatever the autostart flag says.
-    if (!(await d.autostartOn())) return 'disabled';
-    if (!(await d.agentReviewOn())) return 'disabled';
+    if (!(await d.automationOn())) return 'disabled';
 
     const [{ dbRead }, { env }] = await Promise.all([
       import('~/server/db/client'),

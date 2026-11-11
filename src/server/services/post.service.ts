@@ -2263,7 +2263,7 @@ export const getPostContestCollectionDetails = async ({
 
   const collection = await getCollectionById({
     input: { id: post.collectionId },
-    viewer: { id: userId, isModerator },
+    viewer: userId ? { id: userId, isModerator } : undefined,
   });
 
   if (!collection || collection?.mode !== CollectionMode?.Contest)

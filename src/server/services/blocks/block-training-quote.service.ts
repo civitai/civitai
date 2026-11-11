@@ -19,6 +19,7 @@ import { buildAiToolkitTrainingStep } from '~/server/services/orchestrator/train
 import {
   getTrainingFields,
   isAiToolkitEnabled,
+  trainingRolloutRefusal,
   isInvalidAiToolkit,
   trainingBaseModelTypesImage,
   trainingModelInfo,
@@ -197,6 +198,11 @@ export function resolveBlockTrainingRun(input: {
   if (!isAiToolkitEnabled(info.type, features)) {
     refuse('AI Toolkit training is not currently enabled for this base model.');
   }
+  const rolloutRefusal = trainingRolloutRefusal(
+    { types: [info.type], ecosystem: params.ecosystem },
+    features
+  );
+  if (rolloutRefusal) refuse(rolloutRefusal);
   if (params.continueFrom !== undefined) {
     refuse('continuing from a checkpoint is not supported for app training');
   }

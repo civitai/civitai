@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { freshPglite } from '../../../test/pglite';
 import { DEFERRED_BLOCK_EFFECT_TABLE_SQL } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
@@ -67,6 +68,7 @@ const { acceptImage, blockImage, dismissFromCsamQueue, dismissUserFromCsamQueue 
   '../image-moderation.service'
 );
 const { clearUserCsamFlags } = await import('../csam-flag-clear');
+const { DEFERRED_NOTICE_LOG } = await import('../deferred-block-effects');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -225,6 +227,26 @@ describe('dismissing it from the review queue', () => {
     expect(notices()[0].reason).not.toEqual('');
     expect(actioned()).toEqual([{ id: report(FLAGGED), noRewardFor: [OWNER] }]);
     expect(await deferredRows()).toEqual([]);
+  });
+
+  it('sends no notice for a feedback page capture, and still actions its reports', async () => {
+    const CAPTURE = 73;
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "nsfwLevel") VALUES
+        ($1, ${FEEDBACK_CAPTURE_OWNER_ID}, 'csam', 'Scanned', 4)`,
+      [CAPTURE]
+    );
+    await db.exec(`
+      INSERT INTO "Report" ("id", "status") VALUES (${report(CAPTURE)}, 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${CAPTURE}, ${report(CAPTURE)});
+    `);
+    await block(CAPTURE, 'realPerson');
+    expect(await dismiss(CAPTURE)).toEqual({ ok: true });
+
+    expect(notices()).toEqual([]);
+    expect(logged(DEFERRED_NOTICE_LOG.skipped)).toEqual([CAPTURE]);
+    expect(logged(DEFERRED_NOTICE_LOG.failed)).toEqual([]);
+    expect(actioned().map((a) => a.id)).toEqual([report(CAPTURE)]);
   });
 
   it('logs the firing before the send and the send after it', async () => {

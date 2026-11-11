@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { freshPglite } from '../../../test/pglite';
 import { DEFERRED_BLOCK_EFFECT_TABLE_SQL } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
@@ -453,6 +454,29 @@ describe('dismissUserFromCsamQueue', () => {
         `SELECT "entityId" FROM "ModActivity" WHERE activity = 'dismissFromCsamQueue' ORDER BY 1`
       )
     ).rows.map((r) => r.entityId);
+
+  it('refuses the feedback capture account: its captures are dismissed one at a time', async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+        VALUES (58, ${FEEDBACK_CAPTURE_OWNER_ID}, 'csam', 'moderated', 'Blocked', 32);
+    `);
+    const version = (
+      await removedNotDismissed(kysely(), { table: true, writable: true })
+        .select(imagesVersion('i').as('v'))
+        .where('i.userId', '=', FEEDBACK_CAPTURE_OWNER_ID)
+        .executeTakeFirstOrThrow()
+    ).v;
+
+    expect(
+      await dismissUserFromCsamQueue({
+        userId: FEEDBACK_CAPTURE_OWNER_ID,
+        expectedCount: 1,
+        moderatorId: 2,
+        version,
+      })
+    ).toEqual({ ok: false, reason: 'capture' });
+    expect(await dismissedIds()).toEqual([57]);
+  });
 
   it('dismisses every removed image not yet dismissed and keeps every flag', async () => {
     expect(await dismissUser(2)).toEqual({

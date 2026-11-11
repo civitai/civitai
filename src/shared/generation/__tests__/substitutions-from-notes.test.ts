@@ -5,6 +5,7 @@ import { ecosystems } from '~/shared/constants/basemodel.constants';
 import { getWorkflowsForEcosystem } from '../config/workflows';
 import { substitutionsFromNotes } from '../model-substitution';
 import type { GenerationCtx } from '../context';
+import { ECOSYSTEM_FEATURE_FLAGS } from '~/shared/form-graph/generation/ecosystem-gates';
 
 const UNRECOGNIZED_ID = 987654321;
 
@@ -12,7 +13,8 @@ function ctx(): GenerationCtx {
   return {
     limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
     user: { isMember: false, tier: 'free' },
-    flags: {},
+    // Flag-gated ecosystems are locked pairs too; a hidden one would parse as another ecosystem.
+    flags: Object.fromEntries(Object.values(ECOSYSTEM_FEATURE_FLAGS).map((flag) => [flag, true])),
     selfHostedDisabledEcosystems: [],
     selfHostedMode: 'enabled',
     gateRules: [],
