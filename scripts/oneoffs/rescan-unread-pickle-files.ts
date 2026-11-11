@@ -16,6 +16,7 @@
  *                   DATABASE_ENVIRONMENT this run is configured for.
  *   --limit=N       Submit at most N files this run (default: all selected).
  *   --concurrency=N Parallel submissions (default 5).
+ *   --rate=N        Submit at most N files a minute (default 2).
  *   --file-ids=a,b  Only these files (still subject to the selection).
  */
 import { Prisma } from '@prisma/client';
@@ -36,6 +37,7 @@ const flag = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.spl
 const execute = args.includes('--execute');
 const limit = flag('limit') ? Number(flag('limit')) : Infinity;
 const concurrency = Number(flag('concurrency') ?? 5);
+const perMinute = Number(flag('rate') ?? 2);
 const fileIds = flag('file-ids')?.split(',').map(Number);
 
 // A submission inside this window is still in flight; submitting again would only double the work.
@@ -141,7 +143,10 @@ async function main() {
           failed.push({ id: row.id, reason });
         }
       }),
-      concurrency
+      {
+        limit: concurrency,
+        betweenTasksFn: () => new Promise((resolve) => setTimeout(resolve, 60_000 / perMinute)),
+      }
     );
     console.log(
       `submitted through file ${afterId}: ${submitted.length} ok, ${failed.length} failed`

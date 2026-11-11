@@ -528,13 +528,16 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     );
 }
 
+// Text encoders are opened by loaders outside the generator too.
+const PICKLE_LOADED_FILE_TYPES = [...LOADABLE_FILE_TYPES, 'Text Encoder'];
+
 function pickleVerdictFor(
   pickleScan: NonNullable<ScanOutcome['pickleScan']>,
   file: { type: string; name: string }
 ) {
   const { unread: reason } = pickleScan;
   const unread =
-    LOADABLE_FILE_TYPES.includes(file.type) &&
+    PICKLE_LOADED_FILE_TYPES.includes(file.type) &&
     (reason === 'unknown-format' ||
       (reason === 'nothing-read' && !file.name.toLowerCase().endsWith('.zip')));
   return unread
@@ -574,7 +577,7 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
     return void log('warning', { kept: file.pickleScanResult, result: pickle?.result ?? null });
   }
 
-  const data: Prisma.ModelFileUpdateInput = {
+  const data: Prisma.ModelFileUpdateManyMutationInput = {
     scannedAt: new Date(),
     pickleScanResult: pickle.result,
     pickleScanMessage: pickle.message,
@@ -584,7 +587,12 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
     data.virusScanResult = ScanResultCode.Danger;
     data.virusScanMessage = stripNul(outcome.virusScan?.message ?? null);
   }
-  await dbWrite.modelFile.update({ where: { id: fileId }, data });
+  // A file reset by an edit since the submit is Pending again, and its own scan will judge it.
+  const { count } = await dbWrite.modelFile.updateMany({
+    where: { id: fileId, pickleScanResult: { not: ScanResultCode.Pending } },
+    data,
+  });
+  if (!count) return void log('warning', { skipped: 'reset since submit' });
 
   const stored = (type: ModelHashType) => file.hashes.find((h) => h.type === type)?.hash;
   const differs = (type: ModelHashType) => {

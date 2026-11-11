@@ -1777,6 +1777,7 @@ describe('model-file-scan.service', () => {
         ],
         ['a clean scan with no file count', ckpt, { status: 'clean' }],
         ['a legacy exit 0 that read zero files', ckpt, { exitCode: 0, output: 'Scanned files: 0' }],
+        ['a text encoder', { name: 'te.bin', type: 'Text Encoder' }, unknownFormat],
       ])('does not clear a loadable weight on %s', async (_, file, output) => {
         expect(await scanPickle(file, output)).toEqual({
           result: ScanResultCode.Error,
@@ -1844,7 +1845,7 @@ describe('model-file-scan.service', () => {
         await processModelFileScanResult(
           makeReq({ workflowId: 'wf-scan-only', type: 'workflow', status: 'succeeded' })
         );
-        return mockDbWrite.modelFile.update.mock.calls[0]?.[0]?.data;
+        return mockDbWrite.modelFile.updateMany.mock.calls[0]?.[0]?.data;
       }
       const pickle = (output: Record<string, unknown>) => ({ $type: 'modelPickleScan', output });
       const DANGER = pickle({ status: 'dangerousImportsFound', dangerousImportsFound: true });
@@ -1877,6 +1878,14 @@ describe('model-file-scan.service', () => {
 
       it('keeps the stored verdict on a result it cannot read', async () => {
         expect(await rescan([pickle({ status: 'somethingNew' })])).toBeUndefined();
+      });
+
+      it('writes nothing over a file an edit sent back to the scan since the submit', async () => {
+        await rescan([pickle({ status: 'clean', scannedFileCount: 1 })]);
+
+        expect(mockDbWrite.modelFile.updateMany.mock.calls[0][0].where).toMatchObject({
+          pickleScanResult: { not: ScanResultCode.Pending },
+        });
       });
 
       it('runs the full path for a scan the rescan did not submit', async () => {
