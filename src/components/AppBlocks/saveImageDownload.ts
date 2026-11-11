@@ -553,7 +553,10 @@ export function sanitizeSaveBytesFilename(name: string | undefined | null): stri
 }
 
 /** The classifier {@link prepareSaveBytes} runs; injectable so a test can count its calls. */
-export type SaveBytesClassifier = (bytes: ArrayBuffer, filename?: string) => SaveBytesClassification;
+export type SaveBytesClassifier = (
+  bytes: ArrayBuffer,
+  filename?: string
+) => SaveBytesClassification;
 
 /** An accepted `bytes` save. A zip also carries what {@link verifySaveBytesContent} must inflate. */
 export type PreparedSaveBytes =
@@ -607,7 +610,9 @@ declare const verifiedSaveBytesBrand: unique symbol;
  */
 export type VerifiedSaveBytes = PreparedSaveBytes & { readonly [verifiedSaveBytesBrand]: true };
 
-export type SaveBytesVerification = { ok: true; save: VerifiedSaveBytes } | { ok: false; error: string };
+export type SaveBytesVerification =
+  | { ok: true; save: VerifiedSaveBytes }
+  | { ok: false; error: string };
 
 /**
  * The asynchronous last step of a `bytes` save, run by the host AFTER {@link processSaveBytes}
@@ -648,7 +653,10 @@ export const SAVE_BYTES_VERIFY_TIMEOUT_ERROR = 'zip verification timed out';
 export async function verifySaveBytesBeforeDownload(
   bytes: ArrayBuffer,
   prepared: PreparedSaveBytes,
-  { deadlineMs = SAVE_BYTES_VERIFY_DEADLINE_MS, signal }: { deadlineMs?: number; signal?: AbortSignal } = {}
+  {
+    deadlineMs = SAVE_BYTES_VERIFY_DEADLINE_MS,
+    signal,
+  }: { deadlineMs?: number; signal?: AbortSignal } = {}
 ): Promise<SaveBytesVerification> {
   const controller = new AbortController();
   const onOuterAbort = () => controller.abort();
@@ -664,7 +672,10 @@ export async function verifySaveBytesBeforeDownload(
   const running = verifySaveBytesContent(bytes, prepared, controller.signal).catch(
     (err: unknown): SaveBytesVerification => {
       if (err instanceof SaveZipVerifyAbortedError) {
-        return { ok: false, error: signal?.aborted ? SAVE_ZIP_VERIFY_ABORTED_ERROR : SAVE_BYTES_VERIFY_TIMEOUT_ERROR };
+        return {
+          ok: false,
+          error: signal?.aborted ? SAVE_ZIP_VERIFY_ABORTED_ERROR : SAVE_BYTES_VERIFY_TIMEOUT_ERROR,
+        };
       }
       throw err;
     }

@@ -54,7 +54,8 @@ type Entry = {
 function buildZip(entries: readonly Entry[]): ArrayBuffer {
   const parts: number[] = [];
   const u16 = (v: number) => parts.push(v & 0xff, (v >>> 8) & 0xff);
-  const u32 = (v: number) => parts.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff);
+  const u32 = (v: number) =>
+    parts.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff);
   const bytes = (b: Uint8Array) => parts.push(...b);
   const offsets: number[] = [];
   for (const e of entries) {
@@ -139,27 +140,62 @@ const refusal = (zip: ArrayBuffer) => {
 
 describe('host save path refuses what the shared validator must refuse', () => {
   it('POSITIVE CONTROL: the builder baseline is ACCEPTED (stored, with and without a descriptor)', () => {
-    expect(refusal(buildZip([{ name: 'images/001.txt' }, { name: 'images/002.txt', descriptor: true }]))).toBe('ok');
+    expect(
+      refusal(buildZip([{ name: 'images/001.txt' }, { name: 'images/002.txt', descriptor: true }]))
+    ).toBe('ok');
   });
 
   it.each([
     ['path traversal', [{ name: '../evil.txt' }], SAVE_ZIP_TRAVERSAL_ERROR],
     ['an absolute path', [{ name: '/etc/cron.d/x.txt' }], SAVE_ZIP_ABSOLUTE_PATH_ERROR],
-    ['a symlink (Unix mode 0120777)', [{ name: 'link.txt', externalAttrs: (0o120777 << 16) >>> 0 }], SAVE_ZIP_SPECIAL_FILE_ERROR],
-    ['a central name that differs from the local one', [{ name: 'a.txt', localName: 'a.exe' }], SAVE_ZIP_HEADER_MISMATCH_ERROR],
-    ['a zip64 extra field', [{ name: 'a.txt', extra: extraField(0x0001, [0, 0, 0, 0, 0, 0, 0, 0]) }], SAVE_ZIP64_ERROR],
-    ['duplicate names, case-folded', [{ name: 'IMG.txt' }, { name: 'img.TXT' }], SAVE_ZIP_DUPLICATE_NAME_ERROR],
+    [
+      'a symlink (Unix mode 0120777)',
+      [{ name: 'link.txt', externalAttrs: (0o120777 << 16) >>> 0 }],
+      SAVE_ZIP_SPECIAL_FILE_ERROR,
+    ],
+    [
+      'a central name that differs from the local one',
+      [{ name: 'a.txt', localName: 'a.exe' }],
+      SAVE_ZIP_HEADER_MISMATCH_ERROR,
+    ],
+    [
+      'a zip64 extra field',
+      [{ name: 'a.txt', extra: extraField(0x0001, [0, 0, 0, 0, 0, 0, 0, 0]) }],
+      SAVE_ZIP64_ERROR,
+    ],
+    [
+      'duplicate names, case-folded',
+      [{ name: 'IMG.txt' }, { name: 'img.TXT' }],
+      SAVE_ZIP_DUPLICATE_NAME_ERROR,
+    ],
     [
       'a Unicode Path field naming a DIFFERENT path',
-      [{ name: 'a.txt', flags: UTF8, extra: unicodePath('../evil.exe', 'a.txt'), localExtra: unicodePath('../evil.exe', 'a.txt') }],
+      [
+        {
+          name: 'a.txt',
+          flags: UTF8,
+          extra: unicodePath('../evil.exe', 'a.txt'),
+          localExtra: unicodePath('../evil.exe', 'a.txt'),
+        },
+      ],
       SAVE_ZIP_ALTERNATE_PATH_ERROR,
     ],
     [
       'a stored + descriptor entry hiding a local-header signature',
-      [{ name: 'a.txt', descriptor: true, data: new Uint8Array([0x61, 0x50, 0x4b, 0x03, 0x04, 0x62]) }],
+      [
+        {
+          name: 'a.txt',
+          descriptor: true,
+          data: new Uint8Array([0x61, 0x50, 0x4b, 0x03, 0x04, 0x62]),
+        },
+      ],
       SAVE_ZIP_STORED_LOCAL_SIGNATURE_ERROR,
     ],
-    ['an extra field outside the allow-list (0x000d, Unix mode/link)', [{ name: 'a.txt', extra: extraField(0x000d) }], saveZipExtraFieldError(0x000d)],
+    [
+      'an extra field outside the allow-list (0x000d, Unix mode/link)',
+      [{ name: 'a.txt', extra: extraField(0x000d) }],
+      saveZipExtraFieldError(0x000d),
+    ],
   ] as const)('refuses %s', (_name, entries, error) => {
     expect(refusal(buildZip(entries))).toBe(error);
   });
@@ -169,7 +205,8 @@ describe('host save path refuses what the shared validator must refuse', () => {
     zip.file('画像/001.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
     zip.file('画像/001.txt', '猫');
     zip.file('café.json', '{}');
-    const bytes = (await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })).slice().buffer;
+    const bytes = (await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })).slice()
+      .buffer;
     const prepared = prepareSaveBytes({ bytes, filename: 'données.zip' });
     expect(prepared).toMatchObject({ ok: true, type: 'application/zip' });
     if (!prepared.ok) return;

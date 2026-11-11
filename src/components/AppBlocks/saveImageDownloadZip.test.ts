@@ -178,7 +178,10 @@ describe('verifySaveBytesContent — the inflate step before the download', () =
     expect(ok).toMatchObject({ ok: true, type: 'application/zip' });
     if (!ok.ok) return;
     expect(ok.type === 'application/zip' && ok.deflated.length).toBe(3);
-    expect(await verifySaveBytesContent(dataset, ok)).toMatchObject({ ok: true, save: { type: 'application/zip' } });
+    expect(await verifySaveBytesContent(dataset, ok)).toMatchObject({
+      ok: true,
+      save: { type: 'application/zip' },
+    });
 
     // 5 MB of zeros deflates to a few KB. Declare a size that keeps the ratio under 100x so only the inflate step can catch it.
     const real = await jszip({ 'zeros.txt': new Uint8Array(5 * MB + 3) }, 'DEFLATE');
@@ -186,7 +189,10 @@ describe('verifySaveBytesContent — the inflate step before the download', () =
     const prepared = prepareSaveBytes({ bytes: lie, filename: 'd.zip' });
     expect(prepared).toMatchObject({ ok: true, type: 'application/zip' });
     if (!prepared.ok) return;
-    expect(await verifySaveBytesContent(lie, prepared)).toEqual({ ok: false, error: SAVE_ZIP_INFLATE_ERROR });
+    expect(await verifySaveBytesContent(lie, prepared)).toEqual({
+      ok: false,
+      error: SAVE_ZIP_INFLATE_ERROR,
+    });
   });
 
   it('is a no-op for non-zip types', async () => {

@@ -475,7 +475,8 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       expect(r.payload).toEqual({ requestId: 'rq_save_bytes', ok: true });
     });
     expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
-    const [savedBytes, { type: savedType, filename: savedName }] = mocks.saveBytesDownload.mock.calls[0];
+    const [savedBytes, { type: savedType, filename: savedName }] =
+      mocks.saveBytesDownload.mock.calls[0];
     // toBe, not toEqual: vitest's toEqual treats any two ArrayBuffers as equal.
     expect(savedBytes).toBe(bytes);
     expect([savedType, savedName]).toEqual(['image/png', 'healed.png']);
@@ -532,7 +533,8 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       expect(r.payload).toEqual({ requestId: 'rq_save_zip', ok: true });
     });
     expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
-    const [savedBytes, { type: savedType, filename: savedName }] = mocks.saveBytesDownload.mock.calls[0];
+    const [savedBytes, { type: savedType, filename: savedName }] =
+      mocks.saveBytesDownload.mock.calls[0];
     expect(savedBytes).toBe(bytes);
     expect([savedType, savedName]).toEqual(['application/zip', 'dataset.zip']);
     replies.stop();
@@ -557,7 +559,11 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     await vi.waitFor(() => expect(mocks.verifyBeforeDownload).toHaveBeenCalledTimes(1));
     postFromBlock('SAVE_IMAGE', { requestId: 'rq_zip_2', bytes: second, filename: 'two.zip' });
     await vi.waitFor(() => {
-      const r = replies.received.find((m) => m.type === 'SAVE_IMAGE_RESULT' && (m.payload as { requestId?: string }).requestId === 'rq_zip_2');
+      const r = replies.received.find(
+        (m) =>
+          m.type === 'SAVE_IMAGE_RESULT' &&
+          (m.payload as { requestId?: string }).requestId === 'rq_zip_2'
+      );
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_zip_2', ok: false, error: 'busy' });
     });
@@ -568,14 +574,22 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       filename: 'n.txt',
     });
     await vi.waitFor(() => {
-      const r = replies.received.find((m) => m.type === 'SAVE_IMAGE_RESULT' && (m.payload as { requestId?: string }).requestId === 'rq_text');
+      const r = replies.received.find(
+        (m) =>
+          m.type === 'SAVE_IMAGE_RESULT' &&
+          (m.payload as { requestId?: string }).requestId === 'rq_text'
+      );
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_text', ok: true });
     });
     // Release the first: it downloads, and the slot is free again for a later zip.
     release?.();
     await vi.waitFor(() => {
-      const r = replies.received.find((m) => m.type === 'SAVE_IMAGE_RESULT' && (m.payload as { requestId?: string }).requestId === 'rq_zip_1');
+      const r = replies.received.find(
+        (m) =>
+          m.type === 'SAVE_IMAGE_RESULT' &&
+          (m.payload as { requestId?: string }).requestId === 'rq_zip_1'
+      );
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_zip_1', ok: true });
     });
@@ -719,7 +733,8 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
 
       expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
-      const [savedBytes, { type: savedType, filename: savedName }] = mocks.saveBytesDownload.mock.calls[0];
+      const [savedBytes, { type: savedType, filename: savedName }] =
+        mocks.saveBytesDownload.mock.calls[0];
       expect(savedBytes).toBeInstanceOf(ArrayBuffer);
       expect(Array.from(new Uint8Array(savedBytes as ArrayBuffer))).toEqual([
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
