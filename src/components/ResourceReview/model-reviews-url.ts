@@ -15,8 +15,8 @@ function toPositiveInt(value: QueryValue) {
 }
 
 /**
- * The canonical URL of a model's reviews listing. The version filter is the only query param that
- * changes what the page lists, so it is the only one kept — and only when a version is selected.
+ * The canonical URL of a model's reviews listing. The version is the only query param that
+ * changes what the page lists, so it is the only one kept.
  */
 export function getModelReviewsCanonical(modelId: number, modelVersionId?: number | null) {
   const base = `/models/${modelId}/reviews`;
@@ -65,6 +65,21 @@ export function getModelReviewsRedirect(modelId: number, query: Query): string |
 
   if (!isDuplicate) return null;
   return getModelReviewsCanonical(modelId, modelVersionId);
+}
+
+/**
+ * Where to send a request that names no (usable) version: the listing of `versionId`, keeping the
+ * filter. The page is dropped, as it counted another version's reviews. Temporary by nature: the
+ * default version changes as versions publish.
+ */
+export function getModelReviewsVersionRedirect(
+  modelId: number,
+  query: Query,
+  versionId: number
+): string {
+  const filter = parseReviewsFilter(query.filter);
+  const base = getModelReviewsCanonical(modelId, versionId);
+  return filter ? `${base}&filter=${filter}` : base;
 }
 
 export type ReviewsFilter = 'images' | 'up' | 'down';

@@ -1,6 +1,7 @@
 import { keepPreviousData } from '@tanstack/react-query';
 import {
   Alert,
+  Button,
   Card,
   Center,
   Container,
@@ -17,7 +18,12 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconLock, IconMessageCircleOff } from '@tabler/icons-react';
+import {
+  IconChevronLeft,
+  IconChevronRight,
+  IconLock,
+  IconMessageCircleOff,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -33,6 +39,7 @@ import {
 import {
   getModelReviewsCanonical,
   getModelReviewsRedirect,
+  getModelReviewsVersionRedirect,
   getReviewsFilterInput,
   parseReviewsFilter,
 } from '~/components/ResourceReview/model-reviews-url';
@@ -41,10 +48,8 @@ import { getAverageRating, getRatingCount } from '~/components/ResourceReview/re
 import { ReviewCardWithImages } from '~/components/ResourceReview/ReviewCard/ReviewCardWithImages';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  getResourceReviewPagedSchema,
-  REVIEW_HAS_IMAGES_COUNT_CAP,
-} from '~/server/schema/resourceReview.schema';
+import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
+import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -82,6 +87,22 @@ export const getServerSideProps = createServerSideProps({
     if (!result.success) return { notFound: true };
 
     const { modelId, modelVersionId } = result.data;
+
+    // The list is always one version's: send a request without a usable version to the model
+    // page's default (first published) one.
+    const requested = modelVersionId
+      ? await getDefaultModelVersion({ modelId, modelVersionId }).catch(() => null)
+      : null;
+    if (!modelVersionId || requested?.id !== modelVersionId) {
+      const fallback = await getDefaultModelVersion({ modelId }).catch(() => null);
+      if (!fallback) return { notFound: true };
+      return {
+        redirect: {
+          destination: getModelReviewsVersionRedirect(modelId, ctx.query, fallback.id),
+          permanent: false,
+        },
+      };
+    }
 
     await Promise.all([
       ssg?.resourceReview.getPaged.prefetch(result.data),
@@ -185,8 +206,7 @@ export default function ModelReviews() {
     <Skeleton height={36} />
   ) : !!versions?.length ? (
     <Select
-      placeholder="Showing all versions"
-      // clearable={versions && versions.length > 1}
+      allowDeselect={false}
       data={versions.map((version) => ({ label: version.name, value: version.id.toString() }))}
       value={(router.query.modelVersionId as string) ?? null}
       onChange={handleModelVersionChange}
@@ -235,9 +255,7 @@ export default function ModelReviews() {
     </UserResourceReviewComposite>
   );
 
-  const rank = modelVersionId
-    ? modelDetails?.modelVersions.find((v) => v.id === modelVersionId)?.rank
-    : modelDetails?.rank;
+  const rank = modelDetails?.modelVersions.find((v) => v.id === modelVersionId)?.rank;
   const thumbsUp = rank?.thumbsUpCountAllTime ?? 0;
   const thumbsDown = rank?.thumbsDownCountAllTime ?? 0;
   const reviewTotal = thumbsUp + thumbsDown;
@@ -337,21 +355,37 @@ export default function ModelReviews() {
                     No reviews match this filter.
                   </Text>
                 )}
-                {resourceReviews && resourceReviews.totalItems > REVIEW_HAS_IMAGES_COUNT_CAP && (
-                  <Text size="sm" c="dimmed" ta="center">
-                    Showing the newest {REVIEW_HAS_IMAGES_COUNT_CAP.toLocaleString()} reviews with
-                    images.
-                  </Text>
-                )}
-                {resourceReviews && resourceReviews.totalPages > 1 && (
-                  <Center mt="md">
-                    <Pagination
-                      value={page}
-                      onChange={handlePaginationChange}
-                      total={resourceReviews.totalPages}
-                    />
-                  </Center>
-                )}
+                {resourceReviews && 'hasMore' in resourceReviews
+                  ? (page > 1 || resourceReviews.hasMore) && (
+                      <Group justify="center" mt="md">
+                        <Button
+                          variant="default"
+                          leftSection={<IconChevronLeft size={16} />}
+                          disabled={page <= 1}
+                          onClick={() => handlePaginationChange(page - 1)}
+                        >
+                          Previous
+                        </Button>
+                        <Button
+                          variant="default"
+                          rightSection={<IconChevronRight size={16} />}
+                          disabled={!resourceReviews.hasMore}
+                          onClick={() => handlePaginationChange(page + 1)}
+                        >
+                          Next
+                        </Button>
+                      </Group>
+                    )
+                  : resourceReviews &&
+                    resourceReviews.totalPages > 1 && (
+                      <Center mt="md">
+                        <Pagination
+                          value={page}
+                          onChange={handlePaginationChange}
+                          total={resourceReviews.totalPages}
+                        />
+                      </Center>
+                    )}
               </Stack>
             )}
           </ContainerGrid2.Col>

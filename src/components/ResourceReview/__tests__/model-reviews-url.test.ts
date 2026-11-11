@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getModelReviewsCanonical,
   getModelReviewsRedirect,
+  getModelReviewsVersionRedirect,
   getReviewsFilterInput,
   parseReviewsFilter,
 } from '~/components/ResourceReview/model-reviews-url';
@@ -114,5 +115,25 @@ describe('the reviews page filter param', () => {
     expect(getReviewsFilterInput('up')).toEqual({ recommended: true });
     expect(getReviewsFilterInput('down')).toEqual({ recommended: false });
     expect(getReviewsFilterInput(undefined)).toEqual({});
+  });
+});
+
+describe('getModelReviewsVersionRedirect', () => {
+  it('points a versionless listing at the default version', () => {
+    expect(getModelReviewsVersionRedirect(4201, {}, 130072)).toBe(
+      '/models/4201/reviews?modelVersionId=130072'
+    );
+  });
+
+  it('keeps the filter and drops the page, which belonged to another version', () => {
+    expect(
+      getModelReviewsVersionRedirect(4201, { filter: 'images', page: '4', id: '4201' }, 130072)
+    ).toBe('/models/4201/reviews?modelVersionId=130072&filter=images');
+  });
+
+  it('drops an unrecognised filter', () => {
+    expect(getModelReviewsVersionRedirect(4201, { filter: 'bogus' }, 130072)).toBe(
+      '/models/4201/reviews?modelVersionId=130072'
+    );
   });
 });
