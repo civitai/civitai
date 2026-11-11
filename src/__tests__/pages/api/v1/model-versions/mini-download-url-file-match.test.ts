@@ -41,9 +41,11 @@ const {
   mockGetShouldChargeForResources,
   mockGetFeaturedModels,
   mockIsFlipt,
+  mockRefreshBlobs,
   currentUser,
 } = vi.hoisted(() => ({
   mockIsFlipt: vi.fn(),
+  mockRefreshBlobs: vi.fn(),
   mockQueryRaw: vi.fn(),
   mockResolveCanGenerateForVersions: vi.fn(),
   mockGetShouldChargeForResources: vi.fn(),
@@ -64,6 +66,10 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: mockIsFlipt,
+}));
+
+vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
+  refreshBlobsService: mockRefreshBlobs,
 }));
 
 vi.mock('~/server/services/model.service', () => ({
@@ -1289,5 +1295,87 @@ describe('content-hash download url (download-hash-urls flag)', () => {
     );
 
     expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is signed again', () => {
+  const BLOB_ID = '7FB5XC5NQWH0NCJRB6C5XVSY0.safetensors';
+  const blobUrl = (exp: string) =>
+    `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=stored&exp=${exp}`;
+  const EXPIRED = blobUrl('2026-11-04T11:06:26Z');
+  const FRESH = `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=fresh&exp=2099-01-01T00:00:00Z`;
+  /** The archived Training Data placeholder a model scan names by id: its url is the dataset zip. */
+  const placeholder = (modelUrl: string) => ({
+    ...TRAINING_FILE,
+    id: 3350379,
+    type: 'Training Data',
+    url: 'https://backblaze.example/training-images.zip',
+    name: 'training_data.zip',
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: { version: 2, epochs: [{ epochNumber: 5, modelUrl }] },
+    },
+  });
+  // Call 3 = the listing check's read of the Training Data row.
+  const runPlaceholder = (modelUrl: string) => {
+    mockQueryRaw.mockReset();
+    const pending = run(
+      [SAFETENSOR, placeholder(modelUrl)],
+      { modelFileId: '3350379' },
+      { availability: 'Private' }
+    );
+    mockQueryRaw.mockResolvedValueOnce([
+      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+    ]);
+    return pending;
+  };
+
+  beforeEach(() => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'refreshed', url: FRESH }]);
+  });
+
+  it('serves a freshly signed url, never the stored one, for the file a scan names', async () => {
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(mockRefreshBlobs).toHaveBeenCalledWith(expect.objectContaining({ blobIds: [BLOB_ID] }));
+  });
+
+  it('signs again a stored url that has not expired yet', async () => {
+    const { body } = await runPlaceholder(blobUrl('2099-01-01T00:00:00Z'));
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+  });
+
+  it('keeps the AIR on the blob id, not the signature', async () => {
+    await runPlaceholder(EXPIRED);
+
+    expect(lastAirArgs()).toMatchObject({ source: 'orchestrator', id: 'blob', version: BLOB_ID });
+  });
+
+  it('answers 404 when the orchestrator says the blob is gone or blocked', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone' }]);
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('downloadUrls');
+  });
+
+  it('serves the stored url when the refresh says nothing about the blob', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'unknown' }]);
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EXPIRED]);
+  });
+
+  it('leaves a job-asset epoch url alone, without asking the orchestrator', async () => {
+    const { body } = await run([TRAINING_FILE], {}, { availability: 'Private' });
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
   });
 });
