@@ -303,10 +303,16 @@ export const optionFallback =
     return { value: fallback, reason: 'option_unavailable' };
   };
 
-/** Clamp into [min, max]; a non-finite value falls back (NaN would propagate and refuse). */
+/**
+ * Clamp into [min, max]; a non-finite value falls back (NaN would propagate and refuse).
+ *
+ * `undefined` is left alone: the engine only passes it when the field's default is
+ * `undefined`, i.e. an optional field where unset means something (Tripo's "Auto" face limit).
+ */
 export const clampCorrect =
   ({ min, max, fallback }: { min: number; max: number; fallback: number }) =>
-  (value: number) => {
+  (value: number | undefined) => {
+    if (value === undefined) return undefined;
     const next = Number.isFinite(value) ? Math.min(Math.max(value, min), max) : fallback;
     return next === value ? undefined : { value: next, reason: 'out_of_range' };
   };

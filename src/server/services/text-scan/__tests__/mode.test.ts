@@ -58,12 +58,12 @@ describe('getTextScanMode', () => {
     expect(redisMock.withSysReadDeadline).toHaveBeenCalled();
   });
 
-  it('scans CommentV3 at the CommentV2 rollout until it is given its own', async () => {
+  it('scans CommentV3 on its own rollout, never on a stored CommentV2 one', async () => {
     hash({ CommentV2: '{"shadow":0,"active":100}' });
-    expect(await getTextScanMode('CommentV3', 7)).toBe('active');
-    resetTextScanRolloutCache();
-    hash({ CommentV2: '{"shadow":0,"active":100}', CommentV3: '{"shadow":0,"active":0}' });
     expect(await getTextScanMode('CommentV3', 7)).toBe('off');
+    resetTextScanRolloutCache();
+    hash({ CommentV3: '{"shadow":0,"active":100}' });
+    expect(await getTextScanMode('CommentV3', 7)).toBe('active');
   });
 
   it('is active for every id at active 100, whatever shadow says', async () => {

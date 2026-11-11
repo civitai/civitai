@@ -755,13 +755,14 @@ export const getModelsPagedSimpleHandler = async ({
       name: true,
       nsfw: true,
       meta: true,
-      modelVersions: input.needsReview
-        ? {
-            select: { id: true, name: true, meta: true },
-            where: { meta: { path: ['needsReview'], equals: true } },
-            take: 1,
-          }
-        : false,
+      modelVersions:
+        input.needsReview && ctx.user?.isModerator
+          ? {
+              select: { id: true, name: true, meta: true },
+              where: { meta: { path: ['needsReview'], equals: true } },
+              take: 1,
+            }
+          : false,
     },
   });
 

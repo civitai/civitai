@@ -1,4 +1,5 @@
 import superjson from 'superjson';
+import type { SuperJSONValue } from 'superjson';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fastSuperjsonSerialize } from '~/server/trpc/superjson-fast-serialize';
 
@@ -287,5 +288,213 @@ describe('fastSuperjsonSerialize — the fast path is actually taken', () => {
       delete registry['test-money'];
     }
     expect(usedSuperjson({ price: 'money:3' })).toBe(false);
+  });
+});
+
+describe('fastSuperjsonSerialize — sharedRefs', () => {
+  const SHARED = { sharedRefs: true } as const;
+
+  function expectIdenticalShared(value: unknown) {
+    const expected = superjson.serialize(value as SuperJSONValue);
+    const actual = fastSuperjsonSerialize(value, undefined, SHARED);
+    expect(JSON.stringify(actual)).toBe(JSON.stringify(expected));
+    expect(actual).toStrictEqual(expected);
+  }
+
+  function usedSuperjsonShared(value: unknown): boolean {
+    const spy = vi.spyOn(superjson, 'serialize');
+    try {
+      fastSuperjsonSerialize(value, undefined, SHARED);
+      return spy.mock.calls.length > 0;
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  /** The feed shape: a post's `user` and dates are the same objects as its first image's. */
+  function postsLikePayload() {
+    const cosmetics = [{ cosmetic: { id: 1, name: 'hat' }, data: { url: 'u' } }];
+    const user = { id: 9, username: 'creator', cosmetics, profilePicture: null, image: undefined };
+    const sortAt = new Date('2026-03-04T05:06:07.000Z');
+    const images = [0, 1, 2].map((i) => ({
+      id: 100 + i,
+      user,
+      sortAt,
+      publishedAt: sortAt,
+      createdAt: new Date(Date.UTC(2026, 0, i + 1)),
+      thumbnailUrl: undefined,
+      tagIds: [i, i + 1],
+    }));
+    return {
+      nextCursor: undefined,
+      items: [{ postId: 1, user, sortAt, publishedAt: sortAt, images, review: undefined }],
+    };
+  }
+
+  it.each([
+    ['a post sharing its user and dates with its images', postsLikePayload()],
+    [
+      'an object referenced twice',
+      (() => {
+        const o = { a: 1 };
+        return { x: o, y: [o] };
+      })(),
+    ],
+    [
+      'a Date referenced twice',
+      (() => {
+        const d = new Date(3);
+        return [d, { d }];
+      })(),
+    ],
+    [
+      'a shared object carrying annotations',
+      (() => {
+        const o = { at: new Date(7), gone: undefined, deep: { more: undefined } };
+        return { a: o, b: { c: o }, d: [o, o] };
+      })(),
+    ],
+    [
+      // superjson sorts each object's paths by length: the deeper first visit is not the key.
+      'a shared object first reached at the deeper path',
+      (() => {
+        const o = { v: 1 };
+        return { deep: { deeper: { here: o } }, top: o };
+      })(),
+    ],
+    [
+      'a shared object under keys that need escaping',
+      (() => {
+        const o = { v: 1 };
+        return { 'a.b': o, 'c\\d': [o], 0: o };
+      })(),
+    ],
+    [
+      'a shared object nested inside another shared object',
+      (() => {
+        const inner = { i: 1 };
+        const outer = { inner, again: inner };
+        return { x: outer, y: outer, z: inner };
+      })(),
+    ],
+    [
+      'the same empty array twice',
+      (() => {
+        const a: unknown[] = [];
+        return { a, b: a };
+      })(),
+    ],
+    // Still handed to superjson with sharedRefs on — identical by construction.
+    [
+      'a circular reference',
+      (() => {
+        const o: Record<string, unknown> = { a: 1 };
+        o.self = o;
+        return o;
+      })(),
+    ],
+    [
+      'an indirect cycle',
+      (() => {
+        const a: Record<string, unknown> = {};
+        const b: Record<string, unknown> = { a };
+        a.b = b;
+        return { root: a };
+      })(),
+    ],
+    [
+      'a BigInt beside a shared object',
+      (() => {
+        const o = {};
+        return { o, p: o, n: BigInt(1) };
+      })(),
+    ],
+  ])('%s', (_label, value) => {
+    expectIdenticalShared(value);
+  });
+
+  it('pins the wire for a shared object (a literal, not derived)', () => {
+    const o = { at: new Date('2026-01-02T03:04:05.000Z') };
+    expect(JSON.stringify(fastSuperjsonSerialize({ list: [o], first: o }, undefined, SHARED))).toBe(
+      '{"json":{"list":[{"at":"2026-01-02T03:04:05.000Z"}],"first":{"at":"2026-01-02T03:04:05.000Z"}},' +
+        '"meta":{"values":{"list.0.at":["Date"],"first.at":["Date"]},' +
+        '"referentialEqualities":{"first":["list.0"]},"v":1}}'
+    );
+  });
+
+  it('takes the fast path for shared references, and still bails on a cycle', () => {
+    expect(usedSuperjsonShared(postsLikePayload())).toBe(false);
+    const o = {};
+    expect(usedSuperjsonShared([o, o])).toBe(false);
+    // Off (the default), the same payloads still bail, as before the option existed.
+    expect(usedSuperjson(postsLikePayload())).toBe(true);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(usedSuperjsonShared(cyclic)).toBe(true);
+  });
+
+  it('round-trips a shared payload through superjson.deserialize with identity kept', () => {
+    const payload = postsLikePayload();
+    const back = superjson.deserialize<typeof payload>(
+      fastSuperjsonSerialize(payload, undefined, SHARED)
+    );
+    expect(back.items[0].images[1].user).toBe(back.items[0].user);
+    expect(back.items[0].images[2].sortAt).toBeInstanceOf(Date);
+    expect(back.items[0].images[2].sortAt.toISOString()).toBe('2026-03-04T05:06:07.000Z');
+    expect(back.items[0].images[1].user.username).toBe('creator');
+  });
+
+  it('matches superjson on randomly generated trees with shared subtrees', () => {
+    let seed = 0xbeef;
+    const rand = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = seed;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = <T>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
+    const keys = ['a', 'b', 'id', '0', '1', '10', '2', 'x.y', 'p\\q', 'createdAt', 'nested'];
+    let pool: object[] = [];
+    const gen = (depth: number): unknown => {
+      // Reuse an already-built (so never an ancestor) subtree: a shared reference, not a cycle.
+      if (pool.length && rand() < 0.15) return pick(pool);
+      const r = rand();
+      if (depth <= 0 || r < 0.35) {
+        if (rand() < 0.1) {
+          const d = new Date(Math.floor(rand() * 4e12));
+          pool.push(d);
+          return d;
+        }
+        return pick<() => unknown>([
+          () => 'str',
+          () => 1,
+          () => null,
+          () => undefined,
+          () => true,
+        ])();
+      }
+      let v: object;
+      if (r < 0.65) v = Array.from({ length: Math.floor(rand() * 5) }, () => gen(depth - 1));
+      else {
+        const o: Record<string, unknown> = {};
+        const n = Math.floor(rand() * 6);
+        for (let i = 0; i < n; i++) o[pick(keys)] = gen(depth - 1);
+        v = o;
+      }
+      if (rand() < 0.3) pool.push(v);
+      return v;
+    };
+    let withEqualities = 0;
+    for (let i = 0; i < 400; i++) {
+      pool = [];
+      const value = gen(5);
+      expectIdenticalShared(value);
+      expect(usedSuperjsonShared(value)).toBe(false);
+      if (superjson.serialize(value as SuperJSONValue).meta?.referentialEqualities)
+        withEqualities++;
+    }
+    // Positive control: the loop really exercised shared references.
+    expect(withEqualities).toBeGreaterThan(50);
   });
 });
