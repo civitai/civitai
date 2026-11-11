@@ -38,8 +38,12 @@ async function renderBeside(data: MyAppBuzzCap | null | undefined, onOptIn = vi.
 const q = (container: HTMLElement, id: string) => container.querySelector(`[data-testid="${id}"]`);
 
 describe('AppBuzzCapNoticeView', () => {
-  test('nothing while the viewer is under the cap, or the flag is off (null)', async () => {
+  // One render per test: the render barrier is found by test id, and two renders hold two.
+  test('nothing while the viewer is under the cap', async () => {
     expect(q(await renderBeside(status({ paused: false })), 'app-buzz-cap-paused')).toBeNull();
+  });
+
+  test('nothing where the flag is off (the server answers null)', async () => {
     expect(q(await renderBeside(null), 'app-buzz-cap-paused')).toBeNull();
   });
 
