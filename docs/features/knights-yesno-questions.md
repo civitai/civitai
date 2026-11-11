@@ -11,14 +11,14 @@ open-item index with the `"audience" IS NULL` predicate that exempts yes/no ques
 A yes/no question is an ordinary `KnightsQueueItem`, so the ledger, the item row lock and the partitioned `KnightsVote` table are
 shared with ratings. What marks one is `audience` (`players` or `moderators`); a rating item has it null. Extra columns on the item:
 
-| Column | Holds |
-|---|---|
-| `externalId` | The producer's id for the question, unique. Imports upsert on it; labels keep it. |
-| `prompt` | The question as asked about this image. |
-| `audience` | `players` (served in the feed) or `moderators` (a later moderator-app queue; never served to players). |
-| `yesEffect`, `noEffect` | What the producing model would rate the image for each answer. Never selected for a page. |
-| `meta` | Provenance of the row, plus `moderation` (who changed it and why) and `rewordOf` (the producer id a reworded copy replaces). Never served. |
-| `voteCount` | Answers so far; serving finishes questions that are under way first. |
+| Column                  | Holds                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `externalId`            | The producer's id for the question, unique. Imports upsert on it; labels keep it.                                                          |
+| `prompt`                | The question as asked about this image.                                                                                                    |
+| `audience`              | `players` (served in the feed) or `moderators` (a later moderator-app queue; never served to players).                                     |
+| `yesEffect`, `noEffect` | What the producing model would rate the image for each answer. Never selected for a page.                                                  |
+| `meta`                  | Provenance of the row, plus `moderation` (who changed it and why) and `rewordOf` (the producer id a reworded copy replaces). Never served. |
+| `voteCount`             | Answers so far; serving finishes questions that are under way first.                                                                       |
 
 The item's question (`questionKey`) is one `KnightsQuestion` per axis, `knights.yesno.<axis>`, kind `bool`, options yes and no.
 Its `prompt` is a plain fallback question for the axis (`axisPrompt` in `keys.ts`), shown only where an item or Acolyte pair has no
@@ -34,17 +34,17 @@ open rating item per question and image exempts yes/no items, which share an axi
 
 The CSV comes from the question producer (an offline pipeline that proposes the questions); it is not in this repository, and no real file is ever committed. Save it anywhere and pass its path. The header row names the columns; order does not matter and extra columns are ignored.
 
-| Column | Used as |
-| --- | --- |
-| `question_id` | `externalId`, the idempotency key (max 200 chars; longer rows are rejected as `bad-id`); a repeated id in one file is skipped as `duplicate` |
-| `active_candidate` | `true` to import; anything else retires the open item with that id |
-| `image_id` | Positive integer id of an existing image |
-| `axis` | Key matching `[a-z][a-z0-9_]{0,39}`, lower-cased before it is checked; one question per axis is created |
-| `kind` | `observable` (players) or `policy_preference` (moderators) |
-| `question` | The prompt shown to the voter |
-| `yes_effect`, `no_effect` | Optional short labels for what each answer does |
-| `case_id`, `source_purpose`, `source_batch_id`, `promotion_status`, `policy_sha256` | Optional; stored in the item's `meta` |
-| `reword_of` | Optional; the producer id a cleaned-up row rewords. Stored as `meta.rewordOf`, as a moderator reword is; left out when empty |
+| Column                                                                              | Used as                                                                                                                                      |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `question_id`                                                                       | `externalId`, the idempotency key (max 200 chars; longer rows are rejected as `bad-id`); a repeated id in one file is skipped as `duplicate` |
+| `active_candidate`                                                                  | `true` to import; anything else retires the open item with that id                                                                           |
+| `image_id`                                                                          | Positive integer id of an existing image                                                                                                     |
+| `axis`                                                                              | Key matching `[a-z][a-z0-9_]{0,39}`, lower-cased before it is checked; one question per axis is created                                      |
+| `kind`                                                                              | `observable` (players) or `policy_preference` (moderators)                                                                                   |
+| `question`                                                                          | The prompt shown to the voter                                                                                                                |
+| `yes_effect`, `no_effect`                                                           | Optional short labels for what each answer does                                                                                              |
+| `case_id`, `source_purpose`, `source_batch_id`, `promotion_status`, `policy_sha256` | Optional; stored in the item's `meta`                                                                                                        |
+| `reword_of`                                                                         | Optional; the producer id a cleaned-up row rewords. Stored as `meta.rewordOf`, as a moderator reword is; left out when empty                 |
 
 A sample, with placeholder ids (use ids of images that exist in your local database):
 
