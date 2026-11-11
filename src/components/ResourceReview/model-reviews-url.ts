@@ -90,14 +90,13 @@ type ReviewsVersionDecision =
   | { type: 'redirect'; versionId: number }
   | { type: 'notFound' };
 
-/** The list is always one version's, so any version that is not this model's goes to the fallback; no fallback means no reviews page. `loadFallback` runs only when needed. */
+/** The list is always one version's, so any version that is not this model's goes to the fallback; no fallback means no reviews page. */
 export async function resolveReviewsVersion({
   modelVersionId,
   requested,
   loadFallback,
 }: {
   modelVersionId: number | undefined;
-  /** What the lookup of `modelVersionId` on this model returned. */
   requested: { id: number } | null | undefined;
   loadFallback: () => Promise<{ id: number } | null | undefined>;
 }): Promise<ReviewsVersionDecision> {
@@ -116,7 +115,6 @@ export function parseReviewsFilter(value: QueryValue): ReviewsFilter | undefined
   return raw !== undefined && REVIEWS_FILTERS.includes(raw) ? (raw as ReviewsFilter) : undefined;
 }
 
-/** The `resourceReview.getPaged` inputs a reviews page filter stands for. */
 export function getReviewsFilterInput(filter: ReviewsFilter | undefined) {
   if (filter === 'images') return { hasImages: true };
   if (filter === 'up') return { recommended: true };

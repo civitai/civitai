@@ -99,8 +99,7 @@ export const getServerSideProps = createServerSideProps({
 
     const { modelId, modelVersionId } = result.data;
 
-    // The list is always one version's: send a request without a usable version to the model
-    // page's default (first published) one.
+    // The list is always one version's; a missing or foreign version goes to the model page's default.
     const decision = await resolveReviewsVersion({
       modelVersionId,
       requested: modelVersionId
@@ -465,7 +464,6 @@ function FilterChip({
       variant="light"
       size="sm"
       radius="xl"
-      // The design's chips carry no check mark.
       styles={{
         iconWrapper: { display: 'none' },
         label: { paddingInline: 12, fontSize: 12, fontWeight: 500 },

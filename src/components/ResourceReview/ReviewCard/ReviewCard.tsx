@@ -24,7 +24,7 @@ export type ReviewCardProps = {
   review: ResourceReviewPagedModel;
   /** `compact` is text-only, for the model page's cards; `full` also shows the review's images. */
   variant: 'compact' | 'full';
-  /** The review's post images, shown by the `full` variant only. */
+  /** The review's images (the set its `imageCount` counts); shown by the `full` variant only. */
   images?: ImagesInfiniteModel[];
   /** How many of the fetched images the viewer's preferences hide, so the strip can say so. */
   hiddenImageCount?: number;
@@ -60,7 +60,6 @@ export function ReviewCard({
 
   const username = review.user.username ?? 'a user';
 
-  // Tile sizes from the design: 150px tall (120px on phones), with a fixed-width "more" tile.
   const tile = 'relative h-[120px] min-w-0 flex-1 overflow-hidden rounded-md sm:h-[150px]';
   const moreTile = (shown: number, className: string) => (
     <div
@@ -226,7 +225,6 @@ export function ReviewCard({
             </span>
           )
         ) : null}
-        {/* Keeps the empty space between the footer's two ends part of the card's link. */}
         <span className="flex-1" />
         {!full && review.imageCount > 0 && (
           <span className="flex shrink-0 items-center gap-1.5" aria-label="Images">
@@ -243,7 +241,6 @@ export function ReviewCard({
             : review.commentCount ?? 0}
         </span>
       </div>
-      {/* Stretched link makes the whole card clickable; only children marked `pointer-events-auto` (the user link, the menu, the post link, blur toggles) sit above it. */}
       <RoutedDialogLink
         name="resourceReview"
         state={{ reviewId: review.id }}

@@ -191,8 +191,8 @@ export const getUserRatingTotalHandler = async ({ input }: { input: GetByUsernam
 };
 
 /**
- * The images a review card shows. The ids come from the predicate `imageCount` counts with; the
- * rows from the image feed's own by-id read, so they carry what `ImageGuard2` and the cards need.
+ * The images a review card shows. Ids come from the predicate `imageCount` counts with; hydration
+ * reuses the feed's by-id read for `ImageGuard2`'s fields.
  */
 export const getResourceReviewImagesHandler = async ({
   input,
