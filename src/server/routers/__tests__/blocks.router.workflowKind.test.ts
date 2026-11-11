@@ -588,6 +588,28 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it.each(paths)(
+    '%s: a repeat template $type outside ASCII letters and digits is denied',
+    async (_n, run) => {
+      const { snapshot } = await run(
+        body({
+          arguments: { frames: [{ url: 'a' }] },
+          steps: [
+            {
+              $type: 'repeat',
+              input: {
+                for: { $ref: '$arguments', path: 'frames', as: 'frame' },
+                template: { $type: 'cu\u017ftomComfy', input: { workflow: {} } },
+              },
+            },
+          ],
+        })
+      );
+      expect(snapshot.errorCode).toBe('workflow_step_denied');
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
   it.each(paths)('🔴 %s: the denylist covers the step a `repeat` runs', async (_n, run) => {
     const { snapshot } = await run(
       body({
