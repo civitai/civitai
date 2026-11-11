@@ -2754,9 +2754,9 @@ export const REDIS_SYS_KEYS = {
     // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
     // (`readMinimum`).
     COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
-    // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
-    // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
-    // and only new volume after that is filed again. No TTL.
+    // Hash: field = creator userId, value = JSON { filedAt, counterparties: { [userId]: two-way
+    // amount when last filed } }, so only new volume is filed again. Older entries have `warnedAt`
+    // and `chatId` in place of `filedAt` (`parseFiledRecord`). No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
     // String. How many other users the review follows Buzz through before it reaches the creator
     // again; the review clamps it to what it supports (`runCounterpartyReview`).

@@ -29,7 +29,6 @@ export function parseLimits(raw: string | null | undefined): PrepayoutLimits | n
 export const PREPAYOUT_SIGNALS = [
   'counterparty',
   'restricted',
-  'warned-again',
   'single-payer',
   'payout-jump',
   'batch-payer',
@@ -40,7 +39,6 @@ export type PrepayoutSignal = (typeof PREPAYOUT_SIGNALS)[number];
 export const SIGNAL_LABELS: Record<PrepayoutSignal, string> = {
   counterparty: 'two-way Buzz with one account',
   restricted: 'muted or under a pending restriction',
-  'warned-again': 'already warned about two-way Buzz, exchanging again',
   'single-payer': 'one payer funded most of the earnings',
   'payout-jump': 'payout far above their usual',
   'batch-payer': 'funded by other creators in the same payout',
@@ -59,14 +57,10 @@ export type CreatorMetrics = {
   /** The creator's payouts in the previous batches, most recent first. */
   priorPayoutsCents: number[];
   account: { muted: boolean; pendingRestriction: boolean };
-  /** Set when the counterparty review has already warned this creator. */
-  warnedAt: string | null;
 };
 
 export type BatchContext = {
   limits: PrepayoutLimits;
-  /** The counterparty review's minimum (#6181), or null while unset. */
-  counterpartyMinimum: number | null;
   payoutCutoffCents: number;
   batchCreatorIds: ReadonlySet<number>;
 };
@@ -103,13 +97,6 @@ export function evaluateCreator(metrics: CreatorMetrics, ctx: BatchContext) {
 
   if (metrics.account.muted || metrics.account.pendingRestriction)
     fired.set('restricted', { value: 1, limit: 1 });
-
-  if (metrics.warnedAt && ctx.counterpartyMinimum !== null && maxTwoWay >= ctx.counterpartyMinimum)
-    fired.set('warned-again', {
-      value: maxTwoWay,
-      limit: ctx.counterpartyMinimum,
-      counterpartyId: topExchange.userId,
-    });
 
   const topPayer = [...metrics.counterparties].sort((a, b) => b.received - a.received)[0];
   if (topPayer && metrics.bankable > 0) {
