@@ -7,6 +7,13 @@ const { imagesFetch, topicSend, refundTransaction } = vi.hoisted(() => ({
   topicSend: vi.fn(async (_args: unknown) => undefined),
   refundTransaction: vi.fn(async (_id: string, _d?: string) => ({ transactionId: 'x' })),
 }));
+const buzz = vi.hoisted(() => ({
+  getUserBuzzAccount: vi.fn(async () => [{ balance: 1000 }]),
+  createMultiAccountBuzzTransaction: vi.fn(async () => ({
+    transactionCount: 1,
+    transactionIds: [{ transactionId: 'tx-new' }],
+  })),
+}));
 
 // image.service's real import graph is heavy; only the cache the entity hydration reads is needed.
 vi.mock('~/server/services/image.service', () => ({
@@ -20,13 +27,13 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundMultiAccountTransaction: vi.fn(),
   getMultiAccountTransactionsByPrefix: vi.fn(async () => []),
   createBuzzTransaction: vi.fn(),
-  createMultiAccountBuzzTransaction: vi.fn(),
+  ...buzz,
 }));
 
 const {
   bidImagesFor,
   capAuctionBidImages,
-  capBidImages,
+  createBid,
   deleteBid,
   publicSignalData,
   refundBidsForVersions,
@@ -72,17 +79,6 @@ describe('auction bid images', () => {
     expect(forViewer(ctx)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it('My Bids and My Recurring Bids lists are capped the same way', () => {
-    const capped = capBidImages(
-      auction(...LEVELS).bids as never,
-      bidImagesFor({
-        user: { id: 6 },
-        features: { canViewNsfw: false },
-      } as never)
-    );
-    expect(shown({ bids: capped })).toEqual([1, null, null, null, 5]);
-  });
-
   it('the bid stays when its image is dropped', () => {
     const [bid] = publicSignalData(auction(NsfwLevel.X) as never).bids;
     expect(bid).toMatchObject({ id: 1, entityData: { model: { id: 1 } } });
@@ -117,7 +113,9 @@ describe('bid-change signals', () => {
       quantity: 2,
       startAt: new Date(Date.now() - day),
       endAt: new Date(Date.now() + day),
-      auctionBase: { slug: 'sd1' },
+      minPrice: 1,
+      // Not a Model auction, so createBid skips the version checks it has its own tests for.
+      auctionBase: { id: 3, slug: 'sd1', type: 'Image' },
       bids: [10, 11].map((entityId) => ({ entityId, amount: 5, deleted: false })),
     } as never);
     dbMock.dbWrite.modelVersion.findMany.mockResolvedValue(
@@ -148,6 +146,24 @@ describe('bid-change signals', () => {
     expect(topic).toBe(`auction:${AUCTION}`);
     return Object.fromEntries(data.bids.map((b) => [b.entityId, b.entityData?.image?.id ?? null]));
   };
+
+  it('placing a bid sends only public images to the topic', async () => {
+    dbMock.dbWrite.bid.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.bid.create.mockResolvedValue({} as never);
+    // createBid's own read sees only this bidder's bids on the entity: none yet.
+    const auction = await dbMock.dbWrite.auction.findFirst({} as never);
+    dbMock.dbWrite.auction.findFirst.mockResolvedValueOnce({ ...auction, bids: [] } as never);
+
+    await createBid({
+      userId: 1,
+      auctionId: AUCTION,
+      entityId: 10,
+      amount: 5,
+      accountTypes: ['yellow'],
+    } as Parameters<typeof createBid>[0]);
+
+    expect(sentImages()).toEqual({ 10: 100, 11: null });
+  });
 
   it('deleting a bid sends only public images to the topic', async () => {
     dbMock.dbWrite.bid.findFirst.mockResolvedValue({
