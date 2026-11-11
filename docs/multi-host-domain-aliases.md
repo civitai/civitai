@@ -4,8 +4,9 @@
 
 Each `ColorDomain` (`green`, `blue`, `red`) historically mapped to exactly one
 host via `SERVER_DOMAIN_<COLOR>`. We now allow each color to expose multiple
-hostnames so that, for example, both `civitai.com` and `civitai.blue` can
-resolve to the `blue` color on inbound requests.
+hostnames so that, for example, both `civitai.com` (the green primary) and an
+extra hostname such as `civitai.green` can resolve to the `green` color on
+inbound requests.
 
 ## Model
 
@@ -20,13 +21,15 @@ Per color:
 ## Env Configuration
 
 ```env
-SERVER_DOMAIN_BLUE=civitai.com               # canonical (existing)
-SERVER_DOMAIN_BLUE_ALIASES=civitai.blue      # comma-separated (new, optional)
-SERVER_DOMAIN_GREEN=civitai.green
-SERVER_DOMAIN_GREEN_ALIASES=                 # optional
+SERVER_DOMAIN_GREEN=civitai.com              # canonical
+SERVER_DOMAIN_GREEN_ALIASES=civitai.green    # comma-separated (optional, illustrative)
+SERVER_DOMAIN_BLUE=<blue host>
+SERVER_DOMAIN_BLUE_ALIASES=                  # optional
 SERVER_DOMAIN_RED=civitai.red
 SERVER_DOMAIN_RED_ALIASES=                   # optional
 ```
+
+`civitai.com` is the green domain.
 
 ## OAuth on Alias Hosts
 
@@ -61,7 +64,7 @@ provider, then `sync-account=green` brings the session back to the alias.
 
 ## Cookie Behavior
 
-eTLD+1 differs between aliases (`civitai.com` vs `civitai.blue`), so session
+eTLD+1 differs between aliases (`civitai.com` vs `civitai.green`), so session
 cookies are not shared across aliases. The existing `sync-account` flow
 covers cross-host hops; same-color aliases use it just like cross-color hops
 do today.

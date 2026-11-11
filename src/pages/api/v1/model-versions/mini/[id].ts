@@ -28,7 +28,12 @@ import type {
   ModelType,
   ModelHashType,
 } from '~/shared/utils/prisma/enums';
-import { Availability, ModelFileVisibility, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  ModelFileVisibility,
+  type ModelUsageControl,
+  type ScanResultCode,
+} from '~/shared/utils/prisma/enums';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
@@ -36,6 +41,7 @@ import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { hashRouteServesEveryone } from '~/server/services/download-by-hash.servable';
 import { evaluateMiniEpochCaller, getMiniEpochGateMode } from '~/server/utils/mini-epoch-caller';
 
 export const schema = z.object({
@@ -77,6 +83,7 @@ type VersionRow = {
   modelUserId: number;
   modelStatus: string;
   modelMode: string | null;
+  modelAvailability: Availability;
   poi: boolean;
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
@@ -102,6 +109,8 @@ type FileRow = {
   name: string;
   hashes: Record<ModelHashType, string>;
   replacedAt: Date | null;
+  pickleScanResult: ScanResultCode | null;
+  virusScanResult: ScanResultCode | null;
 };
 
 export default MixedAuthEndpoint(async function handler(
@@ -140,6 +149,7 @@ export default MixedAuthEndpoint(async function handler(
       m."userId" as "modelUserId",
       m.status as "modelStatus",
       m.mode as "modelMode",
+      m.availability as "modelAvailability",
       m.poi,
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
@@ -227,6 +237,8 @@ export default MixedAuthEndpoint(async function handler(
       mf."sizeKB", 
       mf.name,
       mf."replacedAt",
+      mf."pickleScanResult",
+      mf."virusScanResult",
       COALESCE(
         JSON_OBJECT_AGG(mfh.type, mfh.hash) FILTER (WHERE mfh.hash IS NOT NULL),
         '{}'::json
@@ -234,7 +246,8 @@ export default MixedAuthEndpoint(async function handler(
     FROM "ModelFile" mf
     LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
     WHERE mf."modelVersionId" = ${id}
-    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt"
+    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt",
+      mf."pickleScanResult", mf."virusScanResult"
     -- requestedFile below calls the bare getPrimaryFile, which settles a full tie by input order,
     -- and that choice decides the epoch branch. (getGenerationFile does its own id sort.)
     ORDER BY mf.id
@@ -399,14 +412,19 @@ export default MixedAuthEndpoint(async function handler(
 
   const downloadUrls = [downloadUrl];
   const sha256 = targetFile.hashes.SHA256;
-  // The hash route offers a non-owner only these copies (findHashCandidates); anything else would
-  // lead with a url that refuses where the id url serves.
-  const hashRouteServes =
-    targetFile.visibility === ModelFileVisibility.Public &&
-    modelVersion.usageControl === ModelUsageControl.Download &&
-    modelVersion.availability !== Availability.Private &&
-    modelVersion.status === 'Published' &&
-    modelVersion.modelStatus === 'Published';
+  // Anything else would lead with a url that refuses where the id url serves.
+  const hashRouteServes = hashRouteServesEveryone({
+    fileVisibility: targetFile.visibility,
+    pickleScanResult: targetFile.pickleScanResult,
+    virusScanResult: targetFile.virusScanResult,
+    versionStatus: modelVersion.status,
+    versionAvailability: modelVersion.availability,
+    usageControl: modelVersion.usageControl,
+    modelStatus: modelVersion.modelStatus,
+    modelMode: modelVersion.modelMode,
+    modelAvailability: modelVersion.modelAvailability,
+    poi: modelVersion.poi,
+  });
   if (
     !trainingResults &&
     hashRouteServes &&

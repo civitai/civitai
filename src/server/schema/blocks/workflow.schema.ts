@@ -615,14 +615,9 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
 //   4. `billingMode` + the load-time `estimateBuzz === priceForVariant`
 //      invariant → replaced by the inline-comfy mechanism below.
 //
-// 🔴 CONSEQUENCE OF (3) WORTH NAMING, because the denylist does not cover it:
-// `$type: 'customComfy'` is not platform-internal, so an app may reach it
-// through this arm with an `input` the `mode:'inline'` arm's `.strict()` exists
-// to refuse — `comfyImage` (an arbitrary OCI container AIR the worker pulls and
-// runs) and `minVramGb` (which selects a higher worker tier, and therefore a
-// different Buzz/second rate than the `stepTimeoutSeconds = maxBuzz` ceiling
-// assumes). Recorded here so it is a decision someone can revisit, not a
-// surprise. See the PR that added this arm.
+// A raw ComfyUI graph (`$type: 'comfy'` or `'customComfy'`) is on the denylist:
+// it reaches the worker only through `kind: 'customComfy'`, whose `.strict()`
+// schema and graph checks this arm does not have.
 //
 // `maxBuzz` is the ONLY spend knob an app sets and it works exactly as the
 // inline-comfy arm's does: the server derives `stepTimeoutSeconds = maxBuzz` and
