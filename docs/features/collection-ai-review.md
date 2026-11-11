@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS default.collectionAiReviewEvents (
   promptTokens      UInt32,
   completionTokens  UInt32,
   -- added by src/server/clickhouse/migrations/2026-11-11-collection-ai-review-observations.sql
-  nsfwLevel         UInt8 DEFAULT 0,        -- the image's level at decision time
+  nsfwLevel         UInt8 DEFAULT 0,        -- the image's level at decision time; 0 on older rows
   minorUncertain    Int8 DEFAULT -1,        -- model observations: 1 / 0, -1 = no readable answer
   depictsMinor      Int8 DEFAULT -1,
   isPhotorealistic  Int8 DEFAULT -1,

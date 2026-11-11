@@ -5,7 +5,8 @@
 -- table lacks, so code that sends them ahead of this DDL loses audit rows.
 --
 -- Adds, to `default.collectionAiReviewEvents`:
---   - `nsfwLevel`: the image's level when the decision was made.
+--   - `nsfwLevel`: the image's level when the decision was made. Rows written before this column
+--     existed read 0, as does an image with no level, so bound reads by the deploy time.
 --   - five observations from the model's response: `minorUncertain`, `depictsMinor`,
 --     `isPhotorealistic`, `suggestiveStyling`, `sexualContent`. 1 = true, 0 = false, -1 = no
 --     readable answer (no model call, an unreadable response, or the field left out).
@@ -36,11 +37,10 @@
 --
 -- Positive control after the app code is live: the next decision rows carry the new values.
 --
---   SELECT nsfwLevel, minorUncertain, isPhotorealistic, count()
+--   SELECT count(), countIf(sexualContent != -1), countIf(nsfwLevel > 0)
 --   FROM default.collectionAiReviewEvents
---   WHERE createdAt > now() - INTERVAL 1 HOUR
---   GROUP BY nsfwLevel, minorUncertain, isPhotorealistic;
---     -- a decision with a model call must show values other than -1.
+--   WHERE createdAt > now() - INTERVAL 1 HOUR;
+--     -- both countIf values must be non-zero once a decision with a model call is logged.
 
 -- No trailing semicolon and nothing after the statement: ClickHouse rejects the file as a
 -- multi-statement query otherwise, so it can be run as-is.
