@@ -168,6 +168,7 @@ import {
   type ContestCollectionItem,
   type SharedContestCollectionItem,
 } from '~/server/services/contest-collection-items.cache';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
@@ -9017,24 +9018,30 @@ export const getImageContestCollectionDetails = async ({
   isModerator,
 }: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
   const useSharedCache = await isFlipt(FLIPT_FEATURE_FLAGS.CONTEST_COLLECTION_ITEMS_REDIS_CACHE);
-  const items: (SharedContestCollectionItem | ContestCollectionItem)[] = useSharedCache
+  const cachedItems: (SharedContestCollectionItem | ContestCollectionItem)[] = useSharedCache
     ? await fetchSharedContestCollectionItems(id)
     : await contestCollectionItemsCache.fetch(id);
 
   // Fetch all permissions in one query instead of N queries
-  const collectionIds = items.map((i) => i.collection.id);
+  const collectionIds = [...new Set(cachedItems.map((i) => i.collection.id))];
   const allPermissions = await getUserCollectionPermissionsByIds({
     ids: collectionIds,
     userId,
+    isModerator,
   });
   const permissionsFor = (item: { collection: { id: number } }) =>
     allPermissions.find((p) => p.collectionId === item.collection.id);
+  // Cached per image for every viewer, so the read rule is applied per viewer here.
+  const items = cachedItems.filter((item) => {
+    if (!!userId && userId === item.addedById) return true;
+    return canReadCollectionItems(permissionsFor(item));
+  });
 
   // This endpoint is public. The reason — and above all the reviewer's free text about
   // someone else's entry — is only for the submitter, whoever manages the collection,
   // and site moderators investigating reports about reviewer behaviour.
   const canReadRejection = (item: SharedContestCollectionItem) =>
-    (!!userId && userId === item.addedById) || !!permissionsFor(item)?.manage || !!isModerator;
+    (!!userId && userId === item.addedById) || !!permissionsFor(item)?.manage;
 
   // The shared value carries no rejection fields (see SharedContestCollectionItem), so with the
   // flag on they are read live, and only for the entries this viewer passes the gate on.
@@ -9054,6 +9061,10 @@ export const getImageContestCollectionDetails = async ({
 
     return {
       ...i,
+      // Other judges' scores are for managers only.
+      scores: permissions?.manage
+        ? i.scores
+        : i.scores.filter((s) => !!userId && s.userId === userId),
       rejectionReason: readable ? rejection?.rejectionReason ?? null : null,
       rejectionDetail: readable ? rejection?.rejectionDetail ?? null : null,
       permissions,

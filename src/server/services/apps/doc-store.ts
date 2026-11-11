@@ -146,6 +146,12 @@ export type DocStoreDeps = {
   /** The least-privilege appdata pool, or null when it is not configured (→ `storage_disabled`). */
   db: DocStoreDb | null;
   limits?: DocStoreLimits;
+  /**
+   * The per-user ceiling of user `uid`, in place of `limits.userBytes` / `limits.userDocs`.
+   * Production wires the viewer's membership-tier caps (`docStoreUserLimits`); read only for a
+   * charge that adds bytes or documents to that user, never for one that frees them.
+   */
+  userLimits?: (uid: number) => Promise<{ userBytes: number; userDocs: number }>;
   /** Called once, the first time the connected role is found to be superuser or BYPASSRLS. */
   onRefused?: (role: { name: string; superuser: boolean; bypassRls: boolean }) => void;
   /**
@@ -885,7 +891,7 @@ const SQL_APP_PURGE_BATCH = [
 // included — in (scope_uid, key) order after a keyset cursor. Keys only: each document is then
 // re-read under its own lock. $1 app, $2 ns, $3 coll, $4 scope_uid and $5 key of the cursor
 // (exclusive), $6 limit.
-const SQL_MIGRATE_PAGE = `SELECT d.scope_uid, d.key FROM appdata.doc d
+const SQL_MIGRATE_PAGE = `SELECT d.scope_uid, d.key, d.author_uid, d.author_kind FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3
     AND (d.scope_uid, d.key) > ($4::int, $5::text COLLATE "C")
   ORDER BY d.scope_uid, d.key LIMIT $6::int`;
@@ -1528,6 +1534,33 @@ function buildDocStore(deps: DocStoreDeps) {
     }
   }
 
+  /**
+   * The per-user ceiling of `uid`: `deps.userLimits` (production: their membership tier's), else
+   * the store-wide `limits`. The one rule the write charge and the `info` figures both apply.
+   */
+  async function viewerLimits(uid: number): Promise<{ userBytes: number; userDocs: number }> {
+    if (deps.userLimits) return deps.userLimits(uid);
+    return { userBytes: limits.userBytes, userDocs: limits.userDocs };
+  }
+
+  /**
+   * The per-user ceilings a write will charge against, resolved BEFORE its transaction opens
+   * (`resolveCeilings`), so the charge never waits on the resolver while holding the app's
+   * usage-row lock that `SQL_CHARGE_APP` takes: the viewer's for a put or an increment, every
+   * owner on the page for a migration. Keyed on the call's context; set at the start of each call.
+   */
+  const preResolvedCeilings = new WeakMap<
+    DocStoreContext,
+    Map<number, { userBytes: number; userDocs: number }>
+  >();
+
+  async function resolveCeilings(ctx: DocStoreContext, uids: Iterable<number>): Promise<void> {
+    if (!deps.userLimits) return;
+    const distinct = [...new Set(uids)];
+    const resolved = await Promise.all(distinct.map((uid) => viewerLimits(uid)));
+    preResolvedCeilings.set(ctx, new Map(distinct.map((uid, i) => [uid, resolved[i]])));
+  }
+
   /** Charge one write: `usage_app` (which also yields the seq), then the caller's `usage_user`. */
   async function charge(
     c: DocStoreClient,
@@ -1548,14 +1581,22 @@ function buildDocStore(deps: DocStoreDeps) {
       throw new DocStoreError('quota_exceeded', 'app storage quota exceeded', { ceiling: 'app' });
     }
     if (user.bytes !== 0 || user.docs !== 0) {
+      // A charge that only frees passes whatever the ceiling (SQL_CHARGE_USER), so it reads none.
+      // Every charge that adds bytes or documents is to a user resolved before the transaction:
+      // the viewer (put, increment) or, for a migration, the owners on the page — the only
+      // charge to someone other than the caller. The lookup here, under the lock, is a fallback
+      // no call path reaches; it keeps a missed pre-resolution correct, only slower.
+      const ceiling = !(user.bytes > 0 || user.docs > 0)
+        ? limits
+        : preResolvedCeilings.get(ctx)?.get(user.uid) ?? (await viewerLimits(user.uid));
       const res = await c.query(SQL_CHARGE_USER, [
         ctx.appId,
         ctx.ns,
         user.uid,
         user.bytes,
         user.docs,
-        limits.userBytes,
-        limits.userDocs,
+        ceiling.userBytes,
+        ceiling.userDocs,
       ]);
       if (res.rows.length === 0) {
         throw new DocStoreError('quota_exceeded', 'storage quota exceeded', {
@@ -1607,6 +1648,7 @@ function buildDocStore(deps: DocStoreDeps) {
     const indexRows = indexRowsFor(coll, data as Record<string, unknown>);
     const scope = scopeUid(ctx, coll);
     const base = [ctx.appId, ctx.ns, coll.name, scope, key];
+    await resolveCeilings(ctx, [viewer]);
 
     return withTx(ctx, async (c) => {
       // Two passes at most: a concurrent creator of the same key can win the
@@ -1800,6 +1842,7 @@ function buildDocStore(deps: DocStoreDeps) {
       throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
     }
     const viewer = requireViewer(ctx);
+    await resolveCeilings(ctx, [viewer]);
     return withTx(ctx, async (c) => {
       const bump = async () =>
         Number(
@@ -2343,6 +2386,16 @@ function buildDocStore(deps: DocStoreDeps) {
    * schema afterwards — what an `acknowledge` op accepted. `next` is the cursor of the next page,
    * or null when this one was the last.
    */
+  /** Whose per-user usage a migrated document's size change is charged to; null for none. */
+  function migrationOwner(scope: number, row: Record<string, unknown>): number | null {
+    if (scope !== 0) return scope;
+    return (row.author_kind === 'user' || row.author_kind === 'counter') &&
+      row.author_uid !== null &&
+      row.author_uid !== undefined
+      ? Number(row.author_uid)
+      : null;
+  }
+
   async function migrateDocuments(
     appId: string,
     coll: DocCollection,
@@ -2366,7 +2419,17 @@ function buildDocStore(deps: DocStoreDeps) {
           after.key,
           limit,
         ])
-      ).rows.map((r) => ({ scopeUid: Number(r.scope_uid), key: r.key as string }))
+      ).rows.map((r) => ({
+        scopeUid: Number(r.scope_uid),
+        key: r.key as string,
+        owner: migrationOwner(Number(r.scope_uid), r),
+      }))
+    );
+    // Each owner's ceiling, once per page and before any document's transaction: a migration
+    // charges its documents' owners, and must not resolve their tiers under the usage-row lock.
+    await resolveCeilings(
+      ctx,
+      page.flatMap((d) => (d.owner === null ? [] : [d.owner]))
     );
     const result: MigrateDocumentsResult = {
       scanned: 0,
@@ -2375,7 +2438,10 @@ function buildDocStore(deps: DocStoreDeps) {
       failed: 0,
       invalid: 0,
       failures: [],
-      next: page.length < limit ? null : page[page.length - 1],
+      next:
+        page.length < limit
+          ? null
+          : { scopeUid: page[page.length - 1].scopeUid, key: page[page.length - 1].key },
     };
     const stillInvalid = (data: unknown) => {
       try {
@@ -2399,14 +2465,7 @@ function buildDocStore(deps: DocStoreDeps) {
             const indexRows = indexRowsFor(coll, next);
             const res = await c.query(SQL_MIGRATE_DOC, [...base, json]);
             const delta = Number(res.rows[0].size_bytes) - Number(row.size_bytes);
-            const owner =
-              scope !== 0
-                ? scope
-                : (row.author_kind === 'user' || row.author_kind === 'counter') &&
-                  row.author_uid !== null &&
-                  row.author_uid !== undefined
-                ? Number(row.author_uid)
-                : null;
+            const owner = migrationOwner(scope, row);
             await c.query(SQL_SYNC_INDEX, [
               appId,
               ctx.ns,
@@ -2580,6 +2639,7 @@ function buildDocStore(deps: DocStoreDeps) {
     unmark,
     usage,
     limits,
+    viewerLimits,
     isUsable,
   };
   /**

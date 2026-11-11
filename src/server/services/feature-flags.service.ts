@@ -856,6 +856,11 @@ const featureFlags = createFeatureFlags({
   // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
   // dark.
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
+  // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
+  // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for
+  // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
+  // fail-closed `isAppLimitsUpgradePromptEnabled`, so the two agree while the flag is absent.
+  appLimitsUpgradePrompt: { availability: [], fliptKey: 'app-limits-upgrade-prompt' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key

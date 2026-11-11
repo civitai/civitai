@@ -238,7 +238,7 @@ export const APP_CAP_OVERRIDE_MAX_VELOCITY_GENS = 100_000;
  * operator reaches for it is an incident control.
  *
  * Sizing context for the tier table below, relative to the per-user cap: the
- * per-user ceiling is `BLOCK_BUZZ_CAP_PER_DAY = 50_000` Buzz/day ≈ $50/day
+ * per-user ceiling (`resolveUserAppCaps`) is 50,000 Buzz/day at Free ≈ $50/day, up to 200,000 at Gold
  * (yellow Buzz at 1000 = $1). One app serves many users, so the per-app
  * aggregate must be a generous multiple — the 5,000,000 `standard` tier is ≈
  * the aggregate spend of ~100 fully-maxed legitimate users through one app.
