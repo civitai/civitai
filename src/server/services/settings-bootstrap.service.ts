@@ -86,11 +86,7 @@ export function bootstrapSession(session: Awaited<ReturnType<typeof getServerAut
 export async function resolveSettingsBootstrapSeeds(
   req: AuthArgs['req'],
   session: Awaited<ReturnType<typeof getServerAuthSession>>,
-  /**
-   * The credential the session was resolved from: the `req.context` of that lookup. A moderator
-   * counts for event gates only on a session or a full-access key (eventViewerOf), so `null` (no
-   * credential known) reads as a non-moderator rather than as a session.
-   */
+  /** The credential the session was resolved from: the `req.context` of that lookup. */
   credential: SessionCredential | null
 ) {
   // Concurrent, to keep this hot per-bootstrap read off the critical path.

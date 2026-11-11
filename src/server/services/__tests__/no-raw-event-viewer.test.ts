@@ -27,6 +27,7 @@ const FIELD_GATES = [
   'getHomeBlocks',
   'getHomeBlockById',
   'setHomeBlocksOrder',
+  'getCollectionBlockAudience',
 ];
 /** Gates taking the viewer as their second positional argument. */
 const POSITIONAL_GATES = [
@@ -277,6 +278,7 @@ describe('no-raw-event-viewer', () => {
       'getNavBanners({ viewer: ctx.user });',
       'getHomeBlockById({ ...input, viewer: ctx.user });',
       'setHomeBlocksOrder({ input, viewer: ctx.user });',
+      'getCollectionBlockAudience({ blockUserId, collectionId, viewer: ctx.user });',
       'markEventPointsWatched(input, ctx.user);',
       'getShopSectionsWithItems({ ...input, isModerator: ctx?.user?.isModerator });',
     ].join('\n');
@@ -287,8 +289,9 @@ describe('no-raw-event-viewer', () => {
       'fixture.ts:4: getNavBanners viewer',
       'fixture.ts:5: getHomeBlockById viewer',
       'fixture.ts:6: setHomeBlocksOrder viewer',
-      'fixture.ts:7: markEventPointsWatched viewer',
-      'fixture.ts:8: getShopSectionsWithItems isModerator',
+      'fixture.ts:7: getCollectionBlockAudience viewer',
+      'fixture.ts:8: markEventPointsWatched viewer',
+      'fixture.ts:9: getShopSectionsWithItems isModerator',
     ]);
   });
 

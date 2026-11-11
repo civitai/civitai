@@ -34,6 +34,17 @@ const h = vi.hoisted(() => ({
 }));
 // Wholesale: the reads under test, and the real module pulls in the whole event engine's I/O.
 vi.mock('~/server/services/event.service', () => h);
+// The bearer lookup: what getServerAuthSession records on the request it was given.
+const bearer = vi.hoisted(() => ({ result: null as Record<string, unknown> | null }));
+vi.mock('~/server/auth/bearer-token', () => ({
+  getSessionFromBearerToken: vi.fn(async () => bearer.result),
+}));
+vi.mock('~/server/auth/session-client', () => ({
+  getHubSession: vi.fn(async () => null),
+  maybeRollHubCookie: vi.fn(async () => undefined),
+  maybeUpgradeLegacySession: vi.fn(async () => undefined),
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
@@ -61,7 +72,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   getLiveNow: vi.fn(async () => false),
 }));
 
-const { resolveSettingsBootstrapSeeds } = await import(
+const { resolveSettingsBootstrap, resolveSettingsBootstrapSeeds } = await import(
   '~/server/services/settings-bootstrap.service'
 );
 
@@ -148,5 +159,52 @@ describe('settings bootstrap: event visibility follows the request credential', 
     expect(seededViewers().length).toBeGreaterThan(0);
     for (const viewer of seededViewers())
       expect(viewer).toEqual(expect.objectContaining({ isModerator: false }));
+  });
+});
+
+// The credential is read off the request the session lookup filled, not handed in by the caller.
+describe('settings bootstrap: the credential comes from the session lookup', () => {
+  const moderatorUser = { id: USER_ID, username: 'mod', isModerator: true };
+  const bootstrapFor = (credential: Record<string, unknown>) => {
+    bearer.result = { user: moderatorUser, ...credential };
+    return resolveSettingsBootstrap({
+      req: {
+        headers: { host: 'civitai.com', authorization: 'Bearer key' },
+        cookies: {},
+        url: '/api/user/settings',
+      },
+      res: { setHeader: () => undefined, getHeader: () => undefined },
+    } as unknown as Parameters<typeof resolveSettingsBootstrap>[0]);
+  };
+  const viewers = () =>
+    h.getViewerEventAccess.mock.calls.map(([args]) => (args as { viewer?: unknown }).viewer);
+
+  beforeEach(() => {
+    testerFlag.reset({ public: false });
+    h.getViewerEventAccess.mockClear();
+  });
+
+  it('reads a moderator on a scoped key as the user alone', async () => {
+    const seeds = await bootstrapFor({
+      tokenScope: TokenScope.UserRead,
+      apiKeyId: 7,
+      apiKeyType: ApiKeyType.User,
+      subject: { type: 'apiKey', id: 7 },
+    });
+    expect(seeds.navBanners?.some((b) => b.id === `event:${BIRTHDAY_2026_EVENT}`)).toBe(false);
+    expect(viewers().length).toBeGreaterThan(0);
+    for (const viewer of viewers()) expect(viewer).toMatchObject({ isModerator: false });
+  });
+
+  // Control: the credential is really read, so a full-access key keeps the moderator.
+  it('keeps a moderator on a full-access personal key', async () => {
+    const seeds = await bootstrapFor({
+      tokenScope: TokenScope.Full,
+      apiKeyId: 8,
+      apiKeyType: ApiKeyType.User,
+      subject: { type: 'apiKey', id: 8 },
+    });
+    expect(seeds.navBanners?.some((b) => b.id === `event:${BIRTHDAY_2026_EVENT}`)).toBe(true);
+    expect(viewers()).toContainEqual(expect.objectContaining({ isModerator: true }));
   });
 });

@@ -3,8 +3,8 @@ import { eventViewerOf } from '~/server/events/event-viewer';
 import { getRegion } from '~/server/utils/region-blocking';
 
 /**
- * A signed-in viewer of mystery boxes: who they are, the `mysteryBox` flag and their country. The
- * moderator flag is eventViewerOf's: event boxes are gated on the event's flag audience.
+ * A signed-in viewer of mystery boxes: who they are, the `mysteryBox` flag and their country.
+ * `isModerator` is eventViewerOf's, so a scoped token does not carry it.
  */
 export const mysteryBoxViewer = (ctx: ProtectedContext) => ({
   userId: ctx.user.id,
