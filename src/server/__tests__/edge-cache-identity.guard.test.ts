@@ -899,6 +899,17 @@ describe('parsing primitives (instrument validation)', () => {
     expect(analyzeIdentityUse('return getThing(input);')).toEqual({ forwards: [], directUses: 0 });
   });
 
+  it('reads eventViewerOf(ctx) and eventUserOf(ctx) as the session user', () => {
+    expect(analyzeIdentityUse('getThing({ ...input, viewer: eventViewerOf(ctx) });')).toEqual({
+      forwards: [{ callee: 'getThing', prop: 'viewer', expr: 'ctx.user' }],
+      directUses: 0,
+    });
+    expect(analyzeIdentityUse('getThing({ user: eventUserOf(ctx), ...input });')).toEqual({
+      forwards: [{ callee: 'getThing', prop: 'user', expr: 'ctx.user' }],
+      directUses: 0,
+    });
+  });
+
   it('calleeUsesProp distinguishes ignored / used / destructured-but-unused / unknown', () => {
     // Dropped at the boundary — the homeBlock shape.
     expect(

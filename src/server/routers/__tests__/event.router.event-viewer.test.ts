@@ -168,6 +168,21 @@ const ROUTES: [route: string, fn: string, passed: 'viewer' | 'user'][] = [
   ['setShowcaseHat', 'setShowcaseHat', 'user'],
   ['getUserRank', 'getUserRank', 'user'],
 ];
+// The routes behind eventGate.
+const GATED_ROUTES = [
+  'getData',
+  'getTeamScores',
+  'getTeamScoreHistory',
+  'getPartners',
+  'getRewards',
+  'getDonors',
+  'getStandings',
+  'getHatCatalog',
+  'getCosmeticScores',
+  'getWornHat',
+  'getTeamRoster',
+];
+const GATED = ROUTES.filter(([route]) => GATED_ROUTES.includes(route));
 const fnOf = (name: string) => (service as Record<string, ReturnType<typeof vi.fn>>)[name];
 const lastViewer = (fn: string, passed: 'viewer' | 'user') => {
   const calls = fnOf(fn).mock.calls;
@@ -193,9 +208,9 @@ describe.each(['a scoped personal key', 'an OAuth token'] as const)(
   (credential) => {
     const ctx = () => ctxFor(credentials[credential]);
 
-    it('is refused an unlaunched event at the gate', async () => {
-      await expect(run('getData', ctx())).rejects.toMatchObject({ code: 'NOT_FOUND' });
-      expect(service.getEventData).not.toHaveBeenCalled();
+    it.each(GATED)('is refused an unlaunched event at event.%s’s gate', async (route, fn) => {
+      await expect(run(route, ctx())).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(fnOf(fn)).not.toHaveBeenCalled();
     });
 
     it.each(ROUTES)('event.%s asks %s about the user alone', async (route, fn, passed) => {
@@ -222,9 +237,9 @@ describe.each(['a scoped personal key', 'an OAuth token'] as const)(
 // Control: without it, the scoped-token answers above would also pass if moderators were dropped
 // everywhere.
 describe('a moderator on a session', () => {
-  it('sees the unlaunched event', async () => {
-    await run('getData', ctxFor(credentials.session));
-    expect(service.getEventData).toHaveBeenCalledTimes(1);
+  it.each(GATED)('passes event.%s’s gate for the unlaunched event', async (route, fn) => {
+    await run(route, ctxFor(credentials.session));
+    expect(fnOf(fn)).toHaveBeenCalledTimes(1);
   });
 
   it.each(ROUTES)('event.%s asks %s about the moderator', async (route, fn, passed) => {

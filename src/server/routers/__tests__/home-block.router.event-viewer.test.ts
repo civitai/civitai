@@ -74,6 +74,11 @@ const ROUTES: [
 ][] = [
   ['getHomeBlocks', (c) => c.getHomeBlocks({}), () => svc.getHomeBlocks.mock.calls[0][0].viewer],
   [
+    'getHomeBlocks (system fallback)',
+    (c) => c.getHomeBlocks({ systemHomeBlockIds: [1] }),
+    () => svc.getHomeBlocks.mock.calls[1][0].viewer,
+  ],
+  [
     'getSystemHomeBlocks',
     (c) => c.getSystemHomeBlocks({}),
     () => filterViewableHomeBlocks.mock.calls[0][1],

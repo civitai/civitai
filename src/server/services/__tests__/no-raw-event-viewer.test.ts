@@ -292,7 +292,8 @@ describe('no-raw-event-viewer', () => {
   it('catches the session user passed to anything imported from the event service', () => {
     const text = [
       "import { getEventData, setShowcaseHat as setHat } from '~/server/services/event.service';",
-      "import type { EventInput } from '~/server/services/event.service';",
+      "import type { getTeamRoster } from '~/server/services/event.service';",
+      'getTeamRoster({ viewer: ctx.user });',
       'getEventData({ ...input, viewer: ctx.user });',
       'setHat({ user: ctx.user, ...input });',
       'getEventData({ ...input, viewer: eventViewerOf(ctx) });',
@@ -301,8 +302,8 @@ describe('no-raw-event-viewer', () => {
       'unrelated({ user: ctx.user });',
     ].join('\n');
     expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([
-      'fixture.ts:3: getEventData viewer',
-      'fixture.ts:4: setHat user',
+      'fixture.ts:4: getEventData viewer',
+      'fixture.ts:5: setHat user',
     ]);
   });
 

@@ -41,8 +41,6 @@ describe('event.getNavBanners', () => {
 
   it('resolves as signed out with no session', async () => {
     await callerFor(undefined).getNavBanners();
-    expect(getNavBanners.mock.calls).toStrictEqual([
-      [{ viewer: { id: undefined, isModerator: false } }],
-    ]);
+    expect(getNavBanners.mock.calls).toEqual([[{ viewer: { isModerator: false } }]]);
   });
 });
