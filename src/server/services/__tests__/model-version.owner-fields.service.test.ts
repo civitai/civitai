@@ -288,6 +288,15 @@ describe('upsertModelVersion — Internal and External generation are moderator-
     expect(written().name).toBe('renamed');
   });
 
+  it('lets an owner edit that omits usageControl through on an External version', async () => {
+    seedExisting({ usageControl: ExternalGeneration });
+
+    await edit({ name: 'renamed' });
+
+    expect(written().name).toBe('renamed');
+    expect(written().usageControl).toBeUndefined();
+  });
+
   it('lets an owner move between Download and Generation', async () => {
     seedExisting({ usageControl: Download });
 
