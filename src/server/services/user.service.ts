@@ -1158,19 +1158,21 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
 type DeletedVersionRow = { id: number };
 
 /**
- * After `deleteUser` deletes an account's models, what `deleteModelById` drops for one model, for
- * all of them. Chunked: an account can have thousands of versions.
+ * After `deleteUser` deletes an account's models: the caches and search entries `deleteModelById`
+ * drops for one deleted model, for all of them. Chunked: an account can have thousands of versions.
  */
-async function dropDeletedVersionCaches(userId: number, versionIds: number[]) {
+async function dropDeletedVersionCaches(versionIds: number[]) {
   // Imported here: a static import joins user.service to the model-version import cycle.
   const { bustMvCache } = await import('~/server/services/model-version.service');
   for (const ids of chunkIds(versionIds, DELETED_MODEL_CACHE_CHUNK)) {
     await preventReplicationLagBatch('modelVersion', ids);
-    await bustMvCache(ids, undefined, userId);
+    // No owner: the orchestrator's copy is dropped for every caller, not one user.
+    await bustMvCache(ids);
   }
 }
 
 async function dropDeletedModelCaches(userId: number) {
+  const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   for (const ids of chunkIds(
     models.map((m) => m.id),
@@ -1178,6 +1180,7 @@ async function dropDeletedModelCaches(userId: number) {
   )) {
     await preventReplicationLagBatch('model', ids);
     await dataForModelsCache.refresh(ids);
+    await bustPublicModelResponseCache(ids);
     await modelsSearchIndex.queueUpdate(
       ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
     );
@@ -1327,10 +1330,7 @@ export const deleteUser = async ({
 
   if (removeModels) {
     await runStep('deleted-version-caches', () =>
-      dropDeletedVersionCaches(
-        user.id,
-        deletedVersions.map((v) => v.id)
-      )
+      dropDeletedVersionCaches(deletedVersions.map((v) => v.id))
     );
     await runStep('deleted-model-caches', () => dropDeletedModelCaches(user.id));
   }

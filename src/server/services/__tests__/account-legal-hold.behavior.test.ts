@@ -15,7 +15,8 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const versionCaches = vi.hoisted(() => ({
-  bustMvCache: vi.fn<(ids: number[], modelIds?: number[], userId?: number) => Promise<void>>(),
+  bustMvCache: vi.fn<(ids: number[]) => Promise<void>>(),
+  bustPublicModelResponseCache: vi.fn<(ids: number[]) => Promise<void>>(),
 }));
 vi.mock('~/server/services/model-version.service', () => versionCaches);
 
@@ -26,7 +27,9 @@ import {
   isLegalHoldAbort,
   LegalHoldError,
 } from '~/server/services/legal-hold.service';
+import { modelsSearchIndex } from '~/server/search-index';
 import { deleteUser } from '~/server/services/user.service';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
@@ -555,6 +558,15 @@ describe('deleteUser under a legal hold', () => {
       );
 
     beforeEach(async () => {
+      vi.spyOn(modelsSearchIndex, 'queueUpdate').mockResolvedValue(undefined as never);
+      dbMock.dbWrite.model.findMany.mockImplementation(
+        (async (args: { where: { userId: number } }) =>
+          (
+            await holder.db.query<{ id: number }>(`SELECT id FROM "Model" WHERE "userId" = $1`, [
+              args.where.userId,
+            ])
+          ).rows) as never
+      );
       await holder.db.exec(`
         TRUNCATE "ModelVersion";
         INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
@@ -578,9 +590,12 @@ describe('deleteUser under a legal hold', () => {
       });
       // The generator reads versions through these caches; a stale entry still serves them.
       expect(versionCaches.bustMvCache).toHaveBeenCalledTimes(1);
-      const [busted, , owner] = versionCaches.bustMvCache.mock.calls[0];
-      expect([...busted].sort()).toEqual([1, 2]);
-      expect(owner).toBe(CLEAN);
+      expect([...versionCaches.bustMvCache.mock.calls[0][0]].sort()).toEqual([1, 2]);
+      // Search and the public API stop serving the deleted models.
+      expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledWith([
+        { id: CLEAN_MODEL, action: SearchIndexUpdateQueueAction.Delete },
+      ]);
+      expect(versionCaches.bustPublicModelResponseCache).toHaveBeenCalledWith([CLEAN_MODEL]);
     });
 
     it('leaves the versions alone when the models are kept', async () => {
@@ -589,6 +604,8 @@ describe('deleteUser under a legal hold', () => {
       expect((await statuses())[1]).toBe('Published');
     });
 
+    // The mocked transaction stops at the scrub's abort, so this pins the version write inside the
+    // transaction and after the scrub; it does not exercise a real rollback.
     it('leaves the versions published when a hold stops the deletion', async () => {
       beforeScrub = () =>
         holder.db.exec(`INSERT INTO "CsamReport" ("userId", details) VALUES (${CLEAN}, '{}')`);
