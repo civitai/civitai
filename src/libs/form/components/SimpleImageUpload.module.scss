@@ -30,7 +30,7 @@
   }
 }
 
-// Feed cards are about 320px wide; a full-width portrait preview would dwarf the form.
+// Cap the portrait preview; at full width it would dwarf the form.
 .cardCropWrapper {
   max-width: 320px;
 }
