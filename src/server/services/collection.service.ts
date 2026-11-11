@@ -2021,8 +2021,8 @@ export const getCollectionItemsByCollectionId = async ({
   /** See `getModelsRaw`. */
   coverage?: CoverageAudience;
   /**
-   * Answer a collection the viewer may not read (collection.getById's rule) as a missing one. Off
-   * for server-side readers that choose the collection themselves (home blocks).
+   * Answer a collection the viewer may neither read nor submit to as a missing one. Off for
+   * server-side readers that choose the collection themselves (home blocks).
    */
   requireRead?: boolean;
 }): Promise<CollectionItemsResult> => {

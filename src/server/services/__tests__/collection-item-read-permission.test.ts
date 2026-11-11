@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ImageService from '~/server/services/image.service';
 
 /**
- * Collection item reads follow the collection's read permission (collection.getById's rule: read,
- * write or manage). A collection the viewer may not read answers exactly as a missing one:
+ * Collection item reads follow the collection's read permission. Readers and managers see every
+ * item; a viewer who may only submit sees their own; a collection the viewer may neither read nor
+ * submit to answers exactly as a missing one:
  * - `collection.getAllCollectionItems` (requireRead) throws the same not-found error;
- * - `collection.getEntryCount` throws the same not-found error, unless the viewer may submit.
+ * - `collection.getEntryCount` throws the same not-found error.
  * The permission rule runs for real over a mocked collection row.
  */
 const { mockGetAllImages } = vi.hoisted(() => ({ mockGetAllImages: vi.fn() }));
@@ -71,7 +72,7 @@ const collectionIs = (over: Record<string, unknown> | null) => {
     ...over,
   };
   const found = collectionRow
-    ? { id: COLLECTION_ID, type: 'Image', mode: null, userId: OWNER }
+    ? { id: COLLECTION_ID, type: 'Image', mode: collectionRow.mode, userId: OWNER }
     : null;
   for (const db of [dbMock.dbRead, dbMock.dbWrite])
     vi.mocked(db.collection.findUniqueOrThrow).mockImplementation((async () => {
@@ -143,6 +144,11 @@ describe('collection items of a collection the viewer may not read', () => {
     expect(await imageIdsOf(STRANGER)).toEqual([6]);
   });
 
+  it("lists only the viewer's own items in a Private contest (random order)", async () => {
+    collectionIs({ read: 'Private', write: 'Public', mode: 'Contest' });
+    expect(await imageIdsOf(STRANGER)).toEqual([6]);
+  });
+
   it('answers a Private collection open for submissions as missing when signed out', async () => {
     collectionIs({ read: 'Private', write: 'Public' });
     expect(await errorOf(listItems(COLLECTION_ID, undefined))).toMatchObject({ code: 'NOT_FOUND' });
@@ -155,26 +161,43 @@ describe('collection items of a collection the viewer may not read', () => {
 });
 
 describe('the page cursor', () => {
-  it("reads the cursor item's position only from the requested collection", async () => {
-    await getCollectionItemsByCollectionId({
-      input: { collectionId: COLLECTION_ID, limit: 10, browsingLevel: 3, cursor: '123' } as never,
-      user: STRANGER as never,
-      requireRead: true,
-    });
-    const itemQuery = vi
-      .mocked(dbMock.dbRead.$queryRaw)
-      .mock.calls.find(([strings]) =>
-        (strings as unknown as string[]).join('?').includes('FROM "CollectionItem" ci')
-      )!;
-    const cursor = itemQuery
-      .slice(1)
-      .map((v) => v as { sql?: string; values?: unknown[] } | null)
-      .find((frag) => frag?.sql?.includes('SELECT "createdAt"'))!;
-    const lookups = cursor.sql!.match(/SELECT "createdAt" FROM "CollectionItem" WHERE[^)]*/g)!;
-    expect(lookups.length).toBeGreaterThan(0);
-    for (const lookup of lookups) expect(lookup).toContain('"collectionId" = ');
-    expect(cursor.values).toContain(COLLECTION_ID);
-  });
+  it.each([
+    ['newest first', {}, STRANGER, dbMock.dbRead],
+    [
+      'oldest first (review)',
+      { forReview: true, reviewSort: 'Oldest' },
+      { id: OWNER },
+      dbMock.dbWrite,
+    ],
+  ])(
+    "reads the cursor item's position only from the requested collection, %s",
+    async (_, extra, user, db) => {
+      await getCollectionItemsByCollectionId({
+        input: {
+          collectionId: COLLECTION_ID,
+          limit: 10,
+          browsingLevel: 3,
+          cursor: '123',
+          ...extra,
+        } as never,
+        user: user as never,
+        requireRead: true,
+      });
+      const itemQuery = vi
+        .mocked(db.$queryRaw)
+        .mock.calls.find(([strings]) =>
+          (strings as unknown as string[]).join('?').includes('FROM "CollectionItem" ci')
+        )!;
+      const cursor = itemQuery
+        .slice(1)
+        .map((v) => v as { sql?: string; values?: unknown[] } | null)
+        .find((frag) => frag?.sql?.includes('SELECT "createdAt"'))!;
+      const lookups = cursor.sql!.match(/SELECT "createdAt" FROM "CollectionItem" WHERE[^)]*/g)!;
+      expect(lookups.length).toBeGreaterThan(0);
+      for (const lookup of lookups) expect(lookup).toContain('"collectionId" = ');
+      expect(cursor.values).toContain(COLLECTION_ID);
+    }
+  );
 });
 
 describe('entry count of a collection the viewer may not read', () => {
