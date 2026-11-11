@@ -15,6 +15,8 @@
 </header>
 
 <div class="grid gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-  <SourcesForm settings={data.settings} lastChange={data.lastChange} />
+  {#key data.lastChange?.at}
+    <SourcesForm settings={data.settings} lastChange={data.lastChange} />
+  {/key}
   <ContextPanel context={data.context} />
 </div>

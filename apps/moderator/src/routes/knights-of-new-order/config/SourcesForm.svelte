@@ -77,7 +77,7 @@
           inputmode="decimal"
           autocomplete="off"
           required
-          bind:value={sfwPercent}
+          bind:value={() => sfwPercent, (value) => ((sfwPercent = value), (confirming = false))}
         />
       </div>
       <div class="grid gap-1.5">
@@ -89,7 +89,7 @@
           inputmode="decimal"
           autocomplete="off"
           required
-          bind:value={nsfwPercent}
+          bind:value={() => nsfwPercent, (value) => ((nsfwPercent = value), (confirming = false))}
         />
       </div>
     </div>
