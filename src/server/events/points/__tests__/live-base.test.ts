@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { PointsReadRedis } from '~/server/events/points/read';
 import type { RefereeRedis } from '~/server/events/points/referee';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
-const { refereeTotals, resetLiveBase } = await import('~/server/events/points/referee');
+const { alertOnStaleCut, refereeTotals, resetLiveBase } = await import(
+  '~/server/events/points/referee'
+);
 const { getHatTotals, readTotals } = await import('~/server/events/points/read');
 const { COUNT_BASE_MARK, eventSeasonKeys, LIVE_BUCKET_MS, liveBucket } = await import(
   '~/server/events/points/keys'
@@ -406,5 +409,74 @@ describe('readTotals', () => {
       await readTotals(EVENT, 'hat', [], NOW, fake.redis as unknown as PointsReadRedis)
     ).toEqual({});
     expect(fake.hmGets).toEqual([]);
+  });
+});
+
+// Hours of failed settles leave the cut where the last good one put it, with every point earned since
+// in live buckets. The total shown must hold through that and through the settle that catches up.
+describe('settles that fail for hours, then catch up', () => {
+  const NOW = new Date('2026-11-05T17:07:00.000Z');
+  const NOW_BUCKET = liveBucket(NOW);
+  const STUCK_BUCKETS = (5 * 60 * 60 * 1000) / LIVE_BUCKET_MS;
+  const BASE = 100;
+
+  function stuck() {
+    const fake = fakeRedis();
+    const cut = NOW_BUCKET - STUCK_BUCKETS + 1;
+    fake.strings.set(keys.cut, String(cut));
+    fake.hashes.set(keys.base('hat'), { a: String(BASE) });
+    for (let b = cut; b <= NOW_BUCKET; b++) fake.hashes.set(keys.live(b, 'hat'), { a: '1' });
+    return { fake, cut };
+  }
+  const shown = async (fake: ReturnType<typeof fakeRedis>) =>
+    (await readTotals(EVENT, 'hat', ['a'], NOW, fake.redis as unknown as PointsReadRedis)).a;
+
+  it('shows every point earned since the last settle, five hours on', async () => {
+    const { fake } = stuck();
+    expect(await shown(fake)).toBe(BASE + STUCK_BUCKETS);
+  });
+
+  it('shows the same total after the catch-up settle: each settled bucket leaves the sum as it enters the base', async () => {
+    const { fake, cut } = stuck();
+    const newCut = NOW_BUCKET - 2;
+    const settled = BASE + (newCut - cut);
+    await resetLiveBase(
+      fake.redis as unknown as RefereeRedis,
+      EVENT,
+      'live',
+      new Date(newCut * LIVE_BUCKET_MS),
+      totals({ a: settled })
+    );
+    expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: String(settled) });
+    expect(await shown(fake)).toBe(BASE + STUCK_BUCKETS);
+  });
+});
+
+describe('alertOnStaleCut', () => {
+  const CUT = new Date('2026-11-05T17:00:00.000Z');
+  const cutBucket = (msBefore: number) => String((CUT.getTime() - msBefore) / LIVE_BUCKET_MS);
+  const alert = async (stored: string | undefined) => {
+    const fake = fakeRedis();
+    if (stored) fake.strings.set(keys.cut, stored);
+    loggingMock.logToAxiom.mockClear();
+    await alertOnStaleCut(fake.redis as unknown as RefereeRedis, EVENT, 'live', CUT);
+    return loggingMock.logToAxiom.mock.calls.map(([entry]) => entry);
+  };
+
+  it('logs an error with the lag once the base is over two hours behind', async () => {
+    expect(await alert(cutBucket(2 * 60 * 60 * 1000 + LIVE_BUCKET_MS))).toEqual([
+      expect.objectContaining({
+        type: 'error',
+        name: 'event-points-cut-stale',
+        event: EVENT.name,
+        season: 'live',
+        cutAgeMinutes: 125,
+      }),
+    ]);
+  });
+
+  it('stays quiet after one missed hour, and before any settle has run', async () => {
+    expect(await alert(cutBucket(2 * 60 * 60 * 1000))).toEqual([]);
+    expect(await alert(undefined)).toEqual([]);
   });
 });

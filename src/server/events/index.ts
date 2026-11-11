@@ -13,7 +13,7 @@ import { birthday2026 } from '~/server/events/birthday2026.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
 import { eventPointSeason, eventPointsWindow } from '~/server/events/points/keys';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
-import { runEventPointsReferee } from '~/server/events/points/referee';
+import { REFEREE_CLICKHOUSE_BUDGET_S, runEventPointsReferee } from '~/server/events/points/referee';
 import { syncEventHats } from '~/server/events/points/sync';
 import { pointTypesFor } from '~/server/events/points/types';
 import {
@@ -203,6 +203,7 @@ export const eventEngine = {
   },
   async updateLeaderboard(now = new Date()) {
     let updated = false;
+    const refereeDeadline = Date.now() + REFEREE_CLICKHOUSE_BUDGET_S * 1000;
     for (const eventDef of getScorableEvents(now)) {
       const scored = scoredEvent(eventDef);
       if (scored) {
@@ -232,7 +233,7 @@ export const eventEngine = {
           const season = eventPointSeason(eventDef.startDate, now);
           // A failed settle must not also freeze the standings snapshot or stop the other events.
           try {
-            const result = await runEventPointsReferee(scored, season, now);
+            const result = await runEventPointsReferee(scored, season, now, refereeDeadline);
             final = result.final;
             logToAxiom({
               type: 'info',

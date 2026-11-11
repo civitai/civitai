@@ -57,7 +57,14 @@ CREATE TABLE IF NOT EXISTS default.collectionAiReviewEvents (
   reason            String CODEC(ZSTD(3)),  -- the model's own wording, for auditing only
   applied           UInt8,                  -- 0 when the collection is in dry run
   promptTokens      UInt32,
-  completionTokens  UInt32
+  completionTokens  UInt32,
+  -- added by src/server/clickhouse/migrations/2026-11-11-collection-ai-review-observations.sql
+  nsfwLevel         UInt8 DEFAULT 0,        -- the image's level at decision time; 0 on older rows
+  minorUncertain    Int8 DEFAULT -1,        -- model observations: 1 / 0, -1 = no readable answer
+  depictsMinor      Int8 DEFAULT -1,
+  isPhotorealistic  Int8 DEFAULT -1,
+  suggestiveStyling Int8 DEFAULT -1,
+  sexualContent     Int8 DEFAULT -1
 ) ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(createdAt)
 ORDER BY (collectionId, collectionItemId, createdAt);

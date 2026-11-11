@@ -4,6 +4,7 @@ import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as StorageResolver from '~/utils/storage-resolver';
 import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * `updateFile`'s lookup authorizes the file you may EDIT. It says nothing about a destination
@@ -702,6 +703,163 @@ describe('a file type change to or from training data on a trained version', () 
       expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('a file whose loader or format changes', () => {
+  const RESET = { virusScanResult: 'Pending', pickleScanResult: 'Pending', scannedAt: null };
+  const scanned = (overrides: Record<string, unknown> = {}) => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...FILE,
+      virusScanResult: 'Success',
+      pickleScanResult: 'Success',
+      ...overrides,
+    });
+  };
+  const write = () => dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0];
+
+  it('goes back to unscanned when it becomes a type a loader opens', async () => {
+    scanned({ type: 'Config', name: 'a.ckpt' });
+
+    await updateFile({ id: 1, type: 'Model', userId: 7 });
+
+    expect(write().data).toMatchObject(RESET);
+    expect(write().where).toMatchObject({
+      virusScanResult: 'Success',
+      pickleScanResult: 'Success',
+    });
+  });
+
+  it('goes back to unscanned when a rename changes its format', async () => {
+    scanned();
+
+    await updateFile({ id: 1, name: 'a.ckpt', userId: 7 });
+
+    expect(write().data).toMatchObject(RESET);
+  });
+
+  it("goes back to unscanned when a moderator changes a loadable file's format, and logs it", async () => {
+    scanned();
+
+    await updateFile({ id: 1, metadata: { format: 'PickleTensor' }, userId: 7, isModerator: true });
+
+    expect(write().data).toMatchObject(RESET);
+    const overrides = () =>
+      vi
+        .mocked(loggingMock.logToAxiom)
+        .mock.calls.filter(
+          ([entry]) => (entry as { name?: string }).name === 'model-file-format-override'
+        );
+    expect(overrides()).toHaveLength(1);
+    expect(overrides()[0][0]).toMatchObject({ fileId: 1, moderatorId: 7, to: 'PickleTensor' });
+  });
+
+  it('logs no override for a moderator setting the format the name has', async () => {
+    scanned();
+
+    await updateFile({ id: 1, metadata: { format: 'SafeTensor' }, userId: 7, isModerator: true });
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'model-file-format-override' })
+    );
+  });
+
+  it("drops a reset file's version from the cached coverage", async () => {
+    scanned();
+
+    await updateFile({ id: 1, name: 'a.ckpt', userId: 7 });
+
+    expect(mockResourceDataBust).toHaveBeenCalledWith([FILE.modelVersionId]);
+    expect(mockBustFileAirs).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a rename to a pickle extension', {}, 'a.ckpt'],
+    ['a rename of a file no loader opens', { type: 'Config', name: 'a.yaml' }, 'a.pt'],
+  ])('goes back to unscanned on %s', async (_, stored, name) => {
+    scanned(stored);
+
+    await updateFile({ id: 1, name, userId: 7 });
+
+    expect(write().data).toMatchObject(RESET);
+  });
+
+  it('keeps the scan of a rename that only changes the case of its extension', async () => {
+    scanned({ name: 'a.ckpt' });
+
+    await updateFile({ id: 1, name: 'a.CKPT', userId: 7 });
+
+    expect(write().data).not.toHaveProperty('pickleScanResult');
+  });
+
+  it('goes back to unscanned when a cleared format leaves a different one', async () => {
+    scanned({ metadata: { format: 'PickleTensor' } });
+
+    await updateFile({ id: 1, metadata: { format: null }, userId: 7, isModerator: true });
+
+    expect(write().data).toMatchObject(RESET);
+  });
+
+  it('lets an owner declare the format an upper-case file name has', async () => {
+    scanned({ name: 'a.SAFETENSORS', metadata: { format: 'Other' } });
+
+    await updateFile({ id: 1, metadata: { format: 'SafeTensor' }, userId: 7 });
+
+    expect(write().data.metadata).toMatchObject({ format: 'SafeTensor' });
+  });
+
+  it('keeps an Error verdict through a change that would reset the scan', async () => {
+    scanned({ pickleScanResult: 'Error' });
+
+    await updateFile({ id: 1, name: 'a.ckpt', userId: 7 });
+
+    expect(write().data).not.toHaveProperty('pickleScanResult');
+  });
+
+  it("refuses an owner a format the file's name does not have", async () => {
+    scanned();
+
+    await expect(
+      updateFile({ id: 1, metadata: { format: 'PickleTensor' }, userId: 7 })
+    ).rejects.toThrow("A file's format must match its file name.");
+    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, Partial<Parameters<typeof updateFile>[0]>]>([
+    ['the format its name already has', { metadata: { format: 'SafeTensor' } }],
+    ['a rename within the same format', { name: 'b.safetensors' }],
+    ['a change to a type no loader opens', { type: 'Config' }],
+  ])('keeps the scan of an edit to %s', async (_, edit) => {
+    scanned();
+
+    await updateFile({ id: 1, userId: 7, ...edit });
+
+    expect(write().data).not.toHaveProperty('pickleScanResult');
+  });
+
+  it("lets an owner declare a zip's format, which sends it back to the scan", async () => {
+    scanned({ name: 'a.zip', metadata: { format: 'Other' } });
+
+    await updateFile({ id: 1, metadata: { format: 'Diffusers' }, userId: 7 });
+
+    expect(write().data).toMatchObject(RESET);
+  });
+
+  it('keeps a Danger verdict through a change that would reset the scan', async () => {
+    scanned({ type: 'Config', name: 'a.ckpt', pickleScanResult: 'Danger' });
+
+    await updateFile({ id: 1, type: 'Model', userId: 7 });
+
+    expect(write().data).not.toHaveProperty('pickleScanResult');
+  });
+
+  it('writes nothing over a verdict that landed after the edit read the file', async () => {
+    scanned({ type: 'Config', name: 'a.ckpt' });
+    dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(updateFile({ id: 1, type: 'Model', userId: 7 })).rejects.toThrow(
+      'This file was scanned while you were editing it.'
+    );
+  });
 });
 
 // The domain stamp gates which domain a paid training submit may run under; it is the server's.

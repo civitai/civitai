@@ -271,9 +271,10 @@ findings are done — see the parity checklist.
 - [x] **Grant cosmetic items** from the shop panel — `grantCosmetic`, behind `user.cosmetics.grant`.
       🎥 *"Check their cosmetic shop, potentially grant them items."*
 - [x] **Multi-select comments to ToS/delete them.** **Built 2026-08-24 on `moderator-feedback-3` — not
-      merged or deployed.** Both lists in User Lookup → Comments carry a select-all over the *filtered*
-      rows, and the ids post from the selection rather than the rendered checkboxes, so it reaches past
-      the card's "Show more" fold. Actioned rows drop in place instead of refetching the account.
+      merged or deployed.** Since 2026-11 User Lookup → Comments is one list, paged 50 at a time
+      (`/api/user-comments`), with a select-all over the current page's *filtered* rows. Ticks persist
+      across pages, and the shared `SelectionBar` acts on all of them and counts those not shown. The
+      server refuses ids owned by another account and sends them in batches of 500.
 - [ ] **`/users` page grant doubles as the ban / purge / bulk-comment permission.** `contentAction`,
       `purgeContent` and `setBanned` in User Lookup all gate on `canAccess(user, '/users')`. Page grants
       and permissions are meant to be independent axes here; these are welded, so granting a page is

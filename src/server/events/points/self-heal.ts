@@ -3,7 +3,11 @@ import { getEventScoringPhase } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { eventPointSeason } from '~/server/events/points/keys';
-import { runEventPointsReferee } from '~/server/events/points/referee';
+import {
+  REFEREE_CLICKHOUSE_BUDGET_S,
+  runEventPointsReferee,
+  SETTLE_LOCK_S,
+} from '~/server/events/points/referee';
 import { reconcileEventRosters, rosterEvents } from '~/server/events/points/roster-sync';
 import { syncEventHats } from '~/server/events/points/sync';
 import { acquireJobLock, type JobLock } from '~/server/jobs/job-lock';
@@ -17,9 +21,9 @@ export type SelfHealReason = 'switch-on' | 'empty-map' | 'missing-count-base';
 export type SelfHealOutcome = 'busy' | 'off' | 'unknown' | 'cooldown' | 'locked' | 'ran' | 'failed';
 
 // The job whose lock the heal takes: the referee's settle stages its bases under shared keys, so it
-// must never run beside the hourly job (or another pod's heal). Its lock expiration, too.
+// must never run beside the hourly job (or another pod's heal).
 export const SETTLE_JOB = 'event-engine-leaderboard-update';
-export const SETTLE_LOCK_S = 15 * 60;
+export { SETTLE_LOCK_S };
 // One heal per event per window, across every pod, whatever happened to the last one: a genuinely
 // empty event (no hats placed), or one the referee has nothing to settle for yet, would otherwise
 // heal on every reload. A flip has its own window, so an earlier repair cannot swallow it.
@@ -102,10 +106,18 @@ export function createEventPointsSelfHeal(deps: SelfHealDeps) {
       }
       try {
         const now = deps.now();
+        // The roster step after the settle runs under the same lock.
+        const refereeDeadline =
+          Date.now() + REFEREE_CLICKHOUSE_BUDGET_S * 1000 - ROSTER_STEP_MAX_MS;
         const hats = (await deps.syncEventHats(now)).find((r) => r.event === name);
         const scored = { ...eventDef, scoring: eventDef.scoring };
         const settled = (await deps.getScoringPhase(eventDef, now))
-          ? await deps.runReferee(scored, eventPointSeason(eventDef.startDate, now), now)
+          ? await deps.runReferee(
+              scored,
+              eventPointSeason(eventDef.startDate, now),
+              now,
+              refereeDeadline
+            )
           : undefined;
         deps.log({
           ...entry,

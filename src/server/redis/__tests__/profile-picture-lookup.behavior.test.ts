@@ -23,7 +23,8 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
-      type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb, "needsReview" text
+      type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb, "needsReview" text,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb
     );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
   `);
@@ -75,9 +76,19 @@ describe('profile picture lookup', () => {
     expect(result[OTHER]).toMatchObject({ id: 20 });
   });
 
-  it('returns the picture of a user whose avatar is still pending its scan', async () => {
-    await setIngestion(10, 'Pending');
+  it.each(['Pending', 'Error'])(
+    'returns no picture for a user whose avatar is %s, as for a user with none',
+    async (state) => {
+      await setIngestion(10, state);
+      const result = await lookupProfilePictures([OWNER, OTHER], true);
+      expect(result).not.toHaveProperty(String(OWNER));
+      expect(result[OTHER]).toMatchObject({ id: 20 });
+    }
+  );
 
+  it('returns a picture still pending its scan once a moderator has rated it', async () => {
+    await setIngestion(10, 'Pending');
+    await db.query(`UPDATE "Image" SET "nsfwLevelLocked" = true WHERE id = 10`);
     expect((await lookupProfilePictures([OWNER], true))[OWNER]).toMatchObject({ id: 10 });
   });
 });

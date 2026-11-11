@@ -3,7 +3,9 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDatasetEditable } from '~/shared/constants/training.constants';
 import type { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { ModelStatus, ModelUploadType, ScanResultCode } from '~/shared/utils/prisma/enums';
-import { unscannedFile } from '~/utils/file-helpers';
+import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
+import { getModelFileFormat, unscannedFile } from '~/utils/file-helpers';
+import { getFileExtension } from '~/utils/string-helpers';
 
 // A version that has been out in the world (or is about to be) keeps its files; new bytes go in a
 // new version. Unpublished counts, since publishing it again brings back what it had.
@@ -70,22 +72,81 @@ export function assertFileTypeChangeAllowed(
 export const TRAINING_DATA_SCAN_PENDING_MESSAGE =
   "Training data can't be changed to another type until its security scan completes.";
 
+type ScanResetFile = {
+  type: string;
+  name: string;
+  metadata: unknown;
+  pickleScanResult: ScanResultCode;
+  virusScanResult: ScanResultCode;
+};
+type FileChange = { type?: string; name?: string; format?: string | null };
+
+const nameFormat = (name: string) => getModelFileFormat(name.toLowerCase());
+const formatOf = (file: { name: string; metadata: unknown }) =>
+  (file.metadata as { format?: string } | null)?.format ?? nameFormat(file.name);
+const extension = (name: string) => getFileExtension(name.toLowerCase());
+const NOT_CLEAN: ScanResultCode[] = [ScanResultCode.Danger, ScanResultCode.Error];
+
+/** A new format the file's name does not have. A zip's contents can't be told from its name. */
+export function formatMismatch(file: { name: string; metadata: unknown }, change: FileChange) {
+  if (change.format == null || change.format === formatOf(file)) return false;
+  const name = change.name ?? file.name;
+  return extension(name) !== 'zip' && change.format !== nameFormat(name);
+}
+
+/** Refuses an owner a format the file name does not have. */
+export function assertFormatChangeAllowed(
+  file: { name: string; metadata: unknown },
+  change: FileChange,
+  isModerator: boolean
+) {
+  if (!isModerator && formatMismatch(file, change))
+    throw throwBadRequestError(
+      "A file's format must match its file name. Upload the file again to change its format."
+    );
+}
+
 /**
- * The scan fields to write with a type change. Training Data has only had a virus scan, so a file
- * relabelled away from it goes back to unscanned, and the model-file scan picks it up as its new type.
+ * Training Data goes back to unscanned when it is relabelled, since it has only had a virus scan.
+ * Any other file does when it becomes a type a loader opens, or its name's extension or its format
+ * changes. A verdict that is not clean stands.
  */
-export function scanResetForTypeChange(file: { type: string }, nextType: string | undefined) {
+function resetsScan(file: ScanResetFile, change: FileChange) {
+  const nextType = change.type && change.type !== file.type ? change.type : undefined;
+  if (file.type === 'Training Data') return !!nextType;
+  if (NOT_CLEAN.includes(file.pickleScanResult) || NOT_CLEAN.includes(file.virusScanResult))
+    return false;
+  const becameLoadable =
+    !!nextType &&
+    LOADABLE_FILE_TYPES.includes(nextType) &&
+    !LOADABLE_FILE_TYPES.includes(file.type);
+  const renamed = !!change.name && extension(change.name) !== extension(file.name);
+  const nextFormat =
+    change.format === undefined ? undefined : change.format ?? nameFormat(change.name ?? file.name);
+  const changedFormat = nextFormat !== undefined && nextFormat !== formatOf(file);
+  return becameLoadable || renamed || changedFormat;
+}
+
+/** The scan fields to write with a file change. */
+export function scanResetForFileChange(file: ScanResetFile, change: FileChange) {
   // A Json column takes Prisma.JsonNull, never a bare null.
-  return resetsScan(file, nextType) ? { ...unscannedFile, rawScanResult: Prisma.JsonNull } : {};
+  return resetsScan(file, change) ? { ...unscannedFile, rawScanResult: Prisma.JsonNull } : {};
 }
 
 /**
- * The condition a type change's write must add: the reset may only replace the Success it was
- * judged on, never a verdict that landed since.
+ * The condition a write that resets a scan (a relabel, a rename, a format change, a file becoming
+ * loadable) must add: it may only replace the verdicts it was judged on, never one that landed since.
  */
-export function scanResetWriteGuard(file: { type: string }, nextType: string | undefined) {
-  return resetsScan(file, nextType) ? { virusScanResult: ScanResultCode.Success } : {};
+export function scanResetWriteGuard(file: ScanResetFile, change: FileChange) {
+  if (!resetsScan(file, change)) return {};
+  return file.type === 'Training Data'
+    ? { virusScanResult: ScanResultCode.Success }
+    : { virusScanResult: file.virusScanResult, pickleScanResult: file.pickleScanResult };
 }
 
-const resetsScan = (file: { type: string }, nextType: string | undefined) =>
-  file.type === 'Training Data' && !!nextType && nextType !== file.type;
+/** Why a file change guarded by scanResetWriteGuard wrote nothing. */
+export function scanResetConflictMessage(file: { type: string }) {
+  return file.type === 'Training Data'
+    ? TRAINING_DATA_SCAN_PENDING_MESSAGE
+    : 'This file was scanned while you were editing it. Try again.';
+}

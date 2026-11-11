@@ -2,6 +2,7 @@ import {
   FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
 } from '@civitai/shared/feedback-capture';
+import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -384,7 +385,7 @@ export const getUsers = async ({
   if (include?.includes('avatar'))
     select.push(
       'COALESCE(i.url, u.image) AS "avatarUrl"',
-      `COALESCE(i.nsfwLevel, 'None') AS "avatarNsfwLevel"`
+      'COALESCE(i."nsfwLevel", 0) AS "avatarNsfwLevel"'
     );
 
   if (contestBanned) {
@@ -409,9 +410,11 @@ export const getUsers = async ({
   const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
-      ${Prisma.raw(
-        include?.includes('avatar') ? 'LEFT JOIN "Image" i ON i.id = u."profilePictureId"' : ''
-      )}
+      ${
+        include?.includes('avatar')
+          ? Prisma.sql`LEFT JOIN "Image" i ON i.id = u."profilePictureId" AND ${servableProfilePictureSql}`
+          : Prisma.empty
+      }
     WHERE ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}

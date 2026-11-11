@@ -357,7 +357,11 @@ describe('hook: the sheet cookie', () => {
   }
 
   beforeEach(() => {
-    guardCheck.mockResolvedValue({ status: 'reauth', authorize: 'https://hub.test/a' });
+    guardCheck.mockResolvedValue({
+      status: 'reauth',
+      authorize: 'https://hub.test/a',
+      reason: 'no-session',
+    });
   });
 
   it('authenticates the image route as the moderator, marked as the sheet', async () => {
@@ -404,15 +408,55 @@ describe('hook: the sheet cookie', () => {
   });
 
   it.each([
-    ['login', { status: 'login', redirect: 'https://hub.test/login' }],
-    ['reauth', { status: 'reauth', authorize: 'https://hub.test/a' }],
-  ])('uses the sheet when there is no web session (%s)', async (_n, web) => {
+    ['login', { status: 'login', redirect: 'https://hub.test/login', reason: 'no-session' }],
+    ['reauth', { status: 'reauth', authorize: 'https://hub.test/a', reason: 'no-session' }],
+    ['invalid login', { status: 'login', redirect: 'https://hub.test/login', reason: 'invalid' }],
+    ['invalid reauth', { status: 'reauth', authorize: 'https://hub.test/a', reason: 'invalid' }],
+  ])('uses the sheet when there is no valid web session (%s)', async (_n, web) => {
     const token = await signIn();
     guardCheck.mockResolvedValue(web);
     const { res, locals } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
     expect(res.status).toBe(299);
     expect(locals.heldCredential).toBe('sheet');
     expect(locals.user).toMatchObject({ id: 42 });
+  });
+
+  it.each([
+    ['login', { status: 'login', redirect: 'https://hub.test/login', reason: 'unavailable' }],
+    ['reauth', { status: 'reauth', authorize: 'https://hub.test/a', reason: 'unavailable' }],
+  ])(
+    'answers 503 when the web session cannot be resolved, without using or clearing the sheet (%s)',
+    async (_n, web) => {
+      const token = await signIn();
+      guardCheck.mockResolvedValue(web);
+      redis.get.mockClear();
+      const { res, resolve, locals } = await run(
+        '/api/held-media/7',
+        `${WEB_COOKIE}; __Secure-held_sheet=${token}`
+      );
+      expect(res.status).toBe(503);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(res.headers.get('set-cookie')).toBeNull();
+      expect(resolve).not.toHaveBeenCalled();
+      expect(locals.heldCredential).toBeUndefined();
+      expect(redis.get).not.toHaveBeenCalled();
+    }
+  );
+
+  it('sends a valid shared web session that needs this host cookie to sign in, not to the sheet', async () => {
+    const token = await signIn();
+    guardCheck.mockResolvedValue({
+      status: 'login',
+      redirect: 'https://mod.test/api/auth/authorize',
+      reason: 'host-cookie',
+    });
+    redis.get.mockClear();
+    const { res, resolve, locals } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://mod.test/api/auth/authorize');
+    expect(resolve).not.toHaveBeenCalled();
+    expect(locals.heldCredential).toBeUndefined();
+    expect(redis.get).not.toHaveBeenCalled();
   });
 
   it('refuses a sheet cookie beside a signed-in non-moderator, without looking it up', async () => {
