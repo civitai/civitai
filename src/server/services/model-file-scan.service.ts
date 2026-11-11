@@ -745,7 +745,7 @@ const isUnverifiedSignature = (sig: string) =>
 
 /**
  * The verdict the scanner's FOUND lines give, or null when they give none. Encrypted and over-limit
- * alerts share exit codes with infections and with errors, so the exit code cannot tell them apart.
+ * alerts share exit codes with errors and with clean scans, so the exit code cannot tell them apart.
  */
 function clamSignatureResult(text: string | null | undefined): ScanResultCode | null {
   const signatures = [...(text ?? '').matchAll(CLAM_FOUND_LINE)].map((match) => match[1]);
@@ -768,6 +768,8 @@ function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>):
     if (status.includes('error') || status.includes('fail')) return ScanResultCode.Error;
     return ScanResultCode.Pending;
   }
+  // Exit 1 stays Danger whatever the alerts say.
+  if (output.exitCode === 1) return ScanResultCode.Danger;
   return clamSignatureResult(output.output) ?? exitCodeToScanResult(output.exitCode);
 }
 

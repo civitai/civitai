@@ -1338,15 +1338,21 @@ describe('model-file-scan.service', () => {
       it.each([
         [
           'an encrypted alert',
-          1,
-          '/m/a.zip: Heuristics.Encrypted.Zip FOUND\n',
+          0,
+          '/m/a.zip: OK\nzip-precheck: Heuristics.Encrypted.ZipPreCheck FOUND\n',
           ScanResultCode.Error,
         ],
         [
-          'a file-count limit',
+          'an encrypted alert with exit 1',
+          1,
+          '/m/a.zip: Heuristics.Encrypted.Zip FOUND\n',
+          ScanResultCode.Danger,
+        ],
+        [
+          'a file-count limit with exit 1',
           1,
           '/m/a.zip: Heuristics.Limits.Exceeded.MaxFiles FOUND\n',
-          ScanResultCode.Error,
+          ScanResultCode.Danger,
         ],
         [
           'a size limit',
@@ -1362,8 +1368,8 @@ describe('model-file-scan.service', () => {
         ],
         [
           'an encrypted alert in CRLF output',
-          1,
-          '/m/a.zip: Heuristics.Encrypted.Zip FOUND\r\n/m/a.zip: Virus(es) detected ERROR\r\n',
+          0,
+          '/m/a.zip: OK\r\nzip-precheck: Heuristics.Encrypted.ZipPreCheck FOUND\r\n',
           ScanResultCode.Error,
         ],
         [
@@ -1380,7 +1386,7 @@ describe('model-file-scan.service', () => {
         ],
         ['no alert', 0, '/m/a.zip: OK\n', ScanResultCode.Success],
       ])(
-        'with no status, %s decides before the exit code',
+        'with no status, %s (exit %i) gets the verdict in its row',
         async (_, exitCode, output, expected) => {
           expect(await virusVerdict({ status: null, exitCode, output })).toBe(expected);
         }
