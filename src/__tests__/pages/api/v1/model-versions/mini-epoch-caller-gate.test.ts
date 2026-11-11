@@ -443,4 +443,26 @@ describe('mini/[id] epoch arm, a stored blob url', () => {
     expect(status).toBe(404);
     expect(h.refreshBlobs).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['a bearer that does not resolve', { authorization: 'Bearer not-a-key' }],
+    ['a signed-in caller with no grant', stranger],
+  ])('enforce-anon serves %s the stored url, not signed again', async (_label, caller) => {
+    h.variant.value = 'enforce-anon';
+
+    const { status, body } = await request(caller, {}, BLOB_FILE);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([STORED]);
+    expect(h.refreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('enforce-anon signs it again for the service token', async () => {
+    h.variant.value = 'enforce-anon';
+
+    const { body } = await request(service, {}, BLOB_FILE);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(h.refreshBlobs).toHaveBeenCalledTimes(1);
+  });
 });

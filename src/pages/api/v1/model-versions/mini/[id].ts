@@ -319,7 +319,8 @@ export default MixedAuthEndpoint(async function handler(
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
-  // Only a caller the epoch gate serves gets a freshly signed url; anyone else keeps the stored one.
+  // Only the owner, a moderator, a grantee or the service token gets a freshly signed url; anyone
+  // else the gate serves (`log`, or `enforce-anon` with a credential) keeps the stored one.
   let mayResign = false;
   // Decided before the epoch is read, so a refused caller gets the same answer whatever the
   // version's training results hold.
