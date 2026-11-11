@@ -74,6 +74,11 @@ describe('post.getResources visibility', () => {
     expect(await resourcesFor(STRANGER)).toEqual([ROWS[0]]);
   });
 
+  it('carries no cover image: covers are served only to the post owner by post.getResourceCovers', async () => {
+    postIs({});
+    expect(await resourcesFor(ANON)).toEqual([ROWS[0]]);
+  });
+
   it.each([
     ['unpublished', { published: false }],
     ['Private', { private: true }],
@@ -91,6 +96,17 @@ describe('post.getResources visibility', () => {
     postIs(state);
     expect(await resourcesFor(SELF)).toEqual([ROWS[0]]);
     expect(await resourcesFor(MOD)).toEqual([ROWS[0]]);
+    // The service filters rows by the images this viewer may open, so it must be told who asks.
+    expect(mockGetPostResources).toHaveBeenCalledWith({
+      id: POST_ID,
+      userId: OWNER,
+      isModerator: undefined,
+    });
+    expect(mockGetPostResources).toHaveBeenCalledWith({
+      id: POST_ID,
+      userId: MOD!.id,
+      isModerator: true,
+    });
   });
 
   it('a stranger the owner blocked gets NOT_FOUND; a moderator is not block-checked', async () => {

@@ -1,4 +1,5 @@
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
 import * as z from 'zod';
@@ -56,11 +57,14 @@ import {
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
   CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
+  SOURCE_SCAN_PENDING_ERROR_CODE,
   isKnownBlockScope,
   PRIVATE_RUN_BUZZ_CAP,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
+  REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { buzzCapRedisKey, buzzCapWindowKey } from '~/server/services/blocks/block-buzz-cap';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
@@ -265,6 +269,7 @@ import {
 import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
 import { collectTrainingTriggerWords } from '~/server/services/blocks/block-training-trigger-word';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
+import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -294,6 +299,7 @@ import {
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
   assertStepTypeAllowed,
+  foldStepTypeCase,
   isTrainingStepTypeIgnoringCase,
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
@@ -384,6 +390,7 @@ import {
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { auditPassThroughPrompts } from '~/server/services/blocks/pass-through-prompt-audit';
 import {
   cancelWorkflow,
   getWorkflow,
@@ -409,6 +416,7 @@ import {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import {
   assertGenerationInputsUsable,
+  isAppSourcePendingError,
   opaqueInputUrlsIn,
 } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
@@ -1319,17 +1327,6 @@ async function resolvePageLoraGates(opts: {
 // 25h TTL: comfortably covers a UTC-day window plus clock skew; the key is
 // re-derived per day so a stale counter never bleeds into the next window.
 const BLOCK_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
-
-function buzzCapWindowKey(): string {
-  // UTC calendar day, e.g. '2026-06-02'.
-  return new Date().toISOString().slice(0, 10);
-}
-
-function buzzCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}` {
-  // PER-USER aggregate: appBlockId is intentionally NOT part of the key so all
-  // of a user's installed blocks share ONE daily ceiling (see comment above).
-  return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${userId}:${buzzCapWindowKey()}`;
-}
 
 /**
  * THE ONE reserve primitive behind every cumulative Buzz counter in this router
@@ -3905,7 +3902,7 @@ export const blocksRouter = router({
         // Same bounds as `grantScopes`, deliberately: the two procedures describe the same
         // vocabulary and a viewer toggling a row off should not hit a different limit from
         // the one that turned it on.
-        scopes: z.array(z.string().min(1).max(64)).min(1).max(32),
+        scopes: z.array(z.string().min(1).max(64)).min(1).max(REVOKE_SCOPES_MAX_PER_CALL),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -6948,13 +6945,15 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
-      if (input.body.kind === 'workflow' || input.body.kind === 'step')
-        await assertStepOrWorkflowInputsUsable(input.body, claims, {
+      if (input.body.kind === 'workflow' || input.body.kind === 'step') {
+        const pending = await assertStepOrWorkflowInputsUsable(input.body, claims, {
           confirmedSubmit:
             input.body.kind === 'step' &&
             isPassThroughStepBody(input.body) &&
             input.body.quoteId !== undefined,
         });
+        if (pending) return pending;
+      }
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -7097,6 +7096,7 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
+      assertNoRestrictedBaseModels({ baseModels: [resolved.baseModel, checkpoint.baseModel] });
       // PAGE branch: pre-spend availability gate over the resources THIS gate
       // can see — the viewer-picked BODY version (`resolved.gate`) AND each
       // additional LoRA — a fail-fast UX layer in place of the skipped
@@ -7138,6 +7138,7 @@ export const blocksRouter = router({
           checkpointBaseModel: checkpoint.baseModel,
         });
         additionalResourceTypes = resourceTypes;
+        assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
@@ -8524,8 +8525,8 @@ export const blocksRouter = router({
     .input(
       z.object({
         appBlockId: z.string().min(1).max(64).optional(),
-        from: z.string().datetime().optional(),
-        to: z.string().datetime().optional(),
+        from: isoDatetimeCompat().optional(),
+        to: isoDatetimeCompat().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -8708,8 +8709,8 @@ export const blocksRouter = router({
     .input(
       z.object({
         appBlockId: z.string().min(1).max(64).optional(),
-        from: z.string().datetime().optional(),
-        to: z.string().datetime().optional(),
+        from: isoDatetimeCompat().optional(),
+        to: isoDatetimeCompat().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -8744,8 +8745,8 @@ export const blocksRouter = router({
     .input(
       z.object({
         appBlockId: z.string().min(1).max(64),
-        from: z.string().datetime().optional(),
-        to: z.string().datetime().optional(),
+        from: isoDatetimeCompat().optional(),
+        to: isoDatetimeCompat().optional(),
         includeOwner: z.boolean().optional(),
         // Declared-name shape; `__undeclared__` cannot match it.
         event: z.string().regex(BLOCK_ANALYTICS_NAME_RE).optional(),
@@ -9725,8 +9726,10 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
-  if (input.body.kind === 'workflow' || input.body.kind === 'step')
-    await assertStepOrWorkflowInputsUsable(input.body, claims);
+  if (input.body.kind === 'workflow' || input.body.kind === 'step') {
+    const pending = await assertStepOrWorkflowInputsUsable(input.body, claims);
+    if (pending) return pending;
+  }
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -9820,6 +9823,7 @@ async function estimateBlockWorkflowCell(
     userId,
     slotId: ctxSlotId,
   });
+  assertNoRestrictedBaseModels({ baseModels: [resolved.baseModel, checkpoint.baseModel] });
   // PAGE branch: pre-spend availability gate over the resources THIS gate
   // can see — the viewer-picked BODY version (`resolved.gate`) AND each
   // additional LoRA — as a fail-fast UX layer in place of the skipped
@@ -9856,6 +9860,7 @@ async function estimateBlockWorkflowCell(
       checkpointBaseModel: checkpoint.baseModel,
     });
     additionalResourceTypes = resourceTypes;
+    assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates: [buildGateVersion(resolved.gate), ...loraGates],
       viewer: { id: userId, isModerator: !!user.isModerator },
@@ -10120,6 +10125,8 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (isInlineComfyBody(body)) {
     const verdict = checkInlineComfyGraph(body.workflow);
     if (!verdict.runnable) return { snapshot: verdict.snapshot };
+    const pending = await checkInlineComfySources({ graph: verdict.graph, userId, claims });
+    if (pending) return pending;
     return {
       snapshot: {
         workflowId: 'wf_estimate',
@@ -10239,6 +10246,8 @@ async function submitCustomComfyWorkflow(opts: {
     // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
     //     which is what makes gating that flat array sufficient.
     assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
+    const pending = await checkInlineComfySources({ graph: inlineBody.workflow, userId, claims });
+    if (pending) return pending;
     // (b) ENTITLEMENT — the real belt (early-access `hasAccess` + Private
     //     subscription + anti-drop + anti-substitute) over the declared AIRs.
     await assertViewerEntitledToInlineResources({
@@ -10270,6 +10279,7 @@ async function submitCustomComfyWorkflow(opts: {
       const resolvedVersion = await resolvePageResourceContext(versionId);
       gates.push(buildGateVersion(resolvedVersion.gate));
     }
+    assertNoRestrictedBaseModels({ baseModels: gates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates,
       viewer: { id: userId, isModerator: !!user.isModerator },
@@ -10277,6 +10287,10 @@ async function submitCustomComfyWorkflow(opts: {
       wildcardsEnabled: !!ctx.features.wildcards,
     });
   }
+
+  // A recipe's Hugging Face AIRs depend on the engine its params pick, so check the built step's.
+  if (recipe && params)
+    assertNoRestrictedBaseModels({ airs: recipe.buildStep(params, {}).resources });
 
   const token = await getOrchestratorToken(userId, ctx);
 
@@ -10865,7 +10879,7 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
  * Narrow a `kind:'step'` body to its PASS-THROUGH arm.
  *
  * 🔴 KEYED ON THE VALUE OF `step`, NOT `'step' in body`. The pass-through arm
- * declares `step: z.undefined()`, so a body carrying `step` as an own key is a
+ * declares `step: z.undefined().optional()`, so a body carrying `step` as an own key is a
  * LEGAL pass-through body (an SDK spreading an optional variable produces one,
  * and `undefined` survives superjson); a presence test routes it to
  * `resolveBlockStep`, which answers BAD_REQUEST. Same rule as
@@ -10895,13 +10909,15 @@ async function assertStepOrWorkflowInputsUsable(
       : isPassThroughStepBody(body)
       ? (['appBlocksPassThrough', body.input] as const)
       : (['appBlocksStep', body.params] as const);
-  // Only a registry step declares free text in its params (`freeTextParamPaths`, pinned against
-  // its param schema). A workflow or pass-through body is read whole: there any step can `$ref`
-  // any field, so a link in a text field may be wired into an image input.
+  // A registry step declares free text in its params (`freeTextParamPaths`, pinned against its
+  // param schema); a lone pass-through step by its `$type`. A workflow is read whole: there any
+  // step can `$ref` any field, so a link in a text field may be wired into an image input.
   const freeTextPaths =
-    body.kind === 'step' && !isPassThroughStepBody(body)
-      ? getStep(body.step)?.freeTextParamPaths
-      : undefined;
+    body.kind === 'workflow'
+      ? undefined
+      : isPassThroughStepBody(body)
+      ? PASS_THROUGH_FREE_TEXT_PATHS.get(foldStepTypeCase(body.$type))
+      : getStep(body.step)?.freeTextParamPaths;
   const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs, freeTextPaths);
   if (tooDeep) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
@@ -10909,14 +10925,91 @@ async function assertStepOrWorkflowInputsUsable(
   if (tooLarge) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
   }
-  await assertGenerationInputsUsable({
-    urls,
-    userId,
-    entry,
-    isApiCaller: false,
-    opaqueInput: true,
-  });
+  try {
+    await assertGenerationInputsUsable({
+      urls,
+      userId,
+      entry,
+      isApiCaller: false,
+      opaqueInput: true,
+      appBlockLog: { appBlockId: claims.appBlockId, stepTypes: bodyStepTypes(body) },
+    });
+  } catch (error) {
+    if (!isAppSourcePendingError(error)) throw error;
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: (error as TRPCError).message,
+        errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
+      } satisfies BlockWorkflowSnapshot,
+    };
+  }
 }
+
+/**
+ * The source images an inline customComfy graph reads must pass the app-block source gate. The
+ * whole graph is read: a node may link a text field into an image input. The estimate and the
+ * submit both call this on the graph `checkInlineComfyGraph` returned, so nothing an estimate
+ * saw is trusted at submit. A pending source returns the failed snapshot; anything else throws.
+ */
+async function checkInlineComfySources(opts: {
+  graph: ComfyGraph;
+  userId: number;
+  claims: BlockClaims;
+}): Promise<{ snapshot: BlockWorkflowSnapshot } | null> {
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(opts.graph);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'workflow graph nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'workflow graph is too large to check' });
+  }
+  try {
+    await assertGenerationInputsUsable({
+      urls,
+      userId: opts.userId,
+      entry: 'appBlocksInlineComfy',
+      isApiCaller: false,
+      opaqueInput: true,
+      appBlockLog: { appBlockId: opts.claims.appBlockId, stepTypes: 'customComfy' },
+    });
+  } catch (error) {
+    if (!isAppSourcePendingError(error)) throw error;
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: (error as TRPCError).message,
+        errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
+      } satisfies BlockWorkflowSnapshot,
+    };
+  }
+  return null;
+}
+
+/** The step types a body runs, for a log line: a registry step's id, else each `$type`. */
+function bodyStepTypes(body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>) {
+  if (body.kind === 'step' && !isPassThroughStepBody(body)) return body.step;
+  const steps = body.kind === 'workflow' ? body.steps : [body];
+  return steps.map((step) => foldStepTypeCase(step.$type)).join(',');
+}
+
+/**
+ * Free-text fields of a pass-through step's orchestrator input, by case-folded `$type`: text the
+ * orchestrator never fetches (message text, tool schemas). A media part beside them is still read.
+ */
+const PASS_THROUGH_FREE_TEXT_PATHS: ReadonlyMap<string, readonly string[]> = new Map([
+  [
+    'chatcompletion',
+    [
+      'messages[].content',
+      'messages[].tool_calls.**',
+      'tools[].function.**',
+      'tools[].parameters.**',
+    ],
+  ],
+]);
 
 /**
  * Settle-time observability labels for a pass-through submit.
@@ -12548,6 +12641,7 @@ async function submitPassThroughStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
   // A pass-through body carries no `accountType` (its `.strict()` wire shape has
   // no such field), so currency selection is Auto — the domain-allowed set,
   // drained blue-first.
@@ -13211,6 +13305,7 @@ async function submitMultiStepWorkflow(opts: {
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, prepared.steps));
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
@@ -14007,7 +14102,7 @@ type QuotedGrantSubmitArm = {
   /** Extra fields on the submit-failure log line. */
   logFields: Record<string, unknown>;
   /** Kind refusals that must run before anything costs something (after the gate). */
-  preflight?: () => void;
+  preflight?: (auth: QuotedGrantAuth) => void | Promise<void>;
   /**
    * The orchestrator `externalId` this job is submitted under, and what a DEFINITE
    * submit records. Computed before the replay claim.
@@ -14046,7 +14141,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
   const copy = QUOTED_GRANT_COPY[arm.kind];
   const auth = await assertQuotedGrantRequestAllowed(arm.kind, claims, ctx);
   const { userId } = auth;
-  arm.preflight?.();
+  await arm.preflight?.(auth);
   const quoteId = arm.quoteId;
   if (!quoteId) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: arm.missingQuoteMessage });
@@ -14659,10 +14754,12 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
       generationType: resolveBlockGenerationType(body),
       logFields: { stepType: body.$type },
       // Before anything that costs something: the platform denylist (the same rule as
-      // the unconfirmed arm), then no training `$type` through this door.
-      preflight: () => {
+      // the unconfirmed arm), then no training `$type` through this door, then the prompt gate.
+      preflight: async ({ userId }) => {
         assertPassThroughStepTypeAllowed(body.$type, body.input);
         assertNotTrainingStepType(body.$type);
+        const { isGreen } = resolveBlockMaturity(claims);
+        await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -14884,6 +14981,21 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
       log: { userId, source: 'app-blocks', appBlockId: claims.appBlockId },
     });
   }
+}
+
+function passThroughAuditContext(
+  claims: BlockClaims,
+  userId: number,
+  isGreen: boolean,
+  steps: ReadonlyArray<{ $type: string; input: unknown }>
+) {
+  return {
+    steps,
+    userId,
+    appBlockId: claims.appBlockId,
+    isGreen,
+    loadIsModerator: async () => !!(await getBlockSessionUser(userId)).isModerator,
+  };
 }
 
 /** A `kind:'training'` body as the one training step the trigger-word rule reads. */

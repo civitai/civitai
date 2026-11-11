@@ -714,7 +714,11 @@ async function buildContinuation(
   const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
   if (!ecosystem)
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
-  if (isRetiredEcosystem(ecosystem))
+  // A retired card can share a live ecosystem (Hunyuan trains as `wan`), so check the base too.
+  if (
+    isRetiredEcosystem(ecosystem) ||
+    (typeof input.model === 'string' && isRetiredBaseAir(input.model))
+  )
     throw new Error('keep training: this model is no longer offered for training');
   // The source's `model` is what it trained (`customModel || model` at submit).
   const unavailable = unavailableRunMessage(

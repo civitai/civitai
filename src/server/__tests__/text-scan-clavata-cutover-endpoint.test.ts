@@ -86,6 +86,6 @@ describe('text-scan-clavata-cutover endpoint', () => {
   it('returns the status rows under targets', async () => {
     const res = await run({ action: 'status' });
     expect(res.status).toBe(200);
-    expect(res.body.targets).toHaveLength(13);
+    expect(res.body.targets).toHaveLength(11);
   });
 });

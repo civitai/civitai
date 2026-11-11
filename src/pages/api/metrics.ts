@@ -86,6 +86,9 @@ import { ensureRegisterAppReviewAutodeployMetrics } from '~/server/prom/app-revi
 // that module's graph never loads the redis client.
 import '~/server/prom/ingestion-gauge-store';
 import { ensureRegisterThreadCpuMetrics } from '~/server/prom/thread-cpu.metrics';
+// Seeds civitai_provider_download_total at 0 for every live provider. The providers are read on each
+// scrape, so a new one is seeded by the first scrape after it is minted.
+import { seedProviderDownloadMetrics } from '~/server/prom/provider-download.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
@@ -231,6 +234,7 @@ const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockSharedStorageMetrics();
   seedAppBlockDocStoreMetrics();
   await refreshDocStoreEnabled();
+  await seedProviderDownloadMetrics();
 
   const metrics = await collectRegistryMetrics(client.register, 'default');
 

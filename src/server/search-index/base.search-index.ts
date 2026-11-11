@@ -442,7 +442,15 @@ export type SearchIndexUpdateSyncResult = {
   handledWithoutDocument: number;
 };
 
-export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor) {
+/**
+ * A processor that forwards to the Outbox takes a reason on every queueUpdate, so a metrics refresh
+ * (reason 'metrics', never forwarded) cannot be queued as a content change by omission.
+ */
+type QueueUpdateOptions<P> = P extends { outboxEntity: SearchOutboxEntity }
+  ? [options: { reason: SearchUpdateReason }]
+  : [options?: { reason?: SearchUpdateReason }];
+
+export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>(processor: P) {
   const {
     indexName,
     setup,
@@ -824,8 +832,9 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     },
     async queueUpdate(
       items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
-      { reason }: { reason?: SearchUpdateReason } = {}
+      ...[options]: QueueUpdateOptions<P>
     ) {
+      const reason = options?.reason;
       if (outboxEntity) await forwardSearchUpdate({ entityType: outboxEntity, items, reason });
       if (retired) return;
       await SearchIndexUpdate.queueUpdate({ indexName, items });

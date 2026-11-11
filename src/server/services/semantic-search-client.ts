@@ -1,9 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
+import { dbRead } from '~/server/db/client';
 
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
-// The ceiling of an `ids` batch on the image fetch path (IMAGE_IDS_BATCH_CAP's reasoning).
+// Most candidates hydrated per round: each round is one id-list query on the page's fetch path.
 const MAX_HYDRATION_BATCH = 100;
 // The search service's paging cap.
 export const MAX_CANDIDATE_OFFSET = 2000;
@@ -254,4 +255,22 @@ export async function collectPage<T extends { id: number }>({
 
   const nextCursor = !exhausted && position < MAX_CANDIDATE_OFFSET ? position : undefined;
   return { items, nextCursor };
+}
+
+/** Tag names, as search URLs and pickers carry them, to ids; a name that does not exist is dropped. */
+export async function resolveTagIds(names: string[]) {
+  const tags = await dbRead.tag.findMany({
+    where: { name: { in: names.map((name) => name.toLowerCase()) } },
+    select: { id: true },
+  });
+  return tags.map((x) => x.id);
+}
+
+/** Usernames to user ids; a name that does not exist is dropped. */
+export async function resolveUserIds(usernames: string[]) {
+  const users = await dbRead.user.findMany({
+    where: { username: { in: usernames } },
+    select: { id: true },
+  });
+  return users.map((x) => x.id);
 }

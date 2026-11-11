@@ -1,8 +1,48 @@
 import { dbRead } from '~/server/db/client';
 import { canViewOwnerOnly, canViewPoiModel } from '~/server/utils/poi-model-visibility';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 
 type Viewer = { id?: number | null; isModerator?: boolean | null } | null | undefined;
+
+type ModelVisibilityRow = { status: ModelStatus; userId: number; poi: boolean };
+const modelVisibilitySelect = { status: true, userId: true, poi: true } as const;
+
+/**
+ * Published or the viewer's own, and not `poi` unless theirs: `getModelHandler`'s rule without its
+ * owner-block check. The caller lets moderators through.
+ */
+const isModelVisibleTo = (model: ModelVisibilityRow, viewer?: Viewer) =>
+  (model.status === ModelStatus.Published || model.userId === viewer?.id) &&
+  canViewPoiModel(model.poi, model.userId, viewer);
+
+/**
+ * Null unless `viewer` may see the model (`isModelVisibleTo`). A moderator sees every model, with
+ * no read, so `userId` (the owner) is null for them.
+ */
+export async function getModelVisibleToViewer(
+  modelId: number,
+  viewer?: Viewer
+): Promise<{ userId: number | null } | null> {
+  if (viewer?.isModerator) return { userId: null };
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: modelVisibilitySelect,
+  });
+  if (!model || !isModelVisibleTo(model, viewer)) return null;
+  return { userId: model.userId };
+}
+
+/** The ids among `modelIds` that `viewer` may see (`isModelVisibleTo`); every id for a moderator. */
+export async function getModelIdsVisibleToViewer(modelIds: number[], viewer?: Viewer) {
+  const ids = [...new Set(modelIds)];
+  if (viewer?.isModerator) return new Set(ids);
+  if (!ids.length) return new Set<number>();
+  const models = await dbRead.model.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, ...modelVisibilitySelect },
+  });
+  return new Set(models.filter((model) => isModelVisibleTo(model, viewer)).map((m) => m.id));
+}
 
 /** The ids among `modelIds` that `viewer` may not see (see `canViewPoiModel`). */
 export async function getHiddenModelIds(modelIds: number[], viewer?: Viewer) {

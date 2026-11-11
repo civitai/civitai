@@ -5,6 +5,7 @@ import {
   checkManifest,
   isUnderAppPrefix,
   matchAppRecord,
+  postIntentManifestSchema,
   sniffIntentMedia,
 } from '~/server/services/post-intent/post-intent.logic';
 
@@ -53,6 +54,14 @@ describe('isUnderAppPrefix', () => {
 describe('matchAppRecord', () => {
   it('finds no record for a host nobody approved', () => {
     expect(matchAppRecord('https://evil.example/api/share/a.json', [record])).toBeNull();
+  });
+});
+
+describe('postIntentManifestSchema expiresAt', () => {
+  it('reads a minute-precision expiry from the app host as :00', () => {
+    expect(postIntentManifestSchema.shape.expiresAt.unwrap().parse('2026-11-10T11:20+02:00')).toBe(
+      '2026-11-10T11:20:00+02:00'
+    );
   });
 });
 

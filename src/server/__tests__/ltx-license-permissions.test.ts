@@ -28,6 +28,7 @@ const OTHER_SAME: BaseModel[] = [
   'Pony V7',
   'Ideogram 4.0',
   'MiniMax H3',
+  'MiniMax H3 Image',
   'Krea 2',
   'Krea 2 Turbo',
 ];

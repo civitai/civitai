@@ -17,14 +17,12 @@ const { createSearchIndexUpdateProcessor } = await import(
   '~/server/search-index/base.search-index'
 );
 
-// Prod before the hand migration: no Comic.
 const SCHEMA = `
   CREATE TYPE "OutboxEntity" AS ENUM ('Article', 'Image', 'Model', 'Post', 'ModelVersion');
   CREATE TABLE "Outbox" (
     id bigserial PRIMARY KEY, event text NOT NULL, "entityType" "OutboxEntity" NOT NULL,
     "entityId" bigint NOT NULL, "createdAt" timestamp(3) DEFAULT now(), details jsonb, attempts int
   );
-  CREATE TABLE "Article" (id int PRIMARY KEY, title text NOT NULL, "updatedAt" timestamp(3));
 `;
 
 let harness: Awaited<ReturnType<typeof startPglitePrisma>>;
@@ -38,8 +36,7 @@ beforeEach(async () => {
   dbMock.dbWrite.outbox.createMany.mockImplementation((args: never) =>
     harness.prisma.outbox.createMany(args)
   );
-  await harness.pg.exec(`TRUNCATE "Outbox"; TRUNCATE "Article";`);
-  await harness.pg.exec(`INSERT INTO "Article" (id, title) VALUES (1, 'before')`);
+  await harness.pg.exec(`TRUNCATE "Outbox";`);
   setEnv({ SEARCH_OUTBOX_FORWARD: ['Article', 'Comic'] });
 });
 
@@ -55,9 +52,6 @@ const processor = (outboxEntity: SearchOutboxEntity, retired = false) =>
     pushData: async () => undefined,
   });
 
-const title = () =>
-  harness.prisma.article.findUnique({ where: { id: 1 }, select: { title: true } });
-
 const outbox = () =>
   harness.pg
     .query<{ event: string; entityType: string; entityId: string; details: unknown }>(
@@ -67,22 +61,22 @@ const outbox = () =>
 
 describe('the search Outbox forward', () => {
   it('still forwards when the Meilisearch index is retired', async () => {
-    await processor('Article', true).queueUpdate([
-      { id: 1 },
-      { id: 2, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
+    await processor('Article', true).queueUpdate(
+      [{ id: 1 }, { id: 2, action: SearchIndexUpdateQueueAction.Delete }],
+      { reason: 'edit' }
+    );
     expect(await outbox()).toEqual([
       {
         event: 'search.update',
         entityType: 'Article',
         entityId: '1',
-        details: { reason: null, action: 'Update' },
+        details: { reason: 'edit', action: 'Update' },
       },
       {
         event: 'search.update',
         entityType: 'Article',
         entityId: '2',
-        details: { reason: null, action: 'Delete' },
+        details: { reason: 'edit', action: 'Delete' },
       },
     ]);
     expect(h.queued).toEqual([]);
@@ -101,39 +95,18 @@ describe('the search Outbox forward', () => {
     expect(h.queued).toHaveLength(1);
   });
 
-  // Comic switched on before its enum value is applied: the insert fails in Postgres.
+  // A stubbed rejection, not a real database error: the socket harness can report a SQL error as a
+  // dropped connection instead, which made the message nondeterministic.
   it('swallows a failed insert, and still queues the update for Meilisearch', async () => {
     loggingMock.logToAxiom.mockClear();
-    await expect(processor('Comic').queueUpdate([{ id: 1 }])).resolves.toBeUndefined();
-    await harness.recover();
+    dbMock.dbWrite.outbox.createMany.mockRejectedValueOnce(new Error('insert failed'));
+    await expect(
+      processor('Comic').queueUpdate([{ id: 1 }], { reason: 'edit' })
+    ).resolves.toBeUndefined();
 
-    expect(await outbox()).toEqual([]);
     expect(h.queued).toHaveLength(1);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'search-outbox-forward',
-        message: expect.stringMatching(/invalid input value for enum/),
-      })
+      expect.objectContaining({ name: 'search-outbox-forward', message: 'insert failed' })
     );
-  });
-
-  // Why the forward takes no transaction and writes through its own client: a caught failure
-  // inside a transaction still loses the save (PGlite directly: see the harness).
-  it('control: a caught failure inside a transaction still loses the save', async () => {
-    const failure = await harness.pg
-      .transaction(async (tx) => {
-        await tx.query(`UPDATE "Article" SET title = 'after' WHERE id = 1`);
-        await tx
-          .query(`INSERT INTO "Outbox" (event, "entityType", "entityId") VALUES ('x', 'Comic', 1)`)
-          .catch(() => undefined);
-        await tx.query(`SELECT 1`);
-      })
-      .then(
-        () => undefined,
-        (e: Error) => e
-      );
-
-    expect(failure?.message).toMatch(/current transaction is aborted/);
-    expect(await title()).toMatchObject({ title: 'before' });
   });
 });

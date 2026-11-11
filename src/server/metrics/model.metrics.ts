@@ -660,7 +660,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
   return tasks;
 }
 
-async function getCommentTasks(ctx: ModelMetricContext) {
+export async function getCommentTasks(ctx: ModelMetricContext) {
   const commentEvents = await ctx.ch.$query<{ modelId: number }>`
     SELECT DISTINCT entityId AS modelId
     FROM comments
@@ -668,7 +668,10 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       AND type = 'Model'
       AND entityId IS NOT NULL
   `;
-  const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])];
+  // Must stay sorted (numerically): each batch queries entityId BETWEEN ids[0] AND ids[last].
+  const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])].sort(
+    (a, b) => a - b
+  );
   ctx.addAffected(affected);
 
   // Seed commentCount to 0 for all affected models so that models with zero

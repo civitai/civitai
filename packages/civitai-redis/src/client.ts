@@ -2197,6 +2197,10 @@ export const REDIS_SYS_KEYS = {
     // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
     // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
     PAGE_ACCESS: 'app:page-access',
+    // `app:held-sheet:code:<sha256(code)>` — one sign-in code for the held-media sheet, 60 s, single use.
+    HELD_SHEET_CODE: 'app:held-sheet:code',
+    // `app:held-sheet:session:<sha256(token)>` — one held-media sheet session, sliding idle expiry.
+    HELD_SHEET_SESSION: 'app:held-sheet:session',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
@@ -3236,6 +3240,10 @@ const REDIS_KEYS_UNPREFIXED = {
     CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
     // Contest entries per image; see src/server/services/contest-collection-items.cache.ts.
     CONTEST_COLLECTION_ITEMS: 'packed:caches:contest-collection-items',
+    // Which host images have any remix-gallery placement, so the card and gallery reads skip
+    // the database for the hosts that have none; see
+    // src/server/services/remix-gallery-hosts.cache.ts.
+    REMIX_GALLERY_HOSTS: 'packed:caches:remix-gallery-hosts',
     // Async contest-scoring runs: per-run state, the per-collection pointer to the
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.

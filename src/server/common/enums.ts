@@ -100,11 +100,6 @@ export enum ImageScanType {
   SpineRating = 9,
 }
 
-// export enum CommentV2Sort {
-//   Newest = 'Newest',
-//   Oldest = 'Oldest',
-// }
-
 export enum ArticleSort {
   MostBookmarks = 'Most Bookmarks',
   MostReactions = 'Most Reactions',
