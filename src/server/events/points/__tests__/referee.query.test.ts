@@ -11,7 +11,7 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query } }));
 
 const { queryReferee, REFEREE_CLICKHOUSE_BUDGET_S, refereeWindow, runEventPointsReferee } =
   await import('~/server/events/points/referee');
-const { LIVE_BUCKET_MS } = await import('~/server/events/points/keys');
+const { eventSeasonKeys, LIVE_BUCKET_MS } = await import('~/server/events/points/keys');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -98,8 +98,7 @@ describe('runEventPointsReferee', () => {
     expect(await staleAlerts(EVENT, now)).toHaveLength(1);
   });
 
-  // Past the season's end the cut stays at the end; only removals keep settling, through the
-  // finalize window, and a settle stuck there must still be seen.
+  // After the season ends only removals settle, so only removeCut shows a stuck settle.
   const FINALIZING = {
     ...EVENT,
     scoring: { ...EVENT.scoring, finalizeAfterMs: 24 * 60 * 60 * 1000 },
@@ -109,8 +108,8 @@ describe('runEventPointsReferee', () => {
 
   it('logs a settle stuck inside the finalize window, after the season has ended', async () => {
     stored({ cut: END, removeCut: END + HOUR });
-    expect(await staleAlerts(FINALIZING, new Date(END + 5 * HOUR + 7 * 60_000))).toEqual([
-      expect.objectContaining({ season: 'live', cutAgeMinutes: 235 }),
+    expect(await staleAlerts(FINALIZING, new Date(END + 5 * HOUR + 10 * 60_000))).toEqual([
+      expect.objectContaining({ season: 'live', cutAgeMinutes: 240 }),
     ]);
   });
 
@@ -120,16 +119,17 @@ describe('runEventPointsReferee', () => {
   });
 });
 
-// The season's stored cut (a bucket) and removal cut (ms), as resetLiveBase writes them.
+// What resetLiveBase leaves in redis: the cut as a bucket number, the removal cut as ms.
 function stored({ cut, removeCut }: { cut: number; removeCut?: number }) {
   redisMock.sysRedis.get.mockImplementation((async (key: string) => {
-    if (key.endsWith(':remove-cut')) return removeCut == null ? null : String(removeCut);
-    if (key.endsWith(':cut')) return String(Math.ceil(cut / LIVE_BUCKET_MS));
+    const keys = eventSeasonKeys('e', 'live');
+    if (key === keys.removeCut) return removeCut == null ? null : String(removeCut);
+    if (key === keys.cut) return String(Math.ceil(cut / LIVE_BUCKET_MS));
     return null;
   }) as never);
 }
 
-// Runs a settle whose first query fails, and returns the stale-cut alerts it logged.
+// The failing query ends the run right after the alert, so only the alert is under test.
 async function staleAlerts(event: typeof EVENT, now: Date) {
   redisMock.sysRedis.hGetAll.mockResolvedValue({});
   query.mockClear();

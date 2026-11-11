@@ -439,9 +439,8 @@ export async function resetLiveBase(
   redis: RefereeRedis,
   event: { name: string },
   season: EventPointSeason,
-  cut: Date,
-  totals: ReturnType<typeof refereeTotals>,
-  removeCut = cut
+  { cut, removeCut }: Pick<Window, 'cut' | 'removeCut'>,
+  totals: ReturnType<typeof refereeTotals>
 ) {
   const keys = eventSeasonKeys(event.name, season);
   const oldCutBucket = Number((await redis.get(keys.cut)) ?? 0);
@@ -479,9 +478,8 @@ export async function resetLiveBase(
   return changed;
 }
 
-// Measured against the removal cut this run should reach, not the clock: it moves with every settle
-// until the finalize window closes (the cut stops at the season's end), and then stops, so a season
-// that is fully settled never trips it.
+// Measured against the removal cut a run should reach, not the clock, so a fully settled season never
+// trips it. The cut stops at the season's end, so it could not see a stuck finalize window.
 export async function alertOnStaleCut(
   redis: Pick<RefereeRedis, 'get'>,
   event: { name: string },
@@ -493,7 +491,7 @@ export async function alertOnStaleCut(
     redis.get(keys.cut),
     redis.get(keys.removeCut),
   ]);
-  // A base written before the removal cut was stored: its cut is where its removals were settled to.
+  // Bases written before removeCut existed: their cut is where removals were settled to.
   const stored = Number(settledTo ?? 0) || Number(cutBucket ?? 0) * LIVE_BUCKET_MS;
   if (!stored) return;
   const lagMs = removeCut.getTime() - stored;
@@ -528,14 +526,7 @@ export async function runEventPointsReferee(
   const awards = await loadTeamAwards(event, window.cut);
   for (const { team, points } of awards)
     totals.team.set(team, (totals.team.get(team) ?? 0) + points);
-  const changed = await resetLiveBase(
-    sysRedis,
-    event,
-    season,
-    window.cut,
-    totals,
-    window.removeCut
-  );
+  const changed = await resetLiveBase(sysRedis, event, season, window, totals);
   // This runs in a job: its corrections go out before it returns, not on a later window, except the
   // team totals while another server holds their push lease: this server retries those on its own
   // timer a window later, so it relies on the job running in a long-lived app process. A season's
