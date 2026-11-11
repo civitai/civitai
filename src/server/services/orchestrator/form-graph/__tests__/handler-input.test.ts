@@ -14,6 +14,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
+import { seedreamVersionIds } from '~/shared/form-graph/generation/image/seedream.graph';
 import { flux3VideoVersionIds } from '~/shared/generation/version-ids';
 import { createFlux3VideoInput } from '../flux3-video.handler';
 import { createFormGraphStepInput } from '../index';
@@ -360,6 +361,75 @@ describe('krea3.handler', () => {
       expectFlags: { krea3Ultra: true },
     });
     expect(firstInput(at1k)).toMatchObject({ resolution: '1k', thinkingMode: 'instant' });
+  });
+});
+
+describe('seedream.handler', () => {
+  const ON = { seedream55: true };
+  const v55 = seedreamVersionIds['v5.5'];
+  const v50pro = seedreamVersionIds['v5.0-pro'];
+  const modelMeta = (flags: GenerationCtx['flags']) => {
+    const store = generationHub.createStore({ ext: { ...BASE, flags } });
+    store.set({ workflow: 'txt2img', ecosystem: 'Seedream' });
+    return store.getField('model')?.meta as {
+      versions?: { options: { label: string; value: number; newUntil?: Date }[] };
+      defaultModelId?: number;
+    };
+  };
+
+  it('with seedream55 off, the default and the version list are v5.0-pro and the five before it', async () => {
+    const steps = await dispatch({ workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat' });
+    expect(firstInput(steps)).toMatchObject({ engine: 'seedream', version: 'v5.0-pro' });
+
+    const meta = modelMeta({});
+    expect(meta.defaultModelId).toBe(v50pro);
+    expect(meta.versions?.options).toEqual([
+      { label: 'v3', value: 2208174 },
+      { label: 'v4', value: 2208278 },
+      { label: 'v4.5', value: 2470991 },
+      { label: 'v5.0 lite', value: 2720141 },
+      { label: 'v5.0 pro', value: 3110984 },
+    ]);
+  });
+
+  // The orchestrator answers 400 to v5.5 until its release, which is what the flag waits on.
+  it('with seedream55 off, a submitted v5.5 is sent as v5.0-pro', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Seedream',
+      prompt: 'a cat',
+      model: v55,
+    });
+    expect(firstInput(steps)).toMatchObject({ version: 'v5.0-pro' });
+  });
+
+  it('with seedream55 on, v5.5 is offered, marked New and the default', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Seedream',
+      prompt: 'a cat',
+      expectFlags: ON,
+    });
+    expect(firstInput(steps)).toMatchObject({ engine: 'seedream', version: 'v5.5' });
+
+    const meta = modelMeta(ON);
+    expect(meta.defaultModelId).toBe(v55);
+    expect(meta.versions?.options.at(-1)).toEqual({
+      label: 'v5.5',
+      value: v55,
+      newUntil: new Date('2026-12-12'),
+    });
+  });
+
+  it('with seedream55 on, a picked v5.0-pro stays v5.0-pro', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Seedream',
+      prompt: 'a cat',
+      model: v50pro,
+      expectFlags: ON,
+    });
+    expect(firstInput(steps)).toMatchObject({ version: 'v5.0-pro' });
   });
 });
 

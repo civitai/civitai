@@ -1,4 +1,4 @@
-import { Button, Input, UnstyledButton } from '@mantine/core';
+import { Badge, Button, Input, UnstyledButton } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { showNotification } from '@mantine/notifications';
 import { IconSparkles } from '@tabler/icons-react';
@@ -157,6 +157,8 @@ function VersionLevelDropdown({
  * a button group. Registers every version id with ResourceDataProvider for
  * batch hydration.
  */
+const isVersionNew = (o: VersionOption) => !!o.newUntil && Date.now() < o.newUntil.getTime();
+
 export function VersionGroupSelector({
   versions,
   modelId,
@@ -221,7 +223,19 @@ export function VersionGroupSelector({
           dynamicColumns={6}
           value={leaf.selectedValue?.toString() ?? ''}
           onChange={(v) => handleChange(Number(v))}
-          data={leaf.group.options.map((o) => ({ label: o.label, value: o.value.toString() }))}
+          data={leaf.group.options.map((o) => ({
+            label: isVersionNew(o) ? (
+              <span className="inline-flex items-center gap-1">
+                {o.label}
+                <Badge size="xs" color="green" variant="filled" radius="sm">
+                  New
+                </Badge>
+              </span>
+            ) : (
+              o.label
+            ),
+            value: o.value.toString(),
+          }))}
         />
       )}
     </div>
