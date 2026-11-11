@@ -556,11 +556,10 @@ const newOrderChangeFillTarget = createJob(
   }
 );
 
-// Not gated on `isV1KnightsLive`: after the cutover it must keep settling votes players already cast in
-// v1 (final ratings, paid out later by grant-bless-buzz) until the old game is removed.
-
 // Rotate rating slot and purge old slot at 00:00 UTC daily
 // Players will now rate from the new slot, old slot gets purged
+// This job is not gated on `isV1KnightsLive`: after the cutover it keeps settling the ratings players
+// already cast in the old game (paid out later by grant-bless-buzz) until the old game is removed.
 const newOrderChangeRateTarget = createJob(
   'new-order-change-rate-target',
   '0 0 * * *',
