@@ -277,7 +277,8 @@ type BidImageFilter = (image: { nsfwLevel: number; userId: number }) => boolean;
 
 /**
  * Each bid with its image kept only when `keep` allows it. A bid's model passes the site cap on
- * its own level, which says nothing about the one image shown for it.
+ * its own level, which says nothing about the one image shown for it. Unlike capNestedImages the
+ * bid stays (only its image goes), and each image has its own owner rather than one per parent.
  */
 export function capBidImages<B extends BidWithImage>(bids: B[], keep: BidImageFilter): B[] {
   return bids.map((bid) => {
@@ -305,6 +306,16 @@ export const publicSignalData = (auction: GetAuctionBySlugReturn) =>
   capAuctionBidImages(auction, (image) =>
     isRatingWithinCap(image.nsfwLevel, publicBrowsingLevelsFlag)
   );
+
+/** The only way a bid change reaches the auction's topic, so no send can skip the cap. */
+const sendBidChange = (auctionId: number, auction: GetAuctionBySlugReturn) =>
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.Auction}:${auctionId}`,
+      target: SignalMessages.AuctionBidChange,
+      data: publicSignalData(auction),
+    })
+    .catch();
 
 export type GetAuctionBySlugReturn = AsyncReturnType<typeof getAuctionBySlug>;
 export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
@@ -816,13 +827,7 @@ export const createBid = async ({
 
   // TODO there is probably a better way to do this that avoids refetching everything, but we need to update all positions and numbers
   const signalData = await getAuctionBySlug({ slug: auctionData.auctionBase.slug });
-  signalClient
-    .topicSend({
-      topic: `${SignalTopic.Auction}:${auctionId}`,
-      target: SignalMessages.AuctionBidChange,
-      data: publicSignalData(signalData),
-    })
-    .catch();
+  sendBidChange(auctionId, signalData);
 
   // Notify anyone this bid knocked out of a winning position (best-effort).
   // The new bid only raises this entity's total, so we can derive the post-bid
@@ -930,13 +935,7 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   });
 
   const signalData = await getAuctionBySlug({ slug: bid.auction.auctionBase.slug });
-  signalClient
-    .topicSend({
-      topic: `${SignalTopic.Auction}:${bid.auction.id}`,
-      target: SignalMessages.AuctionBidChange,
-      data: publicSignalData(signalData),
-    })
-    .catch();
+  sendBidChange(bid.auction.id, signalData);
 };
 
 /**
@@ -1073,13 +1072,7 @@ export const refundBidsForVersions = async ({
 
   for (const a of aData) {
     const signalData = await getAuctionBySlug({ slug: a.auctionBase.slug });
-    signalClient
-      .topicSend({
-        topic: `${SignalTopic.Auction}:${a.id}`,
-        target: SignalMessages.AuctionBidChange,
-        data: publicSignalData(signalData),
-      })
-      .catch();
+    sendBidChange(a.id, signalData);
   }
 
   return {

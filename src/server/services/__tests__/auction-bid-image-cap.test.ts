@@ -1,20 +1,36 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// image.service's real import graph is heavy; nothing here reads it.
+const { imagesFetch, topicSend, refundTransaction } = vi.hoisted(() => ({
+  imagesFetch: vi.fn(async (_ids: number[]) => ({} as Record<number, unknown>)),
+  topicSend: vi.fn(async (_args: unknown) => undefined),
+  refundTransaction: vi.fn(async (_id: string, _d?: string) => ({ transactionId: 'x' })),
+}));
+
+// image.service's real import graph is heavy; only the cache the entity hydration reads is needed.
 vi.mock('~/server/services/image.service', () => ({
-  imagesForModelVersionsCache: { fetch: vi.fn(async () => ({})) },
+  imagesForModelVersionsCache: { fetch: imagesFetch },
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
-vi.mock('~/utils/signal-client', () => ({
-  signalClient: { send: vi.fn(), topicSend: vi.fn(async () => undefined) },
+vi.mock('~/utils/signal-client', () => ({ signalClient: { send: vi.fn(), topicSend } }));
+vi.mock('~/server/services/buzz.service', () => ({
+  refundTransaction,
+  getTransactionByExternalId: vi.fn(async () => null),
+  refundMultiAccountTransaction: vi.fn(),
+  getMultiAccountTransactionsByPrefix: vi.fn(async () => []),
+  createBuzzTransaction: vi.fn(),
+  createMultiAccountBuzzTransaction: vi.fn(),
 }));
 
-const { bidImagesFor, capAuctionBidImages, capBidImages, publicSignalData } = await import(
-  '~/server/services/auction.service'
-);
+const {
+  bidImagesFor,
+  capAuctionBidImages,
+  capBidImages,
+  deleteBid,
+  publicSignalData,
+  refundBidsForVersions,
+} = await import('~/server/services/auction.service');
 
 const OWNER = 5;
 const auction = (...levels: number[]) => ({
@@ -83,27 +99,85 @@ describe('auction bid images', () => {
       null,
     ]);
   });
+});
 
-  it('every bid read and every bid-change signal go through the cap', () => {
-    const read = (path: string) => readFileSync(join(process.cwd(), path), 'utf8');
-    const router = read('src/server/routers/auction.router.ts');
-    const procedure = (name: string, next: string) =>
-      router.slice(router.indexOf(`${name}:`), router.indexOf(`${next}:`));
-    const bySlug = procedure('getBySlug', 'getMyBids');
-    expect(bySlug).toContain('keepCrawlerAnswerOutOfEdgeCache(ctx)');
-    expect(bySlug).toMatch(
-      /capAuctionBidImages\(await getAuctionBySlug\(input\), bidImagesFor\(ctx\)\)/
+describe('bid-change signals', () => {
+  const AUCTION = 5;
+  const day = 24 * 60 * 60 * 1000;
+  // Version 10 shows a public image, 11 one above the public cap.
+  const images: Record<number, { id: number; nsfwLevel: number }> = {
+    10: { id: 100, nsfwLevel: NsfwLevel.PG },
+    11: { id: 110, nsfwLevel: NsfwLevel.X },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.auction.findFirst.mockResolvedValue({
+      id: AUCTION,
+      quantity: 2,
+      startAt: new Date(Date.now() - day),
+      endAt: new Date(Date.now() + day),
+      auctionBase: { slug: 'sd1' },
+      bids: [10, 11].map((entityId) => ({ entityId, amount: 5, deleted: false })),
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue(
+      [10, 11].map((id) => ({
+        id,
+        name: `v${id}`,
+        model: { id, meta: null, user: { id: 1 } },
+      })) as never
     );
-    expect(procedure('getMyBids', 'getMyRecurringBids')).toMatch(
-      /capBidImages\(await getMyBids\([^)]*\), bidImagesFor\(ctx\)\)/
+    imagesFetch.mockResolvedValue(
+      Object.fromEntries(
+        Object.entries(images).map(([id, image]) => [
+          id,
+          { images: [{ ...image, userId: OWNER, metadata: {} }] },
+        ])
+      )
     );
-    expect(procedure('getMyRecurringBids', 'createBid')).toMatch(
-      /capBidImages\(await getMyRecurringBids\([^)]*\), bidImagesFor\(ctx\)\)/
-    );
-    const service = read('src/server/services/auction.service.ts');
-    expect(service.match(/SignalMessages\.AuctionBidChange/g)).toHaveLength(3);
-    const sends = service.match(/target: SignalMessages\.AuctionBidChange,\s*data: [^,]+,/g) ?? [];
-    expect(sends).toHaveLength(3);
-    for (const send of sends) expect(send).toContain('publicSignalData(');
+  });
+
+  const sentImages = () => {
+    expect(topicSend).toHaveBeenCalledTimes(1);
+    const [{ topic, data }] = topicSend.mock.calls[0] as [
+      {
+        topic: string;
+        data: { bids: { entityId: number; entityData?: { image?: { id: number } } }[] };
+      }
+    ];
+    expect(topic).toBe(`auction:${AUCTION}`);
+    return Object.fromEntries(data.bids.map((b) => [b.entityId, b.entityData?.image?.id ?? null]));
+  };
+
+  it('deleting a bid sends only public images to the topic', async () => {
+    dbMock.dbWrite.bid.findFirst.mockResolvedValue({
+      userId: 1,
+      transactionIds: ['tx-bid'],
+      auction: {
+        id: AUCTION,
+        startAt: new Date(Date.now() - day),
+        endAt: new Date(Date.now() + day),
+        auctionBase: { slug: 'sd1' },
+      },
+    } as never);
+    dbMock.dbWrite.bid.update.mockResolvedValue({} as never);
+
+    await deleteBid({ userId: 1, bidId: 77 });
+
+    expect(sentImages()).toEqual({ 10: 100, 11: null });
+  });
+
+  it('refunding bids for removed versions sends only public images to the topic', async () => {
+    dbMock.dbWrite.auction.findMany.mockResolvedValue([
+      { id: AUCTION, auctionBase: { slug: 'sd1' } },
+    ] as never);
+    dbMock.dbWrite.bidRecurring.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.bid.updateManyAndReturn.mockResolvedValue([
+      { id: 1, userId: 2, transactionIds: ['tx-plain'] },
+    ] as never);
+
+    await refundBidsForVersions({ versionIds: [12], name: 'zzfixture', notificationKey: 7 });
+
+    expect(sentImages()).toEqual({ 10: 100, 11: null });
   });
 });

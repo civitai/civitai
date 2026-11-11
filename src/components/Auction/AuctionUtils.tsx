@@ -186,9 +186,9 @@ export const useAuctionTopicListener = (auctionId?: number) => {
 
   // console.log('listening to auction', auctionId);
 
+  // The signal carries only public images, so refetch for this viewer's cap rather than setData.
   useSignalConnection(SignalMessages.AuctionBidChange, (data: GetAuctionBySlugReturn) => {
-    // console.log('auction bid change', data);
-    queryUtils.auction.getBySlug.setData({ slug: data.auctionBase.slug }, data);
+    queryUtils.auction.getBySlug.invalidate({ slug: data.auctionBase.slug });
   });
   useSignalConnection(SignalMessages.TopicUpdate, (data: { topic: string; count: number }) => {
     // console.log('auction count', data);
