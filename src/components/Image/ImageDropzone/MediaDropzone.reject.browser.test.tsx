@@ -10,6 +10,8 @@ vi.mock('~/utils/notifications', async (orig) => ({
 }));
 
 // eslint-disable-next-line import/first
+import { constants } from '~/server/common/constants';
+// eslint-disable-next-line import/first
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 // eslint-disable-next-line import/first
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -38,11 +40,12 @@ describe('MediaDropzone — a file it does not accept', () => {
       new File([new Uint8Array([1])], 'holiday.mov', { type: 'video/quicktime' }),
     ]);
 
-    expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1));
     const { error } = mocks.showErrorNotification.mock.calls[0][0];
+    const { maxVideoDurationSeconds, maxVideoDimension } = constants.mediaUpload;
     expect(error.message).toContain('holiday.mov: unsupported file type');
     expect(error.message).toContain('.mp4, .webm');
-    expect(error.message).toContain('245 seconds, 3840px, and 750 MB');
+    expect(error.message).toContain(`${maxVideoDurationSeconds} seconds, ${maxVideoDimension}px`);
     expect(onDrop).not.toHaveBeenCalled();
     expect(onReject).toHaveBeenCalledTimes(1);
   });
