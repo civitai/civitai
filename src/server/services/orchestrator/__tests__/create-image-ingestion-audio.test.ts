@@ -20,14 +20,14 @@ vi.mock('~/env/client', () => ({ env: { NEXT_PUBLIC_IMAGE_LOCATION: 'https://ima
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 
 describe('createImageIngestionRequest — audio', () => {
-  it('refuses a song rather than sending it down the video frame-extraction path', async () => {
-    await expect(
-      createImageIngestionRequest({
-        imageId: 7,
-        url: 'https://image.civitai.com/x/song.mp3',
-        type: 'audio',
-      })
-    ).rejects.toThrow(/audio/i);
-    expect(mockSubmit).not.toHaveBeenCalled();
+  it('submits a song to its own scan workflow, not the video frame-extraction path', async () => {
+    await createImageIngestionRequest({
+      imageId: 7,
+      url: 'https://image.civitai.com/x/song.mp3',
+      type: 'audio',
+    });
+    expect(mockSubmit).toHaveBeenCalledTimes(1);
+    const { body } = mockSubmit.mock.calls[0][0];
+    expect(body.metadata).toEqual({ imageId: 7, scan: 'song' });
   });
 });

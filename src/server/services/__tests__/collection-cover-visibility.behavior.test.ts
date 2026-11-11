@@ -112,8 +112,9 @@ const LIVE_MODEL = 217; // stranger's image on a published post on a model that 
 
 beforeAll(async () => {
   const schema = `
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
-    CREATE TABLE "Image" (
+    CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
       "id"              integer PRIMARY KEY,
       "userId"          integer NOT NULL,
       "postId"          integer,

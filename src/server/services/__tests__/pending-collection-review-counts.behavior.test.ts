@@ -179,7 +179,8 @@ beforeAll(async () => {
       "availability" "Availability" NOT NULL DEFAULT 'Public',
       "metadata"    jsonb NOT NULL DEFAULT '{}'
     );
-    CREATE TABLE "Image" (
+        CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
       "id"              integer PRIMARY KEY,
       "postId"          integer,
       "userId"          integer DEFAULT 7777,

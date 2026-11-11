@@ -48,7 +48,7 @@ const ROWS = [
 
 const { execLog, mockIngestImage } = vi.hoisted(() => ({
   execLog: [] as { sql: string; values: unknown[] }[],
-  mockIngestImage: vi.fn(async () => true),
+  mockIngestImage: vi.fn(async (_args: { image: { id: number } }) => true),
 }));
 
 vi.mock('~/server/services/image.service', () => ({
@@ -84,8 +84,7 @@ dbMock.dbWrite.$executeRaw.mockImplementation(
   }
 );
 
-const sentIds = () =>
-  mockIngestImage.mock.calls.map((c) => (c[0] as { image: { id: number } }).image.id);
+const sentIds = () => mockIngestImage.mock.calls.map(([args]) => args.image.id);
 const pruned = () => execLog.find((c) => c.sql.includes('DELETE FROM "JobQueue"'));
 
 beforeEach(() => {

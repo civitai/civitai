@@ -698,7 +698,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     decision: 'subject',
   },
   // The image createImageIngestionRequest is scanning.
-  'src/server/services/video-audio-scan.service.ts#submitVideoAudioScan': {
+  'src/server/services/video-audio-scan.service.ts#submitAudioScanWorkflow': {
     writes: ['imageId'],
     decision: 'server-derived',
   },
