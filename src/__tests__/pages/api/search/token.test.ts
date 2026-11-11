@@ -3,14 +3,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
+import type * as BrowsingLevel from '~/server/utils/browsing-level';
 import { COMICS_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { buildSearchRules } from '~/server/meilisearch/search-token';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
-const { mockGetServerAuthSession, mockGetFeatureFlagsLazy } = vi.hoisted(() => ({
+const { mockGetServerAuthSession, mockGetFeatureFlagsLazy, mockDomainCap } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockGetFeatureFlagsLazy: vi.fn(),
+  mockDomainCap: vi.fn(),
 }));
+
+// Real cap by default. A signed-in viewer's real cap is SFW, which is also the fail-closed
+// default, so tests that must prove the cap is forwarded override it with a different one.
+vi.mock('~/server/utils/browsing-level', async (importOriginal) => {
+  const actual = await importOriginal<typeof BrowsingLevel>();
+  mockDomainCap.mockImplementation(actual.requestDomainBrowsingLevelCap);
+  return { ...actual, requestDomainBrowsingLevelCap: mockDomainCap };
+});
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
@@ -83,18 +93,31 @@ describe('GET /api/search/token', () => {
 
   it('takes the moderator decision from the session, not from the request', async () => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    mockDomainCap.mockReturnValueOnce(publicBrowsingLevelsFlag);
     const { body } = await requestToken(
       { isModerator: 'true', moderator: '1', mod: 'true' },
       { 'x-moderator': 'true' }
     );
-    expect(decodeRules(body.token)).toEqual(buildSearchRules({ id: 42, isModerator: false }));
-    expect(decodeRules(body.token)).not.toEqual(buildSearchRules({ id: 42, isModerator: true }));
+    const browsingLevelCap = publicBrowsingLevelsFlag;
+    expect(decodeRules(body.token)).toEqual(
+      buildSearchRules({ id: 42, isModerator: false, browsingLevelCap })
+    );
+    expect(decodeRules(body.token)).not.toEqual(
+      buildSearchRules({ id: 42, isModerator: true, browsingLevelCap })
+    );
   });
 
   it('gives a moderator session the moderator rules, still held to the site level', async () => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 7, isModerator: true } });
+    mockDomainCap.mockReturnValueOnce(publicBrowsingLevelsFlag);
     const { body } = await requestToken();
-    expect(decodeRules(body.token)).toEqual(buildSearchRules({ id: 7, isModerator: true }));
+    const rules = decodeRules(body.token);
+    expect(rules).toEqual(
+      buildSearchRules({ id: 7, isModerator: true, browsingLevelCap: publicBrowsingLevelsFlag })
+    );
+    expect(rules).not.toEqual(buildSearchRules({ id: 7, isModerator: true }));
+    expect(rules[MODELS_SEARCH_INDEX].filter).toContain('nsfwLevel');
+    expect(rules[COMICS_SEARCH_INDEX].filter).toContain('nsfwLevel');
   });
 
   it('holds a signed-out token to PG', async () => {
