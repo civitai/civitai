@@ -1538,6 +1538,9 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
 
     expect(body.downloadUrls).toEqual([FRESH]);
     expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
+    expect(mockRefreshBlobs).toHaveBeenCalledWith(
+      expect.objectContaining({ token: `owner-token-${OWNER_ID}` })
+    );
   });
 
   it('is not signed for a taken-down model, whose url is withheld', async () => {

@@ -46,6 +46,11 @@ import {
   type ScanResultCode,
 } from '~/shared/utils/prisma/enums';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
+import {
+  getMiniModerationState,
+  MINI_MODERATION_EXPIRES_MS,
+  moderationBlocksGeneration,
+} from '~/server/utils/mini-moderation-state';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
@@ -53,7 +58,11 @@ import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { hashRouteServesEveryone } from '~/server/services/download-by-hash.servable';
-import { evaluateMiniEpochCaller, getMiniEpochGateMode } from '~/server/utils/mini-epoch-caller';
+import {
+  credentialKind,
+  evaluateMiniEpochCaller,
+  getMiniEpochGateMode,
+} from '~/server/utils/mini-epoch-caller';
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -109,6 +118,8 @@ type VersionRow = {
   sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   versionFlags: number;
   userFlags: number;
+  ownerDeletedAt: Date | null;
+  ownerBannedAt: Date | null;
 };
 type FileRow = {
   id: number;
@@ -178,6 +189,8 @@ export default MixedAuthEndpoint(async function handler(
       lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
       mv."flags" AS "versionFlags",
       u."flags" AS "userFlags",
+      u."deletedAt" AS "ownerDeletedAt",
+      u."bannedAt" AS "ownerBannedAt",
       (
         (
             pa."entityId" IS NOT NULL
@@ -488,7 +501,19 @@ export default MixedAuthEndpoint(async function handler(
       wildcardsEnabled: false,
     }
   );
-  const canGenerate = genStates.get(modelVersion.id)?.canGenerate ?? false;
+  const moderation = getMiniModerationState({
+    versionStatus: modelVersion.status,
+    versionAvailability: modelVersion.availability,
+    modelStatus: modelVersion.modelStatus,
+    modelMode: modelVersion.modelMode,
+    modelAvailability: modelVersion.modelAvailability,
+    poi: modelVersion.poi,
+    ownerDeletedAt: modelVersion.ownerDeletedAt,
+    ownerBannedAt: modelVersion.ownerBannedAt,
+  });
+  const canGenerate =
+    !moderationBlocksGeneration(moderation) &&
+    (genStates.get(modelVersion.id)?.canGenerate ?? false);
 
   // Check if should charge
   const shouldChargeResult = await getShouldChargeForResources([
@@ -672,9 +697,43 @@ export default MixedAuthEndpoint(async function handler(
     fees,
     payoutEnabled,
     tipsEnabled,
+    ...(user?.isModerator ? { moderation } : {}),
   };
+  logMiniModerationCaller(req, user, modelVersion.id, modelVersion.modelUserId);
+  if (user?.isModerator) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    // Read by the orchestrator as the absolute time its cached copy of this response expires.
+    res.setHeader('X-Expires', new Date(Date.now() + MINI_MODERATION_EXPIRES_MS).toISOString());
+  }
   res.status(200).json(data);
 });
+
+/** Which principal the orchestrator's configured credential resolves to, for the moderation rollout. */
+function logMiniModerationCaller(
+  req: NextApiRequest,
+  user: Session['user'] | undefined,
+  modelVersionId: number,
+  ownerId: number
+) {
+  const orchestrator = matchesOrchestratorServiceToken(req);
+  const resolvedAs = credentialKind(req, user, orchestrator);
+  if (resolvedAs === 'none') return;
+  const principal = user?.isModerator
+    ? 'moderator'
+    : orchestrator
+    ? 'orchestrator-token'
+    : user?.id && user.id === ownerId
+    ? 'owner'
+    : 'other';
+  logToAxiom({
+    type: 'info',
+    name: 'mini-moderation-caller',
+    modelVersionId,
+    resolvedAs,
+    principal,
+    moderationIncluded: !!user?.isModerator,
+  }).catch(() => undefined);
+}
 
 const RESIGN_TIMEOUT_MS = 3000;
 
