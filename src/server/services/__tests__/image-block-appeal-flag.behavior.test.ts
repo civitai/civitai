@@ -102,6 +102,8 @@ beforeAll(async () => {
       "blockedFor" text,
       "nsfwLevel" int NOT NULL DEFAULT 0,
       "needsReview" text,
+      "postId" int,
+      "pHash" bigint,
       "updatedAt" timestamp(3)
     );
     -- Enums as in prod, so a literal outside the enum fails here too.
@@ -123,7 +125,21 @@ beforeAll(async () => {
       category text,
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY);
   `);
+  for (const migration of [
+    '20261209120000_csam_queue_set_aside',
+    '20261229120000_image_deferred_block_effect',
+  ])
+    await holder.db.exec(
+      readFileSync(
+        new URL(
+          `../../../../packages/civitai-db-schema/prisma/migrations/${migration}/migration.sql`,
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
 });
 
 beforeEach(async () => {
@@ -154,21 +170,27 @@ beforeEach(async () => {
     const flat = Prisma.sql(strings, ...(v as never[]));
     // Only the statements that write the review flag; the other raw writers touch columns this
     // stand-in does not have.
-    if (!/"Appeal"|SET "needsReview"|"CsamQueueSetAside"|"blockedFor" = CASE/.test(flat.text))
+    if (
+      !/"Appeal"|SET "needsReview"|"CsamQueueSetAside"|"blockedFor" = CASE|"ImageDeferredBlockEffect"/.test(
+        flat.text
+      )
+    )
       return 0;
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
-  // `writeModeratorBlock` returns rows; every other raw read here has its own fake.
+  // The block, the approval's held check and the ruling's image write return rows; every other raw
+  // read here has its own fake.
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(v as never[]));
-    if (!/"blockedFor" = CASE|AND "blockedFor" = \$/.test(flat.text)) return [];
+    if (!/"CsamQueueSetAside"|SELECT id FROM "Image"|RETURNING "postId", "pHash"/.test(flat.text))
+      return [];
     return (await run(flat)).rows;
   }) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "Appeal" CASCADE;
+    TRUNCATE "Image", "Appeal", "CsamQueueSetAside", "ImageDeferredBlockEffect" CASCADE;
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 7, 'Blocked', 'moderated', 32, 'appeal'),
       (${FLAGGED}, 8, 'Scanned', NULL, 4, 'minor'),
@@ -378,14 +400,13 @@ describe('a re-block keeps the original block reason', () => {
 describe('reportCsamImages', () => {
   const moderator = { id: 2, isModerator: true } as never;
 
-  it('closes the pending appeal as Rejected so the CSAM queue owns the image', async () => {
+  it('leaves a pending appeal Pending', async () => {
     // FLAGGED's id is shared by a post's pending appeal, which a CSAM report on the image must not touch.
     await reportCsamImages({ imageIds: [APPEALED, FLAGGED], user: moderator });
 
-    expect(await strandedAppeals()).toEqual([]);
     expect(await appeals()).toEqual([
       { status: 'Approved', internalNotes: null },
-      { status: 'Rejected', internalNotes: 'Closed by CSAM report' },
+      { status: 'Pending', internalNotes: null },
       { status: 'Pending', internalNotes: null },
       { status: 'Rejected', internalNotes: null },
     ]);
@@ -406,66 +427,7 @@ describe('reportCsamImages', () => {
     expect(refundTransaction).not.toHaveBeenCalled();
   });
 
-  // An appeal that commits while the report is being made, just before the flag lands. The flag
-  // has to be written before the appeals are closed, or this one survives it.
-  it('closes an appeal that lands just before the flag', async () => {
-    await holder.db.exec(`DELETE FROM "Appeal" WHERE "entityId" = ${APPEALED}`);
-    const flag = updateMany('Image');
-    dbMock.dbWrite.image.updateMany.mockImplementation((async (args: any) => {
-      if (args.data?.needsReview === 'csam')
-        await holder.db.exec(
-          `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${APPEALED}, 'Pending')`
-        );
-      return flag(args);
-    }) as never);
-
-    await reportCsamImages({ imageIds: [APPEALED], user: moderator });
-
-    expect(await strandedAppeals()).toEqual([]);
-    expect((await imageRow(APPEALED)).needsReview).toBe('csam');
-  });
-
-  it('does not leave the flag behind when closing the appeals fails', async () => {
-    // A real transaction on the stand-in, so a write that is not inside it survives the rollback.
-    dbMock.dbWrite.$transaction.mockImplementationOnce((async (cb: (tx: unknown) => unknown) => {
-      await holder.db.exec('BEGIN');
-      try {
-        const result = await cb(dbMock.dbWrite);
-        await holder.db.exec('COMMIT');
-        return result;
-      } catch (e) {
-        await holder.db.exec('ROLLBACK');
-        throw e;
-      }
-    }) as never);
-    dbMock.dbWrite.appeal.updateMany.mockRejectedValueOnce(new Error('connection lost'));
-
-    await expect(reportCsamImages({ imageIds: [APPEALED], user: moderator })).rejects.toThrow(
-      'connection lost'
-    );
-
-    expect((await imageRow(APPEALED)).needsReview).toBe('appeal');
-  });
-
-  it('leaves no pending appeal whose resolution could clear the flag', async () => {
-    // The shared claim fake returns every row now in the target status; here it must return only
-    // the rows this claim moved out of Pending, as Prisma does.
-    dbMock.dbWrite.appeal.updateManyAndReturn.mockImplementation(
-      (async ({ where, data }: any) =>
-        (
-          await holder.db.query(
-            `UPDATE "Appeal" SET status = $3 WHERE "entityId" = ANY($1) AND "entityType" = $2
-             AND status = 'Pending'
-           RETURNING id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId"`,
-            [where.entityId.in, where.entityType, data.status]
-          )
-        ).rows) as never
-    );
-    // A resolution that did reach the image would write it here, so the flag's survival is observed.
-    dbMock.dbWrite.image.update.mockImplementation((async ({ where, data }: any) => {
-      await updateMany('Image')({ where: { id: where.id }, data });
-      return { postId: null, pHash: null };
-    }) as never);
+  it('keeps the flag through a rejection of the pending appeal', async () => {
     await reportCsamImages({ imageIds: [APPEALED], user: moderator });
 
     await resolveEntityAppeal({
@@ -476,6 +438,22 @@ describe('reportCsamImages', () => {
     } as never);
 
     expect((await imageRow(APPEALED)).needsReview).toBe('csam');
+  });
+
+  it('refuses an approval of the pending appeal, which stays Pending', async () => {
+    await reportCsamImages({ imageIds: [APPEALED], user: moderator });
+
+    await expect(
+      resolveEntityAppeal({
+        ids: [APPEALED],
+        entityType: 'Image',
+        status: 'Approved',
+        userId: 2,
+      } as never)
+    ).rejects.toThrow('cannot put it back');
+
+    expect(await imageRow(APPEALED)).toMatchObject({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect((await appeals())[1]).toEqual({ status: 'Pending', internalNotes: null });
   });
 });
 
@@ -495,13 +473,6 @@ describe('approving an image appeal', () => {
       )
     ).rows.length;
 
-  beforeEach(() => {
-    dbMock.dbWrite.image.update.mockImplementation((async ({ where, data }: any) => {
-      await updateMany('Image')({ where: { id: where.id }, data });
-      return { postId: null, pHash: null };
-    }) as never);
-  });
-
   it('is refused for an image blocked for CSAM, and leaves the appeal pending', async () => {
     await holder.db.query(`UPDATE "Image" SET "blockedFor" = $1 WHERE id = $2`, [
       BlockedReason.CSAM,
@@ -520,23 +491,101 @@ describe('approving an image appeal', () => {
     expect(await pendingAppeals()).toBe(0);
     expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Scanned' });
   });
+
+  /** The held check reads an image not yet held; the CSAM block lands before the ruling's write. */
+  const turnHeldAfterCheck = async () => {
+    dbMock.dbWrite.$executeRaw.mockClear();
+    loggingMock.logToAxiom.mockClear();
+    // The shared claim fake returns every row now in the target status; here it must return only
+    // the rows this claim moved out of Pending, as Prisma does.
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockImplementationOnce(
+      (async ({ where, data }: any) =>
+        (
+          await holder.db.query(
+            `UPDATE "Appeal" SET status = $3 WHERE "entityId" = ANY($1) AND "entityType" = $2
+             AND status = 'Pending'
+             RETURNING id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId", "createdAt"`,
+            [where.entityId.in, where.entityType, data.status]
+          )
+        ).rows) as never
+    );
+    await holder.db.query(
+      `UPDATE "Appeal" SET "buzzTransactionId" = 'appeal-7-1' WHERE "entityId" = $1`,
+      [APPEALED]
+    );
+    const fake = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...v: unknown[]
+    ) => {
+      const flat = Prisma.sql(strings, ...(v as never[]));
+      if (/^\s*SELECT id FROM "Image"/.test(flat.text)) {
+        await holder.db.query(`UPDATE "Image" SET "blockedFor" = $1 WHERE id = $2`, [
+          BlockedReason.CSAM,
+          APPEALED,
+        ]);
+        return [];
+      }
+      return fake(strings, ...(v as never[]));
+    }) as never);
+  };
+
+  it('reopens, rather than approves, an appeal whose image turned held after its check', async () => {
+    await turnHeldAfterCheck();
+    await approve();
+
+    expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Blocked' });
+    const restoreWrites = dbMock.dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
+      (strings as TemplateStringsArray).join('?').includes('"nsfwLevelLocked" = FALSE')
+    );
+    expect(restoreWrites).toEqual([]);
+    expect(loggingMock.logToAxiom.mock.calls.map(([e]) => (e as { name?: string }).name)).toContain(
+      'appeal-approval-not-restored'
+    );
+    expect(await pendingAppeals()).toBe(1);
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('neither refunds nor tells when putting it back to Pending fails', async () => {
+    await turnHeldAfterCheck();
+    dbMock.dbWrite.appeal.updateMany.mockRejectedValueOnce(new Error('connection lost'));
+
+    await approve();
+
+    expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Blocked' });
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('reopens, and neither refunds nor tells, when the image write itself fails', async () => {
+    await turnHeldAfterCheck();
+    const fake = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...v: unknown[]
+    ) => {
+      if (/^\s*UPDATE "Image"/.test(Prisma.sql(strings, ...(v as never[])).text))
+        throw new Error('lock timeout');
+      return fake(strings, ...(v as never[]));
+    }) as never);
+
+    await approve();
+
+    expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Blocked' });
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.appeal.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'Pending' }) })
+    );
+  });
 });
 
 describe('reportCsamImages and images set aside from the CSAM queue', () => {
   const moderator = { id: 2, isModerator: true } as never;
-
-  beforeAll(async () => {
-    await holder.db.exec(`CREATE TABLE "CsamReport" (id serial PRIMARY KEY)`);
-    await holder.db.exec(
-      readFileSync(
-        new URL(
-          '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_csam_queue_set_aside/migration.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
-  });
 
   beforeEach(async () => {
     dbMock.dbWrite.$queryRaw.mockImplementation(

@@ -2197,6 +2197,10 @@ export const REDIS_SYS_KEYS = {
     // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
     // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
     PAGE_ACCESS: 'app:page-access',
+    // `app:held-sheet:code:<sha256(code)>` — one sign-in code for the held-media sheet, 60 s, single use.
+    HELD_SHEET_CODE: 'app:held-sheet:code',
+    // `app:held-sheet:session:<sha256(token)>` — one held-media sheet session, sliding idle expiry.
+    HELD_SHEET_SESSION: 'app:held-sheet:session',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
@@ -2231,6 +2235,15 @@ export const REDIS_SYS_KEYS = {
     EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
     // Cumulative Buzz-spend cap counter, keyed `system:blocks:buzz-cap:${userId}:${appBlockId}:${day}`.
     BUZZ_CAP: 'system:blocks:buzz-cap',
+    // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
+    // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
+    // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT
+    // prefixed `buzz-cap`, so a prefix match on the counters never takes it in.
+    BUZZ_CAP_OPT_IN: 'system:blocks:buzz-opt-in',
+    // A spend was refused at the viewer's daily app Buzz cap, today: `system:blocks:buzz-refused:
+    // ${userId}:${UTC-day}` = the cap it was refused at, expiring at the next UTC midnight. What
+    // the running app's paused notice reads; opting in deletes it. Not prefixed `buzz-cap`.
+    BUZZ_CAP_REFUSED: 'system:blocks:buzz-refused',
     // Cumulative TIP-spend cap counter for the block tip endpoint, keyed
     // `system:blocks:tip-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP: that
     // bounds a user's daily generation SPEND; this bounds a user's daily Buzz
@@ -2326,11 +2339,16 @@ export const REDIS_SYS_KEYS = {
     // (`system:blocks:agent-review-autostart-reserved:${YYYY-MM-DD}`): the per-review cap is
     // reserved before the start and released once its report row exists (or the start failed).
     AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
+    // Model spend of the impersonation check on approved apps' listing edits, in US cents, per
+    // UTC day (`system:blocks:listing-check-spend:${YYYY-MM-DD}`): added to the day's agent-review
+    // spend, so it counts against the same automatic-start budget.
+    LISTING_CHECK_SPEND: 'system:blocks:listing-check-spend',
     // Live app pointer on the shared static server, per app slug. TAKEDOWN
-    // (`...:${slug}`, no TTL) is set when this platform starts a live unpublish for the app and
-    // cleared when its pointer is written back (a restore or a deploy): it is the evidence a relist
-    // restores on. LOCK (`...:${slug}`, SET NX EX) serialises the pointer Jobs of one app; DIRTY
-    // (`...:${slug}`) asks the lock holder to look at the app again before it lets go.
+    // (`...:${slug}`, no TTL) is set to 'attempted' when this platform starts a live unpublish or
+    // restore for the app (the evidence a relist restores on), upgraded to 'confirmed' when an
+    // unpublish succeeded, and cleared when its pointer is written back (a restore or a deploy). LOCK
+    // (`...:${slug}`, SET NX EX) serialises the pointer Jobs of one app; DIRTY (`...:${slug}`)
+    // asks the lock holder to look at the app again before it lets go.
     LIVE_POINTER_TAKEDOWN: 'system:blocks:live-pointer-takedown',
     LIVE_POINTER_LOCK: 'system:blocks:live-pointer-lock',
     LIVE_POINTER_DIRTY: 'system:blocks:live-pointer-dirty',
@@ -2495,6 +2513,8 @@ export const REDIS_SYS_KEYS = {
     COUNT: 'download:count',
     /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
     REPEATS: 'download:repeats',
+    /** `<prefix>:<provider>:<hour>`: a provider's downloads this hour. See provider-download.limiter.ts. */
+    PROVIDER: 'download:provider',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
@@ -3101,6 +3121,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
+    // The live per-provider download tokens. See provider-download/provider-token.store.ts.
+    PROVIDER_DOWNLOAD_TOKENS: 'packed:caches:provider-download-tokens',
     // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
     ACCOUNT_STANDING: 'packed:caches:account-standing',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
@@ -3231,6 +3253,10 @@ const REDIS_KEYS_UNPREFIXED = {
     CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
     // Contest entries per image; see src/server/services/contest-collection-items.cache.ts.
     CONTEST_COLLECTION_ITEMS: 'packed:caches:contest-collection-items',
+    // Which host images have any remix-gallery placement, so the card and gallery reads skip
+    // the database for the hosts that have none; see
+    // src/server/services/remix-gallery-hosts.cache.ts.
+    REMIX_GALLERY_HOSTS: 'packed:caches:remix-gallery-hosts',
     // Async contest-scoring runs: per-run state, the per-collection pointer to the
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.

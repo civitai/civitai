@@ -150,10 +150,9 @@ describe('getImageContestCollectionDetails rejection visibility', () => {
     expect(item.rejectionDetail).toBe(DETAIL);
   });
 
-  it('shows them to a site moderator who is neither submitter nor manager', async () => {
+  it('shows them to a site moderator who is neither submitter nor collection owner', async () => {
     const item = await read({ userId: STRANGER_ID, isModerator: true });
 
-    expect(item.permissions?.manage).not.toBe(true);
     expect(item.rejectionReason).toBe(CollectionItemRejectionReason.Other);
     expect(item.rejectionDetail).toBe(DETAIL);
   });

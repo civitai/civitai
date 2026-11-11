@@ -41,6 +41,8 @@ import {
   getCollectionById,
   getCollectionCoverImages,
   getCollectionItemById,
+  createEmptyPermissions,
+  getCollectionEntryCount,
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
@@ -233,10 +235,13 @@ export const getCollectionByIdHandler = async ({
     });
 
     // If the user has 0 permission over this collection, they have no business asking for it.
+    // Unlike item reads (`canReadCollectionItems`), write (not writeReview) counts here: this returns
+    // metadata, not items.
+    // The flags go back empty, as for a missing id, so the answer does not describe the collection.
     if (!permissions.read && !permissions.write && !permissions.manage) {
       return {
         collection: null,
-        permissions,
+        permissions: createEmptyPermissions(input.id),
         collaborators: [] as Collaborator[],
         pendingReviewCount: 0,
         redPendingReviewCount: 0,
@@ -603,6 +608,7 @@ export const collectionItemsInfiniteHandler = async ({
     input,
     user: ctx.user,
     coverage: await coverageAudience(ctx.user ?? undefined),
+    requireRead: true,
   });
 
   return {
@@ -610,6 +616,19 @@ export const collectionItemsInfiniteHandler = async ({
     collectionItems: result.items,
   };
 };
+
+export const getCollectionEntryCountHandler = ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) =>
+  getCollectionEntryCount({
+    collectionId: input.id,
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+  });
 
 export const updateCollectionItemsStatusHandler = async ({
   input,

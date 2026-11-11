@@ -47,6 +47,7 @@ import {
 import { useQueryImages } from '~/components/Image/image.utils';
 import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
@@ -521,7 +522,13 @@ export function PostDetailContent({ postId }: Props) {
             )}
             <StorylinePostNext postId={post.id} />
             <Stack className="mb-20 mt-6 gap-6 @max-lg:order-4" id="comments" mb={90}>
-              <PostComments postId={postId} userId={post.user.id} />
+              {/* `ssr-client-only-sections`: the server never has the comments (they are not
+                  prefetched, so it renders the composer over a loader), and this is the last
+                  thing in the column on every width, so its arrival moves nothing above it. The
+                  `#comments` anchor stays server-rendered. */}
+              <ClientOnlySection name="post-comments" minHeight={200}>
+                <PostComments postId={postId} userId={post.user.id} />
+              </ClientOnlySection>
             </Stack>
           </div>
           <div className="relative flex w-[336px] flex-col gap-3 @lg:my-3 @max-lg:contents">

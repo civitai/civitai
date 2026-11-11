@@ -17,6 +17,7 @@ import {
   getRequestBrowsingLevel,
   requestDomainBrowsingLevelCap,
 } from '~/server/utils/browsing-level';
+import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { checkSiteSearchRateLimit } from '~/server/utils/site-search-rate-limit';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -49,6 +50,8 @@ function route(path: string[], body: unknown, viewer: SiteSearchViewer) {
 
 export default MixedAuthEndpoint(
   async function handler(req, res, user) {
+    // `/api/search` is outside the proxy matcher, so the policy runs here.
+    if (applyApiRequestPolicy(req as NextApiRequest, res)) return;
     // The answer depends on the session and the host, so nothing may cache it.
     res.setHeader('Cache-Control', 'private, no-store');
 

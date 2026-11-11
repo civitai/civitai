@@ -19,7 +19,7 @@ import {
 } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
-  auditMetaData,
+  auditPostImageMeta,
   getTagsFromPrompt,
   includesInappropriate,
   includesPoi,
@@ -68,7 +68,10 @@ import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
-import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
+import {
+  FEEDBACK_CAPTURE_OWNER_ID,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 
 // Ingestion stages shared by the legacy (wdTagging + mediaRating) and imageScanning result handlers.
 
@@ -804,26 +807,39 @@ async function auditScanResults(args: {
   if (associatedEntities.poi && nsfw) poiReview = true;
   if (associatedEntities.minor && nsfw) minorReview = true;
 
-  if (!minorReview && !poiReview && !tagReview && nsfw) {
+  // The capture account is no one's new account: its captures get only the content keys.
+  if (!minorReview && !poiReview && !tagReview && nsfw && !isFeedbackCaptureOwner(args.userId)) {
     newUserReview = await getIsNewUser(args.userId);
   }
 
   const minor = minorTags.length > 0 || !!associatedEntities.minor;
   const poi = poiTags.length > 0 || !!associatedEntities.poi || (!!prompt && !!includesPoi(prompt));
 
-  // A feedback page capture is a picture of the site, not the capture account's content.
   let reviewKey: string | undefined;
-  if (args.userId === FEEDBACK_CAPTURE_OWNER_ID) reviewKey = undefined;
-  else if (poiReview) reviewKey = 'poi';
+  if (poiReview) reviewKey = 'poi';
   else if (minorReview) reviewKey = 'minor';
   else if (tagReview) reviewKey = 'tag';
   else if (newUserReview) reviewKey = 'newUser';
 
   let blockedFor: string | undefined;
   if (nsfw && prompt) {
-    const auditResult = auditMetaData({ prompt }, nsfw);
+    // The post editor's own verdict, so the scan never blocks what the editor let through.
+    const auditResult = auditPostImageMeta({ prompt }, nsfw);
     if (!auditResult.success)
       blockedFor = auditResult.blockedFor.join(',') ?? 'Failed audit, no explanation';
+    else if (auditResult.softBlockedFor?.length)
+      logToAxiom({
+        name: 'image-prompt-soft-block-pass',
+        type: 'info',
+        userId: args.userId,
+        imageId: args.imageId,
+        details: {
+          triggers: auditResult.softBlockedFor.map((word) => ({
+            category: 'nsfw_blocklist',
+            matchedWord: word,
+          })),
+        },
+      }).catch(() => null);
   }
 
   return {
@@ -953,6 +969,7 @@ async function notifyImageAutoBlocked({
   reason?: string | null;
   log: ScanLog;
 }) {
+  if (isFeedbackCaptureOwner(userId)) return;
   await createNotification({
     category: NotificationCategory.System,
     key: `image-block:${imageId}`,

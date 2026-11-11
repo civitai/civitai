@@ -71,6 +71,7 @@ import {
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import { restoreLiveAppSoon } from '~/server/services/blocks/live-unpublish.service';
 import {
   applyListingMediaSplitDecision,
   applyRevisionRedSlots,
@@ -2097,6 +2098,14 @@ export async function submitListingRevision(opts: {
   // writers that correctly do not bust).
   await bustAppListingCatalogCache().catch(() => undefined);
 
+  // IMPERSONATION CHECK for an approved app whose edit changes its name, icon or cover. Gated
+  // on the review-automation flags and the daily budget. Awaited: it writes a `pending` row
+  // before returning (so a lost background run still badges the edit), and starts the model
+  // call in the background, so the submit is not held on it. Never throws.
+  await import('./app-listing-edit-impersonation.service')
+    .then((m) => m.startListingEditImpersonationCheck(publishRequestId))
+    .catch(() => undefined);
+
   return { publishRequestId, shadowId, slug: shadow.revisionOf.slug };
 }
 
@@ -3495,6 +3504,9 @@ export async function approveExternalRequest(opts: {
   // (5), same TOCTOU discipline as the floor + scan gates above.
   assertOffsiteListingActionable(listing);
 
+  // Set when the on-site branch below un-suspended the backing block: the app to put back live.
+  let liveRestore: { slug: string; appBlockId: string } | null = null;
+
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
   const rating = await dbWrite.$transaction(async (tx) => {
@@ -3701,10 +3713,13 @@ export async function approveExternalRequest(opts: {
     // would be harmless), an on-site listing whose block is already approved, and every
     // off-site listing (no `appBlockId` at all).
     if (request.kind === 'onsite' && primaryListing.appBlockId) {
-      await tx.appBlock.updateMany({
+      const unsuspended = await tx.appBlock.updateMany({
         where: { id: primaryListing.appBlockId, status: 'suspended' },
         data: { status: 'approved' },
       });
+      if (unsuspended.count > 0) {
+        liveRestore = { slug: primaryListing.slug, appBlockId: primaryListing.appBlockId };
+      }
     }
     // Supersede any OTHER pending off-site request pointing at the SAME listing row
     // (`appListingId`), NOT merely the same slug. 🔴 A pending REVISION request
@@ -3754,6 +3769,9 @@ export async function approveExternalRequest(opts: {
 
   // Catalog bust: approve puts the listing INTO the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  // Widened explicitly: TypeScript cannot see the assignment inside the transaction callback.
+  const restore = liveRestore as { slug: string; appBlockId: string } | null;
+  if (restore) restoreLiveAppSoon(restore);
 
   return { publishRequestId, listingId: appListingId, slug: request.slug };
 }
@@ -4780,7 +4798,13 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
     select: { ...modQueueSubmissionSelect, submittedBy: submitterChip },
   });
   const hasNext = rows.length > limit;
-  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
+  const page = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
+  // The impersonation check on an approved app's listing edit: present only for an edit that
+  // changes the name, icon or cover (a missing result then reads `missing`, never "unchecked").
+  // FAIL-SOFT on a failed READ, so the queue itself stays up; that one case shows no badge.
+  const { listingEditQueueChecks } = await import('./app-listing-edit-impersonation.service');
+  const checks = await listingEditQueueChecks(page).catch(() => null);
+  const items = page.map((r) => ({ ...r, listingEditCheck: checks?.get(r.id) ?? null }));
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 

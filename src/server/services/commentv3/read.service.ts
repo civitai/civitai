@@ -92,8 +92,11 @@ type Row = {
 // Arrays travel as one comma-joined string: pg and PGlite send array parameters differently.
 const intArray = (ids: number[]) => sql`string_to_array(${ids.join(',')}, ',')::int[]`;
 
+// A tombstone is never pinned, whatever pinnedAt it kept from before the delete cleared it.
+const PINNED_AT = sql`(CASE WHEN c."deletedAt" IS NULL THEN c."pinnedAt" END)`;
+
 const COLUMNS = sql`c.id, c."parentId", c."replyToId", c.depth, c.content, c."createdAt", c."updatedAt",
-  c."pinnedAt", c.hidden, c."tosViolation", c.locked, c."reactionCount", c."deletedAt", c."userId",
+  ${PINNED_AT} AS "pinnedAt", c.hidden, c."tosViolation", c.locked, c."reactionCount", c."deletedAt", c."userId",
   u.username, u."deletedAt" AS "userDeletedAt", u.image AS "userImage"`;
 
 /** Whether a row's ToS state and author let this viewer see it. `alias` names the CommentV3 row. */
@@ -302,12 +305,12 @@ export async function getCommentSection(
     options.cursor
       ? ([] as Row[])
       : sql<Row>`SELECT ${COLUMNS} FROM "CommentV3" c JOIN "User" u ON u.id = c."userId"
-           WHERE ${topLevel} AND c."pinnedAt" IS NOT NULL
+           WHERE ${topLevel} AND c."pinnedAt" IS NOT NULL AND c."deletedAt" IS NULL
            ORDER BY c."pinnedAt" DESC, c.id DESC LIMIT ${MAX_PINNED}`
           .execute(db)
           .then((r) => r.rows),
     sql<Row>`SELECT ${COLUMNS} FROM "CommentV3" c JOIN "User" u ON u.id = c."userId"
-       WHERE ${topLevel} AND c."pinnedAt" IS NULL
+       WHERE ${topLevel} AND ${PINNED_AT} IS NULL
          ${options.cursor ? sql`AND ${afterCursor(sort, options.cursor)}` : sql``}
        ORDER BY ${sort.order} LIMIT ${budget + 1}`
       .execute(db)
@@ -367,9 +370,9 @@ async function openReplies(
   return (
     await sql<Row>`SELECT * FROM (
         SELECT ${COLUMNS}, c."rootId",
-               row_number() OVER (PARTITION BY c."parentId" ORDER BY c."pinnedAt" DESC NULLS LAST, ${
-                 sort.order
-               }) AS rn
+               row_number() OVER (PARTITION BY c."parentId" ORDER BY ${PINNED_AT} DESC NULLS LAST, ${
+      sort.order
+    }) AS rn
           FROM "CommentV3" c JOIN "User" u ON u.id = c."userId"
          WHERE c."rootId" = ANY(${intArray(rootIds)}) AND c.depth BETWEEN 1 AND ${replyDepth}
            AND ${visibleTo(viewer)}
@@ -436,7 +439,7 @@ export async function getCommentEntity(db: CommentV3Db, commentId: number) {
 }
 
 /**
- * The model comment a model-page link names. Links and notifications sent before the model flip
+ * The model comment a model-page link names. Links and notifications sent earlier
  * carry the old v1 id (`modelPageId`), which on another model or surface can be a different
  * comment's id. On the same model no comment's id is another's v1 id, so a v1 id found there wins,
  * and any other id is taken as the comment's own.
@@ -476,10 +479,10 @@ export async function getCommentReplies(
        WHERE c."parentId" = ${parentId} AND ${visibleTo(viewer)}
          ${
            options.cursor
-             ? sql`AND c."pinnedAt" IS NULL AND ${afterCursor(sort, options.cursor)}`
+             ? sql`AND ${PINNED_AT} IS NULL AND ${afterCursor(sort, options.cursor)}`
              : sql``
          }
-       ORDER BY c."pinnedAt" DESC NULLS LAST, ${sort.order} LIMIT ${limit + 1}`.execute(db)
+       ORDER BY ${PINNED_AT} DESC NULLS LAST, ${sort.order} LIMIT ${limit + 1}`.execute(db)
   ).rows;
   const page = rows.slice(0, limit);
   const items = await decorate(db, page, viewer);

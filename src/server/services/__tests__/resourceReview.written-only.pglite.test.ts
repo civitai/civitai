@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
 import { writtenReviewSql } from '~/server/services/resourceReview.service';
 
 // The model page's review row asks `getPaged` for `writtenOnly`; this is the filter it adds.
@@ -45,5 +46,29 @@ const idsMatching = async (filter: Prisma.Sql) => {
 describe('writtenReviewSql', () => {
   it('keeps reviews with text and drops bare thumbs, empty editor HTML and hidden reviews', async () => {
     expect(await idsMatching(writtenReviewSql)).toEqual([5, 6]);
+  });
+});
+
+describe('getResourceReviewPagedSchema', () => {
+  // Without a version, writtenOnly would regex-filter every review of the model in one scan.
+  it('rejects writtenOnly without a version', () => {
+    expect(getResourceReviewPagedSchema.safeParse({ modelId: 1, writtenOnly: true }).success).toBe(
+      false
+    );
+    expect(
+      getResourceReviewPagedSchema.safeParse({ modelId: 1, modelVersionId: 2, writtenOnly: true })
+        .success
+    ).toBe(true);
+  });
+
+  // The page's SSR safeParse 404s on a failed parse, so an oversized limit must clamp, not fail.
+  it('clamps limit to 50 and defaults it to 20', () => {
+    const limitOf = (limit?: number) =>
+      getResourceReviewPagedSchema.parse({ modelId: 1, limit }).limit;
+    expect(limitOf(51)).toBe(50);
+    expect(limitOf(200)).toBe(50);
+    expect(limitOf(50)).toBe(50);
+    expect(limitOf()).toBe(20);
+    expect(getResourceReviewPagedSchema.safeParse({ modelId: 1, limit: 0 }).success).toBe(false);
   });
 });

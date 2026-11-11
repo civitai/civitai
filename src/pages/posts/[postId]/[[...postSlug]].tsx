@@ -1,21 +1,24 @@
 import type { InferGetServerSidePropsType } from 'next';
 
+import { ClientOnlySectionsProvider } from '~/components/ClientOnlySection/ClientOnlySection';
 import { PostDetail } from '~/components/Post/Detail/PostDetail';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getPostDetail } from '~/server/services/post.service';
 import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ssrClientOnlySectionsOn } from '~/server/utils/ssr-client-only-sections';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isNumber } from '~/utils/type-guards';
 
 export default function PostDetailPage({
   postId,
+  ssrClientOnlySections,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   return (
-    <>
+    <ClientOnlySectionsProvider enabled={ssrClientOnlySections}>
       {/* This may not need to be a separate component. Depends on if we ever want a post to open in stacked navigation (routed modal) */}
       <PostDetail postId={postId} />
-    </>
+    </ClientOnlySectionsProvider>
   );
 }
 
@@ -67,7 +70,7 @@ export const getServerSideProps = createServerSideProps({
       // PostDetail gates on `forcedBrowsingLevel || nsfwLevel`; the forced level comes from
       // contest-collection details the client only resolves after hydration.
       return {
-        props: { postId },
+        props: { postId, ssrClientOnlySections: ssrClientOnlySectionsOn() },
         gating: {
           contentNsfwLevel: post.nsfwLevel,
           nsfw: post.nsfw,

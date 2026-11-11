@@ -47,8 +47,8 @@ async function seedHit(
   reportId: number,
   tags: Tag[],
   entity: { table: string; col: string; id: number } = {
-    table: 'CommentV2Report',
-    col: 'commentV2Id',
+    table: 'CommentV3Report',
+    col: 'commentId',
     id: reportId * 10,
   },
   opts: { text?: string; authorId?: number | string } = {}
@@ -113,7 +113,7 @@ describe('fetchCandidates', () => {
         tag: 'CSAM',
         confidence: 77,
         authorId: 1001,
-        entityType: 'commentV2',
+        entityType: 'commentV3',
         entityId: 10,
       },
       {
@@ -121,7 +121,7 @@ describe('fetchCandidates', () => {
         tag: 'Grooming',
         confidence: 91,
         authorId: 1001,
-        entityType: 'commentV2',
+        entityType: 'commentV3',
         entityId: 10,
       },
       {
@@ -184,7 +184,7 @@ describe('snapshotAutomatedText', () => {
       report_id: 1,
       tag: 'CSAM',
       wave: 1,
-      entity_type: 'commentV2',
+      entity_type: 'commentV3',
       entity_id: 10,
       author_id: 1001,
       visibility: 'public',

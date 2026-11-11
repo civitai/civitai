@@ -1,3 +1,4 @@
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
 import {
   ImageSort,
@@ -10,6 +11,7 @@ import { dbRead } from '~/server/db/client';
 import { getUserFollows, imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import {
   getUserCollectionPermissionsById,
   removeEntityFromAllCollections,
@@ -23,6 +25,7 @@ import {
   bulkRemoveBlockedImages,
   deleteImageById,
   getAllImagesIndex,
+  getImagesForModelVersionCache,
   getPostDetailByImageId,
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
@@ -55,6 +58,7 @@ import { buildSearchActor } from '~/server/meilisearch/client';
 import {
   getGallerySettingsByModelId,
   getHeldGalleryLevel,
+  isModelGalleryWithheld,
   getHeldLevelsByPost,
 } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
@@ -114,6 +118,7 @@ import {
   getPostImageCounts,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
 import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
@@ -249,7 +254,11 @@ export const setTosViolationHandler = async ({
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
-    const written = await writeModeratorBlock([id]);
+    const written = await writeModeratorBlock([id], {
+      blockedBy: user.id,
+      violationType,
+      reportReason: ReportReason.TOSViolation,
+    });
     const held = written.held.has(id);
 
     if (!held) {
@@ -268,21 +277,20 @@ export const setTosViolationHandler = async ({
         )
       );
 
-      await createNotification({
-        userId: image.userId,
-        type: 'tos-violation',
-        category: NotificationCategory.System,
-        key: `tos-violation:image:${crypto.randomUUID()}`,
-        details: {
-          modelName: image.post?.title ?? `post #${image.postId as number}`,
-          entity: 'image',
-          url: `/images/${id}`,
-          // Only the moderator's own choice — the inferred fallback below is a classification for
-          // analytics, and telling someone their image broke a rule the moderator never picked is
-          // worse than telling them nothing.
-          ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
-        },
-      }).catch();
+      if (!isFeedbackCaptureOwner(image.userId))
+        await createNotification({
+          userId: image.userId,
+          type: 'tos-violation',
+          category: NotificationCategory.System,
+          key: `tos-violation:image:${crypto.randomUUID()}`,
+          details: {
+            modelName: image.post?.title ?? `post #${image.postId as number}`,
+            entity: 'image',
+            url: `/images/${id}`,
+            // Only the moderator's explicit pick; the inferred fallback below is for analytics, not the user.
+            ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
+          },
+        }).catch();
     }
 
     await clearReviewFlagsOnBlock([id]);
@@ -357,6 +365,25 @@ export const setTosViolationHandler = async ({
  * credentials the moderator procedures accept, so an app a moderator authorised does not get it.
  */
 const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+
+/** The owner a taken-down model's gallery is shown to, on the same credentials as `moderatorView`. */
+const galleryOwnerId = (ctx: Context) =>
+  ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
+
+/** Whether the request's model gallery is withheld from this viewer (see `isModelGalleryWithheld`). */
+const isGalleryWithheldFrom = (ctx: Context, input: Parameters<typeof isModelGalleryWithheld>[0]) =>
+  moderatorView(ctx) ? false : isModelGalleryWithheld(input, galleryOwnerId(ctx));
+
+export const getImagesForModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
+  return getImagesForModelVersionCache([input.id]);
+};
 
 /**
  * The images a viewer may see whole: one on a minor or SFW-only model's post, above that model's held
@@ -454,9 +481,14 @@ export const getInfiniteImagesHandler = async ({
   }
 
   try {
-    // A minor or SFW-only model's images are served only at its gallery's held level, except to
-    // moderators, who must see what they may need to remove.
-    const heldLevel = moderatorView(ctx) ? undefined : await getHeldGalleryLevel(scopedInput);
+    // A minor or SFW-only model's images are served only at its gallery's held level, and a
+    // taken-down model's only to its owner, except to moderators, who must see what they may need
+    // to remove.
+    const [heldLevel, withheld] = await Promise.all([
+      moderatorView(ctx) ? undefined : getHeldGalleryLevel(scopedInput),
+      isGalleryWithheldFrom(ctx, scopedInput),
+    ]);
+    if (withheld) return { items: [], nextCursor: undefined };
     if (heldLevel !== undefined) {
       const browsingLevel = Flags.intersection(scopedInput.browsingLevel, heldLevel);
       // The fetches read 0 as their default level, not as none, so an empty intersection is an empty page.
@@ -537,6 +569,7 @@ export const getInfiniteImagesHandler = async ({
         ...scopedInput,
         user,
         holdExempt: moderatorView(ctx),
+        galleryOwnerId: galleryOwnerId(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
@@ -669,10 +702,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
     // A minor or SFW-only model's gallery serves only its held level, whatever level is asked for:
     // the page, the pinned posts and the sponsored post alike. Moderators see it whole.
-    const [modelGallerySettings, heldLevel] = await Promise.all([
+    // A taken-down model's gallery is its owner's alone.
+    const [modelGallerySettings, heldLevel, withheld] = await Promise.all([
       input.modelId ? getGallerySettingsByModelId({ id: input.modelId }) : null,
       moderatorView(ctx) ? undefined : getHeldGalleryLevel(input),
+      isGalleryWithheldFrom(ctx, input),
     ]);
+    if (withheld) return { nextCursor: undefined, items: [] };
     if (heldLevel !== undefined) {
       const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
       // The fetches below read 0 as their default level, not as none, so an empty intersection is an
@@ -1037,10 +1073,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
       });
     }
 
-    return {
+    // One `user` object per creator on the wire (`image-feed-shared-users`, dark): the decoded
+    // response is unchanged, devalue writes each creator once. See `feed-shared-users.ts`.
+    return withSharedFeedUsers({
       nextCursor: cursor,
       items: results,
-    };
+    });
   } catch (error) {
     console.log({ error });
     if (error instanceof TRPCError) throw error;
@@ -1193,10 +1231,22 @@ export const getImageContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const userId = ctx.user?.id;
+    const isModerator = ctx.user?.isModerator;
+    // An image the viewer may not open gets the same answer as an id with no contest entries.
+    const image = await assertImageVisibleToViewer({ id: input.id, userId, isModerator }).catch(
+      (error) => {
+        if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
+        throw error;
+      }
+    );
+    if (!image) return { collectionItems: [], post: null };
+
     const collectionItems = await getImageContestCollectionDetails({
       ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      userId,
+      isModerator,
+      imageOwnerId: image.userId,
     });
     const imageId = collectionItems?.[0]?.imageId;
     if (!imageId) return { collectionItems, post: null };

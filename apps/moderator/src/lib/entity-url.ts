@@ -42,17 +42,11 @@ export function entityUrl(
   return entityId && segment ? `${civitaiUrl}/${segment}/${entityId}` : null;
 }
 
-// Linking a comment to its ENTITY leaves the moderator scrolling a thread for the row they were already
-// looking at. Both comment tables have a deep link and neither is derivable from `entityUrl`.
-
-/** `CommentV2` (image, article, post, bounty, …). The main app resolves the thread server-side and
+/** A comment by its `CommentV3` id. Linking to its ENTITY instead leaves the moderator scrolling a
+ *  thread for the row they were already looking at. The main app resolves the thread server-side and
  *  redirects with the comment pinned, so this works for entity types that have no standalone page and
  *  for replies buried past the first page of a thread — neither of which a built URL can reach. */
-export const commentV2Url = (civitaiUrl: string, commentId: number) =>
-  `${civitaiUrl}/comments/v2/${commentId}`;
-
-/** `CommentV3`: the same server-side resolution, through the permalink that reads any comment. */
-export const commentV3Url = (civitaiUrl: string, commentId: number) =>
+export const commentUrl = (civitaiUrl: string, commentId: number) =>
   `${civitaiUrl}/comments/${commentId}`;
 
 /** A user's profile, optionally a section of it (`models`, `images`, `posts`, …). Encoded — usernames
@@ -65,6 +59,13 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
 /** The main site's account-level CSAM report for a user. */
 export const csamReportUrl = (civitaiUrl: string, userId: number) =>
   `${civitaiUrl}/moderator/csam/${userId}`;
+
+/**
+ * The main site's CSAM report filing for a feedback page capture: no subject preselected, since a
+ * capture can show any account's content. The moderator picks one there.
+ */
+export const csamCaptureReportUrl = (civitaiUrl: string, imageId: number) =>
+  `${civitaiUrl}/moderator/csam/capture?imageId=${imageId}`;
 
 /** The main site's generator evidence page for a user, with one restriction's triggers preselected. */
 export const csamGeneratorEvidenceUrl = (

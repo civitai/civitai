@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { matches, type Where } from './prisma-where.fixture';
 import type * as AgentReviewService from '~/server/services/blocks/agent-review.service';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as ModAlert from '~/server/common/mod-alert';
@@ -21,6 +22,7 @@ const m = vi.hoisted(() => ({
   autodeployOn: vi.fn(async () => true),
   agentAutostartOn: vi.fn(async () => true),
   agentBaseOn: vi.fn(async () => true),
+  automationOn: vi.fn(async (): Promise<boolean> => true),
   startClaimedReviewBuild: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   startAgentReview: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   notifyModAlert: vi.fn(async (..._a: unknown[]): Promise<string> => 'delivered'),
@@ -31,6 +33,7 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   isAppBlocksReviewAutodeployEnabled: () => m.autodeployOn(),
   isAppBlocksAgenticReviewAutostartEnabled: () => m.agentAutostartOn(),
   isAppBlocksAgenticReviewEnabled: () => m.agentBaseOn(),
+  isAgentReviewAutomationEnabled: () => m.automationOn(),
 }));
 vi.mock('~/server/services/blocks/publish-request.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PublishRequestService>()),
@@ -74,22 +77,6 @@ type Row = {
 let rows: Row[] = [];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-type Where = Record<string, unknown>;
-function matches(row: Row, where: Where): boolean {
-  return Object.entries(where).every(([key, cond]) => {
-    if (key === 'OR') return (cond as Where[]).some((w) => matches(row, w));
-    const value = (row as unknown as Record<string, unknown>)[key];
-    if (cond && typeof cond === 'object' && !(cond instanceof Date)) {
-      const c = cond as { in?: unknown[]; gt?: Date; gte?: Date; not?: unknown; contains?: string };
-      if (c.in) return c.in.includes(value);
-      if (c.contains !== undefined) return typeof value === 'string' && value.includes(c.contains);
-      if (c.gt) return value instanceof Date && value.getTime() > c.gt.getTime();
-      if (c.gte) return value instanceof Date && value.getTime() >= c.gte.getTime();
-      if ('not' in c) return value !== c.not;
-    }
-    return value === cond;
-  });
-}
 const table = {
   // The read a statement sees is taken when it STARTS; the delay is how long it then takes.
   // That is what lets an unlocked second claim count the slots before the first claim's
@@ -211,6 +198,10 @@ beforeEach(() => {
   m.autodeployOn.mockResolvedValue(true);
   m.agentAutostartOn.mockResolvedValue(true);
   m.agentBaseOn.mockResolvedValue(true);
+  // The shared pair, as the real helper composes it, so tests that flip one flag still work.
+  m.automationOn.mockImplementation(
+    async () => (await m.agentAutostartOn()) && (await m.agentBaseOn())
+  );
   m.startClaimedReviewBuild.mockReset();
   m.startClaimedReviewBuild.mockResolvedValue({});
   m.startAgentReview.mockReset();
@@ -594,6 +585,19 @@ describe('agent review auto-start', () => {
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
   });
 
+  it("🔴 listing-edit impersonation checks' spend counts against the same daily budget", async () => {
+    // $37 of reviews + $2 cap = $39 fits; add $1.50 of listing-edit checks and it no longer does.
+    spend(37);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
+    redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+      key.includes('listing-check-spend') ? '150' : null) as never);
+    try {
+      expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('budget-refused');
+    } finally {
+      redisMock.sysRedis.get.mockImplementation((async () => null) as never);
+    }
+  });
+
   it('the budget is env-configurable', async () => {
     envMock.set({ AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: 100 });
     spend(90);
@@ -607,6 +611,13 @@ describe('agent review auto-start', () => {
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
+  it('🔴 reads the ONE shared switch pair (isAgentReviewAutomationEnabled), not its own copy', async () => {
+    spend(0);
+    m.automationOn.mockResolvedValue(false);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('disabled');
+    expect(m.startAgentReview).not.toHaveBeenCalled();
+  });
+
   it('flag OFF: no auto-start', async () => {
     spend(0);
     m.agentAutostartOn.mockResolvedValue(false);
@@ -614,12 +625,16 @@ describe('agent review auto-start', () => {
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
-  it('a live preview triggers it; a failed one does not', async () => {
+  it('🔴 every settled review build triggers it — a failed preview too (the agent reads the bundle)', async () => {
     spend(0);
     await onReviewBuildSettled({ publishRequestId: PUBREQ, live: false });
-    expect(m.startAgentReview).not.toHaveBeenCalled();
-    await onReviewBuildSettled({ publishRequestId: PUBREQ, live: true });
     expect(m.startAgentReview).toHaveBeenCalledTimes(1);
+    await onReviewBuildSettled({ publishRequestId: 'pubreq_other', live: true });
+    expect(m.startAgentReview).toHaveBeenCalledTimes(2);
+    expect(m.startAgentReview).toHaveBeenLastCalledWith({
+      publishRequestId: 'pubreq_other',
+      modUserId: null,
+    });
   });
 
   it('a start failure is reported, never thrown', async () => {
@@ -790,8 +805,7 @@ describe('agent review auto-start: concurrent go-lives share the budget', () => 
   // instant: under the suite's module sharing, one of two CONCURRENT first-time dynamic imports
   // of a mocked module was measured resolving the real module (its env failed to validate).
   const deps = {
-    autostartOn: async () => true,
-    agentReviewOn: async () => true,
+    automationOn: async () => true,
     startAgentReview: (...a: unknown[]) => m.startAgentReview(...a),
   };
   beforeEach(() => {

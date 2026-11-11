@@ -260,7 +260,7 @@ export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
 export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
-export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
+export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion" | "Comic";
 
 export type StorylineStatus = "Ongoing" | "Complete";
 
@@ -1379,6 +1379,7 @@ export interface ModActivity {
   entityId: number | null;
   createdAt: Date;
   host: string | null;
+  credential: string | null;
 }
 
 export interface ModThreadClaim {
@@ -4253,6 +4254,16 @@ export interface CsamQueueSetAside {
   outcome: CsamQueueSetAsideOutcome;
   csamReportId: number | null;
   moderatorId: number;
+  createdAt: Date;
+}
+
+export interface ImageDeferredBlockEffect {
+  imageId: number;
+  violationType: string | null;
+  notifyOwner: boolean;
+  reportReason: string | null;
+  reportIds: number[];
+  blockedBy: number | null;
   createdAt: Date;
 }
 

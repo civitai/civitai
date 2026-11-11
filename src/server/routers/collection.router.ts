@@ -8,6 +8,7 @@ import {
   getAllCollectionsInfiniteHandler,
   getAllUserCollectionsHandler,
   getCollectionByIdHandler,
+  getCollectionEntryCountHandler,
   getPermissionDetailsHandler,
   getUserCollectionItemsByItemHandler,
   joinCollectionAsManagerHandler,
@@ -53,7 +54,6 @@ import {
 import {
   getCollectionAiReview,
   getCollectionAiReviewDefaultPrompt,
-  getCollectionEntryCount,
   setCollectionAiReview,
 } from '~/server/services/collection.service';
 import {
@@ -230,9 +230,7 @@ export const collectionRouter = router({
   getEntryCount: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getByIdSchema)
-    .query(({ input, ctx }: { input: GetByIdInput; ctx: { user: { id: number } } }) => {
-      return getCollectionEntryCount({ collectionId: input.id, userId: ctx.user.id });
-    }),
+    .query(getCollectionEntryCountHandler),
   joinCollectionAsManager: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(getByIdSchema)

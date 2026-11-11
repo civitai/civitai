@@ -1,9 +1,10 @@
 import { PrismaClient } from '@prisma/client';
+import { createKyselyClients } from '@civitai/db/kysely';
+import type { Kysely } from 'kysely';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { CacheTTL } from '~/server/common/constants';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 
 /**
@@ -35,7 +36,24 @@ type Target = keyof typeof SCHEMAS;
 
 const state = vi.hoisted(() => ({
   topology: { read: 'primary', write: 'primary' } as { read: string; write: string },
+  // One real Kysely client per schema, over pg with the app's type parsers (createKyselyClients).
+  kysely: {} as Record<string, { getExecutor(): unknown }>,
+  used: { read: 0, write: 0 },
 }));
+
+// The lookup runs through Kysely over the pg pools. Each app client resolves, per statement, to the
+// schema the topology names, and counts the statements it ran.
+vi.mock('~/server/db/kyselyDb.lazy', () => {
+  const db = {
+    kyselyRead: {
+      getExecutor: () => (state.used.read++, state.kysely[state.topology.read].getExecutor()),
+    },
+    kyselyWrite: {
+      getExecutor: () => (state.used.write++, state.kysely[state.topology.write].getExecutor()),
+    },
+  };
+  return { loadKyselyDb: async () => db };
+});
 
 // The shared internal-auth check is not under test here; mirrors image-delivery.test.ts.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -43,12 +61,6 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 import handler from '~/pages/api/internal/image-delivery/[id]';
-
-const withSchema = (url: string, schema: string) => {
-  const parsed = new URL(url);
-  parsed.searchParams.set('schema', schema);
-  return parsed.toString();
-};
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
 // Every id is distinct, and none equals another field's value.
@@ -238,13 +250,14 @@ type Outcome = {
   cacheWrites: unknown[][];
 };
 
-const prisma = {} as Record<Target, PrismaClient>;
+const kyselyClients = {} as Record<Target, Kysely<unknown>>;
 
 async function request(
   query: Record<string, unknown>,
   topology: { read: Target; write: Target } = { read: 'primary', write: 'primary' }
 ): Promise<{ seen: Outcome; used: [number, number] }> {
   state.topology = topology;
+  state.used = { read: 0, write: 0 };
   vi.clearAllMocks();
 
   const res = makeRes();
@@ -265,7 +278,7 @@ async function request(
       cacheWrites: vi.mocked(redisMock.redis.packed.set).mock.calls.map((call) => [...call]),
     },
     // [replica reads, primary reads]
-    used: [dbMock.dbRead.$queryRaw.mock.calls.length, dbMock.dbWrite.$queryRaw.mock.calls.length],
+    used: [state.used.read, state.used.write],
   };
 }
 
@@ -274,7 +287,14 @@ const found = (row: Row, body: Record<string, unknown>) => ({
   body,
   threw: false,
   fallbacks: [],
-  cacheWrites: [[`packed:caches:image-delivery-metadata:v2:${row.url}`, body, { EX: CacheTTL.sm }]],
+  // 3 minutes for an entry that shows metadata, an hour for one that hides it (image-delivery.service).
+  cacheWrites: [
+    [
+      `packed:caches:image-delivery-metadata:v2:${row.url}`,
+      body,
+      { EX: body.hideMeta === true ? 3600 : 180 },
+    ],
+  ],
 });
 const NOT_FOUND = {
   status: 404,
@@ -302,13 +322,13 @@ describe.skipIf(!databaseUrl)('image-delivery lookup against a real Postgres', (
     await admin.$disconnect();
 
     for (const target of Object.keys(SCHEMAS) as Target[]) {
-      prisma[target] = new PrismaClient({ datasourceUrl: withSchema(url, SCHEMAS[target]) });
+      kyselyClients[target] = createKyselyClients<unknown>({
+        connectionString: url,
+        singleClient: true,
+        options: `-c search_path="${SCHEMAS[target]}"`,
+      }).db;
+      state.kysely[target] = kyselyClients[target];
     }
-
-    dbMock.dbRead.$queryRaw.mockImplementation(((...args: never[]) =>
-      (prisma[state.topology.read as Target].$queryRaw as any)(...args)) as never);
-    dbMock.dbWrite.$queryRaw.mockImplementation(((...args: never[]) =>
-      (prisma[state.topology.write as Target].$queryRaw as any)(...args)) as never);
     // Every lookup misses the cache, so every one reaches the database.
     redisMock.redis.packed.get.mockImplementation(async () => null);
     redisMock.redis.packed.set.mockImplementation(async () => undefined);
@@ -318,10 +338,16 @@ describe.skipIf(!databaseUrl)('image-delivery lookup against a real Postgres', (
     state.topology = { read: 'primary', write: 'primary' };
   });
 
+  afterEach(() => {
+    // Through Kysely only: the Prisma query engine is never reached, on either side.
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
   afterAll(async () => {
     const url = databaseUrl as string;
     for (const target of Object.keys(SCHEMAS) as Target[]) {
-      await prisma[target]?.$disconnect();
+      await kyselyClients[target]?.destroy();
     }
     const admin = new PrismaClient({ datasourceUrl: url });
     for (const schema of Object.values(SCHEMAS))

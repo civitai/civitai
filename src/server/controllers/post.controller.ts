@@ -14,6 +14,7 @@ import type {
   CreatePostWithImagesInput,
   PostCreateInput,
   RemoveResourceFromPostImageInput,
+  GetPostResourceCoversInput,
 } from '~/server/schema/post.schema';
 import {
   bulkSaveItems,
@@ -23,7 +24,11 @@ import {
 } from '~/server/services/collection.service';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
-import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  getRequestBrowsingLevel,
+  resolveRequestBrowsingLevels,
+  viewerBrowsingLevel,
+} from '~/server/utils/browsing-level';
 import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
@@ -45,7 +50,7 @@ import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
-import { getHeldGalleryLevel } from '~/server/services/model.service';
+import { getHeldGalleryLevel, isModelGalleryWithheld } from '~/server/services/model.service';
 import { Flags } from '~/shared/utils/flags';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
@@ -67,6 +72,7 @@ import {
   getPostContestCollectionDetails,
   getPostDetail,
   getPostResources,
+  getPostResourceCovers,
   getPostsInfinite,
   getPostTags,
   removePostTag,
@@ -85,12 +91,19 @@ export const getPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    // A minor or SFW-only model's posts are served only at its gallery's held level, except to
-    // moderators, who must see what they may need to remove.
-    const heldLevel =
-      ctx.user?.isModerator && isSessionOrFullUserKey(ctx)
-        ? undefined
-        : await getHeldGalleryLevel({ ...input, postIds: input.ids });
+    // A minor or SFW-only model's posts are served only at its gallery's held level, and a
+    // taken-down model's only to its owner, except to moderators, who must see what they may need
+    // to remove.
+    const selector = { ...input, postIds: input.ids };
+    const moderator = !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+    const ownerId = ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
+    const [heldLevel, withheld] = moderator
+      ? [undefined, false]
+      : await Promise.all([
+          getHeldGalleryLevel(selector),
+          isModelGalleryWithheld(selector, ownerId),
+        ]);
+    if (withheld) return { items: [], nextCursor: undefined };
     if (heldLevel !== undefined) {
       const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
       // The feed reads 0 as no filter, so an empty intersection is an empty page.
@@ -847,9 +860,35 @@ export const getPostResourcesHandler = async ({
 }) => {
   try {
     await assertPostVisibleToViewer({ ...input, user: ctx.user });
-    const resources = await getPostResources({ ...input });
+    const resources = await getPostResources({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
 
     return resources.filter((x) => x.name !== 'vae');
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getPostResourceCoversHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetPostResourceCoversInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    // The level comes from the client: without this clamp it could ask for covers above its domain's cap.
+    const levels = { browsingLevel: input.browsingLevel };
+    resolveRequestBrowsingLevels(levels, ctx);
+    return await getPostResourceCovers({
+      id: input.id,
+      user: ctx.user,
+      browsingLevel: viewerBrowsingLevel(ctx, levels.browsingLevel ?? input.browsingLevel),
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -860,13 +899,23 @@ export const getPostResourcesHandler = async ({
 // #region [post for collections]
 export const getPostContestCollectionDetailsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetByIdInput;
   ctx: Context;
 }) => {
   try {
-    const items = await getPostContestCollectionDetails({ ...input });
-    return items;
+    const visible = await assertPostVisibleToViewer({ ...input, user: ctx.user }).catch((e) => {
+      if (e instanceof TRPCError && e.code === 'NOT_FOUND') return null;
+      throw e;
+    });
+    if (!visible) return { collection: null, permissions: null, items: [] };
+
+    return await getPostContestCollectionDetails({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
