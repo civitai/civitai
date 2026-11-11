@@ -610,7 +610,7 @@ export default MixedAuthEndpoint(async function handler(
       ? getConsumerBlobId(downloadUrls[0])
       : undefined;
   if (blobId) {
-    const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId);
+    const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId, user?.id);
     if (resigned.status === 'gone') return res.status(404).json({ error: 'Missing epoch' });
     if (resigned.status === 'refreshed') {
       res.setHeader('Cache-Control', 'private, no-store');
@@ -663,18 +663,28 @@ export default MixedAuthEndpoint(async function handler(
 const RESIGN_TIMEOUT_MS = 3000;
 
 /** A fresh signature from the blob owner's own orchestrator account; `unknown` on any failure. */
-async function resignEpochBlob(ownerId: number, blobId: string): Promise<BlobRefreshResult> {
+async function resignEpochBlob(
+  ownerId: number,
+  blobId: string,
+  callerId: number | undefined
+): Promise<BlobRefreshResult> {
   const unknown: BlobRefreshResult = { blobId, status: 'unknown' };
-  try {
-    const token = await getOrchestratorToken(ownerId);
-    const [result] = await Promise.race([
-      refreshBlobsService({ token, blobIds: [blobId] }),
-      new Promise<BlobRefreshResult[]>((resolve) =>
-        setTimeout(() => resolve([unknown]), RESIGN_TIMEOUT_MS)
-      ),
-    ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<BlobRefreshResult>((resolve) => {
+    timer = setTimeout(() => resolve(unknown), RESIGN_TIMEOUT_MS);
+  });
+  const resign = async () => {
+    const token = await getOrchestratorToken(ownerId, undefined, {
+      bypassCache: callerId !== ownerId,
+    });
+    const [result] = await refreshBlobsService({ token, blobIds: [blobId] });
     return result ?? unknown;
+  };
+  try {
+    return await Promise.race([resign(), timeout]);
   } catch {
     return unknown;
+  } finally {
+    clearTimeout(timer);
   }
 }
