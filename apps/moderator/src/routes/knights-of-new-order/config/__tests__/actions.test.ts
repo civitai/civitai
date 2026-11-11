@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { save } = vi.hoisted(() => ({ save: vi.fn() }));
+const { save, requireAccess } = vi.hoisted(() => ({ save: vi.fn(), requireAccess: vi.fn() }));
 
 vi.mock('$lib/server/knights/sources-config.service', () => ({
   getLastSourcesChange: vi.fn(),
@@ -8,10 +8,10 @@ vi.mock('$lib/server/knights/sources-config.service', () => ({
   getSourcesSettings: vi.fn(),
   saveSourcesConfig: save,
 }));
-vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn() }));
+vi.mock('$lib/server/access', () => ({ requireAccess }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
-import { actions } from '../+page.server';
+import { actions, load } from '../+page.server';
 import { percentToRate, rateToPercent } from '../rates';
 
 const formEvent = (fields: Record<string, string>) => {
@@ -78,5 +78,28 @@ describe('Knights of New Order sources config action', () => {
     expect(
       await actions.save(formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5' }))
     ).toMatchObject({ status: 500 });
+  });
+});
+
+describe('Knights of New Order config access', () => {
+  beforeEach(() => vi.clearAllMocks());
+  const denied = () =>
+    requireAccess.mockImplementationOnce(() => {
+      throw new Error('forbidden');
+    });
+
+  it('refuses a save without access before anything is written', async () => {
+    denied();
+    await expect(
+      actions.save(formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5' }))
+    ).rejects.toThrow('forbidden');
+    expect(requireAccess).toHaveBeenCalledWith({ id: 77 }, '/knights-of-new-order/config');
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('refuses to load the page without access', async () => {
+    denied();
+    await expect(load(formEvent({}) as never)).rejects.toThrow('forbidden');
+    expect(requireAccess).toHaveBeenCalledWith({ id: 77 }, '/knights-of-new-order/config');
   });
 });
