@@ -61,6 +61,17 @@ describe('getResourceReviewPagedSchema', () => {
     ).toBe(true);
   });
 
+  // Without a version, hasImages would probe the images of every reviewer of the model.
+  it('rejects hasImages without a version', () => {
+    expect(getResourceReviewPagedSchema.safeParse({ modelId: 1, hasImages: true }).success).toBe(
+      false
+    );
+    expect(
+      getResourceReviewPagedSchema.safeParse({ modelId: 1, modelVersionId: 2, hasImages: true })
+        .success
+    ).toBe(true);
+  });
+
   // The page's SSR safeParse 404s on a failed parse, so an oversized limit must clamp, not fail.
   it('clamps limit to 50 and defaults it to 20', () => {
     const limitOf = (limit?: number) =>

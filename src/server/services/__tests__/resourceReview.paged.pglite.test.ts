@@ -2,7 +2,6 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as ReviewSchema from '~/server/schema/resourceReview.schema';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 import type * as UserService from '~/server/services/user.service';
 
@@ -29,12 +28,6 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
     Object.fromEntries(ids.map((id) => [id, { username: `u${id}`, image: null, deletedAt: null }])),
   getCosmeticsForUsers: async () => ({}),
   getProfilePicturesForUsers: async () => ({}),
-}));
-
-// A cap of 2 lets the over-cap path run on a handful of rows.
-vi.mock('~/server/schema/resourceReview.schema', async (importOriginal) => ({
-  ...(await importOriginal<typeof ReviewSchema>()),
-  REVIEW_HAS_IMAGES_COUNT_CAP: 2,
 }));
 
 const { getPagedResourceReviews } = await import('~/server/services/resourceReview.service');
@@ -479,7 +472,7 @@ describe('getPagedResourceReviews', () => {
       expect(result.totalItems).toBe(2);
     });
 
-    it('stops counting one past the cap', async () => {
+    it('pages by hasMore without counting', async () => {
       await pg.exec(`
         INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
           (1010, 30, now() - interval '1 day'),
@@ -492,12 +485,14 @@ describe('getPagedResourceReviews', () => {
         { id: 7, userId: 31, postId: 1011, daysAgo: 7 },
       ]);
 
-      const first = await page({ modelVersionId: V1, hasImages: true, limit: 2, page: 1 });
+      // Matches, newest first: 1, 5, 6, 7.
+      const first = await page({ modelVersionId: V1, hasImages: true, limit: 1, page: 1 });
+      expect(first.items.map((r) => r.id)).toEqual([1]);
+      expect(first.hasMore).toBe(true);
 
-      // Four reviews match; the count stops at cap + 1 = 3, so pages past it are not offered.
-      expect(first.totalItems).toBe(3);
-      expect(first.totalPages).toBe(2);
-      expect(first.items.map((r) => r.id)).toEqual([1, 5]);
+      const last = await page({ modelVersionId: V1, hasImages: true, limit: 3, page: 2 });
+      expect(last.items.map((r) => r.id)).toEqual([7]);
+      expect(last.hasMore).toBe(false);
     });
 
     it('combines with writtenOnly', async () => {

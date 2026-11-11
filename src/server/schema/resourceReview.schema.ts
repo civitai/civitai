@@ -113,10 +113,12 @@ export const getResourceReviewPagedSchema = paginationSchema
   .refine((input) => !input.writtenOnly || input.modelVersionId, {
     message: 'writtenOnly requires modelVersionId',
     path: ['writtenOnly'],
+  })
+  // Without a version, hasImages probes the images of every reviewer of the model.
+  .refine((input) => !input.hasImages || input.modelVersionId, {
+    message: 'hasImages requires modelVersionId',
+    path: ['hasImages'],
   });
 
 /** A review's image count stops at this; the list returns one more to mean "more than this". */
 export const REVIEW_IMAGE_COUNT_CAP = 100;
-
-/** With `hasImages`, the total stops counting at one more than this, so "1000+" is all a deep list can claim. */
-export const REVIEW_HAS_IMAGES_COUNT_CAP = 1000;

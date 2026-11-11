@@ -46,13 +46,14 @@ import {
   bustRatingTotalsCache,
   bustRatingTotalsForRows,
 } from '~/server/services/resourceReview.cache';
-import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import type { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
-import {
-  REVIEW_HAS_IMAGES_COUNT_CAP,
-  REVIEW_IMAGE_COUNT_CAP,
-} from '~/server/schema/resourceReview.schema';
+import { REVIEW_IMAGE_COUNT_CAP } from '~/server/schema/resourceReview.schema';
 import type {
   CreateResourceReviewInput,
   GetRatingTotalsInput,
@@ -554,8 +555,8 @@ const servablePostImageSql = (browsingLevel: number) => Prisma.sql`
   AND p."metadata"->>'unpublishedAt' IS NULL
 `;
 
-// Scalar `(SELECT true ...)` probes, not EXISTS: Postgres flattens an EXISTS into a merge join that
-// walks every image of the version or of the user.
+// Scalar `(SELECT true ...)` probes: the planner does not turn them into a join over every image of
+// the version or of the user.
 const usedReviewedVersionSql = Prisma.sql`(SELECT true FROM "ImageResourceNew" ir
   WHERE ir."imageId" = i.id AND ir."modelVersionId" = rr."modelVersionId")`;
 const SMALL_SIDE = 1000;
@@ -615,6 +616,36 @@ const reviewImageCountSql = (limit: number, browsingLevel: number) => Prisma.sql
   END
 `;
 
+/**
+ * Whether review `rr` has a servable image from its version, for a list scoped to one version —
+ * the same images `reviewImageCountSql` counts. A review with a post asks its own post; the rest
+ * look their reviewer up in the `reviewers` CTE (`reviewersWithImagesCte`), which is read once
+ * instead of walking each reviewer's images per review.
+ */
+const reviewHasImagesSql = (browsingLevel: number) => Prisma.sql`
+  CASE
+    WHEN rr."postId" IS NOT NULL THEN EXISTS (
+      SELECT 1 FROM "Image" i
+      JOIN "Post" p ON p.id = i."postId"
+      WHERE i."postId" = rr."postId" AND ${servablePostImageSql(
+        browsingLevel
+      )} AND ${usedReviewedVersionSql}
+      LIMIT 1
+    )
+    ELSE rr."userId" IN (SELECT "userId" FROM reviewers)
+  END
+`;
+
+const reviewersWithImagesCte = (modelVersionId: number, browsingLevel: number) => Prisma.sql`
+  WITH reviewers AS MATERIALIZED (
+    SELECT DISTINCT i."userId"
+    FROM "ImageResourceNew" ir
+    JOIN "Image" i ON i.id = ir."imageId"
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE ir."modelVersionId" = ${modelVersionId} AND ${servablePostImageSql(browsingLevel)}
+  )
+`;
+
 const getReviewImageCounts = async (reviewIds: number[], browsingLevel: number) => {
   if (!reviewIds.length) return new Map<number, number>();
   const rows = await dbRead.$queryRaw<{ id: number; imageCount: number }[]>`
@@ -652,7 +683,10 @@ export const getPagedResourceReviews = async ({
   ];
   if (writtenOnly) AND.push(writtenReviewSql);
   if (recommended !== undefined) AND.push(Prisma.sql`rr.recommended = ${recommended}`);
-  if (hasImages) AND.push(Prisma.sql`${reviewImageCountSql(1, browsingLevel)} > 0`);
+  if (hasImages) {
+    if (!modelVersionId) throw throwBadRequestError('hasImages requires modelVersionId');
+    AND.push(reviewHasImagesSql(browsingLevel));
+  }
   if (username) {
     const user = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (user) AND.push(Prisma.sql`rr."userId" = ${user.id}`);
@@ -694,27 +728,22 @@ export const getPagedResourceReviews = async ({
     AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
-  // writtenOnly's regex would run on every review of the version in an exact COUNT, so that
-  // path pages by hasMore (one extra row) instead. hasImages probes the image tables per review,
-  // so its COUNT stops at one past the cap rather than probing every review of the model.
-  const countQuery = writtenOnly
+  // writtenOnly's regex and hasImages' image probes would run on every review of the version in an
+  // exact COUNT, so those paths page by hasMore (one extra row) instead.
+  const pagesByHasMore = !!(writtenOnly || hasImages);
+  const countQuery = pagesByHasMore
     ? undefined
-    : hasImages
-    ? dbRead.$queryRaw<{ count: number }[]>`
-        SELECT COUNT(*)::int as count
-        FROM (
-          SELECT rr.id
-          FROM "ResourceReview" rr
-          WHERE ${Prisma.join(AND, ' AND ')}
-          LIMIT ${REVIEW_HAS_IMAGES_COUNT_CAP + 1}
-        ) matching
-      `
     : dbRead.$queryRaw<{ count: number }[]>`
         SELECT COUNT(rr.id)::int as count
         FROM "ResourceReview" rr
         WHERE ${Prisma.join(AND, ' AND ')}
       `;
   const rowsQuery = dbRead.$queryRaw<ResourceReviewRow[]>`
+    ${
+      hasImages && modelVersionId
+        ? reviewersWithImagesCte(modelVersionId, browsingLevel)
+        : Prisma.empty
+    }
     SELECT
       rr.id,
       rr."modelVersionId",
@@ -736,12 +765,12 @@ export const getPagedResourceReviews = async ({
     FROM "ResourceReview" rr
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY rr."createdAt" DESC
-    LIMIT ${writtenOnly ? limit + 1 : limit}
+    LIMIT ${pagesByHasMore ? limit + 1 : limit}
     OFFSET ${skip}
   `;
   const [countRows, rows] = await Promise.all([countQuery, rowsQuery]);
   const count = countRows?.[0].count;
-  const hasMore = writtenOnly ? rows.length > limit : undefined;
+  const hasMore = pagesByHasMore ? rows.length > limit : undefined;
   const itemsRaw = rows.slice(0, limit);
 
   const userIds = itemsRaw.map((item) => item.userId);
