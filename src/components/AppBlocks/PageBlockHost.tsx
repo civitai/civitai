@@ -184,7 +184,12 @@ import {
   downloadBytesAsBlob,
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
+  isZipSaveCandidate,
   processSaveBytes,
+  SAVE_BYTES_BUSY_ERROR,
+  SAVE_BYTES_ZIP_MAX_BYTES,
+  SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT,
+  verifySaveBytesBeforeDownload,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
@@ -3958,9 +3963,15 @@ export function PageBlockHost({
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
   // `bytes` saves are limited separately, over a rolling window (processSaveBytes):
-  // they never await, so the in-flight count above would be released before the
-  // next message and bound nothing. Same ref-not-state reasoning.
+  // most never await, so the in-flight count above would be released before the
+  // next message and bound nothing. A zip does await (its inflate check), but it is
+  // recorded in the window synchronously BEFORE that await, so a burst of zips is
+  // still bounded by the window. Same ref-not-state reasoning.
   const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  // Zip content checks in flight (SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT): a zip's verify DOES await
+  // (it inflates up to 1 GiB declared), so unlike the rest of the bytes path it needs an in-flight
+  // cap. Same ref-not-state reasoning.
+  const saveZipVerifyInFlightRef = useRef<number>(0);
   // Separate from saveBytesWindowRef: uploads have their own, longer window (imageUploadBytes.ts).
   const uploadBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   // requestIds of unanswered `bytes` uploads. A reused id is dropped, not answered: the SDK settles
@@ -3988,13 +3999,26 @@ export function PageBlockHost({
   //            can NEVER be saved.
   //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
   //            is classified from the content (processSaveBytes) and only
-  //            image/JSON/text can be saved, under the classified extension.
+  //            image/JSON/text — or a validated .zip (@civitai/app-sdk/save-zip: structure,
+  //            local headers, entry names/types, declared sizes, then an inflate
+  //            check before the download) — can be saved, under the classified
+  //            extension.
   //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
-  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes per rolling window; past
+  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes (a zip:
+  //            SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW) per rolling window; past
   //            either it replies `busy`.
   // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
   // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
   // so the block never hangs.
+  // Aborted when the host UNMOUNTS (not on a dependency change — a token refresh mid-check must not
+  // drop the reply): a zip check still running stops, and nothing is downloaded for it afterwards.
+  // A fresh controller per mount, so StrictMode's mount → unmount → mount leaves a live one.
+  const saveBytesUnmountRef = useRef<AbortController>(new AbortController());
+  useEffect(() => {
+    const controller = new AbortController();
+    saveBytesUnmountRef.current = controller;
+    return () => controller.abort();
+  }, []);
   useEffect(() => {
     const off = onMessage<unknown>('SAVE_IMAGE', async (raw) => {
       const req = resolveSaveImageRequest(raw);
@@ -4005,6 +4029,19 @@ export function PageBlockHost({
         return;
       }
       if (req.kind === 'bytes') {
+        // ONE zip content check at a time per host. Checked before processSaveBytes so a busy zip is
+        // not recorded in the window; an over-cap zip falls through to its too-large refusal (an
+        // over-cap file is never `busy`, see processSaveBytes).
+        if (
+          isZipSaveCandidate(req.bytes) &&
+          req.bytes.byteLength <= SAVE_BYTES_ZIP_MAX_BYTES &&
+          saveZipVerifyInFlightRef.current >= SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT
+        ) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: SAVE_BYTES_BUSY_ERROR });
+          return;
+        }
+        const unmounted = saveBytesUnmountRef.current.signal;
+        let holdsZipSlot = false;
         try {
           // Per-file cap, then window pre-check (both on byteLength alone), then classify, then
           // record: a refused save is never decoded/parsed on this main thread, and an over-cap
@@ -4015,10 +4052,29 @@ export function PageBlockHost({
             send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: result.error });
             return;
           }
-          downloadBytesAsBlob(req.bytes, result.type, result.filename);
+          // Taken synchronously, before the first await, so two zips cannot both pass the gate.
+          if (result.type === 'application/zip') {
+            saveZipVerifyInFlightRef.current += 1;
+            holdsZipSlot = true;
+          }
+          // A zip's deflated entries must inflate to their declared sizes and CRCs BEFORE the
+          // download (a no-op for every other type), under a deadline below the SDK's request
+          // timeout. The window already counted this save. Only a verified save can be downloaded.
+          const verified = await verifySaveBytesBeforeDownload(req.bytes, result, {
+            signal: unmounted,
+          });
+          if (unmounted.aborted) return; // host gone: no download, nobody to reply to
+          if (!verified.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: verified.error });
+            return;
+          }
+          downloadBytesAsBlob(req.bytes, verified.save);
           send('SAVE_IMAGE_RESULT', { requestId, ok: true });
         } catch (err) {
+          if (unmounted.aborted) return;
           send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        } finally {
+          if (holdsZipSlot) saveZipVerifyInFlightRef.current -= 1;
         }
         return;
       }
