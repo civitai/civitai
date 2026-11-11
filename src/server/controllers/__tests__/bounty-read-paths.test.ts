@@ -120,7 +120,7 @@ const {
   upsertBountyEntryHandler,
   submitBountyEntryHandler,
 } = await import('../bountyEntry.controller');
-// A mature domain, signed in: the domain caps nothing.
+// canViewNsfw: true, so the domain applies no browsing-level cap.
 const uncapped = { features: { canViewNsfw: true } };
 const stranger = { user: { id: 6 }, ...uncapped } as never;
 
@@ -318,7 +318,12 @@ describe('bounty images on a capped site', () => {
   it('the feed sends a capped viewer no image above the cap, and drops a bounty left with none', async () => {
     dbMock.dbRead.bounty.findMany.mockResolvedValue([feedBounty(1), feedBounty(2)]);
     mockImagesForBounties.mockResolvedValue({
-      1: [image(10, NsfwLevel.PG), image(11, NsfwLevel.X), image(12, 0)],
+      1: [
+        image(10, NsfwLevel.PG),
+        image(11, NsfwLevel.X),
+        image(12, 0),
+        image(13, NsfwLevel.PG | NsfwLevel.XXX),
+      ],
       2: [image(20, NsfwLevel.R)],
     });
     const { items } = await getInfiniteBountiesHandler({
@@ -337,6 +342,18 @@ describe('bounty images on a capped site', () => {
       ctx: signedInSfw as never,
     });
     expect(items).toEqual([]);
+  });
+
+  it('the feed caps by the level the service reports, not a stale one on the row', async () => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([feedBounty(1)]);
+    mockImagesForBounties.mockResolvedValue({
+      1: [image(10, NsfwLevel.PG), { ...image(11, NsfwLevel.PG), nsfwLefel: NsfwLevel.X }],
+    });
+    const { items } = await getInfiniteBountiesHandler({
+      input: feedInput,
+      ctx: signedOut as never,
+    });
+    expect(ids(items[0].images)).toEqual([10]);
   });
 
   it('the detail page sends a capped viewer no image above the cap', async () => {

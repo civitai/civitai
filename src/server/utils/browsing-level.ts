@@ -125,7 +125,8 @@ export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'featu
 
 /**
  * A parent's level (a bounty's, an entry's) is its images' combined level, so the cap on the
- * parent does not reach each image: this drops those above the cap, and unrated ones. The owner
+ * parent does not reach each image: this drops those above the cap, mixed ratings that reach
+ * above it, and unrated ones. The owner
  * and moderators keep them, since edit forms are filled from these reads and save back only the
  * images they were shown.
  */
@@ -137,7 +138,11 @@ export function capNestedImages<T extends { nsfwLevel?: number | null }>(
   const cap = requestDomainBrowsingLevelCap(ctx);
   if (cap === undefined || ctx.user?.isModerator) return images;
   if (ownerId != null && ctx.user?.id === ownerId) return images;
-  return images.filter((image) => Flags.intersects(Number(image.nsfwLevel) || 0, cap));
+  // Every bit of the rating must be inside the cap, as for a single image (`canViewImageMedia`).
+  return images.filter((image) => {
+    const level = Number(image.nsfwLevel) || 0;
+    return level !== 0 && Flags.hasFlag(cap, level);
+  });
 }
 
 /** Every level a request may be served: its cap from `requestDomainBrowsingLevelCap`, or all. */
