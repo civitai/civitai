@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TRPCError } from '@trpc/server';
+import type { TRPCError } from '@trpc/server';
 
 /**
  * Off-site `issueTrackerUrl` — the author write paths, the MATERIAL classification and the
