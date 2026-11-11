@@ -1235,18 +1235,22 @@ describe('content-hash download url (download-hash-urls flag)', () => {
 
       expect(status).toBe(200);
       expect(body.downloadUrls).toHaveLength(1);
+      expect(urlFileId(body)).toBe(String(files[0].id));
     }
   );
 
   it("reads every column the hash route's terms need", async () => {
     await run([SAFETENSOR], { modelFileId: '101' });
-    const [versionSql, filesSql] = mockQueryRaw.mock.calls.map(([strings]) =>
+    const statements = mockQueryRaw.mock.calls.map(([strings]) =>
       (strings as TemplateStringsArray).join('?')
     );
+    const selectOf = (from: string) =>
+      statements.find((sql) => sql.includes(from))?.split(new RegExp(`FROM\\s+${from}`))[0] ?? '';
+    const versionSelect = selectOf('"ModelVersion"');
+    const filesSelect = selectOf('"ModelFile"');
 
-    expect(versionSql).toMatch(/\bm\.availability as "modelAvailability"/);
-    expect(versionSql).toMatch(/\bm\.poi\b/);
-    const filesSelect = filesSql.split(/\bFROM\b/)[0];
+    expect(versionSelect).toMatch(/\bm\.availability\s+as\s+"modelAvailability"/i);
+    expect(versionSelect).toMatch(/\bm\.poi\b/);
     expect(filesSelect).toMatch(/\bmf\."pickleScanResult"/);
     expect(filesSelect).toMatch(/\bmf\."virusScanResult"/);
   });
