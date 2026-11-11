@@ -140,7 +140,8 @@ describe('submitTrainingDataScan', () => {
   it('submits nothing, and writes no verdict, without an orchestrator token outside production', async () => {
     setEnv({ ORCHESTRATOR_ACCESS_TOKEN: undefined });
 
-    await submitTrainingDataScan(TARGET);
+    // Not a submit: the self-heal counts none toward giving up.
+    expect(await submitTrainingDataScanSafe(TARGET, 'test')).toBe(false);
 
     expect(h.fetch).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.modelFile.update).not.toHaveBeenCalled();
@@ -306,6 +307,7 @@ describe('healStalledTrainingDataScans', () => {
           deletedAt: null,
           tosViolation: false,
           status: { notIn: ['Deleted', 'UnpublishedViolation'] },
+          OR: [{ mode: null }, { mode: { not: 'TakenDown' } }],
         },
       },
     });

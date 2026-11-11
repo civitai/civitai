@@ -11,7 +11,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { blobAir, uploadConsumerBlob } from '~/server/services/orchestrator/consumer-blob-scan';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
-import { ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
+import { ModelModifier, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 
 /**
  * The virus scan for a Training Data zip. The zip is copied to the orchestrator as a consumer blob
@@ -49,7 +49,7 @@ export async function submitTrainingDataScan({
   modelVersionId,
   url,
 }: TrainingDataScanTarget) {
-  if (!isProd && !env.ORCHESTRATOR_ACCESS_TOKEN) return;
+  if (!isProd && !env.ORCHESTRATOR_ACCESS_TOKEN) return false;
 
   await dbWrite.modelFile.update({
     where: { id: fileId },
@@ -106,6 +106,7 @@ export async function submitTrainingDataScan({
     },
   });
   if (!data?.id) throw new Error(`Training data scan was not accepted for file ${fileId}`);
+  return true;
 }
 
 /**
@@ -155,8 +156,7 @@ export async function submitTrainingDataScanSafe(
   op: string
 ): Promise<boolean> {
   try {
-    await submitTrainingDataScan(target);
-    return true;
+    return await submitTrainingDataScan(target);
   } catch (error) {
     logToAxiom({
       ...safeError(error),
@@ -184,6 +184,8 @@ const pendingTrainingDataWhere: Prisma.ModelFileWhereInput = {
       deletedAt: null,
       tosViolation: false,
       status: { notIn: [ModelStatus.Deleted, ModelStatus.UnpublishedViolation] },
+      // `mode` is nullable, and `not` alone would skip every model without one.
+      OR: [{ mode: null }, { mode: { not: ModelModifier.TakenDown } }],
     },
   },
 };
@@ -286,7 +288,7 @@ async function claimAndSubmit(
   return { claimed, submitted, failed };
 }
 
-/** Two waves at the copy concurrency, so a run ends well inside its lock. */
+/** Two waves at the copy concurrency. */
 export const HEAL_PAGE = 6;
 /** Accepted resubmits after the first submit before the zip is given up on. */
 const HEAL_MAX_RESUBMITS = 3;
@@ -302,8 +304,8 @@ const healAttemptsKey = (file: PendingZip) =>
 /**
  * Resubmits Training Data zips that were submitted over an hour ago and still have no verdict,
  * oldest first. A zip that was never submitted is left to the upload paths and the mod requeue.
- * Only a resubmit the orchestrator accepted counts: one that failed (an outage) leaves the zip for the
- * next run. A zip still without a verdict after `HEAL_MAX_RESUBMITS` accepted resubmits is marked Error.
+ * Only a resubmit the orchestrator accepted counts: one that failed (an outage) leaves the zip for a
+ * run after its claim is an hour old. A zip still without a verdict after `HEAL_MAX_RESUBMITS` accepted resubmits is marked Error.
  */
 export async function healStalledTrainingDataScans() {
   const files = await dbWrite.modelFile.findMany({
@@ -325,7 +327,7 @@ export async function healStalledTrainingDataScans() {
       try {
         accepted = Number((await sysRedis.get(healAttemptsKey(file))) ?? 0);
       } catch {
-        // Without a count the cap can't be kept; the next run tries again.
+        // Without a count the cap can't be kept; it is tried again once its claim is an hour old.
         return false;
       }
       if (accepted < HEAL_MAX_RESUBMITS) return true;

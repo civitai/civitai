@@ -7,7 +7,7 @@ vi.mock('~/server/services/training-data-scan.service', () => ({
 import { trainingDataScanHealJob } from '~/server/jobs/training-data-scan-heal';
 
 // A run copies two waves of up to about 12 minutes each; a lock that ran out sooner, or went with a
-// dropped scheduler connection, would let the next run re-claim zips this one has not started.
+// dropped scheduler connection, would let runs overlap.
 describe('training-data-scan-heal', () => {
   it('holds its lock longer than a run, through a scheduler disconnect', () => {
     const job = trainingDataScanHealJob as unknown as {
@@ -16,6 +16,6 @@ describe('training-data-scan-heal', () => {
     };
     expect(job.cron).toBe('*/15 * * * *');
     expect(job.options.keepLockOnDisconnect).toBe(true);
-    expect(job.options.lockExpiration).toBeGreaterThanOrEqual(2 * 12 * 60);
+    expect(job.options.lockExpiration).toBeGreaterThanOrEqual(30 * 60);
   });
 });
