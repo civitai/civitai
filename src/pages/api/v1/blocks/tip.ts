@@ -48,7 +48,7 @@ import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotenc
  * PAGE-SAFE via BOUNDED tipping: this endpoint enforces a per-tip cap
  * (BLOCK_TIP_MAX_PER_TIP) AND a per-user daily cap (BLOCK_TIP_CAP_PER_DAY,
  * reserve-and-refund) BEFORE any money moves — the analogue of the gen-spend
- * `buzzBudget` + `BLOCK_BUZZ_CAP_PER_DAY` pair. Those caps are what let
+ * `buzzBudget` + per-user daily cap pair. Those caps are what let
  * `social:tip:self` come off PAGE_FORBIDDEN_SCOPES (a page tip is now bounded, no
  * longer effectively-unbounded spend). Over either cap → clean 4xx (never a 500).
  *

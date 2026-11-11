@@ -52,7 +52,6 @@ import {
   BLOCK_POST_TITLE_MAX,
 } from '~/server/services/blocks/block-post.logic';
 import {
-  BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
@@ -64,7 +63,12 @@ import {
   REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { buzzCapRedisKey, buzzCapWindowKey } from '~/server/services/blocks/block-buzz-cap';
+import {
+  buzzCapRedisKey,
+  buzzCapWindowKey,
+  markDailyCapRefused,
+} from '~/server/services/blocks/block-buzz-cap';
+import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
@@ -1431,7 +1435,7 @@ async function refundBlockBuzzSpend(key: string, cost: number): Promise<void> {
 // re-confirming the consent CANNOT reset the ceiling within the window. Window =
 // the key's 25h TTL (re-armed on first write): the ceiling is cumulative per
 // (mod, publishRequestId) over a rolling ~25h, NOT reset per submit or per mint.
-// It is STRICTLY TIGHTER than the 50k/day cap, so it is the binding constraint;
+// It is STRICTLY TIGHTER than the per-user daily cap (50,000 at Free, the lowest tier), so it binds;
 // the mod's OWN non-review block usage still counts against the daily key separately.
 const REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
@@ -1487,7 +1491,7 @@ async function reserveReviewRunForRealBuzzSpend(
 // requiring a consent budget would make this feature dead for most reviewers for
 // reasons entirely unrelated to it — a moderator has no reason to have ever consented
 // to an app they are reviewing the takedown of. The platform ceiling below is the
-// bound, and it is STRICTLY TIGHTER than the 50k/day cap it replaces.
+// bound, and it is STRICTLY TIGHTER than the per-user daily cap it replaces (50,000 at Free).
 const PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
 function privateRunBuzzCapKey(
@@ -1516,7 +1520,7 @@ async function reservePrivateRunBuzzSpend(
 // ---- CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) ceiling the VIEWER set
 //      for THIS app at consent time (`app_user_scope_grants.buzz_budget_per_day`).
 //
-// The two caps above are PLATFORM caps: BLOCK_BUZZ_CAP_PER_DAY bounds one user
+// The two caps above are PLATFORM caps: the daily cap (`resolveUserAppCaps`) bounds one user
 // across ALL their apps (deliberately no appBlockId in the key), and the G8
 // per-app cap bounds one app across ALL users. Neither can express "I am happy for
 // THIS app to spend 500 of my Buzz a day and no more" — which is the thing a user
@@ -1631,7 +1635,7 @@ type BlockBuzzReservation = {
  * FAIL-CLOSED, IN EVERY DIRECTION THAT MATTERS. A Redis error on the consent leg
  * refunds the platform leg and rethrows, so a failed reservation never leaves the
  * user's daily allowance burned. A DB error reading the budget likewise throws
- * rather than being treated as "no budget": absent means UNBOUNDED-within-50k, so
+ * rather than being treated as "no budget": absent means unbounded within the per-user daily cap, so
  * swallowing the error would silently widen the ceiling the user consented to. And a
  * REVOKED grant refuses — with the same refund.
  */
@@ -1665,9 +1669,9 @@ async function reserveBlockBuzzSpendForClaims(
   // just a line number. `no-unthreaded-private-run-claim` asserts this order.
   //
   // ⚠️ THE RESIDUAL, STATED RATHER THAN DISCOVERED LATER: replacing the daily cap means
-  // a private run no longer counts against the viewer's 50k/day platform key, so ONE
+  // a private run no longer counts against the viewer's daily platform key, so ONE
   // viewer's spend summed across MANY delisted apps is bounded by
-  // (spend-capable delisted apps × PRIVATE_RUN_BUZZ_CAP) rather than by the flat 50k.
+  // (spend-capable delisted apps × PRIVATE_RUN_BUZZ_CAP) rather than by the per-user daily cap.
   //
   // 🔴 NO FIGURE IS QUOTED FOR THAT PRODUCT, AND THAT IS DELIBERATE TWICE OVER. It is a
   // count of a population MODERATORS MOVE — every delist, relist and approval changes it
@@ -1690,12 +1694,22 @@ async function reserveBlockBuzzSpendForClaims(
     const { total, key } = await reservePrivateRunBuzzSpend(userId, claims.appBlockId, cost);
     return { total, key, cap: PRIVATE_RUN_BUZZ_CAP, consent: null };
   }
+  // The per-user daily cap is the viewer's plan cap from `resolveUserAppCaps` — THE source the
+  // account Limits section reads too, so the cap shown is the cap enforced. It never throws (a
+  // failed read serves the strictest tier's cap), and it is read before the reservation so a
+  // read cannot strand one.
+  const { buzzPerDay } = await resolveUserAppCaps(userId);
   const { total, key } = await reserveBlockBuzzSpend(userId, cost);
-  const platform = { total, key, cap: BLOCK_BUZZ_CAP_PER_DAY };
+  const platform = { total, key, cap: buzzPerDay };
+  // Every spend caller refuses exactly when `total > cap` on this leg (and refunds), so this is
+  // the one place that sees every daily-cap refusal: record it for the paused notice. The
+  // post-paid overage correction has no deny path, but a total over the cap there means the
+  // NEXT spend is refused, so marking is right for it too.
+  if (total > buzzPerDay) await markDailyCapRefused(userId, buzzPerDay);
   if (claims.dev === true) return { ...platform, consent: null };
 
   // From here any throw must undo the platform reservation just taken — otherwise a
-  // failed attempt permanently burns the viewer's 50k/day allowance for a spend that
+  // failed attempt permanently burns the viewer's daily allowance for a spend that
   // never happened. Same rule the consent-DENY path below obeys, and the REVOKED exit
   // immediately after this read obeys it too: a refusal is a non-committed exit like any
   // other, and it is the one most likely to be repeated by a client that keeps retrying.
@@ -7414,7 +7428,7 @@ export const blocksRouter = router({
       // the platform cap on purpose: the platform cap is the one the user did not
       // choose, so when both are breached at once the message that explains the
       // situation is the platform one. 🔴 The refund is the load-bearing half —
-      // without it a denied attempt silently burns the user's 50k/day platform
+      // without it a denied attempt silently burns the user's daily platform
       // allowance for a generation the app was never allowed to run.
       if (consentBudgetExceeded(reservation)) {
         await refundBlockBuzzReservation(reservation, cost);
@@ -10409,7 +10423,7 @@ async function submitCustomComfyWorkflow(opts: {
   // (2) Reserve the CEILING (not the 0 estimate) against the cumulative cap so
   // post-paid spend can't slip past it counted at ~0. A RUN-FOR-REAL review token
   // reserves against the tight per-(mod, publishRequestId) session ceiling; every
-  // other token keeps the per-user 50k/day cap (byte-identical).
+  // other token keeps the per-user daily cap (`resolveUserAppCaps`).
   // The reservation THROWS fail-closed on a redis error; release the claim first.
   let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
   try {

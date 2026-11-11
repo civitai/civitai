@@ -62,6 +62,7 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
   enqueueCollectionRebuild,
@@ -2063,11 +2064,9 @@ const readPostResourceRows = (id: number) =>
   dbRead.postResourceHelper.findMany({ where: { postId: id }, orderBy: { modelName: 'asc' } });
 
 /**
- * The resources of the post's images the viewer may open (`getImageIdsVisibleToViewer`), from
- * models they may see (`getModelIdsVisibleToViewer`). The view keeps one row per resource from any
- * of the post's images, so for anyone but the post's owner or a moderator a row stays only when a
- * visible image uses that version, and it names that image. The owner gets rows from all their
- * images, still only of models they may see.
+ * Moderators get every row. Anyone else gets rows of models they may see
+ * (`getModelIdsVisibleToViewer`; a row with no model is dropped). The post's owner gets them from
+ * all its images; others only from images they may open, each row naming such an image.
  */
 export const getPostResources = async ({
   id,
@@ -2247,7 +2246,25 @@ export const getPostContestCollectionDetails = async ({
       items: [],
     };
 
-  const collection = await getCollectionById({ input: { id: post.collectionId } });
+  const permissions = await getUserCollectionPermissionsById({
+    id: post.collectionId,
+    userId,
+    isModerator,
+  });
+  // A collection whose items the viewer may not read answers as none. The post's owner submitted
+  // it, so they always see it.
+  const isPostOwner = !!userId && userId === post.userId;
+  if (!isPostOwner && !canReadCollectionItems(permissions))
+    return {
+      collection: null,
+      permissions: null,
+      items: [],
+    };
+
+  const collection = await getCollectionById({
+    input: { id: post.collectionId },
+    viewer: { id: userId, isModerator },
+  });
 
   if (!collection || collection?.mode !== CollectionMode?.Contest)
     return {
@@ -2289,11 +2306,6 @@ export const getPostContestCollectionDetails = async ({
       reviewedAt: true,
       tag: true,
     },
-  });
-
-  const permissions = await getUserCollectionPermissionsById({
-    id: post.collectionId,
-    userId,
   });
 
   return {

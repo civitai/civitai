@@ -579,6 +579,19 @@ describe('agent review auto-start', () => {
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
   });
 
+  it("🔴 listing-edit impersonation checks' spend counts against the same daily budget", async () => {
+    // $37 of reviews + $2 cap = $39 fits; add $1.50 of listing-edit checks and it no longer does.
+    spend(37);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
+    redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+      key.includes('listing-check-spend') ? '150' : null) as never);
+    try {
+      expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('budget-refused');
+    } finally {
+      redisMock.sysRedis.get.mockImplementation((async () => null) as never);
+    }
+  });
+
   it('the budget is env-configurable', async () => {
     envMock.set({ AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: 100 });
     spend(90);
@@ -599,12 +612,16 @@ describe('agent review auto-start', () => {
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
-  it('a live preview triggers it; a failed one does not', async () => {
+  it('🔴 every settled review build triggers it — a failed preview too (the agent reads the bundle)', async () => {
     spend(0);
     await onReviewBuildSettled({ publishRequestId: PUBREQ, live: false });
-    expect(m.startAgentReview).not.toHaveBeenCalled();
-    await onReviewBuildSettled({ publishRequestId: PUBREQ, live: true });
     expect(m.startAgentReview).toHaveBeenCalledTimes(1);
+    await onReviewBuildSettled({ publishRequestId: 'pubreq_other', live: true });
+    expect(m.startAgentReview).toHaveBeenCalledTimes(2);
+    expect(m.startAgentReview).toHaveBeenLastCalledWith({
+      publishRequestId: 'pubreq_other',
+      modUserId: null,
+    });
   });
 
   it('a start failure is reported, never thrown', async () => {

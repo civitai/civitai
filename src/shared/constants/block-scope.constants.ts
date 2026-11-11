@@ -495,30 +495,12 @@ export function isPrivateRunAudience(value: unknown): value is PrivateRunAudienc
 export const PRIVATE_RUN_BUZZ_CAP = 2500;
 
 /**
- * PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling across ALL the apps
- * a viewer has installed. The abuse ceiling nobody consents to — a per-call
- * `buzzBudget` alone cannot bound an app looping sub-budget submits, so this is
- * the aggregate that actually binds. Enforced in `blocks.router.ts`
- * (`reserveBlockBuzzSpend`, keyed WITHOUT appBlockId so N installed apps share
- * ONE ceiling rather than multiplying it).
- *
- * Lives HERE, in the client-safe shared module, because it is now read by three
- * places that must agree: the server enforcement, the `blocks.grantScopes` zod
- * bound on a user-set consent budget, and the consent dialog that shows the user
- * what the ceiling is. It is also the upper bound on
- * `app_user_scope_grants.buzz_budget_per_day` — a consent budget ABOVE the
- * platform cap could never bind, so storing one would be storing a number that
- * means nothing.
- */
-export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
-
-/**
  * The most a block token's per-call `buzzBudget` claim may be, for an install token
  * and a pre-approval (dev / private-run / review) token alike. It bounds one
  * generation only. A multi-step (`kind: 'workflow'`) call is bounded in TOTAL at this
  * budget times its step count, and at `BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL` whatever the
  * budget; no single step is held to the budget. Total spend is bounded by
- * `BLOCK_BUZZ_CAP_PER_DAY`, `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`,
+ * the per-user daily cap (`resolveUserAppCaps`), `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`,
  * the dev-tunnel session cap and the per-app caps.
  *
  * The two exceptions are jobs whose exact price the VIEWER confirmed in host chrome —
@@ -615,7 +597,15 @@ export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
  * decides for them.
  */
 export const BLOCK_CONSENT_BUDGET_MIN_PER_DAY = 1;
-export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
+/**
+ * The most a viewer may set as one app's daily consent budget
+ * (`app_user_scope_grants.buzz_budget_per_day`, the `blocks.grantScopes` zod bound and the
+ * consent dialog). A fixed 50,000 for every tier, by decision: it was the per-user daily cap
+ * before that cap became per-tier (`resolveUserAppCaps`), and it is no longer tied to it. So
+ * a paid tier's higher daily cap, and the opt-in above it, are reachable only across several
+ * apps or on grants with no budget set.
+ */
+export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = 50_000;
 
 /**
  * The scope the per-app daily Buzz budget governs.
