@@ -88,7 +88,15 @@ const inBatches = <T, R>(items: T[], fn: (item: T) => Promise<R>) =>
 
 type ChargeRow = { id: string; date: string; payer: string; accountType: string; amount: string };
 
-function legsOf(rows: ChargeRow[]): ChargeLeg[] {
+type RunRow = {
+  payer: string;
+  workflowId: string;
+  chargedAt: string;
+  types: string[];
+  amounts: string[];
+};
+
+function legsOf(rows: { accountType: string; amount: string }[]): ChargeLeg[] {
   const by = new Map<string, number>();
   for (const r of rows) by.set(r.accountType, (by.get(r.accountType) ?? 0) + Number(r.amount));
   return [...by].map(([accountType, amount]) => ({ accountType, amount }));
@@ -159,7 +167,12 @@ function versionOf(
     return { status: 'unreachable', source: null, modelVersionId: null, modelId: null };
   const hit = versions.get(workflowId);
   return hit
-    ? { status: 'found', ...hit }
+    ? {
+        status: 'found',
+        source: hit.source,
+        modelVersionId: hit.modelVersionId,
+        modelId: hit.modelId,
+      }
     : { status: 'notFound', source: null, modelVersionId: null, modelId: null };
 }
 
@@ -345,38 +358,39 @@ export async function getAccountTrainings(
   const since = `date >= now() - INTERVAL ${window} DAY`;
   const ch = getClickhouse();
 
-  let rows: (ChargeRow & { workflowId: string })[];
+  // Grouped in ClickHouse so the cap counts runs, not the legs a run was paid in.
+  let rows: RunRow[];
   try {
-    rows = await ch.$query<ChargeRow & { workflowId: string }>(`
-      SELECT transactionId AS id, toString(date) AS date, fromAccountId AS payer,
-             fromAccountType AS accountType, amount,
-             JSONExtractString(details, 'workflowId') AS workflowId
+    rows = await ch.$query<RunRow>(`
+      SELECT fromAccountId AS payer,
+             JSONExtractString(details, 'workflowId') AS workflowId,
+             toString(min(date)) AS chargedAt,
+             groupArray(fromAccountType) AS types,
+             groupArray(amount) AS amounts
       FROM buzzTransactions
       PREWHERE fromAccountId IN (${set})
       WHERE type = 'training' AND ${since}
-      ORDER BY date DESC
+      GROUP BY payer, workflowId, if(workflowId = '', transactionId, '') AS unlinked
+      ORDER BY chargedAt DESC
       LIMIT ${RUN_LIMIT + 1}
     `);
   } catch {
     return { ...empty, reachable: false };
   }
   const truncated = rows.length > RUN_LIMIT;
-  rows = rows.slice(0, RUN_LIMIT);
 
   const unlinkedCharges: Record<number, number> = {};
-  const grouped = new Map<string, { parsed: ParsedId; rows: ChargeRow[] }>();
-  for (const row of rows) {
-    const parsed = parseTrainingId(row.workflowId);
-    if (!parsed) {
+  const runsIn: { parsed: ParsedId; row: RunRow }[] = [];
+  for (const row of rows.slice(0, RUN_LIMIT)) {
+    // Ledger text reaches the later queries by interpolation: only a well-formed id goes on.
+    const workflow = parseWorkflowId(row.workflowId);
+    if (!workflow) {
       const payer = Number(row.payer);
       unlinkedCharges[payer] = (unlinkedCharges[payer] ?? 0) + 1;
       continue;
     }
-    const group = grouped.get(parsed.workflowId);
-    if (group) group.rows.push(row);
-    else grouped.set(parsed.workflowId, { parsed, rows: [row] });
+    runsIn.push({ parsed: { workflowId: row.workflowId, ...workflow }, row });
   }
-  const runsIn = [...grouped.values()];
   const parsed = runsIn.map((g) => g.parsed);
   const workflowIds = runsIn.map((g) => g.parsed.workflowId);
 
@@ -398,7 +412,7 @@ export async function getAccountTrainings(
         .catch(() => null)
     : Promise.resolve([] as RefundRow[]);
 
-  const payers = new Map(runsIn.map((g) => [g.parsed.workflowId, Number(g.rows[0].payer)]));
+  const payers = new Map(runsIn.map((g) => [g.parsed.workflowId, Number(g.row.payer)]));
   const [refunds, jobs, versions] = await Promise.all([
     refundsRead,
     parsed.length ? safeJobs(parsed, payers) : Promise.resolve([] as UserJobRow[]),
@@ -410,9 +424,11 @@ export async function getAccountTrainings(
   const completions = jobs ? completionsOf(parsed, jobs) : null;
   const listed = new Set(ids);
 
-  const runs = runsIn.map(({ parsed: p, rows: legs }): AccountTrainingRun => {
-    const payerId = Number(legs[0].payer);
-    const legSums = legsOf(legs);
+  const runs = runsIn.map(({ parsed: p, row }): AccountTrainingRun => {
+    const payerId = Number(row.payer);
+    const legSums = legsOf(
+      row.types.map((accountType, i) => ({ accountType, amount: row.amounts[i] }))
+    );
     return {
       workflowId: p.workflowId,
       submitterId: p.ownerId,
@@ -421,7 +437,7 @@ export async function getAccountTrainings(
         status: 'found',
         source: 'buzzTransactions',
         payerId,
-        chargedAt: clickhouseDate(legs[0].date.slice(0, 19)),
+        chargedAt: clickhouseDate(row.chargedAt.slice(0, 19)),
         legs: legSums,
         buzz: legSums.reduce((sum, l) => sum + l.amount, 0),
         refunded: refunds ? refundBy.get(p.workflowId) ?? 0 : null,
