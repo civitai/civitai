@@ -574,11 +574,14 @@ describe('indirectTransfersSql', () => {
 });
 
 describe('renderWarningMessage', () => {
-  it('is the one-time warning, naming the consequence', () => {
+  it('explains netting and moderator review, without threatening removal', () => {
     const message = renderWarningMessage('creator_one');
     expect(message.startsWith('Hi creator\\_one,\n\n')).toBe(true);
-    expect(message).toContain('Consider this your one and only warning.');
-    expect(message).toContain('your account will be removed from the Creator Program');
+    expect(message).toContain(
+      "Buzz that moves back and forth between accounts doesn't count toward your bankable earnings; it's netted out at cash-out. Cycling Buzz to inflate earnings is against the Creator Program rules. If it keeps happening, a moderator will review your account."
+    );
+    expect(message).not.toContain('one and only warning');
+    expect(message).not.toContain('will be removed');
     expect(message).toContain('[contact support](/support)');
   });
 
