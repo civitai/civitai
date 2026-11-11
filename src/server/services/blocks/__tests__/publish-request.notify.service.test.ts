@@ -128,6 +128,8 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/services/blocks/app-listing-mapper', () => ({
   mapAppBlockToListing: () => ({ id: 'apl_mapped' }),
+  // The approve path resolves the manifest `bugs` link beside the two builders; inert here.
+  buildListingIssueTrackerSync: () => ({ write: false }),
   // The approve path also imports the manifest-governed copy re-sync builder
   // (subsequent-version approve). Stubbed so this suite stays focused on the
   // notification emission; the re-sync itself has its own suite

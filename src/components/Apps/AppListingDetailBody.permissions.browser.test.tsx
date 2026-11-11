@@ -132,6 +132,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     installCount: 4213,
     openCount: 2718,
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     betaMessage: null,
     forkable: false,
     forkOf: null,

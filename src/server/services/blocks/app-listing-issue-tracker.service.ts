@@ -49,7 +49,11 @@ export const ISSUE_TRACKER_UNAVAILABLE: ListingIssueTrackerRead = Object.freeze(
   value: null,
 });
 
-/** Raw read surface: a replica, the primary, a transaction client or a test double. */
+/**
+ * Raw read surface: a replica, the primary, a transaction client or a test double. Every read
+ * here is a TAGGED-TEMPLATE call (`db.$queryRaw\`…\``), like the other no-type column modules,
+ * so a caller or test that inspects raw calls sees one shape.
+ */
 export type IssueTrackerReadClient = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   $queryRaw: (query: any, ...values: any[]) => Promise<any>;
@@ -79,9 +83,11 @@ export async function readListingIssueTrackerUrl(
   db: IssueTrackerReadClient
 ): Promise<ListingIssueTrackerRead> {
   try {
-    const rows = (await db.$queryRaw(
-      Prisma.sql`SELECT "issue_tracker_url" AS "issueTrackerUrl" FROM "app_listings" WHERE "id" = ${listingId} LIMIT 1`
-    )) as IssueTrackerRow[] | null | undefined;
+    const rows = (await db.$queryRaw`SELECT "issue_tracker_url" AS "issueTrackerUrl"
+        FROM "app_listings" WHERE "id" = ${listingId} LIMIT 1`) as
+      | IssueTrackerRow[]
+      | null
+      | undefined;
     const row = Array.isArray(rows) ? rows[0] : undefined;
     return { available: true, value: asStoredValue(row?.issueTrackerUrl) };
   } catch (err) {
@@ -124,15 +130,19 @@ export async function readListingIssueTrackerUrlsForRender(
 ): Promise<Map<string, string | null>> {
   if (listingIds.length === 0) return new Map();
   try {
-    const rows = (await db.$queryRaw(
-      Prisma.sql`SELECT "id", "issue_tracker_url" AS "issueTrackerUrl" FROM "app_listings" WHERE "id" IN (${Prisma.join(
-        [...listingIds]
-      )})`
-    )) as IssueTrackerRow[] | null | undefined;
+    const rows = (await db.$queryRaw`SELECT "id", "issue_tracker_url" AS "issueTrackerUrl"
+        FROM "app_listings" WHERE "id" IN (${Prisma.join([...listingIds])})`) as
+      | IssueTrackerRow[]
+      | null
+      | undefined;
     if (!Array.isArray(rows)) return new Map();
     const out = new Map<string, string | null>();
     for (const r of rows) {
-      if (typeof r?.id === 'string') out.set(r.id, asStoredValue(r.issueTrackerUrl));
+      // Only a row that CARRIES the selected column is an answer about it (a real row always
+      // does, `null` included); anything else is not evidence and stays unknown.
+      if (typeof r?.id === 'string' && r && 'issueTrackerUrl' in r) {
+        out.set(r.id, asStoredValue(r.issueTrackerUrl));
+      }
     }
     return out;
   } catch (err) {
@@ -159,15 +169,17 @@ export async function readListingProblemLinkMaps(
   if (listingIds.length === 0) return { sourceRepoUrls: new Map(), issueTrackerUrls: new Map() };
   const readSourceRepos = async (): Promise<Map<string, string | null>> => {
     try {
-      const rows = (await db.$queryRaw(
-        Prisma.sql`SELECT "id", "source_repo_url" AS "sourceRepoUrl" FROM "app_listings" WHERE "id" IN (${Prisma.join(
-          [...listingIds]
-        )})`
-      )) as Array<{ id?: unknown; sourceRepoUrl?: unknown }> | null | undefined;
+      const rows = (await db.$queryRaw`SELECT "id", "source_repo_url" AS "sourceRepoUrl"
+          FROM "app_listings" WHERE "id" IN (${Prisma.join([...listingIds])})`) as
+        | Array<{ id?: unknown; sourceRepoUrl?: unknown }>
+        | null
+        | undefined;
       if (!Array.isArray(rows)) return new Map();
       const out = new Map<string, string | null>();
       for (const r of rows) {
-        if (typeof r?.id === 'string') out.set(r.id, asStoredValue(r.sourceRepoUrl));
+        if (typeof r?.id === 'string' && r && 'sourceRepoUrl' in r) {
+          out.set(r.id, asStoredValue(r.sourceRepoUrl));
+        }
       }
       return out;
     } catch (err) {

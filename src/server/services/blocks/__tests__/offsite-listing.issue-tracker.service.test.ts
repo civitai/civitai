@@ -96,10 +96,11 @@ function armTracker(
   values: Record<string, string | null>,
   opts: { missing?: boolean } = {}
 ) {
-  client.$queryRaw.mockImplementation(async (q: unknown) => {
+  // Tagged-template calls: `(strings, ...values)`, the listing id being the first value.
+  client.$queryRaw.mockImplementation(async (q: unknown, ...vals: unknown[]) => {
     if (!sqlText(q).includes('issue_tracker_url')) return [];
     if (opts.missing) throw missingColumn();
-    const id = ((q as { values?: unknown[] }).values ?? [])[0] as string;
+    const id = vals[0] as string;
     return id in values ? [{ issueTrackerUrl: values[id] }] : [];
   });
 }

@@ -456,8 +456,8 @@ export function buildScalarPatch(
 
   // Issue tracker / support link — the same rule as the source link: only when retyped, cleared
   // with `null`, and the canonical comparison is the server's.
-  const issueTrackerUrl = current.issueTrackerUrl.trim();
-  if (issueTrackerUrl !== original.issueTrackerUrl.trim()) {
+  const issueTrackerUrl = (current.issueTrackerUrl ?? '').trim();
+  if (issueTrackerUrl !== (original.issueTrackerUrl ?? '').trim()) {
     patch.issueTrackerUrl = issueTrackerUrl.length > 0 ? issueTrackerUrl : null;
   }
 

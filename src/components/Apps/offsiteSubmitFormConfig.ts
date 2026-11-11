@@ -258,7 +258,9 @@ export function validateOffsiteSubmitForm(
   }
 
   // issueTrackerUrl is OPTIONAL — the same shared validator the server runs, when provided.
-  if (values.issueTrackerUrl.trim().length > 0) {
+  // `?? ''`: a values object built before this field existed (a stale draft, a fixture) must
+  // read as "no link", not throw.
+  if ((values.issueTrackerUrl ?? '').trim().length > 0) {
     const tracker = validateIssueTrackerUrl(values.issueTrackerUrl);
     if (!tracker.ok) errors.issueTrackerUrl = tracker.error;
   }
@@ -664,7 +666,7 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
     scopeJustifications,
     externalUrl: values.externalUrl.trim() || undefined,
     sourceRepoUrl: values.sourceRepoUrl.trim() || undefined,
-    issueTrackerUrl: values.issueTrackerUrl.trim() || undefined,
+    issueTrackerUrl: (values.issueTrackerUrl ?? '').trim() || undefined,
     tagline: values.tagline.trim() || undefined,
     description: values.description.trim() || undefined,
     category: values.category ?? undefined,

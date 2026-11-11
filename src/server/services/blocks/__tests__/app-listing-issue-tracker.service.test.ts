@@ -173,8 +173,9 @@ describe('readListingIssueTrackerUrlsForRender / readListingProblemLinkMaps', ()
   it('readListingProblemLinkMaps: each column degrades INDEPENDENTLY', async () => {
     // Source column present, issue-tracker column missing — two migrations, applied apart.
     const db = {
-      $queryRaw: vi.fn(async (q: { sql?: string; strings?: string[] }) => {
-        const text = String(q?.sql ?? q?.strings?.join('?') ?? '');
+      // A tagged-template call: the first argument is the static strings array.
+      $queryRaw: vi.fn(async (strings: readonly string[]) => {
+        const text = strings.join('?');
         if (text.includes('issue_tracker_url')) throw missingColumn();
         return [{ id: 'apl_a', sourceRepoUrl: 'https://github.com/o/r' }];
       }),
