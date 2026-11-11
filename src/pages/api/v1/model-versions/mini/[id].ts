@@ -617,8 +617,7 @@ export default MixedAuthEndpoint(async function handler(
       : undefined;
   if (blobId) {
     const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId, !!user?.isModerator);
-    // A blocked blob is never served. Any other refusal is the answer only once the stored url is
-    // dead too; until then it is served.
+    // A blocked blob is never served; a missing one is, until the stored url expires.
     if (
       resigned.status === 'gone' &&
       (resigned.reason !== 'missing' || shouldRefreshBlobUrl(downloadUrls[0]))
