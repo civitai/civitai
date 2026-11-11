@@ -60,7 +60,8 @@ export function ReviewCard({
 
   const username = review.user.username ?? 'a user';
 
-  const tile = 'relative h-[120px] min-w-0 flex-1 overflow-hidden rounded-md sm:h-[150px]';
+  // Fixed squares, so one or two images keep the same thumbnail shape as four.
+  const tile = 'relative size-[120px] shrink-0 overflow-hidden rounded-md sm:size-[150px]';
   const moreTile = (shown: number, className: string) => (
     <div
       className={clsx(
@@ -168,28 +169,35 @@ export function ReviewCard({
       {shownImages.length > 0 && (
         <div className="flex gap-2" data-testid="review-images">
           {shownImages.map((image, index) => (
-            <ImageGuard2 key={image.id} image={image} connectType="review" connectId={review.id}>
-              {(safe) => (
-                <div className={clsx(tile, index >= MAX_PHONE_IMAGES && 'hidden sm:block')}>
-                  <ImageGuard2.BlurToggle
-                    className={clsx('absolute left-2 top-2 z-10', interactive)}
-                  />
-                  {!safe ? (
-                    <MediaHash {...image} />
-                  ) : (
-                    <EdgeMedia
-                      src={image.url}
-                      name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
-                      type={image.type}
-                      width={320}
-                      placeholder="empty"
-                      className="size-full object-cover"
+            // The tile wraps ImageGuard2 so its blur sits inside the tile; the tile is too small for
+            // the "This image is rated" explanation, and the eye toggle is enough here.
+            <div
+              key={image.id}
+              className={clsx(tile, index >= MAX_PHONE_IMAGES && 'hidden sm:block')}
+            >
+              <ImageGuard2 image={image} connectType="review" connectId={review.id} explain={false}>
+                {(safe) => (
+                  <>
+                    <ImageGuard2.BlurToggle
+                      className={clsx('absolute left-2 top-2 z-10', interactive)}
                     />
-                  )}
-                </div>
-              )}
-            </ImageGuard2>
+                    {!safe ? (
+                      <MediaHash {...image} />
+                    ) : (
+                      <EdgeMedia
+                        src={image.url}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name ?? undefined}
+                        type={image.type}
+                        width={320}
+                        placeholder="empty"
+                        className="size-full object-cover"
+                      />
+                    )}
+                  </>
+                )}
+              </ImageGuard2>
+            </div>
           ))}
           {review.imageCount > phoneShown &&
             moreTile(phoneShown, 'flex h-[120px] w-[72px] sm:hidden')}

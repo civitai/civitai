@@ -208,71 +208,75 @@ function ReviewImage({
     );
 
   return (
-    <ImageGuard2 image={image} connectType="review" connectId={reviewId}>
-      {(safe) => (
-        <div
-          className="relative overflow-hidden rounded-md bg-gray-2 dark:bg-dark-9"
-          data-testid="review-slide"
-          style={size}
-        >
-          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-          <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
+    // ImageGuard2 renders its "This image is rated" overlay beside its children, so the positioned
+    // slide has to wrap it, or the overlay centers on whatever positioned ancestor comes next.
+    <div
+      className="relative overflow-hidden rounded-md bg-gray-2 dark:bg-dark-9"
+      data-testid="review-slide"
+      style={size}
+    >
+      <ImageGuard2 image={image} connectType="review" connectId={reviewId}>
+        {(safe) => (
+          <>
+            <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+            <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
 
-          <RoutedDialogLink
-            name="imageDetail"
-            state={{ imageId: image.id, images }}
-            className="block size-full"
-          >
-            {!safe ? (
-              <MediaHash {...image} />
-            ) : (
-              <EdgeMedia
-                src={image.url}
-                name={image.name ?? image.id.toString()}
-                alt={image.name ?? undefined}
-                type={image.type}
-                width={800}
-                hiDpi={features.hiDpiPreviews}
-                sourceWidth={image.width}
-                placeholder="empty"
-                className="size-full"
-              />
+            <RoutedDialogLink
+              name="imageDetail"
+              state={{ imageId: image.id, images }}
+              className="block size-full"
+            >
+              {!safe ? (
+                <MediaHash {...image} />
+              ) : (
+                <EdgeMedia
+                  src={image.url}
+                  name={image.name ?? image.id.toString()}
+                  alt={image.name ?? undefined}
+                  type={image.type}
+                  width={800}
+                  hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
+                  placeholder="empty"
+                  className="size-full"
+                />
+              )}
+            </RoutedDialogLink>
+            <Reactions
+              entityId={image.id}
+              entityType="image"
+              reactions={image.reactions}
+              metricsUnknown={image.stats?.statsUnknown}
+              metrics={{
+                likeCount: image.stats?.likeCountAllTime,
+                dislikeCount: image.stats?.dislikeCountAllTime,
+                heartCount: image.stats?.heartCountAllTime,
+                laughCount: image.stats?.laughCountAllTime,
+                cryCount: image.stats?.cryCountAllTime,
+              }}
+              readonly={!safe}
+              className={classes.reactions}
+              targetUserId={image.user.id}
+              disableBuzzTip={image.poi}
+            />
+            {image.hasMeta && (
+              <div className="absolute bottom-0.5 right-0.5 z-10">
+                <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                  <LegacyActionIcon component="div" variant="transparent" size="lg">
+                    <IconInfoCircle
+                      color="white"
+                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                      opacity={0.8}
+                      strokeWidth={2.5}
+                      size={26}
+                    />
+                  </LegacyActionIcon>
+                </ImageMetaPopover2>
+              </div>
             )}
-          </RoutedDialogLink>
-          <Reactions
-            entityId={image.id}
-            entityType="image"
-            reactions={image.reactions}
-            metricsUnknown={image.stats?.statsUnknown}
-            metrics={{
-              likeCount: image.stats?.likeCountAllTime,
-              dislikeCount: image.stats?.dislikeCountAllTime,
-              heartCount: image.stats?.heartCountAllTime,
-              laughCount: image.stats?.laughCountAllTime,
-              cryCount: image.stats?.cryCountAllTime,
-            }}
-            readonly={!safe}
-            className={classes.reactions}
-            targetUserId={image.user.id}
-            disableBuzzTip={image.poi}
-          />
-          {image.hasMeta && (
-            <div className="absolute bottom-0.5 right-0.5 z-10">
-              <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                <LegacyActionIcon component="div" variant="transparent" size="lg">
-                  <IconInfoCircle
-                    color="white"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                    opacity={0.8}
-                    strokeWidth={2.5}
-                    size={26}
-                  />
-                </LegacyActionIcon>
-              </ImageMetaPopover2>
-            </div>
-          )}
-        </div>
-      )}
-    </ImageGuard2>
+          </>
+        )}
+      </ImageGuard2>
+    </div>
   );
 }

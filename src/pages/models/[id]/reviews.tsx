@@ -296,83 +296,91 @@ export default function ModelReviews() {
             <div className="md:w-[280px] md:shrink-0">{Versions}</div>
           </div>
 
-          {summary && (
-            <Card
-              p={{ base: 14, sm: 20 }}
-              withBorder
-              className="order-1 flex flex-col gap-2 sm:gap-3.5 lg:col-start-2 lg:row-start-2"
-              data-testid="reviews-summary"
-            >
-              <div className="flex flex-col gap-0.5 sm:gap-1">
-                <Text
-                  fw={800}
-                  c={summary.color}
-                  tt="capitalize"
-                  className="text-[17px] leading-[17px] sm:text-[22px] sm:leading-[26px]"
+          {/* Desktop: the right column follows the list while it scrolls. The outer box spans the
+              list's rows so the sticky column has room to move; on phones both boxes are
+              display:contents and the children keep their own order around the list. */}
+          <div className="contents lg:col-start-2 lg:row-span-3 lg:row-start-2 lg:block">
+            <div className="contents lg:sticky lg:top-4 lg:flex lg:flex-col lg:gap-6">
+              {summary && (
+                <Card
+                  p={{ base: 14, sm: 20 }}
+                  withBorder
+                  className="order-1 flex flex-col gap-2 sm:gap-3.5"
+                  data-testid="reviews-summary"
                 >
-                  {summary.label}
-                </Text>
-                <Text c="dimmed" className="text-[13px]">
-                  {summary.percent}%
-                  <span className="hidden md:inline">
-                    {' '}
-                    of {summary.total.toLocaleString()} {summary.total === 1 ? 'review' : 'reviews'}{' '}
-                    recommend it
-                  </span>
-                  <span className="md:hidden">
-                    {' '}
-                    · {summary.total.toLocaleString()} {summary.total === 1 ? 'review' : 'reviews'}
-                  </span>
-                </Text>
-              </div>
-              <div
-                className="flex h-1.5 overflow-hidden rounded-full bg-red-6 sm:h-2"
-                role="img"
-                aria-label={`${thumbsUp.toLocaleString()} thumbs up, ${thumbsDown.toLocaleString()} thumbs down`}
-              >
-                <div
-                  className="bg-green-6"
-                  style={{ width: `${(thumbsUp / summary.total) * 100}%` }}
-                />
-              </div>
-              <div className="hidden items-center justify-between text-[13px] md:flex">
-                <span className="flex items-center gap-1.5 text-green-6">
-                  <IconThumbUp size={14} />
-                  <Text component="span" className="text-[13px]" c="var(--mantine-color-text)">
-                    {thumbsUp.toLocaleString()}
-                  </Text>
-                </span>
-                <span className="flex items-center gap-1.5 text-red-6">
-                  <Text component="span" className="text-[13px]" c="var(--mantine-color-text)">
-                    {thumbsDown.toLocaleString()}
-                  </Text>
-                  <IconThumbDown size={14} />
-                </span>
-              </div>
-            </Card>
-          )}
-
-          <div className="order-3 lg:col-start-2 lg:row-start-3">
-            {isMuted ? (
-              <Alert color="yellow" icon={<IconLock />}>
-                You cannot add reviews because you have been muted
-              </Alert>
-            ) : model?.locked ? (
-              <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
-                <Center>
-                  <div className="flex items-center gap-2">
-                    <ThemeIcon color="gray" size="xl" radius="xl">
-                      <IconMessageCircleOff />
-                    </ThemeIcon>
-                    <Text size="lg" c="dimmed">
-                      Reviews are turned off for this model.
+                  <div className="flex flex-col gap-0.5 sm:gap-1">
+                    <Text
+                      fw={800}
+                      c={summary.color}
+                      tt="capitalize"
+                      className="text-[17px] leading-[17px] sm:text-[22px] sm:leading-[26px]"
+                    >
+                      {summary.label}
+                    </Text>
+                    <Text c="dimmed" className="text-[13px]">
+                      {summary.percent}%
+                      <span className="hidden md:inline">
+                        {' '}
+                        of {summary.total.toLocaleString()}{' '}
+                        {summary.total === 1 ? 'review' : 'reviews'} recommend it
+                      </span>
+                      <span className="md:hidden">
+                        {' '}
+                        · {summary.total.toLocaleString()}{' '}
+                        {summary.total === 1 ? 'review' : 'reviews'}
+                      </span>
                     </Text>
                   </div>
-                </Center>
-              </Paper>
-            ) : (
-              UserReview
-            )}
+                  <div
+                    className="flex h-1.5 overflow-hidden rounded-full bg-red-6 sm:h-2"
+                    role="img"
+                    aria-label={`${thumbsUp.toLocaleString()} thumbs up, ${thumbsDown.toLocaleString()} thumbs down`}
+                  >
+                    <div
+                      className="bg-green-6"
+                      style={{ width: `${(thumbsUp / summary.total) * 100}%` }}
+                    />
+                  </div>
+                  <div className="hidden items-center justify-between text-[13px] md:flex">
+                    <span className="flex items-center gap-1.5 text-green-6">
+                      <IconThumbUp size={14} />
+                      <Text component="span" className="text-[13px]" c="var(--mantine-color-text)">
+                        {thumbsUp.toLocaleString()}
+                      </Text>
+                    </span>
+                    <span className="flex items-center gap-1.5 text-red-6">
+                      <Text component="span" className="text-[13px]" c="var(--mantine-color-text)">
+                        {thumbsDown.toLocaleString()}
+                      </Text>
+                      <IconThumbDown size={14} />
+                    </span>
+                  </div>
+                </Card>
+              )}
+
+              <div className="order-3">
+                {isMuted ? (
+                  <Alert color="yellow" icon={<IconLock />}>
+                    You cannot add reviews because you have been muted
+                  </Alert>
+                ) : model?.locked ? (
+                  <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
+                    <Center>
+                      <div className="flex items-center gap-2">
+                        <ThemeIcon color="gray" size="xl" radius="xl">
+                          <IconMessageCircleOff />
+                        </ThemeIcon>
+                        <Text size="lg" c="dimmed">
+                          Reviews are turned off for this model.
+                        </Text>
+                      </div>
+                    </Center>
+                  </Paper>
+                ) : (
+                  UserReview
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="order-2 min-w-0 lg:col-start-1 lg:row-span-3 lg:row-start-2">
