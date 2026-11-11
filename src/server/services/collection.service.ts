@@ -2022,8 +2022,8 @@ export const getCollectionItemsByCollectionId = async ({
   /** See `getModelsRaw`. */
   coverage?: CoverageAudience;
   /**
-   * Answer a collection the viewer may neither read nor submit to as a missing one. Off for
-   * server-side readers that choose the collection themselves (home blocks).
+   * Answer a collection the viewer may neither read nor submit to as a missing one. Callers that
+   * leave it off must check read themselves.
    */
   requireRead?: boolean;
 }): Promise<CollectionItemsResult> => {
@@ -2197,23 +2197,27 @@ export const getCollectionItemsByCollectionId = async ({
       : Prisma.sql``;
 
     // Cursor condition for compound ordering (createdAt, id)
+    // The cursor item is looked up only among the items this viewer may list.
+    const cursorItemScope = Prisma.sql`AND "collectionId" = ${collectionId} ${
+      requireRead && !readsAll ? Prisma.sql`AND "addedById" = ${user?.id}` : Prisma.sql``
+    }`;
     const cursorCondition = parsedCursor.id
       ? sortDirection === 'DESC'
         ? Prisma.sql`AND (
-            ci."createdAt" < (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId})
+            ci."createdAt" < (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
             OR (
-              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId})
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
               AND ci.id < ${parsedCursor.id}
             )
             OR ci."createdAt" IS NULL
           )`
         : Prisma.sql`AND (
-            ci."createdAt" > (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId})
+            ci."createdAt" > (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
             OR (
-              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId})
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
               AND ci.id < ${parsedCursor.id}
             )
-            OR (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId}) IS NULL
+            OR (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope}) IS NULL
           )`
       : Prisma.sql``;
 

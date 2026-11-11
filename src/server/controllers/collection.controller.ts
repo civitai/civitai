@@ -231,7 +231,8 @@ export const getCollectionByIdHandler = async ({
     });
 
     // If the user has 0 permission over this collection, they have no business asking for it.
-    // Unlike item reads (`canReadCollectionItems`), write counts here: this returns metadata, not items.
+    // Unlike item reads (`canReadCollectionItems`), write (not writeReview) counts here: this returns
+    // metadata, not items.
     // The flags go back empty, as for a missing id, so the answer does not describe the collection.
     if (!permissions.read && !permissions.write && !permissions.manage) {
       return {
