@@ -593,7 +593,15 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_zip_1', ok: true });
     });
-    expect(mocks.verifyBeforeDownload).toHaveBeenCalledTimes(1); // the busy zip was never checked
+    // The busy zip was never content-checked. (Every bytes save goes through the check — a no-op
+    // for the text one — so count the ZIP checks, by the bytes they were given.)
+    const zipChecks = mocks.verifyBeforeDownload.mock.calls.filter(
+      (c) => (c[1] as { type?: string }).type === 'application/zip'
+    );
+    // By CONTENT: postMessage hands the host a structured-clone copy, not `first` itself.
+    expect(zipChecks.map((c) => [...new Uint8Array(c[0] as ArrayBuffer)])).toEqual([
+      [...new Uint8Array(first)],
+    ]);
     replies.stop();
   });
 
