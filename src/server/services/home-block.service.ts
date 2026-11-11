@@ -1001,22 +1001,16 @@ export const deleteHomeBlockById = async ({
 }: {
   input: GetByIdInput & { userId: number; isModerator?: boolean };
 }) => {
-  try {
-    const { id, userId, isModerator } = input;
-    const homeBlock = await dbRead.homeBlock.findFirst({
-      // Confirm the homeBlock belongs to the user:
-      where: { id, userId: isModerator ? undefined : userId },
-      select: { id: true, userId: true },
-    });
+  const { id, userId, isModerator } = input;
+  const where = { id, userId: isModerator ? undefined : userId };
+  const homeBlock = await dbRead.homeBlock.findFirst({ where, select: { id: true, userId: true } });
+  if (!homeBlock) return null;
 
-    if (!homeBlock) {
-      return null;
-    }
-
-    return await dbWrite.homeBlock.delete({ where: { id } });
-  } catch {
-    // Ignore errors
-  }
+  // The check above reads the replica; the owner filter holds on the row actually deleted.
+  return await dbWrite.homeBlock.delete({ where }).catch((e) => {
+    if (isPrismaRecordNotFound(e)) return null;
+    throw e;
+  });
 };
 
 type FeaturedCollectionsPool = NonNullable<HomeBlockMetaSchema['featuredCollections']>;

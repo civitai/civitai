@@ -9,7 +9,7 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   fetchThroughCache: async (_key: string, fetcher: () => Promise<unknown>) => fetcher(),
 }));
 
-const { setHomeBlocksOrder, upsertHomeBlock } = await import(
+const { deleteHomeBlockById, setHomeBlocksOrder, upsertHomeBlock } = await import(
   '~/server/services/home-block.service'
 );
 
@@ -64,6 +64,12 @@ beforeEach(() => {
     const before = stored.length;
     stored = stored.filter((b) => !matches(b, args.where));
     return { count: before - stored.length };
+  }) as never);
+  dbMock.dbWrite.homeBlock.delete.mockImplementation((async (args: { where: Where }) => {
+    const hit = stored.find((b) => matches(b, args.where));
+    if (!hit) throw notFound();
+    stored = stored.filter((b) => b !== hit);
+    return hit;
   }) as never);
   dbMock.dbWrite.$transaction.mockImplementation((async (ops: unknown) =>
     Array.isArray(ops) ? Promise.all(ops) : ops) as never);
@@ -147,5 +153,43 @@ describe('editing a home block writes only a block the editor may edit', () => {
     });
     dbMock.dbWrite.homeBlock.update.mockRejectedValueOnce(conflict as never);
     await expect(edit(50, USER_A)).rejects.toBe(conflict);
+  });
+});
+
+describe('deleting a home block removes only a block the user may delete', () => {
+  // The ownership check reads separately from the delete; the stub makes that read find the row
+  // regardless of owner so the delete's own filter is what is tested.
+  const ownerReadFinds = (id: number) =>
+    dbMock.dbRead.homeBlock.findFirst.mockResolvedValue({ id, userId: USER_A } as never);
+
+  const remove = (id: number, userId: number, isModerator = false) =>
+    deleteHomeBlockById({ input: { id, userId, isModerator } });
+
+  it("keeps another user's block", async () => {
+    ownerReadFinds(60);
+    expect(await remove(60, USER_A)).toBeNull();
+    expect(block(60)).toBeDefined();
+  });
+
+  it("deletes the user's own block", async () => {
+    ownerReadFinds(50);
+    await remove(50, USER_A);
+    expect(block(50)).toBeUndefined();
+  });
+
+  it("lets a moderator delete another user's block", async () => {
+    ownerReadFinds(60);
+    await remove(60, USER_A, true);
+    expect(block(60)).toBeUndefined();
+  });
+
+  it('surfaces any other database error unchanged', async () => {
+    ownerReadFinds(50);
+    const conflict = new Prisma.PrismaClientKnownRequestError('Transaction conflict', {
+      code: 'P2034',
+      clientVersion: 'test',
+    });
+    dbMock.dbWrite.homeBlock.delete.mockRejectedValueOnce(conflict as never);
+    await expect(remove(50, USER_A)).rejects.toBe(conflict);
   });
 });
