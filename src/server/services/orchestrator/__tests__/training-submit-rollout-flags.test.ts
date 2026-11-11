@@ -58,7 +58,7 @@ const givenVersion = ({
   baseModelType = 'minimaxh3',
   params = aiToolkitParams('minimaxh3') as Record<string, unknown>,
 } = {}) => {
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([
+  const versionRow = [
     {
       trainingDetails: {
         baseModel,
@@ -75,7 +75,13 @@ const givenVersion = ({
       modelVersionId: 55,
       modelVersionMetadata: {},
     },
-  ]);
+  ];
+  // A custom base model's weights are checked before the rollout gates: give it a SafeTensor file
+  // so the cases below reach them.
+  dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    Promise.resolve(
+      strings.join('').includes("'format'") ? [{ fmt: 'SafeTensor', modelId: 1 }] : versionRow
+    )) as never);
   dbMock.dbWrite.modelFile.count.mockResolvedValue(1);
 };
 
