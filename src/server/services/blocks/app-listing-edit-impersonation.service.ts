@@ -5,7 +5,7 @@ import {
   runImpersonationChecks,
   type ModelCall,
 } from './app-impersonation-check.service';
-import type { ImpersonationSubject } from './app-impersonation.logic';
+import { impersonationFingerprint, type ImpersonationSubject } from './app-impersonation.logic';
 import type { ListingEditCheckSummary } from '~/shared/utils/agent-review-findings';
 
 /**
@@ -58,7 +58,31 @@ type StoredCheck = {
   record?: unknown;
   findings?: unknown;
   costUsd?: number | null;
+  /** What was judged: the revision's text, icon and cover under the PUBLIC slug. The queue
+   *  recomputes it from the live revision; a mismatch means the result is stale. */
+  fingerprint?: string;
 };
+
+/** The fingerprint of a revision as the listing-edit check judges it. */
+function revisionFingerprint(
+  shadow: {
+    name: string;
+    tagline: string | null;
+    description: string | null;
+    iconId: number | null;
+    coverId: number | null;
+  },
+  publicSlug: string
+): string {
+  return impersonationFingerprint({
+    name: shadow.name,
+    slug: publicSlug,
+    tagline: shadow.tagline ?? null,
+    description: shadow.description ?? null,
+    iconId: shadow.iconId ?? null,
+    coverId: shadow.coverId ?? null,
+  });
+}
 
 async function store(publishRequestId: string, check: StoredCheck): Promise<void> {
   const { dbWrite } = await import('~/server/db/client');
@@ -67,14 +91,9 @@ async function store(publishRequestId: string, check: StoredCheck): Promise<void
   await dbWrite.keyValue.upsert({ where: { key }, create: { key, value }, update: { value } });
 }
 
-/** The automatic agent review's switches — the listing-edit check follows the same ones. */
+/** The automatic agent review's switches — the listing-edit check follows the same pair. */
 async function reviewAutomationOn(): Promise<boolean> {
-  const flags = await import('~/server/services/app-blocks-flag');
-  const [autostart, base] = await Promise.all([
-    flags.isAppBlocksAgenticReviewAutostartEnabled(),
-    flags.isAppBlocksAgenticReviewEnabled(),
-  ]);
-  return autostart && base;
+  return (await import('~/server/services/app-blocks-flag')).isAgentReviewAutomationEnabled();
 }
 
 type EditTarget = {
@@ -244,6 +263,7 @@ export async function runListingEditImpersonationCheck(
       record: result.record,
       findings: result.findings,
       costUsd: result.costUsd,
+      fingerprint: revisionFingerprint(shadow, parent.slug),
     });
     if (result.costUsd != null) await recordListingCheckSpendUsd(result.costUsd);
     return 'checked';
@@ -312,22 +332,30 @@ export async function listingEditQueueChecks(
     select: {
       id: true,
       name: true,
+      tagline: true,
+      description: true,
       iconId: true,
       coverId: true,
-      revisionOf: { select: { name: true, iconId: true, coverId: true, status: true } },
+      revisionOf: {
+        select: { name: true, slug: true, iconId: true, coverId: true, status: true },
+      },
     },
   })) as Array<{
     id: string;
     name: string;
+    tagline?: string | null;
+    description?: string | null;
     iconId: number | null;
     coverId: number | null;
     revisionOf: {
       name: string;
+      slug?: string;
       iconId: number | null;
       coverId: number | null;
       status: string;
     } | null;
   }>;
+  const shadowById = new Map(shadows.map((sh) => [sh.id, sh]));
   const identityEdit = new Set(
     shadows
       .filter(
@@ -344,11 +372,33 @@ export async function listingEditQueueChecks(
   const byId = new Map(stored.map((s) => [s.key.slice(KEY_PREFIX.length), s.value]));
   for (const r of checked) {
     const value = byId.get(r.id);
+    if (value === undefined) {
+      out.set(r.id, { status: 'missing', flagging: 0, titles: [] });
+      continue;
+    }
+    const summary = summariseListingEditCheck(value);
+    // A COMPLETE result is only good for the revision it judged: a pending revision stays
+    // editable (its icon and cover can still change), so a different live revision → stale.
+    const sh = shadowById.get(r.appListingId);
+    const recorded = (value as { fingerprint?: unknown } | null)?.fingerprint;
+    const live =
+      sh && sh.revisionOf?.slug != null
+        ? revisionFingerprint(
+            {
+              name: sh.name,
+              tagline: sh.tagline ?? null,
+              description: sh.description ?? null,
+              iconId: sh.iconId,
+              coverId: sh.coverId,
+            },
+            sh.revisionOf.slug
+          )
+        : null;
     out.set(
       r.id,
-      value === undefined
-        ? { status: 'missing', flagging: 0, titles: [] }
-        : summariseListingEditCheck(value)
+      summary.status === 'complete' && (typeof recorded !== 'string' || recorded !== live)
+        ? { ...summary, status: 'stale' }
+        : summary
     );
   }
   return out;

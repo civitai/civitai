@@ -805,8 +805,7 @@ describe('agent review auto-start: concurrent go-lives share the budget', () => 
   // instant: under the suite's module sharing, one of two CONCURRENT first-time dynamic imports
   // of a mocked module was measured resolving the real module (its env failed to validate).
   const deps = {
-    autostartOn: async () => true,
-    agentReviewOn: async () => true,
+    automationOn: async () => true,
     startAgentReview: (...a: unknown[]) => m.startAgentReview(...a),
   };
   beforeEach(() => {
