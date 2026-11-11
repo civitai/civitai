@@ -279,8 +279,10 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `UserProfile.showcaseSections`: `20261106005437_user_profile_showcase_sections`
     //   `ResourceReview.postId` / `.releasedAt`: `20261231130000_resource_review_post_id`
     //   `BoxOpening.guaranteed`: `20261231000000_box_opening_guaranteed`
+    //   `ModActivity.credential`: `20261231180000_mod_activity_credential`
     const inFlightColumns = new Set([
       'BoxOpening.guaranteed',
+      'ModActivity.credential',
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
       'Thread.storylineId',

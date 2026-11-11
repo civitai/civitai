@@ -149,7 +149,7 @@ every entity type is off whatever the hash says, so XGuard and the profanity fil
 Clavata runs again for any entity cut over by `disableClavataFor` (the cutover is kept in its own
 set, `system:text-scan:clavata-cutover`, and the Clavata job skips a cut-over entity only while the
 switch is on and that entity type is 100% active; anything less hands it back to Clavata).
-`CommentV3` has no rollout of its own and uses `CommentV2`'s (`rolloutFor()` in `text-scan/mode.ts`), for both scanning and the cutover's 100%-active check.
+`CommentV3` has its own rollout, like every other entity type; a stored `CommentV2` field is ignored.
 Turning it off does not undo verdicts already applied.
 
 - **off** — nothing is submitted.

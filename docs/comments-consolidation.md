@@ -51,7 +51,7 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
-- **2026-11-09 — Phase 5 built, not deployed** (Briant; `docs/plans/comments-v3-phase5.md`). It
+- **2026-11-09 — Phase 5 built, deployed 2026-11-10** (Briant; `docs/plans/comments-v3-phase5.md`). It
   takes Phase 5 together with Phase 6's "Transition code to remove": the old-row sync, the surface
   switches, the reverse copy (so there is no rollback to the old tables after it), the backfill
   endpoint and the parity job, `commentsv2.service.ts`, `thread-chain.ts`, the CommentV2
@@ -74,7 +74,7 @@ section that holds the detail.
   dedupe key and address comments by `legacyV1Id` (since the model flip, `modelPageId`) (_Notifications
   impact_); the mute filter is `notCommentMuted` over `path`, and `thread-chain.ts` stays for the
   block guard, the block hide sweep and the v2 lock check (_Thread mute_; the v2 lock check went
-  2026-11-05, release 2 of the write flip, not deployed); the moderator
+  2026-11-05, release 2 of the write flip, deployed by 2026-11-10); the moderator
   report-queue joins and `csam-holds.queries.ts` stay on the old link tables until `ReportEntity.CommentV3`
   (_Moderator app impact_); two `createdAt` indexes (`CommentV3`, `CommentV3Reaction`) are added for
   the per-minute notification cursors; CommentV3 is read through Kysely or raw SQL, never the
@@ -407,7 +407,7 @@ New writers and readers the phases below now include: the text-scan / scam-scan 
 `creator-score-self-activity.service.ts`, `bot-account-detection/cohort.ts`, and four raw
 `Thread.commentCount` reads in `challenge.service.ts`. "Hide in place" (#5076) removed
 `hiddenCount` and the hidden-count `groupBy`. `commentsv2.service.ts` now derives reply ancestry
-server-side (#5622), ignoring the client's `parentThreadId`. (Built 2026-11-05, release 2 of the write flip, not deployed:
+server-side (#5622), ignoring the client's `parentThreadId`. (Built 2026-11-05, release 2 of the write flip, deployed by 2026-11-10:
 `commentv2.controller.ts` and the v2 write paths are deleted; comment visibility is each surface's
 `assertVisible` in `commentv3/surfaces.ts`. Phase 5 deletes `commentsv2.service.ts` and the
 `Comment`/`CommentV2` text-scan profiles.)
@@ -432,7 +432,7 @@ fallback chain is re-implemented in at least 9 places (notifications ×4, permal
 
 **"Load more replies" costs a recursive CTE.** Because reply pages live in child threads,
 `getReplyThreads` walks `Thread.parentThreadId` recursively, then fetches comments for the selected
-thread ids, then regroups them in JS (`commentsv2.reply-threads.ts`, deleted 2026-11-05, release 2 of the write flip, not deployed). It works, but every level of
+thread ids, then regroups them in JS (`commentsv2.reply-threads.ts`, deleted 2026-11-05, release 2 of the write flip, deployed by 2026-11-10). It works, but every level of
 the tree is a join through a second table, and reply counts require trigger-maintained
 `Thread.commentCount` plus a per-request `groupBy`.
 
@@ -997,7 +997,7 @@ Plan:
 The tRPC contract (`commentv2` router shapes) and the client (`CommentsProvider`, `Comment.tsx`)
 stay as-is — the swap happens inside the service layer, so UI churn is near zero for v2 surfaces.
 (Superseded: the contract moved to the `commentv3` router, and the `commentv2` router is deleted,
-2026-11-05, release 2 of the write flip, not deployed.)
+2026-11-05, release 2 of the write flip, deployed by 2026-11-10.)
 
 **Phase 0 — measure & decide.** Measured 2026-10-16 — results in the viability review above.
 What was asked for: row counts for `Comment`/`CommentV2`/`Thread`; v1 depth distribution (rows with
@@ -1047,7 +1047,7 @@ sweep:
   entity. `CommentV3` is moderated exactly as `CommentV2` is (decided 2026-10-30): an `EntityType`
   value plus `trg_moderation_commentv3` (`20261211120000_comment_v3_moderation_trigger`, applied
   2026-10-30), consumed by `entity-moderation.ts`, with a `CLAVATA_TARGETS` entry owned on
-  `CommentV2`'s rollout (`rolloutFor()` in `text-scan/mode.ts`). The trigger fires only on direct
+  `CommentV3`'s own text-scan rollout (it followed `CommentV2`'s until 2026-11-10). The trigger fires only on direct
   writes (`WHEN pg_trigger_depth() = 0`), so under dual-write a mirrored row, which the old
   table's trigger already queued, is not scanned twice; a backfill rerun calls the mirror's row
   functions outside a trigger, so its copies are queued while the trigger is enabled. Phase 1
@@ -1095,7 +1095,7 @@ particulars:
 
 - The lock and the mutes mirror the same way, so `toggleLockCommentsThread`,
   `toggleThreadMute` and `toggleSectionMute` need no app-level pair until their surfaces flip (since
-  2026-11-05, release 2 of the write flip, not deployed: the v2 toggles are deleted, and `commentv3/section.service.ts` writes
+  2026-11-05, release 2 of the write flip, deployed by 2026-11-10: the v2 toggles are deleted, and `commentv3/section.service.ts` writes
   `CommentMute`, `CommentTopicMute` and the topic lock directly): a
   root `Thread` insert or `locked` update upserts the topic's `locked` (so the locked empty
   thread the lock toggle creates has a locked topic, and the first `Thread` for a model whose
@@ -1357,7 +1357,7 @@ Per-surface cutover checklist additions from the residue sweep:
   `ComicChapter.id`; `ChapterComments.tsx` and `getChapterThread` removed). Its server side,
   `createChapterComment` in `comics.router.ts`, bypassed `upsertComment` and wrote
   `Thread`/`CommentV2` directly, because `commentv2.upsert` cannot address a thread keyed by project
-  and position. Release 2 of the write flip (built 2026-11-05, not deployed) removes it, and chapter
+  and position. Release 2 of the write flip (built 2026-11-05, deployed by 2026-11-10) removes it, and chapter
   comments write through the `commentv3` mutations (decided 2026-10-30).
 - **crucible flip**: `getCommentThreadCrucibleId` and the `new-crucible-comment` notification go
   with it (#5780).
@@ -1680,4 +1680,4 @@ notifications, permalink, controllers, event-engine handler tests) — mostly me
 rewrites. Three need judgment, not find-and-replace: the two moderator SQL-assertion tests
 (`reports.sql.test.ts`, `reports.queries.explain.test.ts` assert exact SQL text and query plans)
 and `schema-drift/.../production-plan.test.ts`. One E2E gate: `tests/preview-engagement.spec.ts`
-drives `commentv3.create`/`delete` end-to-end (moved with `tests/example.spec.ts`, 2026-11-05, release 2 of the write flip, not deployed).
+drives `commentv3.create`/`delete` end-to-end (moved with `tests/example.spec.ts`, 2026-11-05, release 2 of the write flip, deployed by 2026-11-10).

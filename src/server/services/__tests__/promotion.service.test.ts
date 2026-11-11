@@ -54,9 +54,10 @@ vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
   getCreatorGalleryHiddenUserIds: async () => [],
 }));
 
+const fetchImageTagIds = vi.fn(async (): Promise<Record<number, unknown>> => ({}));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof Caches>()),
-  tagIdsForImagesCache: { fetch: async () => ({}) },
+  tagIdsForImagesCache: { fetch: fetchImageTagIds },
 }));
 
 const {
@@ -324,6 +325,14 @@ describe('createGalleryPromotion', () => {
     postImages = [cleanImage(11), { ...cleanImage(12), ...change }];
     await expect(buy()).rejects.toThrow('cannot be promoted');
     expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
+  });
+
+  // The host-hidden-tag refusal is judged at purchase and accept, never while the run serves, so it
+  // must not read a tag list another process's L1 may still hold from before a tag edit.
+  it("reads the images' tags past this process's L1", async () => {
+    await buy();
+    expect(fetchImageTagIds).toHaveBeenCalledTimes(1);
+    expect(fetchImageTagIds).toHaveBeenCalledWith([11, 12], { bypassLocal: true });
   });
 
   it('accepts a stalled scan a moderator rated, as the rest of the site does', async () => {
