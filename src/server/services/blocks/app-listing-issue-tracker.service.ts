@@ -201,6 +201,13 @@ export async function readListingProblemLinkMaps(
 const ISSUE_TRACKER_COLUMN_PROBE_ID = '__app_listing_issue_tracker_column_probe__';
 
 /**
+ * 🔴 RETIREMENT: this probe and every missing-column fallback in this module exist only for the
+ * window before the manual migration `20270103120000_app_listing_issue_tracker` is applied.
+ * Remove them once `issue_tracker_url` is applied in every writable environment and the
+ * `app_listings.issue_tracker_url` entry in `inFlightColumns`
+ * (`packages/civitai-db-schema/src/schema-drift/__tests__/production-snapshot.test.ts`) is
+ * dropped. Until then they stay.
+ *
  * Is the manual-apply column present? Run it OUTSIDE any transaction, on the client the
  * transaction will use (the primary). Not memoised: the column appears partway through a
  * deploy's life, and a cached `false` would keep the feature inert until a restart.

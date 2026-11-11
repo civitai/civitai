@@ -43,6 +43,10 @@ import {
 // OAuth-connect scope-review validator in @civitai/auth so the two can't drift.
 import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 
+/** The refusal for a non-string manifest `bugs` (an object included). */
+export const MANIFEST_BUGS_NOT_A_STRING =
+  'bugs must be a URL string (an object such as { "url": ... } is not supported)';
+
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
 
 /**
@@ -110,8 +114,8 @@ interface RawManifest {
    */
   repository?: unknown;
   /**
-   * OPTIONAL public issue-tracker / support link, npm-style: a URL string or `{ url, email }`
-   * (`email` is ignored). Shown as a `Support` row on the store DETAIL page and re-synced from
+   * OPTIONAL public issue-tracker / support link: a URL STRING only (the npm `{ url, email }`
+   * object form is refused — {@link MANIFEST_BUGS_NOT_A_STRING}). Shown as a `Support` row on the store DETAIL page and re-synced from
    * the manifest on every approved version, like `repository`. The URL must pass
    * `validateIssueTrackerUrl`: https, no credentials, no port, ≤200 chars, any host.
    */
@@ -559,29 +563,16 @@ export class BlockManifestValidator {
       if (!repo.ok) errors.push(repo.error.replace('sourceRepoUrl', 'repository'));
     }
 
-    // Optional `bugs` (the public issue-tracker / support link), npm-style: a URL string or
-    // `{ url, email }`. Only `url` is used; `email` is accepted and ignored (the store shows no
-    // mailto link). The URL goes through the SHARED `validateIssueTrackerUrl`, the function the
-    // off-site listing form uses, re-labelled to the manifest key.
+    // Optional `bugs` (the public issue-tracker / support link): a URL STRING only, like
+    // `repository`. The npm `{ url, email }` object form is REFUSED with a message rather than
+    // ignored, so an author who wrote it learns why no Support link appears. The URL goes through
+    // the SHARED `validateIssueTrackerUrl`, re-labelled to the manifest key.
     if (m.bugs !== undefined) {
-      const bugs = m.bugs as unknown;
-      let bugsUrl: unknown;
-      if (typeof bugs === 'string') {
-        bugsUrl = bugs;
-      } else if (bugs && typeof bugs === 'object' && !Array.isArray(bugs)) {
-        bugsUrl = (bugs as { url?: unknown }).url;
-        if (bugsUrl === undefined) bugsUrl = null;
+      if (typeof m.bugs !== 'string') {
+        errors.push(MANIFEST_BUGS_NOT_A_STRING);
       } else {
-        errors.push('bugs must be a URL string or an object with a "url"');
-        bugsUrl = null;
-      }
-      if (bugsUrl !== null) {
-        const tracker = validateIssueTrackerUrl(bugsUrl);
-        if (!tracker.ok) {
-          errors.push(
-            tracker.error.replace('issueTrackerUrl', typeof bugs === 'string' ? 'bugs' : 'bugs.url')
-          );
-        }
+        const tracker = validateIssueTrackerUrl(m.bugs);
+        if (!tracker.ok) errors.push(tracker.error.replace('issueTrackerUrl', 'bugs'));
       }
     }
 

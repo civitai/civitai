@@ -3539,7 +3539,7 @@ model AppListing {
   // revision) like `sourceRepoUrl`.
   // 🔴 CARRIES THE no-type ANNOTATION — stripped from the generated client, read and written by
   // raw SQL in `app-listing-issue-tracker.service.ts` only, for the reason `visibility` above
-  // documents. MANUAL-APPLY migration `20270102120000_app_listing_issue_tracker`.
+  // documents. MANUAL-APPLY migration `20270103120000_app_listing_issue_tracker`.
   issueTrackerUrl String?      @map("issue_tracker_url") // @no-type
   // AUTHOR-DECLARED "this app is in beta" flag + an optional short note, rendered as
   // a badge on the store card and a badge + notice on the detail page and the app's

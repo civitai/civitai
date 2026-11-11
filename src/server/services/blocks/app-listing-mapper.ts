@@ -98,9 +98,9 @@ export function resolveListingSourceRepo(manifest: unknown): string | null {
 }
 
 /**
- * Extract the optional PUBLIC ISSUE-TRACKER / SUPPORT link from the manifest's npm-style
- * `bugs` key — a URL string or `{ url, email }` (`email` is ignored). Null when absent, blank,
- * of another shape, or no longer valid, for the reason {@link resolveListingSourceRepo} gives:
+ * Extract the optional PUBLIC ISSUE-TRACKER / SUPPORT link from the manifest's `bugs` key — a
+ * URL STRING only, like `repository` (the validator refuses any other shape at submit). Null when
+ * absent, blank, not a string, or no longer valid, for the reason {@link resolveListingSourceRepo} gives:
  * a public store page must never serve a link the current rules would reject.
  *
  * Returns the NORMALISED form (`validateIssueTrackerUrl`), so stored values compare stably.
@@ -113,14 +113,8 @@ export function resolveListingSourceRepo(manifest: unknown): string | null {
  */
 export function resolveListingIssueTracker(manifest: unknown): string | null {
   const m = (manifest ?? {}) as { bugs?: unknown };
-  const bugs = m.bugs;
-  let raw: unknown;
-  if (typeof bugs === 'string') raw = bugs;
-  else if (bugs && typeof bugs === 'object' && !Array.isArray(bugs)) {
-    raw = (bugs as { url?: unknown }).url;
-  }
-  if (typeof raw !== 'string') return null;
-  const validated = validateIssueTrackerUrl(raw);
+  if (typeof m.bugs !== 'string') return null;
+  const validated = validateIssueTrackerUrl(m.bugs);
   return validated.ok ? validated.url : null;
 }
 
