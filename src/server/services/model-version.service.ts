@@ -187,9 +187,10 @@ import {
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import {
   assertFileTypeChangeAllowed,
-  scanResetForTypeChange,
+  assertFormatChangeAllowed,
+  scanResetConflictMessage,
+  scanResetForFileChange,
   scanResetWriteGuard,
-  TRAINING_DATA_SCAN_PENDING_MESSAGE,
   versionAcceptsNewTrainingData,
 } from '~/server/utils/model-file-replace';
 import {
@@ -3828,8 +3829,10 @@ export const mergeVersions = async ({
           select: {
             id: true,
             type: true,
+            name: true,
             metadata: true,
             virusScanResult: true,
+            pickleScanResult: true,
             modelVersion: { select: { uploadType: true, trainingStatus: true } },
           },
         });
@@ -3839,32 +3842,30 @@ export const mergeVersions = async ({
           const file = fileById.get(mapping.fileId);
           if (!file) throw throwBadRequestError('A file to update is not part of this merge.');
           assertFileTypeChangeAllowed(file, mapping.type);
+          const change = { type: mapping.type, format: mapping.metadata?.format };
+          assertFormatChangeAllowed(file, change, false);
 
           const updateData: Record<string, unknown> = {};
-          if (mapping.type)
-            Object.assign(
-              updateData,
-              { type: mapping.type },
-              scanResetForTypeChange(file, mapping.type)
-            );
+          if (mapping.type) updateData.type = mapping.type;
           if (mapping.metadata)
             updateData.metadata = {
               ...((file.metadata as Record<string, unknown>) ?? {}),
               ...mapping.metadata,
             };
+          Object.assign(updateData, scanResetForFileChange(file, change));
           if (Object.keys(updateData).length > 0) {
             const { count } = await tx.modelFile.updateMany({
               where: {
                 id: mapping.fileId,
                 ...inMerge,
-                ...scanResetWriteGuard(file, mapping.type),
+                ...scanResetWriteGuard(file, change),
               },
               data: updateData,
             });
             if (count !== 1)
               throw throwBadRequestError(
-                Object.keys(scanResetWriteGuard(file, mapping.type)).length
-                  ? TRAINING_DATA_SCAN_PENDING_MESSAGE
+                Object.keys(scanResetWriteGuard(file, change)).length
+                  ? scanResetConflictMessage(file)
                   : 'A file to update is not part of this merge.'
               );
           }
