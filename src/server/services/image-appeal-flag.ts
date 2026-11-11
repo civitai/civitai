@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { captureHoldLegsSql } from '~/server/services/legal-hold.service';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -53,7 +55,7 @@ export const REPORT_HOLD_RELEASE_MARGIN_DAYS = 7;
  * `CSAM_HOLD_MAX_DAYS - REPORT_HOLD_RELEASE_MARGIN_DAYS`, so a report that does not name the image's
  * owner (no owner on the report, another account's image) leaves the flag on. Narrower than the legal
  * hold `remove-blocked-images` applies (`legal-hold.ts`), so an image released here is still held
- * there.
+ * there. A feedback page capture has no owner a report can name, so any report listing it releases it.
  */
 export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promise<number> {
   if (!imageIds.length) return 0;
@@ -64,18 +66,24 @@ export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promis
     WHERE i.id IN (${Prisma.join(imageIds)})
       AND i."needsReview" = 'csam'
       AND i.ingestion = 'Blocked'
-      AND EXISTS (
-        SELECT 1 FROM "CsamReport" c
-        WHERE c."userId" = i."userId"
-          AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM "CsamReport" c
-        WHERE c."userId" = i."userId"
-          AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-          AND c."createdAt" <= now() - ${
-            CSAM_HOLD_MAX_DAYS - REPORT_HOLD_RELEASE_MARGIN_DAYS
-          } * interval '1 day'
+      AND (
+        (
+          i."userId" <> ${FEEDBACK_CAPTURE_OWNER_ID}
+          AND EXISTS (
+            SELECT 1 FROM "CsamReport" c
+            WHERE c."userId" = i."userId"
+              AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "CsamReport" c
+            WHERE c."userId" = i."userId"
+              AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+              AND c."createdAt" <= now() - ${
+                CSAM_HOLD_MAX_DAYS - REPORT_HOLD_RELEASE_MARGIN_DAYS
+              } * interval '1 day'
+          )
+        )
+        OR (i."userId" = ${FEEDBACK_CAPTURE_OWNER_ID} AND ${captureHoldLegsSql('i').reported})
       )
     RETURNING i.id
     `;

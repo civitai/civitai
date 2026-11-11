@@ -12,7 +12,9 @@ import { clickhouse } from '~/server/clickhouse/client';
 import {
   getImageUploadIpEvents,
   UPLOAD_REQUEST_IP_NOTE,
+  FEEDBACK_CAPTURE_UPLOAD_IP_NOTE,
 } from '~/server/services/image-upload-action.service';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob } from '~/utils/file-utils';
@@ -164,7 +166,7 @@ type CsamReportUserActivity = {
   ip: string;
   time: string;
   details?: {
-    type: 'post' | 'model-version' | 'image-upload-request';
+    type: 'post' | 'model-version' | 'image-upload-request' | 'feedback-capture-upload';
     id: number;
   };
 };
@@ -434,6 +436,7 @@ async function getImages(imageIds?: number[]) {
     where: { id: { in: imageIds } },
     select: {
       id: true,
+      userId: true,
       url: true,
       createdAt: true,
       name: true,
@@ -610,6 +613,10 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
+/** Filed with each feedback page capture in an image report, whoever the report's subject is. */
+export const FEEDBACK_CAPTURE_FILE_NOTE =
+  'Page capture submitted by a reporter: this file is a screenshot of a Civitai page that a user attached to a feedback report sent to Civitai. It may show content posted by an account other than the one who submitted it.';
+
 export function getReportedUserAdditionalInfo(
   email: string | null,
   userActivity: CsamReportUserActivity[]
@@ -619,6 +626,9 @@ export function getReportedUserAdditionalInfo(
       email ? `Email: ${email}` : null,
       userActivity.some((a) => a.details?.type === 'image-upload-request')
         ? UPLOAD_REQUEST_IP_NOTE
+        : null,
+      userActivity.some((a) => a.details?.type === 'feedback-capture-upload')
+        ? FEEDBACK_CAPTURE_UPLOAD_IP_NOTE
         : null,
     ]
       .filter(Boolean)
@@ -1382,6 +1392,8 @@ async function reportImages(claim: SendClaim) {
     const prompts = promptFileDetails((image.meta ?? {}) as Record<string, unknown>, {
       storedOnImage: true,
     });
+    if (isFeedbackCaptureOwner(image.userId))
+      prompts.additionalInfo.unshift(xmlText(FEEDBACK_CAPTURE_FILE_NOTE));
     fileDetailsOf.set(image.id, {
       fileDetails: {
         originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
