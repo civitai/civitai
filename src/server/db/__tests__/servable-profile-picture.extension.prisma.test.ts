@@ -20,7 +20,15 @@ const answer = async ({ args }: { args: unknown }) => {
 // Query extensions run in the order they are applied, each `query` calling the next: the gate
 // first, as in client.ts, and the stand-in for the engine after it.
 const client = base.$extends(servableProfilePictureExtension(() => undefined)).$extends({
-  query: { $allModels: { findMany: answer, findUnique: answer, findFirst: answer } },
+  query: {
+    $allModels: {
+      findMany: answer,
+      findUnique: answer,
+      findFirst: answer,
+      findUniqueOrThrow: answer,
+      findFirstOrThrow: answer,
+    },
+  },
 });
 
 afterAll(() => base.$disconnect());
@@ -62,6 +70,18 @@ describe('the servable profile picture extension on a real Prisma client', () =>
     rows.current = { id: 5, profilePicture: picture('Error') };
     const result = await client.user.findUnique({ where: { id: 5 }, select: simpleUserSelect });
     expect(result?.profilePicture).toBeNull();
+  });
+
+  it('gates findUniqueOrThrow and findFirstOrThrow', async () => {
+    rows.current = { id: 5, profilePicture: picture('Pending') };
+    const unique = await client.user.findUniqueOrThrow({
+      where: { id: 5 },
+      select: simpleUserSelect,
+    });
+    rows.current = { id: 5, profilePicture: picture('Scanned', 'csam') };
+    const first = await client.user.findFirstOrThrow({ select: simpleUserSelect });
+    expect(unique.profilePicture).toBeNull();
+    expect(first.profilePicture).toBeNull();
   });
 
   it('passes a query without the picture through as the same object', async () => {

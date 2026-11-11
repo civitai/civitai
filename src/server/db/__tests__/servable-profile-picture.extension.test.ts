@@ -217,6 +217,13 @@ describe('the servable profile picture gate', () => {
   });
 
   it('gates through every registered find handler', async () => {
+    expect(Object.keys(registered()).sort()).toEqual([
+      'findFirst',
+      'findFirstOrThrow',
+      'findMany',
+      'findUnique',
+      'findUniqueOrThrow',
+    ]);
     for (const [operation, handler] of Object.entries(registered())) {
       const result = (await handler({
         args: { select: simpleUserSelect },

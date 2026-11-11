@@ -78,9 +78,8 @@ export const transformData = async ({
 }) => {
   const records = articles
     .map(({ tags, stats, bannerImage, ...articleRecord }) => {
-      // An article whose cover is blocked or under review is left out until the review closes.
-      // One whose cover has not finished scanning is indexed, without it (else the servable
-      // banner). One with no cover and no servable banner is left out.
+      // Blocked or under-review cover: not indexed. Unscanned cover: indexed without it, so the
+      // article stays searchable.
       const cover = articleRecord.coverImage;
       if (cover && (cover.blockedFor || cover.needsReview || cover.ingestion === 'Blocked'))
         return null;

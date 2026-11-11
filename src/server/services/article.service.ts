@@ -862,7 +862,7 @@ export const getArticleById = async ({
 
 type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
 
-/** Whether a reader may see this cover or banner: owners and moderators always, anyone else only once it is scanned and not awaiting review. */
+/** Owners and moderators always; anyone else per `servableArticleImage`. */
 function isArticleImageViewable<T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview'>>(
   image: T | null | undefined,
   isOwnerOrMod: boolean
