@@ -1709,9 +1709,10 @@ async function reserveBlockBuzzSpendForClaims(
   // the one place that sees every daily-cap refusal: record it for the paused notice. The
   // post-paid overage correction has no deny path, but a total over the cap there means the
   // NEXT spend is refused, so marking is right for it too.
-  // A check that passes clears it: "paused" means the LAST daily-cap check refused.
+  // A check that passes clears it: "paused" means the LAST daily-cap check refused. Not awaited:
+  // it is off the spend's critical path, and the helper never throws.
   if (total > buzzPerDay) await markDailyCapRefused(userId, buzzPerDay);
-  else await clearDailyCapRefusal(userId);
+  else void clearDailyCapRefusal(userId);
   if (claims.dev === true) return { ...platform, consent: null };
 
   // From here any throw must undo the platform reservation just taken — otherwise a
