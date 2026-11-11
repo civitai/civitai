@@ -2,6 +2,7 @@ import type { NextApiRequest } from 'next';
 import type { Session } from '~/types/session';
 import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
 import { getRequestCredential } from '~/server/auth/request-credential';
+import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -38,7 +39,8 @@ function credentialKind(
   const subject = getRequestCredential(req).subject?.type;
   if (subject === 'oauth') return 'oauth';
   if (subject === 'apiKey') return 'api-key';
-  if (req.headers?.authorization) return 'unrecognized';
+  // `?token=` is a credential channel too; one that does not resolve counts as presented.
+  if (req.headers?.authorization || requestCarriesQueryToken(req)) return 'unrecognized';
   return user ? 'session' : 'none';
 }
 
@@ -90,6 +92,7 @@ export async function evaluateMiniEpochCaller({
   logToAxiom({
     type: 'info',
     name: 'mini-epoch-caller',
+    mode,
     modelVersionId,
     authHeader: !!req.headers?.authorization,
     resolvedAs,

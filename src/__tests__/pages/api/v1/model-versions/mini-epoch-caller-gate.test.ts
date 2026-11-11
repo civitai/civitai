@@ -332,6 +332,7 @@ describe('mini/[id] epoch arm, log', () => {
         'authHeader',
         'callerClass',
         'enforced',
+        'mode',
         'modelVersionId',
         'name',
         'resolvedAs',

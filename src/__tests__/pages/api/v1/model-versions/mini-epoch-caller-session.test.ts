@@ -45,6 +45,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 import {
   EPOCH_URL,
   GRANTEE_ID,
+  OWNER_ID,
   SERVICE_TOKEN,
   TRAINING_FILE,
   VERSION_ID,
@@ -65,7 +66,7 @@ const keySession = (userId: number, subject: 'apiKey' | 'oauth') => ({
   buzzLimit: null,
 });
 
-async function call(authorization?: string) {
+async function call(authorization?: string, queryToken?: string) {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw
     .mockResolvedValueOnce([versionRow])
@@ -74,7 +75,7 @@ async function call(authorization?: string) {
   const req = {
     method: 'GET',
     url: `/api/v1/model-versions/mini/${VERSION_ID}`,
-    query: { id: String(VERSION_ID) },
+    query: { id: String(VERSION_ID), ...(queryToken ? { token: queryToken } : {}) },
     headers: { host: 'civitai.com', ...(authorization ? { authorization } : {}) },
     cookies: {},
     socket: { remoteAddress: '127.0.0.1' },
@@ -168,6 +169,21 @@ describe('mini/[id] epoch arm through the real session layer, enforce-anon', () 
     expect(log).toEqual([
       expect.objectContaining({ resolvedAs: 'unrecognized', callerClass: 'anonymous' }),
     ]);
+  });
+
+  it('serves a ?token= the session layer does not know, as it serves the header form', async () => {
+    const { status, body, log } = await call(undefined, 'not-a-key');
+    expect(status).toBe(200);
+    expect(body?.downloadUrls).toEqual([EPOCH_URL]);
+    expect(log).toEqual([expect.objectContaining({ resolvedAs: 'unrecognized', enforced: false })]);
+  });
+
+  it('serves the owner by API key', async () => {
+    h.bearerSession.mockResolvedValue(keySession(OWNER_ID, 'apiKey'));
+    const { status, body, log } = await call('Bearer owner-key');
+    expect(status).toBe(200);
+    expect(body?.downloadUrls).toEqual([EPOCH_URL]);
+    expect(log).toEqual([expect.objectContaining({ callerClass: 'owner', resolvedAs: 'api-key' })]);
   });
 
   it('answers a request with no credential as an unknown id', async () => {
