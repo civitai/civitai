@@ -4,8 +4,9 @@ import { servableProfilePicture } from '~/server/services/profile-picture.servab
 /**
  * A user's `profilePicture`, read through Prisma's nested select (`simpleUserSelect` and every copy
  * of it), comes back as `null` unless `servableProfilePicture` serves it: Scanned and not flagged
- * `csam`. Stricter than `servableProfilePictureSql`, which also admits moderator-locked ratings. `User.profilePicture` is the only relation of that name, so the
- * match is by key: a spread or hand-built copy of the select is caught too.
+ * `csam`. Stricter than `servableProfilePictureSql`, which also admits moderator-locked ratings.
+ * `User.profilePicture` is the only relation of that name, so the match is by key: a spread or
+ * hand-built copy of the select is caught too.
  *
  * Only find queries are touched; writes return what they wrote. A query whose select tree has no
  * `profilePicture` carrying `url` is passed through as is: the cost is one walk of the args.
@@ -97,7 +98,7 @@ function needsIngestion(plan: Plan): boolean {
   return false;
 }
 
-/** Nulls each planned picture that is not Scanned, in place. */
+/** Nulls each planned picture `servableProfilePicture` would not serve, in place. */
 export function applyProfilePicturePlan(result: unknown, plan: Plan): void {
   if (Array.isArray(result)) {
     for (const row of result) applyProfilePicturePlan(row, plan);
