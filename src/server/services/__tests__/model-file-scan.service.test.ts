@@ -1179,7 +1179,7 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.pickleScanMessage).toContain('Dangerous import detected');
     });
 
-    it('maps pickleScan with no dangerous imports through exitCodeToScanResult', async () => {
+    it('maps a legacy exit 0 to Success on a file no loader opens', async () => {
       mockGetWorkflow.mockResolvedValue({
         data: {
           metadata: { fileId: 1 },
@@ -1710,7 +1710,7 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.pickleScanMessage).toContain('Dangerous import detected');
     });
 
-    it('maps pickleScan status "clean" to Success with examined imports message', async () => {
+    it('maps pickleScan status "clean" to Success with examined imports message on a file no loader opens', async () => {
       mockGetWorkflow.mockResolvedValue({
         data: {
           metadata: { fileId: 1 },
@@ -1737,6 +1737,87 @@ describe('model-file-scan.service', () => {
       const updateCall = mockDbWrite.modelFile.update.mock.calls[0][0];
       expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
       expect(updateCall.data.pickleScanMessage).toBe('No Pickle imports');
+    });
+
+    describe('a pickle scan that read nothing', () => {
+      const UNREAD = 'The pickle scan could not read this file';
+      async function scanPickle(
+        file: { name: string; type: string },
+        output: Record<string, unknown>
+      ) {
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          id: 1,
+          modelVersionId: 100,
+          modelVersion: { modelId: 200 },
+          ...file,
+        });
+        mockGetWorkflow.mockResolvedValue({
+          data: {
+            metadata: { fileId: 1 },
+            steps: [{ $type: 'modelPickleScan', output: { dangerousImports: [], ...output } }],
+          },
+        });
+        await processModelFileScanResult(
+          makeReq({ workflowId: 'wf-unread', type: 'workflow', status: 'succeeded' })
+        );
+        const { data } = mockDbWrite.modelFile.update.mock.calls[0][0];
+        return { result: data.pickleScanResult, message: data.pickleScanMessage };
+      }
+      const ckpt = { name: 'model.ckpt', type: 'Model' };
+      const unknownFormat = { status: 'skipped', skipped: true, skipReason: 'unknown-format' };
+
+      it.each([
+        ['an unknown-format skip', ckpt, unknownFormat],
+        ['a legacy unknown-format skip', ckpt, { skipped: true, skipReason: 'unknown-format' }],
+        ['a skip status it does not know', ckpt, { status: 'skippedOther', skipped: true }],
+        [
+          'an unknown-format skip of a file named .zip',
+          { name: 'x.zip', type: 'Model' },
+          unknownFormat,
+        ],
+        ['a clean scan with no file count', ckpt, { status: 'clean' }],
+        ['a legacy exit 0 that read zero files', ckpt, { exitCode: 0, output: 'Scanned files: 0' }],
+      ])('does not clear a loadable weight on %s', async (_, file, output) => {
+        expect(await scanPickle(file, output)).toEqual({
+          result: ScanResultCode.Error,
+          message: UNREAD,
+        });
+      });
+
+      it.each([
+        ['a parse error the step also calls skipped', { status: 'parseError', skipped: true }],
+        ['a scanner error', { status: 'error' }],
+      ])('stores %s as Error', async (_, output) => {
+        expect(await scanPickle(ckpt, output)).toEqual({
+          result: ScanResultCode.Error,
+          message: UNREAD,
+        });
+      });
+
+      it.each([
+        ['a counted clean scan', ckpt, { status: 'clean', scannedFileCount: 1 }],
+        ['a zip with no pickle members', { name: 'pack.zip', type: 'Model' }, { status: 'clean' }],
+        ['a file no loader opens', { name: 'model.yaml', type: 'Config' }, unknownFormat],
+        [
+          'a format skip the scanner reports',
+          { name: 'model.safetensors', type: 'Model' },
+          { status: 'skippedSafetensors', skipped: true, skipReason: 'safetensors-resource-info' },
+        ],
+        [
+          'a legacy format skip',
+          { name: 'model.safetensors', type: 'Model' },
+          { skipped: true, skipReason: 'safetensors-extension' },
+        ],
+      ])('clears %s', async (_, file, output) => {
+        expect((await scanPickle(file, output)).result).toBe(ScanResultCode.Success);
+      });
+
+      it.each([
+        ['by flag', { status: 'dangerousImportsFound', dangerousImportsFound: true }],
+        ['in a scan that counted no files', { status: 'clean', dangerousImports: ['os,system'] }],
+      ])('keeps Danger for dangerous imports found %s', async (_, output) => {
+        expect((await scanPickle(ckpt, output)).result).toBe(ScanResultCode.Danger);
+      });
     });
 
     it('parses metadata JSON and stores it in headerData', async () => {
