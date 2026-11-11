@@ -136,6 +136,13 @@ describe('settings bootstrap: event visibility follows the request credential', 
     expect(seededViewers()).toContainEqual(expect.objectContaining({ isModerator: true }));
   });
 
+  it('reads a moderator with no known credential as the user alone', async () => {
+    expect(bannerShown(await resolveSettingsBootstrapSeeds(req, moderator, null))).toBe(false);
+    expect(seededViewers().length).toBeGreaterThan(0);
+    for (const viewer of seededViewers())
+      expect(viewer).toEqual(expect.objectContaining({ isModerator: false }));
+  });
+
   it('reads a moderator on a scoped key as the user alone', async () => {
     expect(bannerShown(await resolveSettingsBootstrapSeeds(req, moderator, scopedKey))).toBe(false);
     expect(seededViewers().length).toBeGreaterThan(0);

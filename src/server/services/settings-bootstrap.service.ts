@@ -70,7 +70,7 @@ export async function resolveSettingsBootstrap({ req, res }: AuthArgs) {
   return resolveSettingsBootstrapSeeds(
     req,
     session,
-    (req as { context?: SessionCredential }).context
+    (req as { context?: SessionCredential }).context ?? null
   );
 }
 
@@ -88,9 +88,10 @@ export async function resolveSettingsBootstrapSeeds(
   session: Awaited<ReturnType<typeof getServerAuthSession>>,
   /**
    * The credential the session was resolved from: the `req.context` of that lookup. A moderator
-   * counts for event gates only on a session or a full-access key (eventViewerOf).
+   * counts for event gates only on a session or a full-access key (eventViewerOf), so `null` (no
+   * credential known) reads as a non-moderator rather than as a session.
    */
-  credential: SessionCredential | undefined
+  credential: SessionCredential | null
 ) {
   // Concurrent, to keep this hot per-bootstrap read off the critical path.
   // EVERY member swallows its own errors: a single rejection fails the whole
@@ -103,7 +104,7 @@ export async function resolveSettingsBootstrapSeeds(
   const eventCosmeticReads: EventCosmeticReads = new Map();
   const eventUser = session?.user && {
     ...session.user,
-    isModerator: eventViewerOf({ ...credential, user: session.user }).isModerator,
+    isModerator: !!credential && eventViewerOf({ ...credential, user: session.user }).isModerator,
   };
   const [
     settings,
