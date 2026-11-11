@@ -4,6 +4,7 @@ import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as StorageResolver from '~/utils/storage-resolver';
 import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * `updateFile`'s lookup authorizes the file you may EDIT. It says nothing about a destination
@@ -737,12 +738,15 @@ describe('a file whose loader or format changes', () => {
     expect(write().data).toMatchObject(RESET);
   });
 
-  it("goes back to unscanned when a moderator changes a loadable file's format", async () => {
+  it("goes back to unscanned when a moderator changes a loadable file's format, and logs it", async () => {
     scanned();
 
     await updateFile({ id: 1, metadata: { format: 'PickleTensor' }, userId: 7, isModerator: true });
 
     expect(write().data).toMatchObject(RESET);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'model-file-format-override', fileId: 1, moderatorId: 7 })
+    );
   });
 
   it("drops a reset file's version from the cached coverage", async () => {

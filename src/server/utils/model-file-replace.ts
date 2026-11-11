@@ -86,19 +86,20 @@ const formatOf = (file: { name: string; metadata: unknown }) =>
 const extension = (name: string) => /\.[^./]+$/.exec(name.toLowerCase())?.[0] ?? '';
 const NOT_CLEAN: ScanResultCode[] = [ScanResultCode.Danger, ScanResultCode.Error];
 
-/**
- * Refuses an owner a format the file name does not have. A zip's contents can't be told from its
- * name, so any format stands for it.
- */
+/** A new format the file's name does not have. A zip's contents can't be told from its name. */
+export function formatMismatch(file: { name: string; metadata: unknown }, change: FileChange) {
+  if (change.format == null || change.format === formatOf(file)) return false;
+  const name = change.name ?? file.name;
+  return extension(name) !== '.zip' && change.format !== nameFormat(name);
+}
+
+/** Refuses an owner a format the file name does not have. */
 export function assertFormatChangeAllowed(
   file: { name: string; metadata: unknown },
   change: FileChange,
   isModerator: boolean
 ) {
-  if (isModerator || change.format == null || change.format === formatOf(file)) return;
-  const name = change.name ?? file.name;
-  if (extension(name) === '.zip') return;
-  if (change.format !== nameFormat(name))
+  if (!isModerator && formatMismatch(file, change))
     throw throwBadRequestError(
       "A file's format must match its file name. Upload the file again to change its format."
     );

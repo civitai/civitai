@@ -47,6 +47,7 @@ import { prepareFile } from '~/utils/file-helpers';
 import {
   assertFileTypeChangeAllowed,
   assertFormatChangeAllowed,
+  formatMismatch,
   scanResetConflictMessage,
   scanResetForFileChange,
   scanResetWriteGuard,
@@ -263,6 +264,15 @@ export async function updateFile({
   assertFileTypeChangeAllowed(modelFile, inputData.type);
   const change = { type: inputData.type, name: inputData.name, format: metadata?.format };
   assertFormatChangeAllowed(modelFile, change, isModerator);
+  if (isModerator && formatMismatch(modelFile, change))
+    logToAxiom({
+      type: 'info',
+      name: 'model-file-format-override',
+      fileId: id,
+      moderatorId: userId,
+      from: (modelFile.metadata as { format?: string } | null)?.format ?? null,
+      to: change.format,
+    }).catch(() => undefined);
 
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
 
