@@ -476,17 +476,20 @@
   let importing = $state(false);
   let importNotice = $state('');
   let zipInput: HTMLInputElement;
-  const zipQueue: File[] = [];
+  // Each zip captures the epoch when it is queued, not when the drain starts: a Remove all drops the
+  // zips queued before it, while one dropped after it still imports.
+  const zipQueue: { file: File; current: () => boolean }[] = [];
   async function importZips(files: File[]) {
-    zipQueue.push(...files);
+    zipQueue.push(...files.map((file) => ({ file, current: epoch.capture() })));
     if (importing) return;
     importing = true;
     importNotice = '';
-    const current = epoch.capture();
     const unreadable: string[] = [];
     const empty: string[] = [];
     try {
-      for (let file = zipQueue.shift(); file; file = zipQueue.shift()) {
+      for (let next = zipQueue.shift(); next; next = zipQueue.shift()) {
+        const { file, current } = next;
+        if (!current()) continue;
         let entries: Awaited<ReturnType<typeof readZip>>;
         try {
           entries = await readZip(file);
