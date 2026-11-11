@@ -23,6 +23,8 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
+import type { Context } from '~/server/createContext';
+import { canViewImageMedia } from '~/server/utils/image-media-visibility';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -270,21 +272,32 @@ export const getAuctionNameBySlug = async (slug: string) => {
   return auctionBase?.name ?? null;
 };
 
+type BidWithImage = { entityData?: { image?: { nsfwLevel: number; userId: number } } };
+type BidImageFilter = (image: { nsfwLevel: number; userId: number }) => boolean;
+
 /**
- * The auction with each bid's image kept only when `keep` allows it. A bid's model passes the
- * site cap on its own level, which says nothing about the one image shown for it.
+ * Each bid with its image kept only when `keep` allows it. A bid's model passes the site cap on
+ * its own level, which says nothing about the one image shown for it.
  */
-export function capAuctionBidImages<
-  T extends { bids: { entityData?: { image?: { nsfwLevel: number; userId: number } } }[] }
->(auction: T, keep: (image: { nsfwLevel: number; userId: number }) => boolean): T {
-  return {
-    ...auction,
-    bids: auction.bids.map((bid) => {
-      const image = bid.entityData?.image;
-      if (!image || keep(image)) return bid;
-      return { ...bid, entityData: { ...bid.entityData, image: undefined } };
-    }),
-  };
+export function capBidImages<B extends BidWithImage>(bids: B[], keep: BidImageFilter): B[] {
+  return bids.map((bid) => {
+    const image = bid.entityData?.image;
+    if (!image || keep(image)) return bid;
+    return { ...bid, entityData: { ...bid.entityData, image: undefined } };
+  });
+}
+
+/** A bid's image is held to the request's cap like a single image; its owner and moderators keep it. */
+export const bidImagesFor =
+  (ctx: Pick<Context, 'user' | 'features' | 'req'>): BidImageFilter =>
+  (image) =>
+    canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } });
+
+export function capAuctionBidImages<T extends { bids: BidWithImage[] }>(
+  auction: T,
+  keep: BidImageFilter
+): T {
+  return { ...auction, bids: capBidImages(auction.bids, keep) };
 }
 
 /** Every subscriber to an auction's topic gets one payload, so it carries only public images. */
