@@ -48,9 +48,15 @@ export function useImageLoadSlot(wanted: boolean) {
   const [granted, setGranted] = useState(false);
   const slot = useRef<Slot | null>(null);
 
+  // A grant is final: once the query may run, React Query owns it, so re-entering view must not
+  // take a second slot that nothing would release.
+  const everGranted = useRef(false);
   useEffect(() => {
-    if (!wanted) return;
-    slot.current = acquireImageLoadSlot(() => setGranted(true));
+    if (!wanted || everGranted.current) return;
+    slot.current = acquireImageLoadSlot(() => {
+      everGranted.current = true;
+      setGranted(true);
+    });
     return () => slot.current?.release();
   }, [wanted]);
 
