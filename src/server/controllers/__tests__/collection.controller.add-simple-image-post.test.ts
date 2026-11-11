@@ -71,7 +71,6 @@ beforeEach(() => {
   mocks.applyFirstDailyPost.mockResolvedValue(undefined);
 });
 
-/** createPost returns the publishedAt it was given, as the real one does. */
 const echoPublishedAt = () =>
   mocks.createPost.mockImplementation(async ({ publishedAt }: { publishedAt?: Date }) => ({
     id: NEW_POST_ID,
