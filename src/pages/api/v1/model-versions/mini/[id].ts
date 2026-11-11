@@ -18,9 +18,13 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { coverageColumn, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
-import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
-import { refreshBlobsService } from '~/server/services/orchestrator/refreshBlobs';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
+import {
+  refreshBlobsService,
+  type BlobRefreshResult,
+} from '~/server/services/orchestrator/refreshBlobs';
 import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
@@ -335,6 +339,8 @@ export default MixedAuthEndpoint(async function handler(
   const trainingResults = useEpochUrl ? targetFile.metadata.trainingResults : undefined;
 
   let withheldFromCaller = false;
+  // Only a caller the epoch gate serves gets a freshly signed url; anyone else keeps the stored one.
+  let mayResign = false;
 
   if (trainingResults) {
     const epoch =
@@ -382,27 +388,12 @@ export default MixedAuthEndpoint(async function handler(
         mode,
       });
       withheldFromCaller = caller.withhold;
-    }
-
-    // The stored url was signed once, at publish. Signed again on every read, so the url handed out
-    // is valid under whatever the orchestrator checks now; the blob id, and so the AIR, is unchanged.
-    const blobId = withheldFromCaller ? undefined : getConsumerBlobId(downloadUrl);
-    if (blobId) {
-      const [resigned] = await refreshBlobsService({
-        token: env.ORCHESTRATOR_ACCESS_TOKEN,
-        blobIds: [blobId],
-      });
-      if (resigned?.status === 'gone') return res.status(404).json({ error: 'Missing epoch' });
-      if (resigned?.status === 'refreshed') downloadUrl = resigned.url;
-      else
-        logToAxiom({
-          type: 'warning',
-          name: 'mini-epoch-blob-resign',
-          message: 'served the stored epoch url unsigned again',
-          modelVersionId: modelVersion.id,
-          fileId: targetFile.id,
-          blobId,
-        }).catch(() => undefined);
+      mayResign = caller.callerClass !== 'anonymous' && caller.callerClass !== 'other';
+    } else {
+      mayResign =
+        matchesOrchestratorServiceToken(req) ||
+        user?.id === modelVersion.modelUserId ||
+        !!user?.isModerator;
     }
   } else {
     // this does not work for things like Flux
@@ -612,6 +603,28 @@ export default MixedAuthEndpoint(async function handler(
     withheldFromCaller ||
     (!!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated)));
 
+  // The stored url was signed once, at publish, and is signed again here for a caller it is served
+  // to. Each refresh also extends the blob's life on the orchestrator, so never for a withheld url.
+  const blobId =
+    trainingResults && mayResign && !withholdEpochUrl
+      ? getConsumerBlobId(downloadUrls[0])
+      : undefined;
+  if (blobId) {
+    const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId);
+    if (resigned.status === 'gone') return res.status(404).json({ error: 'Missing epoch' });
+    if (resigned.status === 'refreshed') {
+      res.setHeader('Cache-Control', 'private, no-store');
+      downloadUrls[0] = resigned.url;
+    } else
+      logToAxiom({
+        type: 'warning',
+        name: 'mini-epoch-blob-resign',
+        message: 'served the stored epoch url',
+        modelVersionId: modelVersion.id,
+        blobId,
+      }).catch(() => undefined);
+  }
+
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
@@ -646,3 +659,22 @@ export default MixedAuthEndpoint(async function handler(
   };
   res.status(200).json(data);
 });
+
+const RESIGN_TIMEOUT_MS = 3000;
+
+/** A fresh signature from the blob owner's own orchestrator account; `unknown` on any failure. */
+async function resignEpochBlob(ownerId: number, blobId: string): Promise<BlobRefreshResult> {
+  const unknown: BlobRefreshResult = { blobId, status: 'unknown' };
+  try {
+    const token = await getOrchestratorToken(ownerId);
+    const [result] = await Promise.race([
+      refreshBlobsService({ token, blobIds: [blobId] }),
+      new Promise<BlobRefreshResult[]>((resolve) =>
+        setTimeout(() => resolve([unknown]), RESIGN_TIMEOUT_MS)
+      ),
+    ]);
+    return result ?? unknown;
+  } catch {
+    return unknown;
+  }
+}

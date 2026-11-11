@@ -71,6 +71,9 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
   refreshBlobsService: mockRefreshBlobs,
 }));
+vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
+  getOrchestratorToken: async (userId: number) => `owner-token-${userId}`,
+}));
 
 vi.mock('~/server/services/model.service', () => ({
   getFeaturedModels: mockGetFeaturedModels,
@@ -1331,6 +1334,7 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
   };
 
   beforeEach(() => {
+    currentUser.value = { id: OWNER_ID };
     mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'refreshed', url: FRESH }]);
   });
 
@@ -1339,7 +1343,11 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
 
     expect(status).toBe(200);
     expect(body.downloadUrls).toEqual([FRESH]);
-    expect(mockRefreshBlobs).toHaveBeenCalledWith(expect.objectContaining({ blobIds: [BLOB_ID] }));
+    expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
+    expect(mockRefreshBlobs).toHaveBeenCalledWith({
+      token: `owner-token-${OWNER_ID}`,
+      blobIds: [BLOB_ID],
+    });
   });
 
   it('signs again a stored url that has not expired yet', async () => {
@@ -1348,13 +1356,7 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
     expect(body.downloadUrls).toEqual([FRESH]);
   });
 
-  it('keeps the AIR on the blob id, not the signature', async () => {
-    await runPlaceholder(EXPIRED);
-
-    expect(lastAirArgs()).toMatchObject({ source: 'orchestrator', id: 'blob', version: BLOB_ID });
-  });
-
-  it('answers 404 when the orchestrator says the blob is gone or blocked', async () => {
+  it('answers 404 when the orchestrator says the blob is gone', async () => {
     mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone' }]);
 
     const { status, body } = await runPlaceholder(EXPIRED);
@@ -1370,6 +1372,34 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
 
     expect(status).toBe(200);
     expect(body.downloadUrls).toEqual([EXPIRED]);
+  });
+
+  it.each([
+    ['an anonymous caller', undefined],
+    ['a signed-in stranger', { id: OTHER_USER_ID }],
+  ])('keeps the stored url for %s the gate does not check', async (_, user) => {
+    currentUser.value = user;
+
+    const { body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([EXPIRED]);
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('is not signed for a taken-down model, whose url is withheld', async () => {
+    mockQueryRaw.mockReset();
+    const pending = run(
+      [SAFETENSOR, placeholder(EXPIRED)],
+      { modelFileId: '3350379' },
+      { availability: 'Private', modelMode: 'TakenDown' }
+    );
+    mockQueryRaw.mockResolvedValueOnce([
+      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+    ]);
+    const { body } = await pending;
+
+    expect(body.downloadUrls).toEqual([]);
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
   });
 
   it('leaves a job-asset epoch url alone, without asking the orchestrator', async () => {

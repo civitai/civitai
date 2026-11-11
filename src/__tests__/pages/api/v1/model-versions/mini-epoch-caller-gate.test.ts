@@ -15,6 +15,14 @@ const h = vi.hoisted(() => ({
   variant: { value: null as string | null },
   hasEntityAccess: vi.fn(),
   getFliptVariant: vi.fn(),
+  refreshBlobs: vi.fn(),
+}));
+
+vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
+  refreshBlobsService: h.refreshBlobs,
+}));
+vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
+  getOrchestratorToken: async () => 'owner-token',
 }));
 
 vi.mock('~/server/services/generation/generation.service', () => ({
@@ -315,5 +323,47 @@ describe('the service token outside the epoch arm', () => {
     expect(h.getFliptVariant.mock.calls.map(([flag]) => flag)).not.toContain(
       'mini-epoch-caller-gate'
     );
+  });
+});
+
+describe('mini/[id] epoch arm, a stored blob url', () => {
+  const BLOB_ID = 'BLOBID0000000000000000000.safetensors';
+  const STORED = `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=s&exp=2026-11-04T00:00:00Z`;
+  const FRESH = `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=f&exp=2099-01-01T00:00:00Z`;
+  const BLOB_FILE = {
+    ...TRAINING_FILE,
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: { epochs: [{ epoch_number: 10, model_url: STORED }] },
+    },
+  };
+
+  beforeEach(() => {
+    h.variant.value = 'enforce';
+    h.refreshBlobs.mockReset();
+    h.refreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'refreshed', url: FRESH }]);
+  });
+
+  it('is signed again once for a caller the gate serves', async () => {
+    const { body } = await request(service, {}, BLOB_FILE);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(h.refreshBlobs).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the stored url for a caller log mode serves but would refuse', async () => {
+    h.variant.value = 'log';
+
+    const { body } = await request(anonymous, {}, BLOB_FILE);
+
+    expect(body.downloadUrls).toEqual([STORED]);
+    expect(h.refreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('is not signed for a caller the gate withholds it from', async () => {
+    const { body } = await request(anonymous, {}, BLOB_FILE);
+
+    expect(body.downloadUrls).toEqual([]);
+    expect(h.refreshBlobs).not.toHaveBeenCalled();
   });
 });
