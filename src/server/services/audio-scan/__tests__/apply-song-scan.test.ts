@@ -125,6 +125,34 @@ describe('a song with lyrics', () => {
     expect(lyricsScan.submit).toHaveBeenCalledWith({ imageId: 7, content: 'la' });
   });
 
+  it.each(['Failed', 'Expired', 'Canceled'])(
+    'counts a %s lyrics scan as a retry, putting the song in Error for the capped retry lane',
+    async (status) => {
+      withLyrics({ status });
+
+      await run(scanned(false));
+
+      expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+      expect(pipeline.markImageScanError).toHaveBeenCalledWith(
+        expect.objectContaining({ imageId: 7, failureType: 'lyrics-scan-failed' })
+      );
+      expect(lyricsScan.submit).not.toHaveBeenCalled();
+    }
+  );
+
+  it('counts a lyrics submit that throws as a lyrics failure, not an audio processing error', async () => {
+    withLyrics();
+    lyricsScan.submit.mockRejectedValueOnce(new Error('orchestrator down'));
+
+    await run(scanned(false));
+
+    expect(pipeline.markImageScanError).toHaveBeenCalledTimes(1);
+    expect(pipeline.markImageScanError).toHaveBeenCalledWith(
+      expect.objectContaining({ failureType: 'lyrics-submit-failed' })
+    );
+    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+  });
+
   it('does not re-send a lyrics scan that is still in flight', async () => {
     withLyrics({ status: 'Pending' });
 
@@ -176,6 +204,18 @@ describe('a lyrics verdict landing', () => {
 
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ workflowId: 'wf-audio', fixed: { nsfwLevel: NsfwLevel.PG } })
+    );
+  });
+
+  it('counts a failed lyrics scan on a song whose audio verdict is stored', async () => {
+    withLyrics({ status: 'Failed' });
+    audioRow('Succeeded');
+    pipeline.loadImageForScan.mockResolvedValue(song({ ingestion: 'Pending' }));
+
+    await applySongLyricsVerdict(7);
+
+    expect(pipeline.markImageScanError).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowId: 'wf-audio', failureType: 'lyrics-scan-failed' })
     );
   });
 

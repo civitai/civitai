@@ -59,7 +59,8 @@ export async function submitTrackLyricsScan({
 
 export type LyricsVerdict =
   | { state: 'none' }
-  | { state: 'pending'; inFlight: boolean; text: string }
+  /** `failed`: the last scan ended without a verdict; neither it nor `inFlight` means never sent. */
+  | { state: 'pending'; inFlight: boolean; failed: boolean; text: string }
   | { state: 'clean' }
   | { state: 'blocked' };
 
@@ -79,6 +80,7 @@ export async function readLyricsVerdict(imageId: number): Promise<LyricsVerdict>
   return {
     state: 'pending',
     inFlight: moderation?.status === EntityModerationStatus.Pending,
+    failed: !!moderation && moderation.status !== EntityModerationStatus.Pending,
     text: lyrics.text,
   };
 }

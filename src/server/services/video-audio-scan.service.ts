@@ -116,6 +116,13 @@ export async function submitVideoAudioScan({
  * and does not swallow failure: the caller owns what an unsubmitted song becomes, so it gets the
  * submit result as it would from the image scan.
  */
+type StandingAudioScan = {
+  data: { id: string };
+  attempts: number;
+  body?: undefined;
+  response?: undefined;
+};
+
 export async function submitSongScan({
   imageId,
   mediaUrl,
@@ -125,6 +132,24 @@ export async function submitSongScan({
   mediaUrl: string;
   priority?: Priority;
 }) {
+  // Waiting only on its lyrics verdict: the audio verdict stands, so only the lyrics are re-sent.
+  const audio = await dbWrite.imageAudioScan.findUnique({
+    where: { imageId },
+    select: { status: true, workflowId: true },
+  });
+  if (audio?.status === 'Succeeded') {
+    // At the call site: track-lyrics reaches back here through the orchestrator service.
+    const { readLyricsVerdict, submitTrackLyricsScan } = await import(
+      '~/server/services/audio-scan/track-lyrics'
+    );
+    const lyrics = await readLyricsVerdict(imageId);
+    if (lyrics.state === 'pending') {
+      if (!lyrics.inFlight) await submitTrackLyricsScan({ imageId, content: lyrics.text });
+      // The stored audio workflow stands in for a submit, so the caller stamps the attempt.
+      return { data: { id: audio.workflowId }, attempts: 0 } satisfies StandingAudioScan;
+    }
+  }
+
   const metadata = { imageId, scan: 'song' };
   return submitAudioScanWorkflow({
     imageId,

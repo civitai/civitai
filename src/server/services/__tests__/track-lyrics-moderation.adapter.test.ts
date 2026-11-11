@@ -77,6 +77,16 @@ describe('the TrackLyrics moderation adapter', () => {
     expect(mocks.decide).toHaveBeenCalledWith(7);
   });
 
+  it('lets a failed lyrics scan reach the song, to be counted', async () => {
+    await getModerationAdapter('TrackLyrics')!.applyFailure!({
+      entityId: 7,
+      workflowId: 'wf',
+      status: 'failed',
+    });
+
+    expect(mocks.decide).toHaveBeenCalledWith(7);
+  });
+
   it('lets an XGuard lyrics verdict decide the song too', async () => {
     await getModerationAdapter('TrackLyrics')!.applyResult!({
       entityId: 7,

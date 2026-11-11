@@ -54,6 +54,11 @@ export const trackLyricsModerationAdapter: ModerationAdapter = {
     await decideSong(entityId);
   },
 
+  // The song counts the failed scan toward its retry cap.
+  applyFailure: async ({ entityId }) => {
+    await decideSong(entityId);
+  },
+
   applyTextScan: withCsamHold('TrackLyrics', async ({ entityId, outcome }) => {
     if (outcome.csam?.detected) await removeHeldSongFromSearch(entityId);
     await decideSong(entityId);

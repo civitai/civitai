@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { mockLyricsSubmit } = vi.hoisted(() => ({ mockLyricsSubmit: vi.fn() }));
+vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  submitTrackLyricsScan: mockLyricsSubmit,
+}));
+
 const { mockGetWorkflow, mockSubmit, mockIsFlipt } = vi.hoisted(() => ({
   mockGetWorkflow: vi.fn(),
   mockSubmit: vi.fn(),
@@ -280,6 +286,42 @@ describe('submitSongScan', () => {
     mockIsFlipt.mockReset().mockResolvedValue(false);
     mockSubmit.mockReset().mockResolvedValue({ data: { id: 'wf-song' }, attempts: 1 });
     dbMock.dbWrite.imageAudioScan.upsert.mockReset().mockResolvedValue({});
+    dbMock.dbWrite.imageAudioScan.findUnique.mockReset().mockResolvedValue(null);
+    dbMock.dbWrite.trackLyrics.findUnique.mockReset().mockResolvedValue(null);
+    dbMock.dbWrite.entityModeration.findUnique.mockReset().mockResolvedValue(null);
+    mockLyricsSubmit.mockReset().mockResolvedValue({ id: 'wf-lyrics' });
+  });
+
+  describe('for a song whose audio verdict is stored and whose lyrics verdict is missing', () => {
+    beforeEach(() => {
+      dbMock.dbWrite.imageAudioScan.findUnique.mockResolvedValue({
+        status: 'Succeeded',
+        workflowId: 'wf-audio-done',
+      } as never);
+      dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ text: 'la' } as never);
+    });
+
+    it('re-sends only the lyrics scan, never the audio scan again', async () => {
+      const result = await submitSongScan(input);
+
+      expect(mockSubmit).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.imageAudioScan.upsert).not.toHaveBeenCalled();
+      expect(mockLyricsSubmit).toHaveBeenCalledWith({ imageId: 9, content: 'la' });
+      expect(result.data).toEqual({ id: 'wf-audio-done' });
+    });
+
+    it('sends nothing while the lyrics scan is in flight', async () => {
+      dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+        status: 'Pending',
+        blocked: null,
+      } as never);
+
+      const result = await submitSongScan(input);
+
+      expect(mockSubmit).not.toHaveBeenCalled();
+      expect(mockLyricsSubmit).not.toHaveBeenCalled();
+      expect(result.data).toEqual({ id: 'wf-audio-done' });
+    });
   });
 
   it('scans the song even though the video flag is off, with no transcription step', async () => {

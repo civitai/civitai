@@ -4,6 +4,7 @@ import { songVerdict } from '~/server/services/audio-scan/song-scan';
 import {
   readLyricsVerdict,
   submitTrackLyricsScan,
+  type LyricsVerdict,
 } from '~/server/services/audio-scan/track-lyrics';
 import { dbWrite } from '~/server/db/client';
 import {
@@ -65,6 +66,44 @@ async function failSong({
   });
 }
 
+/**
+ * A clean song still waiting on its lyrics verdict. A scan that ended without one counts as a
+ * retry, as does a send that throws: the song goes to Error, whose capped lane re-sends only the
+ * lyrics (`submitSongScan`), so it stays hidden once the cap is spent. A scan never sent is sent.
+ */
+async function awaitLyrics({
+  imageId,
+  workflowId,
+  lyrics,
+}: {
+  imageId: number;
+  workflowId: string;
+  lyrics: Extract<LyricsVerdict, { state: 'pending' }>;
+}) {
+  if (lyrics.inFlight) return;
+  if (lyrics.failed) {
+    await failSong({
+      imageId,
+      workflowId,
+      steps: [],
+      failureType: 'lyrics-scan-failed',
+      reason: 'lyrics scan ended without a verdict',
+    });
+    return;
+  }
+  try {
+    await submitTrackLyricsScan({ imageId, content: lyrics.text });
+  } catch (error) {
+    await failSong({
+      imageId,
+      workflowId,
+      steps: [],
+      failureType: 'lyrics-submit-failed',
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+}
+
 type SongDecision = {
   imageId: number;
   workflowId: string;
@@ -102,7 +141,7 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
     return;
   }
   if (verdict.action === 'clean' && lyrics.state === 'pending') {
-    if (!lyrics.inFlight) await submitTrackLyricsScan({ imageId, content: lyrics.text });
+    await awaitLyrics({ imageId, workflowId, lyrics });
     return;
   }
 
