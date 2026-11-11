@@ -25,7 +25,7 @@ import {
   refreshBlobsService,
   type BlobRefreshResult,
 } from '~/server/services/orchestrator/refreshBlobs';
-import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
+import { getConsumerBlobId, shouldRefreshBlobUrl } from '~/shared/orchestrator/blob-url';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -611,16 +611,22 @@ export default MixedAuthEndpoint(async function handler(
       : undefined;
   if (blobId) {
     const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId, user?.id);
-    if (resigned.status === 'gone') return res.status(404).json({ error: 'Missing epoch' });
+    // A refusal is the answer only once the stored url is dead too; until then it is served.
+    if (resigned.status === 'gone' && shouldRefreshBlobUrl(downloadUrls[0]))
+      return res.status(404).json({ error: 'Missing epoch' });
     if (resigned.status === 'refreshed') {
       res.setHeader('Cache-Control', 'private, no-store');
       downloadUrls[0] = resigned.url;
     } else
       logToAxiom({
         type: 'warning',
-        name: 'mini-epoch-blob-resign',
+        name:
+          resigned.status === 'gone'
+            ? 'mini-epoch-resign-gone-unexpired'
+            : 'mini-epoch-blob-resign',
         message: 'served the stored epoch url',
         modelVersionId: modelVersion.id,
+        fileId: targetFile.id,
         blobId,
       }).catch(() => undefined);
   }
