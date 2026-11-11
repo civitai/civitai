@@ -45,7 +45,7 @@ import {
   STANDALONE_KIND_LABEL,
 } from '~/components/Apps/listingKindLabels';
 import { getRatingLabel } from '~/utils/rating-label';
-import { listingUsageStat } from '~/components/Apps/appListingCardView';
+import { getRecommendLabel, listingUsageStat } from '~/components/Apps/appListingCardView';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   offsiteContentRatingColor,
@@ -214,7 +214,7 @@ export function buildListingDetailRows(
 
   if (!opts.preview) {
     const { recommendPct } = detail.recommend;
-    if (recommendPct == null || detail.reviewCount === 0) {
+    if (detail.reviewCount === 0) {
       // Matches `getRecommendLabel`'s zero case. 🔴 The ladder is NOT called here: with
       // zero reviews `positiveRating` is 0, which the ladder scores `Mixed` — a verdict
       // about an app nobody has reviewed.
@@ -222,6 +222,17 @@ export function buildListingDetailRows(
       // in it, so a link would move the viewer to an empty heading. The link is an
       // affordance for content that exists.
       rows.push({ key: 'reviews', label: 'Reviews', value: 'No reviews yet' });
+    } else if (recommendPct == null) {
+      // Reviews exist, but the server withheld the percentage (too few for one to mean
+      // anything — `recommendRollup` owns the number). The counts, and no ladder verdict:
+      // one positive review must not read "Positive (1)". No colour, since there is no
+      // verdict; the link stays, because there are reviews to jump to.
+      rows.push({
+        key: 'reviews',
+        label: 'Reviews',
+        value: getRecommendLabel(detail.recommend, detail.reviewCount),
+        anchorId: LISTING_REVIEWS_ANCHOR_ID,
+      });
     } else {
       const { label, color } = getRatingLabel({
         positiveRating: recommendPct,
@@ -232,7 +243,7 @@ export function buildListingDetailRows(
         label: 'Reviews',
         value: `${label} (${detail.reviewCount.toLocaleString()})`,
         color: String(color),
-        // 🔴 Only in this branch — the zero-review row above deliberately omits it.
+        // 🔴 Only with reviews — the zero-review row above deliberately omits it.
         // No `preview` guard is needed HERE because the whole block is already inside
         // `if (!opts.preview)`. That matters: the reviews SECTION is not rendered in
         // the preview posture, so a link emitted there would point at an id that does

@@ -168,13 +168,15 @@ export type ListingCreatorChip = {
 
 /**
  * Recommend rollup, read from the `AppListingMetric` rollup (P5-populated).
- * `recommendPct` is `null` when there are no reviews yet (metric row absent OR
- * zero counts) so the UI can render "no reviews yet" instead of "0%".
+ * `recommendPct` is `null` when there are too few reviews for a percentage to mean
+ * anything: none at all (metric row absent OR zero counts), or fewer than the minimum
+ * `recommendRollup` applies. The counts are always present, so the UI branches on them:
+ * zero reviews → "No reviews yet", reviews but no pct → the counts, else the pct.
  */
 export type ListingRecommendRollup = {
   recommendedCount: number;
   notRecommendedCount: number;
-  /** up / (up+down) in [0,1], or null when there are no reviews yet. */
+  /** up / (up+down) in [0,1], or null below the minimum review count (incl. zero). */
   recommendPct: number | null;
 };
 

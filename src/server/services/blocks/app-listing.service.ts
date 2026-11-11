@@ -237,8 +237,21 @@ export function decodeListingCursor(cursor: string | undefined): {
 // ---------------------------------------------------------------------------
 
 /**
+ * The fewest counted reviews (moderator-excluded ones are already left out of the
+ * counters) at which a listing shows a recommend PERCENTAGE. Below it the counts still
+ * travel and `recommendPct` is `null`, so one review never reads "100% recommend (1)".
+ *
+ * 🔴 The only place this rule lives. Clients branch on `recommendPct == null` and
+ * `reviewCount === 0`, never on the number; `app-listing-recommend-threshold.test.ts`
+ * fails if any other file names this constant or compares a review count against a
+ * threshold of its own. The top-rated sort (`listingBayesianSortKey`) is independent.
+ */
+export const LISTING_RECOMMEND_PCT_MIN_REVIEWS = 5;
+
+/**
  * Compute the recommend rollup from an `AppListingMetric` row (or null when the
  * P5 rollup job hasn't populated one yet — every count reads 0, pct null).
+ * `recommendPct` is also null below {@link LISTING_RECOMMEND_PCT_MIN_REVIEWS}.
  */
 export function recommendRollup(
   metric: { thumbsUpCount: number; thumbsDownCount: number } | null | undefined
@@ -249,7 +262,7 @@ export function recommendRollup(
   return {
     recommendedCount: up,
     notRecommendedCount: down,
-    recommendPct: total > 0 ? up / total : null,
+    recommendPct: total >= LISTING_RECOMMEND_PCT_MIN_REVIEWS ? up / total : null,
   };
 }
 
