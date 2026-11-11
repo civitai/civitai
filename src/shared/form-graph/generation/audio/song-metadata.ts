@@ -1,4 +1,4 @@
-import type { AudioMetadata } from '~/server/schema/media.schema';
+import type { AudioMetadata, LyricLine } from '~/server/schema/media.schema';
 
 /** The refusal when a user without the music flag tries to store a song. */
 export const SONGS_UNAVAILABLE_MESSAGE = 'Songs are not available yet.';
@@ -8,7 +8,7 @@ export type SongDetails = Partial<Pick<AudioMetadata, 'title' | 'lyrics' | 'bpm'
 /** What a simple-mode song's drafting chat step decided; the form never holds these. */
 export type SongConcept = { lyrics?: unknown; bpm?: unknown; key?: unknown };
 
-export function parseLyricLines(lyrics: unknown): AudioMetadata['lyrics'] {
+export function parseLyricLines(lyrics: unknown): LyricLine[] | undefined {
   if (typeof lyrics !== 'string') return undefined;
   const lines = lyrics
     .split(/\r?\n/)
@@ -51,7 +51,8 @@ export function readSongConcept(
   return { lyrics, bpm, key };
 }
 
-const AUDIO_STEP_TYPES = ['aceStepAudio', 'miniMaxMusic3', 'yuE2'];
+/** Orchestrator step types that sing lyrics. */
+export const SONG_STEP_TYPES: readonly string[] = ['aceStepAudio', 'miniMaxMusic3', 'yuE2'];
 
 /**
  * The lyrics a generation workflow was asked to sing: the audio step's own input (custom mode, and
@@ -62,7 +63,7 @@ export function readWorkflowLyrics(
   steps: readonly { $type?: string; input?: unknown; output?: unknown }[] | null | undefined
 ): string | undefined {
   const fromAudioStep = steps
-    ?.filter((s) => s.$type && AUDIO_STEP_TYPES.includes(s.$type))
+    ?.filter((s) => s.$type && SONG_STEP_TYPES.includes(s.$type))
     .map((s) => (s.input as { lyrics?: unknown } | null | undefined)?.lyrics)
     .find((lyrics): lyrics is string => typeof lyrics === 'string' && !!lyrics.trim());
   if (fromAudioStep) return fromAudioStep;

@@ -34,12 +34,15 @@ export const videoMetadataSchema = sharedMetadata.extend({
   // hasSound: z.boolean().default(false), not accessible from HTMLVideoElement
 });
 
+/** One line of a song's lyrics: `t` is its offset in seconds, or null when not synced. */
+export type LyricLine = z.infer<typeof lyricLineSchema>;
+export const lyricLineSchema = z.object({ t: z.number().nullable(), text: z.string() });
+
 export type AudioMetadata = z.infer<typeof audioMetadataSchema>;
 export const audioMetadataSchema = sharedMetadata.partial({ height: true, width: true }).extend({
   duration: z.number(),
   title: z.string().optional(),
-  /** `t` is the offset in seconds, or null when the lyrics are not synced to the audio. */
-  lyrics: z.array(z.object({ t: z.number().nullable(), text: z.string() })).optional(),
+  lyrics: z.array(lyricLineSchema).optional(),
   bpm: z.number().optional(),
   key: z.string().optional(),
   coverImageId: z.number().optional(),
