@@ -5,14 +5,12 @@ import { rankTable } from '$lib/server/progression/rating';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
 import { rulesFacts } from '$lib/server/rules';
 import { fervorSum } from '$lib/server/leaderboard-view';
-import { judgesNeeded } from '$lib/server/yesno/items';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
   const days = new Map(ladderRows().map((row) => [row.rank, row.minDaysPlayed]));
-  const [status, judges, badges, player] = await Promise.all([
+  const [status, badges, player] = await Promise.all([
     getPlayerStatusOrNew(db, locals.user.id),
-    judgesNeeded(db),
     rankBadgeUrls(db),
     db
       .selectFrom('NewOrderPlayer')
@@ -23,11 +21,11 @@ export const load: PageServerLoad = async ({ locals }) => {
   return {
     status,
     // Level bands, bars and day requirements all come from config; `minDaysPlayed` is present only on a rank that has it.
-    ranks: rankTable().map((rank) => {
+    ranks: rankTable().map(({ voteWeight: _voteWeight, ...rank }) => {
       const minDaysPlayed = days.get(rank.rank);
       return minDaysPlayed ? { ...rank, minDaysPlayed } : rank;
     }),
-    facts: rulesFacts(judges),
+    facts: rulesFacts(),
     fervorExample: { correct: 100, accuracyPercent: 80, sum: fervorSum(100, 125) },
     badges: badges.large,
     swornIn: player?.startAt.toISOString() ?? null,

@@ -4,6 +4,9 @@ import { goldForRank, PROGRESSION, RATING } from './progression/config';
 import { rankTable } from './progression/rating';
 import { SMITES } from './smites/config';
 import { APPRENTICE } from './apprenticeship/config';
+import { CONVERSION } from './conversion/config';
+import { RANK_RULES } from './ranks';
+import { STREAK_BADGE_IDS } from './daily/streak-badges';
 
 const RATING_GUIDE_LEVELS = [
   NsfwLevel.PG,
@@ -24,7 +27,7 @@ export function ratingGuide() {
 }
 
 /** Numbers the rules page quotes, read from the game's config. */
-export function rulesFacts(yesNoJudges: number) {
+export function rulesFacts() {
   return {
     apprenticeship: {
       xpPerCorrect: APPRENTICE.xpPerCorrect,
@@ -45,20 +48,32 @@ export function rulesFacts(yesNoJudges: number) {
     gold: {
       perCorrectVote: goldForRank('Knight'),
       belowBarFactor: RATING.belowBarFactor,
+      dailyCaps: {
+        Knight: RANK_RULES.Knight.dailyGoldCap,
+        Templar: RANK_RULES.Templar.dailyGoldCap,
+        Paladin: RANK_RULES.Paladin.dailyGoldCap,
+      },
+    },
+    conversion: {
+      goldPerBuzz: CONVERSION.goldPerBuzz,
+      minBuzz: CONVERSION.minBuzz,
+      minGold: CONVERSION.goldPerBuzz * CONVERSION.minBuzz,
     },
     watch: {
       size: DAILY.watchSize,
       bonusGold: streakBonusGold(1),
       streakCap: DAILY.streakCap,
       maxShields: DAILY.maxShields,
+      badgeStreaks: Object.keys(STREAK_BADGE_IDS)
+        .map(Number)
+        .sort((a, b) => a - b),
     },
     fervor: {
       scale: PROGRESSION.fervorScale,
       windowDays: PROGRESSION.fervorWindowDays,
       accuracyFloorPercent: PROGRESSION.fervorAccuracyFloor * 100,
     },
-    yesNo: { judgesNeeded: yesNoJudges },
-    hearts: SMITES.max,
+    hearts: { max: SMITES.max, returnAfterDays: SMITES.expireAfterDays },
     ratingGuide: ratingGuide(),
   };
 }
