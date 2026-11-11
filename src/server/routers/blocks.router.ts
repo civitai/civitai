@@ -394,7 +394,10 @@ import {
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
-import { auditPassThroughPrompts } from '~/server/services/blocks/pass-through-prompt-audit';
+import {
+  auditPassThroughPrompts,
+  auditTrainingSamplePrompts,
+} from '~/server/services/blocks/pass-through-prompt-audit';
 import {
   cancelWorkflow,
   getWorkflow,
@@ -12654,7 +12657,10 @@ async function submitPassThroughStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
+  await auditPassThroughPrompts({
+    ...passThroughAuditContext(claims, userId, isGreen),
+    steps: [body],
+  });
   // A pass-through body carries no `accountType` (its `.strict()` wire shape has
   // no such field), so currency selection is Auto — the domain-allowed set,
   // drained blue-first.
@@ -13318,7 +13324,10 @@ async function submitMultiStepWorkflow(opts: {
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, prepared.steps));
+  await auditPassThroughPrompts({
+    ...passThroughAuditContext(claims, userId, isGreen),
+    steps: prepared.steps,
+  });
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
@@ -14772,7 +14781,10 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
         assertPassThroughStepTypeAllowed(body.$type, body.input);
         assertNotTrainingStepType(body.$type);
         const { isGreen } = resolveBlockMaturity(claims);
-        await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
+        await auditPassThroughPrompts({
+          ...passThroughAuditContext(claims, userId, isGreen),
+          steps: [body],
+        });
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -14996,14 +15008,8 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
   }
 }
 
-function passThroughAuditContext(
-  claims: BlockClaims,
-  userId: number,
-  isGreen: boolean,
-  steps: ReadonlyArray<{ $type: string; input: unknown }>
-) {
+function passThroughAuditContext(claims: BlockClaims, userId: number, isGreen: boolean) {
   return {
-    steps,
     userId,
     appBlockId: claims.appBlockId,
     isGreen,
@@ -15048,6 +15054,13 @@ async function submitTrainingWorkflow(opts: {
       bodyHash: async () => hashTrainingBody(body),
       generationType: resolveBlockGenerationType(body),
       logFields: {},
+      preflight: async ({ userId }) => {
+        const { isGreen } = resolveBlockMaturity(claims);
+        await auditTrainingSamplePrompts({
+          ...passThroughAuditContext(claims, userId, isGreen),
+          samplePrompts: body.samplePrompts,
+        });
+      },
       runIdentity: async (auth) => {
         const owner = { userId: auth.userId, appBlockId: claims.appBlockId };
         return {
