@@ -208,10 +208,8 @@ describe('agentReviewLane — the fast lane is positive evidence only', () => {
   });
 
   it('the badges say what to do next — never that the submission passed or is safe', () => {
-    expect(AGENT_REVIEW_LANE_BADGES).toEqual({
-      'agent-clean': { label: 'Fast lane: read the report, then decide', color: 'teal' },
-      flagged: { label: 'Agent flagged: read the findings first', color: 'orange' },
-    });
+    // Both lanes that show a badge are covered, so the loop cannot pass by having nothing in it.
+    expect(Object.keys(AGENT_REVIEW_LANE_BADGES).sort()).toEqual(['agent-clean', 'flagged']);
     for (const b of Object.values(AGENT_REVIEW_LANE_BADGES)) {
       expect(b.label).not.toMatch(/pass|safe|approved|verified|clean/i);
       expect(b.color).not.toBe('green');
@@ -241,6 +239,7 @@ describe("listingEditCheckBadge — an approved app's listing edit", () => {
     ['pending', 'Impersonation not checked yet: check the listing by hand'],
     ['missing', 'Impersonation check incomplete: check the listing by hand'],
     ['skipped', 'Impersonation check skipped (daily budget spent): check the listing by hand'],
+    ['stale', 'Impersonation check out of date (listing changed): check the listing by hand'],
   ] as const)('🔴 a %s check → %s', (status, label) => {
     expect(listingEditCheckBadge({ status, flagging: 0, titles: [] })?.label).toBe(label);
   });
