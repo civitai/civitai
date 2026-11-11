@@ -242,9 +242,9 @@ export function decodeListingCursor(cursor: string | undefined): {
  * travel and `recommendPct` is `null`, so one review never reads "100% recommend (1)".
  *
  * 🔴 The only place this rule lives. Clients branch on `recommendPct == null` and
- * `reviewCount === 0`, never on the number; `app-listing-recommend-threshold.test.ts`
- * fails if any other file names this constant or compares a review count against a
- * threshold of its own. The top-rated sort (`listingBayesianSortKey`) is independent.
+ * `reviewCount === 0`, never on the number, so a client must not compare a review count
+ * against a threshold of its own. Nothing enforces that mechanically. The top-rated sort
+ * (`listingBayesianSortKey`) is independent.
  */
 export const LISTING_RECOMMEND_PCT_MIN_REVIEWS = 5;
 
