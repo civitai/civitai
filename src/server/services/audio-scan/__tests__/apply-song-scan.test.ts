@@ -143,18 +143,21 @@ describe('a song with lyrics', () => {
   it.each([
     ['throws', new Error('orchestrator down')],
     ['is not sent because the text scan is off or skipped it', new Error('lyrics scan not sent')],
-  ])('counts a lyrics send that %s as a lyrics failure, not an audio error', async (_label, error) => {
-    withLyrics();
-    lyricsScan.submit.mockRejectedValueOnce(error);
+  ])(
+    'counts a lyrics send that %s as a lyrics failure, not an audio error',
+    async (_label, error) => {
+      withLyrics();
+      lyricsScan.submit.mockRejectedValueOnce(error);
 
-    await run(scanned(false));
+      await run(scanned(false));
 
-    expect(pipeline.markImageScanError).toHaveBeenCalledTimes(1);
-    expect(pipeline.markImageScanError).toHaveBeenCalledWith(
-      expect.objectContaining({ failureType: 'lyrics-submit-failed' })
-    );
-    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
-  });
+      expect(pipeline.markImageScanError).toHaveBeenCalledTimes(1);
+      expect(pipeline.markImageScanError).toHaveBeenCalledWith(
+        expect.objectContaining({ failureType: 'lyrics-submit-failed' })
+      );
+      expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+    }
+  );
 
   it('does not re-send a lyrics scan that is still in flight', async () => {
     withLyrics({ status: 'Pending' });

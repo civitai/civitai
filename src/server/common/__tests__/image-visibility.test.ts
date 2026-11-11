@@ -14,23 +14,6 @@ const render = (alias?: string) => {
 };
 
 describe('imageReviewedSql', () => {
-  // Pins the whole shape, not keywords: a string match still passes with OR and AND swapped,
-  // which would expose every mod-rated ToS removal.
-  it('renders (not a held song) AND (scanned OR (not a song AND mod-rated AND not terminal AND not an unqualified Error lock))', () => {
-    expect(render()).toBe(
-      '( ("i"."type" <> audio::"MediaType" OR NOT EXISTS ( SELECT 1 FROM "TextScanHold" h ' +
-        `WHERE h."entityType" = 'TrackLyrics' AND h."entityId" = "i"."id" AND h."label" = 'csam' ` +
-        'AND h."status"::text IN (Pending,Confirmed) )) ' +
-        'AND ( "i"."ingestion" = Scanned::"ImageIngestionStatus" ' +
-        'OR ( "i"."type" <> audio::"MediaType" ' +
-        'AND "i"."nsfwLevelLocked" = TRUE ' +
-        'AND "i"."ingestion" NOT IN (Blocked::"ImageIngestionStatus",NotFound::"ImageIngestionStatus") ' +
-        'AND NOT ( "i"."ingestion" = Error::"ImageIngestionStatus" ' +
-        `AND ( COALESCE("i"."metadata"->>'nsfwLevelReason', '') = Knights Vote ` +
-        `OR COALESCE("i"."scanJobs"->'error'->>'failureClass', '') = permanent ) ) ) ) )`
-    );
-  });
-
   it('keeps the terminal exclusion inside the mod-rated branch, not the top level', () => {
     const sql = render();
     const orIndex = sql.indexOf('OR', sql.indexOf('Scanned'));

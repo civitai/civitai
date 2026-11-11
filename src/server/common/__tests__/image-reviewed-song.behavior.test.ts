@@ -35,7 +35,8 @@ beforeAll(async () => {
       (9, 'audio', 'Scanned', false),
       (10, 'audio', 'Scanned', false),
       (11, 'audio', 'Scanned', false),
-      (12, 'image', 'Scanned', false);
+      (12, 'image', 'Scanned', false),
+      (13, 'audio', 'Scanned', false);
     CREATE TABLE "TextScanHold" (
       id serial PRIMARY KEY,
       "entityType" text NOT NULL,
@@ -48,6 +49,7 @@ beforeAll(async () => {
       ('TrackLyrics', 10, 'csam', 'Confirmed'),
       ('TrackLyrics', 11, 'csam', 'Dismissed'),
       ('TrackLyrics', 12, 'csam', 'Pending'),
+      ('TrackLyrics', 13, 'nsfw', 'Pending'),
       ('Post', 3, 'csam', 'Pending');
   `);
 });
@@ -79,10 +81,11 @@ describe('imageReviewedSql for a song', () => {
     expect(ids).not.toContain(10);
   });
 
-  it('shows a song whose lyrics hold was dismissed, and is unaffected by other entity holds', async () => {
+  it('shows a song whose lyrics hold was dismissed or is not for csam, and is unaffected by other entity holds', async () => {
     const ids = await reviewed();
 
     expect(ids).toContain(11);
+    expect(ids).toContain(13);
     expect(ids).toContain(3);
     expect(ids).toContain(12);
   });

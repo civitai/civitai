@@ -56,13 +56,15 @@ beforeEach(() => {
 });
 
 describe('a csam hold on a song', () => {
-  it("removes the song by unpublishing its post, and keeps the song's rows", async () => {
+  it('removes the song by unpublishing its post, and does not put it back in search', async () => {
     await decide('remove');
 
     expect(mocks.unpublishPost).toHaveBeenCalledWith(
       expect.objectContaining({ id: 300, userId: 1 })
     );
-    expect(w.image.delete).not.toHaveBeenCalled();
+    expect(mocks.queueSearch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: SearchIndexUpdateQueueAction.Update })
+    );
   });
 
   it('strikes the author against the song image, which is an entity type a strike can carry', async () => {
