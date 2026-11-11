@@ -50,7 +50,3 @@ export async function getCollectionBlockAudience({
     return 'none';
   return 'viewer';
 }
-
-/** A collection whose items may sit in an entry every viewer reads. */
-export const isCollectionReadShared = (read: string | null | undefined) =>
-  read === CollectionReadConfiguration.Public || read === CollectionReadConfiguration.Unlisted;

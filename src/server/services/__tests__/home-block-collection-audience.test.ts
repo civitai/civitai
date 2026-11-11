@@ -223,27 +223,37 @@ describe('cache headers', () => {
 });
 
 describe('deleting a block', () => {
+  // One stored row owned by BLOCK_OWNER; findFirst answers only a where that matches it.
+  const storedBlock = { id: BLOCK_ID, userId: BLOCK_OWNER };
+  const deleteAs = (user: { id: number; isModerator?: boolean }) =>
+    deleteUserHomeBlockHandler({ input: { id: BLOCK_ID }, ctx: { user } as never });
+
+  beforeEach(() => {
+    dbMock.dbRead.homeBlock.findFirst.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: number; userId?: number };
+    }) =>
+      where.id === storedBlock.id &&
+      (where.userId === undefined || where.userId === storedBlock.userId)
+        ? storedBlock
+        : null) as never);
+    dbMock.dbWrite.homeBlock.delete.mockResolvedValue({ id: BLOCK_ID } as never);
+  });
+
   it('lets the owner delete a block whose collection they may no longer read', async () => {
     seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Image' }, BLOCK_OWNER);
-    dbMock.dbRead.homeBlock.findFirst.mockResolvedValue({
-      id: BLOCK_ID,
-      userId: BLOCK_OWNER,
-    } as never);
-    dbMock.dbWrite.homeBlock.delete.mockResolvedValue({ id: BLOCK_ID } as never);
-    await expect(
-      deleteUserHomeBlockHandler({
-        input: { id: BLOCK_ID },
-        ctx: { user: { id: BLOCK_OWNER } } as never,
-      })
-    ).resolves.toMatchObject({ id: BLOCK_ID });
+    await expect(deleteAs({ id: BLOCK_OWNER })).resolves.toMatchObject({ id: BLOCK_ID });
+    expect(dbMock.dbWrite.homeBlock.delete).toHaveBeenCalledWith({ where: { id: BLOCK_ID } });
   });
 
   it("answers a stranger's delete as a missing block, not a refusal", async () => {
-    dbMock.dbRead.homeBlock.findFirst.mockResolvedValue(null as never);
-    await expect(
-      deleteUserHomeBlockHandler({ input: { id: BLOCK_ID }, ctx: { user: STRANGER } as never })
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await errorOf(deleteAs(STRANGER))).toMatchObject({ code: 'NOT_FOUND' });
     expect(dbMock.dbWrite.homeBlock.delete).not.toHaveBeenCalled();
+  });
+
+  it("lets a moderator delete another user's block", async () => {
+    await expect(deleteAs(MOD)).resolves.toMatchObject({ id: BLOCK_ID });
   });
 });
 

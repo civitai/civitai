@@ -53,10 +53,8 @@ import {
   getFeaturedCollectionsState,
 } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { takeFeaturedCollectionCycle } from '~/server/services/featured-collections-rotation';
-import {
-  getCollectionBlockAudience,
-  isCollectionReadShared,
-} from '~/server/services/home-block-collection-access';
+import { isCollectionReadShared } from '~/server/services/collection-item-access';
+import { getCollectionBlockAudience } from '~/server/services/home-block-collection-access';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { GET_ALL_IMAGES_PER_MODEL_SLIM } from '~/server/utils/model-getall-images';
 import {
