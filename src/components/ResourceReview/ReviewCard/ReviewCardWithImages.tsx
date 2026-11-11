@@ -5,12 +5,12 @@ import { ReviewCard } from '~/components/ResourceReview/ReviewCard/ReviewCard';
 import { useImageLoadSlot } from '~/components/ResourceReview/ReviewCard/imageLoadLimiter';
 import { useReviewImages } from '~/components/ResourceReview/useReviewImages';
 
-const IMAGES_PER_CARD = 4;
+// Matches the review dialog's request (its eight tiles plus one), so opening it reuses this query.
+const IMAGES_FETCHED = 9;
 
 /**
- * A `full` ReviewCard that loads its own images once it nears the viewport, so a page of twenty
- * cards doesn't fire twenty image queries up front. The images are the ones its `imageCount`
- * counts. At most a few cards load at a time, the rest wait their turn.
+ * A `full` ReviewCard that loads its own images once near the viewport, so a page of cards doesn't
+ * fire an image query per card up front.
  */
 export function ReviewCardWithImages({
   review,
@@ -21,7 +21,7 @@ export function ReviewCardWithImages({
   const wanted = inView && review.imageCount > 0;
   const { granted, release } = useImageLoadSlot(wanted);
   const { images, flatData, isSuccess, isError } = useReviewImages(
-    { reviewId: review.id, limit: IMAGES_PER_CARD },
+    { reviewId: review.id, limit: IMAGES_FETCHED },
     { enabled: wanted && granted }
   );
   const settled = isSuccess || isError;

@@ -47,12 +47,12 @@ describe('ReviewCardWithImages', () => {
   test('asks for the review’s own images, whether or not it has a post', async () => {
     await renderWithProviders(<ReviewCardWithImages review={makeReview({ postId: 55 })} />);
     await vi.waitFor(() => expect(lastCall()[1]).toEqual({ enabled: true }));
-    expect(lastCall()[0]).toEqual({ reviewId: 7, limit: 4 });
+    expect(lastCall()[0]).toEqual({ reviewId: 7, limit: 9 });
 
     useReviewImages.mockClear();
     await renderWithProviders(<ReviewCardWithImages review={makeReview({ postId: null })} />);
     await vi.waitFor(() => expect(lastCall()[1]).toEqual({ enabled: true }));
-    expect(lastCall()[0]).toEqual({ reviewId: 7, limit: 4 });
+    expect(lastCall()[0]).toEqual({ reviewId: 7, limit: 9 });
   });
 
   test('tells the card how many fetched images the preferences hid', async () => {
