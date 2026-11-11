@@ -45,6 +45,14 @@ import { excludedFromCoverage, hasFailedScan } from '~/server/utils/failed-scan'
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { Tracker } from '~/server/clickhouse/client';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
+import { clamFilesScanned } from '~/server/services/orchestrator/consumer-blob-scan';
+import {
+  submitTrainingDataScanSafe,
+  TRAINING_DATA_BLOB_SCAN,
+  HEAL_OP,
+  trainingDataObjectUnchanged,
+  uncountUnconfirmedResubmit,
+} from '~/server/services/training-data-scan.service';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -70,6 +78,9 @@ export type ScanOutcome = {
   headerData?: unknown;
   /** Full upstream payload (orchestrator step outputs or legacy ScanResult) for forensics. */
   rawScanResult?: unknown;
+  /** The stored url a Training Data blob scan copied. Only an outcome naming the file's current url
+   *  may write a Training Data file. */
+  trainingDataUrl?: string;
 };
 
 const exitCodeToScanResult = (exitCode: number | null | undefined): ScanResultCode => {
@@ -160,6 +171,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     select: {
       id: true,
       type: true,
+      url: true,
       modelVersionId: true,
       // SSHS_12 comes from the metadata-parse step, but the hash rebuild below deletes every row
       // for the file — so a hash-only rescan has to re-derive it from what is already stored.
@@ -190,14 +202,57 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     return;
   }
 
+  // A Training Data verdict counts only from its own blob scan of the file's current url: a late
+  // result from another scan, from before the file's zip was swapped, or for a file relabelled since
+  // (which needs the model-file scan instead) is dropped.
+  const isTrainingData = file.type === 'Training Data';
+  const isBlobScan = outcome.trainingDataUrl !== undefined;
+  if ((isTrainingData || isBlobScan) && (!isTrainingData || outcome.trainingDataUrl !== file.url)) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'apply-scan-outcome',
+        message: `Dropped a stale training data scan result for file ${fileId}`,
+        fileId,
+        modelVersionId: outcome.modelVersionId,
+      },
+      'webhooks'
+    ).catch();
+    return;
+  }
+
+  // A Danger on a dataset stands: a later clean result, perhaps from an older scan, never replaces it.
+  if (
+    isTrainingData &&
+    file.virusScanResult === ScanResultCode.Danger &&
+    outcome.virusScan &&
+    outcome.virusScan.result !== ScanResultCode.Danger
+  ) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'apply-scan-outcome',
+        message: `Kept the Danger verdict of training data file ${fileId}`,
+        fileId,
+      },
+      'webhooks'
+    ).catch();
+    return;
+  }
+
+  // A Training Data write names the url checked above, so a zip swapped in meanwhile is untouched.
+  const sameBytes = file.type === 'Training Data' ? { url: file.url, type: 'Training Data' } : {};
+
   // D4: failed workflow — bump scanRequestedAt to now so the file qualifies for
   // the fallback job's 24h-stale retry path, NOT the immediate-retry path. This
   // gives natural backoff (24h) for permanently-broken AIRs and avoids tight
   // loops if the orchestrator keeps rejecting the same file. Transient outages
   // are accepted as a 24h delay; we don't have a retry-counter column.
+  // Training Data is not on that path: the fallback job skips it, and the self-heal
+  // resubmits it once this stamp is an hour old.
   if (outcome.failed) {
     await dbWrite.modelFile.update({
-      where: { id: fileId },
+      where: { id: fileId, ...sameBytes },
       data: { scanRequestedAt: new Date() },
     });
     await bustAfterFailedScan(outcome.modelVersionId ?? file.modelVersionId, file);
@@ -242,7 +297,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   }
 
   const written = await dbWrite.modelFile.update({
-    where: { id: fileId },
+    where: { id: fileId, ...sameBytes },
     data,
     select: { pickleScanResult: true, virusScanResult: true },
   });
@@ -780,6 +835,10 @@ async function handleScanWorkflow(event: WorkflowEvent) {
   if (!fileId) throw new Error(`missing workflow metadata.fileId - ${event.workflowId}`);
 
   const modelVersionId = data.metadata?.modelVersionId as number | undefined;
+  const trainingDataUrl =
+    data.metadata?.scan === TRAINING_DATA_BLOB_SCAN
+      ? (data.metadata?.url as string | undefined)
+      : undefined;
 
   if (event.status !== 'succeeded') {
     logToAxiom(
@@ -793,7 +852,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       },
       'webhooks'
     ).catch();
-    await applyScanOutcome({ fileId, modelVersionId, failed: true });
+    await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
     return;
   }
 
@@ -810,15 +869,69 @@ async function handleScanWorkflow(event: WorkflowEvent) {
   const outcome: ScanOutcome = {
     fileId,
     modelVersionId,
+    trainingDataUrl,
     rawScanResult: { source: 'orchestrator', workflowId: event.workflowId, steps },
   };
 
   if (clamScan?.output) {
-    const result = deriveClamScanResult(clamScan.output);
+    const derived = deriveClamScanResult(clamScan.output);
+    // A zip's scan that read no files has not cleared it.
+    const readNothing =
+      !!trainingDataUrl &&
+      derived === ScanResultCode.Success &&
+      clamFilesScanned(clamScan.output) === 0;
+    const result = readNothing ? ScanResultCode.Error : derived;
     outcome.virusScan = {
       result,
-      message: result !== ScanResultCode.Success ? clamScan.output.output ?? null : null,
+      message: readNothing
+        ? 'The virus scan read no files'
+        : result !== ScanResultCode.Success
+        ? clamScan.output.output ?? null
+        : null,
     };
+
+    if (
+      trainingDataUrl &&
+      result === ScanResultCode.Success &&
+      !(await trainingDataObjectUnchanged({
+        fileId,
+        url: trainingDataUrl,
+        etag: data.metadata?.etag,
+        size: data.metadata?.size,
+      }))
+    ) {
+      // Not confirmed as the object that was scanned: it stays Pending, and the self-heal scans it again.
+      const { count: reset } = await dbWrite.modelFile.updateMany({
+        where: {
+          id: fileId,
+          url: trainingDataUrl,
+          type: 'Training Data',
+          // A Danger stands; an Error the self-heal gave up on stays given up.
+          virusScanResult: { notIn: [ScanResultCode.Danger, ScanResultCode.Error] },
+        },
+        data: {
+          virusScanResult: ScanResultCode.Pending,
+          virusScanMessage: null,
+          scanRequestedAt: new Date(),
+        },
+      });
+      if (reset && data.metadata?.op === HEAL_OP)
+        await uncountUnconfirmedResubmit({
+          fileId,
+          url: trainingDataUrl,
+          workflowId: event.workflowId,
+        });
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'training-data-scan-unconfirmed',
+          fileId,
+          workflowId: event.workflowId,
+        },
+        'webhooks'
+      ).catch();
+      return;
+    }
   }
 
   if (pickleScan?.output) {
@@ -895,6 +1008,8 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     select: {
       id: true,
       url: true,
+      type: true,
+      sizeKB: true,
       modelVersion: {
         select: {
           id: true,
@@ -914,6 +1029,16 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     // Soft-deleted version → orphaned file. Skip rather than crash.
     if (!file.modelVersion) {
       failed.push(file.id);
+      return;
+    }
+    if (file.type === 'Training Data') {
+      // A Training Studio placeholder has no zip until the archive job swaps one in, and scans it then.
+      if (!file.sizeKB) return;
+      const submitted = await submitTrainingDataScanSafe(
+        { fileId: file.id, modelVersionId: file.modelVersion.id, url: file.url },
+        'rescan-model'
+      );
+      (submitted ? sent : failed).push(file.id);
       return;
     }
     try {

@@ -46,6 +46,8 @@ const getWorkflow = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/orchestrator/workflows', () => ({ getWorkflow }));
 const ownerHeld = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/legal-hold.service', () => ({ ownerHeld, ownerHeldSql: () => '' }));
+const submitTrainingDataScanSafe = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('~/server/services/training-data-scan.service', () => ({ submitTrainingDataScanSafe }));
 vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelFileService>()),
   deleteFilesForModelVersionCache: async () => undefined,
@@ -220,6 +222,35 @@ describe('archiveStudioDataset', () => {
 
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'skipped' });
     expect(getWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('marks the new zip unscanned and sends it to the virus scan', async () => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder());
+    getWorkflow.mockResolvedValue(workflowWith([{ air: 'urn:air:other:blob@AAA.png' }]));
+    fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png'));
+    submitTrainingDataScanSafe.mockClear();
+
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'archived' });
+
+    const [{ data }] = swaps();
+    expect(data).toMatchObject({
+      virusScanResult: 'Pending',
+      virusScanMessage: null,
+      scannedAt: null,
+    });
+    expect(submitTrainingDataScanSafe).toHaveBeenCalledWith(
+      { fileId: 7, modelVersionId: 70, url: data.url },
+      'studio-dataset-archive'
+    );
+  });
+
+  it('sends nothing to the scan when the file was not swapped', async () => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({ ...placeholder(), sizeKB: 1234 });
+    submitTrainingDataScanSafe.mockClear();
+
+    await archiveStudioDataset(7);
+
+    expect(submitTrainingDataScanSafe).not.toHaveBeenCalled();
   });
 });
 
