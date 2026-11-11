@@ -1,28 +1,52 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as Detect from '~/server/services/creator-program-counterparty-review/detect';
 
-const { mockUpsertChat, mockCreateMessage } = vi.hoisted(() => ({
+const { mockUpsertChat, mockCreateMessage, mockAbuseReport } = vi.hoisted(() => ({
   mockUpsertChat: vi.fn(),
   mockCreateMessage: vi.fn(),
+  mockAbuseReport: vi.fn(),
 }));
 vi.mock('~/server/services/chat.service', () => ({
   upsertChat: mockUpsertChat,
   createMessage: mockCreateMessage,
 }));
 vi.mock('~/server/services/moderator-app.service', () => ({
-  moderatorApp: { abuseReport: vi.fn() },
+  moderatorApp: { abuseReport: mockAbuseReport },
+}));
+vi.mock('~/server/services/creator-program-counterparty-review/detect', async (importOriginal) => ({
+  ...(await importOriginal<typeof Detect>()),
+  defaultClickhouse: () => ({
+    // One creator over the minimum both ways with one account; no indirect paths.
+    $query: async (sql: string) =>
+      sql.includes('AS path')
+        ? []
+        : [{ userId: 11, counterpartyId: 22, received: 30_000, sent: 30_000 }],
+  }),
+  findProgramMembers: async () => [{ id: 11, username: 'creator' }],
+}));
+vi.mock('~/server/jobs/job', () => ({
+  createJob: (name: string, cron: string, fn: () => Promise<unknown>) => ({
+    name,
+    cron,
+    run: () => ({ result: fn(), cancel: () => Promise.resolve() }),
+    options: {},
+  }),
 }));
 
 import {
+  creatorProgramCounterpartyReview,
   DEFAULT_COUNTERPARTY_REVIEW_MIN,
   readMinimum,
-  sendWarning,
 } from '~/server/jobs/creator-program-counterparty-review';
-import { renderWarningMessage } from '~/server/services/creator-program-counterparty-review/report';
+
+const { COUNTERPARTY_REVIEW_WARNINGS } = REDIS_SYS_KEYS.CREATOR_PROGRAM;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers({ now: new Date('2026-12-01T10:00:00Z'), toFake: ['Date'] });
+  return () => vi.useRealTimers();
 });
 
 describe('readMinimum', () => {
@@ -48,32 +72,43 @@ describe('readMinimum', () => {
   });
 });
 
-describe('sendWarning', () => {
-  it('messages the member from the Civitai account in a 1:1 chat', async () => {
-    mockUpsertChat.mockResolvedValueOnce({ id: 77 });
+describe('creatorProgramCounterpartyReview', () => {
+  it('files a creator new to the review on the board and sends them no message', async () => {
+    redisMock.sysRedis.get.mockResolvedValue(null);
+    redisMock.sysRedis.hGet.mockResolvedValue(null);
 
-    expect(await sendWarning({ id: 11, username: 'creator' })).toEqual({ chatId: 77 });
+    await creatorProgramCounterpartyReview.run().result;
 
-    expect(mockUpsertChat).toHaveBeenCalledWith({
-      userIds: [-1, 11],
-      userId: -1,
-      isModerator: true,
-    });
-    expect(mockCreateMessage).toHaveBeenCalledWith({
-      chatId: 77,
-      userId: -1,
-      isModerator: true,
-      contentType: 'Markdown',
-      content: renderWarningMessage('creator'),
-    });
+    expect(mockAbuseReport).toHaveBeenCalledTimes(1);
+    expect(mockAbuseReport.mock.calls[0][0].findings).toEqual([
+      expect.objectContaining({ userId: 11, actioned: false }),
+    ]);
+    expect(mockUpsertChat).not.toHaveBeenCalled();
+    expect(mockCreateMessage).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      COUNTERPARTY_REVIEW_WARNINGS,
+      '11',
+      JSON.stringify({ filedAt: '2026-12-01T10:00:00.000Z', counterparties: { '22': 30_000 } })
+    );
   });
 
-  it('fails when the chat cannot be opened, so the review retries it', async () => {
-    mockUpsertChat.mockRejectedValueOnce(new Error('This user is not accepting chat requests'));
-
-    await expect(sendWarning({ id: 11, username: 'creator' })).rejects.toThrow(
-      'not accepting chat requests'
+  // Entries written while the review still messaged creators keep deduping after it stopped.
+  it('does not file again a creator recorded under the old shape with no new volume', async () => {
+    redisMock.sysRedis.get.mockResolvedValue(null);
+    redisMock.sysRedis.hGet.mockImplementation(async (key: string) =>
+      key === COUNTERPARTY_REVIEW_WARNINGS
+        ? JSON.stringify({
+            warnedAt: '2026-10-02T10:00:00.000Z',
+            chatId: 5,
+            counterparties: { '22': 30_000 },
+          })
+        : null
     );
+
+    await creatorProgramCounterpartyReview.run().result;
+
+    expect(mockAbuseReport.mock.calls[0][0].findings).toEqual([]);
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
     expect(mockCreateMessage).not.toHaveBeenCalled();
   });
 });
