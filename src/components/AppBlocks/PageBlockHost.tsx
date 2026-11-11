@@ -3963,10 +3963,11 @@ export function PageBlockHost({
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
   // `bytes` saves are limited separately, over a rolling window (processSaveBytes):
-  // most never await, so the in-flight count above would be released before the
-  // next message and bound nothing. A zip does await (its inflate check), but it is
-  // recorded in the window synchronously BEFORE that await, so a burst of zips is
-  // still bounded by the window. Same ref-not-state reasoning.
+  // a non-zip save's content check resolves at once, so the in-flight count above
+  // would be released before the next message and bound nothing. Only a ZIP save
+  // holds a slot while it is checked (saveZipVerifyInFlightRef, below), and it is
+  // recorded in the window synchronously BEFORE that await too. Same ref-not-state
+  // reasoning.
   const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   // Zip content checks in flight (SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT): a zip's verify DOES await
   // (it inflates up to 1 GiB declared), so unlike the rest of the bytes path it needs an in-flight
