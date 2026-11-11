@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { reviewQueueVisibleTargetSql } from '~/server/services/collection-review.sql';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
@@ -2047,7 +2048,7 @@ export const getCollectionItemsByCollectionId = async ({
 
   // Readers and managers see every item. A viewer who may only submit (the usual contest setup:
   // anyone may add, entries hidden) sees only their own. Anyone else gets a missing collection.
-  const readsAll = permission.read || permission.manage;
+  const readsAll = canReadCollectionItems(permission);
   const submitsOnly = !readsAll && (permission.write || permission.writeReview) && !!user?.id;
   if (requireRead && !readsAll && !submitsOnly) throw throwNotFoundError('Collection not found');
   const ownItemsCondition =
@@ -4147,7 +4148,7 @@ export async function getCollectionEntryCount({
     userId,
     isModerator,
   });
-  if (!permission.read && !permission.write && !permission.writeReview && !permission.manage)
+  if (!canReadCollectionItems(permission) && !permission.write && !permission.writeReview)
     throw throwNotFoundError('Collection not found');
 
   const [collection] = await dbRead.$queryRaw<{ total: number }[]>`

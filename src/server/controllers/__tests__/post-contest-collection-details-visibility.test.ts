@@ -158,6 +158,14 @@ describe('post.getContestCollectionDetails visibility', () => {
     }
   });
 
+  it('reads the collection as signed out, with no viewer, for a signed-out caller', async () => {
+    postIs({});
+    await detailsFor(ANON);
+    expect(m.getCollectionById).toHaveBeenLastCalledWith(
+      expect.objectContaining({ viewer: undefined })
+    );
+  });
+
   it('gives a moderator their moderator permissions', async () => {
     postIs({});
     expect((await detailsFor(MOD)).permissions).toMatchObject({ manage: true });

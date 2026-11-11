@@ -47,6 +47,7 @@ const JUDGE_A = 31;
 const JUDGE_B = 32;
 const STRANGER_ID = 7;
 const SUBMITTER_ID = 8;
+const IMAGE_OWNER_ID = 9;
 const SCORES = [
   { userId: JUDGE_A, score: 8 },
   { userId: JUDGE_B, score: 3 },
@@ -103,7 +104,7 @@ function mockQueries({
 }
 
 async function details(
-  viewer: { userId?: number; isModerator?: boolean },
+  viewer: { userId?: number; isModerator?: boolean; imageOwnerId?: number },
   read: 'Public' | 'Unlisted' | 'Private' = 'Public',
   write: 'Private' | 'Public' | 'Review' = 'Private'
 ) {
@@ -126,6 +127,16 @@ describe('contest entries in a collection the viewer may not read', () => {
     expect(await details({ userId: COLLECTION_OWNER_ID }, 'Private')).toHaveLength(1);
     expect(await details({ userId: SUBMITTER_ID }, 'Private')).toHaveLength(1);
     expect(await details({ userId: STRANGER_ID, isModerator: true }, 'Private')).toHaveLength(1);
+  });
+
+  it("lists a Private collection's entry to the image's owner when someone else submitted it", async () => {
+    expect(
+      await details({ userId: IMAGE_OWNER_ID, imageOwnerId: IMAGE_OWNER_ID }, 'Private')
+    ).toHaveLength(1);
+    // Control: owning the image is what counts, not being named as an owner of some other image.
+    expect(await details({ userId: STRANGER_ID, imageOwnerId: IMAGE_OWNER_ID }, 'Private')).toEqual(
+      []
+    );
   });
 
   it.each(['Public', 'Review'] as const)(
@@ -158,4 +169,28 @@ describe('judge scores on contest entries', () => {
     expect(await scoresFor({ userId: COLLECTION_OWNER_ID })).toEqual(SCORES);
     expect(await scoresFor({ userId: STRANGER_ID, isModerator: true })).toEqual(SCORES);
   });
+});
+
+describe('the per-viewer filter runs after the shared cache read', () => {
+  const itemReads = () =>
+    dbMock.dbRead.$queryRaw.mock.calls.filter(([strings]) =>
+      (Array.isArray(strings) ? strings.join('') : String(strings)).includes('"CollectionItem" ci')
+    ).length;
+
+  it.each([
+    ['a reader first, then a stranger', COLLECTION_OWNER_ID, STRANGER_ID, 1, 0],
+    ['a stranger first, then a reader', STRANGER_ID, COLLECTION_OWNER_ID, 0, 1],
+  ] as const)(
+    'answers each viewer by their own permission when %s read the same image',
+    async (_, first, second, firstCount, secondCount) => {
+      const imageId = nextImageId++;
+      mockQueries({ imageId, read: 'Private' });
+      const a = await getImageContestCollectionDetails({ id: imageId, userId: first });
+      const b = await getImageContestCollectionDetails({ id: imageId, userId: second });
+      // The second read is a cache hit: the entries were queried once.
+      expect(itemReads()).toBe(1);
+      expect(a).toHaveLength(firstCount);
+      expect(b).toHaveLength(secondCount);
+    }
+  );
 });

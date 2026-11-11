@@ -1234,19 +1234,19 @@ export const getImageContestCollectionDetailsHandler = async ({
     const userId = ctx.user?.id;
     const isModerator = ctx.user?.isModerator;
     // An image the viewer may not open gets the same answer as an id with no contest entries.
-    const visible = await assertImageVisibleToViewer({ id: input.id, userId, isModerator }).then(
-      () => true,
+    const image = await assertImageVisibleToViewer({ id: input.id, userId, isModerator }).catch(
       (error) => {
-        if (error instanceof TRPCError && error.code === 'NOT_FOUND') return false;
+        if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
         throw error;
       }
     );
-    if (!visible) return { collectionItems: [], post: null };
+    if (!image) return { collectionItems: [], post: null };
 
     const collectionItems = await getImageContestCollectionDetails({
       ...input,
       userId,
       isModerator,
+      imageOwnerId: image.userId,
     });
     const imageId = collectionItems?.[0]?.imageId;
     if (!imageId) return { collectionItems, post: null };
