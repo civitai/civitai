@@ -33,7 +33,9 @@ const MODEL = 1;
 const VERSION = 100;
 const freeCreator = { id: 7, isModerator: false, tier: 'free', meta: {} } as never;
 
-const createVersion = (usageControl: string) =>
+const moderator = { id: 9, isModerator: true, tier: 'free', meta: {} } as never;
+
+const createVersion = (usageControl: string, user = freeCreator) =>
   upsertModelVersionHandler({
     input: {
       modelId: MODEL,
@@ -43,8 +45,8 @@ const createVersion = (usageControl: string) =>
       licensingFee: null,
     },
     ctx: {
-      user: freeCreator,
-      features: getFeatureFlags({ user: freeCreator }),
+      user,
+      features: getFeatureFlags({ user }),
       track: { modelVersionEvent: vi.fn().mockResolvedValue(undefined) },
     },
   } as never);
@@ -72,4 +74,11 @@ describe('upsertModelVersionHandler — usage control for a creator with no memb
       expect(mockUpsertModelVersion).not.toHaveBeenCalled();
     }
   );
+
+  it('lets a moderator set InternalGeneration', async () => {
+    await createVersion('InternalGeneration', moderator);
+    expect(mockUpsertModelVersion).toHaveBeenCalledWith(
+      expect.objectContaining({ usageControl: 'InternalGeneration' })
+    );
+  });
 });

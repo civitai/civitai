@@ -41,9 +41,9 @@ export function resolveMembership(user: SessionUser | undefined, testCookie?: st
 // Monetization is open to every creator who meets the eligibility floor; membership decides only HOW MANY
 // new prices they may set in a month, via monthlyPricingAllowance.
 
-// Mirrors the main app's `generationOnlyModels` feature, whose availability is ['user']: any signed-in
-// creator may move a version off Download. Restated here because the flag registry lives in the main app
-// and this spoke writes the column directly — if that availability list changes, change this with it.
+// Restates the main app's `generationOnlyModels` registry default, ['user']: any signed-in creator may move
+// a version off Download. It does not read the flag, so an env override that switches it off in the main
+// app has no effect here; if the default availability changes, change this with it.
 export function canSetGenerationOnly(user: SessionUser | undefined): boolean {
   return !!user;
 }

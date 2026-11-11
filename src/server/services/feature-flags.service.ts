@@ -663,7 +663,8 @@ const featureFlags = createFeatureFlags({
   blocklists: ['granted'],
   toolSearch: ['public'],
   comicSearch: ['public'],
-  // Open to every signed-in creator; kept as a flag so an env override can still switch it off.
+  // Open to every signed-in creator; kept as a flag so an env override can switch it off in the main app
+  // (Creator Studio's canSetGenerationOnly restates the default and doesn't read it).
   generationOnlyModels: ['user'],
   appTour: ['public'],
   privateModels: ['public'],
