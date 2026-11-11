@@ -183,7 +183,7 @@ const ONE_HOUR = 60 * ONE_MINUTE;
 export const formatDuration = (seconds: number) => {
   if (seconds === 0) return '0:00';
 
-  // Round once, before splitting: rounding only the seconds part turned 59.6s into "00:60".
+  // Round before splitting; rounding only the remainder can yield 60 seconds.
   const total = Math.round(seconds);
   const hours = Math.floor(total / ONE_HOUR);
   const minutes = Math.floor((total % ONE_HOUR) / ONE_MINUTE);
