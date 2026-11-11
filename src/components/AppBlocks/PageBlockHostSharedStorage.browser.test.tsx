@@ -593,6 +593,18 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_zip_1', ok: true });
     });
+    // The slot was RELEASED when the first check finished: another zip is checked and saved.
+    const third = await zipBytes({ 'c.txt': 'third' });
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_zip_3', bytes: third, filename: 'three.zip' });
+    await vi.waitFor(() => {
+      const r = replies.received.find(
+        (m) =>
+          m.type === 'SAVE_IMAGE_RESULT' &&
+          (m.payload as { requestId?: string }).requestId === 'rq_zip_3'
+      );
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_zip_3', ok: true });
+    });
     // The busy zip was never content-checked. (Every bytes save goes through the check — a no-op
     // for the text one — so count the ZIP checks, by the bytes they were given.)
     const zipChecks = mocks.verifyBeforeDownload.mock.calls.filter(
@@ -601,6 +613,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     // By CONTENT: postMessage hands the host a structured-clone copy, not `first` itself.
     expect(zipChecks.map((c) => [...new Uint8Array(c[0] as ArrayBuffer)])).toEqual([
       [...new Uint8Array(first)],
+      [...new Uint8Array(third)],
     ]);
     replies.stop();
   });
@@ -608,13 +621,14 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
   test('SAVE_IMAGE bytes variant: a zip whose check finishes AFTER the host unmounts is never downloaded', async () => {
     let release: (() => void) | undefined;
     let seenSignal: AbortSignal | undefined;
-    mocks.verifyBeforeDownload.mockImplementationOnce(
-      (...args: unknown[]) =>
-        new Promise((resolve) => {
-          seenSignal = (args[2] as { signal?: AbortSignal } | undefined)?.signal;
-          release = () => resolve(mocks.actualVerifyBeforeDownload(args[0], args[1]));
-        })
-    );
+    let held: Promise<unknown> | undefined;
+    mocks.verifyBeforeDownload.mockImplementationOnce((...args: unknown[]) => {
+      held = new Promise((resolve) => {
+        seenSignal = (args[2] as { signal?: AbortSignal } | undefined)?.signal;
+        release = () => resolve(mocks.actualVerifyBeforeDownload(args[0], args[1]));
+      });
+      return held;
+    });
     const host = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const bytes = await zipBytes({ 'a.txt': 'x' });
@@ -624,7 +638,10 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     await host.unmount();
     expect(seenSignal?.aborted).toBe(true); // the check was told to stop
     release?.();
-    await new Promise((r) => setTimeout(r, 50));
+    // Wait on the check the handler is awaiting, then one tick for the handler's continuation
+    // (queued before this await, so it has run) — no sleep standing in for "long enough".
+    await held;
+    await Promise.resolve();
     expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
   });
 
@@ -652,6 +669,19 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       });
     });
     expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    // A REFUSED check releases the one-zip slot too: the next valid zip is checked and saved.
+    const next = await zipBytes({ 'a.txt': 'fine' });
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_zip_after_lie',
+      bytes: next,
+      filename: 'n.zip',
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_zip_after_lie', ok: true });
+    });
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
     replies.stop();
   });
 

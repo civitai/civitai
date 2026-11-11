@@ -2981,7 +2981,6 @@ export async function listPendingRequests(
     opts.includeAgentReview
       ? agentReviewSummariesForRequests(items.map((r) => r.id))
       : Promise.resolve(null),
-    // The caller's client: the same one that read the page.
     opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
   ]);
   // The impersonation check is STALE when the listing changed after it ran (a new app's draft

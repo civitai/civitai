@@ -94,9 +94,11 @@ export const SAVE_BYTES_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
  * fetches on the block's behalf in the unsandboxed top frame; without a cap a
  * hostile block could fire a burst of SAVE_IMAGEs and download-bomb the viewer's
  * tab (memory / bandwidth). The host gates on this and replies `busy` past it.
- * Covers the `url` / `imageId` variants only: a `bytes` save never awaits, so a
- * concurrency slot would be released before the next message arrived and bound
- * nothing — `bytes` has its own rolling-window limit ({@link admitSaveBytes}).
+ * Covers the `url` / `imageId` variants only. A non-zip `bytes` save's content
+ * check resolves at once, so a slot here would be released before the next
+ * message arrived and bound nothing — `bytes` has its own rolling-window limit
+ * ({@link admitSaveBytes}), and a ZIP save holds its own verify slot
+ * ({@link SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT}).
  */
 export const SAVE_IMAGE_MAX_CONCURRENT = 3;
 
@@ -468,7 +470,7 @@ export type SaveBytesClassification =
  * Classify block-supplied bytes by CONTENT, with the refusal reason. Order:
  *   1. PNG / WebP / JPEG magic bytes — so a PNG with a zip APPENDED is a PNG, saved as `.png`
  *      (an image viewer opens it as the image; its trailing bytes are not unpacked by anything
- *      that trusts the `.png` name). That is today's behaviour for any trailing data, unchanged.
+ *      that trusts the `.png` name).
  *   2. a buffer that STARTS like a zip ({@link looksLikeSaveZip}: a local header at byte 0, or an
  *      empty archive) is a zip candidate and must pass {@link validateSaveZip}; a candidate that
  *      fails is refused with the zip's reason and never falls through to text. A zip with a prefix
@@ -637,8 +639,7 @@ export async function verifySaveBytesContent(
 /**
  * The host's deadline for one zip's content check: under the SDK's 30 s `SAVE_IMAGE` request
  * timeout (a `'protocol'` request), with room for the postMessage round trip, so the block gets
- * this host's reply rather than its own timeout. Measured: an honest 256 MiB entry verifies in
- * about 2 s on Node, so the deadline only fires on a pathological archive or a starved tab.
+ * this host's reply rather than its own timeout.
  */
 export const SAVE_BYTES_VERIFY_DEADLINE_MS = 25_000;
 export const SAVE_BYTES_VERIFY_TIMEOUT_ERROR = 'zip verification timed out';
@@ -691,7 +692,8 @@ export async function verifySaveBytesBeforeDownload(
 /**
  * How many zip content checks one host runs at once. Each one inflates up to 1 GiB declared (twice:
  * see `verifySaveZipInflate`) on the viewer's main thread's event loop, so a second zip while one is
- * verifying replies `busy`. Non-zip `bytes` saves never await and are not counted.
+ * verifying replies `busy`. Only zip saves hold a slot: a non-zip `bytes` save's check resolves at
+ * once.
  */
 export const SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT = 1;
 

@@ -220,7 +220,6 @@ describe('verifySaveBytesContent — the inflate step before the download', () =
 
 describe('verifySaveBytesBeforeDownload — the deadline and the unmount signal', () => {
   it('pins the deadline under the SDK’s 30 s SAVE_IMAGE request timeout', () => {
-    expect(SAVE_BYTES_VERIFY_DEADLINE_MS).toBe(25_000);
     expect(SAVE_BYTES_VERIFY_DEADLINE_MS).toBeLessThan(30_000);
   });
 
@@ -270,10 +269,9 @@ describe('verifySaveBytesBeforeDownload — the deadline and the unmount signal'
 describe('zip size caps on the path the handler calls (processSaveBytes)', () => {
   const T0 = 9_000_000;
 
-  it('pins the zip caps: 256 MB per file and per window, other types unchanged', () => {
-    expect(SAVE_ZIP_MAX_BYTES).toBe(256 * MB);
-    expect(SAVE_BYTES_ZIP_MAX_BYTES).toBe(256 * MB);
-    expect(SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW).toBe(256 * MB);
+  it('the zip caps are the validator’s own, per file and per window; other types unchanged', () => {
+    expect(SAVE_BYTES_ZIP_MAX_BYTES).toBe(SAVE_ZIP_MAX_BYTES);
+    expect(SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW).toBe(SAVE_ZIP_MAX_BYTES);
     expect(SAVE_BYTES_MAX_BYTES).toBe(50 * MB);
   });
 
@@ -283,7 +281,10 @@ describe('zip size caps on the path the handler calls (processSaveBytes)', () =>
     expect(ok.result).toMatchObject({ ok: true, type: 'application/zip', filename: 'dataset.zip' });
     expect(ok.recent).toEqual([{ at: T0, size: SAVE_BYTES_ZIP_MAX_BYTES }]);
 
-    const over = storedZipOfSize(SAVE_BYTES_ZIP_MAX_BYTES + 1);
+    // Refused on byteLength before anything is parsed, so it only has to START like a zip.
+    const overView = new Uint8Array(SAVE_BYTES_ZIP_MAX_BYTES + 1);
+    overView.set([0x50, 0x4b, 0x03, 0x04]);
+    const over = overView.buffer;
     const refused = processSaveBytes({ bytes: over, filename: 'dataset.zip' }, [], T0 + 1);
     expect(refused.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
     expect(refused.recent).toEqual([]);

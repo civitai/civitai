@@ -1,4 +1,5 @@
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
+import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 
 /**
  * Whether the viewer may see other people's items in a collection: read or manage. Write alone does
@@ -10,3 +11,7 @@ import type { CollectionContributorPermissionFlags } from '~/server/services/col
 export const canReadCollectionItems = (
   permissions: Pick<CollectionContributorPermissionFlags, 'read' | 'manage'> | null | undefined
 ) => !!permissions && (permissions.read || permissions.manage);
+
+/** A collection whose items may sit in an entry every viewer reads. */
+export const isCollectionReadShared = (read: string | null | undefined) =>
+  read === CollectionReadConfiguration.Public || read === CollectionReadConfiguration.Unlisted;
