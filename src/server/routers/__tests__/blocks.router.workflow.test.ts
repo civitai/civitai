@@ -10996,7 +10996,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     // naming `$type: 'comfy'` here would otherwise get an unaudited ComfyUI graph
     // rendered and handed back. The platform's own comfy steps (built from
     // `kind: 'textToImage'`) do not pass this guard; see the native submit test.
-    it.each(['comfy', 'Comfy'])(
+    it.each(['comfy', 'Comfy', 'customComfy', 'CustomComfy'])(
       'refuses a raw `%s` step on submit AND estimate, before the orchestrator or any reservation',
       async (t) => {
         // `as never`: `ptBody` is a loosely typed fixture; the cast keeps these two
@@ -12097,7 +12097,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(stamped).toBe('step:imageBackgroundRemoval');
     });
 
-    it('NAMESPACES a $type that collides with a kind key — never bare `customComfy`', async () => {
+    it('NAMESPACES a $type that collides with a kind key — never bare `training`', async () => {
       // 🔴 THE REASON THE VALUE IS PREFIXED, asserted at the call site the money
       // flows through. `textToImage` is itself a live orchestrator `$type`
       // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
@@ -12108,12 +12108,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       ptQuoting(5, 5);
       await caller().submitWorkflow({
         blockToken: 'tok',
-        body: ptBody({ $type: 'customComfy' }),
+        body: ptBody({ $type: 'training' }),
       });
       await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
-      expect(stamped).toBe('step:customComfy');
-      expect(stamped).not.toBe('customComfy');
+      expect(stamped).toBe('step:training');
+      expect(stamped).not.toBe('training');
     });
 
     // The collision this namespacing was written for is now closed at the door instead:

@@ -150,6 +150,9 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
   // graph → `createComfyInput`) never reach this guard. Arbitrary graphs go
   // through `kind: 'customComfy'`.
   'comfy',
+  // The same raw graph under its other `$type`. `kind: 'customComfy'` builds this
+  // step itself, after its own graph checks, and never reaches this guard.
+  'customComfy',
 ]);
 
 /**

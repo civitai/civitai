@@ -569,6 +569,18 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
     }
   );
 
+  it.each(paths)('🔴 %s: a raw customComfy step is denied', async (_n, run) => {
+    const graph = { '1': { class_type: 'LoadImage', inputs: { image: 'x.png' } } };
+    const { snapshot } = await run(
+      body({ steps: [{ $type: 'customComfy', input: { workflow: graph, resources: [] } }] })
+    );
+    expect(snapshot.errorCode).toBe('workflow_step_denied');
+    expect(snapshot.error).toContain("workflow step 0: orchestrator step type 'customComfy'");
+    expect(h.getOrchestratorToken).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(0);
+  });
+
   it.each(paths)('%s: the denylist is case-folded, like the pass-through arm', async (_n, run) => {
     const { snapshot } = await run(body({ steps: [{ $type: 'MEDIAHASH', input: {} }] }));
     expect(snapshot.errorCode).toBe('workflow_step_denied');
