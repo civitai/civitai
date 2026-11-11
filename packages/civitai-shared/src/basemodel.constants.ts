@@ -1806,8 +1806,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.MiniMaxH3Image,
     defaults: {
-      // PENDING: the Draft model version does not exist yet. 0 matches no version.
-      model: { id: 0 },
+      model: { id: 3463368 },
       modelLocked: true,
     },
   },
