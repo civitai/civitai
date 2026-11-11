@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { WorkflowStepTemplate } from '@civitai/orchestration-client';
 import { submitWorkflow } from '@civitai/orchestration-client';
 import { isProd } from '~/env/other';
@@ -5,6 +6,7 @@ import { env } from '~/env/server';
 import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { blobAir, uploadConsumerBlob } from '~/server/services/orchestrator/consumer-blob-scan';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -172,32 +174,118 @@ export async function requeuePendingTrainingDataScans({
   const nextAfterId = files.length === limit ? files[files.length - 1].id : null;
   if (dryRun) return { dryRun, total, page: files.length, nextAfterId };
 
-  // Claimed up front, so a retried or overlapping request skips the rows this one will copy.
-  const claimed = new Set(
+  const { claimed, submitted, failed } = await claimAndSubmit(files, 'requeue', {
+    neverSubmitted: true,
+  });
+  return { dryRun, total, page: claimed.length, submitted, failed, nextAfterId };
+}
+
+type PendingZip = { id: number; url: string; modelVersionId: number };
+
+/**
+ * Claimed up front, so a retried or overlapping run skips the rows this one will copy. A row never
+ * submitted is claimed only with `neverSubmitted`. `onClaimed` may hold a row back from submission
+ * by returning false.
+ */
+async function claimAndSubmit(
+  files: PendingZip[],
+  op: string,
+  {
+    neverSubmitted,
+    onClaimed = async () => true,
+  }: { neverSubmitted: boolean; onClaimed?: (file: PendingZip) => Promise<boolean> }
+) {
+  const claimedIds = new Set(
     (
       await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "ModelFile" SET "scanRequestedAt" = now()
         WHERE id = ANY(${files.map((file) => file.id)}::int[])
-          AND ("scanRequestedAt" IS NULL
-            OR "scanRequestedAt" < now() - ${REQUEUE_IN_FLIGHT_MS / 1000} * interval '1 second')
+          AND ("scanRequestedAt" < now() - ${REQUEUE_IN_FLIGHT_MS / 1000} * interval '1 second'
+            OR (${neverSubmitted}::boolean AND "scanRequestedAt" IS NULL))
         RETURNING id`
     ).map(({ id }) => id)
   );
+  const claimed = files.filter((file) => claimedIds.has(file.id));
 
   let submitted = 0;
   const failed: number[] = [];
   await limitConcurrency(
-    files
-      .filter((file) => claimed.has(file.id))
-      .map((file) => async () => {
-        const ok = await submitTrainingDataScanSafe(
-          { fileId: file.id, modelVersionId: file.modelVersionId, url: file.url },
-          'requeue'
-        );
-        if (ok) submitted++;
-        else failed.push(file.id);
-      }),
+    claimed.map((file) => async () => {
+      if (!(await onClaimed(file))) return;
+      const ok = await submitTrainingDataScanSafe(
+        { fileId: file.id, modelVersionId: file.modelVersionId, url: file.url },
+        op
+      );
+      if (ok) submitted++;
+      else failed.push(file.id);
+    }),
     REQUEUE_CONCURRENCY
   );
-  return { dryRun, total, page: claimed.size, submitted, failed, nextAfterId };
+  return { claimed, submitted, failed };
+}
+
+const HEAL_PAGE = 25;
+/** Resubmits after the first submit before the zip is given up on. */
+const HEAL_MAX_RESUBMITS = 3;
+const HEAL_ATTEMPTS_TTL_SECONDS = 14 * 24 * 60 * 60;
+
+/** Per zip, not per file: a file that now holds another zip starts again. */
+const healAttemptsKey = (file: PendingZip) =>
+  `${REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_ATTEMPTS}:${file.id}:${createHash('sha1')
+    .update(file.url)
+    .digest('hex')
+    .slice(0, 16)}` as const;
+
+/**
+ * Resubmits Training Data zips that were submitted over an hour ago and still have no verdict,
+ * oldest first. A zip that was never submitted is left to the upload paths and the mod requeue.
+ * A zip still without a verdict after `HEAL_MAX_RESUBMITS` resubmits is marked Error.
+ */
+export async function healStalledTrainingDataScans() {
+  const files = await dbWrite.modelFile.findMany({
+    where: {
+      ...pendingTrainingDataWhere,
+      scanRequestedAt: { not: null, lt: new Date(Date.now() - REQUEUE_IN_FLIGHT_MS) },
+    },
+    select: { id: true, url: true, modelVersionId: true },
+    orderBy: { scanRequestedAt: 'asc' },
+    take: HEAL_PAGE,
+  });
+  if (!files.length) return { picked: 0, submitted: 0, failed: [], gaveUp: [] };
+
+  const gaveUp: number[] = [];
+  const { claimed, submitted, failed } = await claimAndSubmit(files, 'self-heal', {
+    neverSubmitted: false,
+    onClaimed: async (file) => {
+      let attempts: number;
+      try {
+        const key = healAttemptsKey(file);
+        attempts = await sysRedis.incrBy(key, 1);
+        await sysRedis.expire(key, HEAL_ATTEMPTS_TTL_SECONDS);
+      } catch {
+        // Without a count the cap can't be kept; the next run tries again.
+        return false;
+      }
+      if (attempts <= HEAL_MAX_RESUBMITS) return true;
+
+      const reason = `no verdict after ${HEAL_MAX_RESUBMITS} resubmits`;
+      await dbWrite.modelFile.updateMany({
+        where: { id: file.id, url: file.url, virusScanResult: ScanResultCode.Pending },
+        data: {
+          virusScanResult: ScanResultCode.Error,
+          virusScanMessage: 'The virus scan could not be completed.',
+          scannedAt: new Date(),
+        },
+      });
+      gaveUp.push(file.id);
+      logToAxiom({
+        type: 'error',
+        name: 'training-data-scan-gave-up',
+        fileId: file.id,
+        reason,
+      }).catch(() => undefined);
+      return false;
+    },
+  });
+  return { picked: claimed.length, submitted, failed, gaveUp };
 }

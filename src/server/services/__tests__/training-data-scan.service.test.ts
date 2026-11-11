@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const h = vi.hoisted(() => ({
   submitWorkflow: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorCl
 vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl: h.resolveDownloadUrl }));
 
 import {
+  healStalledTrainingDataScans,
   requeuePendingTrainingDataScans,
   submitTrainingDataScan,
   submitTrainingDataScanSafe,
@@ -203,13 +205,14 @@ describe('requeuePendingTrainingDataScans', () => {
     expect(h.submitWorkflow).toHaveBeenCalledTimes(1);
     expect(h.submitWorkflow.mock.calls[0][0].body.metadata.fileId).toBe(2);
     expect(result).toMatchObject({ page: 1, submitted: 1 });
-    const [sql, ids, staleSeconds] = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    const [sql, ids, staleSeconds, neverSubmitted] = dbMock.dbWrite.$queryRaw.mock.calls[0];
     expect(ids).toEqual([1, 2]);
-    // A claim older than the in-flight window is taken again.
+    // A claim older than the in-flight window is taken again, and so is a row never submitted.
     expect(sql.join('?')).toMatch(
-      /"scanRequestedAt" IS NULL\s+OR "scanRequestedAt" < now\(\) - \? \* interval '1 second'/
+      /"scanRequestedAt" < now\(\) - \? \* interval '1 second'\s+OR \(\?::boolean AND "scanRequestedAt" IS NULL\)/
     );
     expect(staleSeconds).toBe(60 * 60);
+    expect(neverSubmitted).toBe(true);
   });
 
   it('claims the page before it submits any of it', async () => {
@@ -220,5 +223,69 @@ describe('requeuePendingTrainingDataScans', () => {
     expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
       h.submitWorkflow.mock.invocationCallOrder[0]
     );
+  });
+});
+
+describe('healStalledTrainingDataScans', () => {
+  const stalled = { id: 3, url: 'https://bucket/3.zip', modelVersionId: 30 };
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelFile.findMany.mockReset().mockResolvedValue([stalled]);
+    dbMock.dbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.$queryRaw.mockReset().mockResolvedValue([{ id: 3 }]);
+    redisMock.sysRedis.incrBy.mockReset().mockResolvedValue(1);
+  });
+
+  it('never picks a zip that was never submitted', async () => {
+    await healStalledTrainingDataScans();
+
+    const { where } = dbMock.dbWrite.modelFile.findMany.mock.calls[0][0];
+    expect(where).toMatchObject({ type: 'Training Data', virusScanResult: 'Pending' });
+    expect(where.scanRequestedAt.not).toBeNull();
+    expect(Date.now() - where.scanRequestedAt.lt.getTime()).toBeGreaterThanOrEqual(60 * 60_000);
+    // Nor claims one whose submission was reset between the read and the claim.
+    const [, , , neverSubmitted] = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    expect(neverSubmitted).toBe(false);
+  });
+
+  it('resubmits a stalled zip, counting the attempt per zip', async () => {
+    redisMock.sysRedis.incrBy.mockResolvedValue(3);
+
+    const result = await healStalledTrainingDataScans();
+
+    expect(h.submitWorkflow).toHaveBeenCalledTimes(1);
+    expect(redisMock.sysRedis.incrBy.mock.calls[0][0]).toMatch(
+      /^system:training-data-scan:heal-attempts:3:[0-9a-f]{16}$/
+    );
+    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ picked: 1, submitted: 1, gaveUp: [] });
+  });
+
+  it('marks the zip Error, and submits nothing, on the 4th failure', async () => {
+    redisMock.sysRedis.incrBy.mockResolvedValue(4);
+
+    const result = await healStalledTrainingDataScans();
+
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenCalledWith({
+      where: { id: 3, url: stalled.url, virusScanResult: 'Pending' },
+      data: expect.objectContaining({ virusScanResult: 'Error' }),
+    });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith({
+      type: 'error',
+      name: 'training-data-scan-gave-up',
+      fileId: 3,
+      reason: 'no verdict after 3 resubmits',
+    });
+    expect(result).toMatchObject({ gaveUp: [3], submitted: 0 });
+  });
+
+  it('neither resubmits nor gives up when the attempt count cannot be read', async () => {
+    redisMock.sysRedis.incrBy.mockRejectedValue(new Error('redis down'));
+
+    await healStalledTrainingDataScans();
+
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
   });
 });
