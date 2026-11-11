@@ -22,8 +22,8 @@ import {
  * `testing-login` credentials provider and the `/testing/*` route.
  *
  * Instead we mint the LEGACY next-auth session cookie directly with the preview's
- * shared NEXTAUTH_SECRET — the same JWE the app's `decodeLegacySessionCookie`
- * reads, so parity is guaranteed.
+ * shared NEXTAUTH_SECRET — the same JWE the app's `decodePreviewSessionCookie`
+ * reads on a preview (IS_PREVIEW=true only), so parity is guaranteed.
  *
  * IMPORTANT (post first-party-OAuth cutover): `getSessionUserById` now resolves a
  * user from the shared session cache then the centralized hub (auth.civitai.com),
@@ -48,7 +48,7 @@ const PREVIEW_URL = process.env.PREVIEW_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https preview => __Secure- prefix
 
 // Mint the LEGACY next-auth v4 session cookie (a `dir`/`A256GCM` JWE, HKDF-derived key) WITHOUT next-auth, which
-// is now removed. The app still ACCEPTS it via @civitai/auth's decodeLegacySessionCookie during the cutover, so
+// is now removed. A preview ACCEPTS it via src/server/auth/preview-session-cookie.ts (production does not), so
 // this mirrors that decoder's key derivation exactly.
 const ENC_INFO = 'NextAuth.js Generated Encryption Key';
 const derivedKey = (secret: string) => new Uint8Array(hkdfSync('sha256', secret, '', ENC_INFO, 32));

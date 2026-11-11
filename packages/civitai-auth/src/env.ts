@@ -3,8 +3,7 @@
 // bare import during `next build` / scripts / tests never throws).
 //
 // Two roles read different slices:
-//  - SPOKE (verify):  AUTH_JWKS_URI, AUTH_JWT_ISSUER, and during the
-//                     HS256->RS256 migration window NEXTAUTH_SECRET (legacy decode).
+//  - SPOKE (verify):  AUTH_JWKS_URI, AUTH_JWT_ISSUER.
 //  - HUB   (sign):    AUTH_JWT_PRIVATE_KEY (PKCS8 PEM), AUTH_JWT_PUBLIC_KEY (SPKI PEM,
 //                     served at the JWKS endpoint), AUTH_JWT_KID, AUTH_SESSION_MAX_AGE.
 import * as z from 'zod';

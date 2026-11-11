@@ -144,10 +144,8 @@ describe('createAuthVerifier', () => {
     expect(await verifier.verifyToken(token)).toBeNull();
   });
 
-  it('returns null (not throw) on a corrupt legacy token in the JWE branch', async () => {
-    // No JWKS configured + legacySecret set → a non-RS256/garbage token falls to the legacy
-    // next-auth decode, which throws on corrupt input. verifyToken must swallow that → null.
-    const verifier = createAuthVerifier({ issuer, audience, legacySecret: 'legacy-secret' });
+  it('returns null (not throw) on a token that is not ES256', async () => {
+    const verifier = createAuthVerifier({ issuer, audience });
     await expect(verifier.verifyToken('not.a.jwt')).resolves.toBeNull();
   });
 

@@ -1,11 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { hkdfSync } from 'node:crypto';
 import { EncryptJWT } from 'jose';
-import { decodeLegacySessionCookie } from '../legacy-cookie';
+import { decodePreviewSessionCookie } from '../preview-session-cookie';
 
-// Mints a next-auth-v4-shaped JWE (dir / A256GCM, HKDF key) using the SAME derivation the decoder uses, so this
-// validates the decoder is self-consistent with the format. (Validating against a REAL next-auth cookie needs a
-// captured fixture + secret — out of scope for a unit test; the HKDF params mirror next-auth v4's source.)
+// Mints the cookie the preview pipeline sets (next-auth v4 shape: dir / A256GCM, HKDF key from the secret).
 const SECRET = 'test-secret-0123456789';
 const ENC_INFO = 'NextAuth.js Generated Encryption Key';
 const key = () => new Uint8Array(hkdfSync('sha256', SECRET, '', ENC_INFO, 32));
@@ -18,10 +16,29 @@ async function mintLegacy(payload: Record<string, unknown>, expSecondsFromNow = 
     .encrypt(key());
 }
 
-describe('decodeLegacySessionCookie', () => {
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe('decodePreviewSessionCookie outside a preview', () => {
+  it.each([[undefined], ['false'], ['TRUE'], ['1'], ['']])(
+    'returns null when IS_PREVIEW is %s',
+    async (value) => {
+      vi.stubEnv('IS_PREVIEW', value);
+      const token = await mintLegacy({ sub: '7', user: { id: 7 } });
+      expect(await decodePreviewSessionCookie(token, SECRET)).toBeNull();
+    }
+  );
+});
+
+describe('decodePreviewSessionCookie on a preview', () => {
+  beforeEach(() => {
+    vi.stubEnv('IS_PREVIEW', 'true');
+  });
+
   it('round-trips a next-auth-style JWE (dir/A256GCM, hkdf-derived key)', async () => {
     const token = await mintLegacy({ sub: '7', user: { id: 7, username: 'bob' } });
-    expect(await decodeLegacySessionCookie(token, SECRET)).toMatchObject({
+    expect(await decodePreviewSessionCookie(token, SECRET)).toMatchObject({
       sub: '7',
       user: { id: 7, username: 'bob' },
     });
@@ -29,18 +46,18 @@ describe('decodeLegacySessionCookie', () => {
 
   it('returns null on a wrong secret', async () => {
     const token = await mintLegacy({ sub: '7' });
-    expect(await decodeLegacySessionCookie(token, 'a-different-secret-9876')).toBeNull();
+    expect(await decodePreviewSessionCookie(token, 'a-different-secret-9876')).toBeNull();
   });
 
   it('returns null on a garbage token', async () => {
-    expect(await decodeLegacySessionCookie('not.a.jwe', SECRET)).toBeNull();
+    expect(await decodePreviewSessionCookie('not.a.jwe', SECRET)).toBeNull();
   });
 
   it('returns null for a token without an expiry', async () => {
     const token = await new EncryptJWT({ sub: '7' })
       .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
       .encrypt(key());
-    expect(await decodeLegacySessionCookie(token, SECRET)).toBeNull();
+    expect(await decodePreviewSessionCookie(token, SECRET)).toBeNull();
   });
 
   it.each([
@@ -48,11 +65,11 @@ describe('decodeLegacySessionCookie', () => {
     ['impExp', Date.now() + 60_000],
   ])('returns null for a token carrying %s', async (claim, value) => {
     const token = await mintLegacy({ sub: '7', [claim]: value });
-    expect(await decodeLegacySessionCookie(token, SECRET)).toBeNull();
+    expect(await decodePreviewSessionCookie(token, SECRET)).toBeNull();
   });
 
   it('returns null on an expired token', async () => {
     const token = await mintLegacy({ sub: '7' }, -3600);
-    expect(await decodeLegacySessionCookie(token, SECRET)).toBeNull();
+    expect(await decodePreviewSessionCookie(token, SECRET)).toBeNull();
   });
 });

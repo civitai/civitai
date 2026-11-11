@@ -55,7 +55,6 @@
     "src/server/__tests__/sticker-topup.test.ts",
     "src/server/__tests__/user-owned-sticker-cache.test.ts",
     "src/server/auth/__tests__/ban-session-revocation.test.ts",
-    "src/server/auth/__tests__/session-client.test.ts",
     "src/server/auth/__tests__/session-invalidation.test.ts",
     "src/server/auth/__tests__/session-verifier.test.ts",
     "src/server/controllers/__tests__/collection.controller.roster.test.ts",
