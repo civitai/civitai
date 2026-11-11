@@ -43,6 +43,8 @@ export function ArticleBanner({
               <EdgeMedia
                 src={image.url}
                 className="size-full object-cover"
+                // EdgeImage caps an image at its requested width; the banner must span any screen.
+                style={{ maxWidth: 'none' }}
                 name={image.name}
                 alt={title}
                 type={image.type}
