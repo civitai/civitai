@@ -167,14 +167,17 @@ function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
   return rest;
 }
 
-type ImageHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+type BountyHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
 
-/** A bounty's level is its images' combined level, so it does not cap each one. */
-function shapeImageHit(hit: ImageHit, browsingLevelCap: number | undefined): ImageHit {
+/**
+ * A bounty's own level is its images' combined level, which passes the cap when any one image
+ * does, so each image is capped here.
+ */
+function shapeBountyHit(hit: BountyHit, browsingLevelCap: number | undefined): BountyHit {
   if (browsingLevelCap === undefined) return hit;
-  const shaped: ImageHit = { ...hit };
+  const shaped: BountyHit = { ...hit };
   if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
-  if (shaped._formatted) shaped._formatted = shapeImageHit(shaped._formatted, browsingLevelCap);
+  if (shaped._formatted) shaped._formatted = shapeBountyHit(shaped._formatted, browsingLevelCap);
   return shaped;
 }
 
@@ -185,7 +188,7 @@ function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSear
   if (indexUid === COMICS_SEARCH_INDEX)
     return hits.map((hit: ComicHit) => shapeComicHit(hit, viewer.browsingLevelCap));
   if (indexUid === BOUNTIES_SEARCH_INDEX)
-    return hits.map((hit: ImageHit) => shapeImageHit(hit, viewer.browsingLevelCap));
+    return hits.map((hit: BountyHit) => shapeBountyHit(hit, viewer.browsingLevelCap));
   return hits;
 }
 

@@ -195,10 +195,12 @@ describe('bounty images', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('a capped viewer gets no bounty image above the cap or unrated, highlight included', async () => {
-    respond({ hits: [{ id: 1, images, _formatted: { images } }] });
+    // Meilisearch's highlight copy carries numbers as strings.
+    const formatted = images.map((i) => ({ ...i, nsfwLevel: String(i.nsfwLevel) }));
+    respond({ hits: [{ id: 1, images, _formatted: { images: formatted } }] });
     const hit = firstHit((await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, capped)).body);
     expect(hit.images).toEqual([pg]);
-    expect(hit._formatted.images).toEqual([pg]);
+    expect(hit._formatted.images).toEqual([{ id: 11, nsfwLevel: String(NsfwLevel.PG) }]);
   });
 
   it('a bounty with no image inside the cap is sent none', async () => {
@@ -209,6 +211,16 @@ describe('bounty images', () => {
 
   it('a multi-search shapes bounty hits too', async () => {
     respond({ results: [{ indexUid: BOUNTIES_SEARCH_INDEX, hits: [{ id: 1, images }] }] });
+    const { body } = await siteMultiSearch(
+      { queries: [{ indexUid: BOUNTIES_SEARCH_INDEX, q: 'x' }] },
+      capped
+    );
+    const [result] = (body as { results: { hits: Record<string, any>[] }[] }).results;
+    expect(result.hits[0].images).toEqual([pg]);
+  });
+
+  it('a multi-search result that does not name its index is shaped by its query', async () => {
+    respond({ results: [{ hits: [{ id: 1, images }] }] });
     const { body } = await siteMultiSearch(
       { queries: [{ indexUid: BOUNTIES_SEARCH_INDEX, q: 'x' }] },
       capped
