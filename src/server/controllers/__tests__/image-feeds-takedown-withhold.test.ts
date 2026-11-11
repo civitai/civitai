@@ -235,5 +235,9 @@ describe('image.getImagesForModelVersion on a capped site', () => {
     const req = { headers: { 'x-civitai-verified-bot': 'googlebot' } };
     await run({ features: { canViewNsfw: true }, req, cache });
     expect(cache).toEqual({ edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 });
+
+    const human = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
+    await run({ features: { canViewNsfw: true }, req: { headers: {} }, cache: human });
+    expect(human).toEqual({ edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 });
   });
 });

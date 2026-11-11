@@ -388,7 +388,7 @@ export const getImagesForModelVersionHandler = async ({
 }) => {
   if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
   const byVersion = await getImagesForModelVersionCache([input.id]);
-  // Any version id can be asked for, so each image is held to the request's cap like a single one.
+  // Any version id can be asked for, so the cap applies per image.
   keepCrawlerAnswerOutOfEdgeCache(ctx);
   return Object.fromEntries(
     Object.entries(byVersion).map(([versionId, entry]) => [
