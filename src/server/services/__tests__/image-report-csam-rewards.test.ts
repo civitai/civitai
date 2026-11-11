@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  FEEDBACK_CAPTURE_OWNER_ID,
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+} from '@civitai/shared/feedback-capture';
 import type * as ReportService from '~/server/services/report.service';
 
 /** Flagging images as CSAM actions their reports without rewarding an owner. Ids are invented. */
@@ -26,7 +30,8 @@ const OWNER = 20;
 const OTHER_OWNER = 21;
 
 beforeEach(() => {
-  bulkSetReportStatus.mockClear();
+  vi.clearAllMocks();
+  dbMock.dbWrite.image.count.mockResolvedValue(0 as never);
   dbMock.dbRead.image.findMany.mockResolvedValue([
     { userId: OWNER, reports: [{ reportId: 7 }, { reportId: 8 }] },
     { userId: OTHER_OWNER, reports: [{ reportId: 9 }] },
@@ -47,5 +52,18 @@ describe('reportCsamImages', () => {
     expect(rewardRemovedReporters).toBe(false);
     for (const reportId of [7, 9])
       expect(new Set(noRewardFor(reportId))).toEqual(new Set([OWNER, OTHER_OWNER]));
+  });
+
+  it('refuses a feedback page capture and changes nothing', async () => {
+    dbMock.dbWrite.image.count.mockResolvedValue(1 as never);
+
+    await expect(
+      reportCsamImages({ imageIds: [500, 501], user: { id: 2, isModerator: true } as never })
+    ).rejects.toThrow(FEEDBACK_CAPTURE_OWNER_REFUSAL);
+    expect(dbMock.dbWrite.image.count).toHaveBeenCalledWith({
+      where: { id: { in: [500, 501] }, userId: FEEDBACK_CAPTURE_OWNER_ID },
+    });
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    expect(bulkSetReportStatus).not.toHaveBeenCalled();
   });
 });

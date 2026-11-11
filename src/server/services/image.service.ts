@@ -297,6 +297,7 @@ import {
 import {
   FEEDBACK_CAPTURE_METADATA_KEY,
   FEEDBACK_CAPTURE_OWNER_ID,
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
   type FeedbackCaptureMetadata,
 } from '@civitai/shared/feedback-capture';
@@ -8291,6 +8292,12 @@ export async function reportCsamImages({
   ip?: string;
 }) {
   if (!user.isModerator) throw throwAuthorizationError();
+  // A capture is reported from the subject picker, which names the account it concerns; this path
+  // would report it against no one.
+  const captures = await dbWrite.image.count({
+    where: { id: { in: imageIds }, userId: FEEDBACK_CAPTURE_OWNER_ID },
+  });
+  if (captures) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   // An appeal that starts after the flag is refused by createEntityAppeal; one already Pending stays
   // Pending, and no approval of it restores the image while the flag is on.
   await dbWrite.$transaction(async (tx) => {

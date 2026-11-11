@@ -268,12 +268,15 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           >
             Rescan Image
           </Menu.Item>
-          <Menu.Item
-            leftSection={<IconAlertTriangle size={14} stroke={1.5} />}
-            onClick={handleReportCsam}
-          >
-            Report CSAM
-          </Menu.Item>
+          {/* Without the report page, a capture has no way to name the account it concerns. */}
+          {(features.csamReports || !isCapture) && (
+            <Menu.Item
+              leftSection={<IconAlertTriangle size={14} stroke={1.5} />}
+              onClick={handleReportCsam}
+            >
+              Report CSAM
+            </Menu.Item>
+          )}
           {postId && <ToggleSearchableMenuItem entityType="Post" entityId={postId} />}
         </>
       )}
