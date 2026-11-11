@@ -1,9 +1,7 @@
-import { env } from '~/env/client';
-
 /**
  * Site search's direct path, used while the `siteSearchProxy` flag is off (see
  * `site-search-client`). The key the browser sends to Meilisearch: a short-lived per-viewer token
- * from `/api/search/token`, or the shared public key when the server has no signing key configured.
+ * from `/api/search/token`. With no token there is no key, and site search goes through the proxy.
  *
  * Held in memory only. Every change of signed-in identity (sign-in, sign-out, account switch,
  * impersonation) is a full page load, which starts this module empty.
@@ -18,19 +16,18 @@ let cached: CachedKey | undefined;
 let pending: Promise<string | undefined> | undefined;
 
 async function requestKey(): Promise<CachedKey> {
-  const fallback = env.NEXT_PUBLIC_SEARCH_CLIENT_KEY;
   try {
     const res = await fetch('/api/search/token', { credentials: 'same-origin', cache: 'no-store' });
     if (res.ok) {
       const body = (await res.json()) as { token: string | null; expiresAt?: number };
       if (body.token && body.expiresAt)
         return { key: body.token, refreshAt: body.expiresAt - REFRESH_BEFORE_EXPIRY_MS };
-      return { key: fallback, refreshAt: Infinity };
+      return { key: undefined, refreshAt: Infinity };
     }
   } catch {
     // Network failure: fall through and try again shortly.
   }
-  return { key: fallback, refreshAt: Date.now() + RETRY_AFTER_FAILURE_MS };
+  return { key: undefined, refreshAt: Date.now() + RETRY_AFTER_FAILURE_MS };
 }
 
 export function getSearchApiKey(): Promise<string | undefined> {
@@ -65,7 +62,7 @@ export async function searchFetch<T = any>(url: string, init: RequestInit = {}):
   if ((res.status === 401 || res.status === 403) && cached?.key === key) {
     cached = undefined;
     const fresh = await getSearchApiKey();
-    if (fresh !== key) res = await sendWithKey(url, init, fresh);
+    if (fresh && fresh !== key) res = await sendWithKey(url, init, fresh);
   }
 
   const body = await res.json().catch(() => undefined);

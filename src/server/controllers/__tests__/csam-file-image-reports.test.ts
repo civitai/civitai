@@ -102,6 +102,27 @@ const file = (userId: number, imageIds: number[]) =>
   fileCsamReport({ userId, imageIds, type: 'Image', reportedById: MOD } as never);
 
 describe('fileCsamReport', () => {
+  it('closes the filed images’ Pending image appeals silently, before the flag comes off', async () => {
+    const { releaseReviewFlagsToReportHold } = await import('~/server/services/image-appeal-flag');
+    const order: string[] = [];
+    dbMock.dbWrite.appeal.updateMany.mockImplementationOnce((async () => {
+      order.push('close');
+      return { count: 1 };
+    }) as never);
+    vi.mocked(releaseReviewFlagsToReportHold).mockImplementationOnce(async () => {
+      order.push('release');
+      return 0;
+    });
+
+    await file(OWNER, [IMAGE, OTHER_IMAGE]);
+
+    expect(dbMock.dbWrite.appeal.updateMany).toHaveBeenCalledWith({
+      where: { entityType: 'Image', entityId: { in: [IMAGE, OTHER_IMAGE] }, status: 'Pending' },
+      data: expect.objectContaining({ status: 'Rejected', resolvedBy: MOD }),
+    });
+    expect(order).toEqual(['close', 'release']);
+  });
+
   it('actions the reports made about the filed images, never a report whose id is an image id', async () => {
     await file(OWNER, [IMAGE]);
 

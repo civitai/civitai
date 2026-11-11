@@ -24,6 +24,7 @@ import {
   networkDimSizeHint,
   newRun,
   nextImgId,
+  numberInputValue,
   optimizerLrParams,
   teLocked,
   paramDeviations,
@@ -153,6 +154,19 @@ describe('extra parameter capabilities', () => {
     });
     expect(defaultRunParams(run('sdxl'), '  ')).toMatchObject({ shuffleTokens: false });
   });
+
+  it('sizes an Anima network by LoRA type — 8 for characters, 16 otherwise, custom base too', () => {
+    const size = (r: Run, loraType: string) => {
+      const { networkDim, networkAlpha } = defaultRunParams(r, '', loraType);
+      return [networkDim, networkAlpha];
+    };
+    for (const r of [run('anima'), run('anima', CUSTOM_VERSION_KEY)]) {
+      expect(size(r, 'character')).toEqual(['8', '8']);
+      expect(size(r, 'style')).toEqual(['16', '16']);
+      expect(size(r, 'concept')).toEqual(['16', '16']);
+    }
+    expect(size(run('zimage'), 'character')).toEqual(['32', '32']);
+  });
 });
 
 describe('paramDeviations', () => {
@@ -170,6 +184,18 @@ describe('paramDeviations', () => {
     expect(paramDeviations(r, defaultRunParams(r), 'tag', 'mychar').map((d) => d.field)).toEqual([
       'shuffleTokens',
       'keepTokens',
+    ]);
+  });
+
+  it("measures network size against the LoRA type's recommendation", () => {
+    const r = run('anima');
+    expect(
+      paramDeviations(r, defaultRunParams(r, '', 'character'), 'tag', '', 'character')
+    ).toEqual([]);
+    const devs = paramDeviations(r, defaultRunParams(r, '', 'style'), 'tag', '', 'character');
+    expect(devs.map((d) => [d.field, d.recommended])).toEqual([
+      ['networkDim', '8'],
+      ['networkAlpha', '8'],
     ]);
   });
 
@@ -245,6 +271,28 @@ describe('buildTrainingRuns extra fields', () => {
     });
     expect(video.noiseOffset).toBe(0);
     expect(video.flipAugmentation).toBe(false);
+  });
+
+  it('sends the fallback, not 0, for a cleared numeric field', () => {
+    const out = build(run('sdxl'), 'tag', { unetLr: '', networkDim: '  ' });
+    const d = defaultRunParams(run('sdxl'));
+    expect(out.unetLr).toBe(Number(d.unetLr));
+    expect(out.networkDim).toBe(Number(d.networkDim));
+    expect(out.unetLr).toBeGreaterThan(0);
+  });
+
+  it('falls back to the Prodigy rate for a cleared LR under Prodigy', () => {
+    const out = build(run('sdxl'), 'tag', { optimizer: 'Prodigy', unetLr: '' });
+    expect(out.unetLr).toBe(1);
+  });
+});
+
+describe('numberInputValue', () => {
+  // A blank field must read back as null, or Svelte clears a half-typed `1e` on the way to `1e-4`.
+  it('reads a blank field as null and passes values through', () => {
+    expect(numberInputValue('')).toBeNull();
+    expect(numberInputValue(0.0001)).toBe(0.0001);
+    expect(numberInputValue(0)).toBe(0);
   });
 });
 

@@ -8,7 +8,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileRunState, type RunLimits, type RunState } from '@/vector-sync/cursor';
 import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
-import { ModelMismatchError, VectorStore } from '@/vector-sync/qdrant';
+import {
+  ModelMismatchError,
+  SITE_REPLICATION,
+  VectorStore,
+  type CollectionSpec,
+} from '@/vector-sync/qdrant';
+import { modelDomain } from '@/vector-sync/models/domain';
+import { CONTENT_DOMAINS } from '@/vector-sync/content/domains';
+import { MODEL_COLLECTION } from '@/vector-sync/models/collection';
+import { ARTICLE_COLLECTION } from '@/vector-sync/articles/collection';
 import type { QdrantClient } from '@qdrant/js-client-rest';
 import { parseRateLimitHeader, parseRetryAfter, RateLimiter } from '@/vector-sync/ratelimit';
 import {
@@ -1415,6 +1424,42 @@ describe('collection layout', () => {
       (c) => (c.field_schema as { enable_hnsw?: boolean }).enable_hnsw === false
     );
     expect(noHnsw.map((c) => c.field_name).sort()).toEqual(['postId', 'userId']);
+  });
+
+  // Decision: the site-search Qdrant runs 3 nodes and its collections keep 2 copies of each shard,
+  // acknowledging a write on 1. The image instance is a single node, so images keep the default.
+  // Qdrant only applies these at creation; changing them later means a new collection.
+  test('site collections are created replicated, images are not', async () => {
+    const created = async (spec?: typeof MODEL_COLLECTION | typeof ARTICLE_COLLECTION) => {
+      let args: { replication_factor?: number; write_consistency_factor?: number } = {};
+      const client = {
+        collectionExists: async () => ({ exists: false }),
+        createCollection: async (_c: string, a: typeof args) => void (args = a),
+        getCollection: async () => ({ payload_schema: {}, config: {} }),
+        createPayloadIndex: async () => undefined,
+        getAliases: async () => ({ aliases: [{ alias_name: 'a', collection_name: 'c' }] }),
+      };
+      const qc = client as unknown as QdrantClient;
+      await (spec ? new VectorStore(qc, 'c', spec as never) : new VectorStore(qc, 'c')).bootstrap({
+        alias: 'a',
+      });
+      return [args.replication_factor, args.write_consistency_factor];
+    };
+    expect(await created(MODEL_COLLECTION)).toEqual([2, 1]);
+    expect(await created(ARTICLE_COLLECTION)).toEqual([2, 1]);
+    expect(await created()).toEqual([undefined, undefined]);
+  });
+
+  // Every non-image domain lives on the replicated site-search instance; a new domain's spec
+  // must spread SITE_REPLICATION too.
+  test('every site domain uses the replicated spec', () => {
+    const specs = [modelDomain, ...CONTENT_DOMAINS].map((d) => {
+      const { replicationFactor, writeConsistencyFactor } = d.store()
+        .spec as CollectionSpec<object>;
+      return { name: d.name, replicationFactor, writeConsistencyFactor };
+    });
+    expect(specs.map((s) => s.name)).toEqual(expect.arrayContaining(['model', 'article', 'comic']));
+    for (const spec of specs) expect(spec).toEqual({ name: spec.name, ...SITE_REPLICATION });
   });
 });
 

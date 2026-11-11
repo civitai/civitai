@@ -64,6 +64,7 @@ import {
   REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { buzzCapRedisKey, buzzCapWindowKey } from '~/server/services/blocks/block-buzz-cap';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
@@ -389,6 +390,7 @@ import {
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { auditPassThroughPrompts } from '~/server/services/blocks/pass-through-prompt-audit';
 import {
   cancelWorkflow,
   getWorkflow,
@@ -1325,17 +1327,6 @@ async function resolvePageLoraGates(opts: {
 // 25h TTL: comfortably covers a UTC-day window plus clock skew; the key is
 // re-derived per day so a stale counter never bleeds into the next window.
 const BLOCK_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
-
-function buzzCapWindowKey(): string {
-  // UTC calendar day, e.g. '2026-06-02'.
-  return new Date().toISOString().slice(0, 10);
-}
-
-function buzzCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}` {
-  // PER-USER aggregate: appBlockId is intentionally NOT part of the key so all
-  // of a user's installed blocks share ONE daily ceiling (see comment above).
-  return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${userId}:${buzzCapWindowKey()}`;
-}
 
 /**
  * THE ONE reserve primitive behind every cumulative Buzz counter in this router
@@ -12650,6 +12641,7 @@ async function submitPassThroughStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
   // A pass-through body carries no `accountType` (its `.strict()` wire shape has
   // no such field), so currency selection is Auto — the domain-allowed set,
   // drained blue-first.
@@ -13313,6 +13305,7 @@ async function submitMultiStepWorkflow(opts: {
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, prepared.steps));
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
@@ -14109,7 +14102,7 @@ type QuotedGrantSubmitArm = {
   /** Extra fields on the submit-failure log line. */
   logFields: Record<string, unknown>;
   /** Kind refusals that must run before anything costs something (after the gate). */
-  preflight?: () => void;
+  preflight?: (auth: QuotedGrantAuth) => void | Promise<void>;
   /**
    * The orchestrator `externalId` this job is submitted under, and what a DEFINITE
    * submit records. Computed before the replay claim.
@@ -14148,7 +14141,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
   const copy = QUOTED_GRANT_COPY[arm.kind];
   const auth = await assertQuotedGrantRequestAllowed(arm.kind, claims, ctx);
   const { userId } = auth;
-  arm.preflight?.();
+  await arm.preflight?.(auth);
   const quoteId = arm.quoteId;
   if (!quoteId) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: arm.missingQuoteMessage });
@@ -14761,10 +14754,12 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
       generationType: resolveBlockGenerationType(body),
       logFields: { stepType: body.$type },
       // Before anything that costs something: the platform denylist (the same rule as
-      // the unconfirmed arm), then no training `$type` through this door.
-      preflight: () => {
+      // the unconfirmed arm), then no training `$type` through this door, then the prompt gate.
+      preflight: async ({ userId }) => {
         assertPassThroughStepTypeAllowed(body.$type, body.input);
         assertNotTrainingStepType(body.$type);
+        const { isGreen } = resolveBlockMaturity(claims);
+        await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -14986,6 +14981,21 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
       log: { userId, source: 'app-blocks', appBlockId: claims.appBlockId },
     });
   }
+}
+
+function passThroughAuditContext(
+  claims: BlockClaims,
+  userId: number,
+  isGreen: boolean,
+  steps: ReadonlyArray<{ $type: string; input: unknown }>
+) {
+  return {
+    steps,
+    userId,
+    appBlockId: claims.appBlockId,
+    isGreen,
+    loadIsModerator: async () => !!(await getBlockSessionUser(userId)).isModerator,
+  };
 }
 
 /** A `kind:'training'` body as the one training step the trigger-word rule reads. */

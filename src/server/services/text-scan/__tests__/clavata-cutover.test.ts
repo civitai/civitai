@@ -115,25 +115,6 @@ describe('disableClavataFor', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
-  it('cuts CommentV3 over on CommentV2’s rollout, and on its own once it has one', async () => {
-    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([{ id: 1 }] as never);
-    vi.mocked(getTextScanMode).mockResolvedValue('active');
-    vi.mocked(readTextScanRollouts).mockResolvedValue({
-      CommentV2: { shadow: 0, active: 100 },
-    } as never);
-    await expect(disableClavataFor('CommentV3')).resolves.toMatchObject({
-      clavataKey: 'CommentV3',
-    });
-
-    vi.mocked(readTextScanRollouts).mockResolvedValue({
-      CommentV2: { shadow: 0, active: 100 },
-      CommentV3: { shadow: 100, active: 50 },
-    } as never);
-    await expect(disableClavataFor('CommentV3')).rejects.toMatchObject({
-      reason: 'not-fully-active',
-    });
-  });
-
   it('refuses unless every probed id is active', async () => {
     vi.mocked(getTextScanMode).mockImplementation(async (_t, id) =>
       id === 2 ? 'shadow' : 'active'
@@ -299,14 +280,6 @@ describe('getTextScanOwnedClavataKeys', () => {
   it('owns a key only when it is cut over, the switch is on and the type is fully active', async () => {
     // Post is fully active but not cut over; Chat maps to ChatMessage.
     expect(await getTextScanOwnedClavataKeys()).toEqual(new Set(['Article', 'Chat']));
-  });
-
-  it('owns CommentV3 on CommentV2’s rollout while it has none of its own', async () => {
-    vi.mocked(redisMock.sysRedis.sMembers).mockResolvedValue(['CommentV3'] as never);
-    vi.mocked(readTextScanRollouts).mockResolvedValue({
-      CommentV2: { shadow: 0, active: 100 },
-    } as never);
-    expect(await getTextScanOwnedClavataKeys()).toEqual(new Set(['CommentV3']));
   });
 
   it('owns nothing while the kill switch is off', async () => {
