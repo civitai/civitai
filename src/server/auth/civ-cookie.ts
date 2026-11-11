@@ -130,7 +130,6 @@ export function hasAnyLegacyCookie(cookies: Partial<Record<string, string>>): bo
  * cookies on each refresh is pure waste; the only path that sets a civ-token while a legacy cookie still exists
  * is the callback, which calls this.) Names are the next-auth defaults (dev: `next-auth.<x>`; prod:
  * secure-prefixed). The CSRF cookie's `__Host-` prefix forbids a Domain attribute, so it's cleared host-only.
- * Remove this whole helper once pre-cutover cookies have aged out.
  */
 export function clearLegacyCookies(host?: string): string[] {
   const scopes = legacyClearScopes(host);
@@ -165,7 +164,7 @@ export function clearLegacyCookies(host?: string): string[] {
  * any Set-Cookie already on the response. Pass `host` (the request's `Host` header) so the cookie Domain matches
  * the serving color; omit it only where there's no request (then the cookie is host-only). Pass `deviceCookie`
  * to roll the device cookie in lockstep (switch + rolling-refresh; impersonation does NOT touch the device set).
- * Does NOT clear legacy cookies — the transitions that need that (login callback) calls
+ * Does NOT clear legacy cookies — the transition that needs that (the login callback) calls
  * clearLegacyCookies explicitly; keeping it out of here avoids re-emitting the de-crud on every rolling refresh.
  * `slot` defaults to this app's cookie mode; a roll passes the slot the token was read from. The host-only slot
  * never carries a Domain (`__Host-` forbids it). Pass `requestCookies` so the write also expires, host-only, the

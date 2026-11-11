@@ -25,8 +25,10 @@ async function getPreviewCookieSession(req: AuthRequest): Promise<Session | null
   const token = req.cookies?.[legacySessionCookieName()];
   if (!token) return null;
   const user = (await decodePreviewSessionCookie(token, secret))?.user;
-  if (!user || !Number.isFinite(Number(user.id))) return null;
-  if (refuseModerationAccountSession(user, 'legacy-cookie')) return null;
+  const id = Number(user?.id);
+  if (!user || !Number.isFinite(id)) return null;
+  const username = (user as { username?: string | null }).username;
+  if (refuseModerationAccountSession({ id, username }, 'legacy-cookie')) return null;
   return { user } as unknown as Session;
 }
 
