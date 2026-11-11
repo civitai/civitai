@@ -462,16 +462,13 @@ export const createTrainingWorkflow = async ({
   // The ecosystem/variant in params is what gets trained, so for a catalog base model it must be
   // the one that base maps to. A missing variant is tolerated: versions saved before the form sent
   // one still resubmit (the same rule publish-from-workflow.ts uses to match a run to its base).
-  // baseModelType must match too: the rollout gates below read it, and the caller writes it.
   if (
     trainingParams.engine === 'ai-toolkit' &&
     Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
   ) {
-    const info = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
-    const expected = info.aiToolkit;
+    const expected = trainingModelInfo[baseModel as TrainingDetailsBaseModelList].aiToolkit;
     if (
       !expected ||
-      baseModelType !== info.type ||
       trainingParams.ecosystem !== expected.ecosystem ||
       (trainingParams.modelVariant != null && trainingParams.modelVariant !== expected.modelVariant)
     )
@@ -491,14 +488,22 @@ export const createTrainingWorkflow = async ({
   // short-circuits to true regardless of feature flags. Enforce the rollout
   // flag here so API callers can't submit ACE-Step training when the
   // `audioTraining` flag is off.
-  if (isAudioTrainingBaseType(baseModelType) && !features.audioTraining)
+  // The rollout gates read the catalog's type for a catalog base model as well as baseModelType,
+  // which the caller writes and nothing else ties to what is trained.
+  const catalogType = Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
+    ? trainingModelInfo[baseModel as TrainingDetailsBaseModelList].type
+    : undefined;
+  const trainsAudio =
+    isAudioTrainingBaseType(baseModelType) ||
+    (catalogType !== undefined && isAudioTrainingBaseType(catalogType));
+  if (trainsAudio && !features.audioTraining)
     throw throwBadRequestError('Audio training is not currently enabled.');
 
   // AI Toolkit-only models pass isAiToolkitEnabled regardless of flags, so enforce the rollout
   // flag here, on what is trained rather than on the caller-written baseModelType alone.
   const trainsMiniMaxH3 =
     baseModelType === 'minimaxh3' ||
-    baseModel === 'minimaxh3' ||
+    catalogType === 'minimaxh3' ||
     (trainingParams.engine === 'ai-toolkit' && trainingParams.ecosystem === 'minimaxh3');
   if (trainsMiniMaxH3 && !features.minimaxh3Training)
     throw throwBadRequestError('MiniMax H3 training is not currently enabled.');

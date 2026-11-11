@@ -29,15 +29,19 @@ import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
-const givenMiniMaxH3Version = (baseModelType = 'minimaxh3') => {
+const givenVersion = ({
+  baseModel = 'minimaxh3',
+  baseModelType = 'minimaxh3',
+  ecosystem = 'minimaxh3',
+} = {}) => {
   dbMock.dbWrite.$queryRaw.mockResolvedValue([
     {
       trainingDetails: {
-        baseModel: 'minimaxh3',
+        baseModel,
         baseModelType,
         params: {
           engine: 'ai-toolkit',
-          ecosystem: 'minimaxh3',
+          ecosystem,
           epochs: 10,
           lr: 0.0001,
           trainTextEncoder: false,
@@ -62,12 +66,12 @@ const givenMiniMaxH3Version = (baseModelType = 'minimaxh3') => {
   dbMock.dbWrite.modelFile.count.mockResolvedValue(1);
 };
 
-const submit = (minimaxh3Training: boolean) =>
+const submit = (minimaxh3Training: boolean, audioTraining = true) =>
   createTrainingWorkflow({
     modelVersionId: 55,
     token: 'tok',
     user: { id: 7, isModerator: false } as never,
-    features: { minimaxh3Training, trainingStepsPricing: true } as never,
+    features: { minimaxh3Training, audioTraining, trainingStepsPricing: true } as never,
     domain: 'red',
   } as never);
 
@@ -83,7 +87,7 @@ describe('createTrainingWorkflow MiniMax H3 gate', () => {
     dbMock.dbWrite.modelVersion.update.mockResolvedValue({});
     dbMock.dbWrite.modelVersion.updateMany.mockReset();
     dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
-    givenMiniMaxH3Version();
+    givenVersion();
   });
 
   it('refuses a MiniMax H3 run before claiming the version or submitting when the flag is off', async () => {
@@ -98,10 +102,25 @@ describe('createTrainingWorkflow MiniMax H3 gate', () => {
   // baseModelType is written by the caller and nothing ties it to what is trained; another
   // AI Toolkit-only type passes the mandatory short-circuit and must not slip past the gate.
   it('refuses the same run when baseModelType names a different AI Toolkit-only type', async () => {
-    givenMiniMaxH3Version('qwen');
+    givenVersion({ baseModelType: 'qwen' });
     await expect(submit(false)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses an audio run the same way when baseModelType hides it and audioTraining is off', async () => {
+    givenVersion({ baseModel: 'acestep_15', baseModelType: 'qwen', ecosystem: 'ace_step_15' });
+    await expect(submit(true, false)).rejects.toMatchObject({
+      message: expect.stringMatching(/Audio training is not currently enabled/),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  // A stale or mismatched baseModelType on its own is not refused: only the rollout gates read it.
+  it('still submits a run whose baseModelType disagrees with the catalog when the flags allow it', async () => {
+    givenVersion({ baseModelType: 'qwen' });
+    await submit(true);
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
   });
 
   it('submits a MiniMax H3 run while the flag is on', async () => {
