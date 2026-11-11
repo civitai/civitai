@@ -240,6 +240,7 @@ export type GenerationInputEntryPoint =
   | 'appBlocksStep'
   | 'appBlocksPassThrough'
   | 'appBlocksWorkflow'
+  | 'appBlocksInlineComfy'
   | 'enhancePrompt'
   | 'comicsCostEstimate'
   | 'comicPanelJob'
@@ -253,6 +254,7 @@ const APP_BLOCK_ENTRIES = new Set<GenerationInputEntryPoint>([
   'appBlocksStep',
   'appBlocksPassThrough',
   'appBlocksWorkflow',
+  'appBlocksInlineComfy',
 ]);
 
 /** Entry points where an external host is only counted while the external-host flag is off. */
@@ -262,6 +264,7 @@ const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
   'appBlocksStep',
   'appBlocksPassThrough',
   'appBlocksWorkflow',
+  'appBlocksInlineComfy',
   'enhancePrompt',
 ]);
 
