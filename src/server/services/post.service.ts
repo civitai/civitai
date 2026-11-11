@@ -141,7 +141,10 @@ import {
 } from '~/server/services/orchestrator/remix-provenance';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { audioMetadataSchema } from '~/server/schema/media.schema';
-import { saveGeneratedTrackLyrics } from '~/server/services/audio-scan/track-lyrics';
+import {
+  saveGeneratedTrackLyrics,
+  submitTrackLyricsScan,
+} from '~/server/services/audio-scan/track-lyrics';
 import {
   SONGS_UNAVAILABLE_MESSAGE,
   buildSongDetails,
@@ -1756,13 +1759,17 @@ export const addPostImage = async ({
     clientUrl: serverMintedUrl ? undefined : true,
   });
 
-  // A song whose lyrics failed to save shows none, so nothing unscanned is shown.
+  // A song whose lyrics failed to save is kept without them and waits on its audio verdict alone.
+  // Its lyrics verdict is awaited before it goes public; a lost submit is re-sent from the scan.
   if (song?.lyrics) {
     const saved = await saveGeneratedTrackLyrics({
       imageId: partialResult.id,
       text: song.lyrics,
     }).catch(handleLogError);
-    if (saved) scanEntityInBackground({ entityType: 'TrackLyrics', entityId: partialResult.id });
+    if (saved)
+      submitTrackLyricsScan({ imageId: partialResult.id, content: song.lyrics }).catch(
+        handleLogError
+      );
   }
   await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
 

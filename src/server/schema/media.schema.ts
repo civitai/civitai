@@ -42,8 +42,11 @@ export type AudioMetadata = z.infer<typeof audioMetadataSchema>;
 export const audioMetadataSchema = sharedMetadata.partial({ height: true, width: true }).extend({
   duration: z.number(),
   title: z.string().optional(),
-  /** Sent by the client and never stored: a song's lyrics are in `TrackLyrics`. */
-  lyrics: z.array(lyricLineSchema).optional(),
+  /**
+   * Sent by the client and discarded by the server: a song's lyrics are in `TrackLyrics`. Loose, so
+   * a client's own timing never rejects the post.
+   */
+  lyrics: z.array(z.object({ t: z.number().nullable(), text: z.string() })).optional(),
   bpm: z.number().optional(),
   key: z.string().optional(),
   coverImageId: z.number().optional(),

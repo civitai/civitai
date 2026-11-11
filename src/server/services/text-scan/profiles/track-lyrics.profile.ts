@@ -3,7 +3,7 @@ import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
 
 /**
  * Keyed by the song's `imageId`. Not `notPublic` while its post is a draft: lyrics are scanned when
- * the song is posted, so a hold exists before the post can be published.
+ * the song is posted, and the song stays Pending until their verdict lands.
  */
 registerTextScanProfile({
   entityType: 'TrackLyrics',

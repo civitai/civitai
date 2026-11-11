@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
-const mocks = vi.hoisted(() => ({ hold: vi.fn(), queueSearch: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  hold: vi.fn(),
+  queueSearch: vi.fn(),
+  decide: vi.fn(),
+  submit: vi.fn(),
+}));
 
 vi.mock('~/server/services/text-scan/actions/csam-hold', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -14,6 +19,13 @@ vi.mock('~/server/services/text-scan/actions/csam-hold', async (importOriginal) 
 }));
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: mocks.queueSearch,
+}));
+vi.mock('~/server/services/audio-scan/apply-song-scan', () => ({
+  applySongLyricsVerdict: mocks.decide,
+}));
+vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  submitTrackLyricsScan: mocks.submit,
 }));
 
 await import('~/server/services/text-scan/profiles/index');
@@ -62,6 +74,29 @@ describe('the TrackLyrics moderation adapter', () => {
       ids: [7],
       action: SearchIndexUpdateQueueAction.Delete,
     });
+    expect(mocks.decide).toHaveBeenCalledWith(7);
+  });
+
+  it('lets an XGuard lyrics verdict decide the song too', async () => {
+    await getModerationAdapter('TrackLyrics')!.applyResult!({
+      entityId: 7,
+      workflowId: 'wf',
+      blocked: false,
+      triggeredLabels: [],
+      output: {} as never,
+    });
+
+    expect(mocks.decide).toHaveBeenCalledWith(7);
+  });
+
+  it('re-sends lyrics from the retry cron with their stored text', async () => {
+    dbMock.dbRead.trackLyrics.findMany.mockResolvedValue([{ imageId: 7, text: 'la la' }] as never);
+    const adapter = getModerationAdapter('TrackLyrics')!;
+
+    const content = (await adapter.resolveContent([7])).get(7)!;
+    await adapter.submit({ entityId: 7, content });
+
+    expect(mocks.submit).toHaveBeenCalledWith({ imageId: 7, content: 'la la', fromRetry: true });
   });
 
   it('leaves search alone when no hold is pending, as for text a moderator already cleared', async () => {
@@ -72,10 +107,11 @@ describe('the TrackLyrics moderation adapter', () => {
     expect(mocks.queueSearch).not.toHaveBeenCalled();
   });
 
-  it('leaves search alone for a verdict with no csam detection', async () => {
+  it('leaves search alone for a verdict with no csam detection, and decides the song', async () => {
     await applyTextScan()!(args(false) as never);
 
     expect(mocks.queueSearch).not.toHaveBeenCalled();
     expect(w.textScanHold.findFirst).not.toHaveBeenCalled();
+    expect(mocks.decide).toHaveBeenCalledWith(7);
   });
 });

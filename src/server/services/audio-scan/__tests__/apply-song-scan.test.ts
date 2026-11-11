@@ -13,9 +13,17 @@ vi.mock('~/server/services/image-scan-pipeline', async () => ({
   extractFailedSteps: () => [],
 }));
 vi.mock('~/server/services/job-queue.service', () => ({ removeImageScanJobQueue: vi.fn() }));
+const lyricsScan = vi.hoisted(() => ({ submit: vi.fn() }));
+vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  submitTrackLyricsScan: lyricsScan.submit,
+}));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { applySongScanResult } from '~/server/services/audio-scan/apply-song-scan';
+import {
+  applySongLyricsVerdict,
+  applySongScanResult,
+} from '~/server/services/audio-scan/apply-song-scan';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import type { AudioScanParse } from '~/server/services/video-audio-scan.service';
 import { NsfwLevel } from '~/server/common/enums';
@@ -41,11 +49,17 @@ const run = (parsed: AudioScanParse, image = song()) => {
   pipeline.loadImageForScan.mockResolvedValue(image);
   return applySongScanResult({ imageId: 7, workflowId: 'wf', parsed, steps: [] });
 };
-const withLyrics = () =>
-  dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ imageId: 7 } as never);
+const withLyrics = (verdict?: { status: string; blocked?: boolean | null }) => {
+  dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ imageId: 7, text: 'la' } as never);
+  dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(
+    (verdict ? { blocked: null, ...verdict } : null) as never
+  );
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue(null);
+  dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(null);
   pipeline.resolveScanOutcome.mockResolvedValue({ ingestion: 'Scanned', blockedFor: null });
   pipeline.markImageScanError.mockResolvedValue({ retryCount: 1, userId: 2, failureClass: 'x' });
 });
@@ -96,6 +110,96 @@ describe('a song the scan did not flag', () => {
 
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })
+    );
+  });
+});
+
+describe('a song with lyrics', () => {
+  it('stays Pending on a clean audio scan until its lyrics verdict arrives, and re-sends a lost lyrics scan', async () => {
+    withLyrics();
+
+    await run(scanned(false));
+
+    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+    expect(removeImageScanJobQueue).not.toHaveBeenCalled();
+    expect(lyricsScan.submit).toHaveBeenCalledWith({ imageId: 7, content: 'la' });
+  });
+
+  it('does not re-send a lyrics scan that is still in flight', async () => {
+    withLyrics({ status: 'Pending' });
+
+    await run(scanned(false));
+
+    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+    expect(lyricsScan.submit).not.toHaveBeenCalled();
+  });
+
+  it('is Scanned at PG once the audio is clean and the lyrics verdict is clean', async () => {
+    withLyrics({ status: 'Succeeded', blocked: false });
+
+    await run(scanned(false));
+
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })
+    );
+  });
+
+  it('is blocked when the lyrics verdict blocked it, though the audio is clean', async () => {
+    withLyrics({ status: 'Succeeded', blocked: true });
+
+    await run(scanned(false));
+
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fixed: { nsfwLevel: NsfwLevel.Blocked, blockedFor: 'tos' },
+      })
+    );
+  });
+});
+
+describe('a lyrics verdict landing', () => {
+  const audioRow = (status: string) =>
+    dbMock.dbWrite.imageAudioScan.findUnique.mockResolvedValue({
+      status,
+      workflowId: 'wf-audio',
+      flagged: false,
+      hasAudio: true,
+      result: {},
+    } as never);
+
+  it('decides a Pending song whose audio verdict is already stored', async () => {
+    withLyrics({ status: 'Succeeded', blocked: false });
+    audioRow('Succeeded');
+    pipeline.loadImageForScan.mockResolvedValue(song({ ingestion: 'Pending' }));
+
+    await applySongLyricsVerdict(7);
+
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowId: 'wf-audio', fixed: { nsfwLevel: NsfwLevel.PG } })
+    );
+  });
+
+  it('leaves the decision to the audio callback while the audio scan is still out', async () => {
+    withLyrics({ status: 'Succeeded', blocked: false });
+    audioRow('Pending');
+
+    await applySongLyricsVerdict(7);
+
+    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+  });
+
+  it('does not decide a song already decided, unless the lyrics block it', async () => {
+    withLyrics({ status: 'Succeeded', blocked: false });
+    audioRow('Succeeded');
+    pipeline.loadImageForScan.mockResolvedValue(song({ ingestion: 'Scanned' }));
+
+    await applySongLyricsVerdict(7);
+    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+
+    withLyrics({ status: 'Succeeded', blocked: true });
+    await applySongLyricsVerdict(7);
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.Blocked, blockedFor: 'tos' } })
     );
   });
 });
