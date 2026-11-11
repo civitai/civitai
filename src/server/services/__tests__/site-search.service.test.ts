@@ -106,6 +106,44 @@ describe('shapeModelHit', () => {
   });
 });
 
+describe('highlight copies follow the hit', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const images = [
+    { id: 10, nsfwLevel: NsfwLevel.X },
+    { id: 11, nsfwLevel: NsfwLevel.PG },
+  ];
+  // The copy's numbers arrive as strings, and its ratings are not trusted.
+  const tampered = images.map((i) => ({ ...i, id: String(i.id), nsfwLevel: '1' }));
+  const ids = (list: { id: unknown }[]) => list.map((i) => String(i.id));
+
+  it('a model hit keeps only the copies of the images it kept', () => {
+    const shaped = shapeModelHit(
+      { id: 1, name: 'M', images, _formatted: { images: tampered } },
+      capped
+    );
+    expect(ids(shaped._formatted?.images as { id: unknown }[])).toEqual(['11']);
+  });
+
+  it('a bounty hit keeps only the copies of the images it kept', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ hits: [{ id: 1, images, _formatted: { images: tampered } }] }),
+            {
+              status: 200,
+            }
+          )
+      )
+    );
+    const { body } = await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, capped);
+    const [hit] = (body as { hits: { _formatted: { images: { id: unknown }[] } }[] }).hits;
+    expect(ids(hit._formatted.images)).toEqual(['11']);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('comic covers', () => {
   const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
   const uncapped = { showSfwFace: false };
