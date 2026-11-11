@@ -68,6 +68,20 @@ describe('ReviewCardWithImages', () => {
     );
   });
 
+  test('reports nothing hidden while the viewer’s preferences are still loading', async () => {
+    useReviewImages.mockReturnValue({
+      images: [],
+      flatData: [{ id: 1 }, { id: 2 }],
+      isLoading: true,
+      isSuccess: false,
+      isError: false,
+    });
+    await renderWithProviders(<ReviewCardWithImages review={makeReview()} />);
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="card"]')?.getAttribute('data-hidden')).toBe('0')
+    );
+  });
+
   test('does not load while out of view', async () => {
     state.inView = false;
     await renderWithProviders(<ReviewCardWithImages review={makeReview()} />);
