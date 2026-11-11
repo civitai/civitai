@@ -18,6 +18,7 @@ import {
   recentlyGrantedBuzzCounter,
   setActiveSlot,
 } from '~/server/games/new-order/utils';
+import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { runLinkDetection } from '~/server/games/new-order/link-detection.service';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
@@ -340,6 +341,10 @@ type DailyResetQueryResult = {
 // Updated to sync PostgreSQL from Redis counters instead of ClickHouse
 // This is more efficient and respects the real-time counter updates
 const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async () => {
+  if (!(await isV1KnightsLive())) {
+    log('DailyReset:: v1 game retired, skipping');
+    return;
+  }
   log('DailyReset:: Starting fervor recalculation and PostgreSQL sync');
 
   // Get all players to sync their stats
@@ -443,6 +448,10 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
 
 // Cleanse smites that are older than 7 days
 const newOrderCleanseSmites = createJob('new-order-cleanse-smites', '0 0 * * *', async () => {
+  if (!(await isV1KnightsLive())) {
+    log('CleanseSmites :: v1 game retired, skipping');
+    return;
+  }
   log('CleanseSmites :: Cleansing smites');
   const smites = await dbRead.newOrderSmite.findMany({
     where: { cleansedAt: null, createdAt: { lte: dayjs().subtract(7, 'days').toDate() } },
@@ -527,6 +536,10 @@ const newOrderChangeFillTarget = createJob(
   'new-order-change-fill-target',
   '0 22 * * *',
   async () => {
+    if (!(await isV1KnightsLive())) {
+      log('ChangeFillTarget :: v1 game retired, skipping');
+      return;
+    }
     log('ChangeFillTarget :: Starting fill slot rotation');
 
     // Only Knight rank uses slot rotation; other ranks remain on a single slot
@@ -546,6 +559,8 @@ const newOrderChangeFillTarget = createJob(
 
 // Rotate rating slot and purge old slot at 00:00 UTC daily
 // Players will now rate from the new slot, old slot gets purged
+// This job is not gated on `isV1KnightsLive`: after the cutover it keeps settling the ratings players
+// already cast in the old game (paid out later by grant-bless-buzz) until the old game is removed.
 const newOrderChangeRateTarget = createJob(
   'new-order-change-rate-target',
   '0 0 * * *',

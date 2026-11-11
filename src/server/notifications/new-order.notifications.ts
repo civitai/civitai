@@ -1,7 +1,7 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { KNIGHTS_APP_URL } from '~/shared/constants/knights.constants';
 
-const KNIGHTS_APP_URL = 'https://knights.civitai.com';
 const KNIGHTS_SECTION = 'Knights of New Order';
 
 export const knightsNewOrderNotifications = createNotificationProcessor({
