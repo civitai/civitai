@@ -45,6 +45,9 @@ $black: var(--mantine-color-black, #000000);
     grid-template-rows: auto;
     scroll-snap-type: x mandatory;
     overflow-x: auto;
+    // This is the scroller, and the scrollbar of an element with pointer-events: none can't be
+    // dragged.
+    pointer-events: auto;
     margin-left: 0;
     padding-left: $spacing-md;
     padding-right: $spacing-md;
