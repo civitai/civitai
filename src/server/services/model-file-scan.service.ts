@@ -220,9 +220,12 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   // gives natural backoff (24h) for permanently-broken AIRs and avoids tight
   // loops if the orchestrator keeps rejecting the same file. Transient outages
   // are accepted as a 24h delay; we don't have a retry-counter column.
+  // A Training Data write also names the url checked above, so a zip swapped in meanwhile is untouched.
+  const sameBytes = file.type === 'Training Data' ? { url: file.url } : {};
+
   if (outcome.failed) {
     await dbWrite.modelFile.update({
-      where: { id: fileId },
+      where: { id: fileId, ...sameBytes },
       data: { scanRequestedAt: new Date() },
     });
     await bustAfterFailedScan(outcome.modelVersionId ?? file.modelVersionId, file);
@@ -267,7 +270,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   }
 
   const written = await dbWrite.modelFile.update({
-    where: { id: fileId },
+    where: { id: fileId, ...sameBytes },
     data,
     select: { pickleScanResult: true, virusScanResult: true },
   });

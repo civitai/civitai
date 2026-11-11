@@ -62,13 +62,18 @@ export async function submitTrainingDataScan({
   const source = await fetch(sourceUrl, {
     signal: AbortSignal.any([answered.signal, AbortSignal.timeout(UPLOAD_TIMEOUT_MS)]),
   }).finally(() => clearTimeout(noAnswer));
-  const size = Number(source.headers.get('content-length'));
-  if (!source.ok || !source.body || !(size > 0))
-    throw new Error(`Training data source unreadable: ${source.status}`);
-
-  const air = blobAir(
-    await uploadConsumerBlob({ body: source.body, size, timeoutMs: UPLOAD_TIMEOUT_MS })
-  );
+  let blobId: string;
+  try {
+    const size = Number(source.headers.get('content-length'));
+    if (!source.ok || !source.body || !(size > 0))
+      throw new Error(`Training data source unreadable: ${source.status}`);
+    blobId = await uploadConsumerBlob({ body: source.body, size, timeoutMs: UPLOAD_TIMEOUT_MS });
+  } catch (error) {
+    // Releases the connection now rather than at the deadline.
+    await source.body?.cancel().catch(() => undefined);
+    throw error;
+  }
+  const air = blobAir(blobId);
   // The url ties the verdict to these bytes: the webhook drops it once the file holds another zip.
   const metadata = { fileId, modelVersionId, url, scan: TRAINING_DATA_BLOB_SCAN };
   const { data } = await submitWorkflow({
@@ -167,18 +172,32 @@ export async function requeuePendingTrainingDataScans({
   const nextAfterId = files.length === limit ? files[files.length - 1].id : null;
   if (dryRun) return { dryRun, total, page: files.length, nextAfterId };
 
+  // Claimed up front, so a retried or overlapping request skips the rows this one will copy.
+  const claimed = new Set(
+    (
+      await dbWrite.$queryRaw<{ id: number }[]>`
+        UPDATE "ModelFile" SET "scanRequestedAt" = now()
+        WHERE id = ANY(${files.map((file) => file.id)}::int[])
+          AND ("scanRequestedAt" IS NULL
+            OR "scanRequestedAt" < now() - ${REQUEUE_IN_FLIGHT_MS / 1000} * interval '1 second')
+        RETURNING id`
+    ).map(({ id }) => id)
+  );
+
   let submitted = 0;
   const failed: number[] = [];
   await limitConcurrency(
-    files.map((file) => async () => {
-      const ok = await submitTrainingDataScanSafe(
-        { fileId: file.id, modelVersionId: file.modelVersionId, url: file.url },
-        'requeue'
-      );
-      if (ok) submitted++;
-      else failed.push(file.id);
-    }),
+    files
+      .filter((file) => claimed.has(file.id))
+      .map((file) => async () => {
+        const ok = await submitTrainingDataScanSafe(
+          { fileId: file.id, modelVersionId: file.modelVersionId, url: file.url },
+          'requeue'
+        );
+        if (ok) submitted++;
+        else failed.push(file.id);
+      }),
     REQUEUE_CONCURRENCY
   );
-  return { dryRun, total, page: files.length, submitted, failed, nextAfterId };
+  return { dryRun, total, page: claimed.size, submitted, failed, nextAfterId };
 }

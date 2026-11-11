@@ -109,6 +109,19 @@ describe('submitTrainingDataScan', () => {
     await expect(submitTrainingDataScan(TARGET)).rejects.toThrow('not accepted for file 56');
   });
 
+  it('releases the zip read when the copy cannot go ahead', async () => {
+    const cancel = vi.fn(async () => undefined);
+    h.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      headers: new Headers(),
+      body: { cancel },
+    });
+
+    await expect(submitTrainingDataScan(TARGET)).rejects.toThrow('unreadable: 503');
+    expect(cancel).toHaveBeenCalled();
+  });
+
   it('submits nothing, and writes no verdict, without an orchestrator token outside production', async () => {
     setEnv({ ORCHESTRATOR_ACCESS_TOKEN: undefined });
 
@@ -169,7 +182,8 @@ describe('requeuePendingTrainingDataScans', () => {
     expect(orderBy).toEqual({ id: 'asc' });
   });
 
-  it('submits each zip of the page and reports the ones that failed', async () => {
+  it('submits each zip of the page it claimed and reports the ones that failed', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1 }, { id: 2 }]);
     h.submitWorkflow.mockImplementation(
       async ({ body }: { body: { metadata: { fileId: number } } }) =>
         body.metadata.fileId === 2 ? { data: undefined } : { data: { id: 'wf-1' } }
@@ -179,5 +193,18 @@ describe('requeuePendingTrainingDataScans', () => {
 
     expect(h.submitWorkflow).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({ submitted: 1, failed: [2], nextAfterId: null });
+  });
+
+  it('skips a zip another request claimed first', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 2 }]);
+
+    const result = await requeuePendingTrainingDataScans({ limit: 50, dryRun: false });
+
+    expect(h.submitWorkflow).toHaveBeenCalledTimes(1);
+    expect(h.submitWorkflow.mock.calls[0][0].body.metadata.fileId).toBe(2);
+    expect(result).toMatchObject({ page: 1, submitted: 1 });
+    const [sql, ids] = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    expect(sql.join('?')).toMatch(/"scanRequestedAt" IS NULL/);
+    expect(ids).toEqual([1, 2]);
   });
 });

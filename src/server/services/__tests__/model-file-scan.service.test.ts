@@ -1360,6 +1360,14 @@ describe('model-file-scan.service', () => {
         expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
       });
 
+      it('writes the verdict only over the zip it checked', async () => {
+        scanned({ scannedFileCount: 12 });
+
+        await deliver();
+
+        expect(mockDbWrite.modelFile.update.mock.calls[0][0].where).toEqual({ id: 1, url: ZIP });
+      });
+
       it('marks nothing for a failed workflow of a zip it no longer holds', async () => {
         scanned({}, { scan: 'training-data-blob', url: 'https://old/zip' });
 
