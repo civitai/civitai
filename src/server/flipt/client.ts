@@ -11,6 +11,11 @@ export enum FLIPT_FEATURE_FLAGS {
   RATING_DISPUTE = 'rating-dispute',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
+  // Percentage rollout keyed on the file id: the share of files whose mini response leads with
+  // the content-hash download url. Each file's url changes once over the ramp. Create the key in
+  // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
+  // on every mini request.
+  DOWNLOAD_HASH_URLS = 'download-hash-urls',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
@@ -142,6 +147,12 @@ export enum FLIPT_FEATURE_FLAGS {
   BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
   // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
   COSMETICS_L1 = 'cosmetics-l1',
+  // Gates the larger `tag-ids-for-images` (tagIdsForImagesCache) L1 tier: longer TTL AND more entries.
+  TAG_IDS_FOR_IMAGES_L1_LARGE = 'tag-ids-for-images-l1-large',
+  // Batches the per-command `redis_command_duration_seconds` observations into a local accumulator
+  // flushed at scrape (same series, same values; see @civitai/telemetry/redis-command-metrics).
+  // Boolean, no entity, read at most once per 5s per process. A missing key reads as off.
+  REDIS_COMMAND_METRICS_BATCHED = 'redis-command-metrics-batched',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -208,6 +219,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
   // no entity or context. See `responseWriteSerialize`.
   TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
+  // With TRPC_FAST_SUPERJSON_WRITE on, lets the fast walk handle a shared (non-circular) object
+  // reference instead of bailing to `superjson.serialize` (same output either way). DEFAULT-OFF.
+  // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
+  TRPC_FAST_SUPERJSON_SHARED_REFS = 'trpc-fast-superjson-shared-refs',
+  // One shared `user` object per creator in the image.getInfinite / image.getImagesAsPostsInfinite
+  // responses, so devalue writes each creator once (decoded shape unchanged). DEFAULT-OFF. Global
+  // boolean, read at most once per 5s per process. A no-op unless TRPC_FAST_SUPERJSON_SHARED_REFS
+  // is on too (the fast walk would bail on the shared users). See `feed-shared-users.ts`.
+  IMAGE_FEED_SHARED_USERS = 'image-feed-shared-users',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
@@ -467,6 +487,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
   // serves traffic.
   BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
+
+  // On: `getImageMetricsObject` serves an image's cached `metrics:Image:<id>` hash straight from
+  // Redis, and hands entries past their refresh age to a per-pod, de-duplicated, concurrency-capped
+  // background refresher instead of reading through MetricService.fetch on the request
+  // (`~/server/services/image-metrics-swr`). Ids with no cached hash, or one older than the
+  // max-staleness bound, still take the MetricService read inline, as before. Off (and unknown,
+  // or a client that has not initialised): every id takes the MetricService read, as before.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  IMAGE_METRICS_SWR = 'image-metrics-swr',
 
   // On: a full page load of `/images/[imageId]` or `/posts/[postId]` server-renders a fixed
   // placeholder in place of the sections listed at their `ClientOnlySection` call sites, and those

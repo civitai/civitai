@@ -3902,6 +3902,10 @@ export type ModActivity = {
   entityId: number | null;
   createdAt: Generated<Timestamp>;
   host: string | null;
+  /**
+   * Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
+   */
+  credential: string | null;
 };
 export type Model = {
   id: Generated<number>;

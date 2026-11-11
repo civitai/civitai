@@ -1698,6 +1698,8 @@ model ModActivity {
   entityId   Int?
   createdAt  DateTime @default(now())
   host       String?
+  /// Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
+  credential String?
 
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])
