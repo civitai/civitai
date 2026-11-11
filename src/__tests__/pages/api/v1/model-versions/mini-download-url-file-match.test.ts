@@ -217,6 +217,8 @@ const versionRow = {
   status: 'Published',
   modelStatus: 'Published',
   modelMode: null as string | null,
+  modelAvailability: 'Public',
+  poi: false,
   type: 'Checkpoint',
   requireAuth: false,
   checkPermission: false,
@@ -1203,6 +1205,22 @@ describe('content-hash download url (download-hash-urls flag)', () => {
     ['a private version seen by its owner', [SAFETENSOR], { availability: 'Private' }, true],
     ['an unpublished version seen by its owner', [SAFETENSOR], { status: 'Draft' }, true],
     ['an unpublished model seen by its owner', [SAFETENSOR], { modelStatus: 'Unpublished' }, true],
+    ['a private model seen by its owner', [SAFETENSOR], { modelAvailability: 'Private' }, true],
+    ['a POI model seen by its owner', [SAFETENSOR], { poi: true }, true],
+    ['an archived model', [SAFETENSOR], { modelMode: 'Archived' }, false],
+    ['a taken-down model', [SAFETENSOR], { modelMode: 'TakenDown' }, false],
+    [
+      'a file that failed its pickle scan',
+      [{ ...SAFETENSOR, pickleScanResult: 'Danger' }],
+      {},
+      false,
+    ],
+    [
+      'a file that failed its virus scan',
+      [{ ...SAFETENSOR, virusScanResult: 'Danger' }],
+      {},
+      false,
+    ],
   ] as const)(
     'flag on: %s keeps the id url alone, since the hash route would not serve it',
     async (_, files, versionOverrides, asOwner) => {
@@ -1219,6 +1237,19 @@ describe('content-hash download url (download-hash-urls flag)', () => {
       expect(body.downloadUrls).toHaveLength(1);
     }
   );
+
+  it("reads every column the hash route's terms need", async () => {
+    await run([SAFETENSOR], { modelFileId: '101' });
+    const [versionSql, filesSql] = mockQueryRaw.mock.calls.map(([strings]) =>
+      (strings as TemplateStringsArray).join('?')
+    );
+
+    expect(versionSql).toMatch(/\bm\.availability as "modelAvailability"/);
+    expect(versionSql).toMatch(/\bm\.poi\b/);
+    const filesSelect = filesSql.split(/\bFROM\b/)[0];
+    expect(filesSelect).toMatch(/\bmf\."pickleScanResult"/);
+    expect(filesSelect).toMatch(/\bmf\."virusScanResult"/);
+  });
 
   it('flag on: a file with no sha256 keeps the id url alone', async () => {
     mockIsFlipt.mockResolvedValue(true);
