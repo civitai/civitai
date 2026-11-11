@@ -1361,6 +1361,12 @@ describe('model-file-scan.service', () => {
           ScanResultCode.Error,
         ],
         [
+          'an encrypted alert in CRLF output',
+          1,
+          '/m/a.zip: Heuristics.Encrypted.Zip FOUND\r\n/m/a.zip: Virus(es) detected ERROR\r\n',
+          ScanResultCode.Error,
+        ],
+        [
           'a real signature beside an encrypted alert',
           1,
           '/m/a.zip: Heuristics.Encrypted.Zip FOUND\n/m/a.zip: Win.Test.EICAR_HDB-1 FOUND\n',

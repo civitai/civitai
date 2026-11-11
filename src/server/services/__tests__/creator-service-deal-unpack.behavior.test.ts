@@ -1551,6 +1551,21 @@ describe('the finals malware scan', () => {
         'Failed',
       ],
       [
+        'a virus scan stopped at a limit, in another case',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'LimitsExceeded', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
+        'encrypted content while the workflow still runs',
+        workflow('processing', [
+          { $type: 'modelClamScan', output: { status: 'encrypted', scannedFileCount: 1 } },
+        ]),
+        'Failed',
+      ],
+      [
         'an unknown virus status',
         workflow('succeeded', [{ $type: 'modelClamScan', output: { status: 'new' } }, NOT_PICKLE]),
         'Retry',
