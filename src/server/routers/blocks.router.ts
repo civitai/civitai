@@ -10932,7 +10932,6 @@ function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
 }
 
-/** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
 /** A text-to-image body's source image urls, both wire shapes. */
 function textToImageSourceUrls(body: {
   sourceImage?: { url: string };
@@ -10941,6 +10940,7 @@ function textToImageSourceUrls(body: {
   return [body.sourceImage?.url, ...(body.sourceImages ?? []).map((image) => image.url)];
 }
 
+/** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
 async function assertStepOrWorkflowInputsUsable(
   body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
   claims: BlockClaims,
