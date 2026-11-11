@@ -57,23 +57,26 @@ function errorsFor(extra: Record<string, unknown>): string[] {
   return res.valid ? [] : res.errors;
 }
 
+/** The exact refusal for any non-string `bugs` (an object included). Spelled as a literal. */
+const NOT_A_STRING =
+  'bugs must be a URL string (an object such as { "url": ... } is not supported)';
+
 describe('app-block v1 schema — bugs', () => {
-  it('declares bugs as OPTIONAL, string-or-object, with the validator length bound', () => {
-    const bugs = schema.properties?.bugs;
+  it('declares bugs as an OPTIONAL URL STRING only (no object form), with the validator bound', () => {
+    const bugs = schema.properties?.bugs as Record<string, unknown> | undefined;
     expect(bugs).toBeDefined();
     expect(schema.required ?? []).not.toContain('bugs');
-    const [asString, asObject] = bugs?.anyOf ?? [];
-    expect(asString?.type).toBe('string');
-    expect(asString?.maxLength).toBe(MAX_ISSUE_TRACKER_URL_LENGTH);
-    expect(asObject?.type).toBe('object');
-    const urlProp = (asObject?.properties as Record<string, Record<string, unknown>>)?.url;
-    expect(urlProp?.type).toBe('string');
-    expect(urlProp?.maxLength).toBe(MAX_ISSUE_TRACKER_URL_LENGTH);
+    expect(bugs?.type).toBe('string');
+    expect(bugs?.minLength).toBe(1);
+    expect(bugs?.maxLength).toBe(MAX_ISSUE_TRACKER_URL_LENGTH);
+    // 🔴 No `anyOf` / object arm: an editor must refuse `{ "url": ... }` as the server does.
+    expect(bugs).not.toHaveProperty('anyOf');
+    expect(bugs).not.toHaveProperty('oneOf');
   });
 
   it('the schema pattern rejects every non-https scheme the server rejects', () => {
-    const [asString] = schema.properties?.bugs?.anyOf ?? [];
-    const re = new RegExp(String(asString?.pattern));
+    const bugs = schema.properties?.bugs as Record<string, unknown> | undefined;
+    const re = new RegExp(String(bugs?.pattern));
     for (const bad of ['http://example.com/bugs', 'mailto:a@example.com', 'javascript:alert(1)']) {
       expect(validateIssueTrackerUrl(bad).ok, bad).toBe(false);
       expect(re.test(bad), `schema pattern accepted ${bad}`).toBe(false);
@@ -87,36 +90,35 @@ describe('BlockManifestValidator — bugs', () => {
     expect(errorsFor({})).toEqual([]);
   });
 
-  it.each([
-    ['a URL string', 'https://github.com/o/r/issues'],
-    ['an object with url', { url: 'https://example.com/support' }],
-    ['an object with url and email (email ignored)', { url: 'https://example.com/s', email: 'x' }],
-    ['an object with only email (no link, ignored)', { email: 'help@example.com' }],
-  ])('ACCEPTS %s', (_label, bugs) => {
-    expect(errorsFor({ bugs })).toEqual([]);
+  it('ACCEPTS a URL string', () => {
+    expect(errorsFor({ bugs: 'https://github.com/o/r/issues' })).toEqual([]);
   });
 
   it.each([
-    ['an http string', 'http://example.com/bugs', 'bugs'],
-    ['a mailto string', 'mailto:help@example.com', 'bugs'],
-    ['a string with credentials', 'https://u:p@example.com/bugs', 'bugs'],
-    ['a string with a port', 'https://example.com:8080/bugs', 'bugs'],
-    ['a blank string', '   ', 'bugs'],
-    ['an object with an http url', { url: 'http://example.com/bugs' }, 'bugs.url'],
-    ['an object with a non-string url', { url: 42 }, 'bugs.url'],
-  ])('REJECTS %s, naming the manifest key', (_label, bugs, key) => {
+    ['an http string', 'http://example.com/bugs'],
+    ['a mailto string', 'mailto:help@example.com'],
+    ['a string with credentials', 'https://u:p@example.com/bugs'],
+    ['a string with a port', 'https://example.com:8080/bugs'],
+    ['a blank string', '   '],
+  ])('REJECTS %s, naming the manifest key', (_label, bugs) => {
     const joined = errorsFor({ bugs }).join(' | ');
     expect(joined.length).toBeGreaterThan(0);
-    expect(joined).toContain(key);
+    expect(joined).toContain('bugs');
     expect(joined).not.toContain('issueTrackerUrl');
   });
 
   it.each([
+    // 🔴 The npm object form is REFUSED, not silently ignored — an author who wrote it must be
+    // told, or their Support link simply never appears.
+    ['an object with a valid url', { url: 'https://example.com/support' }],
+    ['an object with url and email', { url: 'https://example.com/s', email: 'help@example.com' }],
+    ['an object with only email', { email: 'help@example.com' }],
+    ['an empty object', {}],
     ['a number', 42],
     ['an array', ['https://example.com']],
     ['null', null],
-  ])('REJECTS bugs given as %s', (_label, bugs) => {
-    expect(errorsFor({ bugs }).join(' | ')).toContain('bugs must be a URL string or an object');
+  ])('REJECTS bugs given as %s, with the exact message', (_label, bugs) => {
+    expect(errorsFor({ bugs })).toEqual([NOT_A_STRING]);
   });
 
   it('agrees with validateIssueTrackerUrl on every string in the corpus', () => {
@@ -139,7 +141,8 @@ describe('BlockManifestValidator — bugs', () => {
 describe('resolveListingIssueTracker — manifest → stored value', () => {
   it.each([
     ['a string', 'https://example.com/bugs', 'https://example.com/bugs'],
-    ['an object url', { url: 'https://EXAMPLE.com/s' }, 'https://example.com/s'],
+    // An object is not a link (the validator refuses it at submit; a legacy row yields none).
+    ['an object with a valid url', { url: 'https://example.com/s' }, null],
     ['an object with only email', { email: 'a@example.com' }, null],
     ['absent', undefined, null],
     ['an invalid string (legacy row)', 'http://example.com', null],
@@ -164,7 +167,7 @@ describe('resolveListingIssueTracker — manifest → stored value', () => {
     });
     expect(
       buildListingIssueTrackerSync({
-        manifest: { bugs: { url: 'https://example.com/b' } },
+        manifest: { bugs: 'https://EXAMPLE.com/b' },
         issueTrackerAvailable: true,
       })
     ).toEqual({ write: true, value: 'https://example.com/b' });
