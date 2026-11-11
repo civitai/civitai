@@ -50,3 +50,22 @@ export function readSongConcept(
   const { lyrics, bpm, key } = parsed as SongConcept;
   return { lyrics, bpm, key };
 }
+
+const AUDIO_STEP_TYPES = ['aceStepAudio', 'miniMaxMusic3', 'yuE2'];
+
+/**
+ * The lyrics a generation workflow was asked to sing: the audio step's own input (custom mode, and
+ * the resolved text in simple mode), else the drafting step's output. Read from the workflow, never
+ * taken from the client.
+ */
+export function readWorkflowLyrics(
+  steps: readonly { $type?: string; input?: unknown; output?: unknown }[] | null | undefined
+): string | undefined {
+  const fromAudioStep = steps
+    ?.filter((s) => s.$type && AUDIO_STEP_TYPES.includes(s.$type))
+    .map((s) => (s.input as { lyrics?: unknown } | null | undefined)?.lyrics)
+    .find((lyrics): lyrics is string => typeof lyrics === 'string' && !!lyrics.trim());
+  if (fromAudioStep) return fromAudioStep;
+  const drafted = readSongConcept(steps)?.lyrics;
+  return typeof drafted === 'string' ? drafted : undefined;
+}

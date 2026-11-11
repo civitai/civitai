@@ -139,7 +139,9 @@ import { audioMetadataSchema } from '~/server/schema/media.schema';
 import {
   SONGS_UNAVAILABLE_MESSAGE,
   buildSongDetails,
+  parseLyricLines,
   readSongConcept,
+  readWorkflowLyrics,
 } from '~/shared/form-graph/generation/audio/song-metadata';
 import { getMetadata } from '~/utils/metadata';
 import { canAddManualResources, getManualResourceLimitError } from '~/utils/manual-image-resources';
@@ -1592,16 +1594,23 @@ export function assertCanStoreSongs(user: SessionUser) {
 const SONG_WORKFLOW_READ_TIMEOUT_MS = 5_000;
 
 /**
- * The song's metadata as stored: only the audio fields, whatever else the client sent. A
- * simple-mode song's lyrics, bpm and key exist only in its drafting chat step, which the client
- * never receives, so they come from the workflow when it was read; what the client sent wins.
+ * The song's metadata as stored: only the audio fields, whatever else the client sent. The lyrics
+ * are shown on the song page, so they come only from the caller's own workflow, read here; the
+ * client's are dropped, and a workflow that could not be read leaves the song without lyrics. A
+ * simple-mode song's bpm and key exist only in its drafting chat step, so they come from the
+ * workflow too; what the client sent wins for those, and for the title.
  */
 function resolveAudioMetadata(metadata: unknown, workflow: UserWorkflow | null) {
   const parsed = audioMetadataSchema.safeParse(metadata);
   if (!parsed.success) throw throwBadRequestError('Invalid audio metadata');
-  const audio = parsed.data;
-  if (audio.lyrics || !workflow) return audio;
-  return { ...buildSongDetails({}, readSongConcept(workflow.steps)), ...audio };
+  const { lyrics: _clientLyrics, ...audio } = parsed.data;
+  if (!workflow) return audio;
+  const { lyrics: _draftedLyrics, ...concept } = buildSongDetails(
+    {},
+    readSongConcept(workflow.steps)
+  );
+  const lyrics = parseLyricLines(readWorkflowLyrics(workflow.steps));
+  return { ...concept, ...audio, ...(lyrics ? { lyrics } : {}) };
 }
 
 export const addPostImage = async ({

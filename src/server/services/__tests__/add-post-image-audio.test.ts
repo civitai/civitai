@@ -203,22 +203,65 @@ describe('addPostImage — audio', () => {
     });
   });
 
-  it('keeps the lyrics the client sent over the drafted ones', async () => {
+  it('ignores the lyrics the client sent when the workflow has lyrics', async () => {
     mocks.music = true;
     mocks.getWorkflow.mockResolvedValue({
       steps: [{ $type: 'chatCompletion', output: { parsed: { lyrics: 'drafted', bpm: 90 } } }],
     });
-    const lyrics = [{ t: null, text: 'mine' }];
     await expect(
-      addSong({ generationWorkflowId: 'wf-1', metadata: { ...song, lyrics } })
+      addSong({
+        generationWorkflowId: 'wf-1',
+        metadata: { ...song, lyrics: [{ t: null, text: 'mine' }] },
+      })
     ).rejects.toThrow('stop after create');
-    expect(mocks.createImage.mock.calls[0][0].metadata).toEqual({ ...song, lyrics });
+    expect(mocks.createImage.mock.calls[0][0].metadata).toEqual({
+      ...song,
+      lyrics: [{ t: null, text: 'drafted' }],
+      bpm: 90,
+    });
   });
 
-  it('still creates the song when the workflow cannot be read', async () => {
+  it.each(['aceStepAudio', 'miniMaxMusic3', 'yuE2'])(
+    "takes a custom-mode song's lyrics from its %s step input, never the client's",
+    async ($type) => {
+      mocks.music = true;
+      mocks.getWorkflow.mockResolvedValue({
+        steps: [{ $type, input: { lyrics: '[Verse]\nsun' }, output: {} }],
+      });
+      await expect(
+        addSong({
+          generationWorkflowId: 'wf-1',
+          metadata: { ...song, lyrics: [{ t: null, text: 'mine' }] },
+        })
+      ).rejects.toThrow('stop after create');
+      expect(mocks.createImage.mock.calls[0][0].metadata.lyrics).toEqual([
+        { t: null, text: '[Verse]' },
+        { t: null, text: 'sun' },
+      ]);
+    }
+  );
+
+  it('prefers the lyrics the audio step was given over the drafting step', async () => {
+    mocks.music = true;
+    mocks.getWorkflow.mockResolvedValue({
+      steps: [
+        { $type: 'chatCompletion', output: { parsed: { lyrics: 'drafted' } } },
+        { $type: 'miniMaxMusic3', input: { lyrics: 'sung' } },
+      ],
+    });
+    await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('stop after create');
+    expect(mocks.createImage.mock.calls[0][0].metadata.lyrics).toEqual([{ t: null, text: 'sung' }]);
+  });
+
+  it.each([
+    ['no workflow id', {}],
+    ['a workflow that cannot be read', { generationWorkflowId: 'wf-1' }],
+  ])("stores no lyrics for %s, rather than the client's", async (_, extra) => {
     mocks.music = true;
     mocks.getWorkflow.mockRejectedValue(new Error('orchestrator down'));
-    await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('stop after create');
+    await expect(
+      addSong({ ...extra, metadata: { ...song, lyrics: [{ t: null, text: 'mine' }] } })
+    ).rejects.toThrow('stop after create');
     expect(mocks.createImage.mock.calls[0][0].metadata).toEqual(song);
   });
 
@@ -228,14 +271,17 @@ describe('addPostImage — audio', () => {
     expect(mocks.getWorkflow).toHaveBeenCalledTimes(1);
   });
 
-  it('does not let a slow orchestrator hold the post: it falls back to the client metadata', async () => {
+  it("does not let a slow orchestrator hold the post: it stores no lyrics rather than the client's", async () => {
     vi.useFakeTimers();
     try {
       mocks.music = true;
       mocks.getWorkflow.mockReturnValue(new Promise(() => undefined));
-      const pending = expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow(
-        'stop after create'
-      );
+      const pending = expect(
+        addSong({
+          generationWorkflowId: 'wf-1',
+          metadata: { ...song, lyrics: [{ t: null, text: 'mine' }] },
+        })
+      ).rejects.toThrow('stop after create');
       await vi.advanceTimersByTimeAsync(10_000);
       await pending;
       expect(mocks.createImage.mock.calls[0][0].metadata).toEqual(song);
