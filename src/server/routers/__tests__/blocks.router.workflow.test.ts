@@ -10991,11 +10991,10 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       }
     });
 
-    // 🔴 A RAW comfy GRAPH IS REFUSED. `workflow.service` delivers a comfy step's
-    // `output.blobs` as media, and this arm runs no prompt audit, so a block
-    // naming `$type: 'comfy'` here would otherwise get an unaudited ComfyUI graph
-    // rendered and handed back. The platform's own comfy steps (built from
-    // `kind: 'textToImage'`) do not pass this guard; see the native submit test.
+    // 🔴 A RAW comfy GRAPH IS REFUSED, under `$type: 'comfy'` or `'customComfy'`.
+    // `workflow.service` delivers a comfy step's `output.blobs` as media and this arm
+    // runs no prompt audit. Platform-built comfy steps (`kind: 'textToImage'`,
+    // `kind: 'customComfy'`) do not pass this guard.
     it.each(['comfy', 'Comfy', 'customComfy', 'CustomComfy'])(
       'refuses a raw `%s` step on submit AND estimate, before the orchestrator or any reservation',
       async (t) => {
@@ -11934,14 +11933,23 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(5, 5);
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ptBody({ $type: 'app-block:app_someone_else' }),
-      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'imageGen' }) });
       const tags: string[] = ptRealSubmits()[0][0].body.tags;
       expect(tags).toContain('app-block:app_test');
-      expect(tags).not.toContain('app-block:app_someone_else');
+      expect(tags).not.toContain('imageGen');
       expect(tags).toContain('passthrough');
+    });
+
+    it('refuses a $type shaped like a tag at the wire, before any submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      for (const $type of ['app-block:app_someone_else', 'a:b']) {
+        await expect(
+          caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type }) })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      }
+      expect(ptRealSubmits()).toHaveLength(0);
     });
 
     // civitai-app-starters#541 — `/models/train/from-orchestrator` admits only
@@ -12128,21 +12136,6 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'textToImage' }) })
       ).rejects.toThrow(/platform-internal and cannot be submitted by an app block/);
       expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
-    });
-
-    it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {
-      // `$type` is `z.string().min(1).max(64)` with no character class, so `a:b`
-      // PARSES and reaches this submit. A second colon would break the value
-      // grammar, so the subtype is dropped — the row still records that a
-      // pass-through submit happened, which is shallower and never wrong. The
-      // write is fire-and-forget off an already-billed submit, so this must
-      // degrade rather than throw.
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
-      happyUser();
-      ptQuoting(5, 5);
-      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'a:b' }) });
-      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
-      expect(mockRecordSpendAttribution.mock.calls[0][0].generationType).toBe('step');
     });
 
     it('IDEMPOTENCY: a replayed submit does not double-charge', async () => {

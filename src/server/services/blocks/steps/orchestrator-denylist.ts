@@ -215,6 +215,10 @@ export function isPlatformInternalStepType(stepType: string): boolean {
  * `isTrainingStepTypeIgnoringCase` (every training check on a caller-supplied `$type`,
  * listed there), so two lists cannot disagree about what "the same step type" means.
  */
+// Every orchestrator `$type` is ASCII letters and digits. Anything else could fold to a
+// denied type under a matcher other than `toLowerCase`, so it is refused outright.
+export const STEP_TYPE_RE = /^[A-Za-z0-9]+$/;
+
 export function foldStepTypeCase(stepType: string): string {
   return stepType.toLowerCase();
 }
@@ -272,7 +276,7 @@ export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
  * `$type` is refused on both router arms too.
  */
 export function assertStepTypeAllowed(stepType: string, where?: string): void {
-  if (isPlatformInternalStepType(stepType)) {
+  if (!STEP_TYPE_RE.test(stepType) || isPlatformInternalStepType(stepType)) {
     throw new PlatformInternalStepTypeError(stepType, where);
   }
 }
