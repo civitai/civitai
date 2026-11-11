@@ -82,7 +82,9 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ingestImageById: mockIngestImageById,
   deleteImageById: mockDeleteImageById,
 }));
-vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn() } }));
+vi.mock('~/server/search-index', () => ({
+  usersSearchIndex: { queueUpdate: vi.fn().mockResolvedValue(undefined) },
+}));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));
 
 import { REDIS_KEYS } from '@civitai/redis';
