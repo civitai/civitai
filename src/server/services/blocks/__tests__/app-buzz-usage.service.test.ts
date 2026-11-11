@@ -28,12 +28,12 @@ const counterReads = (value: string | null) =>
 const TODAY: UserAppCaps = {
   buzzPerDay: 50_000,
   planBuzzPerDay: 50_000,
-  optInBuzzPerDay: 50_000,
+  optInBuzzPerDay: 100_000,
   optedIn: false,
   docBytes: 2_097_152,
   docCount: 1_000,
 };
-/** A plan cap with a higher ceiling to opt in to; distinct from every other number here. */
+/** A plan cap and its opt-in ceiling, distinct from every other number here. */
 const CAN_OPT_IN: UserAppCaps = {
   ...TODAY,
   planBuzzPerDay: 40_000,
@@ -112,9 +112,13 @@ describe('getMyAppBuzzCap (the paused notice)', () => {
     });
   });
 
-  it('no higher ceiling (an override at the cap): paused with an upgrade only, no opt-in', async () => {
+  it('at the Free cap: paused, with the opt-in to 100,000 offered', async () => {
     counterReads('50000');
-    expect(await getMyAppBuzzCap(USER)).toMatchObject({ paused: true, canOptIn: false });
+    expect(await getMyAppBuzzCap(USER)).toMatchObject({
+      paused: true,
+      canOptIn: true,
+      optInLimit: 100_000,
+    });
   });
 
   it('opted in: the cap shown is the raised one, and the opt-in is not offered again', async () => {
@@ -133,11 +137,6 @@ describe('optInAppBuzzToday', () => {
   it('is refused with the flag off, and records nothing', async () => {
     promptOn.mockResolvedValue(false);
     await expect(optInAppBuzzToday(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
-  });
-
-  it('is refused where there is nothing higher to continue to, and records nothing', async () => {
-    await expect(optInAppBuzzToday(USER)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
   });
 

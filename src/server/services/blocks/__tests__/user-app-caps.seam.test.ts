@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { importersOf } from '../../apps/__tests__/import-ledger';
+import { identifierUsers, importersOf } from '../../apps/__tests__/import-ledger';
 
 /**
  * SEAM: the account Limits section and enforcement read a user's app caps from ONE resolver,
@@ -39,16 +39,19 @@ describe('one resolver for the per-user app caps', () => {
     ]);
   });
 
-  // A dynamic `import()` or an `export … from` counts as every binding, so it is listed: each
-  // one below takes some other export (`REVIEW_RUN_FOR_REAL_BUZZ_CAP`, `isDocStoreError`,
-  // `manifestWantsOauthToken`).
-  it('no code reads the pre-tier daily Buzz cap constant in place of the resolver', () => {
-    expect(importersOf('shared/constants/block-scope.constants', 'BLOCK_BUZZ_CAP_PER_DAY')).toEqual(
-      [
-        'server/services/blocks/block-oauth-scope.ts',
-        'server/services/blocks/publish-request.service.ts',
-      ]
-    );
+  // The pre-tier constant is gone, not merely unimported: an import ledger cannot see a use
+  // beside the declaration (the consent-budget max read it in its own file), so this scans every
+  // identifier in src.
+  it('no code names the pre-tier daily Buzz cap constant at all', () => {
+    expect(identifierUsers('BLOCK_BUZZ_CAP_PER_DAY')).toEqual([]);
+  });
+
+  // POSITIVE CONTROL for the scan above: it sees a same-file use (the declaration's own file)
+  // and an importer, so an empty answer is not a scan that sees nothing.
+  it('the identifier scan sees a declaration file and its importers', () => {
+    const users = identifierUsers('BLOCK_CONSENT_BUDGET_MAX_PER_DAY');
+    expect(users).toContain('shared/constants/block-scope.constants.ts');
+    expect(users).toContain('server/routers/blocks.router.ts');
   });
 
   it('only the store module reads the default doc-store limits (its app ceilings and its no-resolver fallback)', () => {

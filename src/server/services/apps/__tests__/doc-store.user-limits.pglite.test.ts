@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDocStore } from '~/server/services/apps/doc-store';
+import { createDocStore, type DocStoreDb } from '~/server/services/apps/doc-store';
 import { createPgliteHarness, type Harness } from './doc-store.harness';
 import {
   BOARD,
   ctx,
+  TALLIES,
   expectCode,
   freshApp,
   NS_PROD,
@@ -74,6 +75,42 @@ describe('per-user ceilings from userLimits', () => {
     expect(await store.viewerLimits(VIEWER_2)).toEqual({ userBytes: 1_000_000, userDocs: 3 });
     const plain = createDocStore({ db: h.db, limits: LOOSE });
     expect(await plain.viewerLimits(VIEWER_1)).toEqual({ userBytes: 1_000_000, userDocs: 10_000 });
+  });
+
+  // The ceiling is resolved BEFORE the transaction opens, never while the write holds the app's
+  // usage-row lock (`SQL_CHARGE_APP`, which runs right after `beforeUsageCharge`).
+  it.each([
+    ['a put', 'put'],
+    ['an increment', 'increment'],
+  ])("%s resolves the viewer's ceiling before the transaction and the lock", async (_l, op) => {
+    const app = freshApp('tierorder');
+    const events: string[] = [];
+    const db: DocStoreDb = {
+      connect: async () => {
+        events.push('connect');
+        return h.db.connect();
+      },
+    };
+    const store = createDocStore({
+      db,
+      limits: LOOSE,
+      userLimits: async (uid) => {
+        events.push('ceiling');
+        return CEILINGS[uid];
+      },
+      hooks: {
+        beforeUsageCharge: async () => {
+          events.push('charge');
+        },
+      },
+    });
+    const one = ctx(app, NS_PROD, VIEWER_1);
+    if (op === 'put') await store.put(one, PREFS, 'a', { v: 1 });
+    else await store.increment(one, TALLIES, 'c', 'plays');
+    expect(events.filter((e) => e !== 'connect').slice(0, 2)).toEqual(['ceiling', 'charge']);
+    expect(events.indexOf('ceiling')).toBeLessThan(events.indexOf('connect'));
+    // Resolved once, outside; the charge to the same viewer did not resolve it again inside.
+    expect(events.filter((e) => e === 'ceiling')).toEqual(['ceiling']);
   });
 
   it('a write that only frees reads no ceiling, and is allowed', async () => {

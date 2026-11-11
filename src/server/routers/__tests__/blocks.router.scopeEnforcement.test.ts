@@ -240,7 +240,6 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { resetUsageLimitConfigCache } from '~/server/services/usage-limit-config.service';
@@ -561,7 +560,7 @@ describe('per-(user, app) consent budget', () => {
   // the second reservation did not accidentally relax it.
   it('INVARIANT: NULL budget still binds at the 50k platform cap', async () => {
     mockGrantFindUnique.mockResolvedValue({ buzzBudgetPerDay: null, revokedAt: null });
-    seeds.push([DAILY_PREFIX, BLOCK_BUZZ_CAP_PER_DAY - 10]);
+    seeds.push([DAILY_PREFIX, 50_000 - 10]); // the Free tier's daily cap
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     orchestratorQuoting(25);
 
@@ -1000,11 +999,20 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
       expect(result.snapshot.error).toContain('daily cap is 50000');
     });
 
-    it('flag on but not opted in: the plan cap binds', async () => {
+    // Record first: with no opt-in record the reservation evaluates the flag zero times.
+    it('flag on but not opted in: the plan cap binds, with zero flag evaluations', async () => {
       asTier('free');
       mockIsUpgradePromptEnabled.mockImplementation(async () => true);
       const result = await submitWith(49_990);
       expect(result.snapshot.error).toContain('daily cap is 50000');
+      expect(mockIsUpgradePromptEnabled).not.toHaveBeenCalled();
+    });
+
+    it('a cap override carries through: opted in, the cap is twice the overridden cap', async () => {
+      usageLimitsRow({ 'apps.buzz-daily': { byTier: { gold: { limit: 61_234 } } } });
+      optedIn('gold');
+      expect((await submitWith(122_443)).snapshot.workflowId).toBe('wf_real');
+      expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(122_468);
     });
   });
 });

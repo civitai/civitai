@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_DOC_STORE_LIMITS } from '~/server/services/apps/doc-store.types';
 import {
+  docStoreUserLimits,
   resolveUserAppCaps,
   type UserAppCapsDeps,
 } from '~/server/services/blocks/user-app-caps.service';
-import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { buildUsageLimitConfig, type UsageLimitConfig } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
 
@@ -15,8 +15,8 @@ import type { SessionUser } from '~/types/session';
  *
  * The code defaults are the per-tier table recorded on the task (11/10): Free 50,000 Buzz/day,
  * 2 MiB, 1,000 docs; Bronze 75,000 / 4 MiB / 2,000; Silver 100,000 / 8 MiB / 5,000; Gold
- * 200,000 / 16 MiB / 10,000. Founder (a tier the membership code also has) maps to Bronze. The
- * opt-in ceiling is twice the tier's daily cap.
+ * 200,000 / 16 MiB / 10,000. Founder (a tier the membership code also has) maps to Bronze.
+ * Opting in raises the daily cap to twice the viewer's resolved tier cap.
  */
 
 /** [tier, Buzz/day, bytes, docs, opt-in ceiling] — literals, never derived. */
@@ -71,10 +71,10 @@ describe('code defaults: the per-tier table', () => {
     expect(await resolveUserAppCaps(7, deps({ tier }))).toEqual(FREE);
   });
 
-  // INVARIANT GUARD: Free is exactly what every user was held to before tiers existed. Ties the
-  // Free literals to the constants enforcement read before this change.
-  it('Free is unchanged from the pre-tier constants', () => {
-    expect(FREE.buzzPerDay).toBe(BLOCK_BUZZ_CAP_PER_DAY);
+  // INVARIANT GUARD: Free is exactly what every user was held to before tiers existed: 50,000
+  // Buzz/day (the deleted pre-tier constant's value) and the doc store's own per-user defaults.
+  it('Free is unchanged from before tiers', () => {
+    expect(FREE.buzzPerDay).toBe(50_000);
     expect(FREE.docBytes).toBe(DEFAULT_DOC_STORE_LIMITS.userBytes);
     expect(FREE.docCount).toBe(DEFAULT_DOC_STORE_LIMITS.userDocs);
   });
@@ -84,7 +84,7 @@ describe('overrides in the usage-limits row', () => {
   it('a tier value set in the row replaces the code default for that cap', async () => {
     const config = configFrom({ 'apps.buzz-daily': { byTier: { gold: { limit: 61_234 } } } });
     const caps = await resolveUserAppCaps(7, deps({ tier: 'gold', getConfig: async () => config }));
-    // The opt-in ceiling follows the overridden cap: twice it.
+    // The opt-in ceiling is twice the RESOLVED cap, so it follows the override.
     expect(caps).toMatchObject({ planBuzzPerDay: 61_234, optInBuzzPerDay: 122_468 });
   });
 
@@ -97,7 +97,7 @@ describe('overrides in the usage-limits row', () => {
         },
       })
     );
-    expect(caps).toEqual({ ...FREE, optInBuzzPerDay: 50_000 });
+    expect(caps).toEqual(FREE);
   });
 
   it('the strictest is taken per cap across tiers, whichever tier holds it', async () => {
@@ -112,7 +112,7 @@ describe('overrides in the usage-limits row', () => {
     expect(caps).toEqual({
       buzzPerDay: 40_000,
       planBuzzPerDay: 40_000,
-      optInBuzzPerDay: 40_000,
+      optInBuzzPerDay: 80_000,
       optedIn: false,
       docBytes: 2_097_152,
       docCount: 300,
@@ -141,41 +141,6 @@ describe('overrides in the usage-limits row', () => {
       { id: 'apps.buzz-daily', reason: 'only a product limit can be disabled' },
     ]);
   });
-
-  // How an override expresses the opt-in ceiling: a `byTier` rule on `apps.buzz-daily-opt-in`.
-  // `{ multiplier: m }` is m times that tier's daily cap; `{ limit: n }` is n Buzz. A tier the
-  // row gives no rule keeps the default, twice its daily cap.
-  it('the opt-in ceiling per tier: a multiple, a fixed figure, or the 2x default', async () => {
-    const config = configFrom({
-      'apps.buzz-daily-opt-in': {
-        byTier: { gold: { multiplier: 3 }, silver: { limit: 123_456 } },
-      },
-    });
-    const ceiling = async (tier: string) =>
-      (await resolveUserAppCaps(7, deps({ tier, getConfig: async () => config }))).optInBuzzPerDay;
-    expect(await ceiling('gold')).toBe(600_000);
-    expect(await ceiling('silver')).toBe(123_456);
-    expect(await ceiling('bronze')).toBe(150_000);
-    expect(await ceiling('free')).toBe(100_000);
-  });
-
-  it('an opt-in figure below the daily cap gives nothing to opt in to', async () => {
-    const config = configFrom({
-      'apps.buzz-daily-opt-in': { byTier: { bronze: { limit: 10_000 } } },
-    });
-    const d = deps({
-      tier: 'bronze',
-      getConfig: async () => config,
-      isOptInEnabled: vi.fn(async () => true),
-      readOptIn: vi.fn(async () => true),
-    });
-    expect(await resolveUserAppCaps(7, d)).toMatchObject({
-      buzzPerDay: 75_000,
-      optInBuzzPerDay: 75_000,
-      optedIn: false,
-    });
-    expect(d.readOptIn).not.toHaveBeenCalled();
-  });
 });
 
 describe('continue on your own Buzz (opt-in)', () => {
@@ -195,7 +160,7 @@ describe('continue on your own Buzz (opt-in)', () => {
     });
   });
 
-  it('a recorded opt-in is ignored with the flag off, and not even read', async () => {
+  it('a recorded opt-in is ignored with the flag off', async () => {
     const d = deps({
       isOptInEnabled: vi.fn(async () => false),
       readOptIn: vi.fn(async () => true),
@@ -203,12 +168,15 @@ describe('continue on your own Buzz (opt-in)', () => {
     const caps = await resolveUserAppCaps(7, d);
     expect(caps.buzzPerDay).toBe(50_000);
     expect(caps.optedIn).toBe(false);
-    expect(d.readOptIn).not.toHaveBeenCalled();
   });
 
-  it('flag on but no opt-in recorded: the plan cap', async () => {
+  // Record first: the record is written only while the flag is on, so a viewer with none needs
+  // no flag evaluation — the common case on every spend reservation.
+  it('no opt-in recorded: the plan cap, and zero flag evaluations', async () => {
     const d = deps({ tier: 'silver', isOptInEnabled: vi.fn(async () => true) });
     expect((await resolveUserAppCaps(7, d)).buzzPerDay).toBe(100_000);
+    expect(d.readOptIn).toHaveBeenCalledWith(7);
+    expect(d.isOptInEnabled).not.toHaveBeenCalled();
   });
 
   it('a failed opt-in read is "not opted in"', async () => {
@@ -234,5 +202,32 @@ describe('continue on your own Buzz (opt-in)', () => {
     expect((await resolveUserAppCaps(VIEWER, d)).buzzPerDay).toBe(100_000);
     expect((await resolveUserAppCaps(OWNER, d)).buzzPerDay).toBe(50_000);
     expect(readOptIn.mock.calls).toEqual([[VIEWER], [OWNER]]);
+  });
+});
+
+describe('the storage ceiling (docStoreUserLimits)', () => {
+  it("is the tier's storage caps, with no opt-in lookup at all", async () => {
+    const getSessionUser = vi.fn(
+      async (id: number) => ({ id, tier: 'gold' } as unknown as SessionUser)
+    );
+    const d = deps({
+      getSessionUser,
+      isOptInEnabled: vi.fn(async () => true),
+      readOptIn: vi.fn(async () => true),
+    });
+    expect(await docStoreUserLimits(7, d)).toEqual({ userBytes: 16_777_216, userDocs: 10_000 });
+    // Positive control: the injected deps were the ones used.
+    expect(getSessionUser).toHaveBeenCalledWith(7);
+    expect(d.readOptIn).not.toHaveBeenCalled();
+    expect(d.isOptInEnabled).not.toHaveBeenCalled();
+  });
+
+  it('a failed session read serves the strictest (Free) storage', async () => {
+    const d = deps({
+      getSessionUser: async () => {
+        throw new Error('hub down');
+      },
+    });
+    expect(await docStoreUserLimits(7, d)).toEqual({ userBytes: 2_097_152, userDocs: 1_000 });
   });
 });
