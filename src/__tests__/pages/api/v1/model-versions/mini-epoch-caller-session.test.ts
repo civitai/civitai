@@ -138,16 +138,18 @@ describe('mini/[id] epoch arm through the real session layer, enforce', () => {
     ]);
   });
 
-  it('withholds from an OAuth caller with no grant, logged as OAuth', async () => {
+  it('answers an OAuth caller with no grant as an unknown id, logged as OAuth', async () => {
     h.bearerSession.mockResolvedValue(keySession(9001, 'oauth'));
-    const { body, log } = await call('Bearer oauth-token');
-    expect(body?.downloadUrls).toEqual([]);
+    const { status, body, log } = await call('Bearer oauth-token');
+    expect(status).toBe(404);
+    expect(body).toEqual({ error: 'Model not found' });
     expect(log).toEqual([expect.objectContaining({ callerClass: 'other', resolvedAs: 'oauth' })]);
   });
 
-  it('withholds from a token the session layer does not know, logged as unrecognized', async () => {
-    const { body, log } = await call('Bearer not-a-key');
-    expect(body?.downloadUrls).toEqual([]);
+  it('answers a token the session layer does not know as an unknown id', async () => {
+    const { status, body, log } = await call('Bearer not-a-key');
+    expect(status).toBe(404);
+    expect(body).toEqual({ error: 'Model not found' });
     expect(log).toEqual([
       expect.objectContaining({ callerClass: 'anonymous', resolvedAs: 'unrecognized' }),
     ]);

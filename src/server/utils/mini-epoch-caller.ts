@@ -43,8 +43,8 @@ function credentialKind(
 }
 
 /**
- * Classifies the caller of the epoch arm for a Private version, logs it, and answers whether the
- * epoch url is withheld from them. Only `enforce` ever withholds.
+ * Classifies the caller of the epoch arm for a Private version, logs it, and answers whether they
+ * are refused. Only `enforce` ever refuses.
  */
 export async function evaluateMiniEpochCaller({
   req,
