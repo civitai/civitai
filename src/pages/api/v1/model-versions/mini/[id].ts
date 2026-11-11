@@ -18,6 +18,9 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { coverageColumn, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
+import { CacheTTL } from '~/server/common/constants';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
@@ -610,7 +613,7 @@ export default MixedAuthEndpoint(async function handler(
       ? getConsumerBlobId(downloadUrls[0])
       : undefined;
   if (blobId) {
-    const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId, user?.id);
+    const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId, !!user?.isModerator);
     // A blocked blob is never served. Any other refusal is the answer only once the stored url is
     // dead too; until then it is served.
     if (
@@ -672,29 +675,36 @@ export default MixedAuthEndpoint(async function handler(
 
 const RESIGN_TIMEOUT_MS = 3000;
 
-/** A fresh signature from the blob owner's own orchestrator account; `unknown` on any failure. */
+/**
+ * A fresh signature from the blob owner's own orchestrator account; `unknown` on any failure. Only a
+ * refreshed url is cached, so a refusal (a blocked blob above all) is asked again on the next read.
+ */
 async function resignEpochBlob(
   ownerId: number,
   blobId: string,
-  callerId: number | undefined
+  moderator: boolean
 ): Promise<BlobRefreshResult> {
   const unknown: BlobRefreshResult = { blobId, status: 'unknown' };
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<BlobRefreshResult>((resolve) => {
-    timer = setTimeout(() => resolve(unknown), RESIGN_TIMEOUT_MS);
-  });
-  const resign = async () => {
-    const token = await getOrchestratorToken(ownerId, undefined, {
-      bypassCache: callerId !== ownerId,
+  const key = `${REDIS_KEYS.CACHES.EPOCH_BLOB_RESIGNED_URL}:${ownerId}:${blobId}` as const;
+  const controller = new AbortController();
+  const resign = async (): Promise<BlobRefreshResult> => {
+    const cached = await redis.packed.get<string>(key).catch(() => null);
+    if (cached && !shouldRefreshBlobUrl(cached))
+      return { blobId, status: 'refreshed', url: cached };
+    const token = await getOrchestratorToken(ownerId, undefined, { bypassCache: moderator });
+    const [result] = await refreshBlobsService({
+      token,
+      blobIds: [blobId],
+      signal: controller.signal,
     });
-    const [result] = await refreshBlobsService({ token, blobIds: [blobId] });
+    if (result?.status === 'refreshed')
+      void redis.packed.set(key, result.url, { EX: CacheTTL.xs * 5 }).catch(() => undefined);
     return result ?? unknown;
   };
-  try {
-    return await Promise.race([resign(), timeout]);
-  } catch {
-    return unknown;
-  } finally {
-    clearTimeout(timer);
-  }
+  return withTimeoutFallback(
+    resign().catch(() => unknown),
+    RESIGN_TIMEOUT_MS,
+    unknown,
+    () => controller.abort()
+  );
 }

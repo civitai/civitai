@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as FliptClient from '~/server/flipt/client';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * Regression coverage for `GET /api/v1/model-versions/mini/[id]`.
@@ -42,8 +43,10 @@ const {
   mockGetFeaturedModels,
   mockIsFlipt,
   mockRefreshBlobs,
+  mockGetOrchestratorToken,
   currentUser,
 } = vi.hoisted(() => ({
+  mockGetOrchestratorToken: vi.fn(),
   mockIsFlipt: vi.fn(),
   mockRefreshBlobs: vi.fn(),
   mockQueryRaw: vi.fn(),
@@ -72,7 +75,7 @@ vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
   refreshBlobsService: mockRefreshBlobs,
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
-  getOrchestratorToken: async (userId: number) => `owner-token-${userId}`,
+  getOrchestratorToken: mockGetOrchestratorToken,
 }));
 
 vi.mock('~/server/services/model.service', () => ({
@@ -1333,9 +1336,17 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
     return pending;
   };
 
+  const CACHE_KEY = `packed:caches:epoch-blob-resigned-url:${OWNER_ID}:${BLOB_ID}`;
+  const cacheControl = (res: NextApiResponse) =>
+    (res.setHeader as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'Cache-Control'
+    )?.[1];
+
   beforeEach(() => {
     currentUser.value = { id: OWNER_ID };
     mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'refreshed', url: FRESH }]);
+    mockGetOrchestratorToken.mockImplementation(async (userId: number) => `owner-token-${userId}`);
+    redisMock.redis.packed.get.mockResolvedValue(null);
   });
 
   it('serves a freshly signed url, never the stored one, for the file a scan names', async () => {
@@ -1347,7 +1358,111 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
     expect(mockRefreshBlobs).toHaveBeenCalledWith({
       token: `owner-token-${OWNER_ID}`,
       blobIds: [BLOB_ID],
+      signal: expect.any(AbortSignal),
     });
+  });
+
+  it('marks a freshly signed url private and uncacheable', async () => {
+    const { res } = await runPlaceholder(EXPIRED);
+
+    expect(cacheControl(res)).toBe('private, no-store');
+  });
+
+  it.each([
+    ['the refresh says nothing', { blobId: BLOB_ID, status: 'unknown' }],
+    ['the blob is missing', { blobId: BLOB_ID, status: 'gone', reason: 'missing' }],
+  ])('sets no cache header when it keeps the stored url (%s)', async (_, result) => {
+    mockRefreshBlobs.mockResolvedValue([result]);
+
+    const { res, body } = await runPlaceholder(blobUrl('2099-01-01T00:00:00Z'));
+
+    expect(body.downloadUrls).toEqual([blobUrl('2099-01-01T00:00:00Z')]);
+    expect(cacheControl(res)).toBeUndefined();
+  });
+
+  it('keeps a freshly signed url for five minutes, per owner and blob', async () => {
+    await runPlaceholder(EXPIRED);
+
+    expect(redisMock.redis.packed.get).toHaveBeenCalledWith(CACHE_KEY);
+    expect(redisMock.redis.packed.set).toHaveBeenCalledWith(CACHE_KEY, FRESH, { EX: 300 });
+  });
+
+  it('serves a cached signature without asking the orchestrator', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(FRESH);
+
+    const { res, body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(cacheControl(res)).toBe('private, no-store');
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
+    expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
+  });
+
+  it('signs again when the cached signature is about to expire', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(
+      blobUrl(new Date(Date.now() + 60_000).toISOString())
+    );
+
+    const { body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
+  });
+
+  it('caches no refusal, so a blocked blob is asked about again', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'blocked' }]);
+
+    const { status } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(404);
+    const writes = redisMock.redis.packed.set.mock.calls.filter(([key]) => key === CACHE_KEY);
+    expect(writes).toEqual([]);
+  });
+
+  it.each([
+    ['the owner', { id: OWNER_ID }, false],
+    ['a moderator', { id: 1, isModerator: true }, true],
+  ])('only a moderator skips the per-pod token cache (%s)', async (_, user, bypassCache) => {
+    currentUser.value = user;
+
+    await runPlaceholder(EXPIRED);
+
+    expect(mockGetOrchestratorToken).toHaveBeenCalledWith(OWNER_ID, undefined, { bypassCache });
+  });
+
+  it.each([
+    ['the refresh rejects', () => mockRefreshBlobs.mockRejectedValue(new Error('down'))],
+    ['the token mint throws', () => mockGetOrchestratorToken.mockRejectedValue(new Error('no'))],
+    ['the cache read rejects', () => redisMock.redis.packed.get.mockRejectedValue(new Error('x'))],
+  ])('serves the stored url when %s', async (label, fail) => {
+    fail();
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(200);
+    // A failed cache read is only a miss: the url is still signed again.
+    expect(body.downloadUrls).toEqual([label === 'the cache read rejects' ? FRESH : EXPIRED]);
+  });
+
+  it('serves the stored url when the refresh hangs, and aborts it', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      mockRefreshBlobs.mockImplementation((args: { signal: AbortSignal }) => {
+        signal = args.signal;
+        return new Promise(() => undefined);
+      });
+
+      const pending = runPlaceholder(EXPIRED);
+      await vi.advanceTimersByTimeAsync(3000);
+      const { status, body } = await pending;
+
+      expect(status).toBe(200);
+      expect(body.downloadUrls).toEqual([EXPIRED]);
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('signs again a stored url that has not expired yet', async () => {

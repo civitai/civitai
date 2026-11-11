@@ -3257,6 +3257,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // only delays a brand-new epoch becoming generatable. See
     // `validateRawAirResources` in orchestration-new.service.
     TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
+    // `<ownerId>:<blobId>` -> a freshly signed url for a published training epoch, re-signed with
+    // the owner's orchestrator token. Short TTL, well under the signed lifetime; see mini/[id].ts.
+    EPOCH_BLOB_RESIGNED_URL: 'packed:caches:epoch-blob-resigned-url',
     // Per-user creator card (`user.getCreator` by id): the user row slice, links, stats, rank,
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.

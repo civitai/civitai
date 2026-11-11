@@ -20,9 +20,11 @@ export type BlobRefreshResult =
 export async function refreshBlobsService({
   token,
   blobIds,
+  signal,
 }: {
   token: string;
   blobIds: string[];
+  signal?: AbortSignal;
 }): Promise<BlobRefreshResult[]> {
   const client = createOrchestratorClient(token);
   const unique = [...new Set(blobIds)].slice(0, MAX_BLOB_REFRESH_BATCH);
@@ -30,7 +32,7 @@ export async function refreshBlobsService({
   return Promise.all(
     unique.map(async (blobId): Promise<BlobRefreshResult> => {
       try {
-        const { data, response } = await refreshBlob({ client, path: { blobId } });
+        const { data, response } = await refreshBlob({ client, path: { blobId }, signal });
         if (data?.blockedReason || data?.available === false)
           return { blobId, status: 'gone', reason: 'blocked' };
         if (response?.status === 404) return { blobId, status: 'gone', reason: 'missing' };
