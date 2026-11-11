@@ -36,7 +36,7 @@ export interface SessionClient {
   resolveSessionUser(token: string): Promise<SessionResolution>;
   /**
    * Read-through resolve BY userId (no token) — for consumer paths that start from a userId rather than a
-   * verifiable session token: API-key/bearer auth and the main app's preview sign-in. Same shared-cache read +
+   * verifiable session token: API-key/bearer auth. Same shared-cache read +
    * per-pod single-flight as getSessionUser(token), but the hub fetch is the INTERNAL-authed read-through
    * identity endpoint (`GET /api/auth/identity?userId=`, gated by AUTH_INTERNAL_TOKEN), since there's no token
    * to present. Null when there's no such user, the secret is unset, or the hub is unreachable. This is a READ
