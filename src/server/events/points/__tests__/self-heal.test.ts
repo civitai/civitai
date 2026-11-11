@@ -431,8 +431,7 @@ describe('the self-heal', () => {
     );
     const job = source.slice(source.indexOf('export const eventEngineLeaderboardUpdate'));
     expect(job).toMatch(new RegExp(String.raw`^[^;]*createJob\(\s*'${SETTLE_JOB}'`));
-    expect(job.slice(0, job.indexOf('\n);'))).toContain('lockExpiration: 15 * 60');
-    expect(SETTLE_LOCK_S).toBe(15 * 60);
+    expect(job.slice(0, job.indexOf('\n);'))).toContain('lockExpiration: SETTLE_LOCK_S');
   });
 
   it('asks for that lock with that expiration', async () => {

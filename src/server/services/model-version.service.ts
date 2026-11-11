@@ -3237,7 +3237,9 @@ export async function bustModelLevelVersionCaches(modelIds: number | number[]) {
 export const bustMvCache = async (
   ids: number | number[],
   modelIds?: number | number[],
-  userId?: number
+  userId?: number,
+  /** `orchestrator: false` for a caller that busts the orchestrator itself, with its own pacing. */
+  { orchestrator = true }: { orchestrator?: boolean } = {}
 ) => {
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
@@ -3262,7 +3264,7 @@ export const bustMvCache = async (
     // Best-effort: a stale price on the model page is not worth failing an unpublish over.
     logToAxiom({ type: 'error', name: 'bust-paid-access-cache', message: 'gate row', error });
   }
-  await bustOrchestratorModelCache(versionIds, userId);
+  if (orchestrator) await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,
   // so a stale `images: []` entry from the publish race will hide the model

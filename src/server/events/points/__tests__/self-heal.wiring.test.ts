@@ -33,7 +33,8 @@ vi.mock('~/server/events/load-events', () => ({
 vi.mock('~/server/events/points/sync', () => ({ syncEventHats: leaves.sync }));
 vi.mock('~/server/events/points/referee', () => ({
   runEventPointsReferee: leaves.referee,
-  REFEREE_CLICKHOUSE_BUDGET_S: 720,
+  REFEREE_CLICKHOUSE_BUDGET_S: 2100,
+  SETTLE_LOCK_S: 45 * 60,
 }));
 // The real lock, watched: what the production heal asks it for.
 const lockCalls = vi.hoisted(() => [] as unknown[][]);
@@ -87,7 +88,7 @@ describe('healEventPoints', () => {
       jobLockKey('event-engine-leaderboard-update'),
     ]);
     expect(lockCalls).toEqual([
-      ['event-engine-leaderboard-update', 15 * 60, sys, { failOpen: false }],
+      ['event-engine-leaderboard-update', 45 * 60, sys, { failOpen: false }],
     ]);
   });
 

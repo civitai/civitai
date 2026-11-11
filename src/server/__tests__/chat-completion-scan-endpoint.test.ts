@@ -14,6 +14,8 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   getTextScanConfig: vi.fn(),
   insertTextScanPrompt: vi.fn(),
   setTextScanConfig: vi.fn(),
+  setTextScanRollout: vi.fn(),
+  setTextScanWebSearchRollout: vi.fn(),
 }));
 
 const { default: handler } = await import('~/pages/api/testing/chat-completion-scan');
@@ -22,8 +24,14 @@ const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
 );
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/orchestration-client');
-const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt, setTextScanConfig } =
-  await import('~/server/services/text-scan/prompt');
+const {
+  getActiveTextScanPrompts,
+  getTextScanConfig,
+  insertTextScanPrompt,
+  setTextScanConfig,
+  setTextScanRollout,
+  setTextScanWebSearchRollout,
+} = await import('~/server/services/text-scan/prompt');
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');
 const { composeUserText, segmentUserText, MIN_SEGMENT_CHARS } = await import(
   '~/server/services/text-scan/segment'
@@ -130,117 +138,96 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(res._body()).toMatchObject({ active: PROMPTS, config: CONFIG });
   });
 
-  it('putPrompt rejects an unknown key and a missing createdById', async () => {
-    expect(
-      (
-        await call({
-          action: 'putPrompt',
-          key: 'label:hate',
-          content: 'x',
-          note: 'n',
-          createdById: 5,
-        })
-      )._status()
-    ).toBe(400);
-    expect(
-      (await call({ action: 'putPrompt', key: 'base', content: 'x', note: 'n' }))._status()
-    ).toBe(400);
+  // Decision: writes are served only by /api/mod/text-scan, which attributes them to the signed-in
+  // moderator and audits the call. This route's token names nobody, so it must not write.
+  it.each([
+    { action: 'putPrompt', key: 'base', content: 'x', note: 'n', createdById: 5 },
+    { action: 'putConfig', moderatorId: 5, config: { thinking: true } },
+    { action: 'putModes', moderatorId: 5, entityType: 'Post', rollout: { shadow: 10 } },
+    { action: 'putWebSearchModes', moderatorId: 5, entityType: 'Model', rollout: { shadow: 10 } },
+  ])('refuses $action with 403 and writes nothing', async (body) => {
+    const res = await call(body);
+    expect(res._status()).toBe(403);
+    expect(JSON.stringify(res._body())).toContain('/api/mod/text-scan');
     expect(insertTextScanPrompt).not.toHaveBeenCalled();
-  });
-
-  it('putPrompt saves without a note', async () => {
-    vi.mocked(insertTextScanPrompt).mockResolvedValue({ id: 5, key: 'base' });
-    const res = await call({ action: 'putPrompt', key: 'base', content: 'x', createdById: 5 });
-    expect(res._status()).toBe(200);
-    expect(insertTextScanPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'base', content: 'x', note: undefined })
-    );
-  });
-
-  it.each(['   ', '\n\t'])('putPrompt rejects whitespace-only content %j', async (content) => {
-    const res = await call({
-      action: 'putPrompt',
-      key: 'base',
-      content,
-      note: 'n',
-      createdById: 5,
-    });
-    expect(res._status()).toBe(400);
-    expect((res._body() as { issues: Array<{ path: unknown[] }> }).issues[0].path).toEqual([
-      'content',
-    ]);
-    expect(insertTextScanPrompt).not.toHaveBeenCalled();
-  });
-
-  it('putPrompt inserts with the moderator id', async () => {
-    vi.mocked(insertTextScanPrompt).mockResolvedValue({ id: 5, key: 'base' });
-    const res = await call({
-      action: 'putPrompt',
-      key: 'base',
-      content: 'BASE v2',
-      note: 'tighten',
-      createdById: 5,
-    });
-    expect(res._status()).toBe(200);
-    expect(insertTextScanPrompt).toHaveBeenCalledWith({
-      key: 'base',
-      content: 'BASE v2',
-      note: 'tighten',
-      createdById: 5,
-    });
-  });
-
-  it('putPrompt surfaces a non-moderator as 401', async () => {
-    vi.mocked(insertTextScanPrompt).mockRejectedValueOnce(
-      new TRPCError({ code: 'UNAUTHORIZED', message: 'not a moderator' })
-    );
-    expect(
-      (
-        await call({ action: 'putPrompt', key: 'base', content: 'x', note: 'n', createdById: 9 })
-      )._status()
-    ).toBe(401);
-  });
-
-  it('putConfig validates the patch and passes the moderator id', async () => {
-    expect(
-      (await call({ action: 'putConfig', moderatorId: 5, config: { maxInputChars: -1 } }))._status()
-    ).toBe(400);
-    expect(
-      (await call({ action: 'putConfig', moderatorId: 5, config: { other: 1 } }))._status()
-    ).toBe(400);
-    expect(
-      (
-        await call({ action: 'putConfig', moderatorId: 5, config: { maxInputChars: 999 } })
-      )._status()
-    ).toBe(400);
-    for (const maxSegments of [0, 21, 2.5, '4'])
-      expect(
-        (await call({ action: 'putConfig', moderatorId: 5, config: { maxSegments } }))._status()
-      ).toBe(400);
-    expect((await call({ action: 'putConfig', config: { thinking: true } }))._status()).toBe(400);
     expect(setTextScanConfig).not.toHaveBeenCalled();
+    expect(setTextScanRollout).not.toHaveBeenCalled();
+    expect(setTextScanWebSearchRollout).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['putModes', 'Post', setTextScanRollout],
+    ['putWebSearchModes', 'Model', setTextScanWebSearchRollout],
+  ] as const)(
+    '%s sets the rollout as the session moderator, never an id from the body',
+    async (action, entityType, setter) => {
+      const input = textScanHarnessSchema.parse({
+        action,
+        moderatorId: 9,
+        entityType,
+        rollout: { shadow: 10 },
+      });
+      await expect(runTextScanHarnessAction(input, {})).rejects.toThrow(
+        'a moderator id is required'
+      );
+      expect(setter).not.toHaveBeenCalled();
+      await runTextScanHarnessAction(input, { moderatorId: 5 });
+      expect(setter).toHaveBeenCalledWith(
+        entityType,
+        expect.objectContaining({ shadow: 10 }),
+        expect.objectContaining({ moderatorId: 5 })
+      );
+    }
+  );
+
+  it('putPrompt rejects an unknown key and whitespace-only content', () => {
+    const base = { action: 'putPrompt', note: 'n' };
+    expect(
+      textScanHarnessSchema.safeParse({ ...base, key: 'label:hate', content: 'x' }).success
+    ).toBe(false);
+    for (const content of ['   ', '\n\t']) {
+      const parsed = textScanHarnessSchema.safeParse({ ...base, key: 'base', content });
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues[0].path).toEqual(['content']);
+    }
+  });
+
+  it('putPrompt writes as the session moderator, never an id from the body', async () => {
+    vi.mocked(insertTextScanPrompt).mockResolvedValue({ id: 5, key: 'base' });
+    const input = textScanHarnessSchema.parse({
+      action: 'putPrompt',
+      key: 'base',
+      content: 'BASE v2',
+      createdById: 9,
+    });
+    await expect(runTextScanHarnessAction(input, {})).rejects.toThrow('a moderator id is required');
+    expect(insertTextScanPrompt).not.toHaveBeenCalled();
+
+    await runTextScanHarnessAction(input, { moderatorId: 5 });
+    expect(insertTextScanPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'base', content: 'BASE v2', note: undefined, createdById: 5 })
+    );
+  });
+
+  it('putConfig validates the patch and writes as the session moderator', async () => {
+    const parse = (config: unknown) =>
+      textScanHarnessSchema.safeParse({ action: 'putConfig', config }).success;
+    expect(parse({ maxInputChars: -1 })).toBe(false);
+    expect(parse({ other: 1 })).toBe(false);
+    expect(parse({ maxInputChars: 999 })).toBe(false);
+    for (const maxSegments of [0, 21, 2.5, '4']) expect(parse({ maxSegments })).toBe(false);
+    expect(parse({ maxSegments: 20 })).toBe(true);
+    expect(parse({ maxInputChars: MIN_SEGMENT_CHARS })).toBe(true);
 
     vi.mocked(setTextScanConfig).mockResolvedValue({ ...CONFIG, thinking: true });
-    const res = await call({ action: 'putConfig', moderatorId: 5, config: { thinking: true } });
-    expect(res._status()).toBe(200);
-    expect(setTextScanConfig).toHaveBeenCalledWith({ thinking: true }, { moderatorId: 5 });
-    expect(res._body()).toEqual({ ...CONFIG, thinking: true });
-    const segments = await call({
+    const input = textScanHarnessSchema.parse({
       action: 'putConfig',
-      moderatorId: 5,
-      config: { maxSegments: 20 },
+      moderatorId: 9,
+      config: { thinking: true },
     });
-    expect(segments._status()).toBe(200);
-    expect(setTextScanConfig).toHaveBeenLastCalledWith({ maxSegments: 20 }, { moderatorId: 5 });
-    expect(
-      (
-        await call({
-          action: 'putConfig',
-          moderatorId: 5,
-          config: { maxInputChars: MIN_SEGMENT_CHARS },
-        })
-      )._status()
-    ).toBe(200);
+    await expect(runTextScanHarnessAction(input, {})).rejects.toThrow('a moderator id is required');
+    await runTextScanHarnessAction(input, { moderatorId: 5 });
+    expect(setTextScanConfig).toHaveBeenCalledWith({ thinking: true }, { moderatorId: 5 });
   });
 
   it('scanEntity composes the production prompt, applies overrides, and waits', async () => {
@@ -307,15 +294,6 @@ describe('chat-completion-scan text-scan actions', () => {
       byOutcome: { ok: 1, refused: 1, too_short: 1 },
       firing: { nsfw: 1 },
     });
-  });
-
-  it('putPrompt and putConfig without any moderator id are a 400', async () => {
-    expect(
-      (await call({ action: 'putPrompt', key: 'base', content: 'x', note: 'n' }))._status()
-    ).toBe(400);
-    expect((await call({ action: 'putConfig', config: { thinking: true } }))._status()).toBe(400);
-    expect(insertTextScanPrompt).not.toHaveBeenCalled();
-    expect(setTextScanConfig).not.toHaveBeenCalled();
   });
 
   it('a harness action that throws goes through the error envelope', async () => {
