@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ModelVersionService from '~/server/services/model-version.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -18,7 +19,10 @@ const versionCaches = vi.hoisted(() => ({
   bustMvCache: vi.fn<(ids: number[]) => Promise<void>>(),
   bustPublicModelResponseCache: vi.fn<(ids: number[]) => Promise<void>>(),
 }));
-vi.mock('~/server/services/model-version.service', () => versionCaches);
+vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelVersionService>()),
+  ...versionCaches,
+}));
 
 import {
   getAccountLegalHoldLegs,
@@ -28,6 +32,7 @@ import {
   LegalHoldError,
 } from '~/server/services/legal-hold.service';
 import { modelsSearchIndex } from '~/server/search-index';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { deleteUser } from '~/server/services/user.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
@@ -559,6 +564,7 @@ describe('deleteUser under a legal hold', () => {
 
     beforeEach(async () => {
       vi.spyOn(modelsSearchIndex, 'queueUpdate').mockResolvedValue(undefined as never);
+      vi.spyOn(dataForModelsCache, 'refresh').mockResolvedValue(undefined as never);
       dbMock.dbWrite.model.findMany.mockImplementation(
         (async (args: { where: { userId: number } }) =>
           (
@@ -591,10 +597,14 @@ describe('deleteUser under a legal hold', () => {
       // The generator reads versions through these caches; a stale entry still serves them.
       expect(versionCaches.bustMvCache).toHaveBeenCalledTimes(1);
       expect([...versionCaches.bustMvCache.mock.calls[0][0]].sort()).toEqual([1, 2]);
+      expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledTimes(1);
       expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledWith([
         { id: CLEAN_MODEL, action: SearchIndexUpdateQueueAction.Delete },
       ]);
+      expect(versionCaches.bustPublicModelResponseCache).toHaveBeenCalledTimes(1);
       expect(versionCaches.bustPublicModelResponseCache).toHaveBeenCalledWith([CLEAN_MODEL]);
+      expect(dataForModelsCache.refresh).toHaveBeenCalledTimes(1);
+      expect(dataForModelsCache.refresh).toHaveBeenCalledWith([CLEAN_MODEL]);
     });
 
     it('leaves the versions alone when the models are kept', async () => {
@@ -610,6 +620,7 @@ describe('deleteUser under a legal hold', () => {
       expect(versionCaches.bustMvCache).not.toHaveBeenCalled();
       expect(versionCaches.bustPublicModelResponseCache).not.toHaveBeenCalled();
       expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+      expect(dataForModelsCache.refresh).not.toHaveBeenCalled();
     });
 
     // The mocked transaction stops at the scrub's abort, so this pins the version write inside the
