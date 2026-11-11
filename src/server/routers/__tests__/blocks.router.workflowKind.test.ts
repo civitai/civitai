@@ -2466,9 +2466,9 @@ describe('inline customComfy — the generation input gate', () => {
 
   it('submit gates its own graph: an image swapped in after a passing estimate is refused', async () => {
     givenImage(OTHER_USER);
-    const body = inline({ image: 'clean.png' });
+    const body = inline();
     await expect(estimate(body)).resolves.toMatchObject({ snapshot: { status: 'pending' } });
-    body.workflow['3'].inputs.image = CDN;
+    (body.workflow['3'].inputs as Record<string, unknown>).image = CDN;
     await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
@@ -2497,7 +2497,9 @@ describe('inline customComfy — the generation input gate', () => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
     await given();
     loggingMock.logToAxiom.mockClear();
-    await expect(submit(inline({ image: OWN_KEY }))).rejects.toMatchObject({
+    const body = inline();
+    (body.workflow['2'].inputs as Record<string, unknown>).text = `restyle ${OWN_KEY}`;
+    await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: APP_SOURCE_UNUSABLE_MESSAGE,
     });
@@ -2519,18 +2521,65 @@ describe('inline customComfy — the generation input gate', () => {
       () => {
         let deep: unknown = 'x';
         for (let i = 0; i < 80; i++) deep = { v: deep };
-        return { image: deep };
+        return deep;
       },
     ],
-    ['is too large to check', () => ({ image: 'a\n'.repeat(70_000) })],
-  ])('refuses a graph that %s, never passing it unscanned', async (what, inputs) => {
+    ['is too large to check', () => 'a\n'.repeat(70_000)],
+  ])('refuses a graph that %s, never passing it unscanned', async (what, text) => {
     for (const call of [estimate, submit]) {
-      await expect(call(inline(inputs()))).rejects.toMatchObject({
+      const body = inline();
+      (body.workflow['2'].inputs as Record<string, unknown>).text = text();
+      await expect(call(body)).rejects.toMatchObject({
         code: 'BAD_REQUEST',
         message: `workflow graph ${what}`,
       });
     }
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('inline customComfy — nodes the host does not run inline', () => {
+  beforeEach(() => {
+    const viewer = { id: VIEWER, isModerator: false, email: 'v@example.com', username: 'v' };
+    dbMock.dbRead.user.findUnique.mockImplementation((async () => viewer) as never);
+  });
+  afterEach(() => dbMock.dbRead.user.findUnique.mockReset());
+
+  const AIR = 'urn:air:sdxl:lora:civitai:101@202';
+  type Node = { class_type: string; inputs: Record<string, unknown> };
+  const graphWith = (node: Node) => ({
+    kind: 'customComfy' as const,
+    mode: 'inline' as const,
+    workflow: {
+      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: AIR } },
+      '2': { class_type: 'StringConcatenate', inputs: { string_a: 'a', string_b: 'b' } },
+      '3': node,
+    },
+    resources: [AIR],
+    maxBuzz: 60,
+  });
+  const refused = { snapshot: { status: 'failed', errorCode: 'inline-node-refused' } };
+
+  it.each([
+    ['a path node', { class_type: 'VHS_LoadImagePath', inputs: { image: '/x.png' } }],
+    ['a linked loader input', { class_type: 'LoadImage', inputs: { image: ['2', 0] } }],
+    ['a local file in a loader', { class_type: 'LoadImage', inputs: { image: 'x.png' } }],
+  ])('refuses %s on estimate AND submit, before any orchestrator call', async (_what, node) => {
+    for (const call of [estimate, submit]) {
+      await expect(call(graphWith(node))).resolves.toMatchObject(refused);
+    }
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(0);
+  });
+
+  it('estimates a LoRA loader with linked model, CLIP and strength', async () => {
+    const node = {
+      class_type: 'LoraLoader',
+      inputs: { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_model: ['2', 0] },
+    };
+    await expect(estimate(graphWith(node))).resolves.toMatchObject({
+      snapshot: { status: 'pending' },
+    });
   });
 });

@@ -10962,10 +10962,9 @@ async function assertStepOrWorkflowInputsUsable(
 }
 
 /**
- * The source images an inline customComfy graph reads must pass the app-block source gate. The
- * whole graph is read: a node may link a text field into an image input. The estimate and the
- * submit both call this on the graph `checkInlineComfyGraph` returned, so nothing an estimate
- * saw is trusted at submit. A pending source returns the failed snapshot; anything else throws.
+ * The source images an inline customComfy graph reads must pass the app-block source gate. Read
+ * the whole graph: a node may link a text field into an image input. A pending source returns
+ * the failed snapshot; anything else throws.
  */
 async function checkInlineComfySources(opts: {
   graph: ComfyGraph;
