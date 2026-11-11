@@ -129,9 +129,14 @@ export function toYesNoRows(records: Record<string, string>[]): {
       prompt,
       yesEffect: clip(r.yes_effect, MAX_EFFECT) || null,
       noEffect: clip(r.no_effect, MAX_EFFECT) || null,
-      meta: Object.fromEntries(
-        Object.entries(META_COLUMNS).map(([name, column]) => [name, clip(r[column], 120)])
-      ),
+      meta: {
+        ...Object.fromEntries(
+          Object.entries(META_COLUMNS).map(([name, column]) => [name, clip(r[column], 120)])
+        ),
+        // A cleaned-up CSV rewords a producer question under a new id; this links it back, the way a
+        // moderator reword does. Left out when empty: the moderator tools treat any value as a reword.
+        ...(idOf(r.reword_of) ? { [REWORD_OF_META_KEY]: idOf(r.reword_of) } : {}),
+      },
     });
   }
   return { rows, skipped, retire };
