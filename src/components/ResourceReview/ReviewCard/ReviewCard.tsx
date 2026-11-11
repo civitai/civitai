@@ -60,8 +60,9 @@ export function ReviewCard({
 
   const username = review.user.username ?? 'a user';
 
-  // Fixed squares, so one or two images keep the same thumbnail shape as four.
-  const tile = 'relative size-[120px] shrink-0 overflow-hidden rounded-md sm:size-[150px]';
+  // Squares that shrink to fit the card, capped so one or two images don't stretch.
+  const tile =
+    'relative aspect-square min-w-0 flex-1 basis-0 overflow-hidden rounded-md max-w-[120px] sm:max-w-[150px]';
   const moreTile = (shown: number, className: string) => (
     <div
       className={clsx(
@@ -200,9 +201,9 @@ export function ReviewCard({
             </div>
           ))}
           {review.imageCount > phoneShown &&
-            moreTile(phoneShown, 'flex h-[120px] w-[72px] sm:hidden')}
+            moreTile(phoneShown, 'flex w-[72px] self-stretch sm:hidden')}
           {review.imageCount > shownImages.length &&
-            moreTile(shownImages.length, 'hidden h-[150px] w-24 sm:flex')}
+            moreTile(shownImages.length, 'hidden w-24 self-stretch sm:flex')}
         </div>
       )}
 
