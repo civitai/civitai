@@ -45,6 +45,7 @@ import {
   getResourceReviewPagedSchema,
   REVIEW_HAS_IMAGES_COUNT_CAP,
 } from '~/server/schema/resourceReview.schema';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRatingLabel } from '~/utils/rating-label';
@@ -53,7 +54,7 @@ import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ctx, ssg }) => {
+  resolver: async ({ ctx, ssg, session, features }) => {
     const params = (ctx.params ?? {}) as { id: string };
 
     // Redirect near-duplicate review URLs (review dialogs, stray reviewId, escaped-`&` loops, a
@@ -67,6 +68,11 @@ export const getServerSideProps = createServerSideProps({
     const result = getResourceReviewPagedSchema.safeParse({
       modelId: params.id,
       ...ctx.query,
+      // Must equal the client's useBrowsingLevelDebounced() or the prefetch key misses.
+      browsingLevel: getServerBrowsingLevel({
+        canViewNsfw: features?.canViewNsfw ?? false,
+        user: session?.user,
+      }),
       // `filter` is the only source of the list filters, so a raw param cannot filter the list
       // while the control shows "All".
       hasImages: undefined,
@@ -78,6 +84,7 @@ export const getServerSideProps = createServerSideProps({
     const { modelId, modelVersionId } = result.data;
 
     await Promise.all([
+      ssg?.resourceReview.getPaged.prefetch(result.data),
       ssg?.model.getSimple.prefetch({ id: modelId }),
       ssg?.model.getById.prefetch({ id: modelId }),
       ssg?.model.getVersions.prefetch({ id: modelId }),
