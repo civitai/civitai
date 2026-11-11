@@ -45,7 +45,7 @@ export function ResourceReviewCarousel({
         limit: 10,
       };
 
-  const { data, images, isLoading } = useQueryImages(filters);
+  const { data, images, isLoading, isError, refetch } = useQueryImages(filters);
 
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
   const viewMoreHref = postId
@@ -61,6 +61,13 @@ export function ResourceReviewCarousel({
         {isLoading ? (
           <div className="flex h-96 items-center justify-center">
             <Loader />
+          </div>
+        ) : isError ? (
+          <div className="flex h-96 flex-col items-center justify-center gap-2">
+            <Text c="dimmed">Could not load images for this review.</Text>
+            <Button variant="light" onClick={() => refetch()}>
+              Try again
+            </Button>
           </div>
         ) : (
           <Embla
@@ -79,7 +86,15 @@ export function ResourceReviewCarousel({
                   >
                     <ImageGuard2 image={image} connectType="review" connectId={reviewId}>
                       {(safe) => (
-                        <div className="relative">
+                        <div
+                          className="relative w-full"
+                          // MediaHash is absolutely positioned, so a blurred slide needs its own size.
+                          style={
+                            safe
+                              ? undefined
+                              : { aspectRatio: `${image.width || 1}/${image.height || 1}` }
+                          }
+                        >
                           <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                           <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
 

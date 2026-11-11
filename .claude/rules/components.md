@@ -64,6 +64,6 @@ Why: `src/providers/ThemeProvider.tsx` sets `Popover` `withinPortal: false` app-
 ## Modals
 
 Use Mantine modals with proper accessibility and keyboard handling, managed through the dialog registry:
-- Register dialogs in `src/components/Dialog/dialog-registry2.ts`; URL-routed ones in `src/components/Dialog/routed-dialog-registry.ts`.
+- Register dialogs in `src/components/Dialog/dialog-registry2.ts`; URL-routed ones as a `<name>.dialog.ts` in `src/components/Dialog/routed-dialog/`, imported by its `registry.ts`.
 - `DialogProvider` for context-based modal management; `RoutedDialogProvider` for URL-based modal state.
 - Open dialogs through the registry so modal handling stays consistent.
