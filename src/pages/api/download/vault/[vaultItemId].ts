@@ -12,7 +12,7 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
-import { ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { ModelUsageControl, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { isModelTakenDown } from '~/server/utils/model-version-gates';
 import { resolveActorFor } from '~/utils/resolve-attribution';
@@ -128,9 +128,12 @@ export default AuthedEndpoint(
         if (!user.isModerator) {
           const scan = await dbRead.modelFile.findUnique({
             where: { id: file.id },
-            select: { pickleScanResult: true, virusScanResult: true },
+            select: { type: true, pickleScanResult: true, virusScanResult: true },
           });
           if (scan && hasFailedScan(scan)) return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
+          // As on the site: training data is served only once its scan completes.
+          if (scan?.type === 'Training Data' && scan.virusScanResult !== ScanResultCode.Success)
+            return onError(404, 'File not found');
         }
         const { url } = await resolveDownloadUrl(file.id, file.url, file.displayName, {
           caller: 'vault',

@@ -74,7 +74,7 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
     mockResolveDownloadUrl.mockResolvedValue({ url: 'https://example.invalid/model.safetensors' });
   });
 
-  const scanOf = (scan: { pickleScanResult: string; virusScanResult: string }) =>
+  const scanOf = (scan: { type?: string; pickleScanResult: string; virusScanResult: string }) =>
     dbMock.dbRead.modelFile.findUnique.mockResolvedValue(scan as never);
 
   it('refuses it with 403 and does not resolve a url', async () => {
@@ -96,6 +96,24 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
   it('serves it to a moderator', async () => {
     TEST_USER.isModerator = true;
     scanOf({ pickleScanResult: 'Success', virusScanResult: 'Danger' });
+    const { promise, res } = run();
+    await promise;
+    expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+  });
+
+  it.each(['Pending', 'Error'])(
+    'refuses training data vaulted earlier whose scan is %s',
+    async (virusScanResult) => {
+      scanOf({ type: 'Training Data', pickleScanResult: 'Pending', virusScanResult });
+      const { promise, res } = run();
+      await promise;
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
+    }
+  );
+
+  it('serves training data whose scan completed', async () => {
+    scanOf({ type: 'Training Data', pickleScanResult: 'Pending', virusScanResult: 'Success' });
     const { promise, res } = run();
     await promise;
     expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
