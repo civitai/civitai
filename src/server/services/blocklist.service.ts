@@ -751,7 +751,6 @@ export async function throwOnBlockedUserContent(
         message: enforce
           ? 'Blocked pattern found in user content; write rejected'
           : 'Blocked pattern found in user content; not enforced on this surface yet',
-        // Ids only. The matched text would copy a blocklist entry into every event.
         details: { surface, entityType, entityId, userId, patternId, enforced: enforce },
       }).catch(() => undefined);
 
