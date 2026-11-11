@@ -1,16 +1,23 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
+import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import type { GenerationStore } from '~/components/form-graph/generation/store';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   getGenerationLicenseTerms,
   hasAcceptedGenerationLicense,
   type GenerationLicenseTerms,
 } from '~/shared/constants/generation-license.constants';
-import { trpc } from '~/utils/trpc';
+import { trpcVanilla } from '~/utils/trpc';
+
+const settingsKey = ['generation-license', 'settings'] as const;
 
 /**
  * The licence the selected ecosystem requires, and whether this user has accepted it. The server
  * refuses the submit either way; this only lets the form ask first instead of failing.
+ *
+ * Plain React Query over the vanilla client, and the optional session: the footer renders under
+ * neither a tRPC provider nor a session in its component tests, and for every ecosystem without
+ * terms this must cost nothing.
  */
 export function useGenerationLicense(store: GenerationStore): {
   terms?: GenerationLicenseTerms;
@@ -24,13 +31,17 @@ export function useGenerationLicense(store: GenerationStore): {
     () => undefined
   );
   const terms = getGenerationLicenseTerms(ecosystem);
-  const currentUser = useCurrentUser();
-  const utils = trpc.useUtils();
-  const { data: settings, isLoading } = trpc.user.getSettings.useQuery(undefined, {
-    enabled: !!terms && !!currentUser,
+  const signedIn = useOptionalCivitaiSessionContext()?.type === 'authed';
+  const queryClient = useQueryClient();
+  const { data: settings, isLoading } = useQuery({
+    queryKey: settingsKey,
+    queryFn: () => trpcVanilla.user.getSettings.query(),
+    enabled: !!terms && signedIn,
   });
-  const mutation = trpc.orchestrator.acceptGenerationLicense.useMutation({
-    onSuccess: () => utils.user.getSettings.invalidate(),
+  const mutation = useMutation({
+    mutationFn: (eco: string) =>
+      trpcVanilla.orchestrator.acceptGenerationLicense.mutate({ ecosystem: eco }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: settingsKey }),
   });
 
   const accepted =
@@ -38,9 +49,9 @@ export function useGenerationLicense(store: GenerationStore): {
   return {
     terms,
     // Signed out, the sign-in gate comes first; while settings load, wait rather than flash the notice.
-    blocked: !!terms && !!currentUser && !isLoading && !accepted,
+    blocked: !!terms && signedIn && !isLoading && !accepted,
     accept: () => {
-      if (ecosystem) mutation.mutate({ ecosystem });
+      if (ecosystem) mutation.mutate(ecosystem);
     },
     accepting: mutation.isPending,
   };
