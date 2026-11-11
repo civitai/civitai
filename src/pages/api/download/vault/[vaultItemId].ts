@@ -132,8 +132,10 @@ export default AuthedEndpoint(
             (await dbRead.modelFile.findUnique({ where: { id: file.id }, select })) ??
             (await dbRead.modelFile.findFirst({ where: { url: file.url }, select }));
           if (scan && hasFailedScan(scan)) return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
-          // Training data is never a vault's file; the site's own rules decide who gets it.
-          if (scan?.type === 'Training Data') return onError(404, 'File not found');
+          // Training data is never a vault's file; the site's own rules decide who gets it. With no row
+          // left, the name it was stored under (`getFileDisplayName`) still says what it was.
+          if (scan ? scan.type === 'Training Data' : file.displayName === 'Training Data')
+            return onError(404, 'File not found');
         }
         const { url } = await resolveDownloadUrl(file.id, file.url, file.displayName, {
           caller: 'vault',

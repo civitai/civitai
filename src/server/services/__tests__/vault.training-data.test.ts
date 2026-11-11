@@ -6,6 +6,7 @@ vi.mock('~/server/services/image.service', () => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { getModelVersionDataForVault } from '~/server/services/vault.service';
+import { getFileDisplayName } from '~/server/utils/model-helpers';
 
 const file = (id: number, type: string, metadata: Record<string, unknown> = {}) => ({
   id,
@@ -38,6 +39,16 @@ describe('the file a vault stores', () => {
     const { files } = await getModelVersionDataForVault({ modelVersionId: 5 });
 
     expect(files.map((f) => f.id)).toEqual([1]);
+  });
+
+  // The vault download refuses a training data entry whose row is gone by this stored name.
+  it('was stored, before it was excluded, under the name "Training Data"', () => {
+    expect(
+      getFileDisplayName({
+        file: { type: 'Training Data', metadata: {} },
+        modelType: 'LORA' as never,
+      })
+    ).toBe('Training Data');
   });
 
   it('is none for a version with only training data', async () => {
