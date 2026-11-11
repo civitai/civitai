@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ignoredWhileSearching,
   imageFeedUrlFromLegacySearch,
@@ -66,34 +66,45 @@ describe('ignoredWhileSearching', () => {
 
 describe('imageFeedUrlFromLegacySearch', () => {
   const parse = (url: string) => new URL(url, 'https://x');
+  const tagIdsByName: Record<string, number> = { dragon: 12, castle: 40 };
+  const resolveTagIds = vi.fn(async (names: string[]) =>
+    names.map((name) => tagIdsByName[name]).filter(Boolean)
+  );
 
-  it('carries the query, user, base model and resolved tags to the feed, dropping the sort', () => {
+  it('carries the query, user, base model and tags to the feed, dropping the sort', async () => {
     const url = parse(
-      imageFeedUrlFromLegacySearch(
+      await imageFeedUrlFromLegacySearch(
         {
           query: 'red  dragon ',
           users: 'someone',
           baseModel: ['SDXL 1.0', 'Pony'],
-          tags: 'dragon',
+          tags: ['dragon', 'castle'],
           sortBy: 'images_v6:stats.reactionCountAllTime:desc',
         },
-        [12]
+        resolveTagIds
       )
     );
     expect(url.pathname).toBe('/images');
     expect(url.searchParams.get('query')).toBe('red dragon');
     expect(url.searchParams.get('username')).toBe('someone');
     expect(url.searchParams.getAll('baseModels')).toEqual(['SDXL 1.0', 'Pony']);
-    expect(url.searchParams.getAll('tags')).toEqual(['12']);
+    expect(url.searchParams.getAll('tags')).toEqual(['12', '40']);
     expect(url.searchParams.has('sort')).toBe(false);
   });
 
-  it('keeps a legacy sort as the feed sort when there is no query', () => {
-    const sortOf = (sortBy: string) =>
-      parse(imageFeedUrlFromLegacySearch({ sortBy })).searchParams.get('sort');
-    expect(sortOf('images_v6:stats.reactionCountAllTime:desc')).toBe(ImageSort.MostReactions);
-    expect(sortOf('images_v6:createdAt:desc')).toBe(ImageSort.Newest);
-    expect(sortOf('images_v6:createdAt:asc')).toBe(ImageSort.Oldest);
-    expect(imageFeedUrlFromLegacySearch({})).toBe('/images');
+  it('looks up at most 20 tag names', async () => {
+    resolveTagIds.mockClear();
+    const tags = Array.from({ length: 30 }, (_, i) => `tag${i}`);
+    await imageFeedUrlFromLegacySearch({ query: 'x', tags }, resolveTagIds);
+    expect(resolveTagIds.mock.calls[0][0]).toHaveLength(20);
+  });
+
+  it('keeps a legacy sort as the feed sort when there is no query', async () => {
+    const sortOf = async (sortBy: string) =>
+      parse(await imageFeedUrlFromLegacySearch({ sortBy }, resolveTagIds)).searchParams.get('sort');
+    expect(await sortOf('images_v6:stats.reactionCountAllTime:desc')).toBe(ImageSort.MostReactions);
+    expect(await sortOf('images_v6:createdAt:desc')).toBe(ImageSort.Newest);
+    expect(await sortOf('images_v6:createdAt:asc')).toBe(ImageSort.Oldest);
+    expect(await imageFeedUrlFromLegacySearch({}, resolveTagIds)).toBe('/images');
   });
 });

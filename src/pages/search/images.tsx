@@ -236,16 +236,12 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ features, ctx }) => {
     if (!features?.imageSearch)
       return { redirect: { destination: '/search/models', permanent: false } };
-    // Search v3: the search page is the images feed with the query applied.
-    if (features.feedSearch) {
-      const tagNames = [ctx.query.tags ?? []].flat().filter(Boolean).slice(0, 20);
-      const tagIds = tagNames.length ? await resolveTagIds(tagNames) : [];
+    if (features.feedSearch)
       return {
         redirect: {
-          destination: imageFeedUrlFromLegacySearch(ctx.query, tagIds),
+          destination: await imageFeedUrlFromLegacySearch(ctx.query, resolveTagIds),
           permanent: false,
         },
       };
-    }
   },
 });

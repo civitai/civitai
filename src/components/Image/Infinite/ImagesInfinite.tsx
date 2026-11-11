@@ -40,6 +40,7 @@ const SEARCH_RETRY_BASE_DELAY_MS = 2000;
 // Slow-fetch thresholds. Bad pods in production can leave a request hanging
 // for tens of seconds before failing, so we show a "taking a while" banner
 // after SLOW_THRESHOLD_MS and abort at ABORT_THRESHOLD_MS to force a retry.
+// Not while a semantic search is running (see the slow-fetch effect).
 const SEARCH_SLOW_THRESHOLD_MS = 3_000;
 const SEARCH_ABORT_THRESHOLD_MS = 8_000;
 
@@ -103,6 +104,7 @@ export function ImagesInfiniteContent({
   const filters = filtersRef.current;
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const infiniteQueryKey = useMemo(() => getQueryKey(trpc.image.getInfinite), []);
+  const searchQueryKey = useMemo(() => getQueryKey(trpc.semanticImageSearch.search), []);
 
   const rawBrowsingLevel = useBrowsingLevelDebounced();
   const domainColor = useDomainColor();
@@ -145,11 +147,13 @@ export function ImagesInfiniteContent({
   // orphaned (observer-less) in-flight queries fires the AbortSignal that
   // tRPC plumbs into the handler ctx, freeing the slot immediately.
   useEffect(() => {
-    queryClient.cancelQueries({
-      queryKey: infiniteQueryKey,
-      predicate: (q) => q.getObserversCount() === 0 && q.state.fetchStatus === 'fetching',
-    });
-  }, [filters, browsingLevel, infiniteQueryKey]);
+    // Each typed query is a new search key too; an abandoned one is cancelled the same way.
+    for (const queryKey of [infiniteQueryKey, searchQueryKey])
+      queryClient.cancelQueries({
+        queryKey,
+        predicate: (q) => q.getObserversCount() === 0 && q.state.fetchStatus === 'fetching',
+      });
+  }, [filters, browsingLevel, searchInput, infiniteQueryKey, searchQueryKey]);
   //#endregion
 
   //#region [search retry] — any backend failure (Meili, API, network)

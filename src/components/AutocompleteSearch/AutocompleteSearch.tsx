@@ -26,7 +26,6 @@ import React, {
 import type { InstantSearchProps, SearchBoxProps } from 'react-instantsearch';
 import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
-import { removeEmpty } from '~/utils/object-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
@@ -64,10 +63,10 @@ import { resolveSearchTarget } from '~/components/Search/search-target';
 import {
   buildFeedSearchUrl,
   buildSearchPageUrl,
-  parseFeedSearch,
   checkAIR,
   parseQuery,
 } from '~/components/AutocompleteSearch/autocomplete-query';
+import { useFeedSearchSync } from '~/components/AutocompleteSearch/useFeedSearchSync';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -303,37 +302,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
 
-  // Search v3: on a feed that answers `?query=`, the bar filters that feed as you type, and the
-  // feed is the preview. Only typing writes the URL; a URL change from elsewhere (first load, the
-  // feed's Clear search) re-seeds the bar, and `appliedFeedQuery` tells the two apart.
+  // Search v3: on a feed that answers `?query=`, the bar filters that feed as you type.
   const filtersFeedInPlace =
     !!features.feedSearch &&
     !!features.imageSearch &&
     indexNameProp === 'images' &&
     router.pathname === '/images';
-  const feedQuery = typeof router.query.query === 'string' ? router.query.query : undefined;
-  const appliedFeedQuery = useRef<string | undefined>(undefined);
-  const typedSinceSeed = useRef(false);
-  const applyFeedSearch = (text: string) => {
-    const { query: nextQuery, username } = parseFeedSearch(text);
-    if (nextQuery === feedQuery && (!username || username === router.query.username)) return;
-    appliedFeedQuery.current = nextQuery;
-    void router.replace(
-      {
-        pathname: router.pathname,
-        query: removeEmpty({ ...router.query, query: nextQuery, ...(username && { username }) }),
-      },
-      undefined,
-      { shallow: true }
-    );
-  };
-  useEffect(() => {
-    if (!filtersFeedInPlace || feedQuery === appliedFeedQuery.current) return;
-    appliedFeedQuery.current = feedQuery;
-    typedSinceSeed.current = false;
-    setSearch(feedQuery ?? '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersFeedInPlace, feedQuery]);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
@@ -466,6 +440,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const blockedQuery =
     items.length === 1 &&
     ['blocked', 'profanity', 'disabled', 'blocked-words'].includes(items[0].key);
+  const feedSearch = useFeedSearchSync({
+    enabled: filtersFeedInPlace,
+    debouncedSearch,
+    setSearch,
+    blocked: blockedQuery,
+  });
 
   // Track profanity search separately to avoid side effects in useMemo
   useEffect(() => {
@@ -526,7 +506,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const handleSubmit = () => {
     if (filtersFeedInPlace) {
-      if (!blockedQuery) applyFeedSearch(search);
+      feedSearch.applyNow(search);
       blurAndDiscardCarriedText();
       onSubmit?.();
       return;
@@ -547,7 +527,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // The explicit clear — the input's clear button. The user asked for the text to go, so the
   // carrier goes with it.
   const handleClear = () => {
-    typedSinceSeed.current = true;
+    feedSearch.markTyped();
     setSearch('');
     onClear?.();
   };
@@ -630,12 +610,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, query, indexName, searchErrorState, filtersFeedInPlace]);
 
-  useEffect(() => {
-    if (filtersFeedInPlace && typedSinceSeed.current && !blockedQuery)
-      applyFeedSearch(debouncedSearch);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersFeedInPlace, debouncedSearch, blockedQuery]);
-
   // Clear selected item after search changes
   useEffect(() => {
     setSelectedItem(null);
@@ -686,7 +660,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         data={items}
         onChange={(value) => {
           if (value == null || value === 'View more results') return;
-          typedSinceSeed.current = true;
+          feedSearch.markTyped();
           setSearch(value);
         }}
         onBlur={handleBlur}

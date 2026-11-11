@@ -40,10 +40,10 @@ export const imageFeedSearchUnavailableKeys = [
 export const IMAGE_FEED_SEARCH_UNAVAILABLE_REASON =
   'Search ranks images by what they show, so these filters only work on the feed without a query.';
 
-export const imageFeedFilterLabels: Record<MediaFilterKey | 'followed', string> = {
-  period: 'Time period',
-  types: 'Media type',
-  includePG13: 'Include PG-13',
+export const imageFeedFilterLabels: Record<
+  (typeof imageFeedSearchUnavailableKeys)[number] | 'followed',
+  string
+> = {
   withMeta: 'Metadata only',
   requiringMeta: 'Missing metadata',
   hidden: 'Hidden',
@@ -59,7 +59,6 @@ export const imageFeedFilterLabels: Record<MediaFilterKey | 'followed', string> 
   disablePoi: 'Disable POI',
   disableMinor: 'Disable minor',
   notPublished: 'Not published',
-  baseModels: 'Base model',
   tools: 'Tools',
   techniques: 'Techniques',
   hatTeams: 'Hat Turf teams',
@@ -143,22 +142,23 @@ const all = (value: string | string[] | undefined) =>
   value === undefined ? [] : Array.isArray(value) ? value : [value];
 
 /**
- * Where an old `/search/images` URL lands now: the images feed with the query applied. Tag names
- * are resolved by the caller (`tagIds`). A sort only survives without a query; with one the feed
- * ranks by match.
+ * Where an old `/search/images` URL lands now: the images feed with the query applied. Tag names are
+ * resolved to ids by `resolveTagIds` (at most 20, the search's own cap). A sort only survives without
+ * a query; with one the feed ranks by match.
  */
-export function imageFeedUrlFromLegacySearch(
+export async function imageFeedUrlFromLegacySearch(
   params: Record<string, string | string[] | undefined>,
-  tagIds: number[] = []
+  resolveTagIds: (names: string[]) => Promise<number[]>
 ) {
   const query = normalizeFeedQuery(first(params.query));
   const sortBy = first(params.sortBy);
   const sort = !query && sortBy ? legacyImageSorts.find(([re]) => re.test(sortBy))?.[1] : undefined;
+  const tagNames = all(params.tags).filter(Boolean).slice(0, 20);
   const queryString = QS.stringify({
     query,
     username: first(params.users),
     baseModels: all(params.baseModel ?? params.baseModels),
-    tags: tagIds,
+    tags: tagNames.length ? await resolveTagIds(tagNames) : [],
     sort,
   });
   return queryString ? `/images?${queryString}` : '/images';

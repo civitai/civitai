@@ -109,9 +109,7 @@ export function MediaFiltersDropdown({
     }
   };
   const greyed = unavailable?.keys.filter(offeredHere) ?? [];
-  const showModerator = (
-    ['poiOnly', 'minorOnly', 'disablePoi', 'disableMinor', 'notPublished', 'scheduled'] as const
-  ).some(shows);
+  const showModerator = ([...moderatorKeys, 'scheduled'] as const).some(shows);
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state[filterType],
@@ -692,7 +690,7 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
     title: string;
     reason: string;
     keys: readonly MediaFilterKey[];
-    labels: Record<MediaFilterKey, string>;
+    labels: Partial<Record<MediaFilterKey, string>>;
   };
   /** Offer the jump-to-month control; it only applies while this is a chronological sort. */
   jumpToSort?: string;

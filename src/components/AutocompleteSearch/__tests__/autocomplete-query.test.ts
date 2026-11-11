@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildFeedSearchUrl,
   buildSearchPageUrl,
+  nextFeedSearchQuery,
   parseQuery,
 } from '~/components/AutocompleteSearch/autocomplete-query';
 import { buildBrowsingLevelFilters, joinFilterClauses } from '~/components/Search/search-filters';
@@ -238,5 +239,26 @@ describe('buildFeedSearchUrl', () => {
 
   it('leaves other indexes on their search page', () => {
     expect(buildFeedSearchUrl('models', 'flux')).toBeNull();
+  });
+});
+
+describe('nextFeedSearchQuery', () => {
+  it("keeps the feed's other filters when the search changes", () => {
+    expect(
+      nextFeedSearchQuery(
+        { baseModels: 'Illustrious', period: 'AllTime', query: 'cat' },
+        'red dragon'
+      )
+    ).toEqual({ baseModels: 'Illustrious', period: 'AllTime', query: 'red dragon' });
+  });
+
+  it('drops only the query when the bar is emptied', () => {
+    expect(nextFeedSearchQuery({ baseModels: 'Illustrious', query: 'cat' }, '')).toEqual({
+      baseModels: 'Illustrious',
+    });
+  });
+
+  it('changes nothing for the query already applied', () => {
+    expect(nextFeedSearchQuery({ query: 'red dragon' }, '  red   dragon ')).toBeNull();
   });
 });

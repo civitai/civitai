@@ -1,5 +1,7 @@
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import type { SearchIndexKey } from '~/components/Search/search.types';
+import type { ParsedUrlQuery } from 'querystring';
+import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import { getModelUrl } from '~/utils/string-helpers';
 
@@ -137,6 +139,17 @@ export function parseFeedSearch(search: string) {
     .replace(/\s+/g, ' ')
     .trim();
   return { query: query || undefined, username };
+}
+
+/**
+ * The router query a header search on the feed produces: the feed's other filters kept, `query`
+ * replaced, `username` set only by an `@user` token. Null when it would change nothing.
+ */
+export function nextFeedSearchQuery(current: ParsedUrlQuery, search: string) {
+  const { query, username } = parseFeedSearch(search);
+  const currentQuery = typeof current.query === 'string' ? current.query : undefined;
+  if (query === currentQuery && (!username || username === current.username)) return null;
+  return removeEmpty({ ...current, query, ...(username && { username }) }) as ParsedUrlQuery;
 }
 
 /**
