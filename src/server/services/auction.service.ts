@@ -21,6 +21,8 @@ import type {
 } from '~/server/schema/auction.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -267,6 +269,29 @@ export const getAuctionNameBySlug = async (slug: string) => {
   });
   return auctionBase?.name ?? null;
 };
+
+/**
+ * The auction with each bid's image kept only when `keep` allows it. A bid's model passes the
+ * site cap on its own level, which says nothing about the one image shown for it.
+ */
+export function capAuctionBidImages<
+  T extends { bids: { entityData?: { image?: { nsfwLevel: number; userId: number } } }[] }
+>(auction: T, keep: (image: { nsfwLevel: number; userId: number }) => boolean): T {
+  return {
+    ...auction,
+    bids: auction.bids.map((bid) => {
+      const image = bid.entityData?.image;
+      if (!image || keep(image)) return bid;
+      return { ...bid, entityData: { ...bid.entityData, image: undefined } };
+    }),
+  };
+}
+
+/** Every subscriber to an auction's topic gets one payload, so it carries only public images. */
+export const publicSignalData = (auction: GetAuctionBySlugReturn) =>
+  capAuctionBidImages(auction, (image) =>
+    isRatingWithinCap(image.nsfwLevel, publicBrowsingLevelsFlag)
+  );
 
 export type GetAuctionBySlugReturn = AsyncReturnType<typeof getAuctionBySlug>;
 export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
@@ -782,7 +807,7 @@ export const createBid = async ({
     .topicSend({
       topic: `${SignalTopic.Auction}:${auctionId}`,
       target: SignalMessages.AuctionBidChange,
-      data: signalData,
+      data: publicSignalData(signalData),
     })
     .catch();
 
@@ -896,7 +921,7 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
     .topicSend({
       topic: `${SignalTopic.Auction}:${bid.auction.id}`,
       target: SignalMessages.AuctionBidChange,
-      data: signalData,
+      data: publicSignalData(signalData),
     })
     .catch();
 };
@@ -1039,7 +1064,7 @@ export const refundBidsForVersions = async ({
       .topicSend({
         topic: `${SignalTopic.Auction}:${a.id}`,
         target: SignalMessages.AuctionBidChange,
-        data: signalData,
+        data: publicSignalData(signalData),
       })
       .catch();
   }
