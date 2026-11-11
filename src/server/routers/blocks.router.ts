@@ -424,6 +424,7 @@ import {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import {
   assertGenerationInputsUsable,
+  countAppBlockHostSources,
   isAppSourcePendingError,
   opaqueInputUrlsIn,
   type GenerationInputPhase,
@@ -7171,6 +7172,10 @@ export const blocksRouter = router({
           wildcardsEnabled: !!ctx.features.wildcards,
         });
       }
+      await countAppBlockHostSources({
+        urls: textToImageSourceUrls(input.body),
+        appBlockLog: { appBlockId: claims.appBlockId, stepTypes: 'textToImage', phase: 'submit' },
+      });
       const token = await getOrchestratorToken(userId, ctx);
 
       // Prompt audit before any orchestrator interaction (mirrors what
@@ -9895,6 +9900,10 @@ async function estimateBlockWorkflowCell(
       wildcardsEnabled: !!ctx.features.wildcards,
     });
   }
+  await countAppBlockHostSources({
+    urls: textToImageSourceUrls(input.body),
+    appBlockLog: { appBlockId: claims.appBlockId, stepTypes: 'textToImage', phase: 'estimate' },
+  });
   const token = await getOrchestratorToken(userId, ctx);
   const generateInput = buildTextToImageInput(input.body, {
     ...resolved,
@@ -10924,6 +10933,14 @@ function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
 }
 
 /** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
+/** A text-to-image body's source image urls, both wire shapes. */
+function textToImageSourceUrls(body: {
+  sourceImage?: { url: string };
+  sourceImages?: { url: string }[];
+}) {
+  return [body.sourceImage?.url, ...(body.sourceImages ?? []).map((image) => image.url)];
+}
+
 async function assertStepOrWorkflowInputsUsable(
   body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
   claims: BlockClaims,

@@ -370,6 +370,52 @@ function appBlockHostSourceReason(url: string): AppBlockHostSourceReason {
   }
 }
 
+type AppBlockLog = { appBlockId?: string; stepTypes?: string; phase?: GenerationInputPhase };
+
+/** One Axiom row per reason with its count, so a many-image step is one row, not one per url. */
+function recordAppBlockHostSources(
+  entry: GenerationInputEntryPoint,
+  reasons: AppBlockHostSourceReason[],
+  appBlockLog: AppBlockLog | undefined
+) {
+  const counts = new Map<AppBlockHostSourceReason, number>();
+  for (const reason of reasons) {
+    appBlockHostSourceCounter.inc({ entry, reason });
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  for (const [reason, count] of counts)
+    void logToAxiom({
+      name: 'app-block-host-source',
+      type: 'info',
+      entry,
+      reason,
+      count,
+      appBlockId: appBlockLog?.appBlockId,
+      stepTypes: appBlockLog?.stepTypes,
+      phase: appBlockLog?.phase,
+    }).catch(() => undefined);
+}
+
+/**
+ * Counts the orchestrator-hosted sources of an App Blocks text-to-image body, whose own gate runs
+ * inside the step builder, after the token and once per built step. Call it once per estimate
+ * and once per submit, before the token. A source the scanned-rows flag refuses is not counted.
+ */
+export async function countAppBlockHostSources({
+  urls,
+  appBlockLog,
+}: {
+  urls: (string | null | undefined)[];
+  appBlockLog: AppBlockLog;
+}) {
+  const reasons = [...new Set(urls.filter((url): url is string => !!url))]
+    .filter((url) => classifyGenerationInputUrl(url) === 'orchestrator')
+    .map(appBlockHostSourceReason);
+  if (!reasons.length) return;
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS)) return;
+  recordAppBlockHostSources('appBlocks', reasons, appBlockLog);
+}
+
 /** Schemes a fetcher may resolve. `urn:` (AIR ids) is not one of them. */
 const FETCH_SCHEMES = new Set([
   'http:',
@@ -841,7 +887,7 @@ export async function assertGenerationInputsUsable({
    */
   opaqueInput?: boolean;
   /** Who and what an App Blocks entry's source log lines are about. Never a url or image id. */
-  appBlockLog?: { appBlockId?: string; stepTypes?: string; phase?: GenerationInputPhase };
+  appBlockLog?: AppBlockLog;
   now?: Date;
 }) {
   const given = [...new Set(urls.filter((url): url is string => !!url))];
@@ -862,7 +908,7 @@ export async function assertGenerationInputsUsable({
   let refuseExternal: boolean | undefined;
   const appBlock = APP_BLOCK_ENTRIES.has(entry);
   const logAppSource = (
-    reason: AppSourceRefusal | 'external' | AppBlockHostSourceReason,
+    reason: AppSourceRefusal | 'external',
     extra: Record<string, unknown> = {}
   ) =>
     void logToAxiom({
@@ -881,6 +927,8 @@ export async function assertGenerationInputsUsable({
   let refuseExternalAppSource: boolean | undefined;
   const loggedHosts = new Set<string>();
   let refuseOrchestrator: boolean | undefined;
+  // Recorded only once the whole call passes, so a refused call counts nothing.
+  const hostSources: AppBlockHostSourceReason[] = [];
   for (const url of given) {
     if (opaqueInput && KEY_LIKE.test(url.trim())) {
       externalKeys.add(canonicalKey(url.trim()));
@@ -904,9 +952,8 @@ export async function assertGenerationInputsUsable({
           refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
           throw appSourceNotOnCivitaiError();
         }
-        const reason = appBlockHostSourceReason(url);
-        appBlockHostSourceCounter.inc({ entry, reason });
-        logAppSource(reason, { mode: 'log' });
+        // `appBlocks` gates inside its step builder; its router counts with countAppBlockHostSources.
+        if (entry !== 'appBlocks') hostSources.push(appBlockHostSourceReason(url));
       }
       continue;
     }
@@ -975,6 +1022,7 @@ export async function assertGenerationInputsUsable({
       maxKeys: IMAGE_ONLY_MAX_KEYS,
       appBlock: appBlockKeys,
     });
+    if (hostSources.length) recordAppBlockHostSources(entry, hostSources, appBlockLog);
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
       refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });
