@@ -297,6 +297,7 @@ import {
 import {
   FEEDBACK_CAPTURE_METADATA_KEY,
   FEEDBACK_CAPTURE_OWNER_ID,
+  isFeedbackCaptureOwner,
   type FeedbackCaptureMetadata,
 } from '@civitai/shared/feedback-capture';
 import type {
@@ -1525,7 +1526,9 @@ export async function handleBlockImages({
       });
     }
     if (include?.includes('user-notification')) {
-      const notified = images.filter((img) => !held.has(img.id));
+      const notified = images.filter(
+        (img) => !held.has(img.id) && !isFeedbackCaptureOwner(img.userId)
+      );
       logNoticeUnderReview(
         notified.filter((img) => underReview.has(img.id)).map(({ id, userId }) => ({ id, userId }))
       );

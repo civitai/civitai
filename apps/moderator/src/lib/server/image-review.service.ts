@@ -70,7 +70,7 @@ const captureOwner = sql.lit(FEEDBACK_CAPTURE_OWNER_ID);
 /** A stamp field of a capture row aliased `i`; null on any other image. */
 const captureStampInt = (field: 'feedbackId' | 'reporterId') =>
   sql<number | null>`case when i."userId" = ${captureOwner}
-    and jsonb_typeof(i.metadata -> ${FEEDBACK_CAPTURE_METADATA_KEY} -> ${field}) = 'number'
+    and (i.metadata -> ${FEEDBACK_CAPTURE_METADATA_KEY} ->> ${field}) ~ '^[1-9][0-9]{0,8}$'
     then (i.metadata -> ${FEEDBACK_CAPTURE_METADATA_KEY} ->> ${field})::int end`;
 
 export async function getImageReviewQueue({

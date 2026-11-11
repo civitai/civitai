@@ -39,7 +39,7 @@ export function setAsideCounts(image: string, state: SetAsideState) {
 
 /** The account that owns feedback page captures (`FEEDBACK_CAPTURE_OWNER_ID` in `@civitai/shared`).
  *  No report names it: a report on a capture names whatever subject the moderator picked. */
-const FEEDBACK_CAPTURE_OWNER_ID = -2;
+export const FEEDBACK_CAPTURE_OWNER_ID = -2;
 
 /** A CSAM-queue image listed as `{ id }` in a sent image report on its owner, unless that send
  *  recorded it as missing. A feedback page capture counts on a report on any subject. The send reads

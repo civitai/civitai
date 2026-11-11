@@ -388,6 +388,30 @@ describe('feedback page captures in the CSAM queue', () => {
     expect(items.find((i) => i.id === 3)?.capture).toBeNull();
   });
 
+  it('reads a malformed stamp as no report and no reporter, and still loads the queue', async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "nsfwLevel", "metadata") VALUES
+        (305, -2, 'csam', 'Scanned', 4, '{"feedbackCapture": {"feedbackId": 1.5, "reporterId": 1e12}}');
+    `);
+    try {
+      const { items } = await getImageReviewQueue({
+        needsReview: 'csam',
+        browsingLevel: ALL_LEVELS,
+        capturesOnly: true,
+        limit: 50,
+      });
+      expect(items.find((i) => i.id === 305)?.capture).toEqual({
+        feedbackId: null,
+        reporterId: null,
+        reporterUsername: null,
+      });
+      const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+      expect(users.find((u) => u.capture?.imageId === 305)?.capture?.feedbackId).toBeNull();
+    } finally {
+      await db.exec(`DELETE FROM "Image" WHERE id = 305`);
+    }
+  });
+
   it('lists only captures under the Feedback captures filter', async () => {
     const { items } = await getImageReviewQueue({
       needsReview: 'csam',

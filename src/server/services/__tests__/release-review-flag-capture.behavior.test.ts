@@ -52,7 +52,7 @@ beforeEach(async () => {
   dbMock.dbWrite.$transaction.mockImplementation((async (fn: (t: typeof tx) => unknown) =>
     fn(tx)) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "CsamReport";
+    TRUNCATE "Image", "CsamReport", "ImageDeferredBlockEffect";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (1, ${CAPTURE}, 'Blocked', 'csam'),
       (2, ${CAPTURE}, 'Blocked', 'csam'),
@@ -99,10 +99,25 @@ describe('releaseReviewFlagsToReportHold', () => {
     expect(await releaseReviewFlagsToReportHold([1])).toBe(1);
   });
 
-  it("never releases a capture on a report naming the reporter's or anyone's account alone", async () => {
-    await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`);
+  it('never releases a capture on a report that names an account but lists no capture', async () => {
+    // The capture account itself included: the database refuses such a report, but if one existed
+    // it must not release every capture.
+    await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER}), (${CAPTURE})`);
 
     expect(await releaseReviewFlagsToReportHold([1, 2])).toBe(0);
+  });
+
+  it("drops the deferred block effects of the capture it releases, and no other image's", async () => {
+    await holder.db.exec(`
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId") VALUES (1), (2), (3);
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER + 1}, '[{"id": 1}]');
+    `);
+
+    expect(await releaseReviewFlagsToReportHold([1, 2, 3])).toBe(1);
+    const left = await holder.db.query<{ imageId: number }>(
+      `SELECT "imageId" FROM "ImageDeferredBlockEffect" ORDER BY 1`
+    );
+    expect(left.rows.map((r) => r.imageId)).toEqual([2, 3]);
   });
 
   it('still releases an ordinary image on a report naming its owner (control)', async () => {
