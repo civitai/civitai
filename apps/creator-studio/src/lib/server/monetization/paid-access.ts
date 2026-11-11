@@ -463,6 +463,8 @@ export async function bulkSetUsageControl(
     .updateTable('ModelVersion')
     .set({ usageControl })
     .where('id', 'in', versionIds)
+    // Internal/External generation is moderator-managed; those versions are left as they are.
+    .where('usageControl', 'in', ['Download', 'Generation'])
     .where('modelId', 'in', (eb) =>
       eb
         .selectFrom('Model')
@@ -529,6 +531,8 @@ export async function setUsageControl(
     .updateTable('ModelVersion')
     .set({ usageControl })
     .where('id', '=', versionId)
+    // Internal/External generation is moderator-managed; those versions are left as they are.
+    .where('usageControl', 'in', ['Download', 'Generation'])
     .where('modelId', 'in', (eb) =>
       eb
         .selectFrom('Model')
