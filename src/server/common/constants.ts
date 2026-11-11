@@ -339,6 +339,8 @@ export const constants = {
     minCreateAmount: 500,
     maxCreateAmount: 100000000,
     supportedBountyToModels: [BountyType.ModelCreation, BountyType.LoraCreation],
+    // The entry's edit form saves back only the images it was shown, so its read must reach every one.
+    maxEntryImagesForEdit: 100,
   },
   defaultCurrency: Currency.BUZZ,
   referrals: {
