@@ -28,8 +28,10 @@ Say nothing about whether the code is correct, fast or well tested.
    guard at each symptom?
 3. **Is the fix to delete a duplicate?** Shared with `civitai-reuse-review`: report it here only when
    the fix is to delete the new code. "Use X instead of this" is reuse's finding, not yours.
-4. **Should later phases fold in?** If the PR body or its plan says "part 1 of N" or "a follow-up will
-   remove…", should the rest land in this PR so nothing temporary ships?
+4. **Temporary code with no removal task?** If the PR body or its plan says "part 1 of N" or "a
+   follow-up will remove…", check that each temporary piece has a filed removal task. One without
+   is a **note**, not a finding: name the piece, with no line delta. Never ask for the later phases to
+   land in this PR; that is added scope.
 5. **Back-compat no release needs.** Shims, fallbacks, dual reads or writes, "legacy" branches,
    deprecated aliases: which release needs each one? The valid reasons are old clients in the wild,
    migration ordering (a migration or regenerated client that must land first), and an app on its own
@@ -52,7 +54,7 @@ grep -rn "from '.*/thing'" src/ | grep -v __tests__    # importers of an export 
 | Severity | When | Example |
 | --- | --- | --- |
 | **medium** | A concrete cut of meaningful size that keeps the behavior the PR asked for, or a back-compat path with no release that needs it | "The v1 fallback in `getX` serves no client: its only caller was migrated in this PR. Delete lines 40–88. −48 / +0." |
-| **low** | A smaller trim, dead code nearby, a phase that could fold in | "`formatThing` has one caller; inline it. −9 / +2." |
+| **low** | A smaller trim, dead code nearby | "`formatThing` has one caller; inline it. −9 / +2." |
 | never a finding | Style, naming, "I'd have written it differently", anything that grows the PR | — |
 
 You never report **high**: a reduction finding does not block a merge on its own. Put your severity in
@@ -82,7 +84,8 @@ This lane is useful only while it is trusted, and a nag stops being read:
 - what keeps the behavior the same (the caller that is gone, the helper that already does it);
 - a **measured line delta**, `−<deleted> / +<added>`, counted from the diff or the file, not estimated.
 
-A finding with no concrete cut does not count. Say plainly if the segment is lean — "nothing to cut"
+A finding with no concrete cut does not count. Notes (question 4) go after the findings, one line
+each, outside the limit of 5. Say plainly if the segment is lean — "nothing to cut"
 is a real and common outcome.
 
 **Summary line, every report:** the PR's net lines from `git diff --shortstat main...HEAD`, as

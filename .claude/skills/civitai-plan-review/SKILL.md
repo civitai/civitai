@@ -16,7 +16,7 @@ cards). Each has a fallback, so the skill works from any Claude Code session:
 
 | Step | On a hub seat | Otherwise |
 |---|---|---|
-| Ask your user (a decision, the tier-2 sign-off) | One card to Justin (`ask_templates` first) | Ask your user however your setup does |
+| Ask your user (a decision, the tier-2 sign-off) | One card to your user (`ask_templates` first) | Ask your user however your setup does |
 | Past seats' work on this concept | `who_worked_on query:"<concept>"` | Ask your user who has worked on it |
 | Standing rules | `store_find collection:ruling` (project civitai) | Ask your user for any standing rules |
 | Tasks, including closed and wontfix | `hq_task list` or the `hq` CLI | The `hq` CLI if you have it; else your team's tracker |

@@ -269,7 +269,7 @@ defect costs the most, and `sonnet` for the rest, which match the diff against k
 share no state.
 
 A numbered list of steps reads as an instruction to run them one after another, so this is stated
-rather than left to inference: **do not spawn them sequentially.** A five-lane review that takes five
+rather than left to inference: **do not spawn them sequentially.** A six-lane review that takes six
 times as long is the thing that makes people stop running it, and a review nobody runs finds nothing.
 
 | Agent | Reviews |
@@ -375,7 +375,7 @@ for an agent whose own transcript reaches nobody. **Treat that as a hint that re
 control that removes your obligation.**
 
 ⚠️ **The agent-definition version of this rule was tried and did not work.** #4011 wrote the same
-obligation into all five agent definitions, where it would not depend on the invoker remembering.
+obligation into the lane agent definitions, where it would not depend on the invoker remembering.
 Measured before and after: **2 of 4 lanes silent before, 4 of 4 after.** The text is still in the agent
 files and is kept, because it costs a paragraph and may help at the margin — but it does not solve this,
 and the numbers are recorded here so nobody re-derives that fix and believes it worked.
