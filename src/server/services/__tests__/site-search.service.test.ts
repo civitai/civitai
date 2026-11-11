@@ -146,6 +146,21 @@ describe('comic covers', () => {
     expect(covers(result.hits)).toEqual([undefined, cover, undefined, undefined, cover]);
   });
 
+  it('a multi-search result that does not name its index is shaped by the query it answers', async () => {
+    respond({ results: [{ hits: [] }, { hits }] });
+    const { body } = await siteMultiSearch(
+      {
+        queries: [
+          { indexUid: MODELS_SEARCH_INDEX, q: 'x' },
+          { indexUid: COMICS_SEARCH_INDEX, q: 'x' },
+        ],
+      },
+      capped
+    );
+    const [, result] = (body as { results: { hits: unknown }[] }).results;
+    expect(covers(result.hits)).toEqual([undefined, cover, undefined, undefined, cover]);
+  });
+
   it('a capped viewer gets no cover in the highlight copy either', async () => {
     const hit = {
       id: 6,
