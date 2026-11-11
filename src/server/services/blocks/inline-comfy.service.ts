@@ -431,8 +431,9 @@ const FILESYSTEM_CLASSES: ReadonlySet<string> = new Set([
   'SaveText|pysssss',
 ]);
 
-// The source gate reads literal values only, so a loader input must be a literal it can
-// check: an AIR, an upload key, a public https URL, or a plain option word.
+// The source gate reads literal values only, so a loader input must be one it can check:
+// an AIR, a public https URL, or a plain option word. Upload keys are refused, since the
+// worker stages files under key-derived names.
 const LOADER_CLASS_RE = /load|url|fetch|download/i;
 const LOADER_CLASSES: ReadonlySet<string> = new Set([
   'CreateHookLora',

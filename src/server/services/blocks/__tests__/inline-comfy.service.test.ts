@@ -812,6 +812,7 @@ describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
     ['CustomLoader', { source: `0001_${KEY.replace(/-/g, '')}` }, LOCAL],
     ['CustomLoader', { source: KEY }, LOCAL],
     ['PreviewBridge', { images: ['2', 0], image: 'x' }, PATH],
+    ['PreviewBridgeLatent', {}, PATH],
     ['LoraLoader', { model: ['1', 0], lora_name: AIR, my_strength: ['2', 0] }, LINKED],
     ['LoraLoader', { model: ['1', 0], lora_name: AIR, prev_hooks: ['2', 0] }, LINKED],
     ...['CreateHookLoraModelOnly', 'CreateHookModelAsLora', 'CreateHookModelAsLoraModelOnly'].map(
