@@ -51,10 +51,13 @@ export const createContext = async ({
   const track = new Tracker(req, res, session);
   // Keyed on the full session: a banned session still reaches its own appeal state, which a shared
   // cache must never keep.
+  // A streamed batch's headers are written before any procedure runs, so a resolver cannot
+  // take its answer back out of the edge cache. Browsers batch only when signed in.
+  const cacheable = !session?.user && !req.query?.batch;
   const cache: CacheSettings | null = {
-    browserTTL: session?.user ? 0 : 60,
-    edgeTTL: session?.user ? 0 : 60,
-    staleWhileRevalidate: session?.user ? 0 : 30,
+    browserTTL: cacheable ? 60 : 0,
+    edgeTTL: cacheable ? 60 : 0,
+    staleWhileRevalidate: cacheable ? 30 : 0,
     canCache: true,
     skip: false,
   };
