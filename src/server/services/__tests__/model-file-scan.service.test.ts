@@ -120,12 +120,14 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({
   limitConcurrency: mockLimitConcurrency,
 }));
 
-const { mockSubmitTrainingDataScanSafe } = vi.hoisted(() => ({
+const { mockSubmitTrainingDataScanSafe, mockTrainingDataObjectUnchanged } = vi.hoisted(() => ({
   mockSubmitTrainingDataScanSafe: vi.fn(),
+  mockTrainingDataObjectUnchanged: vi.fn(),
 }));
 vi.mock('~/server/services/training-data-scan.service', () => ({
   TRAINING_DATA_BLOB_SCAN: 'training-data-blob',
   submitTrainingDataScanSafe: mockSubmitTrainingDataScanSafe,
+  trainingDataObjectUnchanged: mockTrainingDataObjectUnchanged,
 }));
 
 // model.service.ts has a heavy import surface (clickhouse, redis, search-index,
@@ -1307,7 +1309,12 @@ describe('model-file-scan.service', () => {
         });
       const scanned = (
         output: Record<string, unknown>,
-        metadata: Record<string, unknown> = { scan: 'training-data-blob', url: ZIP }
+        metadata: Record<string, unknown> = {
+          scan: 'training-data-blob',
+          url: ZIP,
+          etag: '"e1"',
+          size: 2048,
+        }
       ) =>
         mockGetWorkflow.mockResolvedValue({
           data: {
@@ -1325,6 +1332,44 @@ describe('model-file-scan.service', () => {
 
       beforeEach(() => {
         dataset();
+        mockTrainingDataObjectUnchanged.mockReset().mockResolvedValue(true);
+        mockDbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 1 });
+      });
+
+      it('checks a clean verdict against the object it scanned', async () => {
+        scanned({ scannedFileCount: 12 });
+
+        expect((await verdict()).result).toBe(ScanResultCode.Success);
+        expect(mockTrainingDataObjectUnchanged).toHaveBeenCalledWith({
+          fileId: 1,
+          url: ZIP,
+          etag: '"e1"',
+          size: 2048,
+        });
+      });
+
+      it('keeps the zip Pending, for the self-heal to scan again, when the object is not confirmed', async () => {
+        mockTrainingDataObjectUnchanged.mockResolvedValue(false);
+        scanned({ scannedFileCount: 12 });
+
+        await deliver();
+
+        expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+        expect(mockDbWrite.modelFile.updateMany).toHaveBeenCalledWith({
+          where: { id: 1, url: ZIP, type: 'Training Data' },
+          data: expect.objectContaining({
+            virusScanResult: ScanResultCode.Pending,
+            scanRequestedAt: expect.any(Date),
+          }),
+        });
+      });
+
+      it('records a Danger verdict without the check', async () => {
+        mockTrainingDataObjectUnchanged.mockResolvedValue(false);
+        scanned({ status: 'infected', output: 'Eicar FOUND' });
+
+        expect((await verdict()).result).toBe(ScanResultCode.Danger);
+        expect(mockTrainingDataObjectUnchanged).not.toHaveBeenCalled();
       });
 
       it.each([

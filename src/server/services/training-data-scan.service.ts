@@ -30,6 +30,7 @@ export const TRAINING_DATA_BLOB_SCAN = 'training-data-blob';
 const SOURCE_RESPONSE_TIMEOUT_MS = 60_000;
 const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const SUBMIT_TIMEOUT_MS = 60_000;
+const RECHECK_TIMEOUT_MS = 30_000;
 
 export type TrainingDataScanTarget = {
   fileId: number;
@@ -65,10 +66,13 @@ export async function submitTrainingDataScan({
     signal: AbortSignal.any([answered.signal, AbortSignal.timeout(UPLOAD_TIMEOUT_MS)]),
   }).finally(() => clearTimeout(noAnswer));
   let blobId: string;
+  // What the verdict is checked against: the object must still be these bytes when it lands.
+  const etag = source.headers.get('etag');
+  const size = Number(source.headers.get('content-length'));
   try {
-    const size = Number(source.headers.get('content-length'));
     if (!source.ok || !source.body || !(size > 0))
       throw new Error(`Training data source unreadable: ${source.status}`);
+    if (!etag) throw new Error('Training data source has no ETag');
     blobId = await uploadConsumerBlob({ body: source.body, size, timeoutMs: UPLOAD_TIMEOUT_MS });
   } catch (error) {
     // Releases the connection now rather than at the deadline.
@@ -77,7 +81,7 @@ export async function submitTrainingDataScan({
   }
   const air = blobAir(blobId);
   // The url ties the verdict to these bytes: the webhook drops it once the file holds another zip.
-  const metadata = { fileId, modelVersionId, url, scan: TRAINING_DATA_BLOB_SCAN };
+  const metadata = { fileId, modelVersionId, url, etag, size, scan: TRAINING_DATA_BLOB_SCAN };
   const { data } = await submitWorkflow({
     client: internalOrchestratorClient,
     signal: AbortSignal.timeout(SUBMIT_TIMEOUT_MS),
@@ -102,6 +106,47 @@ export async function submitTrainingDataScan({
     },
   });
   if (!data?.id) throw new Error(`Training data scan was not accepted for file ${fileId}`);
+}
+
+/**
+ * Whether the object at `url` is still the one a scan copied: the same ETag and length. False when
+ * either is missing or the check itself fails, so a verdict that can't be confirmed is never kept.
+ */
+export async function trainingDataObjectUnchanged({
+  fileId,
+  url,
+  etag,
+  size,
+}: {
+  fileId: number;
+  url: string;
+  etag?: unknown;
+  size?: unknown;
+}): Promise<boolean> {
+  if (typeof etag !== 'string' || !etag || typeof size !== 'number' || !(size > 0)) return false;
+  try {
+    const { url: sourceUrl } = await resolveDownloadUrl(fileId, url, undefined, {
+      caller: 'training-data',
+      actor: 'internal',
+    });
+    const res = await fetch(sourceUrl, {
+      headers: { Range: 'bytes=0-0' },
+      signal: AbortSignal.timeout(RECHECK_TIMEOUT_MS),
+    });
+    try {
+      const total =
+        res.status === 206
+          ? Number(res.headers.get('content-range')?.match(/\/(\d+)$/)?.[1])
+          : res.status === 200
+          ? Number(res.headers.get('content-length'))
+          : NaN;
+      return res.headers.get('etag') === etag && total === size;
+    } finally {
+      await res.body?.cancel().catch(() => undefined);
+    }
+  } catch {
+    return false;
+  }
 }
 
 /** As `submitTrainingDataScan`, for a caller that must not fail on it: the failure is logged. */

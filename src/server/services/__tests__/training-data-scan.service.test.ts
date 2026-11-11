@@ -16,6 +16,7 @@ vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl: h.resolveDownloa
 
 import {
   healStalledTrainingDataScans,
+  trainingDataObjectUnchanged,
   requeuePendingTrainingDataScans,
   submitTrainingDataScan,
   submitTrainingDataScanSafe,
@@ -24,10 +25,14 @@ import {
 const TARGET = { fileId: 56, modelVersionId: 7, url: 'https://bucket/data.zip' };
 const ZIP_BYTES = 2048;
 
-const source = (init: { status?: number; length?: string | null } = {}) =>
+const ETAG = '"e1"';
+const source = (init: { status?: number; length?: string | null; etag?: string | null } = {}) =>
   new Response(init.status && init.status >= 400 ? null : 'zipbytes', {
     status: init.status ?? 200,
-    headers: init.length === null ? {} : { 'content-length': init.length ?? String(ZIP_BYTES) },
+    headers: {
+      ...(init.length !== null && { 'content-length': init.length ?? String(ZIP_BYTES) }),
+      ...(init.etag !== null && { etag: init.etag ?? ETAG }),
+    },
   });
 
 /** Answers the zip read, then the blob upload. */
@@ -75,7 +80,14 @@ describe('submitTrainingDataScan', () => {
     });
 
     const { body } = h.submitWorkflow.mock.calls[0][0];
-    const metadata = { fileId: 56, modelVersionId: 7, url: TARGET.url, scan: 'training-data-blob' };
+    const metadata = {
+      fileId: 56,
+      modelVersionId: 7,
+      url: TARGET.url,
+      etag: ETAG,
+      size: ZIP_BYTES,
+      scan: 'training-data-blob',
+    };
     expect(body.metadata).toEqual(metadata);
     expect(body.steps).toEqual([
       {
@@ -96,6 +108,7 @@ describe('submitTrainingDataScan', () => {
     ['the zip read fails', () => h.fetch.mockResolvedValueOnce(source({ status: 404 }))],
     ['the zip has no length', () => h.fetch.mockResolvedValueOnce(source({ length: null }))],
     ['the zip is empty', () => h.fetch.mockResolvedValueOnce(source({ length: '0' }))],
+    ['the zip has no ETag', () => h.fetch.mockResolvedValueOnce(source({ etag: null }))],
     ['the upload is refused', () => orchestratorAnswers({ uploadStatus: 500 })],
     ['the upload names no blob', () => orchestratorAnswers({ upload: {} })],
   ])('throws, and submits no scan of nothing, when %s', async (_, fail) => {
@@ -131,6 +144,49 @@ describe('submitTrainingDataScan', () => {
 
     expect(h.fetch).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.modelFile.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('trainingDataObjectUnchanged', () => {
+  const SCANNED = { fileId: 56, url: TARGET.url, etag: ETAG, size: ZIP_BYTES };
+  const answer = (status: number, headers: Record<string, string>) =>
+    h.fetch.mockResolvedValue(new Response(status === 206 ? 'z' : null, { status, headers }));
+
+  it('confirms the same ETag and length, reading one byte', async () => {
+    answer(206, { etag: ETAG, 'content-range': `bytes 0-0/${ZIP_BYTES}` });
+
+    expect(await trainingDataObjectUnchanged(SCANNED)).toBe(true);
+    const [url, init] = h.fetch.mock.calls[0];
+    expect(url).toBe('https://signed/data.zip');
+    expect(init.headers).toEqual({ Range: 'bytes=0-0' });
+  });
+
+  it('confirms a full answer by its length', async () => {
+    answer(200, { etag: ETAG, 'content-length': String(ZIP_BYTES) });
+    expect(await trainingDataObjectUnchanged(SCANNED)).toBe(true);
+  });
+
+  it.each([
+    [
+      'another ETag',
+      () => answer(206, { etag: '"e2"', 'content-range': `bytes 0-0/${ZIP_BYTES}` }),
+    ],
+    ['another length', () => answer(206, { etag: ETAG, 'content-range': 'bytes 0-0/4096' })],
+    ['no length', () => answer(206, { etag: ETAG })],
+    ['a refused read', () => answer(403, { etag: ETAG })],
+    ['a failed request', () => h.fetch.mockRejectedValue(new Error('timeout'))],
+    ['a failed url lookup', () => h.resolveDownloadUrl.mockRejectedValue(new Error('down'))],
+  ])('does not confirm %s', async (_, arrange) => {
+    arrange();
+    expect(await trainingDataObjectUnchanged(SCANNED)).toBe(false);
+  });
+
+  it.each([
+    ['no ETag', { ...SCANNED, etag: undefined }],
+    ['no length', { ...SCANNED, size: undefined }],
+  ])('does not confirm a scan that recorded %s, without asking', async (_, scanned) => {
+    expect(await trainingDataObjectUnchanged(scanned)).toBe(false);
+    expect(h.fetch).not.toHaveBeenCalled();
   });
 });
 

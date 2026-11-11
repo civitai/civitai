@@ -49,6 +49,7 @@ import { clamFilesScanned } from '~/server/services/orchestrator/consumer-blob-s
 import {
   submitTrainingDataScanSafe,
   TRAINING_DATA_BLOB_SCAN,
+  trainingDataObjectUnchanged,
 } from '~/server/services/training-data-scan.service';
 
 // -----------------------------------------------------------------------------
@@ -865,6 +866,37 @@ async function handleScanWorkflow(event: WorkflowEvent) {
         ? clamScan.output.output ?? null
         : null,
     };
+
+    if (
+      trainingDataUrl &&
+      result === ScanResultCode.Success &&
+      !(await trainingDataObjectUnchanged({
+        fileId,
+        url: trainingDataUrl,
+        etag: data.metadata?.etag,
+        size: data.metadata?.size,
+      }))
+    ) {
+      // Not confirmed as the object that was scanned: it stays Pending, and the self-heal scans it again.
+      await dbWrite.modelFile.updateMany({
+        where: { id: fileId, url: trainingDataUrl, type: 'Training Data' },
+        data: {
+          virusScanResult: ScanResultCode.Pending,
+          virusScanMessage: null,
+          scanRequestedAt: new Date(),
+        },
+      });
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'training-data-scan-unconfirmed',
+          fileId,
+          workflowId: event.workflowId,
+        },
+        'webhooks'
+      ).catch();
+      return;
+    }
   }
 
   if (pickleScan?.output) {
