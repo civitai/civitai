@@ -504,8 +504,18 @@ describe('a training run’s sample prompts', () => {
     const clean = submit(trainingBody(['mychar on a beach']));
     await expect(clean).rejects.toThrow(/quote not found/);
     await expect(clean).rejects.not.toThrow(REFUSED);
-    await expect(submit(trainingBody(['', '  ']))).rejects.not.toThrow(REFUSED);
+    const blank = submit(trainingBody(['', '  ']));
+    await expect(blank).rejects.toThrow(/quote not found/);
     expect(h.audit).toHaveBeenCalledTimes(1);
+    expect(h.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'mychar on a beach', userId: VIEWER, isGreen: true })
+    );
+  });
+
+  it('a mature block’s prompts get the mature audit', async () => {
+    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+    await submit(trainingBody(['mychar on a beach'])).catch(() => undefined);
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ isGreen: false }));
   });
 
   it('log mode: logs what enforce would have done, without the prompt text', async () => {
