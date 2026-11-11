@@ -11,6 +11,9 @@ import { buildUploadKey } from '~/utils/upload-key';
  * the collision token and the sanitiser could be deleted with every test still green — which in
  * production is one upload silently overwriting another's object.
  */
+/** 16 random bytes as hex: no two uploads of one name should ever share a key. */
+const UPLOAD_KEY_SHAPE = /^model\/42\/[A-Za-z0-9_]+\.[0-9a-f]{32}\.safetensors$/;
+
 describe('buildUploadKey', () => {
   it('puts the userId in segment 1, where sign-part authorises against it', () => {
     const key = buildUploadKey('model', 42, 'thing.safetensors');
@@ -18,10 +21,12 @@ describe('buildUploadKey', () => {
     expect(key.split('/')[1]).toBe('42');
   });
 
-  it('sanitises the filename and appends a collision token', () => {
-    expect(buildUploadKey('model', 42, 'My Model v1.0.safetensors')).toMatch(
-      /^model\/42\/[A-Za-z0-9_]+\.[A-Za-z0-9]{4}\.safetensors$/
-    );
+  it('sanitises the filename and appends a 128-bit random token', () => {
+    expect(buildUploadKey('model', 42, 'My Model v1.0.safetensors')).toMatch(UPLOAD_KEY_SHAPE);
+  });
+
+  it('accepts no short token', () => {
+    expect('model/42/My_Model_v1_0.aB3x.safetensors').not.toMatch(UPLOAD_KEY_SHAPE);
   });
 
   it('gives two uploads of the same filename different keys', () => {

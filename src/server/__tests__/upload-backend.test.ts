@@ -151,7 +151,7 @@ describe('upload handler — an upload is one multipart session under a fresh ke
       expect(getPutUrl).not.toHaveBeenCalled();
       expect(getCustomPutUrl).not.toHaveBeenCalled();
       for (const key of keys)
-        expect(key).toMatch(new RegExp(`^${type}/42/model\\.[A-Za-z0-9]{4}\\.safetensors$`));
+        expect(key).toMatch(new RegExp(`^${type}/42/model\\.[0-9a-f]{32}\\.safetensors$`));
       expect(keys[0]).not.toBe(keys[1]);
     }
   );
