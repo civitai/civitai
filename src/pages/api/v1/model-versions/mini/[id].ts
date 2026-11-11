@@ -18,6 +18,17 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { coverageColumn, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
+import { CacheTTL } from '~/server/common/constants';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { logToAxiom } from '~/server/logging/client';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
+import {
+  refreshBlobsService,
+  type BlobRefreshResult,
+} from '~/server/services/orchestrator/refreshBlobs';
+import { getConsumerBlobId, shouldRefreshBlobUrl } from '~/shared/orchestrator/blob-url';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -308,6 +319,9 @@ export default MixedAuthEndpoint(async function handler(
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
+  // Only the owner, a moderator, a grantee or the service token gets a freshly signed url; anyone
+  // else the gate serves (`log`, or `enforce-anon` with a credential) keeps the stored one.
+  let mayResign = false;
   // Decided before the epoch is read, so a refused caller gets the same answer whatever the
   // version's training results hold.
   if (useEpochUrl) {
@@ -325,6 +339,12 @@ export default MixedAuthEndpoint(async function handler(
       // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
       // 404 to a caller who would be served.
       if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
+      mayResign = caller.callerClass !== 'anonymous' && caller.callerClass !== 'other';
+    } else {
+      mayResign =
+        matchesOrchestratorServiceToken(req) ||
+        user?.id === modelVersion.modelUserId ||
+        !!user?.isModerator;
     }
   }
 
@@ -590,6 +610,37 @@ export default MixedAuthEndpoint(async function handler(
   const withholdEpochUrl =
     !!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated));
 
+  // The stored url was signed once, at publish, and is signed again here for a caller it is served
+  // to. Each refresh also extends the blob's life on the orchestrator, so never for a withheld url.
+  const blobId =
+    trainingResults && mayResign && !withholdEpochUrl
+      ? getConsumerBlobId(downloadUrls[0])
+      : undefined;
+  if (blobId) {
+    const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId, !!user?.isModerator);
+    // A blocked blob is never served; a missing one is, until the stored url expires.
+    if (
+      resigned.status === 'gone' &&
+      (resigned.reason !== 'missing' || shouldRefreshBlobUrl(downloadUrls[0]))
+    )
+      return res.status(404).json({ error: 'Missing epoch' });
+    if (resigned.status === 'refreshed') {
+      res.setHeader('Cache-Control', 'private, no-store');
+      downloadUrls[0] = resigned.url;
+    } else
+      logToAxiom({
+        type: 'warning',
+        name:
+          resigned.status === 'gone'
+            ? 'mini-epoch-resign-gone-unexpired'
+            : 'mini-epoch-blob-resign',
+        message: 'served the stored epoch url',
+        modelVersionId: modelVersion.id,
+        fileId: targetFile.id,
+        blobId,
+      }).catch(() => undefined);
+  }
+
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
@@ -624,3 +675,39 @@ export default MixedAuthEndpoint(async function handler(
   };
   res.status(200).json(data);
 });
+
+const RESIGN_TIMEOUT_MS = 3000;
+
+/**
+ * A fresh signature from the blob owner's own orchestrator account; `unknown` on any failure. Only a
+ * refreshed url is cached, so a refusal (a blocked blob above all) is asked again on the next read.
+ */
+async function resignEpochBlob(
+  ownerId: number,
+  blobId: string,
+  moderator: boolean
+): Promise<BlobRefreshResult> {
+  const unknown: BlobRefreshResult = { blobId, status: 'unknown' };
+  const key = `${REDIS_KEYS.CACHES.EPOCH_BLOB_RESIGNED_URL}:${ownerId}:${blobId}` as const;
+  const controller = new AbortController();
+  const resign = async (): Promise<BlobRefreshResult> => {
+    const cached = await redis.packed.get<string>(key).catch(() => null);
+    if (cached && !shouldRefreshBlobUrl(cached))
+      return { blobId, status: 'refreshed', url: cached };
+    const token = await getOrchestratorToken(ownerId, undefined, { bypassCache: moderator });
+    const [result] = await refreshBlobsService({
+      token,
+      blobIds: [blobId],
+      signal: controller.signal,
+    });
+    if (result?.status === 'refreshed')
+      void redis.packed.set(key, result.url, { EX: CacheTTL.xs * 5 }).catch(() => undefined);
+    return result ?? unknown;
+  };
+  return withTimeoutFallback(
+    resign().catch(() => unknown),
+    RESIGN_TIMEOUT_MS,
+    unknown,
+    () => controller.abort()
+  );
+}

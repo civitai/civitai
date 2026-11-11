@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BOUNTIES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
@@ -102,6 +103,44 @@ describe('shapeModelHit', () => {
     expect(shaped.images).toEqual([{ id: 11, nsfwLevel: NsfwLevel.PG }]);
     expect(shaped._formatted?.images).toEqual([{ id: 11, nsfwLevel: NsfwLevel.PG }]);
     expect(shapeModelHit({ id: 3, name: 'M', images }, redViewer).images).toEqual(images);
+  });
+});
+
+describe('highlight copies follow the hit', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const images = [
+    { id: 10, nsfwLevel: NsfwLevel.X },
+    { id: 11, nsfwLevel: NsfwLevel.PG },
+  ];
+  // The copy's numbers arrive as strings, and its ratings are not trusted.
+  const tampered = images.map((i) => ({ ...i, id: String(i.id), nsfwLevel: '1' }));
+  const ids = (list: { id: unknown }[]) => list.map((i) => String(i.id));
+
+  it('a model hit keeps only the copies of the images it kept', () => {
+    const shaped = shapeModelHit(
+      { id: 1, name: 'M', images, _formatted: { images: tampered } },
+      capped
+    );
+    expect(ids(shaped._formatted?.images as { id: unknown }[])).toEqual(['11']);
+  });
+
+  it('a bounty hit keeps only the copies of the images it kept', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ hits: [{ id: 1, images, _formatted: { images: tampered } }] }),
+            {
+              status: 200,
+            }
+          )
+      )
+    );
+    const { body } = await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, capped);
+    const [hit] = (body as { hits: { _formatted: { images: { id: unknown }[] } }[] }).hits;
+    expect(ids(hit._formatted.images)).toEqual(['11']);
+    vi.unstubAllGlobals();
   });
 });
 
@@ -239,5 +278,94 @@ describe('bounty images', () => {
     respond({ hits: [{ id: 1, images }] });
     const hit = firstHit((await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, uncapped)).body);
     expect(hit.images).toEqual(images);
+  });
+});
+
+describe('collection images', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const uncapped = { showSfwFace: false };
+  const pg = { id: 11, nsfwLevel: NsfwLevel.PG };
+  const inCapMixed = { id: 14, nsfwLevel: NsfwLevel.PG | NsfwLevel.PG13 };
+  const images = [
+    { id: 10, nsfwLevel: NsfwLevel.X },
+    pg,
+    { id: 12, nsfwLevel: 0 },
+    { id: 13, nsfwLevel: NsfwLevel.PG | NsfwLevel.XXX },
+    inCapMixed,
+  ];
+  const srcs = ['https://image.test/a.jpeg'];
+  const respond = (body: unknown) =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }))
+    );
+  const hitsOf = (body: unknown) => (body as { hits: Record<string, any>[] }).hits;
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a capped viewer gets only images inside the cap, highlight included, and no srcs', async () => {
+    respond({ hits: [{ id: 1, image: null, images, srcs, _formatted: { images, srcs } }] });
+    const [hit] = hitsOf(
+      (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, capped)).body
+    );
+    expect(hit.images).toEqual([pg, inCapMixed]);
+    expect(hit._formatted.images).toEqual([pg, inCapMixed]);
+    expect(hit).not.toHaveProperty('srcs');
+    expect(hit._formatted).not.toHaveProperty('srcs');
+  });
+
+  it.each([
+    ['above the cap', { id: 20, nsfwLevel: NsfwLevel.R }, null],
+    ['a mixed rating reaching above it', { id: 21, nsfwLevel: NsfwLevel.PG | NsfwLevel.X }, null],
+    ['unrated', { id: 22, nsfwLevel: 0 }, null],
+    ['inside the cap', pg, pg],
+  ])('a capped viewer gets a cover %s as %o', async (_label, cover, expected) => {
+    respond({ hits: [{ id: 1, image: cover, images: [] }] });
+    const [hit] = hitsOf(
+      (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, capped)).body
+    );
+    expect(hit.image).toEqual(expected);
+  });
+
+  it('the highlight copy keeps only what the hit kept, whatever ratings it carries', async () => {
+    const over = { id: 20, nsfwLevel: NsfwLevel.R };
+    // The copy's numbers arrive as strings, and its ratings are not trusted.
+    const formatted = images.map((i) => ({ ...i, id: String(i.id), nsfwLevel: '1' }));
+    respond({
+      hits: [
+        {
+          id: 1,
+          image: over,
+          images,
+          _formatted: { image: { ...over, nsfwLevel: '1' }, images: formatted, srcs },
+        },
+      ],
+    });
+    const [hit] = hitsOf(
+      (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, capped)).body
+    );
+    expect(hit._formatted.images.map((i: { id: string }) => i.id)).toEqual(['11', '14']);
+    expect(hit._formatted.image).toBeNull();
+    expect(hit._formatted).not.toHaveProperty('srcs');
+  });
+
+  it('a multi-search shapes collection hits too', async () => {
+    respond({ results: [{ hits: [{ id: 1, images, srcs }] }] });
+    const { body } = await siteMultiSearch(
+      { queries: [{ indexUid: COLLECTIONS_SEARCH_INDEX, q: 'x' }] },
+      capped
+    );
+    const [result] = (body as { results: { hits: Record<string, any>[] }[] }).results;
+    expect(result.hits[0].images).toEqual([pg, inCapMixed]);
+    expect(result.hits[0]).not.toHaveProperty('srcs');
+  });
+
+  it('an uncapped viewer keeps every image, the cover and srcs', async () => {
+    const cover = { id: 20, nsfwLevel: NsfwLevel.R };
+    respond({ hits: [{ id: 1, image: cover, images, srcs }] });
+    const [hit] = hitsOf(
+      (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, uncapped)).body
+    );
+    expect(hit).toMatchObject({ image: cover, images, srcs });
   });
 });
