@@ -42,6 +42,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
+import { capNestedImages } from '~/server/utils/browsing-level';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -106,22 +107,26 @@ export const getInfiniteBountiesHandler = async ({
       nextCursor,
       items: items
         .map((item) => {
-          const itemImages = images[item.id];
           const tags = item.tags;
           const user = item.user;
-          // if there are no images, we don't want to show the bounty
-          if (!itemImages?.length || !user) return null;
-
-          return {
-            ...item,
-            nsfwLevel: item.nsfw ? NsfwLevel.XXX : item.nsfwLevel,
-            user,
-            images: itemImages.map((image) => ({
+          const itemImages = capNestedImages(
+            (images[item.id] ?? []).map((image) => ({
               ...image,
               tagIds: image.tags.map((x) => x.id),
               // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
               nsfwLevel: item.nsfw ? NsfwLevel.XXX : image.nsfwLefel,
             })),
+            ctx,
+            { ownerId: user?.id }
+          );
+          // if there are no images, we don't want to show the bounty
+          if (!itemImages.length || !user) return null;
+
+          return {
+            ...item,
+            nsfwLevel: item.nsfw ? NsfwLevel.XXX : item.nsfwLevel,
+            user,
+            images: itemImages,
             tags: tags.map(({ tagId }) => tagId),
           };
         })
@@ -199,7 +204,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
             ctx?.user?.isModerator
           )
         : ({} as BountyDetailsSchema),
-      images: images.map((image) => ({
+      images: capNestedImages(images, ctx, { ownerId: bounty.user?.id }).map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,
         metadata: image?.metadata as MixedObject,
@@ -297,13 +302,15 @@ export const getBountyEntriesHandler = async ({
           return {
             ...entry,
             user,
-            images: images
-              .filter((i) => i.entityId === entry.id)
-              .map((i) => ({
-                ...i,
-                tagIds: i.tags?.map((x) => x.id),
-                metadata: i.metadata as ImageMetaProps,
-              })),
+            images: capNestedImages(
+              images.filter((i) => i.entityId === entry.id),
+              ctx,
+              { ownerId: user.id }
+            ).map((i) => ({
+              ...i,
+              tagIds: i.tags?.map((x) => x.id),
+              metadata: i.metadata as ImageMetaProps,
+            })),
             // Returns the amount of buzz required to unlock ALL files accounting for the amount of buzz the entry has earned
             fileUnlockAmount: Math.max(
               0,
