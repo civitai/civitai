@@ -432,7 +432,9 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       if (step === 2) {
         logger(`Pulling tags :: ${indexName} ::`, batchLogKey, subBatchLogKey);
         // Pull tags:
-        const cacheImageTags = await tagIdsForImagesCache.fetch(batch);
+        // Past this process's L1: a document written here keeps these tag ids until its next reindex, so an
+        // L1 entry from before a tag edit would outlive the L1 window by that much.
+        const cacheImageTags = await tagIdsForImagesCache.fetch(batch, { bypassLocal: true });
 
         result.imageTags ??= {};
         Object.assign(result.imageTags, cacheImageTags);
