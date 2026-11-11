@@ -2,10 +2,7 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventViewerOf } from '~/server/events/event-viewer';
 import { getRegion } from '~/server/utils/region-blocking';
 
-/**
- * A signed-in viewer of mystery boxes: who they are, the `mysteryBox` flag and their country.
- * isModerator comes from eventViewerOf, not ctx.user: a scoped token must not count as a moderator for event gates.
- */
+/** A signed-in viewer of mystery boxes: who they are, the `mysteryBox` flag and their country. */
 export const mysteryBoxViewer = (ctx: ProtectedContext) => ({
   userId: ctx.user.id,
   isModerator: eventViewerOf(ctx).isModerator,

@@ -86,7 +86,6 @@ export function bootstrapSession(session: Awaited<ReturnType<typeof getServerAut
 export async function resolveSettingsBootstrapSeeds(
   req: AuthArgs['req'],
   session: Awaited<ReturnType<typeof getServerAuthSession>>,
-  /** The credential the session was resolved from: the `req.context` of that lookup. */
   credential: SessionCredential | null
 ) {
   // Concurrent, to keep this hot per-bootstrap read off the critical path.

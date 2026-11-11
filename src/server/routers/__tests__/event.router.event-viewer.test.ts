@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as EventService from '~/server/services/event.service';
 
 vi.mock('~/env/client', () => ({
   env: {
@@ -42,10 +43,17 @@ const { service, navBanners, watch, moderatorOnly } = vi.hoisted(() => {
       setShowcaseHat: ok(),
     },
     navBanners: { getNavBanners: vi.fn(async () => []) },
-    watch: { markEventPointsWatched: vi.fn(async () => ({ ok: 1 })) },
+    watch: {
+      markEventPointsWatched: vi.fn<(input: unknown, viewer: unknown) => Promise<{ ok: number }>>(
+        async () => ({ ok: 1 })
+      ),
+    },
   };
 });
-vi.mock('~/server/services/event.service', () => service);
+vi.mock('~/server/services/event.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof EventService>()),
+  ...service,
+}));
 vi.mock('~/server/services/nav-banner.service', () => navBanners);
 vi.mock('~/server/events/points/watch.service', () => watch);
 
@@ -217,7 +225,7 @@ describe.each(['a scoped personal key', 'an OAuth token'] as const)(
       expect(navBanners.getNavBanners).toHaveBeenCalledWith({
         viewer: { id: MODERATOR.id, isModerator: false },
       });
-      expect(watch.markEventPointsWatched.mock.calls[0][1]).toEqual({
+      expect(watch.markEventPointsWatched.mock.calls[0]?.[1]).toEqual({
         id: MODERATOR.id,
         isModerator: false,
       });

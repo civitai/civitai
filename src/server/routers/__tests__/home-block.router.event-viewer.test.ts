@@ -13,12 +13,14 @@ import type * as HomeBlockAccess from '~/server/services/home-block-access';
 
 const { svc, filterViewableHomeBlocks } = vi.hoisted(() => ({
   svc: {
-    getHomeBlocks: vi.fn(async () => []),
-    getSystemHomeBlocks: vi.fn(async () => []),
-    getHomeBlockById: vi.fn(async () => null),
-    setHomeBlocksOrder: vi.fn(async () => undefined),
+    getHomeBlocks: vi.fn<(args: { viewer?: unknown }) => Promise<never[]>>(async () => []),
+    getSystemHomeBlocks: vi.fn<(args: unknown) => Promise<never[]>>(async () => []),
+    getHomeBlockById: vi.fn<(args: { viewer?: unknown }) => Promise<null>>(async () => null),
+    setHomeBlocksOrder: vi.fn<(args: { viewer?: unknown }) => Promise<void>>(async () => undefined),
   },
-  filterViewableHomeBlocks: vi.fn(async <T>(blocks: T[]) => blocks),
+  filterViewableHomeBlocks: vi.fn<(blocks: unknown[], viewer?: unknown) => Promise<unknown[]>>(
+    async (blocks) => blocks
+  ),
 }));
 vi.mock('~/server/services/home-block.service', async (importOriginal) => ({
   ...(await importOriginal<typeof HomeBlockService>()),
@@ -66,26 +68,26 @@ const ROUTES: [
   call: (c: ReturnType<typeof caller>) => Promise<unknown>,
   viewer: () => unknown
 ][] = [
-  ['getHomeBlocks', (c) => c.getHomeBlocks({}), () => svc.getHomeBlocks.mock.calls[0][0].viewer],
+  ['getHomeBlocks', (c) => c.getHomeBlocks({}), () => svc.getHomeBlocks.mock.calls[0]?.[0].viewer],
   [
     'getHomeBlocks (system fallback)',
     (c) => c.getHomeBlocks({ systemHomeBlockIds: [1] }),
-    () => svc.getHomeBlocks.mock.calls[1][0].viewer,
+    () => svc.getHomeBlocks.mock.calls[1]?.[0].viewer,
   ],
   [
     'getSystemHomeBlocks',
     (c) => c.getSystemHomeBlocks({}),
-    () => filterViewableHomeBlocks.mock.calls[0][1],
+    () => filterViewableHomeBlocks.mock.calls[0]?.[1],
   ],
   [
     'getHomeBlock',
     (c) => c.getHomeBlock({ id: 1 }).catch(() => undefined),
-    () => svc.getHomeBlockById.mock.calls[0][0].viewer,
+    () => svc.getHomeBlockById.mock.calls[0]?.[0].viewer,
   ],
   [
     'setHomeBlockOrder',
     (c) => c.setHomeBlockOrder({ homeBlocks: [] }),
-    () => svc.setHomeBlocksOrder.mock.calls[0][0].viewer,
+    () => svc.setHomeBlocksOrder.mock.calls[0]?.[0].viewer,
   ],
 ];
 

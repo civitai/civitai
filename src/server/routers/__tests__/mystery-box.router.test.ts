@@ -382,18 +382,18 @@ describe('a moderator on a scoped key reads event boxes as the user alone', () =
 
   it('mysteryBox.getForEvent', async () => {
     await reader().getForEvent({ event: 'birthday2026' });
-    expect(mockRead.mock.calls[0][0]).toMatchObject({ isModerator: false });
+    expect((mockRead.mock.calls as unknown[][])[0]?.[0]).toMatchObject({ isModerator: false });
   });
 
   it('mysteryBox.getCatalogForEvent', async () => {
     await reader().getCatalogForEvent({ event: 'birthday2026' });
-    expect(mockCatalog.mock.calls[0][0]).toMatchObject({
+    expect((mockCatalog.mock.calls as unknown[][])[0]?.[0]).toMatchObject({
       viewer: { id: holder.id, isModerator: false },
     });
   });
 
   it('mysteryBox.getHeld', async () => {
     await reader().getHeld();
-    expect(mockHeld.mock.calls[0][0]).toMatchObject({ isModerator: false });
+    expect((mockHeld.mock.calls as unknown[][])[0]?.[0]).toMatchObject({ isModerator: false });
   });
 });

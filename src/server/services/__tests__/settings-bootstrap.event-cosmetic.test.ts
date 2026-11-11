@@ -134,7 +134,9 @@ describe('settings bootstrap: event visibility follows the request credential', 
   const bannerShown = (seeds: Awaited<ReturnType<typeof resolveSettingsBootstrapSeeds>>) =>
     !!seeds.navBanners?.some((b) => b.id === `event:${BIRTHDAY_2026_EVENT}`);
   const seededViewers = () =>
-    h.getViewerEventAccess.mock.calls.map(([args]) => (args as { viewer?: unknown }).viewer);
+    (h.getViewerEventAccess.mock.calls as unknown[][]).map(
+      ([args]) => (args as { viewer?: unknown }).viewer
+    );
 
   beforeEach(() => {
     // Launched for nobody: only the flag's moderator shortcut lets anyone in.
@@ -180,7 +182,9 @@ describe('settings bootstrap: the credential comes from the session lookup', () 
     } as unknown as Parameters<typeof resolveSettingsBootstrap>[0]);
   };
   const viewers = () =>
-    h.getViewerEventAccess.mock.calls.map(([args]) => (args as { viewer?: unknown }).viewer);
+    (h.getViewerEventAccess.mock.calls as unknown[][]).map(
+      ([args]) => (args as { viewer?: unknown }).viewer
+    );
 
   beforeEach(() => {
     testerFlag.reset({ public: false });
