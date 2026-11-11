@@ -47,6 +47,7 @@ import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scann
 import { Tracker } from '~/server/clickhouse/client';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { clamFilesScanned } from '~/server/services/orchestrator/consumer-blob-scan';
+import { PUBLIC_MODEL_STATUSES } from '~/server/services/text-scan/public-content';
 import {
   submitTrainingDataScanSafe,
   TRAINING_DATA_BLOB_SCAN,
@@ -612,7 +613,7 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
   const danger = pickleAfter === ScanResultCode.Danger || virusDanger;
   log(danger ? 'warning' : 'info', {
     modelVersionId: file.modelVersionId,
-    live: LIVE_STATUSES.includes(file.modelVersion.status),
+    live: PUBLIC_MODEL_STATUSES.includes(file.modelVersion.status),
     before: { pickle: file.pickleScanResult, virus: file.virusScanResult },
     after: {
       pickle: pickleAfter,
@@ -646,8 +647,6 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
       coverageMoved && bustVersionScannedFileAirs(file.modelVersionId, file.modelVersion),
     ]).catch((e) => log('warning', { bust: String(e) }));
 }
-
-const LIVE_STATUSES: ModelStatus[] = [ModelStatus.Published, ModelStatus.Scheduled];
 
 const FAILURE_BUST_TTL_SECONDS = 60 * 60;
 

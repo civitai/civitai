@@ -2,7 +2,9 @@
  * Re-submits to the orchestrator scan every loadable model file whose stored pickle verdict is
  * Success although the scan read nothing: the legacy scanner's summary says it read no files, or the
  * orchestrator's step skipped an unrecognised format or could not parse it. The scans are marked
- * scan-only: their results write only the verdicts (applyScanOnlyOutcome) and trigger nothing else.
+ * scan-only: a result (applyScanOnlyOutcome) writes only the verdicts and scannedAt, and refreshes
+ * the version's caches and search entry when a verdict changes. It unpublishes nothing and runs no
+ * hash checks.
  * A written result replaces `rawScanResult`, so the file leaves the selection; one that came back
  * Pending, failed, or is still in flight stays in it for the next run.
  *
@@ -49,11 +51,11 @@ const perMinute = positive('rate', 2);
 
 // One schedule shared by every worker, so starts are spaced 60s/rate apart whatever the concurrency.
 let nextStart = 0;
-function awaitStartSlot() {
+function awaitStartSlot(): Promise<void> {
   const now = Date.now();
   const wait = Math.max(0, nextStart - now);
   nextStart = Math.max(now, nextStart) + 60_000 / perMinute;
-  return new Promise((resolve) => setTimeout(resolve, wait));
+  return new Promise<void>((resolve) => setTimeout(resolve, wait));
 }
 const ids = idFilter(flag('file-ids'), flag('version-ids'));
 let fileIds = ids.fileIds;

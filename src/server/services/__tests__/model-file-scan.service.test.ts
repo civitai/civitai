@@ -1845,9 +1845,10 @@ describe('model-file-scan.service', () => {
       };
       async function rescan(
         steps: unknown[],
-        metadata: Record<string, unknown> = { op: 'scan-only-rescan' }
+        metadata: Record<string, unknown> = { op: 'scan-only-rescan' },
+        file: Record<string, unknown> = stored
       ) {
-        mockDbWrite.modelFile.findUnique.mockResolvedValue(stored);
+        mockDbWrite.modelFile.findUnique.mockResolvedValue(file);
         mockGetWorkflow.mockResolvedValue({
           data: { metadata: { fileId: 1, ...metadata }, steps },
         });
@@ -1927,6 +1928,17 @@ describe('model-file-scan.service', () => {
         expect(
           mockBustOrchestratorScannedFileCache.mock.calls.map(([f]) => f.fileId).sort()
         ).toEqual([1, 2]);
+      });
+
+      it("refreshes the version's caches but not its file-pinned AIRs when coverage stays", async () => {
+        // A virus Error already keeps the file out of generation, so Success -> Error moves nothing.
+        const excluded = { ...stored, virusScanResult: ScanResultCode.Error };
+
+        await rescan([pickle({ status: 'clean' })], undefined, excluded);
+
+        expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+        expect(mockBustOrchestratorModelCache).toHaveBeenCalledTimes(1);
+        expect(mockBustOrchestratorScannedFileCache).not.toHaveBeenCalled();
       });
 
       it('logs a Danger it found even when the verdict changed since the submit', async () => {
