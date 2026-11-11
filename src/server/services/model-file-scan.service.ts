@@ -571,41 +571,44 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
     );
   if (!file || file.type === 'Training Data') return void log('warning', { skipped: 'file' });
 
-  const pickle = outcome.pickleScan && pickleVerdictFor(outcome.pickleScan, file);
+  const verdict = outcome.pickleScan && pickleVerdictFor(outcome.pickleScan, file);
+  const pickle = verdict && verdict.result !== ScanResultCode.Pending ? verdict : undefined;
   const virusDanger = outcome.virusScan?.result === ScanResultCode.Danger;
-  if (!pickle || pickle.result === ScanResultCode.Pending) {
-    return void log('warning', { kept: file.pickleScanResult, result: pickle?.result ?? null });
-  }
+  if (!pickle && !virusDanger)
+    return void log('warning', { kept: file.pickleScanResult, result: verdict?.result ?? null });
 
-  const data: Prisma.ModelFileUpdateManyMutationInput = {
-    scannedAt: new Date(),
-    pickleScanResult: pickle.result,
-    pickleScanMessage: pickle.message,
-    rawScanResult: stripNul(outcome.rawScanResult) as Prisma.InputJsonValue,
-  };
+  // An unread pickle result leaves rawScanResult as it was, so the file stays selected.
+  const data: Prisma.ModelFileUpdateManyMutationInput = { scannedAt: new Date() };
+  if (pickle) {
+    data.pickleScanResult = pickle.result;
+    data.pickleScanMessage = pickle.message;
+    data.rawScanResult = stripNul(outcome.rawScanResult) as Prisma.InputJsonValue;
+  }
   if (virusDanger) {
     data.virusScanResult = ScanResultCode.Danger;
     data.virusScanMessage = stripNul(outcome.virusScan?.message ?? null);
   }
-  // A file reset by an edit since the submit is Pending again, and its own scan will judge it.
+  // Only over the verdict the file was selected with: a reset or a newer verdict since the submit
+  // stands.
   const { count } = await dbWrite.modelFile.updateMany({
-    where: { id: fileId, pickleScanResult: { not: ScanResultCode.Pending } },
+    where: { id: fileId, pickleScanResult: ScanResultCode.Success },
     data,
   });
-  if (!count) return void log('warning', { skipped: 'reset since submit' });
+  if (!count) return void log('warning', { skipped: 'verdict changed since submit' });
+  const pickleAfter = pickle?.result ?? file.pickleScanResult;
 
   const stored = (type: ModelHashType) => file.hashes.find((h) => h.type === type)?.hash;
   const differs = (type: ModelHashType) => {
     const next = outcome.hashes?.[type];
     return !!next && next.toLowerCase() !== stored(type)?.toLowerCase();
   };
-  const danger = pickle.result === ScanResultCode.Danger || virusDanger;
+  const danger = pickleAfter === ScanResultCode.Danger || virusDanger;
   log(danger ? 'warning' : 'info', {
     modelVersionId: file.modelVersionId,
     live: LIVE_STATUSES.includes(file.modelVersion.status),
     before: { pickle: file.pickleScanResult, virus: file.virusScanResult },
     after: {
-      pickle: pickle.result,
+      pickle: pickleAfter,
       virus: virusDanger ? ScanResultCode.Danger : file.virusScanResult,
     },
     danger,
@@ -614,14 +617,14 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
   });
 
   const changed =
-    pickle.result !== file.pickleScanResult ||
+    pickleAfter !== file.pickleScanResult ||
     (virusDanger && file.virusScanResult !== ScanResultCode.Danger);
   if (!changed) return;
   await deleteFilesForModelVersionCache(file.modelVersionId);
   await modelsSearchIndex.queueUpdate([
     { id: file.modelVersion.modelId, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  if (LOADABLE_FILE_TYPES.includes(file.type))
+  if (danger || LOADABLE_FILE_TYPES.includes(file.type))
     await Promise.all([
       resourceDataCache.bust([file.modelVersionId]),
       bustOrchestratorModelCache(file.modelVersionId),

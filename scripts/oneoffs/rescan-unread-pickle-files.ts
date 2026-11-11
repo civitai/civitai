@@ -35,9 +35,23 @@ import type { ModelType } from '~/shared/utils/prisma/enums';
 const args = process.argv.slice(2);
 const flag = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
 const execute = args.includes('--execute');
-const limit = flag('limit') ? Number(flag('limit')) : Infinity;
-const concurrency = Number(flag('concurrency') ?? 5);
-const perMinute = Number(flag('rate') ?? 2);
+function positive(name: string, fallback: number) {
+  const value = Number(flag(name) ?? fallback);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`--${name} must be a positive number`);
+  return value;
+}
+const limit = flag('limit') ? positive('limit', 0) : Infinity;
+const concurrency = positive('concurrency', 5);
+const perMinute = positive('rate', 2);
+
+// One schedule shared by every worker, so starts are spaced 60s/rate apart whatever the concurrency.
+let nextStart = 0;
+function awaitStartSlot() {
+  const now = Date.now();
+  const wait = Math.max(0, nextStart - now);
+  nextStart = Math.max(now, nextStart) + 60_000 / perMinute;
+  return new Promise((resolve) => setTimeout(resolve, wait));
+}
 const fileIds = flag('file-ids')?.split(',').map(Number);
 
 // A submission inside this window is still in flight; submitting again would only double the work.
@@ -72,7 +86,14 @@ function selectPage(afterId: number) {
       AND (
         (mf."rawScanResult"->>'picklescanOutput' LIKE '%Scanned files: 0%'
           AND coalesce(mf.metadata->>'format', 'null') IN (${Prisma.join(PICKLE_CAPABLE_FORMATS)}))
-        OR mf."rawScanResult"->'steps'->1->'output'->>'status' IN ('skipped', 'parseError')
+        OR (mf."rawScanResult"->'steps'->1->>'$type' = 'modelPickleScan'
+          AND (mf."rawScanResult"->'steps'->1->'output'->>'status' = 'parseError'
+            OR (mf."rawScanResult"->'steps'->1->'output'->>'status' LIKE 'skipped%'
+              AND mf."rawScanResult"->'steps'->1->'output'->>'status' NOT IN ('skippedSafetensors', 'skippedGguf'))
+            OR (mf."rawScanResult"->'steps'->1->'output'->>'status' = 'clean'
+              AND lower(mf.name) NOT LIKE '%.zip'
+              AND coalesce(mf."rawScanResult"->'steps'->1->'output'->>'scannedFileCount', '0') = '0'
+              AND coalesce(mf."rawScanResult"->'steps'->1->'output'->>'output', '') NOT SIMILAR TO '%Scanned files: [1-9]%')))
       )
       AND mf.exists IS NOT FALSE
       AND (mf."scanRequestedAt" IS NULL OR mf."scanRequestedAt" < ${inFlightSince})
@@ -92,7 +113,9 @@ function executeRefusals() {
     refusals.push('--target must be production or non-production');
   if (target !== database) refusals.push(`--target=${target} but the database is ${database}`);
   const callback = new URL(env.NEXTAUTH_URL);
-  const localCallback = ['localhost', '127.0.0.1'].includes(callback.hostname);
+  const localCallback =
+    ['localhost', '127.0.0.1', '[::1]', '0.0.0.0'].includes(callback.hostname) ||
+    callback.protocol !== 'https:';
   if (target === 'production' && localCallback)
     refusals.push(`results would be delivered to ${callback.origin}, not the production site`);
   return refusals;
@@ -145,7 +168,7 @@ async function main() {
       }),
       {
         limit: concurrency,
-        betweenTasksFn: () => new Promise((resolve) => setTimeout(resolve, 60_000 / perMinute)),
+        betweenTasksFn: awaitStartSlot,
       }
     );
     console.log(

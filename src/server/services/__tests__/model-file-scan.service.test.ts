@@ -1884,8 +1884,17 @@ describe('model-file-scan.service', () => {
         await rescan([pickle({ status: 'clean', scannedFileCount: 1 })]);
 
         expect(mockDbWrite.modelFile.updateMany.mock.calls[0][0].where).toMatchObject({
-          pickleScanResult: { not: ScanResultCode.Pending },
+          pickleScanResult: ScanResultCode.Success,
         });
+      });
+
+      it('writes a virus Danger even when the pickle result cannot be read', async () => {
+        const clam = { $type: 'modelClamScan', output: { status: 'infected', infected: true } };
+        const data = await rescan([clam, pickle({ status: 'somethingNew' })]);
+
+        expect(data).toMatchObject({ virusScanResult: ScanResultCode.Danger });
+        expect(data).not.toHaveProperty('pickleScanResult');
+        expect(data).not.toHaveProperty('rawScanResult');
       });
 
       it('runs the full path for a scan the rescan did not submit', async () => {
