@@ -608,11 +608,6 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-mod-rule-metadata',
     sites: 1,
   },
-  // In the population only because their `data` is not a plain literal this file can read.
-  'src/server/services/report.service.ts#settleResolvedAppeals': {
-    decision: 'literal-branches',
-    sites: 1,
-  },
   'src/server/services/image.service.ts#toggleImageFlag': {
     decision: 'boolean-flag-key',
     sites: 1,

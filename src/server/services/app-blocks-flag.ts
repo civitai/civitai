@@ -989,6 +989,22 @@ export async function isAppBlocksReviewSharedServerEnabled(): Promise<boolean> {
 }
 
 /**
+ * GLOBAL flag: a review build publishes its preview to the shared static server ITSELF, with no
+ * per-preview image. ON, and only while APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG is also on: the
+ * review trigger asks for a direct publish, and its success callback (which then says
+ * `directPublish: true`) skips the review apply Job and goes straight to the shared-route
+ * probe. OFF: the review build pushes a review image and the apply Job publishes it, unchanged.
+ * Read when the build is triggered; the callback trusts what the signed callback body says, so
+ * flipping the flag mid-build does not change how that build is served. Base-value evaluation
+ * (no user), like the other machine-side flags.
+ */
+export const APP_BLOCKS_REVIEW_DIRECT_PUBLISH_FLAG = 'app-blocks-review-direct-publish';
+
+export async function isAppBlocksReviewDirectPublishEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_REVIEW_DIRECT_PUBLISH_FLAG);
+}
+
+/**
  * GLOBAL flag: when a LIVE on-site app is delisted (moderator delist, moderator reset to
  * pending, owner unpublish), also remove it from the shared static server so its subdomain stops
  * serving; a relist puts it back. OFF: the block is only suspended and the subdomain keeps serving

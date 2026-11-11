@@ -16,6 +16,7 @@ import {
   recordHeldServe,
   recordHeldView,
 } from '$lib/server/held-media';
+import { SHEET_COOKIE, SHEET_IMAGE_TYPES, sheetCookie } from '$lib/server/held-sheet';
 import { getStorage } from '$lib/server/storage';
 
 /**
@@ -25,10 +26,11 @@ import { getStorage } from '$lib/server/storage';
  * The browser names an image id and nothing else: the key comes from this app's own read of the row,
  * and only for an image `heldImageSql` holds, so this is no general way past the CDN.
  */
-export const GET: RequestHandler = async ({ params, locals, request }) => {
+export const GET: RequestHandler = async ({ params, locals, request, cookies }) => {
   const imageId = requireIdParam(locals, params.imageId, HELD_MEDIA_PAGE, 'image id');
   // Narrows the type; `requireIdParam` has already refused a request without a user.
   if (!locals.user) error(403, 'Not signed in.');
+  const credential = locals.heldCredential === 'sheet' ? 'sheet' : 'web';
 
   const media = await getHeldMedia(imageId);
   if (!media || !isProbeableMediaKey(media.url)) error(404, 'Not available here.');
@@ -41,7 +43,8 @@ export const GET: RequestHandler = async ({ params, locals, request }) => {
     });
   if (!signed) error(502, 'Could not reach storage.');
 
-  const range = forwardableRange(request.headers.get('range'));
+  // The sheet always gets the whole image, so every fetch it makes is audited.
+  const range = credential === 'sheet' ? null : forwardableRange(request.headers.get('range'));
   const upstream = await fetchHeldObject(signed.url, range, request.signal).catch((e) => {
     console.error('[held-media] fetch failed', e);
     return null;
@@ -68,6 +71,10 @@ export const GET: RequestHandler = async ({ params, locals, request }) => {
     void upstream.body.cancel();
     error(415, 'This video type does not play in a browser.');
   }
+  if (credential === 'sheet' && !SHEET_IMAGE_TYPES.has(contentType.split(';')[0].trim())) {
+    void upstream.body.cancel();
+    error(415, 'Not an image type served here.');
+  }
 
   recordHeldServe(
     heldServeRecord({
@@ -80,11 +87,22 @@ export const GET: RequestHandler = async ({ params, locals, request }) => {
   );
   // Awaited, so the row is there before the page that loads these bytes reports them shown. A HEAD
   // (answered by this handler) delivers no bytes.
-  if (request.method !== 'HEAD' && isAuditedServe(upstream))
-    await recordHeldView(locals.user.id, imageId);
+  if (request.method !== 'HEAD' && isAuditedServe(upstream)) {
+    const written = await recordHeldView(locals.user.id, imageId, credential).then(
+      () => true,
+      (e) => {
+        console.error('[held-media] view row not written', e);
+        return false;
+      }
+    );
+    if (!written) {
+      void upstream.body.cancel();
+      error(503, 'Could not record this view.');
+    }
+  }
 
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers: heldMediaHeaders(contentType, upstream.headers),
-  });
+  const headers = heldMediaHeaders(contentType, upstream.headers);
+  const sheetToken = credential === 'sheet' ? cookies.get(SHEET_COOKIE) : undefined;
+  if (sheetToken) headers['set-cookie'] = sheetCookie(sheetToken);
+  return new Response(upstream.body, { status: upstream.status, headers });
 };

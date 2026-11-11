@@ -103,7 +103,7 @@ type ComicForSearchIndex = {
 //    *clean* underlying Image: ingestion = Scanned, not in review, not
 //    TOS-violated. Without the Image checks, panels whose underlying
 //    Image was flagged AFTER scan would still surface in search.
-const WHERE = [
+export const comicSearchEligibleWhere = [
   Prisma.sql`cp."status" = 'Active'::"ComicProjectStatus"`,
   Prisma.sql`cp."tosViolation" = FALSE`,
   Prisma.sql`cp."userId" != -1`,
@@ -180,7 +180,7 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
   setup: onIndexSetup,
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
-      ...WHERE,
+      ...comicSearchEligibleWhere,
       lastUpdatedAt ? Prisma.sql`cp."createdAt" >= ${lastUpdatedAt}` : undefined,
     ].filter(isDefined);
 
@@ -207,7 +207,7 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
       batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
     );
     const where = [
-      ...WHERE,
+      ...comicSearchEligibleWhere,
       batch.type === 'update' ? Prisma.sql`cp.id IN (${Prisma.join(batch.ids)})` : undefined,
       batch.type === 'new'
         ? Prisma.sql`cp.id >= ${batch.startId} AND cp.id <= ${batch.endId}`
