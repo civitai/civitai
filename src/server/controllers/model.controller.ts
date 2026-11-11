@@ -50,6 +50,7 @@ import {
   emptyTrainingOverlay,
 } from '~/server/services/orchestrator/training/workflow-state';
 import { eventEngine } from '~/server/events';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import {
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
@@ -691,7 +692,7 @@ export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
       biasImageSlice: slim,
       metricPrivacyEnabled,
       // model.getAll never edge-caches a signed-in response (skipEdgeCache).
-      eventDecorationViewer: ctx.user,
+      eventDecorationViewer: eventViewerOf(ctx),
       coverage: await coverageAudience(ctx.user ?? undefined),
     };
 

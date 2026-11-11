@@ -80,6 +80,14 @@ describe('getImageContestCollectionDetailsHandler', () => {
     expect(result).toEqual({ collectionItems: ITEMS, post: POST });
   });
 
+  it("passes the image's owner to the entry read", async () => {
+    mocks.assertImageVisibleToViewer.mockResolvedValue({ id: IMAGE_ID, userId: 321 });
+    await getImageContestCollectionDetailsHandler({ input: { id: IMAGE_ID }, ctx: ctx(VIEWER) });
+    expect(mocks.getImageContestCollectionDetails).toHaveBeenCalledWith(
+      expect.objectContaining({ id: IMAGE_ID, imageOwnerId: 321 })
+    );
+  });
+
   it('checks visibility as the requesting viewer', async () => {
     mocks.assertImageVisibleToViewer.mockResolvedValue({ id: IMAGE_ID });
     await getImageContestCollectionDetailsHandler({

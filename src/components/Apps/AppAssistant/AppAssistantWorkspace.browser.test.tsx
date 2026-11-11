@@ -3289,6 +3289,8 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card()).toBeVisible();
     return screen;
   }
+  /** Delete → askAgain is several async hops: the 1s default fails on a loaded CI runner. */
+  const CARRIES_ON = { timeout: 5_000 };
   /** The user picks the app themselves (nothing is chosen for them), then confirms. */
   async function confirmDelete(app: string) {
     await card().getByRole('radio', { name: app }).click();
@@ -3435,7 +3437,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
   test('confirmed, deletes the app picked, then the request carries on: one copy of the message and a fresh reply', async () => {
     await atLimit();
     await confirmDelete('app-cccc');
-    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']), CARRIES_ON);
     expect(m.remove.mock.calls).toEqual([['sbx-cccccccccccc']]);
     expect(m.remove.mock.invocationCallOrder[0]).toBeLessThan(
       m.askAgain.mock.invocationCallOrder[0]
@@ -3452,7 +3454,10 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await atLimit();
     m.running = true;
     await confirmDelete('app-bbbb');
-    await vi.waitFor(() => expect(m.giveBack).toHaveBeenCalledWith('Make a quiz night app'));
+    await vi.waitFor(
+      () => expect(m.giveBack).toHaveBeenCalledWith('Make a quiz night app'),
+      CARRIES_ON
+    );
     expect(m.reasked).toEqual([]);
     expect(m.delivered).toEqual(['Make a quiz night app']);
   });
@@ -3525,7 +3530,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
     await confirmDelete('app-bbbb');
     // The request carries on in place: asked again, never sent as a second message.
-    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']), CARRIES_ON);
     expect(m.send).not.toHaveBeenCalled();
   });
 
@@ -3555,7 +3560,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
     await confirmDelete('app-bbbb');
     // The request carries on in place: asked again, never sent as a second message.
-    await vi.waitFor(() => expect(m.reasked).toEqual(['A tiny click counter app.']));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['A tiny click counter app.']), CARRIES_ON);
     expect(m.send).not.toHaveBeenCalled();
   });
 });

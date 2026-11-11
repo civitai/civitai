@@ -66,6 +66,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   buzzCapRedisKey,
   buzzCapWindowKey,
+  clearDailyCapRefusal,
   markDailyCapRefused,
 } from '~/server/services/blocks/block-buzz-cap';
 import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
@@ -394,7 +395,10 @@ import {
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
-import { auditPassThroughPrompts } from '~/server/services/blocks/pass-through-prompt-audit';
+import {
+  auditPassThroughPrompts,
+  auditTrainingSamplePrompts,
+} from '~/server/services/blocks/pass-through-prompt-audit';
 import {
   cancelWorkflow,
   getWorkflow,
@@ -420,8 +424,10 @@ import {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import {
   assertGenerationInputsUsable,
+  countAppBlockHostSources,
   isAppSourcePendingError,
   opaqueInputUrlsIn,
+  type GenerationInputPhase,
 } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -1435,7 +1441,7 @@ async function refundBlockBuzzSpend(key: string, cost: number): Promise<void> {
 // re-confirming the consent CANNOT reset the ceiling within the window. Window =
 // the key's 25h TTL (re-armed on first write): the ceiling is cumulative per
 // (mod, publishRequestId) over a rolling ~25h, NOT reset per submit or per mint.
-// It is STRICTLY TIGHTER than the per-user daily cap (50,000 at Free, the lowest tier), so it binds;
+// It is STRICTLY TIGHTER than every tier's per-user daily cap (`resolveUserAppCaps`), so it binds;
 // the mod's OWN non-review block usage still counts against the daily key separately.
 const REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
@@ -1491,7 +1497,7 @@ async function reserveReviewRunForRealBuzzSpend(
 // requiring a consent budget would make this feature dead for most reviewers for
 // reasons entirely unrelated to it — a moderator has no reason to have ever consented
 // to an app they are reviewing the takedown of. The platform ceiling below is the
-// bound, and it is STRICTLY TIGHTER than the per-user daily cap it replaces (50,000 at Free).
+// bound, and it is STRICTLY TIGHTER than every tier's per-user daily cap it replaces.
 const PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
 function privateRunBuzzCapKey(
@@ -1705,7 +1711,10 @@ async function reserveBlockBuzzSpendForClaims(
   // the one place that sees every daily-cap refusal: record it for the paused notice. The
   // post-paid overage correction has no deny path, but a total over the cap there means the
   // NEXT spend is refused, so marking is right for it too.
+  // A check that passes clears it: "paused" means the LAST daily-cap check refused. Not awaited:
+  // it is off the spend's critical path, and the helper never throws.
   if (total > buzzPerDay) await markDailyCapRefused(userId, buzzPerDay);
+  else void clearDailyCapRefusal(userId);
   if (claims.dev === true) return { ...platform, consent: null };
 
   // From here any throw must undo the platform reservation just taken — otherwise a
@@ -6961,6 +6970,7 @@ export const blocksRouter = router({
       }
       if (input.body.kind === 'workflow' || input.body.kind === 'step') {
         const pending = await assertStepOrWorkflowInputsUsable(input.body, claims, {
+          phase: 'submit',
           confirmedSubmit:
             input.body.kind === 'step' &&
             isPassThroughStepBody(input.body) &&
@@ -7163,6 +7173,10 @@ export const blocksRouter = router({
           wildcardsEnabled: !!ctx.features.wildcards,
         });
       }
+      await countAppBlockHostSources({
+        urls: textToImageSourceUrls(input.body),
+        appBlockLog: { appBlockId: claims.appBlockId, stepTypes: 'textToImage', phase: 'submit' },
+      });
       const token = await getOrchestratorToken(userId, ctx);
 
       // Prompt audit before any orchestrator interaction (mirrors what
@@ -9741,7 +9755,9 @@ async function estimateBlockWorkflowCell(
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
   if (input.body.kind === 'workflow' || input.body.kind === 'step') {
-    const pending = await assertStepOrWorkflowInputsUsable(input.body, claims);
+    const pending = await assertStepOrWorkflowInputsUsable(input.body, claims, {
+      phase: 'estimate',
+    });
     if (pending) return pending;
   }
   if (input.body.kind === 'workflow') {
@@ -9885,6 +9901,10 @@ async function estimateBlockWorkflowCell(
       wildcardsEnabled: !!ctx.features.wildcards,
     });
   }
+  await countAppBlockHostSources({
+    urls: textToImageSourceUrls(input.body),
+    appBlockLog: { appBlockId: claims.appBlockId, stepTypes: 'textToImage', phase: 'estimate' },
+  });
   const token = await getOrchestratorToken(userId, ctx);
   const generateInput = buildTextToImageInput(input.body, {
     ...resolved,
@@ -10139,7 +10159,12 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (isInlineComfyBody(body)) {
     const verdict = checkInlineComfyGraph(body.workflow);
     if (!verdict.runnable) return { snapshot: verdict.snapshot };
-    const pending = await checkInlineComfySources({ graph: verdict.graph, userId, claims });
+    const pending = await checkInlineComfySources({
+      graph: verdict.graph,
+      userId,
+      claims,
+      phase: 'estimate',
+    });
     if (pending) return pending;
     return {
       snapshot: {
@@ -10260,7 +10285,12 @@ async function submitCustomComfyWorkflow(opts: {
     // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
     //     which is what makes gating that flat array sufficient.
     assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
-    const pending = await checkInlineComfySources({ graph: inlineBody.workflow, userId, claims });
+    const pending = await checkInlineComfySources({
+      graph: inlineBody.workflow,
+      userId,
+      claims,
+      phase: 'submit',
+    });
     if (pending) return pending;
     // (b) ENTITLEMENT — the real belt (early-access `hasAccess` + Private
     //     subscription + anti-drop + anti-substitute) over the declared AIRs.
@@ -10903,12 +10933,26 @@ function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
 }
 
+/** A text-to-image body's source image urls, both wire shapes. */
+function textToImageSourceUrls(body: {
+  sourceImage?: { url: string };
+  sourceImages?: { url: string }[];
+}) {
+  return [body.sourceImage?.url, ...(body.sourceImages ?? []).map((image) => image.url)];
+}
+
 /** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
 async function assertStepOrWorkflowInputsUsable(
   body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
   claims: BlockClaims,
-  /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
-  { confirmedSubmit = false }: { confirmedSubmit?: boolean } = {}
+  {
+    phase,
+    confirmedSubmit = false,
+  }: {
+    phase: GenerationInputPhase;
+    /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
+    confirmedSubmit?: boolean;
+  }
 ) {
   // The arm's own token checks first: a caller refused those never pays for the walk below.
   const userId = confirmedSubmit
@@ -10946,7 +10990,7 @@ async function assertStepOrWorkflowInputsUsable(
       entry,
       isApiCaller: false,
       opaqueInput: true,
-      appBlockLog: { appBlockId: claims.appBlockId, stepTypes: bodyStepTypes(body) },
+      appBlockLog: { appBlockId: claims.appBlockId, stepTypes: bodyStepTypes(body), phase },
     });
   } catch (error) {
     if (!isAppSourcePendingError(error)) throw error;
@@ -10970,6 +11014,7 @@ async function checkInlineComfySources(opts: {
   graph: ComfyGraph;
   userId: number;
   claims: BlockClaims;
+  phase: GenerationInputPhase;
 }): Promise<{ snapshot: BlockWorkflowSnapshot } | null> {
   const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(opts.graph);
   if (tooDeep) {
@@ -10985,7 +11030,11 @@ async function checkInlineComfySources(opts: {
       entry: 'appBlocksInlineComfy',
       isApiCaller: false,
       opaqueInput: true,
-      appBlockLog: { appBlockId: opts.claims.appBlockId, stepTypes: 'customComfy' },
+      appBlockLog: {
+        appBlockId: opts.claims.appBlockId,
+        stepTypes: 'customComfy',
+        phase: opts.phase,
+      },
     });
   } catch (error) {
     if (!isAppSourcePendingError(error)) throw error;
@@ -12654,7 +12703,10 @@ async function submitPassThroughStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
+  await auditPassThroughPrompts({
+    ...passThroughAuditContext(claims, userId, isGreen),
+    steps: [body],
+  });
   // A pass-through body carries no `accountType` (its `.strict()` wire shape has
   // no such field), so currency selection is Auto — the domain-allowed set,
   // drained blue-first.
@@ -13318,7 +13370,10 @@ async function submitMultiStepWorkflow(opts: {
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, prepared.steps));
+  await auditPassThroughPrompts({
+    ...passThroughAuditContext(claims, userId, isGreen),
+    steps: prepared.steps,
+  });
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
@@ -14772,7 +14827,10 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
         assertPassThroughStepTypeAllowed(body.$type, body.input);
         assertNotTrainingStepType(body.$type);
         const { isGreen } = resolveBlockMaturity(claims);
-        await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
+        await auditPassThroughPrompts({
+          ...passThroughAuditContext(claims, userId, isGreen),
+          steps: [body],
+        });
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -14996,14 +15054,8 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
   }
 }
 
-function passThroughAuditContext(
-  claims: BlockClaims,
-  userId: number,
-  isGreen: boolean,
-  steps: ReadonlyArray<{ $type: string; input: unknown }>
-) {
+function passThroughAuditContext(claims: BlockClaims, userId: number, isGreen: boolean) {
   return {
-    steps,
     userId,
     appBlockId: claims.appBlockId,
     isGreen,
@@ -15048,6 +15100,13 @@ async function submitTrainingWorkflow(opts: {
       bodyHash: async () => hashTrainingBody(body),
       generationType: resolveBlockGenerationType(body),
       logFields: {},
+      preflight: async ({ userId }) => {
+        const { isGreen } = resolveBlockMaturity(claims);
+        await auditTrainingSamplePrompts({
+          ...passThroughAuditContext(claims, userId, isGreen),
+          samplePrompts: body.samplePrompts,
+        });
+      },
       runIdentity: async (auth) => {
         const owner = { userId: auth.userId, appBlockId: claims.appBlockId };
         return {

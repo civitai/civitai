@@ -152,6 +152,31 @@ describe('per-user ceilings from userLimits', () => {
     expect(events.slice(firstCharge).filter((e) => e.startsWith('ceiling'))).toEqual([]);
   });
 
+  // A page holds up to 1,000 documents, so up to 1,000 owners: their ceilings are looked up a
+  // bounded number at a time, never all at once.
+  it("a migration looks up at most 10 owners' ceilings at a time", async () => {
+    const app = freshApp('tierfanout');
+    const owners = Array.from({ length: 25 }, (_, i) => 5_000 + i);
+    const writer = createDocStore({ db: h.db, limits: LOOSE });
+    for (const uid of owners) await writer.put(ctx(app, NS_PROD, uid), PREFS, 'a', { v: 1 });
+    let inFlight = 0;
+    let peak = 0;
+    const maintenance = createDocStoreMaintenance({
+      db: h.db,
+      limits: LOOSE,
+      userLimits: async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return { userBytes: 1_000_000, userDocs: 10_000 };
+      },
+    });
+    const result = await maintenance.migrateDocuments(app, PREFS, (d) => ({ ...d, pad: 'x' }));
+    expect(result).toMatchObject({ scanned: 25, migrated: 25, failed: 0 });
+    expect(peak).toBe(10);
+  });
+
   it('a write that only frees reads no ceiling, and is allowed', async () => {
     const app = freshApp('tierfree');
     const { store, userLimits } = storeWithCeilings();

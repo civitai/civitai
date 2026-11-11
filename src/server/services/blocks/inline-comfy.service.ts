@@ -432,8 +432,7 @@ const FILESYSTEM_CLASSES: ReadonlySet<string> = new Set([
 ]);
 
 // The source gate reads literal values only, so a loader input must be one it can check:
-// an AIR, a public https URL, or a plain option word. Upload keys are refused, since the
-// worker stages files under key-derived names.
+// an AIR, a public https URL, or a plain option word.
 const LOADER_CLASS_RE = /load|url|fetch|download/i;
 const LOADER_CLASSES: ReadonlySet<string> = new Set([
   'CreateHookLora',
@@ -458,7 +457,6 @@ const LOADER_LINKED_INPUTS_ALLOWED: ReadonlyMap<string, ReadonlySet<string>> = n
   ['CreateHookModelAsLoraModelOnly', new Set(['prev_hooks'])],
 ]);
 
-const AIR_RE = /^urn:air:/i;
 const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const FILE_LIKE_RE = /[./\\[\]]/;
 // The worker stages inputs under extensionless names built from blob keys, which the
@@ -491,7 +489,7 @@ function isFetchableMediaUrl(value: string): boolean {
 function literalLoaderInputRefusal(name: string, value: unknown): string | null {
   if (value === null || typeof value === 'number' || typeof value === 'boolean') return null;
   if (typeof value !== 'string') return `passes ${name} as an object`;
-  if (AIR_RE.test(value)) return null;
+  if (value.toLowerCase().startsWith(AIR_URN_PREFIX)) return null;
   if (HAS_SCHEME_RE.test(value)) {
     return isFetchableMediaUrl(value) ? null : `gives ${name} a URL the host does not fetch`;
   }

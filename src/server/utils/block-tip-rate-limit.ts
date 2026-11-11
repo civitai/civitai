@@ -86,8 +86,8 @@ export async function checkBlockTipRateLimit(
 export const BLOCK_TIP_MAX_PER_TIP = 5_000;
 // Per-USER daily aggregate across ALL of a user's installed blocks (the key omits
 // appBlockId, mirroring the per-user daily gen cap, so a publisher can't multiply the
-// ceiling by spinning up N blocks). Set BELOW the gen daily cap (50,000 at Free) because
-// tips are irreversible transfers to third parties.
+// ceiling by spinning up N blocks). Keep it BELOW every tier's gen daily cap
+// (`resolveUserAppCaps`) because tips are irreversible transfers to third parties.
 export const BLOCK_TIP_CAP_PER_DAY = 25_000;
 // 25h TTL: covers a UTC-day window plus skew; the key is re-derived per day so a
 // stale counter never bleeds into the next window.

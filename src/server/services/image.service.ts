@@ -9020,7 +9020,8 @@ export const getImageContestCollectionDetails = async ({
   id,
   userId,
   isModerator,
-}: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
+  imageOwnerId,
+}: { userId?: number; isModerator?: boolean; imageOwnerId?: number } & GetByIdInput) => {
   const useSharedCache = await isFlipt(FLIPT_FEATURE_FLAGS.CONTEST_COLLECTION_ITEMS_REDIS_CACHE);
   const cachedItems: (SharedContestCollectionItem | ContestCollectionItem)[] = useSharedCache
     ? await fetchSharedContestCollectionItems(id)
@@ -9035,9 +9036,11 @@ export const getImageContestCollectionDetails = async ({
   });
   const permissionsFor = (item: { collection: { id: number } }) =>
     allPermissions.find((p) => p.collectionId === item.collection.id);
-  // Cached per image for every viewer, so the read rule is applied per viewer here.
+  // Cached per image for every viewer, so the read rule is applied per viewer here. The image's
+  // owner and an entry's submitter always see it.
+  const isImageOwner = !!userId && userId === imageOwnerId;
   const items = cachedItems.filter((item) => {
-    if (!!userId && userId === item.addedById) return true;
+    if (isImageOwner || (!!userId && userId === item.addedById)) return true;
     return canReadCollectionItems(permissionsFor(item));
   });
 
@@ -9065,7 +9068,6 @@ export const getImageContestCollectionDetails = async ({
 
     return {
       ...i,
-      // Other judges' scores are for managers only.
       scores: permissions?.manage
         ? i.scores
         : i.scores.filter((s) => !!userId && s.userId === userId),
