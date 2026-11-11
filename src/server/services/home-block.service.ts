@@ -53,6 +53,8 @@ import {
   getFeaturedCollectionsState,
 } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { takeFeaturedCollectionCycle } from '~/server/services/featured-collections-rotation';
+import { isCollectionReadShared } from '~/server/services/collection-item-access';
+import { getCollectionBlockAudience } from '~/server/services/home-block-collection-access';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { GET_ALL_IMAGES_PER_MODEL_SLIM } from '~/server/utils/model-getall-images';
 import {
@@ -216,7 +218,10 @@ export const getHomeBlockById = async ({
   id,
   domain,
   viewer,
+  onViewerOnly,
 }: GetHomeBlockByIdInputSchema & {
+  /** Called when the answer is for this viewer only, so the caller keeps it out of shared caches. */
+  onViewerOnly?: () => void;
   // Read ONLY to refuse a gated row before the shared read, never to shape the body.
   //
   // 1. The result is stored in a SHARED Redis entry with no user segment. This path goes
@@ -238,12 +243,12 @@ export const getHomeBlockById = async ({
       id,
     },
   } as const;
-  // A miss (a missing row, or any error) on the replica falls back to the primary, through Prisma,
-  // so its not-found throw is unchanged. A call with no `id` (the input allows it) stays on Prisma,
-  // which rejects it as before.
+  // A miss (a missing row, or any error) on the replica falls back to the primary, through Prisma.
+  // A row missing there too answers null, the same answer as a block this viewer may not see. A call
+  // with no `id` (the input allows it) stays on Prisma, which rejects it as before.
   const fallback = () => {
     dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
-    return dbWrite.homeBlock.findUniqueOrThrow(homeBlockFindArgs);
+    return dbWrite.homeBlock.findUnique(homeBlockFindArgs);
   };
   const homeBlock =
     id !== undefined
@@ -258,8 +263,27 @@ export const getHomeBlockById = async ({
   }
 
   const row = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
-  const metadata = await resolveHomeBlockMetadata(row);
+  const { metadata, fromSystem } = await resolveHomeBlockSource(row);
   if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) return null;
+
+  if (row.type === HomeBlockType.Collection) {
+    const audience = await getCollectionBlockAudience({
+      // A clone of a system block shows the collection the system block chose.
+      blockUserId: fromSystem ? -1 : row.userId,
+      collectionId: metadata.collection?.id,
+      viewer,
+    });
+    if (audience === 'none') return null;
+    if (audience === 'viewer') {
+      onViewerOnly?.();
+      // The same read as the shared path (`getHomeBlockCached`), with no user, kept out of it.
+      const block = await getHomeBlockData({
+        homeBlock: { ...row, metadata },
+        input: { limit: 14 * 4, domain },
+      });
+      return block ? { ...block, ...row, metadata } : null;
+    }
+  }
 
   const block = await getHomeBlockCached(row, domain, metadata);
   const rotation = metadata.cosmeticShopSection;
@@ -481,13 +505,22 @@ const getSystemBlockMetadata = async () =>
 export const resolveHomeBlockMetadata = async (homeBlock: {
   metadata?: HomeBlockMetaSchema | Prisma.JsonValue;
   sourceId?: number | null;
-}): Promise<HomeBlockMetaSchema> => {
+}): Promise<HomeBlockMetaSchema> => (await resolveHomeBlockSource(homeBlock)).metadata;
+
+/**
+ * The block's effective metadata, and whether it came from a system block (a clone's source),
+ * rather than from the row's own column.
+ */
+export const resolveHomeBlockSource = async (homeBlock: {
+  metadata?: HomeBlockMetaSchema | Prisma.JsonValue;
+  sourceId?: number | null;
+}): Promise<{ metadata: HomeBlockMetaSchema; fromSystem: boolean }> => {
   const own = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
-  if (!homeBlock.sourceId) return own;
+  if (!homeBlock.sourceId) return { metadata: own, fromSystem: false };
 
   const systemMetadata = await getSystemBlockMetadata();
   const source = systemMetadata[homeBlock.sourceId];
-  if (source) return source;
+  if (source) return { metadata: source, fromSystem: true };
 
   // `userId: -1` is the point of this query, not decoration. Without it a row sourced off another
   // USER's block would resolve that stranger's content and presentation onto this homepage — and
@@ -496,7 +529,9 @@ export const resolveHomeBlockMetadata = async (homeBlock: {
     where: { id: homeBlock.sourceId, userId: -1 },
     select: { metadata: true },
   });
-  return (row?.metadata as HomeBlockMetaSchema) || own;
+  return row?.metadata
+    ? { metadata: row.metadata as HomeBlockMetaSchema, fromSystem: true }
+    : { metadata: own, fromSystem: false };
 };
 
 export const getHomeBlockData = async ({
@@ -748,7 +783,9 @@ export const getHomeBlockData = async ({
       const hydrated = await Promise.all(
         picks.map(async (id) => {
           const col = await getCollectionById({ input: { id } });
-          if (!col) return null;
+          // The pool is chosen ahead of time; a collection that is no longer readable by everyone
+          // drops out here, since this block renders the same for every viewer.
+          if (!col || !isCollectionReadShared(col.read)) return null;
           const result = input.withCoreData
             ? { items: [], nextCursor: undefined }
             : await getCollectionItemsByCollectionId({
@@ -1372,7 +1409,11 @@ export const setHomeBlocksOrder = async ({
   if (ownedHomeBlocks.length) {
     transactions.push(
       ...ownedHomeBlocks.map((homeBlock) =>
-        dbWrite.homeBlock.update({ where: { id: homeBlock.id }, data: { index: homeBlock.index } })
+        // The submitted userId is the client's word; the row's owner is checked here.
+        dbWrite.homeBlock.updateMany({
+          where: { id: homeBlock.id, userId },
+          data: { index: homeBlock.index },
+        })
       )
     );
   }

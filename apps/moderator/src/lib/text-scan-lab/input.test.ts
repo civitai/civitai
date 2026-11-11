@@ -18,8 +18,8 @@ describe('parseCheckInput', () => {
     ['https://civitai.com/challenges/12', 'Challenge', 12],
     ['https://civitai.com/collections/34', 'Collection', 34],
     ['https://civitai.com/crucibles/56/name', 'Crucible', 56],
-    ['https://civitai.com/comments/v2/78', 'CommentV2', 78],
-    ['https://civitai.com/models/1?dialog=commentThread&highlight=55', 'Comment', 55],
+    ['https://civitai.com/comments/78', 'CommentV3', 78],
+    ['https://civitai.com/comments/v2/78', 'CommentV3', 78],
     ['civitai.com/models/123', 'Model', 123],
     ['https://civitai.com/models/1.', 'Model', 1],
     ['(civitai.com/posts/2)', 'Post', 2],
@@ -33,6 +33,20 @@ describe('parseCheckInput', () => {
         'https://civitai.com/models/1\nhttps://civitai.red/models/2, civitai.com/models/1'
       )
     ).toEqual({ kind: 'entity', entityType: 'Model', ids: [1, 2] });
+  });
+
+  it('marks a model-page comment link, whose id may be the old one, for resolving', () => {
+    expect(
+      parseCheckInput('https://civitai.com/models/1?dialog=commentThread&highlight=55')
+    ).toEqual({ kind: 'entity', entityType: 'CommentV3', ids: [55], modelPage: true });
+  });
+
+  it('refuses a model-page comment link together with a comment link', () => {
+    expect(
+      parseCheckInput(
+        'https://civitai.com/models/1?dialog=commentThread&highlight=55 https://civitai.com/comments/78'
+      )
+    ).toEqual({ kind: 'refused', notice: expect.any(String) });
   });
 
   it('refuses links to different kinds of content together', () => {

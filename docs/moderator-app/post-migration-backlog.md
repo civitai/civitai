@@ -313,7 +313,8 @@ findings are done — see the parity checklist.
       all** (`commentTrackTypes` in `clickhouse/tracker.ts` has no type for them), and editing a model
       comment emitted a second event, inflating counts (the v1 path; gone with the model flip, 2026-11-06).
 - [ ] **`getJudgeCommentForImage` returns comment content with no ToS predicate.**
-      `commentsv2.service.ts` reads a challenge judge's comment by raw SQL and returns the body. Every
+      `challenge-judge-review.service.ts` (moved from `commentsv2.service.ts`, deleted in CommentV3
+      Phase 5) reads a challenge judge's comment from CommentV3 by raw SQL and returns the body. Every
       other v2 read filters `tosViolation` for non-moderators as of 2026-08-24; this one does not. The
       authors are challenge judges, so the exposure is small — filed rather than fixed, and it is the
       one v2 content read left unfiltered.

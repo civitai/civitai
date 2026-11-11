@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
     "./token-scope": "./src/token-scope.ts",
-    "./secret-hash": "./src/secret-hash.ts"
+    "./secret-hash": "./src/secret-hash.ts",
+    "./plain-email": "./src/plain-email.ts"
   },
   "scripts": {
     "test": "vitest run",

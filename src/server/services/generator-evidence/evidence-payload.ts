@@ -8,7 +8,6 @@ import type {
 import { EVIDENCE_MEDIA_TYPES } from '~/server/services/generator-evidence/evidence-meta';
 import { escapeXml, xmlSafe, xmlText } from '~/server/services/ncmec-xml';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
-import { trimNonAlphanumeric } from '~/utils/string-helpers';
 
 export type EvidenceFile = { job: StoredEvidenceJob; blob: StoredEvidenceBlob };
 
@@ -82,44 +81,96 @@ export function evidenceFileDetails(
   viewedByEsp: boolean
 ): Omit<SubmitFileDetails, 'reportId' | 'fileId'> {
   const { job, blob } = file;
-  const valuePair: { name: string; value: string }[] = [];
-  const prompt = trimNonAlphanumeric(job.prompt);
-  const negativePrompt = trimNonAlphanumeric(job.negativePrompt);
-  if (prompt) valuePair.push({ name: 'prompt', value: xmlText(prompt) });
-  if (negativePrompt) valuePair.push({ name: 'negativePrompt', value: xmlText(negativePrompt) });
-  if (job.resources?.length)
-    valuePair.push({ name: 'resources', value: xmlText(job.resources.join(',')) });
+  const text = promptFileDetails(job);
   return {
     originalFileName: xmlText(blob.blobId),
     fileViewedByEsp: viewedByEsp,
     publiclyAvailable: false,
     fileAnnotations: { generativeAi: blob.role === 'output' },
+    ...(text.details && { details: text.details }),
+    additionalInfo: [xmlText(describe(file)), ...text.additionalInfo],
+  };
+}
+
+type PromptSource = { prompt?: unknown; negativePrompt?: unknown; resources?: unknown };
+const asText = (value: unknown) => (typeof value === 'string' && value.trim() ? value : undefined);
+
+const WORD = /\w/;
+
+/**
+ * What `trimNonAlphanumeric` returns, in one pass: its pattern takes time in the square of a long run of
+ * symbols, and prompt text reaches this unbounded.
+ */
+export function trimEdgeSymbols(text: string | undefined) {
+  if (text === undefined) return undefined;
+  let start = 0;
+  while (start < text.length && !WORD.test(text[start])) start++;
+  let end = text.length;
+  while (end > start && !WORD.test(text[end - 1])) end--;
+  return text.slice(start, end);
+}
+
+/**
+ * An EXIF value, trimmed of edge symbols as the preserved-evidence send always has. Image metadata has
+ * no length limit, so it is cut to the plain line's limit, marked, as that line is.
+ */
+function exifValue(text: string | undefined, storedOnImage: boolean) {
+  if (!text || !storedOnImage) return trimEdgeSymbols(text);
+  const chars = Array.from(text);
+  if (chars.length <= MAX_GENERATION_LINE_CHARS) return trimEdgeSymbols(text);
+  const cut = `… ${IMAGE_TRUNCATION_MARKER}`;
+  const kept = trimEdgeSymbols(chars.slice(0, MAX_GENERATION_LINE_CHARS - cut.length).join(''));
+  return kept ? `${kept}${cut}` : undefined;
+}
+
+/**
+ * A file's prompts as NCMEC is sent them: EXIF pairs, and the same words as plain lines. `storedOnImage`
+ * labels them as read from the image's own metadata, which its uploader can write.
+ */
+export function promptFileDetails(
+  source: PromptSource,
+  { storedOnImage = false }: { storedOnImage?: boolean } = {}
+): Pick<SubmitFileDetails, 'details'> & { additionalInfo: string[] } {
+  const prompt = asText(source.prompt);
+  const negativePrompt = asText(source.negativePrompt);
+  // Image metadata names no resources NCMEC could use, and its uploader writes it.
+  const resources =
+    !storedOnImage && Array.isArray(source.resources)
+      ? source.resources.filter((r): r is string => typeof r === 'string' && !!r)
+      : [];
+  const valuePair: { name: string; value: string }[] = [];
+  const trimmedPrompt = exifValue(prompt, storedOnImage);
+  const trimmedNegative = exifValue(negativePrompt, storedOnImage);
+  if (trimmedPrompt) valuePair.push({ name: 'prompt', value: xmlText(trimmedPrompt) });
+  if (trimmedNegative) valuePair.push({ name: 'negativePrompt', value: xmlText(trimmedNegative) });
+  if (resources.length) valuePair.push({ name: 'resources', value: xmlText(resources.join(',')) });
+
+  const as = storedOnImage ? ', as stored on the image' : '';
+  const marker = storedOnImage ? IMAGE_TRUNCATION_MARKER : TRUNCATION_MARKER;
+  const lines = [
+    prompt && line(`Prompt${as}: `, prompt, marker),
+    negativePrompt && line(`Negative prompt${as}: `, negativePrompt, marker),
+    resources.length && line(`Resources${as}: `, resources.join(', '), marker),
+  ].filter((text): text is string => !!text);
+  return {
     ...(valuePair.length && { details: [{ type: FileDetailType.EXIF, valuePair }] }),
-    additionalInfo: [xmlText(describe(file)), ...generationText(job)],
+    additionalInfo: lines.length ? [lines.join('\n')] : [],
   };
 }
 
 /** Each line, label and marker included, is at most this many code points before escaping. */
 export const MAX_GENERATION_LINE_CHARS = 4000;
 export const TRUNCATION_MARKER = '[truncated; full text preserved]';
-const CUT = `… ${TRUNCATION_MARKER}`;
+/** For text read from an image's own metadata, which the report does not itself hold. */
+export const IMAGE_TRUNCATION_MARKER = '[truncated]';
 
-function line(label: string, text: string) {
+function line(label: string, text: string, marker = TRUNCATION_MARKER) {
+  const CUT = `… ${marker}`;
   const chars = [...xmlSafe(text.trim())];
   const room = MAX_GENERATION_LINE_CHARS - label.length;
   const kept =
     chars.length <= room ? chars.join('') : chars.slice(0, room - CUT.length).join('') + CUT;
   return label + escapeXml(kept);
-}
-
-/** The generation's words as plain text, alongside the EXIF pairs, for a reader who never opens those. */
-function generationText(job: StoredEvidenceJob) {
-  const lines = [
-    job.prompt?.trim() && line('Prompt: ', job.prompt),
-    job.negativePrompt?.trim() && line('Negative prompt: ', job.negativePrompt),
-    job.resources?.length && line('Resources: ', job.resources.join(', ')),
-  ].filter((text): text is string => !!text);
-  return lines.length ? [lines.join('\n')] : [];
 }
 
 export const EXCLUDED_FILES_NOTICE =

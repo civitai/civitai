@@ -118,6 +118,7 @@ import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
+import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
 
 const PREFETCH_THRESHOLD = 5;
 
@@ -758,36 +759,41 @@ function ImageDetail2Content() {
                     )}
                     {!hideAds && image.id !== 97016897 && <AdUnitSide_2 />}
                     {!hideAds && image.id === 97016897 && <AdUnitOutstream />}
-                    <VotableTags
-                      entityType="image"
-                      entityId={image.id}
-                      canAdd
-                      collapsible
-                      nsfwLevel={image.nsfwLevel}
-                      mediaType={image.type}
-                    />
-                    <ImageDetailPostCard post={post} />
-                    <ImageProcess imageId={image.id} />
-                    <ImageRemixOfDetails imageId={image.id} />
-                    <RemixGalleryCard imageId={image.id} />
-                    <ImageGenerationData imageId={image.id} collapsible />
-                    {/* <ImageRemixesDetails imageId={image.id} /> */}
-                    {/* {!hideAds && <AdUnitSide_3 />} */}
-                    <CollapsibleCard
-                      title="Discussion"
-                      icon={<IconBrandWechat />}
-                      storageKey="discussion"
-                    >
-                      <ImageDetailComments imageId={image.id} userId={image.user.id} />
-                    </CollapsibleCard>
-                    <ImageContestCollectionDetails
-                      key={currentUser?.id}
-                      image={image}
-                      isOwner={isOwner}
-                      isModerator={currentUser?.isModerator}
-                      userId={currentUser?.id}
-                    />
-                    <ImageExternalMeta imageId={image.id} />
+                    {/* `ssr-client-only-sections`: the page is deindexed (see `deIndex` above), so
+                        nothing below is read by search engines, and it is the tail of the sidebar,
+                        so its arrival after hydration moves nothing above it. */}
+                    <ClientOnlySection name="image-detail-sidebar" minHeight={320}>
+                      <VotableTags
+                        entityType="image"
+                        entityId={image.id}
+                        canAdd
+                        collapsible
+                        nsfwLevel={image.nsfwLevel}
+                        mediaType={image.type}
+                      />
+                      <ImageDetailPostCard post={post} />
+                      <ImageProcess imageId={image.id} />
+                      <ImageRemixOfDetails imageId={image.id} />
+                      <RemixGalleryCard imageId={image.id} />
+                      <ImageGenerationData imageId={image.id} collapsible />
+                      {/* <ImageRemixesDetails imageId={image.id} /> */}
+                      {/* {!hideAds && <AdUnitSide_3 />} */}
+                      <CollapsibleCard
+                        title="Discussion"
+                        icon={<IconBrandWechat />}
+                        storageKey="discussion"
+                      >
+                        <ImageDetailComments imageId={image.id} userId={image.user.id} />
+                      </CollapsibleCard>
+                      <ImageContestCollectionDetails
+                        key={currentUser?.id}
+                        image={image}
+                        isOwner={isOwner}
+                        isModerator={currentUser?.isModerator}
+                        userId={currentUser?.id}
+                      />
+                      <ImageExternalMeta imageId={image.id} />
+                    </ClientOnlySection>
                   </div>
                 </ScrollArea>
               </div>

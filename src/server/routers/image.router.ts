@@ -51,6 +51,7 @@ import {
   getImagesAsPostsInfiniteHandler,
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
+import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
 import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   addOrRemoveImageTechniquesSchema,
@@ -116,7 +117,9 @@ export const imageRouter = router({
   getInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
-    .query(getInfiniteImagesHandler),
+    // One `user` object per creator on the wire (`image-feed-shared-users`, dark). Here rather
+    // than in the handler, which `civitai-embed` also calls directly.
+    .query(async (opts) => withSharedFeedUsers(await getInfiniteImagesHandler(opts))),
   getImagesForModelVersion: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
@@ -215,8 +218,13 @@ export const imageRouter = router({
 
   // #region [moderation]
   getImagesByUserIdForModeration: moderatorProcedure
-    .input(z.object({ userId: z.number() }))
-    .query(({ input, ctx }) => getImagesByUserIdForModeration(input.userId)),
+    .input(
+      z.object({
+        userId: z.number(),
+        captureImageIds: z.number().int().array().max(500).optional(),
+      })
+    )
+    .query(({ input }) => getImagesByUserIdForModeration(input.userId, input.captureImageIds)),
 
   // #endregion
 

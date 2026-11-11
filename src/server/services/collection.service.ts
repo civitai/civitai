@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { reviewQueueVisibleTargetSql } from '~/server/services/collection-review.sql';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
@@ -490,7 +491,7 @@ export function submissionStatus(
     : CollectionItemStatus.ACCEPTED;
 }
 
-function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
+export function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
   return {
     collectionId,
     read: false,
@@ -2007,6 +2008,7 @@ export const getCollectionItemsByCollectionId = async ({
   user,
   imagesAsPublicCatalog = false,
   coverage,
+  requireRead = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -2019,6 +2021,11 @@ export const getCollectionItemsByCollectionId = async ({
   imagesAsPublicCatalog?: boolean;
   /** See `getModelsRaw`. */
   coverage?: CoverageAudience;
+  /**
+   * Answer a collection the viewer may neither read nor submit to as a missing one. Callers that
+   * leave it off must check read themselves.
+   */
+  requireRead?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -2038,6 +2045,14 @@ export const getCollectionItemsByCollectionId = async ({
     userId: user?.id,
     isModerator: user?.isModerator,
   });
+
+  // Readers and managers see every item. A viewer who may only submit (the usual contest setup:
+  // anyone may add, entries hidden) sees only their own. Anyone else gets a missing collection.
+  const readsAll = canReadCollectionItems(permission);
+  const submitsOnly = !readsAll && (permission.write || permission.writeReview) && !!user?.id;
+  if (requireRead && !readsAll && !submitsOnly) throw throwNotFoundError('Collection not found');
+  const ownItemsCondition =
+    requireRead && !readsAll ? Prisma.sql`AND ci."addedById" = ${user?.id}` : Prisma.sql``;
 
   if (
     (forReview ||
@@ -2145,6 +2160,7 @@ export const getCollectionItemsByCollectionId = async ({
         ${tagCondition}
         ${awaitingHumanCondition}
         ${imageIngestionCondition}
+        ${ownItemsCondition}
         ${cursorCondition}
       ORDER BY "sortKey" DESC, ci.id DESC
       LIMIT ${limit + 1}
@@ -2181,23 +2197,27 @@ export const getCollectionItemsByCollectionId = async ({
       : Prisma.sql``;
 
     // Cursor condition for compound ordering (createdAt, id)
+    // The cursor item is looked up only among the items this viewer may list.
+    const cursorItemScope = Prisma.sql`AND "collectionId" = ${collectionId} ${
+      requireRead && !readsAll ? Prisma.sql`AND "addedById" = ${user?.id}` : Prisma.sql``
+    }`;
     const cursorCondition = parsedCursor.id
       ? sortDirection === 'DESC'
         ? Prisma.sql`AND (
-            ci."createdAt" < (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+            ci."createdAt" < (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
             OR (
-              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
               AND ci.id < ${parsedCursor.id}
             )
             OR ci."createdAt" IS NULL
           )`
         : Prisma.sql`AND (
-            ci."createdAt" > (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+            ci."createdAt" > (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
             OR (
-              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
               AND ci.id < ${parsedCursor.id}
             )
-            OR (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id}) IS NULL
+            OR (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope}) IS NULL
           )`
       : Prisma.sql``;
 
@@ -2240,6 +2260,7 @@ export const getCollectionItemsByCollectionId = async ({
         ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${reviewVisibleCondition}
+        ${ownItemsCondition}
         ${cursorCondition}
       ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
       LIMIT ${limit + 1}
@@ -4119,10 +4140,21 @@ export const getCollectionItemById = ({ id }: GetByIdInput) => {
 export async function getCollectionEntryCount({
   collectionId,
   userId,
+  isModerator,
 }: {
   collectionId: number;
   userId: number;
+  isModerator?: boolean;
 }) {
+  // A collection the viewer may neither read nor submit to answers as a missing one.
+  const permission = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId,
+    isModerator,
+  });
+  if (!canReadCollectionItems(permission) && !permission.write && !permission.writeReview)
+    throw throwNotFoundError('Collection not found');
+
   const [collection] = await dbRead.$queryRaw<{ total: number }[]>`
     SELECT
       CAST(c.metadata->'maxItemsPerUser' as int) as total

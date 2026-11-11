@@ -50,6 +50,7 @@ import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cach
 import { removeEmpty } from '~/utils/object-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { canViewerOpenModel } from '~/server/services/model-visibility.service';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
@@ -567,6 +568,9 @@ export const getVotableTags = async ({
 }) => {
   let results: VotableTagModel[] = [];
   if (type === 'model') {
+    // modelVotableTagsCache is keyed by model id alone, so the viewer check runs first. A model the
+    // viewer may not see answers as an unknown id does: no tags.
+    if (!(await canViewerOpenModel(id, { id: userId, isModerator }))) return results;
     // Static, user-independent read of the ModelTag composite view — cache-backed
     // (mirrors the image path's imageTagsCache). The per-user vote is merged below,
     // uncached, so nothing user-specific is cached here.
