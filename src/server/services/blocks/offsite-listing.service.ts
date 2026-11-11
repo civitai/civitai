@@ -2098,6 +2098,14 @@ export async function submitListingRevision(opts: {
   // writers that correctly do not bust).
   await bustAppListingCatalogCache().catch(() => undefined);
 
+  // IMPERSONATION CHECK for an approved app whose edit changes its name, icon or cover. Gated
+  // on the review-automation flags and the daily budget. Awaited: it writes a `pending` row
+  // before returning (so a lost background run still badges the edit), and starts the model
+  // call in the background, so the submit is not held on it. Never throws.
+  await import('./app-listing-edit-impersonation.service')
+    .then((m) => m.startListingEditImpersonationCheck(publishRequestId))
+    .catch(() => undefined);
+
   return { publishRequestId, shadowId, slug: shadow.revisionOf.slug };
 }
 
@@ -4790,7 +4798,13 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
     select: { ...modQueueSubmissionSelect, submittedBy: submitterChip },
   });
   const hasNext = rows.length > limit;
-  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
+  const page = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
+  // The impersonation check on an approved app's listing edit: present only for an edit that
+  // changes the name, icon or cover (a missing result then reads `missing`, never "unchecked").
+  // FAIL-SOFT on a failed READ, so the queue itself stays up; that one case shows no badge.
+  const { listingEditQueueChecks } = await import('./app-listing-edit-impersonation.service');
+  const checks = await listingEditQueueChecks(page).catch(() => null);
+  const items = page.map((r) => ({ ...r, listingEditCheck: checks?.get(r.id) ?? null }));
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 

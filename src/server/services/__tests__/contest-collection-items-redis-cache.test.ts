@@ -419,7 +419,9 @@ describe('contest collection items: every image writer busts after its write', (
     const id = nextImageId++;
     rows = [{ ...entriesFor(id)[1], addedById: null }];
     flag(true);
-    expect((await getImageContestCollectionDetails({ id }))[0].scores).toEqual([
+    // Read as a moderator: anyone else sees only their own score.
+    const asModerator = { id, userId: MODERATOR_ID, isModerator: true };
+    expect((await getImageContestCollectionDetails(asModerator))[0].scores).toEqual([
       { userId: 3, score: 8 },
     ]);
 
@@ -444,7 +446,7 @@ describe('contest collection items: every image writer busts after its write', (
     expect(stateAtWrite).toBe('warm');
     // Busted by the time the writer returns: an un-awaited bust can still be in flight here.
     expect(cacheState(id)).toBe('busted');
-    const [after] = await getImageContestCollectionDetails({ id });
+    const [after] = await getImageContestCollectionDetails(asModerator);
     expect(after.scores).toEqual([
       { userId: 3, score: 8 },
       { userId: MODERATOR_ID, score: 3 },

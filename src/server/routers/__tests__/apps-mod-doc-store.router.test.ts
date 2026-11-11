@@ -837,6 +837,7 @@ describe('the moderation operations are reachable from the moderator service onl
         'unmark',
         'put',
         'usage',
+        'viewerLimits',
       ].sort()
     );
   });

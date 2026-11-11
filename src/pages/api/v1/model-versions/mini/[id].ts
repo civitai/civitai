@@ -28,7 +28,12 @@ import type {
   ModelType,
   ModelHashType,
 } from '~/shared/utils/prisma/enums';
-import { Availability, ModelFileVisibility, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  ModelFileVisibility,
+  type ModelUsageControl,
+  type ScanResultCode,
+} from '~/shared/utils/prisma/enums';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
@@ -36,6 +41,7 @@ import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { hashRouteServesEveryone } from '~/server/services/download-by-hash.servable';
 import { evaluateMiniEpochCaller, getMiniEpochGateMode } from '~/server/utils/mini-epoch-caller';
 
 export const schema = z.object({
@@ -77,6 +83,7 @@ type VersionRow = {
   modelUserId: number;
   modelStatus: string;
   modelMode: string | null;
+  modelAvailability: Availability;
   poi: boolean;
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
@@ -102,6 +109,8 @@ type FileRow = {
   name: string;
   hashes: Record<ModelHashType, string>;
   replacedAt: Date | null;
+  pickleScanResult: ScanResultCode | null;
+  virusScanResult: ScanResultCode | null;
 };
 
 export default MixedAuthEndpoint(async function handler(
@@ -140,6 +149,7 @@ export default MixedAuthEndpoint(async function handler(
       m."userId" as "modelUserId",
       m.status as "modelStatus",
       m.mode as "modelMode",
+      m.availability as "modelAvailability",
       m.poi,
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
@@ -227,6 +237,8 @@ export default MixedAuthEndpoint(async function handler(
       mf."sizeKB", 
       mf.name,
       mf."replacedAt",
+      mf."pickleScanResult",
+      mf."virusScanResult",
       COALESCE(
         JSON_OBJECT_AGG(mfh.type, mfh.hash) FILTER (WHERE mfh.hash IS NOT NULL),
         '{}'::json
@@ -234,7 +246,8 @@ export default MixedAuthEndpoint(async function handler(
     FROM "ModelFile" mf
     LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
     WHERE mf."modelVersionId" = ${id}
-    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt"
+    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt",
+      mf."pickleScanResult", mf."virusScanResult"
     -- requestedFile below calls the bare getPrimaryFile, which settles a full tie by input order,
     -- and that choice decides the epoch branch. (getGenerationFile does its own id sort.)
     ORDER BY mf.id
@@ -295,6 +308,26 @@ export default MixedAuthEndpoint(async function handler(
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
+  // Decided before the epoch is read, so a refused caller gets the same answer whatever the
+  // version's training results hold.
+  if (useEpochUrl) {
+    const mode = await getMiniEpochGateMode();
+    if (mode !== 'off') {
+      // The body now depends on the caller, so no shared cache may hold it.
+      res.setHeader('Cache-Control', 'private, no-store');
+      const caller = await evaluateMiniEpochCaller({
+        req,
+        user,
+        modelVersionId: modelVersion.id,
+        ownerId: modelVersion.modelUserId,
+        mode,
+      });
+      // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
+      // 404 to a caller who would be served.
+      if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
+    }
+  }
+
   const targetFile = useEpochUrl
     ? requestedFile
     : modelFileId
@@ -316,8 +349,6 @@ export default MixedAuthEndpoint(async function handler(
   // carries `trainingResults`; reading the field back here is purely so the type
   // narrows for the block below.
   const trainingResults = useEpochUrl ? targetFile.metadata.trainingResults : undefined;
-
-  let withheldFromCaller = false;
 
   if (trainingResults) {
     const epoch =
@@ -352,20 +383,6 @@ export default MixedAuthEndpoint(async function handler(
       modelId: jobId,
       id: fileName,
     });
-
-    const mode = await getMiniEpochGateMode();
-    if (mode !== 'off') {
-      // The body now depends on the caller, so no shared cache may hold it.
-      res.setHeader('Cache-Control', 'private, no-store');
-      const caller = await evaluateMiniEpochCaller({
-        req,
-        user,
-        modelVersionId: modelVersion.id,
-        ownerId: modelVersion.modelUserId,
-        mode,
-      });
-      withheldFromCaller = caller.withhold;
-    }
   } else {
     // this does not work for things like Flux
     // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
@@ -399,14 +416,19 @@ export default MixedAuthEndpoint(async function handler(
 
   const downloadUrls = [downloadUrl];
   const sha256 = targetFile.hashes.SHA256;
-  // The hash route offers a non-owner only these copies (findHashCandidates); anything else would
-  // lead with a url that refuses where the id url serves.
-  const hashRouteServes =
-    targetFile.visibility === ModelFileVisibility.Public &&
-    modelVersion.usageControl === ModelUsageControl.Download &&
-    modelVersion.availability !== Availability.Private &&
-    modelVersion.status === 'Published' &&
-    modelVersion.modelStatus === 'Published';
+  // Anything else would lead with a url that refuses where the id url serves.
+  const hashRouteServes = hashRouteServesEveryone({
+    fileVisibility: targetFile.visibility,
+    pickleScanResult: targetFile.pickleScanResult,
+    virusScanResult: targetFile.virusScanResult,
+    versionStatus: modelVersion.status,
+    versionAvailability: modelVersion.availability,
+    usageControl: modelVersion.usageControl,
+    modelStatus: modelVersion.modelStatus,
+    modelMode: modelVersion.modelMode,
+    modelAvailability: modelVersion.modelAvailability,
+    poi: modelVersion.poi,
+  });
   if (
     !trainingResults &&
     hashRouteServes &&
@@ -566,8 +588,7 @@ export default MixedAuthEndpoint(async function handler(
     model: { status: modelVersion.modelStatus, mode: modelVersion.modelMode },
   };
   const withholdEpochUrl =
-    withheldFromCaller ||
-    (!!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated)));
+    !!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated));
 
   const data = {
     air,

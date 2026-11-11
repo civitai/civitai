@@ -6,8 +6,8 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * `GET /api/v1/model-versions/mini/[id]`, the epoch arm of a Private version, behind the
- * `mini-epoch-caller-gate` variant flag: `log` logs the caller class, `enforce` also withholds the
- * epoch url from callers who are not the owner, a moderator, a grantee or the orchestrator.
+ * `mini-epoch-caller-gate` variant flag: `log` logs the caller class, `enforce` also answers callers
+ * who are not the owner, a moderator, a grantee or the orchestrator as an unknown id.
  */
 
 const h = vi.hoisted(() => ({
@@ -62,12 +62,13 @@ type Caller = {
 async function request(
   caller: Caller = {},
   row: Partial<typeof versionRow> = {},
-  file: object = TRAINING_FILE
+  file: object = TRAINING_FILE,
+  versionRows: object[] = [{ ...versionRow, ...row }]
 ) {
   h.user.value = caller.user;
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw
-    .mockResolvedValueOnce([{ ...versionRow, ...row }])
+    .mockResolvedValueOnce(versionRows)
     .mockResolvedValueOnce([structuredClone(file)]);
 
   const json = vi.fn().mockReturnThis();
@@ -94,6 +95,15 @@ async function request(
     .filter(([name]) => name === 'Cache-Control')
     .at(-1)?.[1];
   return { status, body, cacheControl };
+}
+
+/** The unknown-id 404, carrying nothing that names the epoch, its file or its hash. */
+function expectRefused({ status, body }: { status: unknown; body: unknown }) {
+  expect(status).toBe(404);
+  expect(body).toEqual({ error: 'Model not found' });
+  const text = JSON.stringify(body);
+  for (const leak of [TRAINING_FILE.hashes.SHA256, TRAINING_FILE.name, 'job-abc-123', EPOCH_URL])
+    expect(text).not.toContain(leak);
 }
 
 function callerLogs() {
@@ -162,12 +172,8 @@ describe('mini/[id] epoch arm, enforce', () => {
       { authorization: `Bearer ${SERVICE_TOKEN} x` },
       'anonymous',
     ],
-  ])('withholds the epoch url from %s, the rest of the response kept', async (_l, caller, cls) => {
-    const { status, body } = await request(caller);
-    expect(status).toBe(200);
-    expect(body.downloadUrls).toEqual([]);
-    expect(body.fileName).toBe(TRAINING_FILE.name);
-    expect(body.hashes).toEqual(TRAINING_FILE.hashes);
+  ])('answers %s as an unknown id', async (_l, caller, cls) => {
+    expectRefused(await request(caller));
     expect(callerLogs()).toEqual([
       expect.objectContaining({ callerClass: cls, wouldRefuse: true, enforced: true }),
     ]);
@@ -180,21 +186,18 @@ describe('mini/[id] epoch arm, enforce', () => {
 
   it('does not accept the service token when none is configured', async () => {
     setEnv({ ORCHESTRATOR_SERVICE_TOKEN: undefined });
-    const { body } = await request(service);
-    expect(body.downloadUrls).toEqual([]);
+    expectRefused(await request(service));
     expect(callerLogs()[0]).toMatchObject({ callerClass: 'anonymous', resolvedAs: 'unrecognized' });
   });
 
   it('does not accept a blank configured token', async () => {
     setEnv({ ORCHESTRATOR_SERVICE_TOKEN: '\t' });
-    const { body } = await request({ authorization: 'Bearer \t' });
-    expect(body.downloadUrls).toEqual([]);
+    expectRefused(await request({ authorization: 'Bearer \t' }));
   });
 
   it('does not accept an empty configured token against an empty bearer', async () => {
     setEnv({ ORCHESTRATOR_SERVICE_TOKEN: '' });
-    const { body } = await request({ authorization: 'Bearer ' });
-    expect(body.downloadUrls).toEqual([]);
+    expectRefused(await request({ authorization: 'Bearer ' }));
   });
 
   it('checks a grant for the one version alone', async () => {
@@ -207,16 +210,53 @@ describe('mini/[id] epoch arm, enforce', () => {
     });
   });
 
-  it('withholds from a signed-in caller when the grant lookup fails', async () => {
+  it('refuses a signed-in caller when the grant lookup fails', async () => {
     h.hasEntityAccess.mockRejectedValueOnce(new Error('db down'));
-    const { status, body } = await request(grantee);
+    expectRefused(await request(grantee));
+  });
+
+  it('still withholds a taken-down model from the service token', async () => {
+    const { status, body } = await request(service, { modelMode: 'TakenDown' });
     expect(status).toBe(200);
     expect(body.downloadUrls).toEqual([]);
   });
 
-  it('still withholds a taken-down model from the service token', async () => {
-    const { body } = await request(service, { modelMode: 'TakenDown' });
-    expect(body.downloadUrls).toEqual([]);
+  it('answers a refused caller with the same status and body as an unknown id', async () => {
+    const refused = await request(anonymous);
+    const unknown = await request(anonymous, {}, TRAINING_FILE, []);
+    expect(refused.status).toBe(404);
+    expect({ status: refused.status, body: refused.body }).toEqual({
+      status: unknown.status,
+      body: unknown.body,
+    });
+  });
+
+  it('keeps the refused 404 out of shared caches', async () => {
+    const { cacheControl } = await request(anonymous);
+    expect(cacheControl).toBe('private, no-store');
+  });
+
+  it.each([
+    ['the owner', owner],
+    ['the service token', service],
+  ])('still gives %s the epoch air and hashes', async (_label, caller) => {
+    const { status, body } = await request(caller);
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+    expect(body.hashes).toEqual(TRAINING_FILE.hashes);
+    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(body).toHaveProperty('air');
+  });
+
+  it('refuses before the epoch is read: a version with no epochs answers as an unknown id', async () => {
+    const noEpochs = {
+      ...TRAINING_FILE,
+      metadata: { ...TRAINING_FILE.metadata, trainingResults: { epochs: [] } },
+    };
+    expectRefused(await request(anonymous, {}, noEpochs));
+    // control: the owner reaches the epoch read and gets its own error
+    const forOwner = await request(owner, {}, noEpochs);
+    expect(forOwner).toMatchObject({ status: 404, body: { error: 'Missing epoch' } });
   });
 });
 
