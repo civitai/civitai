@@ -2,7 +2,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
-import { HomeBlockType } from '~/shared/utils/prisma/enums';
+import { CollectionReadConfiguration, HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
 import { createLogger } from '~/utils/logging';
@@ -33,6 +33,11 @@ type HomeBlockForCache = {
 };
 
 const log = createLogger('home-block-cache', 'green');
+
+const SHARED_COLLECTION_READS = new Set<string>([
+  CollectionReadConfiguration.Public,
+  CollectionReadConfiguration.Unlisted,
+]);
 
 // Not 'default': entries under that key predate the PG cap and must never be read again.
 const FEATURED_MODELS_HOME_BLOCK_KEY = 'pg';
@@ -110,7 +115,13 @@ export async function getHomeBlockCached(
     metadata,
   };
 
-  if (homeBlockWithData) {
+  // Only a collection everyone may read goes in this entry, which every viewer reads.
+  const shareable =
+    homeBlock.type !== HomeBlockType.Collection ||
+    SHARED_COLLECTION_READS.has(
+      (homeBlockWithData as { collection?: { read?: string } } | null)?.collection?.read ?? ''
+    );
+  if (homeBlockWithData && shareable) {
     await redis.packed.set<HomeBlockWithData>(cacheKey, parsedHomeBlock, {
       EX: CACHE_EXPIRY[homeBlock.type],
     });

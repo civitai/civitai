@@ -20,6 +20,7 @@ import {
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
 import { filterViewableHomeBlocks, isHomeBlockGated } from '~/server/services/home-block-access';
+import { getCollectionBlockAudience } from '~/server/services/home-block-collection-access';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getFeaturedCollectionsState } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { dbRead } from '~/server/db/client';
@@ -88,7 +89,15 @@ export const getHomeBlocksHandler = async ({
       const coverage = await coverageAudience(ctx.user ?? undefined);
       // Get the core data for each home block:
       const homeBlocksWithData = await Promise.all(
-        homeBlocks.map((homeBlock) => {
+        homeBlocks.map(async (homeBlock) => {
+          if (homeBlock.type === HomeBlockType.Collection) {
+            const audience = await getCollectionBlockAudience({
+              blockUserId: homeBlock.userId,
+              collectionId: (homeBlock.metadata as HomeBlockMetaSchema).collection?.id,
+              viewer: ctx.user,
+            });
+            if (audience === 'none') return null;
+          }
           return getHomeBlockData({ homeBlock, user: ctx.user, input, coverage });
         })
       );
@@ -148,9 +157,13 @@ export const getHomeBlocksByIdHandler = async ({
   input: GetHomeBlockByIdInputSchema & UserPreferencesInput;
 }): Promise<HomeBlockWithData> => {
   try {
+    let viewerOnly = false;
     const homeBlock = await getHomeBlockById({
       ...input,
       viewer: ctx.user,
+      onViewerOnly: () => {
+        viewerOnly = true;
+      },
     });
 
     // `&& ctx.cache` because `ctx.cache` really is null on the SSG prefetch path —
@@ -167,10 +180,19 @@ export const getHomeBlocksByIdHandler = async ({
     // `model.controller.getModelsInfiniteHandler` does not.
     if (
       homeBlock &&
-      (homeBlock.type === HomeBlockType.Announcement || isHomeBlockGated(homeBlock)) &&
+      (homeBlock.type === HomeBlockType.Announcement ||
+        isHomeBlockGated(homeBlock) ||
+        viewerOnly) &&
       ctx.cache
-    )
+    ) {
       ctx.cache.skip = true;
+      // Shown to this viewer only: no shared cache may keep it, the browser's included.
+      if (viewerOnly) {
+        ctx.cache.canCache = false;
+        ctx.cache.edgeTTL = 0;
+        ctx.cache.browserTTL = 0;
+      }
+    }
 
     if (!homeBlock) {
       throw throwNotFoundError('Home block not found');
@@ -234,14 +256,12 @@ export const deleteUserHomeBlockHandler = async ({
   const { id: userId, isModerator } = ctx.user;
 
   try {
-    const homeBlock = await getHomeBlockById({ ...input, viewer: ctx.user });
-    if (!homeBlock) throw throwNotFoundError(`No home block with id ${input.id}`);
-
-    if (!isModerator && homeBlock.userId !== userId) throw throwAuthorizationError();
-
+    // Only the owner (or a moderator) may delete, which `deleteHomeBlockById` checks against the
+    // row itself, so a block is deletable whatever it would render for its owner.
     const deleted = await deleteHomeBlockById({
-      input: { ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator },
+      input: { ...input, userId, isModerator },
     });
+    if (!deleted) throw throwNotFoundError(`No home block with id ${input.id}`);
 
     return deleted;
   } catch (error) {
