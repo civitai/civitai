@@ -50,6 +50,7 @@ import {
   getMiniModerationState,
   MINI_MODERATION_EXPIRES_MS,
   moderationBlocksGeneration,
+  receivesMiniModeration,
 } from '~/server/utils/mini-moderation-state';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
@@ -666,6 +667,7 @@ export default MixedAuthEndpoint(async function handler(
       }).catch(() => undefined);
   }
 
+  const includeModeration = receivesMiniModeration(req, user);
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
@@ -697,10 +699,10 @@ export default MixedAuthEndpoint(async function handler(
     fees,
     payoutEnabled,
     tipsEnabled,
-    ...(user?.isModerator ? { moderation } : {}),
+    ...(includeModeration ? { moderation } : {}),
   };
-  logMiniModerationCaller(req, user, modelVersion.id, modelVersion.modelUserId);
-  if (user?.isModerator) {
+  logMiniModerationCaller(req, user, modelVersion, includeModeration);
+  if (includeModeration) {
     res.setHeader('Cache-Control', 'private, no-store');
     // Read by the orchestrator as the absolute time its cached copy of this response expires.
     res.setHeader('X-Expires', new Date(Date.now() + MINI_MODERATION_EXPIRES_MS).toISOString());
@@ -712,8 +714,8 @@ export default MixedAuthEndpoint(async function handler(
 function logMiniModerationCaller(
   req: NextApiRequest,
   user: Session['user'] | undefined,
-  modelVersionId: number,
-  ownerId: number
+  { id: modelVersionId, modelUserId: ownerId }: { id: number; modelUserId: number },
+  moderationIncluded: boolean
 ) {
   const orchestrator = matchesOrchestratorServiceToken(req);
   const resolvedAs = credentialKind(req, user, orchestrator);
@@ -731,7 +733,7 @@ function logMiniModerationCaller(
     modelVersionId,
     resolvedAs,
     principal,
-    moderationIncluded: !!user?.isModerator,
+    moderationIncluded,
   }).catch(() => undefined);
 }
 

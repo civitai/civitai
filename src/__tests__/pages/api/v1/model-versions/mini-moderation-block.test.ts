@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * The `moderation` block behind the real `MixedAuthEndpoint`, with bearer lookups stubbed to fixed
@@ -103,24 +104,34 @@ const handler = (await import('~/pages/api/v1/model-versions/mini/[id]')).defaul
   res: NextApiResponse
 ) => Promise<void>;
 
-const sessionFor = (userId: number, isModerator: boolean) => ({
+const sessionFor = (
+  userId: number,
+  isModerator: boolean,
+  { tokenScope = TokenScope.Full, oauth = false }: { tokenScope?: number; oauth?: boolean } = {}
+) => ({
   user: { id: userId, username: 'someone', bannedAt: null, isModerator },
   apiKeyId: 11,
-  apiKeyType: 'User',
-  subject: { type: 'apiKey', id: 11 },
-  tokenScope: 0,
+  apiKeyType: oauth ? 'Access' : 'User',
+  subject: oauth ? { type: 'oauth', id: 'client-abc' } : { type: 'apiKey', id: 11 },
+  tokenScope,
   buzzLimit: null,
 });
 
 const KEYS: Record<string, ReturnType<typeof sessionFor>> = {
   'mod-key': sessionFor(MOD_ID, true),
+  'mod-narrow-key': sessionFor(MOD_ID, true, { tokenScope: TokenScope.ModelsRead }),
+  'mod-oauth': sessionFor(MOD_ID, true, { oauth: true }),
   'owner-key': sessionFor(OWNER_ID, false),
   'other-key': sessionFor(OTHER_ID, false),
 };
 
 type Served = { status: number; body?: Record<string, unknown>; headers: Record<string, string> };
 
-async function call(authorization?: string, row: Partial<Row> = {}): Promise<Served> {
+async function call(
+  authorization?: string,
+  row: Partial<Row> = {},
+  queryToken?: string
+): Promise<Served> {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw
     .mockResolvedValueOnce([{ ...baseRow, ...row }])
@@ -128,8 +139,8 @@ async function call(authorization?: string, row: Partial<Row> = {}): Promise<Ser
   const headers: Record<string, string> = {};
   const req = {
     method: 'GET',
-    url: URL,
-    query: { id: String(VERSION_ID) },
+    url: queryToken ? `${URL}?token=${queryToken}` : URL,
+    query: { id: String(VERSION_ID), ...(queryToken ? { token: queryToken } : {}) },
     headers: { host: 'civitai.com', ...(authorization ? { authorization } : {}) },
     cookies: {},
     socket: { remoteAddress: '127.0.0.1' },
@@ -214,12 +225,34 @@ describe('mini/[id] moderation block: who gets it', () => {
     ['the owner', 'Bearer owner-key'],
     ['the orchestrator service token, which resolves to no session', `Bearer ${SERVICE_TOKEN}`],
     ['a key the session layer does not know', 'Bearer not-a-key'],
+    ['a moderator by a narrow-scope key', 'Bearer mod-narrow-key'],
+    ['a moderator by an OAuth token', 'Bearer mod-oauth'],
   ])('gives %s no block and no X-Expires', async (_, authorization) => {
     const { status, body, headers } = await call(authorization);
     expect(status).toBe(200);
     expect(body).not.toHaveProperty('moderation');
     expect(headers).not.toHaveProperty('x-expires');
     expect(body?.canGenerate).toBe(true);
+  });
+});
+
+describe('mini/[id] moderation block: limited moderator credentials', () => {
+  it.each([
+    ['a narrow-scope key', 'Bearer mod-narrow-key'],
+    ['an OAuth token', 'Bearer mod-oauth'],
+  ])('answers a moderator by %s as any credentialed non-moderator', async (_, authorization) => {
+    const row = { modelMode: 'TakenDown' };
+    const limited = await call(authorization, row);
+    const other = await call('Bearer other-key', row);
+    expect(limited.body).not.toHaveProperty('moderation');
+    expect(limited.body?.canGenerate).toBe(false);
+    expect(limited.headers['cache-control']).toBe(other.headers['cache-control']);
+    expect(limited.headers['cache-control']).not.toBe('private, no-store');
+  });
+
+  it('gives a full-scope moderator key passed as ?token= no block', async () => {
+    const { body } = await call(undefined, {}, 'mod-key');
+    expect(body).not.toHaveProperty('moderation');
   });
 });
 

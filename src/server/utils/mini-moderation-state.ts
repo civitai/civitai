@@ -1,4 +1,7 @@
+import type { NextApiRequest } from 'next';
+import type { Session } from '~/types/session';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
+import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 export type MiniModerationSource = {
@@ -28,6 +31,10 @@ export type MiniModerationState = {
 };
 
 export const MINI_MODERATION_EXPIRES_MS = 60 * 60 * 1000;
+
+/** A moderator by browser session or full-scope personal key; never a narrower token. */
+export const receivesMiniModeration = (req: NextApiRequest, user: Session['user'] | undefined) =>
+  !!user?.isModerator && isFullScopeSession(req);
 
 export function getMiniModerationState(source: MiniModerationSource): MiniModerationState {
   const gated = {
