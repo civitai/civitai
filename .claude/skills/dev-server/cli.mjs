@@ -1064,8 +1064,8 @@ Commands:
   list                List all sessions
   start [worktree] [--app name] [--prod a,b] [--dev a,b]
                       Start a dev server (default: the main app, current directory).
-                      --app moderator|creator-studio starts that app from the same
-                      worktree instead, on its preferred port or the next free one.
+                      --app moderator|creator-studio|training-studio starts that app from the
+                      same worktree instead, on its preferred port or the next free one.
                       Every env group defaults to dev; --prod moves named groups
                       (or "all") to production for this start only. See SKILL.md.
   probe [route]       Request a route with a hard timeout and say WHY it was slow.
@@ -1083,7 +1083,7 @@ Commands:
                       Restart a session or an app
   rgb [subcmd]        RGB proxy control (status|start|stop|restart|logs)
   auth [subcmd]       Auth hub control (status|start|stop|restart|logs)
-  app                 List running apps and what is available (moderator, creator-studio)
+  app                 List running apps and what is available
   app <name> [subcmd] [worktree]
                       App control (status|start|stop|restart|logs).
                       Defaults to the current directory's worktree, not the
