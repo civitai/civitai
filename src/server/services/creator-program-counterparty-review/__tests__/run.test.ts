@@ -578,7 +578,7 @@ describe('renderWarningMessage', () => {
     const message = renderWarningMessage('creator_one');
     expect(message.startsWith('Hi creator\\_one,\n\n')).toBe(true);
     expect(message).toContain(
-      "Buzz that moves back and forth between accounts doesn't count toward your bankable earnings; it's netted out at cash-out. Cycling Buzz to inflate earnings is against the Creator Program rules. If it keeps happening, a moderator will review your account."
+      "Our systems noticed Buzz moving back and forth between your account and another account through tips, donations or purchases. Buzz that moves back and forth between accounts doesn't count toward your bankable earnings; it's netted out at cash-out. Cycling Buzz to inflate earnings is against the Creator Program rules. If it keeps happening, a moderator will review your account."
     );
     expect(message).not.toContain('one and only warning');
     expect(message).not.toContain('will be removed');
