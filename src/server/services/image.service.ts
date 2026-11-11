@@ -1303,6 +1303,8 @@ export async function handleUnblockImages({
 
     const imageTagsForReview = await getImagTagsForReviewByImageIds(ids);
     await Promise.all([
+      // Drops its blocks' deferred effects unfired.
+      dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
       ...Object.entries(grouped).map(
         ([needsReview, groupedIds]) => dbWrite.$queryRaw`
           UPDATE "Image" SET
@@ -1379,29 +1381,67 @@ export async function handleUnblockImages({
   return images;
 }
 
-/** An image a block leaves held: its owner notice and report actioning do not run. */
-const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM})`;
+/**
+ * Removed for CSAM, or under the moderator-only review flag and not dismissed from its queue. A block
+ * of a held image sends no owner notice and actions no report: for one under review they wait in
+ * `ImageDeferredBlockEffect` for the review to close.
+ */
+const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needsReview" = 'csam' AND NOT EXISTS (
+  SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
+)))`;
 
 /**
- * Returns the ids the block left held (`heldImageSql`), and those under the moderator-only review
- * flag, read from the UPDATE itself: the row as locked, not as a replica last saw it.
+ * Returns the ids the block left held, and those under the moderator-only review flag, read on the
+ * primary under the block's row locks: not as a replica last saw them. With `deferFor`, a held image
+ * not removed for CSAM gets its deferred-effect row in the same transaction.
  */
 export async function writeModeratorBlock(
-  ids: number[]
+  ids: number[],
+  deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason }
 ): Promise<{ held: Set<number>; underReview: Set<number> }> {
   if (!ids.length) return { held: new Set(), underReview: new Set() };
-  const rows = await dbWrite.$queryRaw<{ id: number; held: boolean; underReview: boolean }[]>`
-    UPDATE "Image" SET
-      ingestion = 'Blocked',
-      "nsfwLevel" = ${NsfwLevel.Blocked},
-      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
-      "updatedAt" = NOW()
-    WHERE id = ANY(${ids}::int[])
-    RETURNING id, ${heldImageSql} AS held, "needsReview" = 'csam' AS "underReview"
-  `;
-  const idsWhere = (key: 'held' | 'underReview') =>
-    new Set(rows.filter((r) => r[key]).map((r) => r.id));
-  return { held: idsWhere('held'), underReview: idsWhere('underReview') };
+  return dbWrite.$transaction(async (tx) => {
+    // Locks the rows and reads what they were before this block.
+    const prior = await tx.$queryRaw<{ id: number; removed: boolean }[]>`
+      SELECT id, ingestion = 'Blocked' AS removed FROM "Image" WHERE id = ANY(${ids}::int[]) FOR UPDATE
+    `;
+    const alreadyRemoved = prior.filter((r) => r.removed).map((r) => r.id);
+    await tx.$executeRaw`
+      UPDATE "Image" SET
+        ingestion = 'Blocked',
+        "nsfwLevel" = ${NsfwLevel.Blocked},
+        "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
+        "updatedAt" = NOW()
+      WHERE id = ANY(${ids}::int[])
+    `;
+    // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
+    // reads the set-aside row that dismissal committed.
+    const rows = await tx.$queryRaw<
+      { id: number; held: boolean; removedForCsam: boolean; underReview: boolean }[]
+    >`
+      SELECT id, ${heldImageSql} AS held, "blockedFor" = ${BlockedReason.CSAM} AS "removedForCsam",
+        "needsReview" = 'csam' AS "underReview"
+      FROM "Image" WHERE id = ANY(${ids}::int[])
+    `;
+    const deferIds = rows.filter((r) => r.held && !r.removedForCsam).map((r) => r.id);
+    // A re-block of an image already removed defers its reports, not a notice.
+    if (deferFor && deferIds.length)
+      await tx.$executeRaw`
+        INSERT INTO "ImageDeferredBlockEffect"
+          ("imageId", "violationType", "notifyOwner", "reportReason", "blockedBy")
+        SELECT id, ${
+          deferFor.violationType ?? null
+        }::text, NOT (id = ANY(${alreadyRemoved}::int[])),
+          ${deferFor.reportReason ?? null}::text, ${deferFor.blockedBy ?? null}::int
+        FROM unnest(${deferIds}::int[]) AS id
+        ON CONFLICT ("imageId") DO UPDATE SET
+          "notifyOwner" = "ImageDeferredBlockEffect"."notifyOwner" OR EXCLUDED."notifyOwner",
+          "reportReason" = COALESCE("ImageDeferredBlockEffect"."reportReason", EXCLUDED."reportReason")
+      `;
+    const idsWhere = (key: 'held' | 'underReview') =>
+      new Set(rows.filter((r) => r[key]).map((r) => r.id));
+    return { held: idsWhere('held'), underReview: idsWhere('underReview') };
+  });
 }
 
 /** Logged when an owner notice goes out for an image under the moderator-only review flag. */
@@ -1439,7 +1479,10 @@ export async function handleBlockImages({
     let held = new Set<number>();
     let underReview = new Set<number>();
     await Promise.all([
-      writeModeratorBlock(ids)
+      writeModeratorBlock(
+        ids,
+        include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined
+      )
         .then((written) => {
           ({ held, underReview } = written);
         })
@@ -8244,9 +8287,8 @@ export async function reportCsamImages({
   ip?: string;
 }) {
   if (!user.isModerator) throw throwAuthorizationError();
-  // Flag first: an appeal that starts after this is refused by createEntityAppeal, and one that
-  // committed before it is closed below. One transaction, so a failed close cannot leave the flag
-  // beside a still-pending appeal.
+  // An appeal that starts after the flag is refused by createEntityAppeal; one already Pending stays
+  // Pending, and no approval of it restores the image while the flag is on.
   await dbWrite.$transaction(async (tx) => {
     await tx.image.updateMany({
       where: { id: { in: imageIds } },
@@ -8269,21 +8311,6 @@ export async function reportCsamImages({
       }).catch(() => {
         // swallow — best effort logging
       });
-    // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
-    // the uploader is not told.
-    await tx.appeal.updateMany({
-      where: {
-        entityType: EntityType.Image,
-        entityId: { in: imageIds },
-        status: AppealStatus.Pending,
-      },
-      data: {
-        status: AppealStatus.Rejected,
-        resolvedBy: user.id,
-        resolvedAt: new Date(),
-        internalNotes: 'Closed by CSAM report',
-      },
-    });
   });
   await refreshProfilePicturesForImages(imageIds);
   const images = await dbRead.image.findMany({

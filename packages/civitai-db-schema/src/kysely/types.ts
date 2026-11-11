@@ -3607,6 +3607,27 @@ export type ImageConnection = {
   entityId: number;
   entityType: string;
 };
+export type ImageDeferredBlockEffect = {
+  imageId: number;
+  /**
+   * The violation the moderator chose, if any; the notice states it.
+   */
+  violationType: string | null;
+  /**
+   * False for a re-block of an image already removed: only its reports are deferred.
+   */
+  notifyOwner: Generated<boolean>;
+  /**
+   * Open reports of this reason on the image are actioned at the close.
+   */
+  reportReason: string | null;
+  /**
+   * These reports are actioned at the close, if still open.
+   */
+  reportIds: Generated<number[]>;
+  blockedBy: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ImageEngagement = {
   userId: number;
   imageId: number;
@@ -6776,6 +6797,7 @@ export type DB = {
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;
   ImageCdnShopTakedown: ImageCdnShopTakedown;
   ImageConnection: ImageConnection;
+  ImageDeferredBlockEffect: ImageDeferredBlockEffect;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
   ImageMetaFlags: ImageMetaFlags;
