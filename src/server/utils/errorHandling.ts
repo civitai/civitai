@@ -77,6 +77,11 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003';
 }
 
+/** True when an `update`/`delete` matched no row (P2025). */
+export function isPrismaRecordNotFound(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+}
+
 /**
  * Postgres `55P03` (lock_not_available, e.g. a `lock_timeout` expiry). A raw query surfaces it as
  * P2010 with the SQLSTATE in `meta.code`; a model query as an unknown request error with no code,
