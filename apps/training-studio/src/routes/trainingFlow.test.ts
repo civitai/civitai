@@ -800,6 +800,14 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
     ).toBe('This custom model is blocked from training. Pick another.');
   });
 
+  it('blocks a code-blocked custom base even when the ops list is empty or unread', () => {
+    const anima = { ...newRun(illustrious, on), versionKey: CUSTOM_VERSION_KEY };
+    const run = { ...anima, customAir: 'urn:air:anima:checkpoint:civitai:2855007@3224434' };
+    const message = 'This custom model is blocked from training. Pick another.';
+    expect(blockedSelectionMessage([run], parseServiceStatus(null))).toBe(message);
+    expect(blockedSelectionMessage([run], null)).toBe(message);
+  });
+
   it('starts a partly-down card on a version that is up', () => {
     const status = parseServiceStatus({ blockedModels: ['flux2klein_9b'] });
     expect(cardUnavailability(klein, on, status)).toBeNull();
