@@ -55,14 +55,12 @@ vi.mock('~/components/Image/ExplainHiddenImages/ExplainHiddenImages', () => ({
   },
   ExplainHiddenImages: () => <div data-testid="explain-hidden" />,
 }));
-// The gallery's own providers fetch addon settings and read the session.
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
   BrowsingLevelProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({
   BrowsingSettingsAddonsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-// Their own behaviour is not under test; they read sessions, flags and image metrics.
 vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
   ImageContextMenu: () => null,
 }));
@@ -218,20 +216,12 @@ describe('ResourceReviewDetail', () => {
     expect(document.querySelector('a[href^="/images?view=feed"]')).not.toBeNull();
   });
 
-  test('a post-backed review shows its images even when the reviewer has no username', async () => {
-    state.review = makeReview({
-      postId: 55,
-      user: { id: 101, username: null, deletedAt: new Date(), cosmetics: [], profilePicture: null },
-    });
-    await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
-    expect(document.querySelector('[data-testid="review-gallery"]')).not.toBeNull();
-  });
-
-  test('a post-less review from a user with no username has nothing to look up', async () => {
+  test('a review whose author has no username still renders its images', async () => {
     state.review = makeReview({
       user: { id: 101, username: null, deletedAt: new Date(), cosmetics: [], profilePicture: null },
     });
-    await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
-    expect(document.querySelector('[data-testid="review-no-images"]')).not.toBeNull();
+    const screen = await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+    await expect.element(screen.getByTestId('review-gallery')).toBeVisible();
+    expect(document.querySelector('[data-testid="review-no-images"]')).toBeNull();
   });
 });

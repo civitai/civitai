@@ -132,7 +132,6 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       </div>
       <ResourceReviewCarousel
         userId={data.user.id}
-        username={data.user.username}
         modelVersionId={data.modelVersion.id}
         reviewId={reviewId}
         postId={data.postId}

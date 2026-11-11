@@ -24,8 +24,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import classes from './ResourceReviewCarousel.module.css';
 
 const MAX_IMAGES = 8;
-// The tallest an image gets, so a portrait fits the dialog without cropping.
-const MAX_IMAGE_HEIGHT = '60vh';
+const MOBILE_MAX_IMAGE_HEIGHT = '60vh';
 // Desktop slides share one height and take their width from the image, so as many as fit show.
 const DESKTOP_IMAGE_HEIGHT = '55vh';
 const SIDE_SLIDE_WIDTH = 240;
@@ -49,29 +48,23 @@ export function ResourceReviewCarousel(props: CarouselProps) {
 
 type CarouselProps = {
   userId: number;
-  username: string | null;
   modelVersionId: number;
   reviewId: number;
   postId: number | null;
 };
 
-function ReviewGallery({ userId, username, modelVersionId, reviewId, postId }: CarouselProps) {
+function ReviewGallery({ userId, modelVersionId, reviewId, postId }: CarouselProps) {
   const mobile = !!useIsMobile({ type: 'media' });
-  // Without a post or a username there is nothing to look the images up by.
-  const canLoad = !!postId || !!username;
-
-  // One more than shown, to know whether there are more.
   const {
     images: fetched,
     flatData,
     isLoading,
     isError,
     refetch,
-  } = useReviewImages({ reviewId, limit: MAX_IMAGES + 1 }, { enabled: canLoad });
+  } = useReviewImages({ reviewId, limit: MAX_IMAGES + 1 });
   const images = fetched.slice(0, MAX_IMAGES);
   const hiddenExplained = useExplainHiddenImages(flatData);
 
-  if (!canLoad) return <NoReviewImages />;
   if (isLoading)
     return (
       <div className="flex h-64 items-center justify-center bg-gray-1 dark:bg-dark-8">
@@ -168,7 +161,6 @@ function sideSlideStyle(mobile: boolean) {
   return mobile ? undefined : { height: DESKTOP_IMAGE_HEIGHT, width: SIDE_SLIDE_WIDTH };
 }
 
-// Arrows only when the slides overflow the viewport.
 function OverflowControls() {
   const overflows = useEmblaStore((state) => state.canScrollNext || state.canScrollPrev);
   return overflows ? <Embla.Controls /> : null;
@@ -196,7 +188,6 @@ function ReviewImage({
   image: ImagesInfiniteModel;
   images: ImagesInfiniteModel[];
   reviewId: number;
-  // Off-screen slides keep their size but skip the heavy content.
   inView: boolean;
   mobile: boolean;
 }) {
@@ -204,7 +195,7 @@ function ReviewImage({
   // The wrapper takes the image's own shape so `MediaHash` (absolute, inset-0) has a size to fill.
   const ratio = image.width && image.height ? image.width / image.height : 1;
   const size = mobile
-    ? { aspectRatio: ratio, width: `min(100%, calc(${MAX_IMAGE_HEIGHT} * ${ratio}))` }
+    ? { aspectRatio: ratio, width: `min(100%, calc(${MOBILE_MAX_IMAGE_HEIGHT} * ${ratio}))` }
     : { aspectRatio: ratio, height: DESKTOP_IMAGE_HEIGHT, maxWidth: '100%' };
 
   if (!inView)
