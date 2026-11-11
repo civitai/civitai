@@ -1061,6 +1061,32 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
       });
     });
 
+    // "Paused" means the LAST daily-cap check refused. A big job refused near the cap must not
+    // keep the app paused once a smaller job fits under the same cap.
+    it('a refused big job pauses; a later small job that fits unpauses', async () => {
+      asTier('free');
+      const { getMyAppBuzzCap } = await import('~/server/services/blocks/app-buzz-usage.service');
+      const viewer = { id: 42, tier: 'free' } as never;
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const submitCosting = async (cost: number) => {
+        mockSubmitWorkflow.mockReset();
+        mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 5000 }));
+        orchestratorQuoting(cost);
+        const out = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+        kv.set(keyUnder(DAILY_PREFIX), String(counters.get(keyUnder(DAILY_PREFIX))));
+        return out;
+      };
+      seeds.push([DAILY_PREFIX, 49_000]);
+
+      const big = await submitCosting(2_000); // 49,000 + 2,000 > 50,000
+      expect(big.snapshot.error).toContain('daily cap is 50000');
+      expect(await getMyAppBuzzCap(viewer)).toMatchObject({ used: 49_000, paused: true });
+
+      const small = await submitCosting(500); // 49,500 <= 50,000
+      expect(small.snapshot.workflowId).toBe('wf_real');
+      expect(await getMyAppBuzzCap(viewer)).toMatchObject({ used: 49_500, paused: false });
+    });
+
     it('a spend within the cap records no refusal', async () => {
       asTier('free');
       const result = await submitWith(49_975);
