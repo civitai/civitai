@@ -103,6 +103,8 @@ export const getResourceReviewPagedSchema = paginationSchema
     modelVersionId: numericString().optional(),
     username: z.string().optional(),
     writtenOnly: z.boolean().optional(),
+    hasImages: z.boolean().optional(),
+    recommended: z.boolean().optional(),
   })
   // Without a version, writtenOnly regex-filters every review of the model before the first match.
   .refine((input) => !input.writtenOnly || input.modelVersionId, {

@@ -118,12 +118,13 @@ type Review = {
   userId?: number;
   postId?: number | null;
   details?: string | null;
+  recommended?: boolean;
   daysAgo: number;
 };
 const insertReviews = (rows: Review[]) =>
   pg.query(
-    `INSERT INTO "ResourceReview" (id, "modelId", "modelVersionId", "userId", "postId", details, "createdAt")
-     SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[], $5::int[], $6::text[], $7::timestamp[])`,
+    `INSERT INTO "ResourceReview" (id, "modelId", "modelVersionId", "userId", "postId", details, "createdAt", recommended)
+     SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[], $5::int[], $6::text[], $7::timestamp[], $8::boolean[])`,
     [
       rows.map((r) => r.id),
       rows.map((r) => r.modelId ?? MODEL),
@@ -132,10 +133,21 @@ const insertReviews = (rows: Review[]) =>
       rows.map((r) => r.postId ?? null),
       rows.map((r) => r.details ?? null),
       rows.map((r) => new Date(Date.UTC(2026, 0, 31 - r.daysAgo))),
+      rows.map((r) => r.recommended ?? true),
     ]
   );
 
-const page = (input: { modelVersionId?: number; page?: number; limit?: number }, userId?: number) =>
+const page = (
+  input: {
+    modelVersionId?: number;
+    page?: number;
+    limit?: number;
+    writtenOnly?: boolean;
+    hasImages?: boolean;
+    recommended?: boolean;
+  },
+  userId?: number
+) =>
   getPagedResourceReviews({ input: { modelId: MODEL, limit: 10, page: 1, ...input }, userId });
 
 describe('getPagedResourceReviews', () => {
@@ -343,5 +355,72 @@ describe('getPagedResourceReviews', () => {
     expect([...first.items, ...second.items, ...third.items].map((r) => r.id)).toEqual([
       2, 3, 5, 4, 1,
     ]);
+  });
+
+  it("returns each review's postId", async () => {
+    await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (900, 1, now() - interval '1 day')`);
+    await insertReviews([
+      { id: 1, postId: 900, daysAgo: 1 },
+      { id: 2, postId: null, daysAgo: 2 },
+    ]);
+
+    const items = (await page({})).items;
+    expect(items.map((r) => [r.id, r.postId])).toEqual([
+      [1, 900],
+      [2, null],
+    ]);
+  });
+
+  it.each([
+    [true, [1, 3]],
+    [false, [2]],
+  ])('recommended: %s keeps only matching thumbs, with a matching total', async (recommended, ids) => {
+    await insertReviews([
+      { id: 1, recommended: true, daysAgo: 3 },
+      { id: 2, recommended: false, daysAgo: 2 },
+      { id: 3, recommended: true, daysAgo: 1 },
+    ]);
+
+    const result = await page({ recommended });
+    expect(result.items.map((r) => r.id)).toEqual(ids.slice().reverse());
+    expect(result.totalItems).toBe(ids.length);
+  });
+
+  describe('hasImages', () => {
+    const AUTHOR = 20;
+    beforeEach(async () => {
+      await pg.exec(`
+        INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+          (1000, ${AUTHOR}, now() - interval '1 day'),
+          (1001, ${AUTHOR}, now() - interval '1 day'),
+          (1002, ${AUTHOR}, now() - interval '1 day'),
+          (1003, 21, now() - interval '1 day');
+        INSERT INTO "Image" (id, "userId", "postId", "needsReview") VALUES
+          (1, ${AUTHOR}, 1000, NULL),
+          (2, ${AUTHOR}, 1001, 'minor'),
+          (3, ${AUTHOR}, 1002, NULL),
+          (4, 21, 1003, NULL);
+        INSERT INTO "ImageResourceNew" VALUES (1, ${V1}), (2, ${V1}), (3, ${V2}), (4, ${V1});
+      `);
+      await insertReviews([
+        { id: 1, userId: AUTHOR, postId: 1000, details: '<p>with image</p>', daysAgo: 1 },
+        { id: 2, userId: AUTHOR, postId: 1001, details: '<p>unservable image</p>', daysAgo: 2 },
+        { id: 3, userId: AUTHOR, postId: 1002, details: '<p>other version image</p>', daysAgo: 3 },
+        { id: 4, userId: 22, postId: null, details: '<p>no post, no images</p>', daysAgo: 4 },
+        { id: 5, userId: 21, postId: null, daysAgo: 5 },
+      ]);
+    });
+
+    it('keeps a review with a servable post image and drops the rest, counting the same images as imageCount', async () => {
+      const result = await page({ modelVersionId: V1, hasImages: true });
+      expect(result.items.map((r) => r.id)).toEqual([1, 5]);
+      expect(result.items.every((r) => r.imageCount > 0)).toBe(true);
+      expect(result.totalItems).toBe(2);
+    });
+
+    it('combines with writtenOnly', async () => {
+      const result = await page({ modelVersionId: V1, hasImages: true, writtenOnly: true });
+      expect(result.items.map((r) => r.id)).toEqual([1]);
+    });
   });
 });

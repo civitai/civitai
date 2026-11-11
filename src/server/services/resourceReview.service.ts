@@ -530,6 +530,7 @@ type ResourceReviewRow = {
   exclude: boolean;
   metadata: any;
   userId: number;
+  postId: number | null;
   commentCount: number;
 };
 // `details` is editor HTML, so an emptied review can be `<p></p>` rather than NULL.
@@ -558,54 +559,56 @@ const SMALL_SIDE = 1000;
 const COUNT_LIMIT = REVIEW_IMAGE_COUNT_CAP + 1;
 
 /**
- * Per review, the published images that used its version, up to one over the cap: from the
+ * Per review row `rr`, the published images that used its version, up to `limit`: from the
  * review's own post, or, for a review written outside a post, from any of the reviewer's posts.
  * That fallback walks whichever of the version's images or the reviewer's images is smaller.
  */
+const reviewImageCountSql = (limit: number) => Prisma.sql`
+  CASE
+    WHEN rr."postId" IS NOT NULL THEN (
+      SELECT COUNT(*)::int FROM (
+        SELECT 1 FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        WHERE i."postId" = rr."postId" AND ${servablePostImageSql} AND ${usedReviewedVersionSql}
+        LIMIT ${limit}
+      ) c
+    )
+    WHEN (
+      SELECT COUNT(*) FROM (
+        SELECT 1 FROM "ImageResourceNew" ir
+        WHERE ir."modelVersionId" = rr."modelVersionId" LIMIT ${SMALL_SIDE}
+      ) v
+    ) < (
+      SELECT COUNT(*) FROM (
+        SELECT 1 FROM "Image" i WHERE i."userId" = rr."userId" LIMIT ${SMALL_SIDE}
+      ) u
+    ) THEN (
+      SELECT COUNT(*)::int FROM (
+        SELECT 1 FROM "ImageResourceNew" vir
+        WHERE vir."modelVersionId" = rr."modelVersionId"
+          AND (
+            SELECT true FROM "Image" i
+            JOIN "Post" p ON p.id = i."postId"
+            WHERE i.id = vir."imageId" AND i."userId" = rr."userId" AND ${servablePostImageSql}
+          )
+        LIMIT ${limit}
+      ) c
+    )
+    ELSE (
+      SELECT COUNT(*)::int FROM (
+        SELECT 1 FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        WHERE i."userId" = rr."userId" AND ${servablePostImageSql} AND ${usedReviewedVersionSql}
+        LIMIT ${limit}
+      ) c
+    )
+  END
+`;
+
 const getReviewImageCounts = async (reviewIds: number[]) => {
   if (!reviewIds.length) return new Map<number, number>();
   const rows = await dbRead.$queryRaw<{ id: number; imageCount: number }[]>`
-    SELECT
-      rr.id,
-      CASE
-        WHEN rr."postId" IS NOT NULL THEN (
-          SELECT COUNT(*)::int FROM (
-            SELECT 1 FROM "Image" i
-            JOIN "Post" p ON p.id = i."postId"
-            WHERE i."postId" = rr."postId" AND ${servablePostImageSql} AND ${usedReviewedVersionSql}
-            LIMIT ${COUNT_LIMIT}
-          ) c
-        )
-        WHEN (
-          SELECT COUNT(*) FROM (
-            SELECT 1 FROM "ImageResourceNew" ir
-            WHERE ir."modelVersionId" = rr."modelVersionId" LIMIT ${SMALL_SIDE}
-          ) v
-        ) < (
-          SELECT COUNT(*) FROM (
-            SELECT 1 FROM "Image" i WHERE i."userId" = rr."userId" LIMIT ${SMALL_SIDE}
-          ) u
-        ) THEN (
-          SELECT COUNT(*)::int FROM (
-            SELECT 1 FROM "ImageResourceNew" vir
-            WHERE vir."modelVersionId" = rr."modelVersionId"
-              AND (
-                SELECT true FROM "Image" i
-                JOIN "Post" p ON p.id = i."postId"
-                WHERE i.id = vir."imageId" AND i."userId" = rr."userId" AND ${servablePostImageSql}
-              )
-            LIMIT ${COUNT_LIMIT}
-          ) c
-        )
-        ELSE (
-          SELECT COUNT(*)::int FROM (
-            SELECT 1 FROM "Image" i
-            JOIN "Post" p ON p.id = i."postId"
-            WHERE i."userId" = rr."userId" AND ${servablePostImageSql} AND ${usedReviewedVersionSql}
-            LIMIT ${COUNT_LIMIT}
-          ) c
-        )
-      END AS "imageCount"
+    SELECT rr.id, ${reviewImageCountSql(COUNT_LIMIT)} AS "imageCount"
     FROM "ResourceReview" rr
     WHERE rr.id = ANY(${reviewIds}::int[])
   `;
@@ -619,7 +622,8 @@ export const getPagedResourceReviews = async ({
   input: GetResourceReviewPagedInput;
   userId?: number;
 }) => {
-  const { limit, page, modelId, modelVersionId, username, writtenOnly } = input;
+  const { limit, page, modelId, modelVersionId, username, writtenOnly, hasImages, recommended } =
+    input;
   const skip = page && page > 0 ? limit * (page - 1) : 0;
   const AND = [
     modelVersionId
@@ -628,6 +632,8 @@ export const getPagedResourceReviews = async ({
     visibleReviewForViewerSql('rr', userId),
   ];
   if (writtenOnly) AND.push(writtenReviewSql);
+  if (recommended !== undefined) AND.push(Prisma.sql`rr.recommended = ${recommended}`);
+  if (hasImages) AND.push(Prisma.sql`${reviewImageCountSql(1)} > 0`);
   if (username) {
     const user = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (user) AND.push(Prisma.sql`rr."userId" = ${user.id}`);
@@ -691,6 +697,7 @@ export const getPagedResourceReviews = async ({
       rr.exclude,
       rr.metadata,
       rr."userId",
+      rr."postId",
       (SELECT COUNT(*)::int FROM "CommentV3" v
         WHERE ${countedTopLevelCommentSql(
           Prisma.raw('v'),
