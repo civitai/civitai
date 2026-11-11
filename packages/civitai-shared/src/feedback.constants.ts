@@ -64,7 +64,7 @@ export const APPS_PLATFORM_FEEDBACK_AREA: FeedbackArea = 'apps-platform';
  */
 /** The only reporter-sent URL the moderator panel renders as a link. */
 export const PLATFORM_FEEDBACK_DOC_URL_PREFIX = 'https://developer.civitai.com/';
-/** How much of a moderator's public note the readback returns. */
+/** Longest public note a moderator can save, and so how much of one the readback returns. */
 export const PLATFORM_FEEDBACK_PUBLIC_NOTE_MAX_LENGTH = 1000;
 /**
  * Which `resolution.fixedIn.component` a reporting client's own version is compared against, to open
