@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 /** Cards loading their images at once; each load is a heavy, un-batched image query. */
 export const MAX_CONCURRENT_IMAGE_LOADS = 4;
 
+// Not `~/utils/queue`: its `Queue` runs promise tasks to completion, but a card holds a slot across
+// a React Query lifecycle and must release it on unmount.
 type Slot = { release: () => void };
 
 let active = 0;

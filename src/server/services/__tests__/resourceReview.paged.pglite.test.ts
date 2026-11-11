@@ -561,7 +561,6 @@ describe('getPagedResourceReviews', () => {
         { id: 7, userId: 31, postId: 1011, daysAgo: 7 },
       ]);
 
-      // Matches, newest first: 1, 5, 6, 7.
       const first = await page({ modelVersionId: V1, hasImages: true, limit: 1, page: 1 });
       expect(first.items.map((r) => r.id)).toEqual([1]);
       expect(first.hasMore).toBe(true);

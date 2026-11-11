@@ -73,12 +73,7 @@ export function getRatingLabel({
   }
 }
 
-/**
- * The summary every surface shows for a version's or model's thumbs: the word label, its colour,
- * the share of thumbs up and the review total, or `null` with no reviews yet.
- *
- * The share is floored so anything with a thumbs down never reads 100%.
- */
+/** Label, colour, share and total for a thumbs pair, or `null` with no reviews. The share is floored so anything with a thumbs down never reads 100%. */
 export function getRatingSummary({
   thumbsUp,
   thumbsDown,

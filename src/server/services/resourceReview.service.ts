@@ -595,7 +595,7 @@ const reviewImageCountSql = (limit: number, browsingLevel: number) => Prisma.sql
         SELECT 1 FROM "ImageResourceNew" vir
         WHERE vir."modelVersionId" = rr."modelVersionId"
           AND (
-            -- scalar probe, same reason
+            -- scalar probe, not EXISTS (see usedReviewedVersionSql)
             SELECT true FROM "Image" i
             JOIN "Post" p ON p.id = i."postId"
             WHERE i.id = vir."imageId" AND i."userId" = rr."userId" AND ${servablePostImageSql(

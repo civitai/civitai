@@ -90,11 +90,7 @@ type ReviewsVersionDecision =
   | { type: 'redirect'; versionId: number }
   | { type: 'notFound' };
 
-/**
- * What the reviews page does about the requested version. The list is always one version's, so a
- * missing, unknown or foreign one goes to the fallback (the model page's default version), and a
- * model with no published version has no reviews page. `loadFallback` runs only when needed.
- */
+/** The list is always one version's, so any version that is not this model's goes to the fallback; no fallback means no reviews page. `loadFallback` runs only when needed. */
 export async function resolveReviewsVersion({
   modelVersionId,
   requested,
