@@ -562,6 +562,7 @@ const servablePostImageSql = (browsingLevel: number) => Prisma.sql`
 // A scalar probe, not EXISTS/JOIN: the planner would otherwise join over every image of the version.
 const usedReviewedVersionSql = Prisma.sql`(SELECT true FROM "ImageResourceNew" ir
   WHERE ir."imageId" = i.id AND ir."modelVersionId" = rr."modelVersionId")`;
+// A side with fewer rows than this is walked in full; at or above it, REVIEWER_WALK_CAP applies.
 const SMALL_SIDE = 1000;
 // Both sides are large, so only the reviewer's newest images are walked: an unbounded walk costs
 // seconds for a creator with tens of thousands of images. A reviewer's matching image older than
@@ -640,9 +641,9 @@ const reviewImageCountSql = (limit: number, browsingLevel: number) =>
 
 /**
  * Whether review `rr` has a servable image from its version, for a list scoped to one version —
- * the same images `reviewImageCountSql` counts. A review with a post asks its own post; the rest
- * look their reviewer up in the `reviewers` CTE (`reviewersWithImagesCte`), which is read once
- * instead of walking each reviewer's images per review.
+ * the same set `reviewImageCountSql` counts, except that this side does not apply
+ * `REVIEWER_WALK_CAP`. A review with a post asks its own post; the rest look their reviewer up in
+ * the `reviewers` CTE, which is read once instead of walking each reviewer's images per review.
  */
 const reviewHasImagesSql = (browsingLevel: number) => Prisma.sql`
   CASE

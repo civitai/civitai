@@ -276,8 +276,7 @@ describe('getReviewImageIds', () => {
     });
 
     it('is empty for a review written from an unpublished post, even to its author', async () => {
-      // The post-image predicate already hides an unpublished post's images, so the author gets none
-      // either; the visibility check only returns before the exclusion lookups.
+      // The post-image predicate hides an unpublished post's images, so even its author gets none.
       await insertReview(1, 102);
       const input = { reviewId: 1, limit: 10, browsingLevel: allBrowsingLevelsFlag };
       expect(await getReviewImageIds({ ...input })).toEqual([]);
