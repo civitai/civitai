@@ -29,12 +29,12 @@ import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
-const givenMiniMaxH3Version = () => {
+const givenMiniMaxH3Version = (baseModelType = 'minimaxh3') => {
   dbMock.dbWrite.$queryRaw.mockResolvedValue([
     {
       trainingDetails: {
         baseModel: 'minimaxh3',
-        baseModelType: 'minimaxh3',
+        baseModelType,
         params: {
           engine: 'ai-toolkit',
           ecosystem: 'minimaxh3',
@@ -91,6 +91,15 @@ describe('createTrainingWorkflow MiniMax H3 gate', () => {
       code: 'BAD_REQUEST',
       message: expect.stringMatching(/MiniMax H3 training is not currently enabled/),
     });
+    expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  // baseModelType is written by the caller and nothing ties it to what is trained; another
+  // AI Toolkit-only type passes the mandatory short-circuit and must not slip past the gate.
+  it('refuses the same run when baseModelType names a different AI Toolkit-only type', async () => {
+    givenMiniMaxH3Version('qwen');
+    await expect(submit(false)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
     expect(submitWorkflow).not.toHaveBeenCalled();
   });

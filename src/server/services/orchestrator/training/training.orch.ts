@@ -462,13 +462,16 @@ export const createTrainingWorkflow = async ({
   // The ecosystem/variant in params is what gets trained, so for a catalog base model it must be
   // the one that base maps to. A missing variant is tolerated: versions saved before the form sent
   // one still resubmit (the same rule publish-from-workflow.ts uses to match a run to its base).
+  // baseModelType must match too: the rollout gates below read it, and the caller writes it.
   if (
     trainingParams.engine === 'ai-toolkit' &&
     Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
   ) {
-    const expected = trainingModelInfo[baseModel as TrainingDetailsBaseModelList].aiToolkit;
+    const info = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
+    const expected = info.aiToolkit;
     if (
       !expected ||
+      baseModelType !== info.type ||
       trainingParams.ecosystem !== expected.ecosystem ||
       (trainingParams.modelVariant != null && trainingParams.modelVariant !== expected.modelVariant)
     )
@@ -491,8 +494,13 @@ export const createTrainingWorkflow = async ({
   if (isAudioTrainingBaseType(baseModelType) && !features.audioTraining)
     throw throwBadRequestError('Audio training is not currently enabled.');
 
-  // Same reason: MiniMax H3 is AI Toolkit-only, so nothing above reads its rollout flag.
-  if (baseModelType === 'minimaxh3' && !features.minimaxh3Training)
+  // AI Toolkit-only models pass isAiToolkitEnabled regardless of flags, so enforce the rollout
+  // flag here, on what is trained rather than on the caller-written baseModelType alone.
+  const trainsMiniMaxH3 =
+    baseModelType === 'minimaxh3' ||
+    baseModel === 'minimaxh3' ||
+    (trainingParams.engine === 'ai-toolkit' && trainingParams.ecosystem === 'minimaxh3');
+  if (trainsMiniMaxH3 && !features.minimaxh3Training)
     throw throwBadRequestError('MiniMax H3 training is not currently enabled.');
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
