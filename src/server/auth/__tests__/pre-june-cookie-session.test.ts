@@ -45,11 +45,13 @@ vi.mock('@civitai/auth', async (importOriginal) => {
 const { createAuthVerifier, createSessionSigner } = await import('@civitai/auth');
 const { getServerAuthSession } = await import('~/server/auth/get-server-auth-session');
 
-async function preJuneCookie() {
+async function preJuneCookie(
+  payload: Record<string, unknown> = { sub: String(USER), user: { id: USER, username: 'seven' } }
+) {
   const key = new Uint8Array(
     hkdfSync('sha256', SECRET, '', 'NextAuth.js Generated Encryption Key', 32)
   );
-  return new EncryptJWT({ sub: String(USER), user: { id: USER, username: 'seven' }, id: 'jti-7' })
+  return new EncryptJWT({ ...payload, id: 'jti-7' })
     .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
     .setJti('jti-7')
     .setIssuedAt()
@@ -96,6 +98,7 @@ describe('getServerAuthSession and the pre-June cookie format', () => {
     'refuses the old session cookie when IS_PREVIEW is %s',
     async (value) => {
       vi.stubEnv('IS_PREVIEW', value);
+      vi.stubEnv('DATABASE_ENVIRONMENT', 'non-production');
       expect(await read({ [legacySessionCookieName()]: await preJuneCookie() })).toBeNull();
       expect(h.getSessionUserById).not.toHaveBeenCalled();
     }
@@ -126,16 +129,25 @@ describe('getServerAuthSession and the pre-June cookie format', () => {
       vi.stubEnv('DATABASE_ENVIRONMENT', 'non-production');
     });
 
-    it('keeps the test sign-in, resolving the user from the hub', async () => {
-      const session = await read({ [legacySessionCookieName()]: await preJuneCookie() });
-      expect(session?.user).toMatchObject({ id: USER });
-      expect(h.getSessionUserById).toHaveBeenCalledWith(USER);
-    });
-
-    it('falls back to the embedded user when the hub has no row for it', async () => {
-      h.getSessionUserById.mockResolvedValue(null);
+    it('keeps the test sign-in as the user embedded in the cookie, without asking the hub', async () => {
       const session = await read({ [legacySessionCookieName()]: await preJuneCookie() });
       expect(session?.user).toEqual({ id: USER, username: 'seven' });
+      expect(h.getSessionUserById).not.toHaveBeenCalled();
+    });
+
+    it('never resolves a `sub` from the hub: no embedded user means no session', async () => {
+      const PROD_USER = 4242;
+      const cookie = await preJuneCookie({ sub: String(PROD_USER) });
+      expect(await read({ [legacySessionCookieName()]: cookie })).toBeNull();
+      expect(h.getSessionUserById).not.toHaveBeenCalled();
+    });
+
+    it('a `sub` naming another user does not change whose session it is', async () => {
+      const PROD_USER = 4242;
+      const cookie = await preJuneCookie({ sub: String(PROD_USER), user: { id: USER } });
+      const session = await read({ [legacySessionCookieName()]: cookie });
+      expect(session?.user).toEqual({ id: USER });
+      expect(h.getSessionUserById).not.toHaveBeenCalled();
     });
   });
 });

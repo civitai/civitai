@@ -59,7 +59,7 @@ const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https => __Sec
 const MAX_AGE_S = 2 * 60 * 60;
 
 // Mint the legacy next-auth v4 session JWE WITHOUT next-auth (removed); the app accepts it on a preview
-// (IS_PREVIEW=true) only, via src/server/auth/preview-session-cookie.ts. dir/A256GCM with an HKDF-derived key.
+// (IS_PREVIEW=true and DATABASE_ENVIRONMENT=non-production) only, via src/server/auth/preview-session-cookie.ts. dir/A256GCM with an HKDF-derived key.
 const ENC_INFO = 'NextAuth.js Generated Encryption Key';
 const derivedKey = (secret) => new Uint8Array(hkdfSync('sha256', secret, '', ENC_INFO, 32));
 

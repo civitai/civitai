@@ -1,7 +1,6 @@
 import { hkdfSync } from 'node:crypto';
 import { jwtDecrypt } from 'jose';
 import type { SessionClaims } from '@civitai/auth';
-import { resolveDatabaseEnvironment } from '~/env/database-target';
 
 // PR previews only. The preview pipeline signs its smoke users in with a next-auth v4 style cookie (a `dir` /
 // `A256GCM` JWE keyed by HKDF from NEXTAUTH_SECRET; see tests/preview-auth.setup.ts). Only a preview on a scratch
@@ -10,7 +9,7 @@ import { resolveDatabaseEnvironment } from '~/env/database-target';
 const ENC_INFO = 'NextAuth.js Generated Encryption Key';
 
 export const previewCookieSignInEnabled = (): boolean =>
-  process.env.IS_PREVIEW === 'true' && resolveDatabaseEnvironment() === 'non-production';
+  process.env.IS_PREVIEW === 'true' && process.env.DATABASE_ENVIRONMENT === 'non-production';
 
 export async function decodePreviewSessionCookie(
   token: string,

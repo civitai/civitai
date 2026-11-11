@@ -16,10 +16,7 @@ import '~/server/prom/resource-intent-cooc.metrics';
 // and held-snapshot gauges, and the weekly job's persisted heartbeats (KeyValue) and the newest
 // ready snapshot's createdAt, both cached for a minute and read only while the build flag is on.
 import '~/server/prom/resource-intent-tags.metrics';
-// Side-effect import: registers the session-resolution metrics, including the UNLABELLED
-// session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if
-// the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
-// which is the exact ambiguity that counter exists to remove.
+// Side-effect import: registers the session-resolution metrics.
 import '~/server/auth/session-metrics';
 // Side-effect import: registers auth_internal_parity (collect()-based, probed at most every ten minutes).
 import '~/server/prom/auth-internal-parity.metrics';

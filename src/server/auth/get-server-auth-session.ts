@@ -9,7 +9,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
 import { refuseModerationAccountSession } from './moderation-account';
 import { decodePreviewSessionCookie, previewCookieSignInEnabled } from './preview-session-cookie';
-import { getHubSession, maybeRollHubCookie, sessionClient } from './session-client';
+import { getHubSession, maybeRollHubCookie } from './session-client';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
@@ -17,24 +17,17 @@ type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
 type AuthResponse = GetServerSidePropsContext['res'] | NextApiResponse;
 
 // PR previews only: the pipeline's smoke users carry a `civitai-token` cookie (preview-session-cookie.ts). The
-// user resolves from the hub first; a preview runs on a dev DB clone the hub has no rows for, so it falls back
-// to the user embedded in the cookie.
+// session is the user embedded in that cookie. A preview runs on a dev DB clone whose smoke users the hub has no
+// rows for, so the hub is never asked.
 async function getPreviewCookieSession(req: AuthRequest): Promise<Session | null> {
   const secret = env.NEXTAUTH_SECRET;
   if (!secret || !previewCookieSignInEnabled()) return null;
   const token = req.cookies?.[legacySessionCookieName()];
   if (!token) return null;
-  const claims = await decodePreviewSessionCookie(token, secret);
-  const userId = Number(claims?.sub ?? claims?.user?.id);
-  if (!Number.isFinite(userId)) return null;
-  if (refuseModerationAccountSession(userId, 'legacy-cookie')) return null;
-  const user = await sessionClient.getSessionUserById(userId);
-  if (user && refuseModerationAccountSession(user, 'legacy-cookie')) return null;
-  if (user) return { user } as Session;
-  if (claims?.user && claims.user.id != null) {
-    return { user: claims.user } as unknown as Session;
-  }
-  return null;
+  const user = (await decodePreviewSessionCookie(token, secret))?.user;
+  if (!user || !Number.isFinite(Number(user.id))) return null;
+  if (refuseModerationAccountSession(user, 'legacy-cookie')) return null;
+  return { user } as unknown as Session;
 }
 
 export const getServerAuthSession = async ({

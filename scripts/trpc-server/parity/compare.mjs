@@ -94,7 +94,7 @@ if (!env.NEXTAUTH_SECRET || !env.WEBHOOK_TOKEN)
   fail2('env file has no NEXTAUTH_SECRET/WEBHOOK_TOKEN');
 
 // A legacy session cookie, minted the way tests/preview-auth.setup.ts mints it. Both targets must run with
-// IS_PREVIEW=true: nothing else reads this cookie.
+// IS_PREVIEW=true and DATABASE_ENVIRONMENT=non-production: nothing else reads this cookie.
 
 function b64url(buf) {
   return Buffer.from(buf).toString('base64url');

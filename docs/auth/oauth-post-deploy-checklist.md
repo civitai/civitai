@@ -22,8 +22,6 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
 - [x] 🛠️ **`AUTH_ADMIN_USER_IDS` is set on the hub** (comma-separated, e.g. `1,5`). It's **fail-closed** —
   unset = `/admin` (the TrustedSpokeDomain editor) is locked for everyone.
 - [ ] 🛠️ **`AUTH_INTERNAL_TOKEN` is IDENTICAL on the hub and the main app.** It gates cache-invalidation.
-  Missing/mismatched is **not** a hard break — the main app silently skips the upgrade and legacy users keep
-  working via the read-only legacy decode — but legacy cookies then won't actively migrate to civ-token.
 - [x] 🛠️ **`AUTH_JWT_AUDIENCE` is UNSET everywhere** (esp. on consumers like `advertising.civitai.com`). The
   hub emits no `aud`; if a consumer sets it, jose rejects every hub token.
 - [x] 🛠️ **`AUTH_COOKIE_DOMAIN`** is correct per env (prod hub `.civitai.com`; a single-color/preview env its
@@ -103,7 +101,8 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
 - [x] 🧹 **Dropped the legacy-cookie read path** once old cookies had aged out: the hub `legacy-exchange` route,
   the `@civitai/auth` decode, and the main app's upgrade-on-read. The `clearLegacy*` helpers stay, so a stale
   cookie is still expired on logout. PR previews keep a test sign-in on that cookie format
-  (`src/server/auth/preview-session-cookie.ts`, `IS_PREVIEW=true` only).
+  (`src/server/auth/preview-session-cookie.ts`: only with `IS_PREVIEW=true` and
+  `DATABASE_ENVIRONMENT=non-production`, and the session is the user embedded in the cookie).
 - [x] 🧹 **Deleted the dead `civ-token` AES endpoint** (`src/server/auth/civ-token.ts` +
   `src/pages/api/auth/civ-token.ts`) — caller-less legacy swap helper. Kept `civToken.schema.ts`
   (`EncryptedDataSchema` is still type-referenced by `AccountProvider.tsx`). `NEXTAUTH_SECRET` stays — it's the

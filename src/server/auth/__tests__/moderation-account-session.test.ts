@@ -113,14 +113,20 @@ describe('a preview sign-in cookie', () => {
   });
 
   it('resolves to no session for the moderation account', async () => {
-    h.decodePreviewSessionCookie.mockResolvedValue({ sub: String(MODERATION) });
+    h.decodePreviewSessionCookie.mockResolvedValue({
+      sub: String(MODERATION),
+      user: { id: MODERATION },
+    });
     expect(await getServerAuthSession({ req: request() as never, res: {} as never })).toBeNull();
     expect(h.getSessionUserById).not.toHaveBeenCalled();
     refusalLogged();
   });
 
   it('still resolves for anyone else', async () => {
-    h.decodePreviewSessionCookie.mockResolvedValue({ sub: String(SOMEONE) });
+    h.decodePreviewSessionCookie.mockResolvedValue({
+      sub: String(SOMEONE),
+      user: { id: SOMEONE },
+    });
     expect(
       (await getServerAuthSession({ req: request() as never, res: {} as never }))?.user
     ).toEqual(expect.objectContaining({ id: SOMEONE }));

@@ -23,16 +23,16 @@ import {
  *
  * Instead we mint the LEGACY next-auth session cookie directly with the preview's
  * shared NEXTAUTH_SECRET — the same JWE the app's `decodePreviewSessionCookie`
- * reads on a preview (IS_PREVIEW=true only), so parity is guaranteed.
+ * reads on a preview (IS_PREVIEW=true and DATABASE_ENVIRONMENT=non-production), so
+ * parity is guaranteed.
  *
  * IMPORTANT (post first-party-OAuth cutover): `getSessionUserById` now resolves a
  * user from the shared session cache then the centralized hub (auth.civitai.com),
  * which read the PRODUCTION identity store — they have NO row for these dev-clone-
  * only smoke users, so a minted cookie would resolve to a null session and every
- * authed request would loop to /login. `get-server-auth-session.ts` therefore has a
- * PREVIEW-ONLY fallback (gated on IS_PREVIEW) that trusts the rich `user` embedded
- * in this minted legacy cookie when the hub lookup misses — restoring the pre-cutover
- * "gate reads token.user straight from the cookie" behaviour for previews only.
+ * authed request would loop to /login. On a preview `get-server-auth-session.ts`
+ * therefore takes the rich `user` embedded in this minted cookie as the session,
+ * without asking the hub.
  * So the minted `user` object below (id + isModerator + tier + the profile fields)
  * IS the authoritative session user on a preview. The backing User rows (and the
  * backing User rows (and the gold subscription) are seeded into cnpg-cluster-dev

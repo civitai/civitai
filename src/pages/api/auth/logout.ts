@@ -59,7 +59,7 @@ export function buildLogoutCookies(host: string | undefined): string[] {
     // `__Host-` cookies are host-only by definition, so one clear without a Domain covers them.
     ...clearCookie(hostSessionCookieName(true), true, [undefined]),
     ...clearCookie(hostDeviceCookieName(true), true, [undefined]),
-    // every legacy next-auth cookie — the SESSION cookie (the hybrid fallback reads it) AND the ancillary cruft
+    // every legacy next-auth cookie — the SESSION cookie (a preview's test sign-in) AND the ancillary cruft
     // (CSRF / callback-url / OAuth state + PKCE). Single source (clearLegacyCookies) — clears over the
     // registrable domain, so a subdomain logout host doesn't orphan the `.civitai.com` legacy session cookie.
     ...clearLegacyCookies(host),

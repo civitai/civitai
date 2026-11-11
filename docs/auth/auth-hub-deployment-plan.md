@@ -74,7 +74,7 @@ contract: [`apps/auth/.env.example`](../../apps/auth/.env.example). Deployment-c
 | `AUTH_JWT_ISSUER` | ✅ | ✅ | ✅ | `https://auth.civitai.com`. JWT `iss`, hub origin every spoke targets, **and** the cookie `__Secure-`/Domain fallback. Empty → cookie loses its prefix + Domain → redirect loop (see §5). |
 | `AUTH_JWKS_URI` | ✅ | ✅ | ✅ | `https://auth.civitai.com/api/auth/jwks` — spoke verify key source. |
 | `AUTH_INTERNAL_TOKEN` | ✅ | ✅ | ✅ | Service secret for `POST /api/auth/identity` (cache bust) and the calls an app makes to the hub on a user's behalf (refresh, session exchange, switch, accounts, impersonate, logout). **Identical on the hub, main and every spoke.** `auth_internal_parity` reports a mismatch; until the hub confirms the value, an app keeps sending those calls in the older shape. |
-| `NEXTAUTH_SECRET` | ✅ | ✅ | — | Salt for **all active** API-key/OAuth-token hashing + email-token hash + legacy JWE decode. **Identical hub↔main** or all token auth 401s. |
+| `NEXTAUTH_SECRET` | ✅ | ✅ | — | Salt for **all active** API-key/OAuth-token hashing + email-token hash. **Identical hub↔main** or all token auth 401s. |
 | `AUTH_COOKIE_DOMAIN` | ✅ | ✅ | — | Prod = `.civitai.com`; localhost = empty (host-only). |
 | `AUTH_ADMIN_USER_IDS` | ✅ | — | — | Comma list; `/admin` (TrustedSpokeDomain editor). **Fail-closed** (unset = locked). |
 | `AUTH_CORS_ORIGINS` | ✅ | — | — | Same-site `*.civitai.com` browser-client allowlist. (Cross-site login origins live in the DB table, not here.) |

@@ -31,7 +31,7 @@ describe('decodePreviewSessionCookie outside a preview on a scratch database', (
     }
   );
 
-  it.each([[undefined], ['production'], ['']])(
+  it.each([[undefined], ['production'], [''], ['NON-PRODUCTION'], [' non-production ']])(
     'returns null on a preview when DATABASE_ENVIRONMENT is %s',
     async (value) => {
       vi.stubEnv('IS_PREVIEW', 'true');
