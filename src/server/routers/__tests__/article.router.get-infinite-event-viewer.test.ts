@@ -3,10 +3,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
- * The article feed decorates each card with its event hat, gated on the viewer it is given. Before
- * launch only a flagged viewer sees hats, and a moderator is in every flag audience, so the viewer
- * must be eventViewerOf(ctx): a moderator counts only on a session or a full-access personal key,
- * never on a scoped or OAuth token (as for article.getById and image.get).
+ * getInfinite must pass eventViewerOf(ctx), not ctx.user: a moderator is in every event flag
+ * audience, so a scoped or OAuth token would otherwise see pre-launch hats.
  */
 
 const { mockGetArticles } = vi.hoisted(() => ({ mockGetArticles: vi.fn() }));
