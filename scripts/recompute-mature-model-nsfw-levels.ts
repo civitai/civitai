@@ -18,10 +18,11 @@ import { runScriptAndExit } from './lib/run-as-script';
 /**
  * Recompute the stored nsfwLevel of mature models (`Model.nsfw = true`) and every version under
  * them, through the same rollups the JobQueue runs: versions first (`updateModelVersionNsfwLevels`),
- * then models (`updateModelNsfwLevels`), since the model level is the bit_or of its Published
- * versions. A model recompute alone leaves its versions at whatever they held before.
+ * then models (`updateModelNsfwLevels`). A model recompute alone leaves the versions' safe bits in
+ * place, and the version-level API filters on those.
  *
  *   pnpm run tsscript scripts/recompute-mature-model-nsfw-levels.ts --ids-file <csv> [--apply]
+ *     [--chunk 250] [--from <model id>]
  *   pnpm run tsscript scripts/recompute-mature-model-nsfw-levels.ts --ids-file <csv> --readback
  *
  * `--ids-file` is a CSV whose first column is the model id (a header row is skipped). Keep it
@@ -30,9 +31,11 @@ import { runScriptAndExit } from './lib/run-as-script';
  * Modes:
  *   (default)   Dry run. Read-only on the replica: the scope check, the current counts and the
  *               counts the rollups will produce. Writes nothing.
- *   --apply     Runs the scope check on the primary, then the two rollups, busts the version and
- *               model caches, and reads the counts back from the primary. Exits 1 if any row
- *               still carries a safe bit.
+ *   --apply     Runs the scope check on the primary, then, per chunk of models in id order, the
+ *               version rollup, the model rollup and the cache busts, pausing a second between
+ *               chunks and stopping at the first error. Then reads the counts for the whole set
+ *               back from the primary, and exits 1 if any row still carries a safe bit.
+ *               `--from <id>` resumes at that model id (the last line printed names the next one).
  *   --readback  Read-only on the replica: the same counts as the dry run's "now", for checking
  *               after replication catches up. Exits 1 if any row still carries a safe bit.
  *
@@ -42,6 +45,16 @@ import { runScriptAndExit } from './lib/run-as-script';
  * outside the scope stops the run before anything is written, and so does the version rollup's
  * system-model kill switch being off, since it would skip some versions.
  */
+
+const PAUSE_MS = 1000;
+
+/** The ids from `from` on, ascending, in chunks of `size`. */
+export function chunksFrom(ids: number[], size: number, from = 0): number[][] {
+  const sorted = ids.filter((id) => id >= from).sort((a, b) => a - b);
+  const chunks: number[][] = [];
+  for (let i = 0; i < sorted.length; i += size) chunks.push(sorted.slice(i, i + size));
+  return chunks;
+}
 
 type ScopeRow = {
   id: number;
@@ -160,8 +173,15 @@ async function main() {
       'ids-file': { type: 'string' },
       apply: { type: 'boolean', default: false },
       readback: { type: 'boolean', default: false },
+      chunk: { type: 'string', default: '250' },
+      from: { type: 'string', default: '0' },
     },
   });
+  const chunkSize = Number(values.chunk);
+  const from = Number(values.from);
+  if (!Number.isInteger(chunkSize) || chunkSize <= 0)
+    throw new Error('--chunk must be a positive integer');
+  if (!Number.isInteger(from) || from < 0) throw new Error('--from must be a model id');
   if (!values['ids-file']) throw new Error('Pass --ids-file <csv>');
   if (values.apply && values.readback) throw new Error('Pass --apply or --readback, not both');
   const ids = parseIdsCsv(readFileSync(values['ids-file'], 'utf8'));
@@ -192,17 +212,28 @@ async function main() {
     return;
   }
 
-  await assertInScope(dbWrite, ids);
+  const chunks = chunksFrom(ids, chunkSize, from);
+  if (!chunks.length) throw new Error(`No ids at or after ${from}`);
+  await assertInScope(dbWrite, chunks.flat());
   printCounts('before (primary)', await readCounts(dbWrite, ids));
-  const versions = await dbWrite.modelVersion.findMany({
-    where: { modelId: { in: ids } },
-    select: { id: true },
-  });
-  const versionIds = versions.map((v) => v.id);
-  await updateModelVersionNsfwLevels(versionIds);
-  await updateModelNsfwLevels(ids);
-  // With model ids, this also refreshes dataForModelsCache and queues the search index.
-  await bustMvCache(versionIds, ids);
+  for (const [index, modelIds] of chunks.entries()) {
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
+    const versions = await dbWrite.modelVersion.findMany({
+      where: { modelId: { in: modelIds } },
+      select: { id: true },
+    });
+    const versionIds = versions.map((v) => v.id);
+    await updateModelVersionNsfwLevels(versionIds);
+    await updateModelNsfwLevels(modelIds);
+    // With model ids, this also refreshes dataForModelsCache and queues the search index.
+    await bustMvCache(versionIds, modelIds);
+    const next = chunks[index + 1]?.[0];
+    console.log(
+      `chunk ${index + 1}/${chunks.length}: ${modelIds.length} models, ${
+        versionIds.length
+      } versions` + (next ? `; resume with --from ${next}` : '')
+    );
+  }
   const after = await readCounts(dbWrite, ids);
   printCounts('after (primary)', after);
   if (after.modelsWithSafeBit || after.versionsWithSafeBit)
