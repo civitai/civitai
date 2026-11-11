@@ -21,6 +21,7 @@ import {
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
 } from '~/server/services/orchestrator/orchestrator.service';
+import { submitTrainingDataScanSafe } from '~/server/services/training-data-scan.service';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { isB2Url, parseB2Url, parseKey } from '~/utils/s3-utils';
@@ -129,9 +130,11 @@ function resolveRegistration(args: {
  */
 async function submitInlineScan({
   handler,
+  fileType,
   ...file
 }: {
   fileId: number;
+  fileType: string;
   modelVersionId: number;
   modelId: number;
   modelType: ModelType;
@@ -139,6 +142,14 @@ async function submitInlineScan({
   url: string;
   handler: 'createFileHandler' | 'updateFileHandler';
 }) {
+  // Not awaited: the zip is copied to the orchestrator before it is scanned, which can take minutes.
+  if (fileType === 'Training Data') {
+    void submitTrainingDataScanSafe(
+      { fileId: file.fileId, modelVersionId: file.modelVersionId, url: file.url },
+      handler
+    );
+    return;
+  }
   await createModelFileScanRequest({
     ...file,
     // Skip pre-flight on inline submission: the file just landed and
@@ -303,6 +314,7 @@ export const createModelFile = async ({
 
     await submitInlineScan({
       fileId: file.id,
+      fileType: createInput.type,
       modelVersionId: file.modelVersion.id,
       modelId: file.modelVersion.modelId,
       modelType: file.modelVersion.model.type,
@@ -402,10 +414,12 @@ export const updateFileHandler = async ({
         )
         .catch(handleLogError);
 
-      // Not awaited: the epoch picker and dataset upload wait on this response, and a failed or slow
-      // submit loses nothing, since scanFilesFallbackJob picks up the unscanned record within minutes.
+      // Not awaited: the epoch picker and dataset upload wait on this response. A failed or slow model
+      // file submit loses nothing, since scanFilesFallbackJob picks up the unscanned record within
+      // minutes; a Training Data zip whose submit failed stays Pending until it is submitted again.
       void submitInlineScan({
         fileId: result.id,
+        fileType: result.type,
         modelVersionId: result.modelVersionId,
         modelId: result.modelVersion.modelId,
         modelType: result.modelVersion.model.type,

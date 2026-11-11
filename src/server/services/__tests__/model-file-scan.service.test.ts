@@ -120,6 +120,14 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({
   limitConcurrency: mockLimitConcurrency,
 }));
 
+const { mockSubmitTrainingDataScanSafe } = vi.hoisted(() => ({
+  mockSubmitTrainingDataScanSafe: vi.fn(),
+}));
+vi.mock('~/server/services/training-data-scan.service', () => ({
+  TRAINING_DATA_BLOB_SCAN: 'training-data-blob',
+  submitTrainingDataScanSafe: mockSubmitTrainingDataScanSafe,
+}));
+
 // model.service.ts has a heavy import surface (clickhouse, redis, search-index,
 // etc) but we only need its `unpublishModelById` for unpublishBlockedModel.
 // Stub the whole module to avoid loading its dep tree.
@@ -1287,6 +1295,47 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.virusScanMessage).toBeNull();
     });
 
+    describe('a Training Data zip scanned as a blob', () => {
+      const clean = (output: Record<string, unknown>, scan?: string) =>
+        mockGetWorkflow.mockResolvedValue({
+          data: {
+            metadata: { fileId: 1, ...(scan && { scan }) },
+            steps: [{ $type: 'modelClamScan', output: { status: 'clean', ...output } }],
+          },
+        });
+      const verdict = async () => {
+        await processModelFileScanResult(
+          makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+        );
+        const { data } = mockDbWrite.modelFile.update.mock.calls[0][0];
+        return { result: data.virusScanResult, message: data.virusScanMessage };
+      };
+
+      it.each([
+        ['its count', { scannedFileCount: 12 }],
+        ['its summary', { output: 'Infected files: 0\nScanned files: 12\n' }],
+      ])('is a Success when the scan says by %s that it read files', async (_, output) => {
+        clean(output, 'training-data-blob');
+        expect(await verdict()).toEqual({ result: ScanResultCode.Success, message: null });
+      });
+
+      it.each([
+        ['a zero count', { scannedFileCount: 0 }],
+        ['no count at all', { output: 'scan summary text' }],
+      ])('is an Error, never a Success, when the scan read nothing (%s)', async (_, output) => {
+        clean(output, 'training-data-blob');
+        expect(await verdict()).toEqual({
+          result: ScanResultCode.Error,
+          message: 'The virus scan read no files',
+        });
+      });
+
+      it('leaves a model file scan that reports no count a Success', async () => {
+        clean({ output: 'scan summary text' });
+        expect((await verdict()).result).toBe(ScanResultCode.Success);
+      });
+    });
+
     it('maps clamScan infected=true to virusScan.Danger and surfaces output message', async () => {
       mockGetWorkflow.mockResolvedValue({
         data: {
@@ -1584,6 +1633,41 @@ describe('model-file-scan.service', () => {
         priority: 'normal',
       });
       expect(result).toEqual({ sent: 2, failed: 0 });
+    });
+
+    it('sends a Training Data zip to its own scan, never the AIR scan', async () => {
+      mockDbRead.modelFile.findMany.mockResolvedValue([
+        {
+          id: 3,
+          url: 's3://data.zip',
+          type: 'Training Data',
+          modelVersion: { id: 30, baseModel: 'SDXL', model: { id: 300, type: 'LORA' } },
+        },
+      ]);
+      mockSubmitTrainingDataScanSafe.mockReset().mockResolvedValue(true);
+
+      const result = await rescanModel({ id: 300 });
+
+      expect(mockCreateModelFileScanRequest).not.toHaveBeenCalled();
+      expect(mockSubmitTrainingDataScanSafe).toHaveBeenCalledWith(
+        { fileId: 3, modelVersionId: 30, url: 's3://data.zip' },
+        'rescan-model'
+      );
+      expect(result).toEqual({ sent: 1, failed: 0 });
+    });
+
+    it('counts a Training Data zip whose scan could not be submitted as failed', async () => {
+      mockDbRead.modelFile.findMany.mockResolvedValue([
+        {
+          id: 3,
+          url: 's3://data.zip',
+          type: 'Training Data',
+          modelVersion: { id: 30, baseModel: 'SDXL', model: { id: 300, type: 'LORA' } },
+        },
+      ]);
+      mockSubmitTrainingDataScanSafe.mockReset().mockResolvedValue(false);
+
+      expect(await rescanModel({ id: 300 })).toEqual({ sent: 0, failed: 1 });
     });
 
     it('skips files with a null modelVersion (orphaned/soft-deleted) without crashing', async () => {

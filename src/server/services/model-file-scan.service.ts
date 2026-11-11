@@ -45,6 +45,11 @@ import { excludedFromCoverage, hasFailedScan } from '~/server/utils/failed-scan'
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { Tracker } from '~/server/clickhouse/client';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
+import { clamFilesScanned } from '~/server/services/orchestrator/consumer-blob-scan';
+import {
+  submitTrainingDataScanSafe,
+  TRAINING_DATA_BLOB_SCAN,
+} from '~/server/services/training-data-scan.service';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -814,10 +819,20 @@ async function handleScanWorkflow(event: WorkflowEvent) {
   };
 
   if (clamScan?.output) {
-    const result = deriveClamScanResult(clamScan.output);
+    const derived = deriveClamScanResult(clamScan.output);
+    // A zip's scan that read no files has not cleared it.
+    const readNothing =
+      data.metadata?.scan === TRAINING_DATA_BLOB_SCAN &&
+      derived === ScanResultCode.Success &&
+      clamFilesScanned(clamScan.output) === 0;
+    const result = readNothing ? ScanResultCode.Error : derived;
     outcome.virusScan = {
       result,
-      message: result !== ScanResultCode.Success ? clamScan.output.output ?? null : null,
+      message: readNothing
+        ? 'The virus scan read no files'
+        : result !== ScanResultCode.Success
+        ? clamScan.output.output ?? null
+        : null,
     };
   }
 
@@ -895,6 +910,7 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     select: {
       id: true,
       url: true,
+      type: true,
       modelVersion: {
         select: {
           id: true,
@@ -914,6 +930,14 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     // Soft-deleted version → orphaned file. Skip rather than crash.
     if (!file.modelVersion) {
       failed.push(file.id);
+      return;
+    }
+    if (file.type === 'Training Data') {
+      const submitted = await submitTrainingDataScanSafe(
+        { fileId: file.id, modelVersionId: file.modelVersion.id, url: file.url },
+        'rescan-model'
+      );
+      (submitted ? sent : failed).push(file.id);
       return;
     }
     try {
