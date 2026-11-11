@@ -141,6 +141,8 @@ export function readFinalScan(workflow: { status?: string | null; steps?: unknow
   if (clam?.infected === true || clam?.status === 'infected') return 'Failed';
   if (pickle?.dangerousImportsFound === true || pickle?.status === 'dangerousImportsFound')
     return 'Failed';
+  // A file the virus scan could not fully read is not cleared, and scanning it again reads no more.
+  if (clam?.status === 'encrypted' || clam?.status === 'limitsExceeded') return 'Failed';
   if (!TERMINAL.has(workflow.status ?? '')) return 'Running';
   if (workflow.status !== 'succeeded') return 'Retry';
   const pickleClean = pickle?.status === 'clean' || !!pickle?.status?.startsWith('skipped');

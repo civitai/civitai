@@ -1535,6 +1535,22 @@ describe('the finals malware scan', () => {
       ['expired', workflow('expired', []), 'Retry'],
       ['canceled', workflow('canceled', []), 'Retry'],
       [
+        'encrypted content the virus scan could not read',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'encrypted', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
+        'a virus scan stopped at a limit',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'limitsExceeded', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
         'an unknown virus status',
         workflow('succeeded', [{ $type: 'modelClamScan', output: { status: 'new' } }, NOT_PICKLE]),
         'Retry',
