@@ -285,13 +285,15 @@ export const placementRouter = router({
       })
     ),
 
-  getStickerTracks: publicProcedure
-    .input(getStickerTracksSchema)
-    .query(({ input, ctx }) =>
-      ctx.features.stickerVideoTracks
-        ? getStickerPlacementTracks({ imageId: input.imageId, isModerator: ctx.user?.isModerator })
-        : []
-    ),
+  getStickerTracks: publicProcedure.input(getStickerTracksSchema).query(({ input, ctx }) =>
+    ctx.features.stickerVideoTracks
+      ? getStickerPlacementTracks({
+          imageId: input.imageId,
+          viewerId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+        })
+      : []
+  ),
 
   // Derived from the ledger, never from `Placement.status` — that column says a
   // placement was processed, not that anyone was paid.

@@ -459,14 +459,15 @@ export const createTrainingWorkflow = async ({
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
 
+  const catalogEntry = Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
+    ? trainingModelInfo[baseModel as TrainingDetailsBaseModelList]
+    : undefined;
+
   // The ecosystem/variant in params is what gets trained, so for a catalog base model it must be
   // the one that base maps to. A missing variant is tolerated: versions saved before the form sent
   // one still resubmit (the same rule publish-from-workflow.ts uses to match a run to its base).
-  if (
-    trainingParams.engine === 'ai-toolkit' &&
-    Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
-  ) {
-    const expected = trainingModelInfo[baseModel as TrainingDetailsBaseModelList].aiToolkit;
+  if (trainingParams.engine === 'ai-toolkit' && catalogEntry) {
+    const expected = catalogEntry.aiToolkit;
     if (
       !expected ||
       trainingParams.ecosystem !== expected.ecosystem ||
@@ -484,12 +485,25 @@ export const createTrainingWorkflow = async ({
       'Kohya training is no longer available. Please switch this run to AI Toolkit and submit again.'
     );
 
-  // Audio base types are marked `isAiToolkitMandatory`, so the check above
-  // short-circuits to true regardless of feature flags. Enforce the rollout
-  // flag here so API callers can't submit ACE-Step training when the
-  // `audioTraining` flag is off.
-  if (isAudioTrainingBaseType(baseModelType) && !features.audioTraining)
+  // Audio and MiniMax H3 are AI Toolkit-only, so isAiToolkitEnabled passes them whatever the
+  // flags say; their rollout flags are enforced here. baseModelType is caller-written, so the gates
+  // also read the catalog's type for the base model and the type of the AI Toolkit ecosystem in
+  // params: what is actually trained.
+  const ecosystemTypes =
+    trainingParams.engine === 'ai-toolkit'
+      ? Object.values(trainingModelInfo)
+          .filter((info) => info.aiToolkit?.ecosystem === trainingParams.ecosystem)
+          .map((info) => info.type)
+      : [];
+  const trainedTypes = [
+    baseModelType,
+    ...(catalogEntry ? [catalogEntry.type] : []),
+    ...ecosystemTypes,
+  ];
+  if (trainedTypes.some(isAudioTrainingBaseType) && !features.audioTraining)
     throw throwBadRequestError('Audio training is not currently enabled.');
+  if (trainedTypes.includes('minimaxh3') && !features.minimaxh3Training)
+    throw throwBadRequestError('MiniMax H3 training is not currently enabled.');
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })

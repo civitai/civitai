@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.476",
+  "version": "5.1.477",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -140,7 +140,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/app-sdk": "^0.80.0",
+    "@civitai/app-sdk": "^0.85.0",
     "@civitai/auth": "workspace:*",
     "@civitai/buzz": "workspace:*",
     "@civitai/components": "^0.13.0",

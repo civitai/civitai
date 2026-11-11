@@ -1,5 +1,10 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
-import type { AgentReviewSummary } from '~/shared/utils/agent-review-findings';
+import {
+  agentReviewSummaryFromQueueRow,
+  isImpersonationCheckStale,
+  type AgentReviewQueueRow,
+  type AgentReviewSummary,
+} from '~/shared/utils/agent-review-findings';
 import {
   BUILDING_REVIEW_PREVIEW_STATES,
   REVIEW_PREVIEW_MAX_AGE_MS,
@@ -2830,32 +2835,75 @@ async function agentReviewSummariesForRequests(
                   THEN r.scope_verdicts->'scopes' ELSE '[]'::jsonb END
            ) AS sv
           WHERE jsonb_typeof(sv) = 'object'
-            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate"
+            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate",
+        -- Every analysis produced a result: an object slot with no non-null error key.
+        (jsonb_typeof(r.code_review) = 'object'
+          AND jsonb_typeof(r.security_audit) = 'object'
+          AND jsonb_typeof(r.scope_verdicts) = 'object'
+          AND coalesce(jsonb_typeof(r.code_review->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.security_audit->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.scope_verdicts->'error'), 'null') = 'null') AS "sectionsOk",
+        (CASE WHEN jsonb_typeof(r.security_audit->'impersonationCheck') = 'object'
+              THEN r.security_audit->'impersonationCheck'->>'status' END) AS "impersonationCheck",
+        (CASE WHEN jsonb_typeof(r.security_audit->'impersonationCheck') = 'object'
+              THEN r.security_audit->'impersonationCheck'->>'fingerprint' END) AS "impersonationFingerprint"
       FROM app_review_agent_reports r
       WHERE r.publish_request_id = ANY(${ids}::text[])
       ORDER BY r.publish_request_id, r.started_at DESC
-    `) as Array<{
-      publishRequestId: string;
-      status: string;
-      severities: (string | null)[] | null;
-      overBroad: number | null;
-      underDeclared: number | null;
-      inaccurate: number | null;
-    }>;
-    for (const r of rows) {
-      out.set(r.publishRequestId, {
-        status: r.status,
-        severities: (r.severities ?? []).filter((x): x is string => typeof x === 'string'),
-        overBroad: r.overBroad ?? 0,
-        underDeclared: r.underDeclared ?? 0,
-        inaccurate: r.inaccurate ?? 0,
-      });
-    }
+    `) as Array<AgentReviewQueueRow & { publishRequestId: string }>;
+    // A finding with no severity becomes `unrated` here (not dropped), so it still flags.
+    for (const r of rows) out.set(r.publishRequestId, agentReviewSummaryFromQueueRow(r));
   } catch (err) {
     console.error(
       `[agentReviewSummariesForRequests] summary read failed: ${
         err instanceof Error ? err.message : String(err)
       }`
+    );
+  }
+  return out;
+}
+
+/**
+ * The impersonation fingerprint of each request's store listing AS IT IS NOW — the same listing,
+ * found the same way, as the check reads (`gatherImpersonationInputs`: the app's on-site listing
+ * by slug; one keyed to another app does not count). One query for the page. FAIL-SOFT to an
+ * empty map: every check then reads stale, which only keeps rows out of the fast lane.
+ */
+async function liveListingFingerprints(
+  requests: Array<{ id: string; slug: string; appBlockId: string | null }>
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (requests.length === 0) return out;
+  try {
+    const [{ dbRead }, { impersonationFingerprint }] = await Promise.all([
+      import('~/server/db/client'),
+      import('./app-impersonation.logic'),
+    ]);
+    const listings = await dbRead.appListing.findMany({
+      where: {
+        slug: { in: [...new Set(requests.map((r) => r.slug))] },
+        kind: 'onsite',
+        revisionOfId: null,
+      },
+      select: {
+        slug: true,
+        name: true,
+        tagline: true,
+        description: true,
+        iconId: true,
+        coverId: true,
+        appBlockId: true,
+      },
+    });
+    const bySlug = new Map(listings.map((l) => [l.slug, l]));
+    for (const r of requests) {
+      const l = bySlug.get(r.slug);
+      if (!l || (l.appBlockId && r.appBlockId && l.appBlockId !== r.appBlockId)) continue;
+      out.set(r.id, impersonationFingerprint(l));
+    }
+  } catch (err) {
+    console.error(
+      `[liveListingFingerprints] read failed: ${err instanceof Error ? err.message : String(err)}`
     );
   }
   return out;
@@ -2920,12 +2968,26 @@ export async function listPendingRequests(
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const [listingFacts, agentSummaries] = await Promise.all([
+  const [listingFacts, agentSummaries, liveFingerprints] = await Promise.all([
     listingFactsForRequests(items as ListingJoinSubject[]),
     opts.includeAgentReview
       ? agentReviewSummariesForRequests(items.map((r) => r.id))
       : Promise.resolve(null),
+    opts.includeAgentReview ? liveListingFingerprints(items) : Promise.resolve(null),
   ]);
+  // The impersonation check is STALE when the listing changed after it ran (a new app's draft
+  // or pending listing is edited in place); a stale check never fast-lanes the row.
+  const withStaleness = (id: string) => {
+    const summary = agentSummaries?.get(id) ?? null;
+    if (!summary) return null;
+    return {
+      ...summary,
+      impersonationStale: isImpersonationCheckStale(
+        summary.impersonationFingerprint,
+        liveFingerprints?.get(id) ?? null
+      ),
+    };
+  };
   const now = Date.now();
   return {
     items: items.map(
@@ -2937,7 +2999,7 @@ export async function listPendingRequests(
         previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
         // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
         // "not run". `null` = the surface is on and this request has no report.
-        ...(agentSummaries ? { agentReview: agentSummaries.get(r.id) ?? null } : {}),
+        ...(agentSummaries ? { agentReview: withStaleness(r.id) } : {}),
         // BigInt isn't JSON-serializable through tRPC's default transformer;
         // surface as a string. UI can format with Intl.NumberFormat.
         bundleSizeBytes: r.bundleSizeBytes.toString(),
