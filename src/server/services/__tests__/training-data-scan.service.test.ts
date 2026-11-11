@@ -450,10 +450,6 @@ describe('healStalledTrainingDataScans', () => {
         counts.set(key, (counts.get(key) ?? 0) - 1);
         return counts.get(key);
       });
-      redisMock.sysRedis.set.mockImplementation(async (key: string, value: string) => {
-        counts.set(key, Number(value));
-        return 'OK';
-      });
     });
     const gaveUp = () => dbMock.dbWrite.modelFile.updateMany.mock.calls.length > 0;
     beforeEach(() => loggingMock.logToAxiom.mockClear());

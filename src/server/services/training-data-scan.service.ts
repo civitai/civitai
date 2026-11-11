@@ -351,7 +351,7 @@ const HEAL_ATTEMPTS_TTL_SECONDS = 14 * 24 * 60 * 60;
 const HEAL_MAX_UNREADABLE = 24;
 
 /** Per zip, not per file: a file that now holds another zip starts again. */
-const zipKey = (prefix: string, file: PendingZip) =>
+const zipKey = <Prefix extends string>(prefix: Prefix, file: PendingZip) =>
   `${prefix}:${file.id}:${createHash('sha1').update(file.url).digest('hex').slice(0, 16)}` as const;
 const healAttemptsKey = (file: PendingZip) =>
   zipKey(REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_ATTEMPTS, file);
@@ -374,7 +374,7 @@ export const HEAL_OP = 'self-heal';
 export async function uncountUnconfirmedResubmit({ fileId, url }: { fileId: number; url: string }) {
   const key = healAttemptsKey({ id: fileId, url, modelVersionId: 0 });
   try {
-    if ((await sysRedis.decrBy(key, 1)) < 0) await sysRedis.set(key, '0');
+    if ((await sysRedis.decrBy(key, 1)) < 0) await sysRedis.incrBy(key, 1);
   } catch {
     // An uncounted take-back only brings the give-up one resubmit nearer.
   }

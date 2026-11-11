@@ -172,7 +172,6 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       id: true,
       type: true,
       url: true,
-      virusScanResult: true,
       modelVersionId: true,
       // SSHS_12 comes from the metadata-parse step, but the hash rebuild below deletes every row
       // for the file — so a hash-only rescan has to re-derive it from what is already stored.
