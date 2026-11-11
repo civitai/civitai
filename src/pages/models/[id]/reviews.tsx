@@ -40,7 +40,10 @@ import { getAverageRating, getRatingCount } from '~/components/ResourceReview/re
 import { ReviewCardWithImages } from '~/components/ResourceReview/ReviewCard/ReviewCardWithImages';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
+import {
+  getResourceReviewPagedSchema,
+  REVIEW_HAS_IMAGES_COUNT_CAP,
+} from '~/server/schema/resourceReview.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRatingLabel } from '~/utils/rating-label';
@@ -63,6 +66,10 @@ export const getServerSideProps = createServerSideProps({
     const result = getResourceReviewPagedSchema.safeParse({
       modelId: params.id,
       ...ctx.query,
+      // `filter` is the only source of the list filters, so a raw param cannot filter the list
+      // while the control shows "All".
+      hasImages: undefined,
+      recommended: undefined,
       ...getReviewsFilterInput(parseReviewsFilter(ctx.query.filter)),
     });
     if (!result.success) return { notFound: true };
@@ -87,6 +94,8 @@ export default function ModelReviews() {
   const queryParams = getResourceReviewPagedSchema.parse({
     modelId: router.query.id,
     ...router.query,
+    hasImages: undefined,
+    recommended: undefined,
     ...getReviewsFilterInput(filter),
   });
   const { modelId, modelVersionId, page } = queryParams;
@@ -310,6 +319,12 @@ export default function ModelReviews() {
                 {resourceReviews && !resourceReviews.items.length && (
                   <Text c="dimmed" ta="center" py="xl">
                     No reviews match this filter.
+                  </Text>
+                )}
+                {resourceReviews && resourceReviews.totalItems > REVIEW_HAS_IMAGES_COUNT_CAP && (
+                  <Text size="sm" c="dimmed" ta="center">
+                    Showing the newest {REVIEW_HAS_IMAGES_COUNT_CAP.toLocaleString()} reviews with
+                    images.
                   </Text>
                 )}
                 {resourceReviews && resourceReviews.totalPages > 1 && (

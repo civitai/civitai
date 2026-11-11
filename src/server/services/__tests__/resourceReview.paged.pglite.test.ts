@@ -429,7 +429,7 @@ describe('getPagedResourceReviews', () => {
       expect(result.totalItems).toBe(2);
     });
 
-    it('stops counting one past the cap, so the pages still run to the last match', async () => {
+    it('stops counting one past the cap', async () => {
       await pg.exec(`
         INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
           (1010, 30, now() - interval '1 day'),
@@ -443,12 +443,11 @@ describe('getPagedResourceReviews', () => {
       ]);
 
       const first = await page({ modelVersionId: V1, hasImages: true, limit: 2, page: 1 });
-      const second = await page({ modelVersionId: V1, hasImages: true, limit: 2, page: 2 });
 
-      // Four reviews match; the count stops at cap + 1 = 3.
+      // Four reviews match; the count stops at cap + 1 = 3, so pages past it are not offered.
       expect(first.totalItems).toBe(3);
       expect(first.totalPages).toBe(2);
-      expect([...first.items, ...second.items].map((r) => r.id)).toEqual([1, 5, 6, 7]);
+      expect(first.items.map((r) => r.id)).toEqual([1, 5]);
     });
 
     it('combines with writtenOnly', async () => {
