@@ -19,17 +19,23 @@ const settingsKey = ['generation-license', 'settings'] as const;
  * neither a tRPC provider nor a session in its component tests, and for every ecosystem without
  * terms this must cost nothing.
  */
-export function useGenerationLicense(store: GenerationStore): {
-  terms?: GenerationLicenseTerms;
-  blocked: boolean;
-  accept: () => void;
-  accepting: boolean;
-} {
+export function useGenerationLicense(store: GenerationStore): GenerationLicenseState {
   const ecosystem = useSyncExternalStore(
     (cb) => store.subscribe(cb),
     () => (store.getSnapshot().state as { ecosystem?: string }).ecosystem,
     () => undefined
   );
+  return useGenerationLicenseFor(ecosystem);
+}
+
+type GenerationLicenseState = {
+  terms?: GenerationLicenseTerms;
+  blocked: boolean;
+  accept: () => void;
+  accepting: boolean;
+};
+
+export function useGenerationLicenseFor(ecosystem: string | undefined): GenerationLicenseState {
   const terms = getGenerationLicenseTerms(ecosystem);
   const signedIn = useOptionalCivitaiSessionContext()?.type === 'authed';
   const queryClient = useQueryClient();

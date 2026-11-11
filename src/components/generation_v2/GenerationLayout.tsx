@@ -5,16 +5,16 @@
  * A single `footer` slot (via GenerationFooter) lets workflow branches declare
  * their own footer content from anywhere in the tree.
  *
- * GenerationLayoutFooter handles generation status, terms agreement, daily boost,
- * and the dismissible status message. Footer slot content only renders when
- * terms are reviewed and generation is available.
+ * GenerationLayoutFooter handles generation status, the terms gates (FooterTermsGate),
+ * daily boost, and the dismissible status message. Footer slot content only renders
+ * while no takeover panel owns the footer.
  */
 
 import clsx from 'clsx';
 import { useMemo, type ReactNode } from 'react';
-import { Alert, Button, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
+import { IconAlertTriangle } from '@tabler/icons-react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
@@ -33,6 +33,9 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import createSlots from '~/libs/slots/create-slots';
 import { hashify } from '~/utils/string-helpers';
 import { useSelfHostedBlock, SelfHostedBlockedAlert } from '~/components/Generation/footer-parts';
+import { useGenerationFormValue } from '~/components/Generate/useGenerationFormBridge';
+import { useGenerationLicenseFor } from '~/components/form-graph/generation/useGenerationLicense';
+import { FooterTermsGate, pickFooterTakeover } from '~/components/generation_v2/FooterTermsGate';
 import { FooterStrips, footerStripsFrame } from '~/components/generation_v2/FooterStrips';
 import { useMobileGenerator } from '~/hooks/useMobileGenerator';
 import classes from './GenerationLayout.module.scss';
@@ -86,13 +89,22 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
   });
 
+  const ecosystem = useGenerationFormValue<string>('ecosystem');
+  const license = useGenerationLicenseFor(ecosystem);
+  const takeover = pickFooterTakeover({
+    available: status.available,
+    selfHostedBlocked: !!selfHostedBlocked,
+    termsReviewed: reviewed,
+    licenseBlocked: license.blocked,
+    membershipNeedsAcknowledgment: membershipUpsell.needsAcknowledgment,
+  });
+
   const messageHash = useMemo(
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
 
-  const showFooterContent =
-    status.available && reviewed && !membershipUpsell.needsAcknowledgment && !selfHostedBlocked;
+  const showFooterContent = !takeover;
   // In the mobile generator the status message joins the strips above the Generate row; elsewhere it
   // renders below the form.
   const mobileGenerator = useMobileGenerator();
@@ -118,7 +130,7 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
       <FooterStrips>
         {mobileGenerator && statusMessage}
         {/* `data-strip-full`: what stops generating is read in full, not folded to one line. */}
-        {!status.available ? (
+        {takeover === 'unavailable' ? (
           <div data-strip-full>
             <AlertWithIcon
               color="yellow"
@@ -129,17 +141,19 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
               {status.message}
             </AlertWithIcon>
           </div>
-        ) : selfHostedBlocked ? (
+        ) : takeover === 'selfHostedBlocked' ? (
           <div data-strip-full>
             <SelfHostedBlockedAlert />
           </div>
-        ) : !reviewed ? (
-          <Alert
-            data-strip-full
-            color="yellow"
+        ) : takeover === 'generationTerms' ? (
+          <FooterTermsGate
             title="Image Generation Terms"
-            data-tour="gen:terms"
-            className="-m-2 rounded-none rounded-t-xl"
+            tourId="gen:terms"
+            confirmLabel="I Confirm, Start Generating"
+            onConfirm={() => {
+              setReviewed(true);
+              if (running) helpers?.next();
+            }}
           >
             <Text size="xs">
               By using the image generator you confirm that you have read and agree to our{' '}
@@ -153,21 +167,40 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
               will result in the loss of your access to the image generator. Illegal or exploitative
               content will be removed and reported.
             </Text>
-            <Button
-              color="yellow"
-              variant="light"
-              onClick={() => {
-                setReviewed(true);
-                if (running) helpers?.next();
-              }}
-              style={{ marginTop: 10 }}
-              leftSection={<IconCheck />}
-              fullWidth
-            >
-              I Confirm, Start Generating
-            </Button>
-          </Alert>
-        ) : membershipUpsell.needsAcknowledgment ? (
+          </FooterTermsGate>
+        ) : takeover === 'generationLicense' && license.terms ? (
+          <FooterTermsGate
+            title={license.terms.title}
+            confirmLabel="I agree to these terms"
+            onConfirm={license.accept}
+            loading={license.accepting}
+          >
+            <div className="flex flex-col gap-2">
+              <Text size="xs">{license.terms.intro}</Text>
+              <ul className="list-disc pl-5">
+                {license.terms.restrictions.map((line) => (
+                  <li key={line}>
+                    <Text size="xs">{line}</Text>
+                  </li>
+                ))}
+              </ul>
+              <Text size="xs">
+                Read the{' '}
+                <Text
+                  component="a"
+                  href={license.terms.licenseUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  td="underline"
+                  inherit
+                >
+                  {license.terms.licenseName}
+                </Text>
+                .
+              </Text>
+            </div>
+          </FooterTermsGate>
+        ) : takeover === 'membershipUpsell' ? (
           // A choice to make, not a notice: it keeps its full height.
           <div data-strip-full>
             <MembershipUpsell />
@@ -183,7 +216,7 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
       </FooterStrips>
 
       {/* Always keep the slot target in the DOM so portals can resolve it.
-          Hidden when generation is unavailable or terms not yet reviewed. */}
+          Hidden while a takeover panel owns the footer. */}
       <div className={!showFooterContent ? 'hidden' : undefined}>{children}</div>
 
       {/* Dismissible status message — shown regardless of review state */}
