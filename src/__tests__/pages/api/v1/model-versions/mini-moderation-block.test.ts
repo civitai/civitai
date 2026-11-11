@@ -182,7 +182,7 @@ function sharedCache() {
 const MODERATION_DEFAULT = {
   versionStatus: 'Published',
   modelStatus: 'Published',
-  modelMode: null,
+  modelMode: null as string | null,
   deleted: false,
   takenDown: false,
   unpublishedViolation: false,
