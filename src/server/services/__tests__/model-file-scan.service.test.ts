@@ -1431,6 +1431,17 @@ describe('model-file-scan.service', () => {
         }
       );
 
+      it('marks a failed workflow of the zip it holds for a later retry, over that zip only', async () => {
+        scanned({});
+
+        await deliver('failed');
+
+        expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+          where: { id: 1, url: ZIP },
+          data: { scanRequestedAt: expect.any(Date) },
+        });
+      });
+
       it('marks nothing for a failed workflow of a zip it no longer holds', async () => {
         scanned({}, { scan: 'training-data-blob', url: 'https://old/zip' });
 

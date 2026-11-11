@@ -7,14 +7,19 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 const h = vi.hoisted(() => ({
   submitWorkflow: vi.fn(),
   resolveDownloadUrl: vi.fn(),
+  isDefiniteNotFound: vi.fn(),
   fetch: vi.fn(),
 }));
 
 vi.mock('@civitai/orchestration-client', () => ({ submitWorkflow: h.submitWorkflow }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
-vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl: h.resolveDownloadUrl }));
+vi.mock('~/utils/delivery-worker', () => ({
+  resolveDownloadUrl: h.resolveDownloadUrl,
+  isDefiniteNotFound: h.isDefiniteNotFound,
+}));
 
 import {
+  TrainingDataSourceUnreadable,
   healStalledTrainingDataScans,
   trainingDataObjectUnchanged,
   requeuePendingTrainingDataScans,
@@ -55,6 +60,7 @@ beforeEach(() => {
   h.fetch.mockReset();
   h.submitWorkflow.mockReset().mockResolvedValue({ data: { id: 'wf-1' } });
   h.resolveDownloadUrl.mockReset().mockResolvedValue({ url: 'https://signed/data.zip' });
+  h.isDefiniteNotFound.mockReset().mockReturnValue(false);
   dbMock.dbWrite.modelFile.update.mockReset().mockResolvedValue({});
   orchestratorAnswers();
 });
@@ -67,6 +73,15 @@ afterEach(() => {
 describe('submitTrainingDataScan', () => {
   it('copies the zip to the orchestrator and runs a virus scan on the blob', async () => {
     await submitTrainingDataScan(TARGET);
+
+    // Stamped first, so a submit that fails is still one the self-heal can find.
+    expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledWith({
+      where: { id: 56 },
+      data: { scanRequestedAt: expect.any(Date) },
+    });
+    expect(dbMock.dbWrite.modelFile.update.mock.invocationCallOrder[0]).toBeLessThan(
+      h.fetch.mock.invocationCallOrder[0]
+    );
 
     expect(h.resolveDownloadUrl).toHaveBeenCalledWith(56, TARGET.url, undefined, {
       caller: 'training-data',
@@ -135,6 +150,53 @@ describe('submitTrainingDataScan', () => {
 
     await expect(submitTrainingDataScan(TARGET)).rejects.toThrow('unreadable: 503');
     expect(cancel).toHaveBeenCalled();
+  });
+
+  it('gives a source lookup 30 seconds, then fails as transient', async () => {
+    vi.useFakeTimers();
+    try {
+      h.resolveDownloadUrl.mockReturnValue(new Promise(() => undefined));
+      const submit = submitTrainingDataScan(TARGET).catch((error: Error) => error);
+
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(h.fetch).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      const error = await submit;
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(TrainingDataSourceUnreadable);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    [
+      'no object at the url',
+      () => {
+        h.resolveDownloadUrl.mockRejectedValue(new Error('404'));
+        h.isDefiniteNotFound.mockReturnValue(true);
+      },
+    ],
+    ['no length', () => h.fetch.mockResolvedValueOnce(source({ length: null }))],
+    ['no ETag', () => h.fetch.mockResolvedValueOnce(source({ etag: null }))],
+  ])('calls a source with %s unreadable', async (_, arrange) => {
+    arrange();
+    await expect(submitTrainingDataScan(TARGET)).rejects.toBeInstanceOf(
+      TrainingDataSourceUnreadable
+    );
+  });
+
+  it.each([
+    [
+      'a lookup that is not a definite absence',
+      () => h.resolveDownloadUrl.mockRejectedValue(new Error('503')),
+    ],
+    ['a refused read', () => h.fetch.mockResolvedValueOnce(source({ status: 503 }))],
+  ])('calls %s transient', async (_, arrange) => {
+    arrange();
+    const error = await submitTrainingDataScan(TARGET).catch((e: Error) => e);
+    expect(error).not.toBeInstanceOf(TrainingDataSourceUnreadable);
   });
 
   it('submits nothing, and writes no verdict, without an orchestrator token outside production', async () => {
@@ -367,6 +429,56 @@ describe('healStalledTrainingDataScans', () => {
       type: 'warning',
       name: 'training-data-scan-heal-submit-failed',
       count: 1,
+    });
+  });
+
+  describe('a zip whose source answers', () => {
+    const counts = new Map<string, number>();
+    beforeEach(() => {
+      counts.clear();
+      redisMock.sysRedis.get.mockImplementation(async (key: string) =>
+        counts.has(key) ? String(counts.get(key)) : null
+      );
+      redisMock.sysRedis.incrBy.mockImplementation(async (key: string) => {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        return counts.get(key);
+      });
+    });
+    const gaveUp = () => dbMock.dbWrite.modelFile.updateMany.mock.calls.length > 0;
+    beforeEach(() => loggingMock.logToAxiom.mockClear());
+
+    it('a definite absence 24 times, is marked Error, logged once', async () => {
+      h.resolveDownloadUrl.mockRejectedValue(new Error('404'));
+      h.isDefiniteNotFound.mockReturnValue(true);
+
+      for (let run = 0; run < 24; run++) await healStalledTrainingDataScans();
+      expect(gaveUp()).toBe(false);
+      await healStalledTrainingDataScans();
+
+      expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ virusScanResult: 'Error' }) })
+      );
+      const logged = loggingMock.logToAxiom.mock.calls.map(([event]) => event.name);
+      expect(logged.filter((name) => name === 'training-data-scan-gave-up')).toHaveLength(1);
+      expect(logged).not.toContain('training-data-scan-submit');
+      expect(logged).not.toContain('training-data-scan-heal-submit-failed');
+    });
+
+    it('a transient failure 30 times, stays Pending', async () => {
+      h.resolveDownloadUrl.mockRejectedValue(new Error('503'));
+
+      for (let run = 0; run < 30; run++) await healStalledTrainingDataScans();
+
+      expect(gaveUp()).toBe(false);
+      expect(counts.size).toBe(0);
+    });
+
+    it('with no ETag 24 times, is marked Error', async () => {
+      h.fetch.mockImplementation(async () => source({ etag: null }));
+
+      for (let run = 0; run < 25; run++) await healStalledTrainingDataScans();
+
+      expect(gaveUp()).toBe(true);
     });
   });
 

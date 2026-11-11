@@ -10,7 +10,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { blobAir, uploadConsumerBlob } from '~/server/services/orchestrator/consumer-blob-scan';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { isDefiniteNotFound, resolveDownloadUrl } from '~/utils/delivery-worker';
 import { ModelModifier, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 
 /**
@@ -31,6 +31,38 @@ const SOURCE_RESPONSE_TIMEOUT_MS = 60_000;
 const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const SUBMIT_TIMEOUT_MS = 60_000;
 const RECHECK_TIMEOUT_MS = 30_000;
+const RESOLVE_TIMEOUT_MS = 30_000;
+
+/** A definite answer that the zip can't be read: no object at the url, or one with no length or ETag. */
+export class TrainingDataSourceUnreadable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TrainingDataSourceUnreadable';
+  }
+}
+
+/** The zip's download url. A lookup that does not answer in time is a transient failure. */
+async function resolveSource(fileId: number, url: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const { url: sourceUrl } = await Promise.race([
+      resolveDownloadUrl(fileId, url, undefined, { caller: 'training-data', actor: 'internal' }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Training data source lookup timed out')),
+          RESOLVE_TIMEOUT_MS
+        );
+      }),
+    ]);
+    return sourceUrl;
+  } catch (error) {
+    if (isDefiniteNotFound(error))
+      throw new TrainingDataSourceUnreadable('Training data source not found');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export type TrainingDataScanTarget = {
   fileId: number;
@@ -56,10 +88,7 @@ export async function submitTrainingDataScan({
     data: { scanRequestedAt: new Date() },
   });
 
-  const { url: sourceUrl } = await resolveDownloadUrl(fileId, url, undefined, {
-    caller: 'training-data',
-    actor: 'internal',
-  });
+  const sourceUrl = await resolveSource(fileId, url);
   const answered = new AbortController();
   const noAnswer = setTimeout(() => answered.abort(), SOURCE_RESPONSE_TIMEOUT_MS);
   const source = await fetch(sourceUrl, {
@@ -70,9 +99,10 @@ export async function submitTrainingDataScan({
   const etag = source.headers.get('etag');
   const size = Number(source.headers.get('content-length'));
   try {
-    if (!source.ok || !source.body || !(size > 0))
+    if (!source.ok || !source.body)
       throw new Error(`Training data source unreadable: ${source.status}`);
-    if (!etag) throw new Error('Training data source has no ETag');
+    if (!(size > 0)) throw new TrainingDataSourceUnreadable('Training data source has no length');
+    if (!etag) throw new TrainingDataSourceUnreadable('Training data source has no ETag');
     blobId = await uploadConsumerBlob({ body: source.body, size, timeoutMs: UPLOAD_TIMEOUT_MS });
   } catch (error) {
     // Releases the connection now rather than at the deadline.
@@ -126,10 +156,7 @@ export async function trainingDataObjectUnchanged({
 }): Promise<boolean> {
   if (typeof etag !== 'string' || !etag || typeof size !== 'number' || !(size > 0)) return false;
   try {
-    const { url: sourceUrl } = await resolveDownloadUrl(fileId, url, undefined, {
-      caller: 'training-data',
-      actor: 'internal',
-    });
+    const sourceUrl = await resolveSource(fileId, url);
     const res = await fetch(sourceUrl, {
       headers: { Range: 'bytes=0-0' },
       signal: AbortSignal.timeout(RECHECK_TIMEOUT_MS),
@@ -150,14 +177,22 @@ export async function trainingDataObjectUnchanged({
   }
 }
 
-/** As `submitTrainingDataScan`, for a caller that must not fail on it: the failure is logged. */
-export async function submitTrainingDataScanSafe(
+type SubmitOutcome = 'submitted' | 'skipped' | 'unreadable' | 'failed';
+
+/**
+ * As `submitTrainingDataScan`, for a caller that must not fail on it. A failure is logged, except an
+ * unreadable source under `quietUnreadable`, whose caller logs it once.
+ */
+async function submitTrainingDataScanOutcome(
   target: TrainingDataScanTarget,
-  op: string
-): Promise<boolean> {
+  op: string,
+  { quietUnreadable = false } = {}
+): Promise<SubmitOutcome> {
   try {
-    return await submitTrainingDataScan(target);
+    return (await submitTrainingDataScan(target)) ? 'submitted' : 'skipped';
   } catch (error) {
+    const unreadable = error instanceof TrainingDataSourceUnreadable;
+    if (unreadable && quietUnreadable) return 'unreadable';
     logToAxiom({
       ...safeError(error),
       type: 'error',
@@ -166,8 +201,13 @@ export async function submitTrainingDataScanSafe(
       fileId: target.fileId,
       modelVersionId: target.modelVersionId,
     }).catch(() => undefined);
-    return false;
+    return unreadable ? 'unreadable' : 'failed';
   }
+}
+
+/** Whether the scan was submitted; a failure is logged instead of thrown. */
+export async function submitTrainingDataScanSafe(target: TrainingDataScanTarget, op: string) {
+  return (await submitTrainingDataScanOutcome(target, op)) === 'submitted';
 }
 
 /**
@@ -251,10 +291,12 @@ async function claimAndSubmit(
     neverSubmitted,
     onClaimed = async () => true,
     onSubmitted = async () => undefined,
+    quietUnreadable = false,
   }: {
     neverSubmitted: boolean;
     onClaimed?: (file: PendingZip) => Promise<boolean>;
-    onSubmitted?: (file: PendingZip) => Promise<void>;
+    onSubmitted?: (file: PendingZip, outcome: SubmitOutcome) => Promise<void>;
+    quietUnreadable?: boolean;
   }
 ) {
   const claimedIds = new Set(
@@ -274,14 +316,14 @@ async function claimAndSubmit(
   await limitConcurrency(
     claimed.map((file) => async () => {
       if (!(await onClaimed(file))) return;
-      const ok = await submitTrainingDataScanSafe(
+      const outcome = await submitTrainingDataScanOutcome(
         { fileId: file.id, modelVersionId: file.modelVersionId, url: file.url },
-        op
+        op,
+        { quietUnreadable }
       );
-      if (ok) {
-        submitted++;
-        await onSubmitted(file);
-      } else failed.push(file.id);
+      if (outcome === 'submitted') submitted++;
+      else failed.push(file.id);
+      await onSubmitted(file, outcome);
     }),
     REQUEUE_CONCURRENCY
   );
@@ -294,18 +336,23 @@ export const HEAL_PAGE = 6;
 const HEAL_MAX_RESUBMITS = 3;
 const HEAL_ATTEMPTS_TTL_SECONDS = 14 * 24 * 60 * 60;
 
+/** Definite "can't read the zip" answers before it is given up on. Transient failures never count. */
+const HEAL_MAX_UNREADABLE = 24;
+
 /** Per zip, not per file: a file that now holds another zip starts again. */
+const zipKey = (prefix: string, file: PendingZip) =>
+  `${prefix}:${file.id}:${createHash('sha1').update(file.url).digest('hex').slice(0, 16)}` as const;
 const healAttemptsKey = (file: PendingZip) =>
-  `${REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_ATTEMPTS}:${file.id}:${createHash('sha1')
-    .update(file.url)
-    .digest('hex')
-    .slice(0, 16)}` as const;
+  zipKey(REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_ATTEMPTS, file);
+const healUnreadableKey = (file: PendingZip) =>
+  zipKey(REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_UNREADABLE, file);
 
 /**
  * Resubmits Training Data zips that were submitted over an hour ago and still have no verdict,
  * oldest first. A zip that was never submitted is left to the upload paths and the mod requeue.
- * Only a resubmit the orchestrator accepted counts: one that failed (an outage) leaves the zip for a
- * run after its claim is an hour old. A zip still without a verdict after `HEAL_MAX_RESUBMITS` accepted resubmits is marked Error.
+ * A zip is marked Error after `HEAL_MAX_RESUBMITS` accepted resubmits without a verdict, or after
+ * `HEAL_MAX_UNREADABLE` definite answers that it can't be read. Any other failed resubmit (an outage)
+ * is not counted: the zip comes back once its claim is an hour old.
  */
 export async function healStalledTrainingDataScans() {
   const files = await dbWrite.modelFile.findMany({
@@ -320,17 +367,27 @@ export async function healStalledTrainingDataScans() {
   if (!files.length) return { picked: 0, submitted: 0, failed: [], gaveUp: [] };
 
   const gaveUp: number[] = [];
+  let unreadableRuns = 0;
   const { claimed, submitted, failed } = await claimAndSubmit(files, 'self-heal', {
     neverSubmitted: false,
+    quietUnreadable: true,
     onClaimed: async (file) => {
       let accepted: number;
+      let unreadable: number;
       try {
         accepted = Number((await sysRedis.get(healAttemptsKey(file))) ?? 0);
+        unreadable = Number((await sysRedis.get(healUnreadableKey(file))) ?? 0);
       } catch {
         // Without a count the cap can't be kept; it is tried again once its claim is an hour old.
         return false;
       }
-      if (accepted < HEAL_MAX_RESUBMITS) return true;
+      const reason =
+        accepted >= HEAL_MAX_RESUBMITS
+          ? `no verdict after ${HEAL_MAX_RESUBMITS} resubmits`
+          : unreadable >= HEAL_MAX_UNREADABLE
+          ? `source unreadable ${HEAL_MAX_UNREADABLE} times`
+          : undefined;
+      if (!reason) return true;
 
       await dbWrite.modelFile.updateMany({
         where: { id: file.id, url: file.url, virusScanResult: ScanResultCode.Pending },
@@ -345,12 +402,19 @@ export async function healStalledTrainingDataScans() {
         type: 'error',
         name: 'training-data-scan-gave-up',
         fileId: file.id,
-        reason: `no verdict after ${HEAL_MAX_RESUBMITS} resubmits`,
+        reason,
       }).catch(() => undefined);
       return false;
     },
-    onSubmitted: async (file) => {
-      const key = healAttemptsKey(file);
+    onSubmitted: async (file, outcome) => {
+      const key =
+        outcome === 'submitted'
+          ? healAttemptsKey(file)
+          : outcome === 'unreadable'
+          ? healUnreadableKey(file)
+          : undefined;
+      if (!key) return;
+      if (outcome === 'unreadable') unreadableRuns++;
       try {
         await sysRedis.incrBy(key, 1);
         await sysRedis.expire(key, HEAL_ATTEMPTS_TTL_SECONDS);
@@ -359,11 +423,12 @@ export async function healStalledTrainingDataScans() {
       }
     },
   });
-  if (failed.length)
+  // Unreadable zips are logged once, when they are given up on.
+  if (failed.length > unreadableRuns)
     logToAxiom({
       type: 'warning',
       name: 'training-data-scan-heal-submit-failed',
-      count: failed.length,
+      count: failed.length - unreadableRuns,
     }).catch(() => undefined);
   return { picked: claimed.length, submitted, failed, gaveUp };
 }

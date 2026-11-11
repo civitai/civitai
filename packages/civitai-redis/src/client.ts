@@ -2232,6 +2232,8 @@ export const REDIS_SYS_KEYS = {
   TRAINING_DATA_SCAN: {
     // Self-heal resubmits per zip — `system:training-data-scan:heal-attempts:${fileId}:${urlHash}`.
     HEAL_ATTEMPTS: 'system:training-data-scan:heal-attempts',
+    // Definite "can't read the zip" answers per zip — same key shape.
+    HEAL_UNREADABLE: 'system:training-data-scan:heal-unreadable',
   },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every

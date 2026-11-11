@@ -632,6 +632,16 @@ describe('a file type change to or from training data on a trained version', () 
     });
   });
 
+  it('keeps the scan of training data edited with its own type sent again', async () => {
+    withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
+
+    await updateFile({ id: 1, type: 'Training Data', userId: 7 });
+
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data).not.toHaveProperty(
+      'virusScanResult'
+    );
+  });
+
   it('keeps the scan of training data edited without a new type', async () => {
     withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
 
