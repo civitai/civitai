@@ -33,7 +33,7 @@ export function canViewImageMedia(
 }
 
 /** Signed-out answers are edge-cached by URL alone; a crawler's must not be served to others. */
-function keepCrawlerAnswerOutOfEdgeCache(
+export function keepCrawlerAnswerOutOfEdgeCache(
   ctx: Pick<Context, 'user' | 'req'> & Partial<Pick<Context, 'cache'>>
 ) {
   const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
