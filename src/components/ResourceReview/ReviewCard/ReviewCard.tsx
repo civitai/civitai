@@ -1,5 +1,5 @@
 import { Badge, Card } from '@mantine/core';
-import { IconLibraryPhoto, IconMessageCircle, IconPhoto } from '@tabler/icons-react';
+import { IconEyeOff, IconLibraryPhoto, IconMessageCircle, IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -26,6 +26,8 @@ export type ReviewCardProps = {
   variant: 'compact' | 'full';
   /** The review's post images, shown by the `full` variant only. */
   images?: ImagesInfiniteModel[];
+  /** How many of the fetched images the viewer's preferences hide, so the strip can say so. */
+  hiddenImageCount?: number;
   /** Title of the review's post, shown in the "From the post" link of the `full` variant. */
   postTitle?: string | null;
   /** Name of the reviewed version, shown after the date. */
@@ -41,6 +43,7 @@ export function ReviewCard({
   review,
   variant,
   images = [],
+  hiddenImageCount = 0,
   postTitle,
   versionName,
   creatorId,
@@ -51,6 +54,8 @@ export function ReviewCard({
     review.imageCount > REVIEW_IMAGE_COUNT_CAP
       ? `${REVIEW_IMAGE_COUNT_CAP}+`
       : `+${review.imageCount - shown}`;
+  const someHidden = hiddenImageCount > 0;
+  const allHidden = full && someHidden && !images.length && review.imageCount > 0;
   const phoneShown = Math.min(shownImages.length, MAX_PHONE_IMAGES);
 
   const username = review.user.username ?? 'a user';
@@ -60,13 +65,15 @@ export function ReviewCard({
   const moreTile = (shown: number, className: string) => (
     <div
       className={clsx(
-        'shrink-0 flex-col items-center justify-center gap-0.5 rounded-md bg-gray-1 text-center dark:bg-dark-5',
+        'shrink-0 flex-col items-center justify-center gap-0.5 rounded-md bg-gray-1 px-1 text-center dark:bg-dark-5',
         className
       )}
       data-testid="review-more-images"
     >
       <span className="text-lg font-bold text-black dark:text-white">{moreLabel(shown)}</span>
-      <span className="text-xs text-gray-6 dark:text-dark-2">images</span>
+      <span className="text-xs text-gray-6 dark:text-dark-2">
+        {someHidden ? 'some hidden' : 'images'}
+      </span>
     </div>
   );
 
@@ -148,6 +155,16 @@ export function ReviewCard({
 
       {/* Pushes the footer to the card's bottom edge when sibling cards in the row are taller. */}
       {!full && <div className="flex-1" />}
+
+      {allHidden && (
+        <div
+          className="flex h-[120px] flex-col items-center justify-center gap-1 rounded-md bg-gray-1 px-2 text-center text-xs text-gray-6 sm:h-[150px] dark:bg-dark-5 dark:text-dark-2"
+          data-testid="review-images-hidden"
+        >
+          <IconEyeOff size={20} />
+          Hidden by your preferences
+        </div>
+      )}
 
       {shownImages.length > 0 && (
         <div className="flex gap-2" data-testid="review-images">

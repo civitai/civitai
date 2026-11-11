@@ -1,11 +1,12 @@
+import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { trpc } from '~/utils/trpc';
 
 /**
- * The images of one review, the same set its `imageCount` counts, with the viewer's hidden
- * preferences applied.
+ * The images of one review, the same set its `imageCount` counts. `images` has the viewer's hidden
+ * preferences applied; `flatData` is what the server returned, before them.
  */
 export function useReviewImages(
   { reviewId, limit }: { reviewId: number; limit: number },
@@ -30,5 +31,7 @@ export function useReviewImages(
     isRefetching: rest.isRefetching,
   });
 
-  return { images: items, isLoading: isLoading || loadingPreferences, ...rest };
+  const flatData = useMemo(() => data?.items ?? [], [data]);
+
+  return { images: items, flatData, isLoading: isLoading || loadingPreferences, ...rest };
 }

@@ -93,6 +93,41 @@ describe('ReviewCard, full variant', () => {
     expect(tiles.map((tile) => tile.textContent)).toEqual(['+10images', '+8images']);
   });
 
+  test('hidden images turn the "+N" tile caption into "some hidden"', async () => {
+    await renderWithProviders(
+      <ReviewCard
+        review={makeReview({ imageCount: 12 })}
+        variant="full"
+        images={[1, 2, 3].map(makeImage)}
+        hiddenImageCount={1}
+      />
+    );
+    const tiles = Array.from(document.querySelectorAll('[data-testid="review-more-images"]'));
+    expect(tiles.map((tile) => tile.textContent)).toEqual(['+10some hidden', '+9some hidden']);
+  });
+
+  test('when every fetched image is hidden, one tile says so instead of an empty strip', async () => {
+    await renderWithProviders(
+      <ReviewCard
+        review={makeReview({ imageCount: 3 })}
+        variant="full"
+        images={[]}
+        hiddenImageCount={3}
+      />
+    );
+    expect(document.querySelector('[data-testid="review-images-hidden"]')?.textContent).toBe(
+      'Hidden by your preferences'
+    );
+    expect(document.querySelector('[data-testid="review-images"]')).toBeNull();
+  });
+
+  test('no hidden images means no hidden tile', async () => {
+    await renderWithProviders(
+      <ReviewCard review={makeReview({ imageCount: 3 })} variant="full" images={[makeImage(1)]} />
+    );
+    expect(document.querySelector('[data-testid="review-images-hidden"]')).toBeNull();
+  });
+
   test('a verdict badge names the recommendation', async () => {
     const screen = await renderWithProviders(
       <ReviewCard review={makeReview({ recommended: false })} variant="full" />

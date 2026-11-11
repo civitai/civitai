@@ -1,7 +1,12 @@
 import { Button, Loader, Text } from '@mantine/core';
 import { IconInfoCircle, IconLibraryPhoto, IconPhotoOff } from '@tabler/icons-react';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import {
+  ExplainHiddenImages,
+  useExplainHiddenImages,
+} from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -11,7 +16,9 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useReviewImages } from '~/components/ResourceReview/useReviewImages';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { useEmblaStore } from '~/components/EmblaCarousel/EmblaCarouselProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import classes from './ResourceReviewCarousel.module.css';
@@ -19,26 +26,36 @@ import classes from './ResourceReviewCarousel.module.css';
 const MAX_IMAGES = 8;
 // The tallest an image gets, so a portrait fits the dialog without cropping.
 const MAX_IMAGE_HEIGHT = '60vh';
+// Desktop slides share one height and take their width from the image, so as many as fit show.
+const DESKTOP_IMAGE_HEIGHT = '55vh';
+const SIDE_SLIDE_WIDTH = 240;
 const SLIDE_CLASS =
-  'flex flex-[0_0_100%] items-center justify-center pl-3 md:flex-[0_0_50%] md:pl-6';
+  'flex max-w-full flex-[0_0_100%] items-center justify-center pl-2 md:flex-none md:justify-start';
 
 /**
  * The review dialog's gallery: up to eight of the images its `imageCount` counts, each shown whole,
- * with a final slide linking to the rest.
+ * with a slide explaining any the viewer's preferences hide and a final slide linking to the rest.
  */
-export function ResourceReviewCarousel({
-  userId,
-  username,
-  modelVersionId,
-  reviewId,
-  postId,
-}: {
+export function ResourceReviewCarousel(props: CarouselProps) {
+  // Its own providers, so "Show Hidden" raises the level only for this gallery's query.
+  return (
+    <BrowsingLevelProvider>
+      <BrowsingSettingsAddonsProvider>
+        <ReviewGallery {...props} />
+      </BrowsingSettingsAddonsProvider>
+    </BrowsingLevelProvider>
+  );
+}
+
+type CarouselProps = {
   userId: number;
   username: string | null;
   modelVersionId: number;
   reviewId: number;
   postId: number | null;
-}) {
+};
+
+function ReviewGallery({ userId, username, modelVersionId, reviewId, postId }: CarouselProps) {
   const mobile = useIsMobile({ type: 'media' });
   // Without a post or a username there is nothing to look the images up by.
   const canLoad = !!postId || !!username;
@@ -46,11 +63,13 @@ export function ResourceReviewCarousel({
   // One more than shown, to know whether there are more.
   const {
     images: fetched,
+    flatData,
     isLoading,
     isError,
     refetch,
   } = useReviewImages({ reviewId, limit: MAX_IMAGES + 1 }, { enabled: canLoad });
   const images = fetched.slice(0, MAX_IMAGES);
+  const hiddenExplained = useExplainHiddenImages(flatData);
 
   if (!canLoad) return <NoReviewImages />;
   if (isLoading)
@@ -68,11 +87,9 @@ export function ResourceReviewCarousel({
         </Button>
       </div>
     );
-  if (!images.length) return <NoReviewImages />;
+  if (!images.length && !hiddenExplained.hasHidden) return <NoReviewImages />;
 
   const hasMore = fetched.length > MAX_IMAGES;
-  const totalSlides = images.length + (hasMore ? 1 : 0);
-  const fits = mobile ? 1 : 2;
   const postTitle = images[0]?.postTitle;
   const viewMoreHref = postId
     ? `/posts/${postId}`
@@ -81,13 +98,9 @@ export function ResourceReviewCarousel({
   return (
     <div>
       <div className="bg-gray-0 px-5 py-4 dark:bg-dark-7" data-testid="review-gallery">
-        <Embla
-          key={reviewId}
-          align={totalSlides > fits ? 'start' : 'center'}
-          withControls={totalSlides > fits}
-        >
+        <Embla key={reviewId} align="start" slidesToScroll="auto">
           <Embla.Viewport>
-            <Embla.Container className="-ml-3 flex md:-ml-6">
+            <Embla.Container className="-ml-2 flex">
               {images.map((image, i) => (
                 <Embla.Slide key={image.id} index={i} className={SLIDE_CLASS}>
                   {({ inView }) => (
@@ -96,10 +109,22 @@ export function ResourceReviewCarousel({
                       images={images}
                       reviewId={reviewId}
                       inView={inView}
+                      mobile={mobile}
                     />
                   )}
                 </Embla.Slide>
               ))}
+              {hiddenExplained.hasHidden && (
+                <Embla.Slide className={SLIDE_CLASS}>
+                  <div
+                    className="flex size-full min-h-60 items-center justify-center rounded-md bg-gray-2 p-4 dark:bg-dark-9"
+                    style={sideSlideStyle(mobile)}
+                    data-testid="review-hidden-explain"
+                  >
+                    <ExplainHiddenImages {...hiddenExplained} />
+                  </div>
+                </Embla.Slide>
+              )}
               {hasMore && (
                 <Embla.Slide className={SLIDE_CLASS}>
                   <Button
@@ -110,6 +135,7 @@ export function ResourceReviewCarousel({
                     fullWidth
                     radius="md"
                     className="h-full min-h-60"
+                    style={sideSlideStyle(mobile)}
                   >
                     See all their images →
                   </Button>
@@ -117,6 +143,7 @@ export function ResourceReviewCarousel({
               )}
             </Embla.Container>
           </Embla.Viewport>
+          <OverflowControls />
         </Embla>
       </div>
       <div className="flex items-center justify-between gap-3 border-b border-solid border-gray-3 px-5 py-2.5 text-[13px] text-gray-6 dark:border-dark-4 dark:text-dark-2">
@@ -142,6 +169,16 @@ export function ResourceReviewCarousel({
   );
 }
 
+function sideSlideStyle(mobile: boolean) {
+  return mobile ? undefined : { height: DESKTOP_IMAGE_HEIGHT, width: SIDE_SLIDE_WIDTH };
+}
+
+// Arrows only when the slides overflow the viewport.
+function OverflowControls() {
+  const overflows = useEmblaStore((state) => state.canScrollNext || state.canScrollPrev);
+  return overflows ? <Embla.Controls /> : null;
+}
+
 function NoReviewImages() {
   return (
     <div
@@ -159,20 +196,21 @@ function ReviewImage({
   images,
   reviewId,
   inView,
+  mobile,
 }: {
   image: ImagesInfiniteModel;
   images: ImagesInfiniteModel[];
   reviewId: number;
   // Off-screen slides keep their size but skip the heavy content.
   inView: boolean;
+  mobile: boolean;
 }) {
   const features = useFeatureFlags();
   // The wrapper takes the image's own shape so `MediaHash` (absolute, inset-0) has a size to fill.
   const ratio = image.width && image.height ? image.width / image.height : 1;
-  const size = {
-    aspectRatio: ratio,
-    width: `min(100%, calc(${MAX_IMAGE_HEIGHT} * ${ratio}))`,
-  };
+  const size = mobile
+    ? { aspectRatio: ratio, width: `min(100%, calc(${MAX_IMAGE_HEIGHT} * ${ratio}))` }
+    : { aspectRatio: ratio, height: DESKTOP_IMAGE_HEIGHT, maxWidth: '100%' };
 
   if (!inView)
     return (

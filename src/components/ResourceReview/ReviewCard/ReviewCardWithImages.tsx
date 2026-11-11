@@ -20,7 +20,7 @@ export function ReviewCardWithImages({
 
   const wanted = inView && review.imageCount > 0;
   const { granted, release } = useImageLoadSlot(wanted);
-  const { images, isSuccess, isError } = useReviewImages(
+  const { images, flatData, isSuccess, isError } = useReviewImages(
     { reviewId: review.id, limit: IMAGES_PER_CARD },
     { enabled: wanted && granted }
   );
@@ -37,6 +37,7 @@ export function ReviewCardWithImages({
         review={review}
         variant="full"
         images={images}
+        hiddenImageCount={flatData.length - images.length}
       />
     </div>
   );

@@ -7,6 +7,8 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 const state = vi.hoisted(() => ({
   review: {} as Record<string, unknown>,
   images: [] as unknown[],
+  flatData: undefined as unknown[] | undefined,
+  hasHidden: false,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -38,11 +40,27 @@ vi.mock('~/components/ResourceReview/useReviewImages', () => ({
     asked.calls.push(args);
     return {
       images: state.images,
+      flatData: state.flatData ?? state.images,
       isLoading: false,
       isError: false,
       refetch: vi.fn(),
     };
   },
+}));
+const explained = vi.hoisted(() => ({ calls: [] as unknown[][] }));
+vi.mock('~/components/Image/ExplainHiddenImages/ExplainHiddenImages', () => ({
+  useExplainHiddenImages: (rows: unknown[]) => {
+    explained.calls.push(rows);
+    return { hasHidden: state.hasHidden };
+  },
+  ExplainHiddenImages: () => <div data-testid="explain-hidden" />,
+}));
+// The gallery's own providers fetch addon settings and read the session.
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
+  BrowsingLevelProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({
+  BrowsingSettingsAddonsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 // Their own behaviour is not under test; they read sessions, flags and image metrics.
 vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
@@ -98,7 +116,10 @@ describe('ResourceReviewDetail', () => {
   beforeEach(() => {
     state.review = makeReview({ postId: 55 });
     state.images = [1, 2, 3, 4].map(makeImage);
+    state.flatData = undefined;
+    state.hasHidden = false;
     asked.calls = [];
+    explained.calls = [];
   });
 
   test('a review with a post names it in a strip with a link, between the images and the text', async () => {
@@ -142,6 +163,37 @@ describe('ResourceReviewDetail', () => {
     const gallery = document.querySelector('[data-testid="review-gallery"]')!;
     expect(gallery.querySelectorAll('[data-testid="review-slide"]')).toHaveLength(8);
     expect(document.body.textContent).not.toContain('See all their images');
+  });
+
+  test('images hidden by preferences add an explanation slide before the see-all slide', async () => {
+    state.images = Array.from({ length: 9 }, (_, i) => makeImage(i + 1));
+    state.flatData = [...state.images, makeImage(99)];
+    state.hasHidden = true;
+    await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+    const gallery = document.querySelector('[data-testid="review-gallery"]')!;
+    const explain = gallery.querySelector('[data-testid="explain-hidden"]')!;
+    const seeAll = [...gallery.querySelectorAll('a')].find((a) =>
+      a.textContent?.includes('See all their images')
+    )!;
+    expect(explained.calls.at(-1)).toBe(state.flatData);
+    expect(follows(gallery.querySelectorAll('[data-testid="review-slide"]')[7], explain)).toBe(
+      true
+    );
+    expect(follows(explain, seeAll)).toBe(true);
+  });
+
+  test('no explanation slide when nothing is hidden', async () => {
+    await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+    expect(document.querySelector('[data-testid="explain-hidden"]')).toBeNull();
+  });
+
+  test('when every image is hidden the gallery shows the explanation, not the empty state', async () => {
+    state.images = [];
+    state.flatData = [makeImage(1), makeImage(2)];
+    state.hasHidden = true;
+    await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+    expect(document.querySelector('[data-testid="explain-hidden"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="review-no-images"]')).toBeNull();
   });
 
   test('the text comes before the comments', async () => {

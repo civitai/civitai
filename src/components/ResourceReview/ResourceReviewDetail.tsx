@@ -93,7 +93,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         schema={metaSchema}
         deIndex={!data.details}
       />
-      <div className="flex items-center justify-between gap-3 border-b border-solid border-gray-3 px-5 py-4 dark:border-dark-4">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-solid border-gray-3 bg-white px-5 py-4 dark:border-dark-4 dark:bg-dark-7">
         <div className="min-w-0">
           <UserAvatar
             user={data.user}

@@ -12,7 +12,9 @@ const useReviewImages = vi.hoisted(() => vi.fn());
 vi.mock('~/components/ResourceReview/useReviewImages', () => ({ useReviewImages }));
 
 vi.mock('~/components/ResourceReview/ReviewCard/ReviewCard', () => ({
-  ReviewCard: () => <div data-testid="card" />,
+  ReviewCard: ({ hiddenImageCount }: { hiddenImageCount?: number }) => (
+    <div data-testid="card" data-hidden={hiddenImageCount} />
+  ),
 }));
 
 import { MAX_CONCURRENT_IMAGE_LOADS } from './imageLoadLimiter';
@@ -33,7 +35,12 @@ const lastCall = () => useReviewImages.mock.calls.at(-1)!;
 beforeEach(() => {
   state.inView = true;
   useReviewImages.mockReset();
-  useReviewImages.mockReturnValue({ images: [], isSuccess: false, isError: false });
+  useReviewImages.mockReturnValue({
+    images: [],
+    flatData: [],
+    isSuccess: false,
+    isError: false,
+  });
 });
 
 describe('ReviewCardWithImages', () => {
@@ -46,6 +53,19 @@ describe('ReviewCardWithImages', () => {
     await renderWithProviders(<ReviewCardWithImages review={makeReview({ postId: null })} />);
     await vi.waitFor(() => expect(lastCall()[1]).toEqual({ enabled: true }));
     expect(lastCall()[0]).toEqual({ reviewId: 7, limit: 4 });
+  });
+
+  test('tells the card how many fetched images the preferences hid', async () => {
+    useReviewImages.mockReturnValue({
+      images: [{ id: 1 }],
+      flatData: [{ id: 1 }, { id: 2 }, { id: 3 }],
+      isSuccess: true,
+      isError: false,
+    });
+    await renderWithProviders(<ReviewCardWithImages review={makeReview()} />);
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="card"]')?.getAttribute('data-hidden')).toBe('2')
+    );
   });
 
   test('does not load while out of view', async () => {
@@ -74,6 +94,7 @@ describe('ReviewCardWithImages', () => {
       const control = { settle: false };
       useReviewImages.mockImplementation((query) => ({
         images: [],
+        flatData: [],
         ...(control.settle && query.reviewId === 1000
           ? settled
           : { isSuccess: false, isError: false }),

@@ -15,6 +15,8 @@ export default function ResourceReviewModal({ reviewId }: { reviewId: number }) 
       size={960}
       radius={16}
       padding={0}
+      // The page modal's ScrollArea must be the scroller, not the modal's content, for the sticky header to hold.
+      classNames={{ content: 'flex flex-col overflow-hidden', body: 'min-h-0 flex-1' }}
     >
       <ResourceReviewDetail reviewId={reviewId} />
     </PageModal>
