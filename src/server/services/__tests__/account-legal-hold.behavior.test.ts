@@ -14,6 +14,11 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+const versionCaches = vi.hoisted(() => ({
+  bustMvCache: vi.fn<(ids: number[], modelIds?: number[], userId?: number) => Promise<void>>(),
+}));
+vi.mock('~/server/services/model-version.service', () => versionCaches);
+
 import {
   getAccountLegalHoldLegs,
   guardedAccountScrubSql,
@@ -50,6 +55,7 @@ const BIG_IMAGE_ID = 10_000_000_019;
 const EXPIRED_MARKER = 20;
 const EXTENDED_MARKER = 21;
 const RELEASED_WITH_REPORT = 22; // a released marker, and a pending report naming them
+const OTHER_OWNERS_MODEL = 102;
 const ALL_USERS = Array.from({ length: 22 }, (_, i) => i + 1);
 
 let failQueries = false;
@@ -91,7 +97,16 @@ beforeAll(async () => {
       "subscriptionId" text
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
-    INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN});
+    INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN}), (${OTHER_OWNERS_MODEL}, ${RECENTLY_SENT});
+    CREATE TYPE "ModelStatus" AS ENUM
+      ('Draft', 'Training', 'Published', 'Scheduled', 'Unpublished', 'UnpublishedViolation',
+       'GatherInterest', 'Deleted');
+    CREATE TABLE "ModelVersion" (
+      id int PRIMARY KEY,
+      "modelId" int NOT NULL,
+      status "ModelStatus" NOT NULL,
+      "updatedAt" timestamp(3) NOT NULL DEFAULT now()
+    );
   `);
   await holder.db.exec(
     readFileSync(
@@ -155,21 +170,22 @@ beforeEach(async () => {
       else await holder.db.exec(sql.text);
       return 1;
     })) as never);
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
     first: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
-  ) => {
-    if (failQueries) throw new Error('connection reset');
-    const sql = Array.isArray(first)
-      ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
-      : (first as Prisma.Sql);
-    const { rows } = await holder.db.query<Row>(sql.text, sql.values);
-    if (answer) return answer(sql.text, rows);
-    // Every column comes back as something other than a boolean.
-    return unreadable
-      ? rows.map((row) => Object.fromEntries(Object.keys(row).map((k) => [k, null])))
-      : rows;
-  }) as never);
+  ) =>
+    lazy(async () => {
+      if (failQueries) throw new Error('connection reset');
+      const sql = Array.isArray(first)
+        ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
+        : (first as Prisma.Sql);
+      const { rows } = await holder.db.query<Row>(sql.text, sql.values);
+      if (answer) return answer(sql.text, rows);
+      // Every column comes back as something other than a boolean.
+      return unreadable
+        ? rows.map((row) => Object.fromEntries(Object.keys(row).map((k) => [k, null])))
+        : rows;
+    })) as never);
 
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
@@ -526,6 +542,62 @@ describe('deleteUser under a legal hold', () => {
         details: { userId: IMAGE_IN_REVIEW, legs: ['image-review'] },
       })
     );
+  });
+
+  describe('versions of the models it deletes', () => {
+    const statuses = async () =>
+      Object.fromEntries(
+        (
+          await holder.db.query<{ id: number; status: string }>(
+            `SELECT id, status FROM "ModelVersion" ORDER BY id`
+          )
+        ).rows.map((r) => [r.id, r.status])
+      );
+
+    beforeEach(async () => {
+      await holder.db.exec(`
+        TRUNCATE "ModelVersion";
+        INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+          (1, ${CLEAN_MODEL}, 'Published'),
+          (2, ${CLEAN_MODEL}, 'Scheduled'),
+          (3, ${CLEAN_MODEL}, 'Draft'),
+          (4, ${CLEAN_MODEL}, 'Unpublished'),
+          (5, ${OTHER_OWNERS_MODEL}, 'Published');
+      `);
+    });
+
+    it('deletes its published and scheduled versions with the models', async () => {
+      await deleteUser({ id: CLEAN, username: 'someone', removeModels: true });
+
+      expect(await statuses()).toEqual({
+        1: 'Deleted',
+        2: 'Deleted',
+        3: 'Draft',
+        4: 'Unpublished',
+        5: 'Published',
+      });
+      // The generator reads versions through these caches; a stale entry still serves them.
+      expect(versionCaches.bustMvCache).toHaveBeenCalledTimes(1);
+      const [busted, , owner] = versionCaches.bustMvCache.mock.calls[0];
+      expect([...busted].sort()).toEqual([1, 2]);
+      expect(owner).toBe(CLEAN);
+    });
+
+    it('leaves the versions alone when the models are kept', async () => {
+      await deleteUser({ id: CLEAN, username: 'someone', removeModels: false });
+
+      expect((await statuses())[1]).toBe('Published');
+    });
+
+    it('leaves the versions published when a hold stops the deletion', async () => {
+      beforeScrub = () =>
+        holder.db.exec(`INSERT INTO "CsamReport" ("userId", details) VALUES (${CLEAN}, '{}')`);
+
+      await expect(
+        deleteUser({ id: CLEAN, username: 'someone', removeModels: true })
+      ).rejects.toBeInstanceOf(LegalHoldError);
+      expect((await statuses())[1]).toBe('Published');
+    });
   });
 });
 
