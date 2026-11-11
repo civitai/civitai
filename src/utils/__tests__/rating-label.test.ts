@@ -351,6 +351,8 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
         'components/Model/ModelVersions/ModelVersionReview.tsx',
         // The model page Reviews section's summary line.
         'components/Model/ModelVersions/ModelVersionWrittenReviews.tsx',
+        // The model reviews page's summary (label, share, up/down bar).
+        'pages/models/[id]/reviews.tsx',
         // The app-store listing detail's "Reviews" row, via the pure row builder.
         'components/Apps/appListingDetailRows.ts',
         // This file.

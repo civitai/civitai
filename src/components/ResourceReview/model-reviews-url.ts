@@ -66,3 +66,21 @@ export function getModelReviewsRedirect(modelId: number, query: Query): string |
   if (!isDuplicate) return null;
   return getModelReviewsCanonical(modelId, modelVersionId);
 }
+
+export type ReviewsFilter = 'images' | 'up' | 'down';
+
+const REVIEWS_FILTERS: readonly string[] = ['images', 'up', 'down'] satisfies ReviewsFilter[];
+
+/** The `filter` query param of the reviews page; anything unrecognised means "all reviews". */
+export function parseReviewsFilter(value: QueryValue): ReviewsFilter | undefined {
+  const raw = firstValue(value);
+  return raw !== undefined && REVIEWS_FILTERS.includes(raw) ? (raw as ReviewsFilter) : undefined;
+}
+
+/** The `resourceReview.getPaged` inputs a reviews page filter stands for. */
+export function getReviewsFilterInput(filter: ReviewsFilter | undefined) {
+  if (filter === 'images') return { hasImages: true };
+  if (filter === 'up') return { recommended: true };
+  if (filter === 'down') return { recommended: false };
+  return {};
+}

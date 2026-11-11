@@ -1,7 +1,6 @@
 import { keepPreviousData } from '@tanstack/react-query';
 import {
   Alert,
-  Badge,
   Card,
   Center,
   Container,
@@ -10,6 +9,7 @@ import {
   LoadingOverlay,
   Pagination,
   Paper,
+  SegmentedControl,
   Select,
   Skeleton,
   Stack,
@@ -17,42 +17,35 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconLock, IconMessage, IconMessageCircleOff, IconPhoto } from '@tabler/icons-react';
+import { IconLock, IconMessageCircleOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { Meta } from '~/components/Meta/Meta';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import {
   EditUserResourceReviewV2,
   UserResourceReviewComposite,
 } from '~/components/ResourceReview/EditUserResourceReview';
-import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
-import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
-import { getAverageRating, getRatingCount } from '~/components/ResourceReview/resourceReview.utils';
-import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   getModelReviewsCanonical,
   getModelReviewsRedirect,
+  getReviewsFilterInput,
+  parseReviewsFilter,
 } from '~/components/ResourceReview/model-reviews-url';
-import {
-  getResourceReviewPagedSchema,
-  REVIEW_IMAGE_COUNT_CAP,
-} from '~/server/schema/resourceReview.schema';
+import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
+import { getAverageRating, getRatingCount } from '~/components/ResourceReview/resourceReview.utils';
+import { ReviewCardWithImages } from '~/components/ResourceReview/ReviewCard/ReviewCardWithImages';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import type { ResourceReviewPagedModel } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
+import { getRatingLabel } from '~/utils/rating-label';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import classes from './review.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -67,7 +60,11 @@ export const getServerSideProps = createServerSideProps({
       if (destination) return { redirect: { destination, permanent: true } };
     }
 
-    const result = getResourceReviewPagedSchema.safeParse({ modelId: params.id, ...ctx.query });
+    const result = getResourceReviewPagedSchema.safeParse({
+      modelId: params.id,
+      ...ctx.query,
+      ...getReviewsFilterInput(parseReviewsFilter(ctx.query.filter)),
+    });
     if (!result.success) return { notFound: true };
 
     const { modelId, modelVersionId } = result.data;
@@ -75,6 +72,7 @@ export const getServerSideProps = createServerSideProps({
     await Promise.all([
       ssg?.resourceReview.getPaged.prefetch(result.data),
       ssg?.model.getSimple.prefetch({ id: modelId }),
+      ssg?.model.getById.prefetch({ id: modelId }),
       ssg?.model.getVersions.prefetch({ id: modelId }),
       ssg?.resourceReview.getRatingTotals.prefetch({ modelId, modelVersionId }),
       ssg?.hiddenPreferences.getHidden.prefetch(),
@@ -85,9 +83,11 @@ export const getServerSideProps = createServerSideProps({
 export default function ModelReviews() {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const filter = parseReviewsFilter(router.query.filter);
   const queryParams = getResourceReviewPagedSchema.parse({
     modelId: router.query.id,
     ...router.query,
+    ...getReviewsFilterInput(filter),
   });
   const { modelId, modelVersionId, page } = queryParams;
   const isMuted = currentUser?.muted ?? false;
@@ -104,6 +104,8 @@ export default function ModelReviews() {
     isLoading: loadingResourceReviews,
     isRefetching: refetchingResourceReviews,
   } = trpc.resourceReview.getPaged.useQuery(queryParams, { placeholderData: keepPreviousData });
+  // The model page's source for thumbs: all-time counts on the model, or on the selected version.
+  const { data: modelDetails } = trpc.model.getById.useQuery({ id: modelId });
   const { data: ratingTotals } = trpc.resourceReview.getRatingTotals.useQuery({
     modelId,
     modelVersionId,
@@ -121,6 +123,14 @@ export default function ModelReviews() {
           page: 1,
         }),
       },
+      undefined,
+      { shallow: true }
+    );
+  };
+
+  const handleFilterChange = (value: string) => {
+    router.replace(
+      { query: removeEmpty({ ...router.query, filter: parseReviewsFilter(value), page: 1 }) },
       undefined,
       { shallow: true }
     );
@@ -200,6 +210,17 @@ export default function ModelReviews() {
     </UserResourceReviewComposite>
   );
 
+  const rank = modelVersionId
+    ? modelDetails?.modelVersions.find((v) => v.id === modelVersionId)?.rank
+    : modelDetails?.rank;
+  const thumbsUp = rank?.thumbsUpCountAllTime ?? 0;
+  const thumbsDown = rank?.thumbsDownCountAllTime ?? 0;
+  const reviewTotal = thumbsUp + thumbsDown;
+  const positiveShare = reviewTotal ? thumbsUp / reviewTotal : 0;
+  const ratingLabel = reviewTotal
+    ? getRatingLabel({ positiveRating: positiveShare, totalCount: reviewTotal })
+    : null;
+
   const ratingCount = getRatingCount(ratingTotals);
   const ratingAverage = getAverageRating(ratingTotals, ratingCount);
 
@@ -241,6 +262,37 @@ export default function ModelReviews() {
             )}
           </ContainerGrid2.Col>
           <ContainerGrid2.Col span={{ base: 12, md: 7 }} offset={{ md: 2 }} order={{ md: 2 }}>
+            {ratingLabel && (
+              <div className="mb-4 flex flex-col gap-2" data-testid="reviews-summary">
+                <Text size="xl" fw={700} c={ratingLabel.color} tt="capitalize">
+                  {ratingLabel.label}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  {Math.floor(positiveShare * 100)}% of {reviewTotal.toLocaleString()}{' '}
+                  {reviewTotal === 1 ? 'review' : 'reviews'}
+                </Text>
+                <div
+                  className="flex h-2 overflow-hidden rounded-full bg-red-6"
+                  role="img"
+                  aria-label={`${thumbsUp.toLocaleString()} thumbs up, ${thumbsDown.toLocaleString()} thumbs down`}
+                >
+                  <div className="bg-green-6" style={{ width: `${positiveShare * 100}%` }} />
+                </div>
+              </div>
+            )}
+            <SegmentedControl
+              mb="md"
+              fullWidth
+              aria-label="Filter reviews"
+              value={filter ?? 'all'}
+              onChange={handleFilterChange}
+              data={[
+                { label: 'All', value: 'all' },
+                { label: 'With images', value: 'images' },
+                { label: '👍', value: 'up' },
+                { label: '👎', value: 'down' },
+              ]}
+            />
             {loadingResourceReviews ? (
               <Center p="xl">
                 <Loader />
@@ -249,8 +301,17 @@ export default function ModelReviews() {
               <Stack style={{ position: 'relative' }}>
                 <LoadingOverlay visible={refetchingResourceReviews} />
                 {resourceReviews?.items.map((review) => (
-                  <ReviewCard key={review.id} creatorId={model?.user.id} {...review} />
+                  <ReviewCardWithImages
+                    key={review.id}
+                    review={review}
+                    creatorId={model?.user.id}
+                  />
                 ))}
+                {resourceReviews && !resourceReviews.items.length && (
+                  <Text c="dimmed" ta="center" py="xl">
+                    No reviews match this filter.
+                  </Text>
+                )}
                 {resourceReviews && resourceReviews.totalPages > 1 && (
                   <Center mt="md">
                     <Pagination
@@ -266,111 +327,5 @@ export default function ModelReviews() {
         </ContainerGrid2>
       </Container>
     </>
-  );
-}
-
-function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creatorId?: number }) {
-  const isCreator = creatorId === review.user.id;
-  const isThumbsUp = review.recommended;
-
-  return (
-    <Card className={classes.card} shadow="sm" radius="md" w="100%" p="xl" withBorder>
-      <Stack gap="sm">
-        {(review.exclude || isCreator) && (
-          <Group justify="start">
-            <Badge color="red">Excluded from count</Badge>
-          </Group>
-        )}
-
-        <Group justify="space-between" wrap="nowrap">
-          <UserAvatar
-            user={review.user}
-            subText={
-              <Group mt={4} gap={8} wrap="nowrap">
-                <Text size="sm" lineClamp={1}>
-                  <DaysFromNow date={review.createdAt} />
-                </Text>
-
-                <RoutedDialogLink
-                  name="resourceReview"
-                  state={{ reviewId: review.id }}
-                  style={{ display: 'flex' }}
-                  rel="nofollow"
-                >
-                  <Badge
-                    px={4}
-                    leftSection={
-                      <Center>
-                        <IconPhoto size={14} />
-                      </Center>
-                    }
-                  >
-                    {review.imageCount > REVIEW_IMAGE_COUNT_CAP
-                      ? `${REVIEW_IMAGE_COUNT_CAP}+`
-                      : review.imageCount}
-                  </Badge>
-                </RoutedDialogLink>
-
-                <RoutedDialogLink
-                  name="resourceReview"
-                  state={{ reviewId: review.id }}
-                  style={{ display: 'flex' }}
-                  rel="nofollow"
-                >
-                  <Badge
-                    px={4}
-                    leftSection={
-                      <Center>
-                        <IconMessage size={14} />
-                      </Center>
-                    }
-                  >
-                    {review.commentCount ?? '0'}
-                  </Badge>
-                </RoutedDialogLink>
-              </Group>
-            }
-            subTextForce
-            avatarSize={40}
-            size="lg"
-            spacing="md"
-            withUsername
-            linkToProfile
-          />
-          <Group className={classes.actionsWrapper} wrap="nowrap">
-            <RoutedDialogLink
-              name="resourceReview"
-              state={{ reviewId: review.id }}
-              style={{ display: 'flex' }}
-              rel="nofollow"
-            >
-              {isThumbsUp ? (
-                <ThemeIcon color="success.5" size="lg" radius="md" variant="light">
-                  <ThumbsUpIcon filled />
-                </ThemeIcon>
-              ) : (
-                <ThemeIcon color="red" size="lg" radius="md" variant="light">
-                  <ThumbsDownIcon filled />
-                </ThemeIcon>
-              )}
-            </RoutedDialogLink>
-            <ResourceReviewMenu
-              reviewId={review.id}
-              userId={review.user.id}
-              review={{
-                ...review,
-                details: review.details ?? '',
-                modelVersionId: review.modelVersionId,
-              }}
-            />
-          </Group>
-        </Group>
-        {review.details && (
-          <ContentClamp maxHeight={300} ml="56px">
-            <RenderHtml html={review.details} withProfanityFilter />
-          </ContentClamp>
-        )}
-      </Stack>
-    </Card>
   );
 }

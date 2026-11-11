@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   getModelReviewsCanonical,
   getModelReviewsRedirect,
+  getReviewsFilterInput,
+  parseReviewsFilter,
 } from '~/components/ResourceReview/model-reviews-url';
 
 describe('getModelReviewsCanonical', () => {
@@ -87,5 +89,30 @@ describe('getModelReviewsRedirect', () => {
 
   it('redirects a repeated version param to its first value', () => {
     expect(getModelReviewsRedirect(MODEL, { modelVersionId: [VERSION, '55'] })).toBe(CANONICAL);
+  });
+});
+
+describe('the reviews page filter param', () => {
+  it.each([
+    ['images', 'images'],
+    ['up', 'up'],
+    ['down', 'down'],
+    [['down', 'up'], 'down'],
+  ] as const)('reads %j as %s', (value, filter) => {
+    expect(parseReviewsFilter(value as string | string[])).toBe(filter);
+  });
+
+  it.each([[undefined], [''], ['all'], ['UP'], ['sideways']])(
+    'reads %j as no filter, so the page lists everything',
+    (value) => {
+      expect(parseReviewsFilter(value)).toBeUndefined();
+    }
+  );
+
+  it('maps each filter onto the getPaged inputs, and none onto no inputs', () => {
+    expect(getReviewsFilterInput('images')).toEqual({ hasImages: true });
+    expect(getReviewsFilterInput('up')).toEqual({ recommended: true });
+    expect(getReviewsFilterInput('down')).toEqual({ recommended: false });
+    expect(getReviewsFilterInput(undefined)).toEqual({});
   });
 });
