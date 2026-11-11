@@ -9,9 +9,9 @@ export const WARNING_NOTICE: Notice = {
 
 export const SMITE_NOTICE: Notice = {
   title: '⚡ You have been smote',
-  message: 'A smite penalty has been applied, reducing your vote weight.',
+  message: 'A smite penalty has been applied and cost you a heart.',
 };
 
 /** Stored as the smite's reason. */
 export const SMITE_REASON =
-  'You failed a skill check. A smite penalty has been applied, reducing your vote weight.';
+  'You failed a skill check. A smite penalty has been applied and cost you a heart.';

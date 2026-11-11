@@ -7,7 +7,6 @@
     rank: string;
     levels: string;
     accuracyBar: number;
-    voteWeight: number;
     goldMultiplier: number;
     dailyGoldCap: number;
     minDaysPlayed?: number;
@@ -17,11 +16,15 @@
     status,
     badges,
     apprenticeBarPercent,
+    levelGold,
+    knightLevel,
   }: {
     ranks: Rank[];
     status: PlayerStatus;
     badges: Record<string, string>;
     apprenticeBarPercent: number;
+    levelGold: number;
+    knightLevel: number;
   } = $props();
 
   const next = $derived(status.nextRank);
@@ -44,9 +47,8 @@
       <p class="levels">Everyone begins here</p>
       <dl>
         <div><dt>Accuracy bar</dt><dd>{apprenticeBarPercent}% on Trials</dd></div>
-        <div><dt>Vote weight</dt><dd>Decides nothing</dd></div>
-        <div><dt>Gold multiplier</dt><dd>None</dd></div>
-        <div><dt>Daily gold cap</dt><dd>No daily cap</dd></div>
+        <div><dt>Judging gold</dt><dd>None</dd></div>
+        <div><dt>Level gold</dt><dd>{count(levelGold)} a level, to level {knightLevel}</dd></div>
       </dl>
     </div>
   </li>
@@ -59,7 +61,6 @@
         <p class="levels">Levels {rank.levels}</p>
         <dl>
           <div><dt>Accuracy bar</dt><dd>{percent(rank.accuracyBar)}</dd></div>
-          <div><dt>Vote weight</dt><dd>{rank.voteWeight}×</dd></div>
           <div><dt>Gold multiplier</dt><dd>{rank.goldMultiplier}×</dd></div>
           <div><dt>Daily gold cap</dt><dd>{count(rank.dailyGoldCap)} a day</dd></div>
           {#if rank.minDaysPlayed}

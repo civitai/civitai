@@ -738,7 +738,6 @@
     rank={data.progress.rank}
     level={data.progress.level}
     levels={data.progress.levels}
-    voteWeight={data.progress.voteWeight}
     goldMultiplier={data.progress.goldMultiplier}
     dailyGoldCap={data.progress.dailyGoldCap}
     previous={data.progress.previous}

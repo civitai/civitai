@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getPlayerStatusOrNew = vi.hoisted(() => vi.fn());
-const judgesNeeded = vi.hoisted(() => vi.fn());
 const startAtRow = vi.hoisted(() => ({ value: undefined as { startAt: Date } | undefined }));
 vi.mock('$lib/server/db', () => ({
   db: {
@@ -11,7 +10,6 @@ vi.mock('$lib/server/db', () => ({
   },
 }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatusOrNew }));
-vi.mock('$lib/server/yesno/items', () => ({ judgesNeeded }));
 vi.mock('$lib/server/rank-badges', () => ({
   rankBadgeUrls: async () => ({ small: {}, large: { Knight: 'k450' } }),
 }));
@@ -22,21 +20,19 @@ const run = () => load({ locals: { user: { id: 7 } } } as never) as Promise<Reco
 beforeEach(() => {
   getPlayerStatusOrNew.mockReset();
   getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight', level: 12 });
-  judgesNeeded.mockReset();
-  judgesNeeded.mockResolvedValue(5);
   startAtRow.value = { startAt: new Date('2026-03-14T00:00:00Z') };
 });
 
 describe('codex load', () => {
-  it("gives the ladder from config with each rank's vote weight, gold multiplier and daily cap", async () => {
+  it("gives the ladder from config with each rank's gold multiplier and daily cap, and no vote weight", async () => {
     const page = await run();
     expect(page.ranks.map((r: { rank: string }) => r.rank)).toEqual([
       'Knight',
       'Templar',
       'Paladin',
     ]);
+    expect(page.ranks[1]).not.toHaveProperty('voteWeight');
     expect(page.ranks[1]).toMatchObject({
-      voteWeight: 1.5,
       goldMultiplier: 1.25,
       dailyGoldCap: 7500,
     });
@@ -53,7 +49,7 @@ describe('codex load', () => {
 
   it('quotes the rules facts, with the fervor formula read from config', async () => {
     const page = await run();
-    expect(page.facts.yesNo.judgesNeeded).toBe(5);
+    expect(page.facts.hearts.max).toBe(3);
     expect(page.facts.fervor).toMatchObject({ scale: 100, windowDays: 7 });
     expect(page.fervorExample.sum).toBe('100 × 100 × 80% × 80% = 6,400');
   });

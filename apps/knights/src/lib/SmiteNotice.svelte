@@ -20,8 +20,8 @@
   </div>
   <p class="count">{hearts} of {maxSmites} hearts left</p>
   <p class="explain">
-    Judging in bad faith earns smites. Each smite lowers the weight of your votes, and right
-    judgments wear smites away. Lose all {maxSmites} hearts and your career resets.
+    Judging in bad faith earns smites. Each smite costs a heart, and right judgments win hearts
+    back. Lose all {maxSmites} hearts and your career resets.
   </p>
 </section>
 

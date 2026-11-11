@@ -60,10 +60,9 @@ const APPRENTICE_REJECTION_TEXT = {
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
-type Perks = { voteWeight: number; goldMultiplier: number; dailyGoldCap: number };
+type Perks = { goldMultiplier: number; dailyGoldCap: number };
 type RankPerks = {
   levels?: string;
-  voteWeight?: number;
   goldMultiplier?: number;
   dailyGoldCap?: number;
   /** The perks of the rank the player held before, for the rank-up's "what changed". */
@@ -75,7 +74,6 @@ type Notice = ProgressNotice &
 const perksOf = (rank: string): Perks | undefined =>
   isRank(rank)
     ? {
-        voteWeight: RANK_RULES[rank].voteWeight,
         goldMultiplier: RANK_RULES[rank].goldMultiplier,
         dailyGoldCap: RANK_RULES[rank].dailyGoldCap,
       }
@@ -89,7 +87,6 @@ function withRankPerks(progress: ProgressNotice | null): Notice | null {
   return {
     ...progress,
     levels: perks.levels,
-    voteWeight: perks.voteWeight,
     goldMultiplier: perks.goldMultiplier,
     dailyGoldCap: perks.dailyGoldCap,
     previous: perksOf(progress.fromRank),

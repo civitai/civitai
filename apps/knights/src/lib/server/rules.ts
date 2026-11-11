@@ -4,6 +4,8 @@ import { goldForRank, PROGRESSION, RATING } from './progression/config';
 import { rankTable } from './progression/rating';
 import { SMITES } from './smites/config';
 import { APPRENTICE } from './apprenticeship/config';
+import { RANK_RULES } from './ranks';
+import { STREAK_BADGE_IDS } from './daily/streak-badges';
 
 const RATING_GUIDE_LEVELS = [
   NsfwLevel.PG,
@@ -23,8 +25,15 @@ export function ratingGuide() {
   }));
 }
 
+/** The Watch-streak days that earn a badge; a milestone whose badge is not set up yet is left out. */
+export const badgeStreaksOf = (ids: Record<number, number | null>) =>
+  Object.entries(ids)
+    .filter(([, id]) => id !== null)
+    .map(([milestone]) => Number(milestone))
+    .sort((a, b) => a - b);
+
 /** Numbers the rules page quotes, read from the game's config. */
-export function rulesFacts(yesNoJudges: number) {
+export function rulesFacts() {
   return {
     apprenticeship: {
       xpPerCorrect: APPRENTICE.xpPerCorrect,
@@ -45,20 +54,25 @@ export function rulesFacts(yesNoJudges: number) {
     gold: {
       perCorrectVote: goldForRank('Knight'),
       belowBarFactor: RATING.belowBarFactor,
+      dailyCaps: {
+        Knight: RANK_RULES.Knight.dailyGoldCap,
+        Templar: RANK_RULES.Templar.dailyGoldCap,
+        Paladin: RANK_RULES.Paladin.dailyGoldCap,
+      },
     },
     watch: {
       size: DAILY.watchSize,
       bonusGold: streakBonusGold(1),
       streakCap: DAILY.streakCap,
       maxShields: DAILY.maxShields,
+      badgeStreaks: badgeStreaksOf(STREAK_BADGE_IDS),
     },
     fervor: {
       scale: PROGRESSION.fervorScale,
       windowDays: PROGRESSION.fervorWindowDays,
       accuracyFloorPercent: PROGRESSION.fervorAccuracyFloor * 100,
     },
-    yesNo: { judgesNeeded: yesNoJudges },
-    hearts: SMITES.max,
+    hearts: { max: SMITES.max, returnAfterDays: SMITES.expireAfterDays },
     ratingGuide: ratingGuide(),
   };
 }

@@ -66,7 +66,7 @@ const standing = (over: Record<string, unknown> = {}) =>
     rank: 'Knight',
     level: 41,
     exp: 640,
-    goldEarned: 3200,
+    goldUnspent: 3200,
     goldPending: 500,
     rating: { accuracy: 0.82, bar: 0.7, belowBar: false, graded: 80, minGraded: 50 },
     nextRank: {
@@ -91,7 +91,7 @@ describe('accuracyLine', () => {
   it('says so when below the bar', () => {
     const rating = { accuracy: 0.5, bar: 0.7, belowBar: true, graded: 80, minGraded: 50 };
     expect(accuracyLine(standing({ rating }))).toBe(
-      'Accuracy 50% · the bar for a Knight is 70% · below it: reduced weight and gold'
+      'Accuracy 50% · the bar for a Knight is 70% · below it: reduced gold'
     );
   });
   it('shows grading progress before the player is rated', () => {
@@ -148,7 +148,7 @@ describe('restartLosses', () => {
       'Gold you have not yet spent',
     ]);
     expect(losses[1].detail).toBe('Level 41 and 640 XP, back to the start.');
-    expect(losses[2].detail).toBe('3,200 earned and 500 still pending.');
+    expect(losses[2].detail).toBe('3,200 unspent and 500 still pending.');
     expect(JSON.stringify(losses).toLowerCase()).not.toContain('smite');
   });
 });
@@ -173,7 +173,7 @@ describe('belowBarCue', () => {
 
   it('says how far under their own rank bar a player is, and what it costs', () => {
     expect(belowBarCue({ rank: 'Templar', rating: rating({}) })).toBe(
-      'Below the Templar bar (77% / 80%): votes and gold count half'
+      'Below the Templar bar (77% / 80%): gold counts half'
     );
   });
 

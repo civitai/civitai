@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { DAILY } from './daily/config';
 import { PROGRESSION, RANK_LADDER } from './progression/config';
-import { rulesFacts } from './rules';
+import { badgeStreaksOf, rulesFacts } from './rules';
 import { SMITES } from './smites/config';
 import { APPRENTICE } from './apprenticeship/config';
 
 describe('rulesFacts', () => {
   it('quotes the numbers the game runs on', () => {
-    const facts = rulesFacts(5);
+    const facts = rulesFacts();
     expect(facts.apprenticeship.knightLevel).toBe(APPRENTICE.knightLevel);
     expect(facts.apprenticeship.accuracyPercent).toBe(APPRENTICE.accuracyBar * 100);
     expect(facts.watch.size).toBe(DAILY.watchSize);
@@ -15,7 +15,7 @@ describe('rulesFacts', () => {
   });
 
   it('quotes the level bands and the days played from the ladder', () => {
-    expect(rulesFacts(5).ranks).toEqual([
+    expect(rulesFacts().ranks).toEqual([
       { rank: 'Knight', levels: '20–49', accuracyPercent: 70, minDaysPlayed: 0 },
       { rank: 'Templar', levels: '50–89', accuracyPercent: 80, minDaysPlayed: 0 },
       { rank: 'Paladin', levels: '90+', accuracyPercent: 85, minDaysPlayed: 60 },
@@ -26,30 +26,43 @@ describe('rulesFacts', () => {
     expect(RANK_LADDER[0].fromLevel).toBe(APPRENTICE.knightLevel);
   });
 
-  it('quotes the hearts from the smite limit', () => {
-    expect(rulesFacts(5).hearts).toBe(SMITES.max);
+  it('quotes the hearts and how long a lost one takes to return, from the smite config', () => {
+    expect(rulesFacts().hearts).toEqual({
+      max: SMITES.max,
+      returnAfterDays: SMITES.expireAfterDays,
+    });
+  });
+
+  it('quotes the daily gold caps and the Vigil streaks from config', () => {
+    const facts = rulesFacts();
+    expect(facts.gold.dailyCaps).toEqual({ Knight: 5000, Templar: 7500, Paladin: 10000 });
+    expect(facts.watch.badgeStreaks).toEqual([7, 30, 100]);
+  });
+
+  it('promises a Vigil badge only for a milestone whose badge exists', () => {
+    expect(badgeStreaksOf({ 7: 1, 30: null, 100: 3 })).toEqual([7, 100]);
+  });
+
+  it('keeps behind-the-scenes numbers out of the facts', () => {
+    expect(rulesFacts()).not.toHaveProperty('yesNo');
   });
 
   it('keeps a vote worth its immediate and graded XP together', () => {
-    const { xp } = rulesFacts(5);
+    const { xp } = rulesFacts();
     expect(xp.atVote + xp.onCorrect).toBe(100);
   });
 
   it('quotes the fervor formula from config, so the page never names a scale itself', () => {
-    expect(rulesFacts(5).fervor).toEqual({
+    expect(rulesFacts().fervor).toEqual({
       scale: PROGRESSION.fervorScale,
       windowDays: PROGRESSION.fervorWindowDays,
       accuracyFloorPercent: PROGRESSION.fervorAccuracyFloor * 100,
     });
   });
 
-  it('quotes how many judges a yes/no question waits for', () => {
-    expect(rulesFacts(7).yesNo.judgesNeeded).toBe(7);
-  });
-
   it('guides all six rating levels, Blocked last', () => {
-    const labels = rulesFacts(5).ratingGuide.map((g) => g.label);
+    const labels = rulesFacts().ratingGuide.map((g) => g.label);
     expect(labels).toEqual(['PG', 'PG-13', 'R', 'X', 'XXX', 'Blocked']);
-    expect(rulesFacts(5).ratingGuide.every((g) => g.description.length > 0)).toBe(true);
+    expect(rulesFacts().ratingGuide.every((g) => g.description.length > 0)).toBe(true);
   });
 });

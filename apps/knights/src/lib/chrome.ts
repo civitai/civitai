@@ -45,7 +45,8 @@ type Standing = {
   rank: string;
   level: number;
   exp: number;
-  goldEarned: number;
+  /** Earned gold not yet converted: the part of a player's gold a restart forfeits. */
+  goldUnspent?: number;
   goldPending: number;
   rating: {
     accuracy: number | null;
@@ -76,19 +77,19 @@ export function accuracyLine({ rank, rating }: Pick<Standing, 'rank' | 'rating'>
   const line = `Accuracy ${percent(rating.accuracy)} · the bar for a ${rank} is ${percent(
     rating.bar
   )}`;
-  return rating.belowBar ? `${line} · below it: reduced weight and gold` : line;
+  return rating.belowBar ? `${line} · below it: reduced gold` : line;
 }
 
 /** "a Knight", "an Acolyte". */
 export const withArticle = (word: string): string =>
   `${/^[aeiou]/i.test(word) ? 'an' : 'a'} ${word}`;
 
-/** The short cue for a player under their own rank's accuracy bar, whose votes and gold are cut (see the Codex); null otherwise. */
+/** The short cue for a player under their own rank's accuracy bar, whose gold is cut (see the Codex); null otherwise. */
 export function belowBarCue({ rank, rating }: Pick<Standing, 'rank' | 'rating'>): string | null {
   if (!rating.belowBar || rating.accuracy === null || rating.bar === null) return null;
   return `Below the ${rank} bar (${percent(rating.accuracy)} / ${percent(
     rating.bar
-  )}): votes and gold count half`;
+  )}): gold counts half`;
 }
 
 export function nextRankLine({ nextRank }: Pick<Standing, 'nextRank'>): string | null {
@@ -112,7 +113,9 @@ export function restartLosses(status: Standing) {
     },
     {
       title: 'Gold you have not yet spent',
-      detail: `${count(status.goldEarned)} earned and ${count(status.goldPending)} still pending.`,
+      detail: `${count(status.goldUnspent ?? 0)} unspent and ${count(
+        status.goldPending
+      )} still pending.`,
     },
   ];
 }

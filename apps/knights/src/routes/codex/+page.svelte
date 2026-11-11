@@ -15,6 +15,7 @@
     { id: 'ranks', label: 'Ranks' },
     { id: 'judging', label: 'How judging works' },
     { id: 'daily', label: 'Daily Watch & streaks' },
+    { id: 'gold', label: 'Gold, Buzz & shop' },
     { id: 'fervor', label: 'Fervor & leaderboard' },
     { id: 'rating-guide', label: 'Rating guide' },
     { id: 'career', label: 'Your career' },
@@ -61,22 +62,28 @@
     <p class="kicker">01 · Ranks</p>
     <h2 id="ranks-title">The ladder</h2>
     <p class="lead">
-      Climb by judging well. Each rank asks for a level and an accuracy bar; in return your votes count
-      for more and your gold multiplies. Your accuracy is the share of your last {facts.accuracy.window}
+      Climb by judging well. Each rank asks for a level and an accuracy bar; in return your gold
+      multiplies. Your accuracy is the share of your last {facts.accuracy.window}
       graded judgments that were right; until {facts.accuracy.minGraded} are graded you are not yet
       rated, and no bar applies. You can skip ranks when you meet both for a higher one.
-      The top rank also asks for days played: days on which you cast at least one judgment since your
-      career began.
+      The top rank also asks for days played: days on which you judged at least one image as a Knight or
+      above since your career began. Practice as an Acolyte does not count.
+    </p>
+    <p class="lead">
+      A rank-up happens when one of your judgments is decided, not when you vote. Reaching a rank earns
+      its badge, and the badge of any rank you skipped.
     </p>
     <RankLadder
       ranks={data.ranks}
       status={data.status}
       badges={data.badges}
       apprenticeBarPercent={facts.apprenticeship.accuracyPercent}
+      levelGold={facts.apprenticeship.levelGold}
+      knightLevel={facts.apprenticeship.knightLevel}
     />
     <p class="muted fine">
-      Below the bar of your own rank your vote weight and gold are cut to {facts.gold.belowBarFactor}×.
-      You keep your rank and level, and recover by judging well; you are never demoted.
+      Below the bar of your own rank your gold is cut to {facts.gold.belowBarFactor}×. You keep your rank
+      and level, and recover by judging well; you are never demoted.
     </p>
   </section>
 
@@ -84,11 +91,11 @@
 
   <section id="judging" aria-labelledby="judging-title">
     <p class="kicker">02 · How judging works</p>
-    <h2 id="judging-title">Consensus, verdicts and skill checks</h2>
+    <h2 id="judging-title">Questions, verdicts and grades</h2>
     <div class="steps">
       <article>
         <span class="ring"><Icon name="users" size={20} /></span>
-        <h3>Consensus</h3>
+        <h3>Questions</h3>
         <p>
           Each image asks one question, usually how it should be rated. Judges answer independently, and
           you never see the image's current rating or anyone else's answer.
@@ -98,17 +105,18 @@
         <span class="ring"><Icon name="gavel" size={20} /></span>
         <h3>Verdicts</h3>
         <p>
-          When enough judges agree, the image is rated that way. A split goes up to higher ranks, and
-          finally to a moderator, so every judgment is eventually decided. Yours is graded against the
-          final verdict: correct, wrong, or inconclusive.
+          Every image ends with a final verdict from the Order. Your judgment is graded against it, and
+          until the image is decided your judgment is pending.
         </p>
       </article>
       <article>
-        <span class="ring"><Icon name="eye-off" size={20} /></span>
-        <h3>Skill checks</h3>
+        <span class="ring"><Icon name="scale" size={20} /></span>
+        <h3>Grades</h3>
         <p>
-          Some images already have a known answer. They are mixed in without notice and measure your
-          accuracy: answer every image honestly.
+          <strong>Correct</strong> matches the Order's final verdict: it pays gold and the extra XP.
+          <strong>Wrong</strong> pays no gold or extra XP and counts against your accuracy.
+          <strong>Inconclusive</strong> means the Order could not settle the image: no gold, and it does
+          not count against your accuracy.
         </p>
       </article>
     </div>
@@ -122,14 +130,15 @@
             so every answer is checked, and each right answer earns {facts.apprenticeship.xpPerCorrect} XP.
           </li>
           <li>
-            Reach level {facts.apprenticeship.knightLevel} with {facts.apprenticeship.accuracyPercent}%
-            accuracy over your last {facts.apprenticeship.window} answers and you become a Knight. If your
-            accuracy is a little short when you reach the level, carry on practising; nothing is lost.
+            Knighthood needs level {facts.apprenticeship.knightLevel} and {facts.apprenticeship.accuracyPercent}%
+            accuracy over at least {facts.apprenticeship.window} practice answers (your latest
+            {facts.apprenticeship.window} count). If your accuracy is a little short when you reach the
+            level, carry on practising; nothing is lost.
           </li>
           <li>
             After every {facts.apprenticeship.checkpointEvery} answers a short recap shows how you did and
-            the ones you missed, with the right answers. An Acolyte's answers never decide anything. Each
-            level you reach on the way, up to level {facts.apprenticeship.knightLevel}, pays
+            the ones you missed, with the right answers. An Acolyte earns no judging gold, but each level
+            you reach on the way, up to level {facts.apprenticeship.knightLevel}, pays
             {facts.apprenticeship.levelGold} gold, once, even if you later restart your career.
           </li>
         </ul>
@@ -139,35 +148,34 @@
         <ul>
           <li>
             Some questions are plain yes or no questions about one image, asked in runs on one subject
-            (press Y or N). Once at least {facts.yesNo.judgesNeeded} judges have answered, an answer with the
-            majority is correct and any other is wrong, with the same XP, gold and accuracy as a rating.
+            (press Y or N). Your answer is graded against the Order's final answer, with the same XP, gold
+            and accuracy as a rating.
           </li>
           <li>
             A judgment gives {facts.xp.atVote} XP at once, and {facts.xp.onCorrect} more when it is graded
-            correct. Higher ranks carry more weight in a vote.
+            correct.
           </li>
           <li>
             A judgment starts at {count(facts.gold.perCorrectVote)} gold for a Knight (more at higher ranks)
-            and is <strong>pending</strong> until the image is decided. A correct verdict makes it
-            <strong>earned</strong>; a wrong or inconclusive one drops it.
+            and is <strong>pending</strong> until the image is decided. See
+            <a href="#gold">Gold, Buzz and the shop</a>.
           </li>
           <li>
-            Judging is paced. Go too fast and you will be asked to rest before the next image, for ten minutes
-            at first and for longer if you keep at it. Moderators are not paced.
+            Every judgment is listed on <a href="/judgments">your judgments</a> page as pending, correct,
+            wrong or inconclusive. Judgments from before a career restart show as <strong>forfeited</strong>:
+            they never pay out.
           </li>
         </ul>
       </div>
       <div>
-        <h3>Smites and hearts</h3>
+        <h3>Hearts and pace</h3>
         <ul>
           <li>
-            Judging in bad faith earns smites. Each smite lowers the weight of your votes, and right
-            judgments wear smites away.
+            You have {facts.hearts.max} hearts. Poor judging can cost one. A lost heart comes back after
+            {facts.hearts.returnAfterDays} days, or sooner if you judge well, and restarting your career restores
+            them all. Lose all {facts.hearts.max} and your career restarts.
           </li>
-          <li>
-            You have {facts.hearts} hearts. Lose them all and your career resets: you start again from the
-            beginning.
-          </li>
+          <li>Judging very fast pauses you for a short while.</li>
         </ul>
       </div>
     </div>
@@ -186,11 +194,16 @@
           days. The Watch is a goal, not a limit: keep judging after it and you keep earning, up to your rank's daily gold cap.
         </p>
         <p>
-          Miss a day and the streak resets. You hold up to {facts.watch.maxShields} free shield, granted
-          each week, which covers exactly one missed day.
+          The Watch, streaks and days played are for Knights and above.
         </p>
         <p>
-          Each rank has a daily gold cap. Past it, judgments still earn XP and count toward the Watch.
+          Miss a day and the streak resets. You start with {facts.watch.maxShields} shield and get one more
+          each week, holding at most {facts.watch.maxShields}. A shield is used only when you miss exactly one day;
+          miss two or more and the streak resets.
+        </p>
+        <p>
+          Reach a streak of {facts.watch.badgeStreaks.join(', ')} days and you earn a Vigil badge for it, once
+          each.
         </p>
       </div>
       <ul class="facts">
@@ -203,8 +216,57 @@
 
   <div class="divider" aria-hidden="true"><span></span></div>
 
+  <section id="gold" aria-labelledby="gold-title">
+    <p class="kicker">04 · Gold, Buzz &amp; shop</p>
+    <h2 id="gold-title">What your judging earns</h2>
+    <div class="details">
+      <div>
+        <h3>Gold</h3>
+        <ul>
+          <li>
+            Judging gold is <strong>pending</strong> until the image is decided. Once your judgment is
+            correct it is yours to spend; a wrong or inconclusive one drops it.
+          </li>
+          <li>
+            The Watch streak bonus and an Acolyte's level gold arrive straight away. The bonus does not
+            count against the daily cap.
+          </li>
+          <li>
+            Each rank has a daily gold cap: {count(facts.gold.dailyCaps.Knight)} for a Knight,
+            {count(facts.gold.dailyCaps.Templar)} for a Templar, {count(facts.gold.dailyCaps.Paladin)} for a
+            Paladin. The cap counts gold as you earn it, so gold from a judgment that turns out wrong still
+            uses up part of the day. Past the cap, judgments still earn XP and count toward the Watch.
+          </li>
+        </ul>
+      </div>
+      <div>
+        <h3>Gold to Buzz</h3>
+        <ul>
+          <li>
+            Buzz packs in the shop turn your gold into Buzz. Each pack shows its gold price and the Buzz it
+            gives, and bigger packs give more Buzz for your gold.
+          </li>
+        </ul>
+      </div>
+      <div>
+        <h3>The shop</h3>
+        <ul>
+          <li>
+            The shop sells Buzz packs, memberships and cosmetics. Some items need a minimum rank.
+          </li>
+          <li>
+            Stock changes every day at UTC midnight. Deals are cheaper and can sell out. You can hold one
+            membership at a time.
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider" aria-hidden="true"><span></span></div>
+
   <section id="fervor" aria-labelledby="fervor-title">
-    <p class="kicker">04 · Fervor &amp; leaderboard</p>
+    <p class="kicker">05 · Fervor &amp; leaderboard</p>
     <h2 id="fervor-title" class="with-icon"><Icon name="sparkles" size={26} />Fervor: your week in the Order</h2>
     <div class="formula">
       <p class="small-caps">Fervor =</p>
@@ -229,7 +291,8 @@
       <article>
         <h3>The leaderboard</h3>
         <p>
-          Everyone is ranked by fervor. Your place and the gap to the next one show beside the image while
+          Knights, Templars and Paladins who graded at least one judgment in the last {facts.fervor.windowDays}
+          days are ranked by fervor. Acolytes do not appear. Your place and the gap to the next one show beside the image while
           you play. <a href="/leaderboard">See the leaderboard</a>.
         </p>
       </article>
@@ -239,7 +302,7 @@
   <div class="divider" aria-hidden="true"><span></span></div>
 
   <section id="rating-guide" aria-labelledby="guide-title">
-    <p class="kicker">05 · Rating guide</p>
+    <p class="kicker">06 · Rating guide</p>
     <h2 id="guide-title">What each level means</h2>
     <p class="lead">Rate what the image shows, not what you would like to see.</p>
     <div class="guide-cols">
@@ -255,6 +318,8 @@
         <p class="kicker" id="career-title">Your career</p>
         <p class="muted">
           Sworn in on {formatDate(data.swornIn)}. Starting over returns you to Acolyte and cannot be undone.
+          It costs your unconverted and pending gold, your streak, and your older judgments, which are
+          forfeited. Your shields and the gold you already spent or converted are kept.
         </p>
       </div>
       <button type="button" class="restart" onclick={() => (restarting = true)}>

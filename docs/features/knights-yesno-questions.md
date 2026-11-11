@@ -24,7 +24,7 @@ The item's question (`questionKey`) is one `KnightsQuestion` per axis, `knights.
 Its `prompt` is a plain fallback question for the axis (`axisPrompt` in `keys.ts`), shown only where an item or Acolyte pair has no
 question text of its own; overlapping axes share one;
 `votesToResolve` is the number of answers a consensus needs (default 5) and `maxVotes` the most it is ever asked (default 10); both are
-read from the row on every answer, so tuning it takes effect at once (`/codex` quotes the fewest across axes). A `maxVotes` below
+read from the row on every answer, so tuning it takes effect at once (the Codex does not quote the number). A `maxVotes` below
 `votesToResolve` is treated as `votesToResolve`. The item's own `votesNeeded` is unused for yes/no.
 Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale`, `retired` or `moderator-retired`). A yes/no item is never `Resolved`, so write-back, escalation and the
 settle sweeps never touch it. Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
@@ -131,5 +131,5 @@ question gets its own `rule` row, so the store computes the majority per questio
 ## Players see
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
-any rating. The Codex has a short paragraph. Hotkeys, banner and the status line are in `/play`. A hidden check is offered before a question is rolled for, so its rate does
+any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is offered before a question is rolled for, so its rate does
 not depend on the yes/no share.
