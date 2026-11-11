@@ -10,7 +10,8 @@ import { familyResources, familyScope, makeTextBlock, type FamilyExt } from '../
  */
 
 // The official version id; the handler throws while it is unset. Registering this graph in the hub
-// also needs quantity capped at 4, the orchestrator's limit for this model.
+// also needs quantity capped at 4, the orchestrator's limit for this model, and App Blocks' step
+// and workflow arms refusing capped ecosystems: only their textToImage arm applies the output cap.
 export const fibo2VersionId: number | undefined = undefined;
 
 export type Fibo2Model = 'dev' | 'editTurbo';

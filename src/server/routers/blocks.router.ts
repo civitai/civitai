@@ -7651,7 +7651,8 @@ export const blocksRouter = router({
             metadata: workflowMetadata,
             // Authoritative maturity clamp on the REAL submit — the orchestrator
             // rejects mature output when this is false. Token-claim derived, and a base-model
-            // licence that caps output holds the submit to PG-13 whatever the token allows.
+            // licence that caps output holds this textToImage submit to PG-13 whatever the token
+            // allows. The step and workflow arms do not apply the cap.
             ...(capOutput
               ? { nsfwLevel: 'pg13' as const, allowMatureContent: false }
               : allowMatureContent === false
