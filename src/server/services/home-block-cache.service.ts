@@ -2,6 +2,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
+import { isCollectionReadShared } from '~/server/services/collection-item-access';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
@@ -110,7 +111,13 @@ export async function getHomeBlockCached(
     metadata,
   };
 
-  if (homeBlockWithData) {
+  // Only a collection everyone may read goes in this entry, which every viewer reads.
+  const shareable =
+    homeBlock.type !== HomeBlockType.Collection ||
+    isCollectionReadShared(
+      (homeBlockWithData as { collection?: { read?: string } } | null)?.collection?.read
+    );
+  if (homeBlockWithData && shareable) {
     await redis.packed.set<HomeBlockWithData>(cacheKey, parsedHomeBlock, {
       EX: CACHE_EXPIRY[homeBlock.type],
     });

@@ -4,6 +4,8 @@ import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 import type { ModelCall } from '~/server/services/blocks/app-impersonation-check.service';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as ReviewAutodeploy from '~/server/services/blocks/review-autodeploy.service';
+import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import { impersonationFingerprint } from '~/server/services/blocks/app-impersonation.logic';
 
 /**
  * The impersonation check on an APPROVED app's listing edit (a revision submitted for review):
@@ -13,12 +15,20 @@ import type * as ReviewAutodeploy from '~/server/services/blocks/review-autodepl
  */
 
 const m = vi.hoisted(() => ({
+  automationOn: true,
   terms: ['Zorblex'] as string[],
   recordSpend: vi.fn<(usd: number) => Promise<undefined>>(async () => undefined),
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   getBlocklistData: vi.fn(async () => m.terms),
+}));
+vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppBlocksFlag>()),
+  // The two flags read individually say ON; only the shared pair says OFF.
+  isAppBlocksAgenticReviewAutostartEnabled: async () => true,
+  isAppBlocksAgenticReviewEnabled: async () => true,
+  isAgentReviewAutomationEnabled: async () => m.automationOn,
 }));
 vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReviewAutodeploy>()),
@@ -130,6 +140,24 @@ describe('runListingEditImpersonationCheck', () => {
     });
   });
 
+  it('🔴 stores the fingerprint of the revision it judged (its text, icon and cover, under the PUBLIC slug)', async () => {
+    seed({ shadow: { name: 'Zorblex Sketch', tagline: 'Draw', description: 'Draws' } });
+    await runListingEditImpersonationCheck(ALPR, { callModel: model });
+    const call = dbMock.dbWrite.keyValue.upsert.mock.calls[0][0] as {
+      create: { value: { fingerprint?: string } };
+    };
+    expect(call.create.value.fingerprint).toBe(
+      impersonationFingerprint({
+        name: 'Zorblex Sketch',
+        slug: 'sketch-helper',
+        tagline: 'Draw',
+        description: 'Draws',
+        iconId: 10,
+        coverId: 20,
+      })
+    );
+  });
+
   it('an icon-only change is checked too, with the new icon handed to the model', async () => {
     seed({ shadow: { iconId: 11 } });
     expect(await runListingEditImpersonationCheck(ALPR, { callModel: model })).toBe('checked');
@@ -206,6 +234,22 @@ describe('🔴 startListingEditImpersonationCheck — gated, budgeted, and never
     ).toBe('disabled');
     expect(run).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.keyValue.upsert).not.toHaveBeenCalled();
+  });
+
+  it('🔴 by default it follows the ONE shared switch pair (isAgentReviewAutomationEnabled)', async () => {
+    seed({ shadow: { name: 'Zorblex Sketch' } });
+    m.automationOn = false;
+    try {
+      expect(
+        await startListingEditImpersonationCheck(ALPR, {
+          gate: { spendTodayUsd: async () => 0, dailyBudgetUsd: () => 40 },
+          run,
+        })
+      ).toBe('disabled');
+    } finally {
+      m.automationOn = true;
+    }
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('an identity change writes a PENDING row synchronously, then starts the check', async () => {
@@ -293,6 +337,42 @@ describe('summariseListingEditCheck / listingEditQueueChecks', () => {
     expect(map.get('alpr_lost')?.status).toBe('missing');
     expect(map.has('alpr_nochange')).toBe(false);
     expect(map.has('alpr_new')).toBe(false);
+  });
+
+  it('🔴 a revision edited AFTER a clean check (new icon) reads as STALE, not complete', async () => {
+    const parentRow = { name: 'Sketch', slug: 'sketch', iconId: 1, coverId: 2, status: 'approved' };
+    const shadowAtCheck = {
+      id: 'apl_s1',
+      name: 'Sketch Pro',
+      tagline: null,
+      description: null,
+      iconId: 1,
+      coverId: 2,
+      revisionOf: parentRow,
+    };
+    const fpAtCheck = impersonationFingerprint({ ...shadowAtCheck, slug: 'sketch' });
+    dbMock.dbRead.keyValue.findMany.mockResolvedValue([
+      {
+        key: listingEditCheckKey('alpr_hit'),
+        value: { ...stored('complete', []), fingerprint: fpAtCheck },
+      },
+    ] as never);
+
+    // Unchanged since the check: complete, nothing to flag.
+    dbMock.dbRead.appListing.findMany.mockResolvedValue([shadowAtCheck] as never);
+    const fresh = await listingEditQueueChecks([{ id: 'alpr_hit', appListingId: 'apl_s1' }], {
+      featureOn: async () => true,
+    });
+    expect(fresh.get('alpr_hit')?.status).toBe('complete');
+
+    // The author swapped the icon on the pending revision afterwards.
+    dbMock.dbRead.appListing.findMany.mockResolvedValue([
+      { ...shadowAtCheck, iconId: 77 },
+    ] as never);
+    const edited = await listingEditQueueChecks([{ id: 'alpr_hit', appListingId: 'apl_s1' }], {
+      featureOn: async () => true,
+    });
+    expect(edited.get('alpr_hit')?.status).toBe('stale');
   });
 
   it('feature flags OFF: no listing-edit badges at all', async () => {

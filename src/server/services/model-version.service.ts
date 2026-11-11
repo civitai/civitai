@@ -187,6 +187,9 @@ import {
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import {
   assertFileTypeChangeAllowed,
+  scanResetForTypeChange,
+  scanResetWriteGuard,
+  TRAINING_DATA_SCAN_PENDING_MESSAGE,
   versionAcceptsNewTrainingData,
 } from '~/server/utils/model-file-replace';
 import {
@@ -3826,6 +3829,7 @@ export const mergeVersions = async ({
             id: true,
             type: true,
             metadata: true,
+            virusScanResult: true,
             modelVersion: { select: { uploadType: true, trainingStatus: true } },
           },
         });
@@ -3837,7 +3841,12 @@ export const mergeVersions = async ({
           assertFileTypeChangeAllowed(file, mapping.type);
 
           const updateData: Record<string, unknown> = {};
-          if (mapping.type) updateData.type = mapping.type;
+          if (mapping.type)
+            Object.assign(
+              updateData,
+              { type: mapping.type },
+              scanResetForTypeChange(file, mapping.type)
+            );
           if (mapping.metadata)
             updateData.metadata = {
               ...((file.metadata as Record<string, unknown>) ?? {}),
@@ -3845,11 +3854,19 @@ export const mergeVersions = async ({
             };
           if (Object.keys(updateData).length > 0) {
             const { count } = await tx.modelFile.updateMany({
-              where: { id: mapping.fileId, ...inMerge },
+              where: {
+                id: mapping.fileId,
+                ...inMerge,
+                ...scanResetWriteGuard(file, mapping.type),
+              },
               data: updateData,
             });
             if (count !== 1)
-              throw throwBadRequestError('A file to update is not part of this merge.');
+              throw throwBadRequestError(
+                Object.keys(scanResetWriteGuard(file, mapping.type)).length
+                  ? TRAINING_DATA_SCAN_PENDING_MESSAGE
+                  : 'A file to update is not part of this merge.'
+              );
           }
         }
       }

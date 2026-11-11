@@ -2229,6 +2229,14 @@ export const REDIS_SYS_KEYS = {
     // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
     ATTEMPTS: 'system:collection-ai-review:attempts',
   },
+  TRAINING_DATA_SCAN: {
+    // Self-heal resubmits per zip — `system:training-data-scan:heal-attempts:${fileId}:${urlHash}`.
+    HEAL_ATTEMPTS: 'system:training-data-scan:heal-attempts',
+    // Definite "can't read the zip" answers per zip — same key shape.
+    HEAL_UNREADABLE: 'system:training-data-scan:heal-unreadable',
+    // Self-heal workflows already taken back — `system:training-data-scan:heal-taken-back:${workflowId}`.
+    HEAL_TAKEN_BACK: 'system:training-data-scan:heal-taken-back',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).
@@ -2240,9 +2248,10 @@ export const REDIS_SYS_KEYS = {
     // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT
     // prefixed `buzz-cap`, so a prefix match on the counters never takes it in.
     BUZZ_CAP_OPT_IN: 'system:blocks:buzz-opt-in',
-    // A spend was refused at the viewer's daily app Buzz cap, today: `system:blocks:buzz-refused:
+    // The viewer's LAST daily app Buzz cap check refused: `system:blocks:buzz-refused:
     // ${userId}:${UTC-day}` = the cap it was refused at, expiring at the next UTC midnight. What
-    // the running app's paused notice reads; opting in deletes it. Not prefixed `buzz-cap`.
+    // the running app's paused notice reads; a passing check or opting in deletes it. Not
+    // prefixed `buzz-cap`.
     BUZZ_CAP_REFUSED: 'system:blocks:buzz-refused',
     // Cumulative TIP-spend cap counter for the block tip endpoint, keyed
     // `system:blocks:tip-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP: that

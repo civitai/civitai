@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { envMock } from '~/__tests__/mocks/env.mock';
 import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 import type { ImpersonationSubject } from '~/server/services/blocks/app-impersonation.logic';
 import type { ModelCall } from '~/server/services/blocks/app-impersonation-check.service';
@@ -61,7 +60,6 @@ const NOW = new Date('2026-11-10T12:00:00Z');
 beforeEach(() => {
   // The canonical db mock resets per FILE; these cases each set their own rows.
   resetHybridNodes();
-  envMock.reset();
   m.terms = ['Zorblex'];
   clearModel.mockClear();
   m.completion.mockClear();
@@ -323,16 +321,6 @@ describe('runImpersonationCheckForRequest', () => {
       expect(dbMock.dbWrite.appReviewAgentReport.updateMany).not.toHaveBeenCalled();
     }
   );
-
-  it('🔴 no env setting widens the name match: a one-character-off name never matches', async () => {
-    envMock.set({ APP_REVIEW_NAME_MATCH_MAX_EDITS: 2 });
-    seed({ id: 'arar_1', status: 'complete', costUsd: null, securityAudit: {} });
-    dbMock.dbRead.appListing.findMany.mockResolvedValue([
-      { id: 'apl_o', name: 'Zorblex Helpers', slug: 'other', appBlockId: null },
-    ] as never);
-    await runImpersonationCheckForRequest(PUBREQ, { callModel: clearModel });
-    expect(written().data.securityAudit.findings.map((f) => f.check)).toEqual(['protected-term']);
-  });
 
   it('a database failure is reported, never thrown', async () => {
     dbMock.dbWrite.appReviewAgentReport.findFirst.mockRejectedValue(new Error('db down'));

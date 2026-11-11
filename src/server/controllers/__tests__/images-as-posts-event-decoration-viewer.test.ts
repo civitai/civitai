@@ -4,12 +4,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ImageService from '~/server/services/image.service';
 import type * as Promotion from '~/shared/utils/promotion';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
  * The model gallery's posts view (image.getImagesAsPostsInfinite) reads its pinned posts, its
  * sponsored post and its page through three separate fetches. Before launch only a flagged viewer
  * sees event hats, and a fetch that names no viewer is treated as signed out, so each one has to
- * name the session user or that part of the gallery shows no hats while the image feed does.
+ * name the viewer (eventViewerOf: a moderator counts only on a session or a full-access key) or
+ * that part of the gallery shows no hats while the image feed does.
  */
 const { fetches } = vi.hoisted(() => ({
   fetches: vi.fn(async () => ({ items: [], nextCursor: undefined })),
@@ -36,7 +39,14 @@ vi.mock('~/shared/utils/promotion', async (importOriginal) => ({
 
 const { getImagesAsPostsInfiniteHandler } = await import('~/server/controllers/image.controller');
 
-const user = { id: 5 };
+const moderator = { id: 5, isModerator: true };
+const session = {};
+const scopedKey = {
+  apiKeyId: 9,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 9 },
+  tokenScope: TokenScope.MediaRead,
+};
 const input = {
   limit: 10,
   modelId: 1,
@@ -51,12 +61,22 @@ beforeEach(() => {
 });
 
 describe('getImagesAsPostsInfiniteHandler event decorations', () => {
-  it.each([false, true])(
-    'names the session user on the pinned, sponsored and page fetches (index feed: %s)',
-    async (imageIndexFeed) => {
+  it.each([
+    [false, 'a session', session, true],
+    [true, 'a session', session, true],
+    [false, 'a scoped token', scopedKey, false],
+    [true, 'a scoped token', scopedKey, false],
+  ])(
+    'names the viewer on the pinned, sponsored and page fetches (index feed: %s, moderator on %s)',
+    async (imageIndexFeed, _label, credential, isModerator) => {
       await getImagesAsPostsInfiniteHandler({
         input,
-        ctx: { user, features: { imageIndexFeed }, req: { headers: {} } } as never,
+        ctx: {
+          user: moderator,
+          ...credential,
+          features: { imageIndexFeed },
+          req: { headers: {} },
+        } as never,
       });
       const calls = fetches.mock.calls.map(
         (c) => (c as unknown as [{ postIds?: number[]; eventDecorationViewer?: unknown }])[0]
@@ -65,7 +85,7 @@ describe('getImagesAsPostsInfiniteHandler event decorations', () => {
       expect(calls.some((c) => c.postIds?.includes(100))).toBe(true);
       expect(calls.some((c) => c.postIds?.includes(200))).toBe(true);
       expect(calls.some((c) => !c.postIds)).toBe(true);
-      for (const call of calls) expect(call.eventDecorationViewer).toBe(user);
+      for (const call of calls) expect(call.eventDecorationViewer).toEqual({ id: 5, isModerator });
     }
   );
 });

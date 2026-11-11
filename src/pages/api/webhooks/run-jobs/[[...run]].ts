@@ -146,6 +146,7 @@ import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
+import { trainingDataScanHealJob } from '~/server/jobs/training-data-scan-heal';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
@@ -187,6 +188,7 @@ import { booleanString } from '~/utils/zod-helpers';
 export const jobs: Job[] = [
   gdprStripeScrubJob,
   scanFilesFallbackJob,
+  trainingDataScanHealJob,
   processHuggingFaceImportsJob,
   archiveStudioTrainingDatasetsJob,
   storageUsageNightlyJob,

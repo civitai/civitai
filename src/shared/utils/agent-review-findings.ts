@@ -252,8 +252,9 @@ export const AGENT_REVIEW_LANE_BADGES: Record<
  * cover — nothing was checked and the row looks as it always did.
  */
 export type ListingEditCheckSummary = {
-  /** `missing` = an identity-changing edit with no stored result at all. */
-  status: 'complete' | 'failed' | 'pending' | 'skipped' | 'missing';
+  /** `missing` = an identity-changing edit with no stored result at all; `stale` = a complete
+   *  result for a revision that has been edited since (its fingerprint no longer matches). */
+  status: 'complete' | 'failed' | 'pending' | 'skipped' | 'missing' | 'stale';
   /** Findings rated medium or worse. */
   flagging: number;
   /** Their titles, for the badge's tooltip. */
@@ -268,6 +269,13 @@ export function listingEditCheckBadge(
   if (summary.status === 'pending') {
     return {
       label: 'Impersonation not checked yet: check the listing by hand',
+      color: 'orange',
+      title: undefined,
+    };
+  }
+  if (summary.status === 'stale') {
+    return {
+      label: 'Impersonation check out of date (listing changed): check the listing by hand',
       color: 'orange',
       title: undefined,
     };

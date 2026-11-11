@@ -41,6 +41,7 @@ vi.mock('~/server/services/mystery-box-inventory.service', async (importOriginal
 import { mysteryBoxRouter } from '../mystery-box.router';
 import { openMysteryBoxInput } from '~/server/schema/mystery-box.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 const holder = {
   id: 2,
@@ -55,7 +56,7 @@ const holder = {
 const caller = (
   features: Record<string, boolean>,
   headers: Record<string, string> = {},
-  ctx: { user?: typeof holder | null; apiKeyId?: number | null } = {}
+  ctx: { user?: typeof holder | null; apiKeyId?: number | null } & Record<string, unknown> = {}
 ) =>
   mysteryBoxRouter.createCaller({
     acceptableOrigin: true,
@@ -365,5 +366,34 @@ describe('the Inventory reads hand the service the flag, the country and the vie
     await rejectsWithCode(signedOut.getOpenings({}), 'UNAUTHORIZED');
     expect(mockHeld).not.toHaveBeenCalled();
     expect(mockOpenings).not.toHaveBeenCalled();
+  });
+});
+
+describe('a moderator on a scoped key reads event boxes as the user alone', () => {
+  const scopedModerator = {
+    user: { ...holder, isModerator: true },
+    apiKeyId: 7,
+    apiKeyType: ApiKeyType.User,
+    subject: { type: 'apiKey', id: 7 },
+    tokenScope: TokenScope.CollectionsRead,
+  };
+  const reader = () => caller({ mysteryBox: true }, {}, scopedModerator);
+  beforeEach(() => vi.clearAllMocks());
+
+  it('mysteryBox.getForEvent', async () => {
+    await reader().getForEvent({ event: 'birthday2026' });
+    expect((mockRead.mock.calls as unknown[][])[0]?.[0]).toMatchObject({ isModerator: false });
+  });
+
+  it('mysteryBox.getCatalogForEvent', async () => {
+    await reader().getCatalogForEvent({ event: 'birthday2026' });
+    expect((mockCatalog.mock.calls as unknown[][])[0]?.[0]).toMatchObject({
+      viewer: { id: holder.id, isModerator: false },
+    });
+  });
+
+  it('mysteryBox.getHeld', async () => {
+    await reader().getHeld();
+    expect((mockHeld.mock.calls as unknown[][])[0]?.[0]).toMatchObject({ isModerator: false });
   });
 });

@@ -38,6 +38,8 @@ import {
   autoLabelTargets,
   handLabelOnlyCount,
   labelTextAfterSwitch,
+  matchesTagFilter,
+  withFilterTags,
   withTags,
   withTrigger,
   versionOptions,
@@ -649,6 +651,47 @@ describe('withTags', () => {
   it('returns the same array when nothing new was typed, so an empty commit is not an edit', () => {
     const tags = ['smile'];
     expect(withTags(tags, ' , smile ')).toBe(tags);
+  });
+});
+
+describe('matchesTagFilter', () => {
+  const tags = ['1girl', 'dress', 'smile'];
+  it('keeps an image with every included tag and none of the excluded ones', () => {
+    expect(matchesTagFilter(tags, { include: ['dress'], exclude: ['crown'] })).toBe(true);
+    expect(matchesTagFilter([...tags, 'crown'], { include: ['dress'], exclude: ['crown'] })).toBe(
+      false
+    );
+    expect(matchesTagFilter(tags, { include: ['dress', 'crown'], exclude: [] })).toBe(false);
+  });
+  it('an exclude-only filter surfaces the images missing the tag, unlabeled ones included', () => {
+    expect(matchesTagFilter(['1girl'], { include: [], exclude: ['dress'] })).toBe(true);
+    expect(matchesTagFilter([], { include: [], exclude: ['dress'] })).toBe(true);
+    expect(matchesTagFilter(tags, { include: [], exclude: ['dress'] })).toBe(false);
+  });
+  it("ignores case, so a typed tag finds the tagger's", () => {
+    expect(matchesTagFilter(tags, { include: ['Dress'], exclude: [] })).toBe(true);
+    expect(matchesTagFilter(tags, { include: [], exclude: ['SMILE'] })).toBe(false);
+  });
+});
+
+describe('withFilterTags', () => {
+  it('adds a comma paste to one side and moves a tag already on the other side', () => {
+    expect(
+      withFilterTags({ include: ['dress'], exclude: ['crown'] }, 'Crown, hat', 'include')
+    ).toEqual({
+      include: ['dress', 'Crown', 'hat'],
+      exclude: [],
+    });
+    expect(withFilterTags({ include: ['dress'], exclude: [] }, 'dress', 'exclude')).toEqual({
+      include: [],
+      exclude: ['dress'],
+    });
+  });
+  it('does not list a tag twice on the same side', () => {
+    expect(withFilterTags({ include: ['dress'], exclude: [] }, 'DRESS', 'include')).toEqual({
+      include: ['DRESS'],
+      exclude: [],
+    });
   });
 });
 

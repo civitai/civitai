@@ -89,9 +89,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // session cookie can roll, and the viewer's own host, which that cookie's Domain comes from.
     // The credential the lookup records goes on THIS request's context, where the tRPC context
     // below reads it.
+    const sessionContext = ((req as { context?: Record<string, unknown> }).context ??= {});
     const sessionRequest = settingsBootstrapRequest(req, {
       host: req.headers.host,
-      context: ((req as { context?: Record<string, unknown> }).context ??= {}),
+      context: sessionContext,
     });
     // JSON round-tripped exactly as a server render's bootstrap is
     // (`resolveSettingsBootstrapForRender`), so the session the procedures below see is the one
@@ -121,7 +122,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // The seeds, from the exact request a server render's bootstrap reads (the internal bootstrap
     // host for ToS, the viewer's host for announcements), so the host-derived ones are the page's.
     let bootstrapFailed = false;
-    const bootstrapSeeds = resolveSettingsBootstrapSeeds(settingsBootstrapRequest(req), session);
+    const bootstrapSeeds = resolveSettingsBootstrapSeeds(
+      settingsBootstrapRequest(req),
+      session,
+      sessionContext
+    );
     bootstrapSeeds.catch(() => {
       bootstrapFailed = true;
     });

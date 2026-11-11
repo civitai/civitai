@@ -2870,16 +2870,14 @@ async function agentReviewSummariesForRequests(
  * empty map: every check then reads stale, which only keeps rows out of the fast lane.
  */
 async function liveListingFingerprints(
+  db: { appListing: { findMany(args: unknown): Promise<unknown> } },
   requests: Array<{ id: string; slug: string; appBlockId: string | null }>
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (requests.length === 0) return out;
   try {
-    const [{ dbRead }, { impersonationFingerprint }] = await Promise.all([
-      import('~/server/db/client'),
-      import('./app-impersonation.logic'),
-    ]);
-    const listings = await dbRead.appListing.findMany({
+    const { impersonationFingerprint } = await import('./app-impersonation.logic');
+    const listings = (await db.appListing.findMany({
       where: {
         slug: { in: [...new Set(requests.map((r) => r.slug))] },
         kind: 'onsite',
@@ -2894,7 +2892,15 @@ async function liveListingFingerprints(
         coverId: true,
         appBlockId: true,
       },
-    });
+    })) as Array<{
+      slug: string;
+      name: string;
+      tagline: string | null;
+      description: string | null;
+      iconId: number | null;
+      coverId: number | null;
+      appBlockId: string | null;
+    }>;
     const bySlug = new Map(listings.map((l) => [l.slug, l]));
     for (const r of requests) {
       const l = bySlug.get(r.slug);
@@ -2903,7 +2909,9 @@ async function liveListingFingerprints(
     }
   } catch (err) {
     console.error(
-      `[liveListingFingerprints] read failed: ${err instanceof Error ? err.message : String(err)}`
+      `[liveListingFingerprints] read failed: ${
+        err instanceof Error ? err.message || err.name : String(err)
+      }`
     );
   }
   return out;
@@ -2973,7 +2981,7 @@ export async function listPendingRequests(
     opts.includeAgentReview
       ? agentReviewSummariesForRequests(items.map((r) => r.id))
       : Promise.resolve(null),
-    opts.includeAgentReview ? liveListingFingerprints(items) : Promise.resolve(null),
+    opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
   ]);
   // The impersonation check is STALE when the listing changed after it ran (a new app's draft
   // or pending listing is edited in place); a stale check never fast-lanes the row.

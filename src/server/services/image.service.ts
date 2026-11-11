@@ -297,6 +297,8 @@ import {
 } from '~/shared/utils/block-provenance-metadata';
 import {
   FEEDBACK_CAPTURE_METADATA_KEY,
+  FEEDBACK_CAPTURE_OWNER_ID,
+  isFeedbackCaptureOwner,
   type FeedbackCaptureMetadata,
 } from '@civitai/shared/feedback-capture';
 import type {
@@ -1525,7 +1527,9 @@ export async function handleBlockImages({
       });
     }
     if (include?.includes('user-notification')) {
-      const notified = images.filter((img) => !held.has(img.id));
+      const notified = images.filter(
+        (img) => !held.has(img.id) && !isFeedbackCaptureOwner(img.userId)
+      );
       logNoticeUnderReview(
         notified.filter((img) => underReview.has(img.id)).map(({ id, userId }) => ({ id, userId }))
       );
@@ -9016,7 +9020,8 @@ export const getImageContestCollectionDetails = async ({
   id,
   userId,
   isModerator,
-}: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
+  imageOwnerId,
+}: { userId?: number; isModerator?: boolean; imageOwnerId?: number } & GetByIdInput) => {
   const useSharedCache = await isFlipt(FLIPT_FEATURE_FLAGS.CONTEST_COLLECTION_ITEMS_REDIS_CACHE);
   const cachedItems: (SharedContestCollectionItem | ContestCollectionItem)[] = useSharedCache
     ? await fetchSharedContestCollectionItems(id)
@@ -9031,9 +9036,11 @@ export const getImageContestCollectionDetails = async ({
   });
   const permissionsFor = (item: { collection: { id: number } }) =>
     allPermissions.find((p) => p.collectionId === item.collection.id);
-  // Cached per image for every viewer, so the read rule is applied per viewer here.
+  // Cached per image for every viewer, so the read rule is applied per viewer here. The image's
+  // owner and an entry's submitter always see it.
+  const isImageOwner = !!userId && userId === imageOwnerId;
   const items = cachedItems.filter((item) => {
-    if (!!userId && userId === item.addedById) return true;
+    if (isImageOwner || (!!userId && userId === item.addedById)) return true;
     return canReadCollectionItems(permissionsFor(item));
   });
 
@@ -9061,7 +9068,6 @@ export const getImageContestCollectionDetails = async ({
 
     return {
       ...i,
-      // Other judges' scores are for managers only.
       scores: permissions?.manage
         ? i.scores
         : i.scores.filter((s) => !!userId && s.userId === userId),
@@ -9079,10 +9085,21 @@ export const getImageContestCollectionDetails = async ({
 // this method should hopefully not be a lasting addition
 export type ModerationImageModel = AsyncReturnType<typeof getImagesByUserIdForModeration>[number];
 
-export async function getImagesByUserIdForModeration(userId: number) {
+/**
+ * `userId`'s images, plus any of `captureImageIds` that are feedback page captures: a capture is owned
+ * by the capture account, so a report on another subject can only name it explicitly.
+ */
+export async function getImagesByUserIdForModeration(
+  userId: number,
+  captureImageIds: number[] = []
+) {
   const { tags, meta, ...select } = imageSelect;
   return await dbRead.image.findMany({
-    where: { userId },
+    where: captureImageIds.length
+      ? {
+          OR: [{ userId }, { userId: FEEDBACK_CAPTURE_OWNER_ID, id: { in: captureImageIds } }],
+        }
+      : { userId },
     select,
     orderBy: { id: 'desc' },
   });
