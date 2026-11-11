@@ -544,10 +544,12 @@ export const writtenReviewSql = Prisma.sql`(
 )`;
 
 // A post can keep an `unpublishedAt` stamp with `publishedAt` still set; the stamp hides it.
+// `acceptableMinor` is dropped for every viewer, as the image feed does outside the pending view.
 const servablePostImageSql = (browsingLevel: number) => Prisma.sql`
   (i."nsfwLevel" & ${browsingLevel}) != 0
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
+  AND i."acceptableMinor" = FALSE
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
   AND ${imageReviewedSql('i')}
   AND p."publishedAt" <= now()
@@ -555,8 +557,7 @@ const servablePostImageSql = (browsingLevel: number) => Prisma.sql`
   AND p."metadata"->>'unpublishedAt' IS NULL
 `;
 
-// Scalar `(SELECT true ...)` probes: the planner does not turn them into a join over every image of
-// the version or of the user.
+// A scalar probe, not EXISTS/JOIN: the planner would otherwise join over every image of the version.
 const usedReviewedVersionSql = Prisma.sql`(SELECT true FROM "ImageResourceNew" ir
   WHERE ir."imageId" = i.id AND ir."modelVersionId" = rr."modelVersionId")`;
 const SMALL_SIDE = 1000;
@@ -594,6 +595,7 @@ const reviewImageCountSql = (limit: number, browsingLevel: number) => Prisma.sql
         SELECT 1 FROM "ImageResourceNew" vir
         WHERE vir."modelVersionId" = rr."modelVersionId"
           AND (
+            -- scalar probe, same reason
             SELECT true FROM "Image" i
             JOIN "Post" p ON p.id = i."postId"
             WHERE i.id = vir."imageId" AND i."userId" = rr."userId" AND ${servablePostImageSql(

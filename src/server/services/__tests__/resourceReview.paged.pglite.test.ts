@@ -80,6 +80,7 @@ beforeAll(async () => {
       "blockedFor" text,
       "nsfwLevel" int NOT NULL DEFAULT 1,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      "acceptableMinor" boolean NOT NULL DEFAULT false,
       metadata jsonb,
       "scanJobs" jsonb
     );
@@ -231,6 +232,81 @@ describe('getPagedResourceReviews', () => {
       const sfw = await page({ modelVersionId: V1, hasImages: true, browsingLevel: NsfwLevel.PG });
       expect(sfw.items.map((r) => r.id)).toEqual([1]);
     });
+  });
+
+  // A review outside a post counts the reviewer's own images; the level must apply on both sides of
+  // that walk and in the `hasImages` reviewer lookup.
+  describe("the viewer's browsing level, for a review with no post", () => {
+    // The reviewer has more images than the version, or fewer: picks which side the count walks.
+    it.each([
+      ['a reviewer with more images than the version', { reviewerPad: 10, versionPad: 0 }],
+      ['a version with more images than the reviewer', { reviewerPad: 0, versionPad: 10 }],
+    ])('hides an R image from a PG viewer for %s', async (_label, { reviewerPad, versionPad }) => {
+      const AUTHOR = 50;
+      await pg.exec(`
+        INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+          (700, ${AUTHOR}, now() - interval '1 day'),
+          (701, 99, now() - interval '1 day');
+        INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel") VALUES (1, ${AUTHOR}, 700, ${NsfwLevel.R});
+        INSERT INTO "ImageResourceNew" VALUES (1, ${V1});
+        INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel")
+          SELECT 100 + g, ${AUTHOR}, 700, ${NsfwLevel.PG} FROM generate_series(1, ${reviewerPad}) g;
+        INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel")
+          SELECT 200 + g, 99, 701, ${NsfwLevel.PG} FROM generate_series(1, ${versionPad}) g;
+        INSERT INTO "ImageResourceNew" SELECT 200 + g, ${V1} FROM generate_series(1, ${versionPad}) g;
+      `);
+      await insertReviews([{ id: 1, userId: AUTHOR, postId: null, daysAgo: 1 }]);
+
+      const sfw = await page({ modelVersionId: V1, browsingLevel: NsfwLevel.PG });
+      expect(sfw.items.map((r) => r.imageCount)).toEqual([0]);
+      const sfwWithImages = await page({
+        modelVersionId: V1,
+        hasImages: true,
+        browsingLevel: NsfwLevel.PG,
+      });
+      expect(sfwWithImages.items).toEqual([]);
+
+      // At a level that includes R the same review counts it and matches.
+      const all = await page({ modelVersionId: V1 });
+      expect(all.items.map((r) => r.imageCount)).toEqual([1]);
+      expect((await page({ modelVersionId: V1, hasImages: true })).items.map((r) => r.id)).toEqual([
+        1,
+      ]);
+    });
+  });
+
+  // The image feed (`getAllImages`) drops `acceptableMinor` images for every viewer outside the
+  // pending view, so the counts and `hasImages` must too or they promise images the card can't load.
+  it('does not count or match acceptableMinor images, for the owner either', async () => {
+    const AUTHOR = 51;
+    await pg.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (710, ${AUTHOR}, now() - interval '1 day');
+      INSERT INTO "Image" (id, "userId", "postId", "acceptableMinor") VALUES
+        (1, ${AUTHOR}, 710, true), (2, ${AUTHOR}, 710, false);
+      INSERT INTO "ImageResourceNew" VALUES (1, ${V1}), (2, ${V1});
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (711, 52, now() - interval '1 day');
+      INSERT INTO "Image" (id, "userId", "postId", "acceptableMinor") VALUES (3, 52, 711, true);
+      INSERT INTO "ImageResourceNew" VALUES (3, ${V1});
+    `);
+    await insertReviews([
+      { id: 1, userId: AUTHOR, postId: 710, daysAgo: 1 },
+      { id: 2, userId: 52, postId: 711, daysAgo: 2 },
+      { id: 3, userId: 52, postId: null, daysAgo: 3 },
+    ]);
+
+    for (const viewer of [undefined, AUTHOR, 52]) {
+      const result = await page({ modelVersionId: V1 }, viewer);
+      expect(
+        result.items.map((r) => [r.id, r.imageCount]),
+        `viewer ${viewer}`
+      ).toEqual([
+        [1, 1],
+        [2, 0],
+        [3, 0],
+      ]);
+    }
+    const withImages = await page({ modelVersionId: V1, hasImages: true });
+    expect(withImages.items.map((r) => r.id)).toEqual([1]);
   });
 
   // The version having fewer images than the reviewer, or more, picks which side the count walks.
