@@ -393,15 +393,15 @@ export const orchestratorRouter = router({
       })
     ),
   // #region [Generation Graph V2 endpoints]
-  /**
-   * Generate from graph - unified endpoint for all generation types
-   */
   acceptGenerationLicense: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(z.object({ ecosystem: z.string() }))
     .mutation(({ ctx, input }) =>
       acceptGenerationLicense({ userId: ctx.user.id, ecosystem: input.ecosystem })
     ),
+  /**
+   * Generate from graph - unified endpoint for all generation types
+   */
   generateFromGraph: orchestratorGuardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(z.any())

@@ -144,6 +144,9 @@ describe('submit paths check the generation licence', () => {
       isWhatIf: true,
       inputGate: { entry: 'appBlocks', isApiCaller: false },
     }).catch(() => undefined);
+    // Both calls got past the input-url check, which runs right before where the licence check
+    // would, so a failure earlier on cannot make the assertion below pass vacuously.
+    expect(mocks.assertInputs).toHaveBeenCalledTimes(2);
     expect(mocks.assertLicense).not.toHaveBeenCalled();
   });
 });

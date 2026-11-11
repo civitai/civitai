@@ -49,7 +49,7 @@ export async function assertGenerationLicenseAccepted({
   if (hasAcceptedGenerationLicense(settings?.generationLicenseAcceptances, terms)) return;
   throw new TRPCError({
     code: 'FORBIDDEN',
-    message: `Accept the ${terms.title} before generating.`,
+    message: `Accept the ${terms.title} in the Civitai generator before generating with this model.`,
     cause: GENERATION_LICENSE_NOT_ACCEPTED,
   });
 }
