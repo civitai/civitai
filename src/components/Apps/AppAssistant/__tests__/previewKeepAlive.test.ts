@@ -23,6 +23,7 @@ describe('isViewerBridgeMessage', () => {
       'OPEN_IMAGE_PICKER',
       'OPEN_IMAGE_UPLOAD',
       'OPEN_MEDIA_UPLOAD',
+      'OPEN_MEDIA_UPLOAD_BATCH',
       'OPEN_RESOURCE_PICKER',
       'PREPARE_TRAINING_DATASET',
       'PUBLISH_GENERATION_OUTPUTS',
