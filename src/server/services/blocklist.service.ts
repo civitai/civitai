@@ -713,7 +713,7 @@ export async function throwOnBlockedUserContent(
     /** The row being written, for the pattern-match log. Omitted on a create (no id yet). */
     entityType?: string;
     entityId?: number;
-    /** Whose content it is. Omitted where no user is in the loop (a fan-out re-check). */
+    /** The user saving the content, when the caller has one. */
     userId?: number;
     /**
      * Replaces the thrown `BAD_REQUEST` for a caller that has its own error type. It is handed

@@ -190,7 +190,7 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
   it('maps blocklist hits back to their leaf by index', async () => {
     mockFindBlocked.mockResolvedValue([
       { kind: 'link', index: 1, matched: ['bad.example', 'worse.example'] },
-      { kind: 'pattern', index: 0, matched: 'scam phrase' },
+      { kind: 'pattern', index: 0, matched: 'scam phrase', patternId: 0 },
     ]);
     const hits = await classifySharedTexts([leaf('zero'), leaf('one', 'k', 'key')]);
     expect(hits).toEqual([
@@ -539,7 +539,9 @@ describe('recording', () => {
   });
 
   it('enforce keeps a PLATFORM-authored matched term: the POI list word and a blocklist entry', async () => {
-    mockFindBlocked.mockResolvedValue([{ kind: 'pattern', index: 0, matched: 'list entry' }]);
+    mockFindBlocked.mockResolvedValue([
+      { kind: 'pattern', index: 0, matched: 'list entry', patternId: 0 },
+    ]);
     const scan = await scanSharedData({ a: 'a list entry here', b: 'emma watson' });
     const rows = sharedDataHitRows(scan, enforce);
     expect(rows.find((r) => r.category === 'pattern')?.matched).toBe('list entry');

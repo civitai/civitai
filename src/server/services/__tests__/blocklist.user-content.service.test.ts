@@ -111,12 +111,7 @@ describe('throwOnBlockedUserContent', () => {
       expect(logs[0][0].details).toMatchObject({ surface: 'model', enforced: false });
     });
 
-    /**
-     * The event names WHAT was written and by whom, never the text. A log carrying the matched
-     * text and no ids could not be traced back to a row, and copied a blocklist entry into every
-     * event. `patternId` is the entry's position in the stored list, empties included, so it
-     * points at the same row a moderator sees.
-     */
+    /** `patternId` is the entry's position in the stored list, empty entries included. */
     it('records ids and the pattern position, never the matched text', async () => {
       setLists({ patterns: ['', 'unrelated phrase', PHISH] });
 
