@@ -1379,6 +1379,7 @@ export interface ModActivity {
   entityId: number | null;
   createdAt: Date;
   host: string | null;
+  credential: string | null;
 }
 
 export interface ModThreadClaim {
