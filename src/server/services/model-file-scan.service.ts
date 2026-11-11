@@ -225,7 +225,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   // loops if the orchestrator keeps rejecting the same file. Transient outages
   // are accepted as a 24h delay; we don't have a retry-counter column.
   // A Training Data write also names the url checked above, so a zip swapped in meanwhile is untouched.
-  const sameBytes = file.type === 'Training Data' ? { url: file.url } : {};
+  const sameBytes = file.type === 'Training Data' ? { url: file.url, type: 'Training Data' } : {};
 
   if (outcome.failed) {
     await dbWrite.modelFile.update({

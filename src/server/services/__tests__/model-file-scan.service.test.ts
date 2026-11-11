@@ -1410,7 +1410,11 @@ describe('model-file-scan.service', () => {
 
         await deliver();
 
-        expect(mockDbWrite.modelFile.update.mock.calls[0][0].where).toEqual({ id: 1, url: ZIP });
+        expect(mockDbWrite.modelFile.update.mock.calls[0][0].where).toEqual({
+          id: 1,
+          url: ZIP,
+          type: 'Training Data',
+        });
       });
 
       it.each(['succeeded', 'failed'])(
@@ -1437,7 +1441,7 @@ describe('model-file-scan.service', () => {
         await deliver('failed');
 
         expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
-          where: { id: 1, url: ZIP },
+          where: { id: 1, url: ZIP, type: 'Training Data' },
           data: { scanRequestedAt: expect.any(Date) },
         });
       });
