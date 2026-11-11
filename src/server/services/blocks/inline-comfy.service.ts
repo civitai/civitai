@@ -10,6 +10,7 @@ import { AIR_URN_PREFIX } from '~/server/services/blocks/steps';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import type { ComfyGraph } from '~/server/services/blocks/recipes';
 import { INLINE_NODE_REFUSED_ERROR_CODE } from '~/shared/constants/block-scope.constants';
+import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks customComfy INLINE-GRAPH belt.
@@ -471,22 +472,12 @@ const MEDIA_INPUT_NAMES: ReadonlySet<string> = new Set([
   'mask',
 ]);
 const KEY_LIKE_RE = /[0-9a-f]{16}|[0-9a-f]{8}-[0-9a-f]{4}-/i;
-const PRIVATE_HOST_RE =
-  /^localhost$|\.(localhost|local|internal|intranet|lan|corp|home\.arpa|svc)$/i;
 
-/** A public https URL: no credentials, port, IP-literal or internal host, no traversal. */
+/** A public https URL (shared SSRF check), with no credentials, port or traversal. */
 function isFetchableMediaUrl(value: string): boolean {
-  if (/[\s[\]\\]/.test(value)) return false;
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
-  const host = url.hostname.replace(/\.+$/, '');
-  if (!host.includes('.') || host.includes(':') || /^[\d.]+$/.test(host)) return false;
-  if (PRIVATE_HOST_RE.test(host)) return false;
+  if (/[\s[\]\\]/.test(value) || !isPublicHttpsUrl(value).ok) return false;
+  const url = new URL(value);
+  if (url.username || url.password || url.port) return false;
   let path: string;
   try {
     path = decodeURIComponent(url.pathname);
