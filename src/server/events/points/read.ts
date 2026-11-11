@@ -14,8 +14,7 @@ import { sysRedis } from '~/server/redis/client';
 
 type PointsEvent = { name: string; startDate: Date };
 
-// No further back than a bucket lives. In steady state the cut is under ~75 minutes old, so a read
-// sums about 15 buckets; only while settles fail does it reach this.
+// No further back than a bucket lives; only while settles fail does a read reach this.
 const MAX_LIVE_BUCKETS = (LIVE_BUCKET_TTL_S * 1000) / LIVE_BUCKET_MS;
 
 // The live buckets a read adds on top of the base: from the referee's cut to now.

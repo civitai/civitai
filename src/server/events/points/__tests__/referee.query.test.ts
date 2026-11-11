@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const query = vi.hoisted(() =>
@@ -8,9 +9,9 @@ const query = vi.hoisted(() =>
 );
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query } }));
 
-const { queryReferee, REFEREE_CLICKHOUSE_BUDGET_S, refereeWindow } = await import(
-  '~/server/events/points/referee'
-);
+const { queryReferee, REFEREE_CLICKHOUSE_BUDGET_S, refereeWindow, runEventPointsReferee } =
+  await import('~/server/events/points/referee');
+const { LIVE_BUCKET_MS } = await import('~/server/events/points/keys');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -69,19 +70,41 @@ describe('referee ClickHouse queries', () => {
       expect(settings?.send_progress_in_http_headers).toBe(1);
       expect(Number(settings?.http_headers_progress_interval_ms)).toBeLessThan(300_000);
     }
+    // With the idle timer kept quiet, only this stops the client waiting on an overrunning query.
+    for (const [arg] of query.mock.calls)
+      expect((arg as { abort_signal?: unknown }).abort_signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('starts no settle query once the budget is spent', async () => {
+  // floor() of a sub-second remainder is 0, which ClickHouse reads as no cap at all.
+  it('starts no query with under a second of budget left', async () => {
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     query.mockClear();
     await expect(
       queryReferee(
         EVENT,
         refereeWindow(EVENT, 'live', new Date('2026-11-05T12:07:00.000Z')),
-        Date.now() - 1
+        Date.now() + 500
       )
     ).rejects.toThrow('budget');
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+// The alert has to fire on the runs that then fail, or a stuck settle goes unseen.
+describe('runEventPointsReferee', () => {
+  it('logs a stale cut before a settle query that fails', async () => {
+    const now = new Date('2026-11-05T12:07:00.000Z');
+    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    redisMock.sysRedis.get.mockResolvedValue(
+      String((now.getTime() - 5 * 60 * 60 * 1000) / LIVE_BUCKET_MS)
+    );
+    query.mockClear();
+    query.mockRejectedValueOnce(new Error('Timeout exceeded'));
+    loggingMock.logToAxiom.mockClear();
+    await expect(runEventPointsReferee(EVENT, 'live', now)).rejects.toThrow('Timeout exceeded');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'event-points-cut-stale', event: 'e' })
+    );
   });
 });
 

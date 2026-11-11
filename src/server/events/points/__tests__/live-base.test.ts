@@ -439,7 +439,6 @@ describe('settles that fail for hours, then catch up', () => {
   it('shows the same total after the catch-up settle: each settled bucket leaves the sum as it enters the base', async () => {
     const { fake, cut } = stuck();
     const newCut = NOW_BUCKET - 2;
-    // The referee's total: the ledger up to the new cut.
     const settled = BASE + (newCut - cut);
     await resetLiveBase(
       fake.redis as unknown as RefereeRedis,

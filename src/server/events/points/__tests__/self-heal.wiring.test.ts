@@ -31,7 +31,10 @@ vi.mock('~/server/events/load-events', () => ({
   ],
 }));
 vi.mock('~/server/events/points/sync', () => ({ syncEventHats: leaves.sync }));
-vi.mock('~/server/events/points/referee', () => ({ runEventPointsReferee: leaves.referee }));
+vi.mock('~/server/events/points/referee', () => ({
+  runEventPointsReferee: leaves.referee,
+  REFEREE_CLICKHOUSE_BUDGET_S: 720,
+}));
 // The real lock, watched: what the production heal asks it for.
 const lockCalls = vi.hoisted(() => [] as unknown[][]);
 vi.mock('~/server/jobs/job-lock', async (importOriginal) => {

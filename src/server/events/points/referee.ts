@@ -39,24 +39,27 @@ const SETTLE_LAG_MS = 10 * 60 * 1000;
 // The hour (UTC) whose run recomputes the whole season, picking up late removals and bans on days
 // the hourly runs treat as final.
 const FULL_RECOMPUTE_HOUR = 3;
-// What a settle's two ClickHouse queries may take together. The hourly job's lock is 15 minutes;
-// this leaves 3 for the hat sync before the settle and the Postgres and Redis writes after it.
+// Both ClickHouse queries together. Must stay under the hourly job's 15 min lock (SETTLE_LOCK_S in
+// self-heal.ts), which also covers the hat sync and the Postgres and Redis writes.
 export const REFEREE_CLICKHOUSE_BUDGET_S = 12 * 60;
-// The client's 300 s request_timeout is a socket idle timer. Progress headers put bytes on the socket
-// every minute while a query runs, so neither it nor a load balancer's idle timeout cuts a query the
-// budget still allows.
+// The client's 300 s request_timeout is a socket idle timer; progress headers keep bytes flowing so
+// a query the budget still allows is not dropped by the client while the server runs on.
 export const REFEREE_PROGRESS_SETTINGS = {
   send_progress_in_http_headers: 1,
   http_headers_progress_interval_ms: '60000',
 } as const;
-// A base this far behind the cut it should have reached means settles are failing.
+// One missed hourly settle is normal lag; two means settles are failing.
 export const STALE_CUT_ALERT_MS = 2 * 60 * 60 * 1000;
 
-// The server-side cap for the next referee query: what is left of the settle's budget.
-function secondsLeft(deadline: number) {
+// Past the server's cap the client gives up too: max_execution_time is checked between blocks, so a
+// query can overrun it, and progress headers keep the idle timer from ever firing.
+const CLIENT_GRACE_S = 30;
+
+// The cap for the next referee query, on the server and on the client.
+function queryLimit(deadline: number) {
   const seconds = Math.floor((deadline - Date.now()) / 1000);
   if (seconds < 1) throw new Error('Referee ClickHouse budget spent');
-  return seconds;
+  return { seconds, signal: AbortSignal.timeout((seconds + CLIENT_GRACE_S) * 1000) };
 }
 
 export type RefereeEvent = {
@@ -207,11 +210,13 @@ async function restrictedUsers(event: RefereeEvent, window: Window, deadline: nu
     hidden: [],
     newAccountMinId: MAX_INT32,
   });
+  const limit = queryLimit(deadline);
   const result = await clickhouse.query({
     query: eventPointsRefereeUsersSql,
     format: 'JSONEachRow',
+    abort_signal: limit.signal,
     clickhouse_settings: {
-      max_execution_time: secondsLeft(deadline),
+      max_execution_time: limit.seconds,
       ...REFEREE_PROGRESS_SETTINGS,
     },
     query_params: params,
@@ -253,13 +258,15 @@ export async function queryReferee(
     sysRedis.hGetAll(eventPointKeys(event.name).weights),
     restrictedUsers(event, window, deadline),
   ]);
+  const limit = queryLimit(deadline);
   const result = await clickhouse.query({
     query: eventPointsRefereeSql,
     format: 'JSONEachRow',
+    abort_signal: limit.signal,
     // A whole-season run on the nightly pass groups every first of the season; spill to disk rather
     // than fail on memory, and allow it the time.
     clickhouse_settings: {
-      max_execution_time: secondsLeft(deadline),
+      max_execution_time: limit.seconds,
       ...REFEREE_PROGRESS_SETTINGS,
       max_bytes_before_external_group_by: '8000000000',
       max_bytes_before_external_sort: '8000000000',
@@ -437,8 +444,8 @@ export async function resetLiveBase(
   return changed;
 }
 
-// Logged before the settle query, so it fires on every run while settles keep failing. Measured
-// against the cut this run should reach, not the clock, so a season past its end never trips it.
+// Measured against the cut this run should reach, not the clock, so a season past its end never
+// trips it.
 export async function alertOnStaleCut(
   redis: Pick<RefereeRedis, 'get'>,
   event: { name: string },
@@ -464,12 +471,14 @@ export async function alertOnStaleCut(
 export async function runEventPointsReferee(
   event: RefereeEvent,
   season: EventPointSeason,
-  now = new Date()
+  now = new Date(),
+  // Shared by every settle under one hold of the lock, so a run settling several events stays in it.
+  deadline = Date.now() + REFEREE_CLICKHOUSE_BUDGET_S * 1000
 ) {
   const window = refereeWindow(event, season, now);
   if (window.cut <= window.start) return { season, rows: 0, changed: 0, final: false };
   await alertOnStaleCut(sysRedis, event, season, window.cut);
-  const rows = await queryReferee(event, window);
+  const rows = await queryReferee(event, window, deadline);
   await writeDailySnapshot(event, window, rows);
   const final = await finalDayTotals(event, window);
   const totals = refereeTotals([...final, ...rows]);
