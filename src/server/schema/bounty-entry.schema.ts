@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { imageGenerationSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { baseFileSchema } from './file.schema';
+import { constants } from '~/server/common/constants';
 
 export type BountyEntryFileMeta = z.infer<typeof bountyEntryFileMeta>;
 
@@ -30,7 +31,11 @@ export const upsertBountyEntryInputSchema = z.object({
         meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
       })
     )
-    .min(1, 'At least one example image must be uploaded'),
+    .min(1, 'At least one example image must be uploaded')
+    .max(
+      constants.bounties.maxEntryImagesForEdit,
+      `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`
+    ),
   description: getSanitizedStringSchema().nullish(),
 });
 
