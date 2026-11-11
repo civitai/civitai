@@ -94,7 +94,7 @@ const ACTIVE_AUTHOR = 8404;
 const VISIBLE = 'apl_owner_active';
 const OF_BANNED = 'apl_owner_banned';
 const OF_DELETED = 'apl_owner_deleted';
-const CHILD_OF_BANNED = 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1ZOB';
+const CHILD_OF_BANNED = 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z3B';
 
 const SUB_LISTINGS_MIGRATION = path.resolve(
   __dirname,
