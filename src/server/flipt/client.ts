@@ -11,6 +11,11 @@ export enum FLIPT_FEATURE_FLAGS {
   RATING_DISPUTE = 'rating-dispute',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
+  // Percentage rollout keyed on the file id: the share of files whose mini response leads with
+  // the content-hash download url. Each file's url changes once over the ramp. Create the key in
+  // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
+  // on every mini request.
+  DOWNLOAD_HASH_URLS = 'download-hash-urls',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
@@ -142,6 +147,12 @@ export enum FLIPT_FEATURE_FLAGS {
   BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
   // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
   COSMETICS_L1 = 'cosmetics-l1',
+  // Gates the larger `tag-ids-for-images` (tagIdsForImagesCache) L1 tier: longer TTL AND more entries.
+  TAG_IDS_FOR_IMAGES_L1_LARGE = 'tag-ids-for-images-l1-large',
+  // Batches the per-command `redis_command_duration_seconds` observations into a local accumulator
+  // flushed at scrape (same series, same values; see @civitai/telemetry/redis-command-metrics).
+  // Boolean, no entity, read at most once per 5s per process. A missing key reads as off.
+  REDIS_COMMAND_METRICS_BATCHED = 'redis-command-metrics-batched',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -321,6 +332,8 @@ export enum FLIPT_FEATURE_FLAGS {
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
   // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
+  // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
+  APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:

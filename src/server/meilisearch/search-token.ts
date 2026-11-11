@@ -81,7 +81,7 @@ export function buildSearchRules(
   );
 }
 
-/** `null` when no signing key is configured: the browser then falls back to the shared key. */
+/** `null` when no signing key is configured: the browser then searches through `/api/search`. */
 export function mintSearchToken(
   viewer?: SearchTokenViewer,
   now = Date.now()

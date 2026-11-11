@@ -811,7 +811,13 @@ export const pullModelsData = async (
     for (const versionBatch of versionBatches) {
       tasks.push(async () => {
         logger(`PullData :: Pull images`, batchLogKey);
-        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
+        // bypassLocal reaches the cache's appendFn, which reads each image's tag ids past this
+        // process's L1 (see imagesForModelVersionsCache): the document keeps them until its next
+        // reindex. Only this index builder bypasses; getModelSearchIndexRecords is a request path
+        // (the resource picker) that stores nothing, so it stays on the L1.
+        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch, {
+          bypassLocal: true,
+        });
         const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
         logger(`PullData :: Pulled images`, batchLogKey);
 

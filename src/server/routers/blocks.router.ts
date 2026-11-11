@@ -390,6 +390,7 @@ import {
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { auditPassThroughPrompts } from '~/server/services/blocks/pass-through-prompt-audit';
 import {
   cancelWorkflow,
   getWorkflow,
@@ -10124,6 +10125,8 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (isInlineComfyBody(body)) {
     const verdict = checkInlineComfyGraph(body.workflow);
     if (!verdict.runnable) return { snapshot: verdict.snapshot };
+    const pending = await checkInlineComfySources({ graph: verdict.graph, userId, claims });
+    if (pending) return pending;
     return {
       snapshot: {
         workflowId: 'wf_estimate',
@@ -10243,6 +10246,8 @@ async function submitCustomComfyWorkflow(opts: {
     // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
     //     which is what makes gating that flat array sufficient.
     assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
+    const pending = await checkInlineComfySources({ graph: inlineBody.workflow, userId, claims });
+    if (pending) return pending;
     // (b) ENTITLEMENT — the real belt (early-access `hasAccess` + Private
     //     subscription + anti-drop + anti-substitute) over the declared AIRs.
     await assertViewerEntitledToInlineResources({
@@ -10940,6 +10945,47 @@ async function assertStepOrWorkflowInputsUsable(
       } satisfies BlockWorkflowSnapshot,
     };
   }
+}
+
+/**
+ * The source images an inline customComfy graph reads must pass the app-block source gate. The
+ * whole graph is read: a node may link a text field into an image input. The estimate and the
+ * submit both call this on the graph `checkInlineComfyGraph` returned, so nothing an estimate
+ * saw is trusted at submit. A pending source returns the failed snapshot; anything else throws.
+ */
+async function checkInlineComfySources(opts: {
+  graph: ComfyGraph;
+  userId: number;
+  claims: BlockClaims;
+}): Promise<{ snapshot: BlockWorkflowSnapshot } | null> {
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(opts.graph);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'workflow graph nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'workflow graph is too large to check' });
+  }
+  try {
+    await assertGenerationInputsUsable({
+      urls,
+      userId: opts.userId,
+      entry: 'appBlocksInlineComfy',
+      isApiCaller: false,
+      opaqueInput: true,
+      appBlockLog: { appBlockId: opts.claims.appBlockId, stepTypes: 'customComfy' },
+    });
+  } catch (error) {
+    if (!isAppSourcePendingError(error)) throw error;
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: (error as TRPCError).message,
+        errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
+      } satisfies BlockWorkflowSnapshot,
+    };
+  }
+  return null;
 }
 
 /** The step types a body runs, for a log line: a registry step's id, else each `$type`. */
@@ -12595,6 +12641,7 @@ async function submitPassThroughStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
   // A pass-through body carries no `accountType` (its `.strict()` wire shape has
   // no such field), so currency selection is Auto — the domain-allowed set,
   // drained blue-first.
@@ -13258,6 +13305,7 @@ async function submitMultiStepWorkflow(opts: {
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, prepared.steps));
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
@@ -14054,7 +14102,7 @@ type QuotedGrantSubmitArm = {
   /** Extra fields on the submit-failure log line. */
   logFields: Record<string, unknown>;
   /** Kind refusals that must run before anything costs something (after the gate). */
-  preflight?: () => void;
+  preflight?: (auth: QuotedGrantAuth) => void | Promise<void>;
   /**
    * The orchestrator `externalId` this job is submitted under, and what a DEFINITE
    * submit records. Computed before the replay claim.
@@ -14093,7 +14141,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
   const copy = QUOTED_GRANT_COPY[arm.kind];
   const auth = await assertQuotedGrantRequestAllowed(arm.kind, claims, ctx);
   const { userId } = auth;
-  arm.preflight?.();
+  await arm.preflight?.(auth);
   const quoteId = arm.quoteId;
   if (!quoteId) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: arm.missingQuoteMessage });
@@ -14706,10 +14754,12 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
       generationType: resolveBlockGenerationType(body),
       logFields: { stepType: body.$type },
       // Before anything that costs something: the platform denylist (the same rule as
-      // the unconfirmed arm), then no training `$type` through this door.
-      preflight: () => {
+      // the unconfirmed arm), then no training `$type` through this door, then the prompt gate.
+      preflight: async ({ userId }) => {
         assertPassThroughStepTypeAllowed(body.$type, body.input);
         assertNotTrainingStepType(body.$type);
+        const { isGreen } = resolveBlockMaturity(claims);
+        await auditPassThroughPrompts(passThroughAuditContext(claims, userId, isGreen, [body]));
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -14931,6 +14981,21 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
       log: { userId, source: 'app-blocks', appBlockId: claims.appBlockId },
     });
   }
+}
+
+function passThroughAuditContext(
+  claims: BlockClaims,
+  userId: number,
+  isGreen: boolean,
+  steps: ReadonlyArray<{ $type: string; input: unknown }>
+) {
+  return {
+    steps,
+    userId,
+    appBlockId: claims.appBlockId,
+    isGreen,
+    loadIsModerator: async () => !!(await getBlockSessionUser(userId)).isModerator,
+  };
 }
 
 /** A `kind:'training'` body as the one training step the trigger-word rule reads. */
