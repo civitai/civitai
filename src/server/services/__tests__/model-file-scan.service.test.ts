@@ -1302,6 +1302,97 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.virusScanMessage).toBeNull();
     });
 
+    describe('a virus scan that could not read the whole file', () => {
+      const virusVerdict = async (output: Record<string, unknown>) => {
+        mockGetWorkflow.mockResolvedValue({
+          data: { metadata: { fileId: 1 }, steps: [{ $type: 'modelClamScan', output }] },
+        });
+        await processModelFileScanResult(
+          makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+        );
+        return mockDbWrite.modelFile.update.mock.calls[0][0].data.virusScanResult;
+      };
+
+      it.each([
+        ['encrypted', { status: 'encrypted', exitCode: 1 }, ScanResultCode.Error],
+        ['limitsExceeded', { status: 'limitsExceeded', exitCode: 2 }, ScanResultCode.Error],
+        ['limitsExceeded, exit 0', { status: 'limitsExceeded', exitCode: 0 }, ScanResultCode.Error],
+        ['clean', { status: 'clean', exitCode: 0 }, ScanResultCode.Success],
+        ['infected', { status: 'infected', infected: true, exitCode: 1 }, ScanResultCode.Danger],
+      ])('status %s is stored as %s', async (_, output, expected) => {
+        expect(await virusVerdict(output)).toBe(expected);
+      });
+
+      it('stores a model file the scan stopped at a limit as an Error too', async () => {
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          id: 1,
+          type: 'Model',
+          modelVersionId: 100,
+          modelVersion: { modelId: 200 },
+        });
+        expect(await virusVerdict({ status: 'limitsExceeded', exitCode: 0 })).toBe(
+          ScanResultCode.Error
+        );
+      });
+
+      it.each([
+        [
+          'an encrypted alert',
+          0,
+          '/m/a.zip: OK\nzip-precheck: Heuristics.Encrypted.ZipPreCheck FOUND\n',
+          ScanResultCode.Error,
+        ],
+        [
+          'an encrypted alert with exit 1',
+          1,
+          '/m/a.zip: Heuristics.Encrypted.Zip FOUND\n',
+          ScanResultCode.Danger,
+        ],
+        [
+          'a file-count limit with exit 1',
+          1,
+          '/m/a.zip: Heuristics.Limits.Exceeded.MaxFiles FOUND\n',
+          ScanResultCode.Danger,
+        ],
+        [
+          'a size limit',
+          2,
+          '/m/a.zip: Heuristics.Limits.Exceeded.MaxFileSize FOUND\n/m/a.zip: Virus(es) detected ERROR\n',
+          ScanResultCode.Error,
+        ],
+        [
+          'a pre-check limit after an OK',
+          0,
+          '/m/a.zip: OK\nzip-precheck: Heuristics.Limits.Exceeded.ZipPreCheck.PrependedData FOUND\n',
+          ScanResultCode.Error,
+        ],
+        [
+          'an encrypted alert in CRLF output',
+          0,
+          '/m/a.zip: OK\r\nzip-precheck: Heuristics.Encrypted.ZipPreCheck FOUND\r\n',
+          ScanResultCode.Error,
+        ],
+        [
+          'a real signature beside an encrypted alert',
+          1,
+          '/m/a.zip: Heuristics.Encrypted.Zip FOUND\n/m/a.zip: Win.Test.EICAR_HDB-1 FOUND\n',
+          ScanResultCode.Danger,
+        ],
+        [
+          'a real signature alone',
+          1,
+          '/m/a.zip: Win.Test.EICAR_HDB-1 FOUND\n',
+          ScanResultCode.Danger,
+        ],
+        ['no alert', 0, '/m/a.zip: OK\n', ScanResultCode.Success],
+      ])(
+        'with no status, %s (exit %i) gets the verdict in its row',
+        async (_, exitCode, output, expected) => {
+          expect(await virusVerdict({ status: null, exitCode, output })).toBe(expected);
+        }
+      );
+    });
+
     describe('a Training Data zip scanned as a blob', () => {
       const ZIP = 'https://bucket/training-images/7/data.zip';
       const dataset = (url = ZIP) =>
@@ -1428,6 +1519,14 @@ describe('model-file-scan.service', () => {
 
         expect((await verdict()).result).toBe(ScanResultCode.Danger);
         expect(mockTrainingDataObjectUnchanged).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['encrypted', '/m/a.zip: Heuristics.Encrypted.Zip FOUND\n'],
+        ['limitsExceeded', '/m/a.zip: Heuristics.Limits.Exceeded.MaxFileSize FOUND\n'],
+      ])('stores the %s verdict as an Error with its output', async (status, output) => {
+        scanned({ status, output, scannedFileCount: 1 });
+        expect(await verdict()).toEqual({ result: ScanResultCode.Error, message: output });
       });
 
       it.each([

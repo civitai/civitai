@@ -736,6 +736,24 @@ export function normalizeScanHashes(
   return out;
 }
 
+/** Clam statuses for a file the scanner could not fully read: never clean, and not malware. */
+const UNVERIFIED_CLAM_STATUSES = new Set(['encrypted', 'limitsexceeded']);
+
+const CLAM_FOUND_LINE = /:\s(\S+)\sFOUND\s*$/gm;
+const isUnverifiedSignature = (sig: string) =>
+  sig.startsWith('Heuristics.Encrypted.') || sig.startsWith('Heuristics.Limits.Exceeded');
+
+/**
+ * The verdict the scanner's FOUND lines give, or null when they give none. Encrypted and over-limit
+ * alerts share exit codes with errors and with clean scans, so the exit code cannot tell them apart.
+ */
+function clamSignatureResult(text: string | null | undefined): ScanResultCode | null {
+  const signatures = [...(text ?? '').matchAll(CLAM_FOUND_LINE)].map((match) => match[1]);
+  if (signatures.some((sig) => !isUnverifiedSignature(sig))) return ScanResultCode.Danger;
+  if (signatures.length) return ScanResultCode.Error;
+  return null;
+}
+
 // Orchestrator now reports scan outcomes via a `status` enum (and explicit
 // boolean flags) instead of POSIX exit codes. Map the known status strings,
 // fall through to the legacy exitCode path to remain compatible with any
@@ -746,10 +764,13 @@ function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>):
   if (status) {
     if (status === 'clean') return ScanResultCode.Success;
     if (status.includes('infect') || status.includes('danger')) return ScanResultCode.Danger;
+    if (UNVERIFIED_CLAM_STATUSES.has(status)) return ScanResultCode.Error;
     if (status.includes('error') || status.includes('fail')) return ScanResultCode.Error;
     return ScanResultCode.Pending;
   }
-  return exitCodeToScanResult(output.exitCode);
+  // Exit 1 stays Danger whatever the alerts say.
+  if (output.exitCode === 1) return ScanResultCode.Danger;
+  return clamSignatureResult(output.output) ?? exitCodeToScanResult(output.exitCode);
 }
 
 function derivePickleScanResult(
