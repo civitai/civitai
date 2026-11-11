@@ -5,13 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('~/utils/blurhash', () => ({ createBlurHash: () => 'LKO2' }));
 
-import { preprocessVideo } from '~/utils/media-preprocessors/video.preprocessor';
+import { preprocessVideo, SEEK_TIMEOUT_MS } from '~/utils/media-preprocessors/video.preprocessor';
 
 const FIXTURES = join(__dirname, '..', '..', 'metadata', '__tests__', 'fixtures', 'video');
 
 /** A `<video>` stand-in: happy-dom never decodes media, so load and seek events are fired by hand. */
-function fakeVideo() {
+function fakeVideo(seek: 'fires' | 'never' | 'errors' = 'fires') {
   const video = {
+    onerror: null as null | (() => void),
     videoWidth: 16,
     videoHeight: 16,
     duration: 0.75,
@@ -22,7 +23,8 @@ function fakeVideo() {
       queueMicrotask(() => video.onloadeddata?.());
     },
     set currentTime(_: number) {
-      queueMicrotask(() => video.onseeked?.());
+      if (seek === 'fires') queueMicrotask(() => video.onseeked?.());
+      if (seek === 'errors') queueMicrotask(() => video.onerror?.());
     },
   };
   return video;
@@ -53,5 +55,33 @@ describe('preprocessVideo', () => {
       type: 'video/mp4',
     });
     expect((await preprocessVideo(file)).meta).toBeUndefined();
+  });
+
+  describe('a seek that cannot finish', () => {
+    const file = () =>
+      new File([readFileSync(join(FIXTURES, 'plain.mp4'))], 'clip.mp4', { type: 'video/mp4' });
+    const seeking = (seek: 'never' | 'errors') => {
+      const create = document.createElement.bind(document);
+      vi.spyOn(document, 'createElement').mockImplementation(((tag: string) =>
+        tag === 'video' ? fakeVideo(seek) : create(tag)) as typeof document.createElement);
+    };
+
+    it('rejects with the poorly-encoded message when seeked never fires, instead of hanging', async () => {
+      seeking('never');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const result = preprocessVideo(file());
+        const outcome = expect(result).rejects.toMatch(/poorly encoded/);
+        await vi.advanceTimersByTimeAsync(SEEK_TIMEOUT_MS + 1);
+        await outcome;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('rejects with the same message when the video errors during the seek', async () => {
+      seeking('errors');
+      await expect(preprocessVideo(file())).rejects.toMatch(/poorly encoded/);
+    });
   });
 });
