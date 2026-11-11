@@ -66,7 +66,7 @@ beforeEach(() => {
   installFakeCacheRedis();
   vi.useFakeTimers({ toFake: ['setTimeout'] });
   revokeUserTokens.mockResolvedValue(true);
-  for (const model of ['userLink', 'model', 'comment', 'commentV2', 'post', 'article'] as const) {
+  for (const model of ['userLink', 'model', 'post', 'article'] as const) {
     dbMock.dbWrite[model].deleteMany?.mockResolvedValue({ count: 0 } as never);
     dbMock.dbWrite[model].updateMany?.mockResolvedValue({ count: 0 } as never);
   }

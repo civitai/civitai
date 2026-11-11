@@ -123,39 +123,6 @@ async function readCandidates({
     .limit(limit)
     .execute();
 
-  // CommentV3 mirrors CommentV2 under the same ids; V2 rows it never copied are read from V2.
-  let v2Query = kyselyRead
-    .selectFrom('CommentV2 as c')
-    .innerJoin('Thread as t', 't.id', 'c.threadId')
-    .innerJoin('Thread as root', (join) =>
-      join.on((eb) => eb('root.id', '=', eb.fn.coalesce('t.rootThreadId', 't.id')))
-    )
-    .select([
-      'c.id',
-      'c.userId',
-      'c.content',
-      'c.createdAt',
-      'c.hidden',
-      'root.postId',
-      'root.imageId',
-    ])
-    .where((eb) =>
-      eb.or([
-        eb('root.imageId', 'in', presentImageIds),
-        ...(postIds.length ? [eb('root.postId', 'in', postIds)] : []),
-      ])
-    )
-    .orderBy('c.id', 'desc')
-    .limit(limit);
-  if (commentIds) v2Query = v2Query.where('c.id', 'in', commentIds);
-  const v2 = await v2Query
-    .where((eb) =>
-      eb.not(
-        eb.exists(eb.selectFrom('CommentV3 as v3').select('v3.id').whereRef('v3.id', '=', 'c.id'))
-      )
-    )
-    .execute();
-
   for (const c of v3)
     candidates.push({
       source: 'comment',
@@ -167,19 +134,9 @@ async function readCandidates({
       ...(c.deletedAt && { deleted: true }),
       ...(c.hidden && { hidden: true }),
     });
-  for (const c of v2)
-    candidates.push({
-      source: 'comment',
-      id: c.id,
-      ...(c.postId ? { postId: c.postId } : { imageId: c.imageId ?? undefined }),
-      authorId: c.userId,
-      postedAt: new Date(c.createdAt).toISOString(),
-      text: htmlToPlainText(c.content),
-      ...(c.hidden && { hidden: true }),
-    });
   return {
     candidates,
-    more: !commentIds && (v3.length === limit || v2.length === limit),
+    more: !commentIds && v3.length === limit,
   };
 }
 
