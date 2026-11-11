@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 // The only lock a moderator didn't set: Knights consensus locks through the moderator path.
 export const KNIGHTS_VOTE_NSFW_LEVEL_REASON = 'Knights Vote';
@@ -34,6 +34,9 @@ const ingestionStatesModRatingCannotOverride: ImageIngestionStatus[] = [
  * A locked rating is a human decision, so it counts as reviewed here in place of a scan
  * that never arrived.
  *
+ * A song is the exception: its scan is the only check of what it says, so a locked rating never
+ * stands in for it and only `Scanned` counts.
+ *
  * `Error` is stricter: a scan that errored never ran its minor/POI/prompt checks, so only
  * a moderator's lock stands in for it, and not when the media itself failed permanently.
  */
@@ -42,7 +45,8 @@ export const imageReviewedSql = (alias = 'i') => {
   return Prisma.sql`(
     ${t}."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
     OR (
-      ${t}."nsfwLevelLocked" = TRUE
+      ${t}."type" <> ${MediaType.audio}::"MediaType"
+      AND ${t}."nsfwLevelLocked" = TRUE
       AND ${t}."ingestion" NOT IN (${Prisma.join(
     ingestionStatesModRatingCannotOverride.map((s) => Prisma.sql`${s}::"ImageIngestionStatus"`)
   )})
@@ -88,17 +92,21 @@ export const pendingLevelImageSql = (userId: number, browsingLevel: number) =>
  * move together.
  */
 export const isImageReviewed = ({
+  type,
   ingestion,
   nsfwLevelLocked,
   nsfwLevelReason,
   scanFailureClass,
 }: {
+  /** Omitted by a caller that has not selected it, which then reads the row as an image. */
+  type?: MediaType | string;
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
   nsfwLevelReason: string | null | undefined;
   scanFailureClass: string | null | undefined;
 }) => {
   if (ingestion === ImageIngestionStatus.Scanned) return true;
+  if (type === MediaType.audio) return false;
   if (!nsfwLevelLocked || ingestionStatesModRatingCannotOverride.includes(ingestion)) return false;
   if (ingestion !== ImageIngestionStatus.Error) return true;
   return (

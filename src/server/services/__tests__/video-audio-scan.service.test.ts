@@ -26,6 +26,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   parseAudioScanSteps,
   processAudioScanCallback,
+  submitSongScan,
   submitVideoAudioScan,
 } from '~/server/services/video-audio-scan.service';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
@@ -247,6 +248,199 @@ describe('createImageIngestionRequest with the audio scan on', () => {
     await createImageIngestionRequest({ ...request, ...overrides });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(mockSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('parseAudioScanSteps with other steps in the workflow', () => {
+  const transcription = (status: string) => ({ $type: 'transcription', status, output: {} });
+
+  it('reads the verdict from its own succeeded step beside a failed transcription', () => {
+    const verdict = { ...step(scanned(true)), status: 'succeeded' };
+
+    expect(parseAudioScanSteps([transcription('failed'), verdict])).toMatchObject({
+      ok: true,
+      flagged: true,
+    });
+  });
+
+  it('gives no verdict when the audioModeration step itself failed', () => {
+    const verdict = { $type: 'audioModeration', status: 'failed' };
+
+    expect(parseAudioScanSteps([transcription('succeeded'), verdict])).toMatchObject({
+      ok: false,
+    });
+  });
+});
+
+describe('submitSongScan', () => {
+  const input = { imageId: 9, mediaUrl: 'https://image.test/s.mp3' };
+
+  beforeEach(() => {
+    mockIsFlipt.mockReset().mockResolvedValue(false);
+    mockSubmit.mockReset().mockResolvedValue({ data: { id: 'wf-song' }, attempts: 1 });
+    dbMock.dbWrite.imageAudioScan.upsert.mockReset().mockResolvedValue({});
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({
+      metadata: { duration: 10, lyrics: [{ t: null, text: 'la la' }] },
+    } as never);
+  });
+
+  it('scans the song even though the video flag is off', async () => {
+    await submitSongScan(input);
+
+    const { body } = mockSubmit.mock.calls[0][0];
+    expect(body.steps.map((s: { $type: string }) => s.$type)).toEqual([
+      'transcription',
+      'audioModeration',
+    ]);
+    expect(body.steps[1].input).toEqual({ mediaUrl: input.mediaUrl, transcriber: 'auto' });
+    expect(body.metadata).toMatchObject({ imageId: 9 });
+    expect(new URL(body.callbacks[0].url).pathname).toBe('/api/webhooks/audio-scan-result');
+    expect(mockIsFlipt).not.toHaveBeenCalled();
+  });
+
+  it('stores a pending row for the callback to settle', async () => {
+    await submitSongScan(input);
+
+    expect(dbMock.dbWrite.imageAudioScan.upsert.mock.calls[0][0].create).toMatchObject({
+      imageId: 9,
+      workflowId: 'wf-song',
+      status: 'Pending',
+    });
+  });
+
+  it('hands back the submit result and stores nothing when the orchestrator did not accept it', async () => {
+    mockSubmit.mockResolvedValue({ data: undefined, attempts: 3, response: { status: 503 } });
+
+    const result = await submitSongScan(input);
+
+    expect(result.data).toBeUndefined();
+    expect(result.response?.status).toBe(503);
+    expect(dbMock.dbWrite.imageAudioScan.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('processAudioScanCallback by media type', () => {
+  beforeEach(() => {
+    mockGetWorkflow.mockReset();
+    dbMock.dbWrite.imageAudioScan.findFirst.mockReset().mockResolvedValue({ imageId: 7 });
+    dbMock.dbWrite.imageAudioScan.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    mockGetWorkflow.mockResolvedValue({
+      data: { status: 'succeeded', metadata: { imageId: 7 }, steps: [step(scanned(true))] },
+    });
+  });
+
+  it('hands a song on for its ingestion to be decided', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'audio' } as never);
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song).toMatchObject({ imageId: 7, workflowId: 'wf-1' });
+    expect(result.song?.parsed).toMatchObject({ ok: true, flagged: true });
+  });
+
+  it('keeps a video shadow-only: its verdict is stored on the scan row and never reaches the image', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'video' } as never);
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song).toBeUndefined();
+    expect(dbMock.dbWrite.imageAudioScan.updateMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('does not hand on a song whose result was already stored by an earlier callback', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'audio' } as never);
+    dbMock.dbWrite.imageAudioScan.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song).toBeUndefined();
+  });
+
+  it('keeps a song scan whose transcription failed the workflow: the verdict step succeeded, so the song is decided', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'audio' } as never);
+    mockGetWorkflow.mockResolvedValue({
+      data: {
+        status: 'failed',
+        metadata: { imageId: 7 },
+        steps: [
+          { $type: 'transcription', status: 'failed' },
+          { ...step(scanned(false)), status: 'succeeded' },
+        ],
+      },
+    });
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song?.parsed).toMatchObject({ ok: true, flagged: false });
+  });
+
+  it('gives a song no verdict when its audioModeration step failed, even if the transcription succeeded', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'audio' } as never);
+    mockGetWorkflow.mockResolvedValue({
+      data: {
+        status: 'failed',
+        metadata: { imageId: 7 },
+        steps: [
+          { $type: 'transcription', status: 'succeeded' },
+          { $type: 'audioModeration', status: 'failed' },
+        ],
+      },
+    });
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song?.parsed).toMatchObject({ ok: false, failureType: 'workflow-failed' });
+  });
+
+  it('still fails a video whose workflow failed, whatever its step says', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'video' } as never);
+    mockGetWorkflow.mockResolvedValue({
+      data: {
+        status: 'failed',
+        metadata: { imageId: 7 },
+        steps: [{ ...step(scanned(false)), status: 'succeeded' }],
+      },
+    });
+
+    await processAudioScanCallback('wf-1');
+
+    expect(dbMock.dbWrite.imageAudioScan.updateMany.mock.calls[0][0].data.status).toBe('Failed');
+  });
+
+  it('hands on a failed song scan so it is retried, with the kind of failure', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'audio' } as never);
+    mockGetWorkflow.mockResolvedValue({
+      data: { status: 'expired', metadata: { imageId: 7 }, steps: [] },
+    });
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song?.parsed).toMatchObject({ ok: false, failureType: 'expired' });
+  });
+});
+
+describe('createImageIngestionRequest for a song', () => {
+  beforeEach(() => {
+    mockIsFlipt.mockReset().mockResolvedValue(false);
+    mockSubmit.mockReset().mockResolvedValue({ data: { id: 'wf-song' }, attempts: 1 });
+    dbMock.dbWrite.imageAudioScan.upsert.mockReset().mockResolvedValue({});
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ metadata: {} } as never);
+  });
+
+  it('submits the song scan, never the video frame extraction', async () => {
+    const result = await createImageIngestionRequest({
+      imageId: 9,
+      url: 'https://image.civitai.com/x/s.mp3',
+      type: 'audio',
+      callbackUrl: 'https://civitai.test/api/webhooks/image-scan-result?token=t',
+    });
+
+    expect(result.data).toEqual({ id: 'wf-song' });
+    const steps = mockSubmit.mock.calls[0][0].body.steps.map((s: { $type: string }) => s.$type);
+    expect(steps).toEqual(['transcription', 'audioModeration']);
     expect(mockSubmit).toHaveBeenCalledTimes(1);
   });
 });

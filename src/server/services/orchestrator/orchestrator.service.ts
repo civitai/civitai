@@ -18,7 +18,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
-import { submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
+import { submitSongScan, submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -143,8 +143,32 @@ export async function createImageIngestionRequest({
   // ledger is asserted by `media-fetch-funnel-ledger.test.ts`, which fails when a new
   // funnel appears un-gated, so do not maintain that list by hand here.
   if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
-  // Every non-image goes down the video frame-extraction path below, which has nothing to extract from a song.
-  if (type === 'audio') throw new Error('Audio has no ingestion scan yet.');
+  if (type === 'audio') {
+    // A song has no frames to extract or tags to read: its own workflow, with its own callback.
+    const result = await submitSongScan({
+      imageId,
+      mediaUrl: getEdgeUrl(normalizeImageScanUrl(url), { type }),
+      priority,
+    });
+    if (!result.data)
+      logToAxiom({
+        type: 'error',
+        name: imageIngestionLogName(false),
+        imageId,
+        url,
+        attempts: result.attempts,
+        responseStatus: result.response?.status,
+        error: safeError('error' in result ? result.error : undefined),
+      });
+    return {
+      data: result.data,
+      body: result.body,
+      error: 'error' in result ? result.error : undefined,
+      status: result.response?.status,
+      retryAfter: getRetryAfterSeconds(result.response),
+      useImageScanning: false,
+    };
+  }
 
   const metadata = { imageId };
   // Submit the NORMALIZED form: an absolute url goes out as its parsed `href`, so the host

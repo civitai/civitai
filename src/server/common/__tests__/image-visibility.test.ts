@@ -16,10 +16,11 @@ const render = (alias?: string) => {
 describe('imageReviewedSql', () => {
   // Pins the whole shape, not keywords: a string match still passes with OR and AND swapped,
   // which would expose every mod-rated ToS removal.
-  it('renders scanned OR (mod-rated AND not terminal AND not an unqualified Error lock)', () => {
+  it('renders scanned OR (not a song AND mod-rated AND not terminal AND not an unqualified Error lock)', () => {
     expect(render()).toBe(
       '( "i"."ingestion" = Scanned::"ImageIngestionStatus" ' +
-        'OR ( "i"."nsfwLevelLocked" = TRUE ' +
+        'OR ( "i"."type" <> audio::"MediaType" ' +
+        'AND "i"."nsfwLevelLocked" = TRUE ' +
         'AND "i"."ingestion" NOT IN (Blocked::"ImageIngestionStatus",NotFound::"ImageIngestionStatus") ' +
         'AND NOT ( "i"."ingestion" = Error::"ImageIngestionStatus" ' +
         `AND ( COALESCE("i"."metadata"->>'nsfwLevelReason', '') = Knights Vote ` +

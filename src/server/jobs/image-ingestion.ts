@@ -194,9 +194,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     WHERE i.id = ANY(${imageIds})
   `) ?? [];
 
-  // Songs have no scan yet. Left out of `images` they count as stale and leave the queue, so they are
-  // neither re-sent nor aged to Error (which the ingestion-error review queue would list).
-  const images = loadedImages.filter((img) => img.type !== 'audio');
+  const images = loadedImages;
 
   // Filter based on status and retry logic
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
@@ -261,6 +259,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         img.ingestion === 'Pending' &&
         !img.isBackfill &&
         !isRateLimitExempt(img) &&
+        // A song never sent (no scan requested) has had no scan to lose: it is sent, not failed unsent.
+        !(img.type === 'audio' && !img.scanRequestedAt) &&
         img.createdAt <= pendingTimeoutDate
     )
     .map((img) => img.id);

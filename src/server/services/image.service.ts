@@ -1780,10 +1780,6 @@ export const ingestImage = async ({
 
   const { url, id, type } = parsedImage.data;
 
-  // No audio scan exists yet, and the frame-extraction path below would run on a song. The row stays
-  // Pending with no scan requested, which no feed reads as visible.
-  if (type === MediaType.audio) return false;
-
   if (!isAllowedImageScanUrl(url)) {
     // Same guard createImageIngestionRequest applies (which would throw here); checking
     // first routes the rejection through the submit-failure machinery — status 400
@@ -1830,6 +1826,17 @@ export const ingestImage = async ({
     type,
     callbackUrl,
     priority: lowPriority ? 'low' : undefined,
+  }).catch((error: unknown) => {
+    // A song's submit also reads and writes the database. A throw must still stamp the attempt, or the
+    // cron sees a song that was never sent and re-sends it every run without limit.
+    if (type !== MediaType.audio) throw error;
+    return {
+      data: undefined,
+      error,
+      status: undefined,
+      retryAfter: undefined,
+      useImageScanning: false,
+    };
   });
   const lane = useImageScanning ? 'imageScanning' : 'new';
   if (!workflowResponse) {
@@ -8456,6 +8463,7 @@ export async function resolveIngestionError({
     where: { id },
     select: {
       ingestion: true,
+      type: true,
       postId: true,
       userId: true,
       metadata: true,
@@ -8466,6 +8474,11 @@ export async function resolveIngestionError({
     },
   });
   if (!image) throw new Error('Image not found');
+  // A song is published only by its own scan; the ingest cron retries it, so no rating here can.
+  if (image.type === MediaType.audio)
+    throw throwBadRequestError(
+      'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
+    );
   const refusal = ingestionResolveRefusal({
     blockedFor: image.blockedFor,
     needsReview: image.needsReview,
