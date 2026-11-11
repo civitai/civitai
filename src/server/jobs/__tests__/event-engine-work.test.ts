@@ -19,8 +19,6 @@ describe('event-engine-leaderboard-update job', () => {
       lockExpiration: 15 * 60,
       keepLockOnDisconnect: true,
     });
-    // The referee's two ClickHouse queries share this budget, inside this lock, with time left over
-    // for the hat sync and the Postgres and Redis writes.
     expect(
       eventEngineLeaderboardUpdate.options.lockExpiration - REFEREE_CLICKHOUSE_BUDGET_S
     ).toBeGreaterThanOrEqual(120);
