@@ -618,10 +618,28 @@ describe('a file type change to or from training data on a trained version', () 
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
   });
 
-  it("lets an uploaded model's owner relabel scanned training data as another type", async () => {
+  it("lets an uploaded model's owner relabel scanned training data, which the model-file scan then takes", async () => {
     withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
 
     await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).resolves.toMatchObject({ id: 1 });
+    // Training Data had only a virus scan; as another type it needs the full one.
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data).toMatchObject({
+      type: 'Other',
+      virusScanResult: 'Pending',
+      pickleScanResult: 'Pending',
+      scanRequestedAt: null,
+      scannedAt: null,
+    });
+  });
+
+  it('keeps the scan of a model file relabelled as another type', async () => {
+    withFile({ type: 'Model', uploadType: 'Created', trainingStatus: null });
+
+    await updateFile({ id: 1, type: 'Other', userId: 7 });
+
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data).not.toHaveProperty(
+      'virusScanResult'
+    );
   });
 
   it.each(['Pending', 'Error', 'Danger'])(

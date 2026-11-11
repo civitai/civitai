@@ -242,7 +242,9 @@ describe('healStalledTrainingDataScans', () => {
     const { where } = dbMock.dbWrite.modelFile.findMany.mock.calls[0][0];
     expect(where).toMatchObject({ type: 'Training Data', virusScanResult: 'Pending' });
     expect(where.scanRequestedAt.not).toBeNull();
-    expect(Date.now() - where.scanRequestedAt.lt.getTime()).toBeGreaterThanOrEqual(60 * 60_000);
+    const waited = Date.now() - where.scanRequestedAt.lt.getTime();
+    expect(waited).toBeGreaterThanOrEqual(60 * 60_000);
+    expect(waited).toBeLessThan(60 * 60_000 + 5_000);
     // Nor claims one whose submission was reset between the read and the claim.
     const [, , , neverSubmitted] = dbMock.dbWrite.$queryRaw.mock.calls[0];
     expect(neverSubmitted).toBe(false);
@@ -278,6 +280,29 @@ describe('healStalledTrainingDataScans', () => {
       reason: 'no verdict after 3 resubmits',
     });
     expect(result).toMatchObject({ gaveUp: [3], submitted: 0 });
+  });
+
+  it('counts, gives up on and submits nothing it did not claim', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    redisMock.sysRedis.incrBy.mockResolvedValue(4);
+
+    await healStalledTrainingDataScans();
+
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('counts attempts per zip, so a file holding a new zip starts again', async () => {
+    dbMock.dbWrite.modelFile.findMany
+      .mockResolvedValueOnce([stalled])
+      .mockResolvedValueOnce([{ ...stalled, url: 'https://bucket/3-new.zip' }]);
+
+    await healStalledTrainingDataScans();
+    await healStalledTrainingDataScans();
+
+    const [[first], [second]] = redisMock.sysRedis.incrBy.mock.calls;
+    expect(first).not.toBe(second);
   });
 
   it('neither resubmits nor gives up when the attempt count cannot be read', async () => {

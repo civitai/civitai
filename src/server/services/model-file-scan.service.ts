@@ -199,8 +199,8 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     return;
   }
 
-  // A Training Data verdict counts only from its own blob scan, of the bytes the file holds now: a
-  // late result from another scan, or from before the file's zip was swapped, is dropped.
+  // A Training Data verdict counts only from its own blob scan of the file's current url: a late
+  // result from another scan, or from before the file's zip was swapped, is dropped.
   if (file.type === 'Training Data' && outcome.trainingDataUrl !== file.url) {
     logToAxiom(
       {

@@ -46,6 +46,7 @@ import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import {
   assertFileTypeChangeAllowed,
+  scanResetForTypeChange,
   assertVersionAcceptsNewUpload,
 } from '~/server/utils/model-file-replace';
 import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
@@ -316,7 +317,7 @@ export async function updateFile({
     // A sent type writes only over the type `typeChanged` was judged against: an edit from a stale
     // tab would otherwise change it back with no bust.
     where: { id, ...(inputData.type !== undefined && { type: modelFile.type }) },
-    data: { ...inputData, metadata },
+    data: { ...inputData, metadata, ...scanResetForTypeChange(modelFile, inputData.type) },
   });
   // Replaced, deleted or retyped since the lookup above: nothing was written.
   if (count === 0) throw throwNotFoundError();

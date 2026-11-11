@@ -2,6 +2,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDatasetEditable } from '~/shared/constants/training.constants';
 import type { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { ModelStatus, ModelUploadType, ScanResultCode } from '~/shared/utils/prisma/enums';
+import { unscannedFile } from '~/utils/file-helpers';
 
 // A version that has been out in the world (or is about to be) keeps its files; new bytes go in a
 // new version. Unpublished counts, since publishing it again brings back what it had.
@@ -65,4 +66,12 @@ export function assertFileTypeChangeAllowed(
     throw throwBadRequestError(
       "Training data can't be changed to another type until its security scan completes."
     );
+}
+
+/**
+ * The scan fields to write with a type change. Training Data has only had a virus scan, so a file
+ * relabelled away from it goes back to unscanned, and the model-file scan picks it up as its new type.
+ */
+export function scanResetForTypeChange(file: { type: string }, nextType: string | undefined) {
+  return file.type === 'Training Data' && nextType && nextType !== file.type ? unscannedFile : {};
 }

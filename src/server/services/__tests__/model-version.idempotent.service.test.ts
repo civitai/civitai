@@ -336,6 +336,24 @@ describe('mergeVersions file remaps', () => {
     );
   });
 
+  it('sends training data relabelled in a merge back to the model-file scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({ type: 'Training Data', virusScanResult: 'Success' }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, type: 'Other' }])).rejects.toThrow(PAST_REMAP);
+
+    expect(fileUpdateMany).toHaveBeenCalledWith({
+      where: { id: FILE, ...inMerge },
+      data: expect.objectContaining({
+        type: 'Other',
+        virusScanResult: 'Pending',
+        pickleScanResult: 'Pending',
+        scanRequestedAt: null,
+      }),
+    });
+  });
+
   // The lookup above returns nothing for a file outside the merge: another owner's file, or a
   // version of this model that is not being merged.
   it('refuses a file that is not part of the merge, writing nothing', async () => {

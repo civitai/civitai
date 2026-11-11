@@ -187,6 +187,7 @@ import {
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import {
   assertFileTypeChangeAllowed,
+  scanResetForTypeChange,
   versionAcceptsNewTrainingData,
 } from '~/server/utils/model-file-replace';
 import {
@@ -3838,7 +3839,12 @@ export const mergeVersions = async ({
           assertFileTypeChangeAllowed(file, mapping.type);
 
           const updateData: Record<string, unknown> = {};
-          if (mapping.type) updateData.type = mapping.type;
+          if (mapping.type)
+            Object.assign(
+              updateData,
+              { type: mapping.type },
+              scanResetForTypeChange(file, mapping.type)
+            );
           if (mapping.metadata)
             updateData.metadata = {
               ...((file.metadata as Record<string, unknown>) ?? {}),
