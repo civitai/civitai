@@ -245,7 +245,11 @@ describe('/api/user/settings nav banners', () => {
   // the dismissed cookie is applied on the client. Passing anything from the request here (cookies,
   // headers) is how one viewer's answer would reach another.
   it('resolves them from the session user alone, never the request', async () => {
-    h.session.mockResolvedValue({ user: { id: 42, isModerator: true } });
+    // As the real lookup does: it records the (session) credential on the request it was given.
+    h.session.mockImplementation(async ({ req }: { req: { context?: object } }) => {
+      req.context ??= {};
+      return { user: { id: 42, isModerator: true } };
+    });
     const { done } = invoke();
     await vi.runAllTimersAsync();
     await done;
