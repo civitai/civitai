@@ -98,8 +98,8 @@ export async function resolveReviewsVersion({
 }: {
   modelVersionId: number | undefined;
   /** What the lookup of `modelVersionId` on this model returned. */
-  requested: { id: number } | null;
-  loadFallback: () => Promise<{ id: number } | null>;
+  requested: { id: number } | null | undefined;
+  loadFallback: () => Promise<{ id: number } | null | undefined>;
 }): Promise<ReviewsVersionDecision> {
   if (modelVersionId && requested?.id === modelVersionId) return { type: 'ok' };
   const fallback = await loadFallback();
