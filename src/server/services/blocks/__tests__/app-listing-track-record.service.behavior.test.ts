@@ -18,7 +18,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  */
 
 const h = vi.hoisted(() => ({
-  pg: null as unknown as { query: (text: string, values: unknown[]) => Promise<{ rows: any[] }> },
+  pg: null as unknown as {
+    query: (text: string, values: unknown[]) => Promise<{ rows: Array<{ id?: string }> }>;
+  },
   pages: [] as { key: string; rows: { id?: string }[] }[],
 }));
 

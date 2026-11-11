@@ -1144,6 +1144,10 @@ function matureFilterFor(column: Prisma.Sql, allowed: MatureRatingsAllowed): Pri
  * (the listing) and `ab` (its backing block). The parent arm and the sub-listing arm of the
  * catalog statement both apply this to the parent row, so a child can never be visible while
  * its parent is not. Do not copy any of it into either arm.
+ *
+ * `userId` narrows it to one developer's listings (the "More by this developer" rail, the
+ * profile Apps tab and the developer track record). It only ever adds a term, and when it is
+ * absent the statement is byte-identical to the grid's, so existing cache entries keep their keys.
  */
 export function storeEligibilityWhere(args: {
   levelFilter: Prisma.Sql;
@@ -1152,7 +1156,10 @@ export function storeEligibilityWhere(args: {
   /** Which mature ratings this request may see — `matureRatingsAllowed(redCapable, level)`. */
   mature: MatureRatingsAllowed;
   scope: StoreVisibilityScope;
+  userId?: number | null;
 }): Prisma.Sql {
+  const ownerTerm =
+    args.userId != null ? Prisma.sql`\n      AND al.user_id = ${args.userId}` : Prisma.empty;
   return Prisma.sql`${args.levelFilter}
       -- A shadow revision is status='draft' and the level gate can admit a draft, so this is
       -- what keeps a shadow's un-reviewed content out of the store.
@@ -1162,7 +1169,7 @@ export function storeEligibilityWhere(args: {
       AND (${args.kind}::text IS NULL OR al.kind = ${args.kind}::text)
       AND (${args.category}::text IS NULL OR al.category = ${args.category}::text)
       AND ${listingMatureFilter(args.mature)}
-      AND ${listingPublicVisibilityFilter(args.scope)}`;
+      AND ${listingPublicVisibilityFilter(args.scope)}${ownerTerm}`;
 }
 
 /**
@@ -1408,6 +1415,8 @@ function noteSubListingTableMissing(err: unknown): void {
  * is a bug, when a whole enumerated list of them are deliberate and correct. The cached
  * statement reads
  * `al.status`, `al.kind`, `al.revision_of_id`, `al.category`, `al.content_rating`,
+ * `al.user_id` (developer-filtered pages only — an ownership move, e.g. `claimListing`,
+ * shifts which developer's rail and record a listing counts toward),
  * `al.app_block_id` + `ab.current_version_deployed_at` (the deploy gate and its join
  * key) and the `sort_key` inputs (`al.name`, `al.created_at`, the metric rollup) — and
  * nothing else. Every other column on the card is hydrated live below the cache and can
@@ -1529,7 +1538,7 @@ export async function listAvailableListings(
   input: ListAppListingsInput,
   opts: ListAvailableListingsOpts = {}
 ): Promise<{ items: StoreGridItem[]; nextCursor?: string }> {
-  const { kind, category, sort, cursor, limit } = input;
+  const { kind, category, sort, cursor, limit, userId } = input;
   const redCapable = opts.redCapable ?? false;
   const floor: ListingAudienceFloor = opts.floor ?? 'public';
   // 🔴 FAIL CLOSED on an absent / unrecognized scope (civitai#3983). This used to be
@@ -1566,6 +1575,9 @@ export async function listAvailableListings(
       category: category ?? null,
       mature,
       scope,
+      // A bound parameter, so it is in the statement hash, not the literal key: a per-user key
+      // segment would make the `cache_name` metric label unbounded.
+      userId: userId ?? null,
     });
 
   // 1 = the cursor sits on a child row: children sort after their parent on the same key.
