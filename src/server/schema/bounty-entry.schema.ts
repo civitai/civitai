@@ -69,5 +69,11 @@ export const submitBountyEntryInputSchema = z.object({
     )
     .min(1, 'At least one file must be provided'),
   // Already-uploaded example image UUIDs.
-  imageUuids: z.array(z.string().uuid()).min(1, 'At least one example image must be provided'),
+  imageUuids: z
+    .array(z.string().uuid())
+    .min(1, 'At least one example image must be provided')
+    .max(
+      constants.bounties.maxEntryImagesForEdit,
+      `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`
+    ),
 });

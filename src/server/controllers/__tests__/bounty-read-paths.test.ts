@@ -427,7 +427,6 @@ describe('entry detail image count', () => {
       twelve.slice(0, imagesPerId)) as never);
   });
 
-  // The edit form saves back only what this read returns; image 11 onward was unlinked on save.
   it.each([
     ['owner', { user: { id: OWNER }, ...uncapped }],
     ['moderator', { user: { id: 7, isModerator: true }, ...uncapped }],
