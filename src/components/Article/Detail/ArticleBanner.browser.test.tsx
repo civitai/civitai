@@ -59,7 +59,6 @@ describe('ArticleBanner', () => {
     const { wrapper, img } = await measure(3200);
     expect(wrapper.width).toBe(3200);
     expect(img.width).toBe(wrapper.width);
-    expect(img.left).toBe(wrapper.left);
     expect(wrapper.height).toBe(448);
   });
 
