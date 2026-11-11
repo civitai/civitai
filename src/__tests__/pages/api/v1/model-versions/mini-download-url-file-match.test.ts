@@ -45,6 +45,7 @@ const {
   mockRefreshBlobs,
   mockGetOrchestratorToken,
   currentUser,
+  serviceToken,
 } = vi.hoisted(() => ({
   mockGetOrchestratorToken: vi.fn(),
   mockIsFlipt: vi.fn(),
@@ -54,6 +55,7 @@ const {
   mockGetShouldChargeForResources: vi.fn(),
   mockGetFeaturedModels: vi.fn(),
   currentUser: { value: undefined as undefined | Record<string, unknown> },
+  serviceToken: { value: false },
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -76,6 +78,10 @@ vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: mockGetOrchestratorToken,
+}));
+vi.mock('~/server/auth/orchestrator-service-token', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  matchesOrchestratorServiceToken: () => serviceToken.value,
 }));
 
 vi.mock('~/server/services/model.service', () => ({
@@ -330,6 +336,7 @@ function lastAirArgs() {
 beforeEach(() => {
   vi.clearAllMocks();
   currentUser.value = undefined;
+  serviceToken.value = false;
   mockQueryRaw.mockReset();
   mockResolveCanGenerateForVersions.mockResolvedValue(
     new Map([[VERSION_ID, { canGenerate: true }]])
@@ -1409,12 +1416,16 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
     expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
   });
 
-  it('caches no refusal, so a blocked blob is asked about again', async () => {
-    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'blocked' }]);
+  it.each([
+    ['blocked', { blobId: BLOB_ID, status: 'gone', reason: 'blocked' }, 404],
+    ['missing', { blobId: BLOB_ID, status: 'gone', reason: 'missing' }, 404],
+    ['unknown', { blobId: BLOB_ID, status: 'unknown' }, 200],
+  ])('caches no %s answer, so the blob is asked about again', async (_, result, expected) => {
+    mockRefreshBlobs.mockResolvedValue([result]);
 
     const { status } = await runPlaceholder(EXPIRED);
 
-    expect(status).toBe(404);
+    expect(status).toBe(expected);
     const writes = redisMock.redis.packed.set.mock.calls.filter(([key]) => key === CACHE_KEY);
     expect(writes).toEqual([]);
   });
@@ -1517,6 +1528,16 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
 
     expect(body.downloadUrls).toEqual([EXPIRED]);
     expect(mockRefreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('signs it again for the orchestrator service token with the gate off', async () => {
+    currentUser.value = undefined;
+    serviceToken.value = true;
+
+    const { body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
   });
 
   it('is not signed for a taken-down model, whose url is withheld', async () => {
