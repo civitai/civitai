@@ -78,10 +78,11 @@ export const transformData = async ({
 }) => {
   const records = articles
     .map(({ tags, stats, bannerImage, ...articleRecord }) => {
-      // The cover, else the banner, once servable: the article can read Scanned before its cover.
+      // The cover, else the banner, once servable. An article whose cover is not yet servable is
+      // still indexed, without an image; one with no cover and no servable banner is not.
       const coverImage =
         servableArticleImage(articleRecord.coverImage) ?? servableArticleImage(bannerImage);
-      if (!coverImage) return null;
+      if (!coverImage && !articleRecord.coverImage) return null;
       return {
         ...articleRecord,
         // `content` is a searchable attribute and is stored as HTML, so tag and
@@ -107,16 +108,18 @@ export const transformData = async ({
           : undefined,
         // Flatten tags:
         tags: tags.map((articleTag) => articleTag.tag),
-        coverImage: {
-          ...coverImage,
-          // Lift the cover image nsfwLevel to the article's aggregate so
-          // front-end filters (ImageGuard blur, browsingLevel mask) reflect
-          // the article's true rating whenever content images, userNsfwLevel,
-          // or the moderation floor raised it above the cover's own level.
-          nsfwLevel: Math.max(articleRecord.nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0),
-          meta: coverImage.meta as ImageMetaProps,
-          tags: coverImage.tags.map((x) => x.tag),
-        },
+        coverImage: coverImage
+          ? {
+              ...coverImage,
+              // Lift the cover image nsfwLevel to the article's aggregate so
+              // front-end filters (ImageGuard blur, browsingLevel mask) reflect
+              // the article's true rating whenever content images, userNsfwLevel,
+              // or the moderation floor raised it above the cover's own level.
+              nsfwLevel: Math.max(articleRecord.nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0),
+              meta: coverImage.meta as ImageMetaProps,
+              tags: coverImage.tags.map((x) => x.tag),
+            }
+          : undefined,
         cosmetic: cosmetics[articleRecord.id] ?? null,
       };
     })

@@ -687,8 +687,12 @@ export const updateUserHandler = async ({
 
     // The client sends the current picture's id when it re-saves it, and no id for a new upload,
     // so any other picture is always created as a new row.
+    // The edit form fills a missing picture with `{ url: user.image }`; re-sent unchanged, that is
+    // no new upload. A picture withheld from its owner's read must not be replaced by it.
+    const isImageFallback =
+      !!profilePicture && !profilePicture.id && !!user.image && profilePicture.url === user.image;
     const newPicture =
-      profilePicture && profilePicture.id !== user.profilePictureId
+      profilePicture && profilePicture.id !== user.profilePictureId && !isImageFallback
         ? { ...profilePicture, id: undefined }
         : undefined;
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];

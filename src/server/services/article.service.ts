@@ -871,10 +871,6 @@ function isArticleImageViewable<T extends Pick<ArticleImageRow, 'ingestion' | 'n
   return isOwnerOrMod || servableArticleImage(image) !== null;
 }
 
-/**
- * The cover or banner as a reader may see it: owners and moderators always, anyone else only once
- * the image has been scanned and is not waiting on review.
- */
 function viewableArticleImage(image: ArticleImageRow | null | undefined, isOwnerOrMod: boolean) {
   if (!isArticleImageViewable(image, isOwnerOrMod)) return undefined;
   return {

@@ -16,6 +16,16 @@ vi.mock('~/server/services/image.service', () => ({
   enqueueImageIngestion: vi.fn(async () => undefined),
 }));
 
+const kysely = vi.hoisted(() => ({ on: false, user: undefined as unknown }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isFlipt: vi.fn(async () => kysely.on),
+}));
+vi.mock('~/server/services/hot-reads-9.reads', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  readUserWithProfileViaKysely: vi.fn(async () => kysely.user),
+}));
+
 import { getUserWithProfile } from '~/server/services/user-profile.service';
 
 const OWNER = 77;
@@ -47,7 +57,7 @@ const picture = (ingestion: string) => ({
 });
 
 function setUser(ingestion: string, { pictureNulled = false } = {}) {
-  dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({
+  const row = {
     id: OWNER,
     username: 'creator',
     meta: {},
@@ -65,11 +75,14 @@ function setUser(ingestion: string, { pictureNulled = false } = {}) {
       sfwCoverImageId: null,
       sfwCoverImage: null,
     },
-  } as never);
+  };
+  dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue(row as never);
+  kysely.user = row;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  kysely.on = false;
   dbMock.dbRead.userStat.findFirst.mockResolvedValue(null);
 });
 
@@ -115,6 +128,28 @@ describe('getUserWithProfile — unscanned cover and avatar', () => {
     dbMock.dbWrite.$queryRaw.mockClear();
     const visitor = await getUserWithProfile({ id: OWNER, sessionUserId: VISITOR });
     expect(visitor.profilePicture).toBeNull();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('reads back the unscanned avatar for a moderator too', async () => {
+    setUser('Pending', { pictureNulled: true });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([picture('Pending')] as never);
+
+    const user = await getUserWithProfile({ id: OWNER, sessionUserId: VISITOR, isModerator: true });
+    expect(user.profilePicture?.url).toBe('avatar-Pending');
+  });
+
+  it('on the Kysely read, serves the owner their unscanned avatar and withholds it from a visitor', async () => {
+    // The Kysely read keeps the unscanned picture for the service to gate; no raw re-read.
+    kysely.on = true;
+    setUser('Pending');
+
+    const owner = await getUserWithProfile({ id: OWNER, sessionUserId: OWNER });
+    const visitor = await getUserWithProfile({ id: OWNER, sessionUserId: VISITOR });
+
+    expect(owner.profilePicture?.url).toBe('avatar-Pending');
+    expect(visitor.profilePicture).toBeNull();
+    expect(visitor.profile.coverImage).toBeNull();
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 });

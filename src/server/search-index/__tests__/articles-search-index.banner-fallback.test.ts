@@ -58,7 +58,7 @@ describe('articles search index', () => {
   });
 
   it.each(['Pending', 'Error'])(
-    'does not index a %s cover; the banner stands in when servable',
+    'indexes an article with a %s cover without it; the banner stands in when servable',
     async (state) => {
       const cover = { ...image(10, 1), ingestion: state };
       const withBanner = await transformData({
@@ -71,7 +71,8 @@ describe('articles search index', () => {
         articles: [article({ coverImage: cover, bannerImage: null })],
         cosmetics: {},
       });
-      expect(coverOnly).toHaveLength(0);
+      expect(coverOnly).toHaveLength(1);
+      expect(coverOnly[0].coverImage).toBeUndefined();
     }
   );
 });

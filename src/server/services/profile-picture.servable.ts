@@ -5,6 +5,8 @@
  * a Scanned one, and never one flagged `csam`. Deliberately stricter than
  * `servableProfilePictureSql`, which also admits a moderator-locked rating (`imageReviewedSql`):
  * these reads do not carry the lock fields, so strict Scanned is the rule at TS sites.
+ * Only `csam` is checked, not any `needsReview`: a picture held for another review stays served,
+ * as in `servableProfilePictureSql`; article images (`servableArticleImage`) hide any.
  * `needsReview` is a separate, required argument so a read that does not select it fails to
  * compile rather than skipping the check, and so the flag never joins the payload.
  */

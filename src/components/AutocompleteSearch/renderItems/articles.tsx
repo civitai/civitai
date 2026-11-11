@@ -32,7 +32,7 @@ export const ArticlesSearchItem = forwardRef<
     likeCount: 0,
   };
   const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
-  const nsfw = !getIsSafeBrowsingLevel(coverImage.nsfwLevel);
+  const nsfw = !!coverImage && !getIsSafeBrowsingLevel(coverImage.nsfwLevel);
 
   return (
     <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">

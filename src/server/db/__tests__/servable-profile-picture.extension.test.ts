@@ -199,14 +199,21 @@ describe('the servable profile picture gate', () => {
       } as never) as unknown as { query: { $allModels: Record<string, Handler> } }
     ).query.$allModels;
 
-  it('registers on find queries only, so writes return what they wrote', () => {
-    expect(Object.keys(registered()).sort()).toEqual([
-      'findFirst',
-      'findFirstOrThrow',
-      'findMany',
-      'findUnique',
-      'findUniqueOrThrow',
-    ]);
+  it('registers no write handler, so writes return what they wrote', () => {
+    const operations = Object.keys(registered());
+    for (const write of [
+      'create',
+      'createMany',
+      'createManyAndReturn',
+      'update',
+      'updateMany',
+      'updateManyAndReturn',
+      'upsert',
+      'delete',
+      'deleteMany',
+      '$allOperations',
+    ])
+      expect(operations, write).not.toContain(write);
   });
 
   it('gates through every registered find handler', async () => {

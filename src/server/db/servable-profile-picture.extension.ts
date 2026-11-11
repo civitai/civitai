@@ -23,17 +23,14 @@ const READ_OPERATIONS = [
 const PICTURE_KEY = 'profilePicture';
 
 type Args = Record<string, unknown>;
-/** The picture fields the check reads; any the query did not ask for are added, then removed. */
 const CHECKED_FIELDS = ['ingestion', 'needsReview'] as const;
 type CheckedField = (typeof CHECKED_FIELDS)[number];
 type Leaf = { added: CheckedField[] };
-/** Per key of a select/include tree: a nested plan, or a picture leaf. */
 type Plan = Map<string, Plan | Leaf>;
 
 const isObject = (value: unknown): value is Args =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** What a relation's args select: `true` is the whole row, else its `select` (or the whole row). */
 function pictureLeaf(value: unknown): Leaf | undefined {
   if (value === true) return { added: [] };
   if (!isObject(value)) return undefined;
@@ -46,7 +43,6 @@ function pictureLeaf(value: unknown): Leaf | undefined {
   return { added: isObject(omit) ? CHECKED_FIELDS.filter((field) => omit[field]) : [] };
 }
 
-/** The paths in `args` that select a servable profile picture, or undefined when there are none. */
 export function planProfilePictures(args: unknown): Plan | undefined {
   if (!isObject(args)) return undefined;
   let plan: Plan | undefined;
@@ -98,7 +94,6 @@ function needsIngestion(plan: Plan): boolean {
   return false;
 }
 
-/** Nulls each planned picture `servableProfilePicture` would not serve, in place. */
 export function applyProfilePicturePlan(result: unknown, plan: Plan): void {
   if (Array.isArray(result)) {
     for (const row of result) applyProfilePicturePlan(row, plan);
