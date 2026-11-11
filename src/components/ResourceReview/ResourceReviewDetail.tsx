@@ -48,7 +48,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       sort: PostSort.Newest,
       browsingLevel,
     },
-    { enabled: !!data }
+    { enabled: !!data && !data.postId }
   );
 
   const { blockedUsers } = useHiddenPreferencesData();
@@ -180,7 +180,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
           </Group>
         </Stack>
       </Container>
-      {data.user.username && (
+      {(data.postId || data.user.username) && (
         <ResourceReviewCarousel
           userId={data.user.id}
           modelVersionId={data.modelVersion.id}
@@ -190,34 +190,40 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       )}
       <Container pb="md" w="100%">
         <Stack>
-          <Group gap={4}>
-            {!!relatedPosts?.items.length && (
-              <Text size="md" mr="xs" fw={500} lh="1.1">
-                Related posts
-              </Text>
-            )}
-            {loadingRelatedPosts && !relatedPosts ? (
-              <Loader type="dots" />
-            ) : (
-              relatedPosts?.items.map((post) => (
-                <Link
-                  key={post.id}
-                  href={`/posts/${post.id}/${post.title ? slugit(post.title) : ''}`}
-                  passHref
-                  legacyBehavior
-                >
-                  <Button
-                    component="a"
-                    variant="light"
-                    styles={{ root: { height: 'auto' }, label: { whiteSpace: 'normal' } }}
-                    size="compact-xs"
+          {data.postId ? (
+            <Anchor component={Link} href={`/posts/${data.postId}`} size="sm" fw={500}>
+              View post →
+            </Anchor>
+          ) : (
+            <Group gap={4}>
+              {!!relatedPosts?.items.length && (
+                <Text size="md" mr="xs" fw={500} lh="1.1">
+                  Related posts
+                </Text>
+              )}
+              {loadingRelatedPosts && !relatedPosts ? (
+                <Loader type="dots" />
+              ) : (
+                relatedPosts?.items.map((post) => (
+                  <Link
+                    key={post.id}
+                    href={`/posts/${post.id}/${post.title ? slugit(post.title) : ''}`}
+                    passHref
+                    legacyBehavior
                   >
-                    {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}
-                  </Button>
-                </Link>
-              ))
-            )}
-          </Group>
+                    <Button
+                      component="a"
+                      variant="light"
+                      styles={{ root: { height: 'auto' }, label: { whiteSpace: 'normal' } }}
+                      size="compact-xs"
+                    >
+                      {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}
+                    </Button>
+                  </Link>
+                ))
+              )}
+            </Group>
+          )}
           <Divider />
           {data.details && <RenderHtml html={data.details} withProfanityFilter />}
 
