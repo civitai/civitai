@@ -568,6 +568,21 @@ describe('a provider token holder', () => {
     });
   });
 
+  it.each([
+    [{ 1: 'in-review', 2: 'not-found' }, 'in-review'],
+    [{ 1: 'failed-scan', 2: 'no-generation' }, 'failed-scan'],
+    [{ 1: 'no-generation', 2: 'failed-scan' }, 'failed-scan'],
+    [{ 1: 'unsupported-file', 2: 'not-found' }, 'unsupported-file'],
+  ] as const)(
+    'answers the more specific refusal whichever copy holds it (%o)',
+    async (refusals, error) => {
+      await copy(1);
+      await copy(2);
+
+      expect(await providerPick(providerGate([], refusals))).toEqual({ ok: false, error });
+    }
+  );
+
   it('names the provider beside the URL kind in the hash logs', async () => {
     await copy(1, { mode: 'TakenDown' });
     await copy(2);
