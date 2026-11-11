@@ -76,11 +76,10 @@ export type TrainingDataScanTarget = {
  * Pending. Outside production without an orchestrator token nothing is submitted and the file stays
  * Pending: a scan is never faked.
  */
-export async function submitTrainingDataScan({
-  fileId,
-  modelVersionId,
-  url,
-}: TrainingDataScanTarget) {
+export async function submitTrainingDataScan(
+  { fileId, modelVersionId, url }: TrainingDataScanTarget,
+  op?: string
+) {
   if (!isProd && !env.ORCHESTRATOR_ACCESS_TOKEN) return false;
 
   await dbWrite.modelFile.update({
@@ -111,7 +110,15 @@ export async function submitTrainingDataScan({
   }
   const air = blobAir(blobId);
   // The url ties the verdict to these bytes: the webhook drops it once the file holds another zip.
-  const metadata = { fileId, modelVersionId, url, etag, size, scan: TRAINING_DATA_BLOB_SCAN };
+  const metadata = {
+    fileId,
+    modelVersionId,
+    url,
+    etag,
+    size,
+    scan: TRAINING_DATA_BLOB_SCAN,
+    ...(op && { op }),
+  };
   const { data } = await submitWorkflow({
     client: internalOrchestratorClient,
     signal: AbortSignal.timeout(SUBMIT_TIMEOUT_MS),
@@ -189,7 +196,7 @@ async function submitTrainingDataScanOutcome(
   { quietUnreadable = false } = {}
 ): Promise<SubmitOutcome> {
   try {
-    return (await submitTrainingDataScan(target)) ? 'submitted' : 'skipped';
+    return (await submitTrainingDataScan(target, op)) ? 'submitted' : 'skipped';
   } catch (error) {
     const unreadable = error instanceof TrainingDataSourceUnreadable;
     if (unreadable && quietUnreadable) return 'unreadable';
@@ -358,6 +365,21 @@ const healUnreadableKey = (file: PendingZip) =>
  * `HEAL_MAX_UNREADABLE` definite answers that it can't be read. Any other failed resubmit (an outage)
  * is not counted: the zip comes back once its claim is an hour old.
  */
+export const HEAL_OP = 'self-heal';
+
+/**
+ * Takes back a self-heal resubmit whose verdict could not be confirmed against the object (a failed
+ * or transient re-check): it was answered, so it is not a resubmit that went unanswered.
+ */
+export async function uncountUnconfirmedResubmit({ fileId, url }: { fileId: number; url: string }) {
+  const key = healAttemptsKey({ id: fileId, url, modelVersionId: 0 });
+  try {
+    if ((await sysRedis.decrBy(key, 1)) < 0) await sysRedis.set(key, '0');
+  } catch {
+    // An uncounted take-back only brings the give-up one resubmit nearer.
+  }
+}
+
 export async function healStalledTrainingDataScans() {
   const files = await dbWrite.modelFile.findMany({
     where: {
@@ -372,7 +394,7 @@ export async function healStalledTrainingDataScans() {
 
   const gaveUp: number[] = [];
   let unreadableRuns = 0;
-  const { claimed, submitted, failed } = await claimAndSubmit(files, 'self-heal', {
+  const { claimed, submitted, failed } = await claimAndSubmit(files, HEAL_OP, {
     neverSubmitted: false,
     quietUnreadable: true,
     onClaimed: async (file) => {

@@ -120,14 +120,19 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({
   limitConcurrency: mockLimitConcurrency,
 }));
 
-const { mockSubmitTrainingDataScanSafe, mockTrainingDataObjectUnchanged } = vi.hoisted(() => ({
-  mockSubmitTrainingDataScanSafe: vi.fn(),
-  mockTrainingDataObjectUnchanged: vi.fn(),
-}));
+const { mockSubmitTrainingDataScanSafe, mockTrainingDataObjectUnchanged, mockUncount } = vi.hoisted(
+  () => ({
+    mockSubmitTrainingDataScanSafe: vi.fn(),
+    mockTrainingDataObjectUnchanged: vi.fn(),
+    mockUncount: vi.fn(),
+  })
+);
 vi.mock('~/server/services/training-data-scan.service', () => ({
   TRAINING_DATA_BLOB_SCAN: 'training-data-blob',
   submitTrainingDataScanSafe: mockSubmitTrainingDataScanSafe,
   trainingDataObjectUnchanged: mockTrainingDataObjectUnchanged,
+  uncountUnconfirmedResubmit: mockUncount,
+  HEAL_OP: 'self-heal',
 }));
 
 // model.service.ts has a heavy import surface (clickhouse, redis, search-index,
@@ -1383,6 +1388,23 @@ describe('model-file-scan.service', () => {
         await deliver();
 
         expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['a self-heal resubmit, which is taken back', { op: 'self-heal' }, 1],
+        ['any other submit, which was never counted', {}, 0],
+      ])('when the object is not confirmed after %s', async (_, op, calls) => {
+        mockUncount.mockReset();
+        mockTrainingDataObjectUnchanged.mockResolvedValue(false);
+        scanned(
+          { scannedFileCount: 12 },
+          { scan: 'training-data-blob', url: ZIP, etag: '"e1"', size: 2048, ...op }
+        );
+
+        await deliver();
+
+        expect(mockUncount).toHaveBeenCalledTimes(calls);
+        if (calls) expect(mockUncount).toHaveBeenCalledWith({ fileId: 1, url: ZIP });
       });
 
       it('records a Danger verdict without the check', async () => {

@@ -49,7 +49,9 @@ import { clamFilesScanned } from '~/server/services/orchestrator/consumer-blob-s
 import {
   submitTrainingDataScanSafe,
   TRAINING_DATA_BLOB_SCAN,
+  HEAL_OP,
   trainingDataObjectUnchanged,
+  uncountUnconfirmedResubmit,
 } from '~/server/services/training-data-scan.service';
 
 // -----------------------------------------------------------------------------
@@ -911,6 +913,8 @@ async function handleScanWorkflow(event: WorkflowEvent) {
           scanRequestedAt: new Date(),
         },
       });
+      if (data.metadata?.op === HEAL_OP)
+        await uncountUnconfirmedResubmit({ fileId, url: trainingDataUrl });
       logToAxiom(
         {
           type: 'warning',

@@ -20,6 +20,7 @@ vi.mock('~/utils/delivery-worker', () => ({
 
 import {
   TrainingDataSourceUnreadable,
+  uncountUnconfirmedResubmit,
   healStalledTrainingDataScans,
   trainingDataObjectUnchanged,
   requeuePendingTrainingDataScans,
@@ -445,6 +446,14 @@ describe('healStalledTrainingDataScans', () => {
         counts.set(key, (counts.get(key) ?? 0) + 1);
         return counts.get(key);
       });
+      redisMock.sysRedis.decrBy.mockImplementation(async (key: string) => {
+        counts.set(key, (counts.get(key) ?? 0) - 1);
+        return counts.get(key);
+      });
+      redisMock.sysRedis.set.mockImplementation(async (key: string, value: string) => {
+        counts.set(key, Number(value));
+        return 'OK';
+      });
     });
     const gaveUp = () => dbMock.dbWrite.modelFile.updateMany.mock.calls.length > 0;
     beforeEach(() => loggingMock.logToAxiom.mockClear());
@@ -473,6 +482,26 @@ describe('healStalledTrainingDataScans', () => {
 
       expect(gaveUp()).toBe(false);
       expect(counts.size).toBe(0);
+    });
+
+    it('a clean scan whose object could not be confirmed, again and again, stays Pending', async () => {
+      for (let run = 0; run < 5; run++) {
+        await healStalledTrainingDataScans();
+        expect(h.submitWorkflow.mock.calls[run][0].body.metadata.op).toBe('self-heal');
+        // The verdict's re-check failed: the webhook takes the resubmit back.
+        await uncountUnconfirmedResubmit({ fileId: stalled.id, url: stalled.url });
+      }
+
+      expect(gaveUp()).toBe(false);
+      expect(h.submitWorkflow).toHaveBeenCalledTimes(5);
+    });
+
+    it('takes back no more than it counted', async () => {
+      await uncountUnconfirmedResubmit({ fileId: stalled.id, url: stalled.url });
+      for (let run = 0; run < 3; run++) await healStalledTrainingDataScans();
+      await healStalledTrainingDataScans();
+
+      expect(gaveUp()).toBe(true);
     });
 
     it('with no ETag 24 times, is marked Error', async () => {
