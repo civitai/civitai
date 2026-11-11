@@ -168,6 +168,10 @@ export const eventOwnerTopic = (event: string, topicId: string) =>
   `${SignalTopic.EventPoints}:${event}:owner:${topicId}` as const;
 
 export const LIVE_BUCKET_MS = 5 * 60 * 1000;
+// How long a live bucket is kept, and how far back a read sums them. The referee settles hourly; this
+// covers hours of failed settles, so the shown total holds still until one succeeds instead of
+// losing its oldest buckets.
+export const LIVE_BUCKET_TTL_S = 12 * 60 * 60;
 export const liveBucket = (time: Date) => Math.floor(time.getTime() / LIVE_BUCKET_MS);
 export const utcDay = (time: Date) => time.toISOString().slice(0, 10);
 // storyline ids whose spark scored for this person on this UTC day
