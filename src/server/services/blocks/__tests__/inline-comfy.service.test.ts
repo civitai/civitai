@@ -787,6 +787,30 @@ describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
     ['LoadImage', { image: 'https://localhost/x.png' }, URL_REFUSED],
     ['LoadImage', { image: 'https://cdn.example.com:8443/x.png' }, URL_REFUSED],
     ['LoadImage', { image: 'file:///x.png' }, URL_REFUSED],
+    ...[
+      'https://localhost./x.png',
+      'https://cdn.internal./x.png',
+      'https://cdn.local/x.png',
+      'https://kubernetes.default.svc/x.png',
+      'https://u:p@cdn.example.com/x.png',
+      'https://cdn/x.png',
+      'https://cdn.example.com/%E0%A4%A',
+      'https://cdn.example.com/..%2fx.png',
+      'https://2130706433/x.png',
+      'https://0x7f.1/x.png',
+      'https://cdn.example.com\\x.png',
+    ].map((image): [string, Record<string, unknown>, string] => [
+      'LoadImage',
+      { image },
+      URL_REFUSED,
+    ]),
+    ['LoadImage', { image: 'abc [output]' }, LOCAL],
+    ['PreviewBridge', { images: ['2', 0], image: 'x' }, PATH],
+    ['LoraLoader', { model: ['1', 0], lora_name: AIR, my_strength: ['2', 0] }, LINKED],
+    ['LoraLoader', { model: ['1', 0], lora_name: AIR, prev_hooks: ['2', 0] }, LINKED],
+    ...['CreateHookLoraModelOnly', 'CreateHookModelAsLora', 'CreateHookModelAsLoraModelOnly'].map(
+      (name): [string, Record<string, unknown>, string] => [name, { ckpt_name: ['2', 0] }, LINKED]
+    ),
     [
       'Load3D',
       { model_file: 'https://cdn.example.com/a.glb', image: { image: 'a' } },
@@ -811,6 +835,10 @@ describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
     ['DiffControlNetLoader', { model: ['1', 0], control_net_name: AIR }],
     ['CreateHookLora', { lora_name: AIR, prev_hooks: ['2', 0], strength_clip: 1 }],
     ['CLIPTextEncode', { text: 'a cat at x.png', clip: ['1', 1] }],
+    ['ImageStitch', { image1: ['2', 0], direction: 'right', match_image_size: true }],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength: ['2', 0] }],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_clip: ['2', 0] }],
+    ['LoadImage', { image: KEY, upload: null, keep_alpha: true }],
   ])('runs %s %j', (classType, inputs) => {
     expect(verdictFor(classType, inputs).runnable).toBe(true);
   });

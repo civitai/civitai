@@ -415,7 +415,7 @@ export function checkInlineComfyGraph(workflow: Record<string, unknown>): Inline
 // reads or writes a path can reach another job's files whether the path is literal
 // or linked. Matched by name, failing closed: the worker's node set is not enumerable.
 const FILESYSTEM_CLASS_RE = /path|dir|folder/i;
-const FILESYSTEM_INPUT_RE = /path|folder|dir|root/i;
+const FILESYSTEM_INPUT_RE = /path|folder|director(y|ies)|dir(?!ect)|root/i;
 const FILESYSTEM_CLASSES: ReadonlySet<string> = new Set([
   'VHS_LoadAudio',
   'LoadImageOutput',
@@ -423,6 +423,8 @@ const FILESYSTEM_CLASSES: ReadonlySet<string> = new Set([
   'RecordAudio',
   'ImageReceiver',
   'LatentReceiver',
+  'PreviewBridge',
+  'PreviewBridgeLatent',
   'Get Batch From History (mtb)',
   'LoadText|pysssss',
   'SaveText|pysssss',
@@ -435,6 +437,7 @@ const LOADER_CLASSES: ReadonlySet<string> = new Set([
   'CreateHookLora',
   'CreateHookLoraModelOnly',
   'CreateHookModelAsLora',
+  'CreateHookModelAsLoraModelOnly',
 ]);
 
 // Linked inputs that carry a model, CLIP, LoRA, hooks or a number, never a string.
@@ -450,12 +453,14 @@ const LOADER_LINKED_INPUTS_ALLOWED: ReadonlyMap<string, ReadonlySet<string>> = n
   ['CreateHookLora', new Set(['prev_hooks'])],
   ['CreateHookLoraModelOnly', new Set(['prev_hooks'])],
   ['CreateHookModelAsLora', new Set(['prev_hooks'])],
+  ['CreateHookModelAsLoraModelOnly', new Set(['prev_hooks'])],
 ]);
 
 const AIR_RE = /^urn:air:/i;
 const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const FILE_LIKE_RE = /[./\\[\]]/;
-const PRIVATE_HOST_RE = /^(localhost|.*\.(localhost|local|internal))$/i;
+const PRIVATE_HOST_RE =
+  /^localhost$|\.(localhost|local|internal|intranet|lan|corp|home\.arpa|svc)$/i;
 
 /** A public https URL: no credentials, port, IP-literal or internal host, no traversal. */
 function isFetchableMediaUrl(value: string): boolean {
@@ -467,7 +472,7 @@ function isFetchableMediaUrl(value: string): boolean {
     return false;
   }
   if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
-  const host = url.hostname;
+  const host = url.hostname.replace(/\.+$/, '');
   if (!host.includes('.') || host.includes(':') || /^[\d.]+$/.test(host)) return false;
   if (PRIVATE_HOST_RE.test(host)) return false;
   let path: string;
