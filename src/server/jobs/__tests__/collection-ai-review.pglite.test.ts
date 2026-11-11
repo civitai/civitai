@@ -206,8 +206,8 @@ describe('reviewCollection: an image flagged as a minor before its outcome is wr
 
     await reviewCollection(COLLECTION_ID, config);
 
-    expect(await claimedIds()).toEqual([2, 3]);
-    expect(statusWrites()).toEqual([{ status: 'ACCEPTED', ids: [2, 3] }]);
+    expect(await claimedIds()).toEqual([2]);
+    expect(statusWrites()).toEqual([{ status: 'ACCEPTED', ids: [2] }]);
   });
 
   it('holds it for a human on the next run', async () => {

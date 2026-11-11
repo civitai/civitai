@@ -61,8 +61,9 @@ type PendingItem = {
 
 export const HELD_MINOR_ESCALATION = 'scanner-flagged minor';
 
+// An entry marked acceptableMinor goes to a human too, like a flagged one.
 const isHeldMinor = (item: Pick<PendingItem, 'minor' | 'acceptableMinor'>) =>
-  !!item.minor && !item.acceptableMinor;
+  !!item.minor || !!item.acceptableMinor;
 
 export const collectionAiReview = createJob(
   'collection-ai-review',
@@ -434,7 +435,7 @@ async function applyOutcomes({
               ci.id IN (${Prisma.join(acceptIds)})
               AND EXISTS (
                 SELECT 1 FROM "Image" i
-                WHERE i.id = ci."imageId" AND i.minor AND NOT i."acceptableMinor"
+                WHERE i.id = ci."imageId" AND (i.minor OR i."acceptableMinor")
               )
             )`
           : Prisma.empty

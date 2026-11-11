@@ -626,8 +626,12 @@ describe('reviewCollection: a rating label the rules do not recognise', () => {
 describe('reviewCollection: an image the scanner flagged as a minor', () => {
   const held = { minor: true, acceptableMinor: false };
 
-  it('is never accepted on an approve: it goes to the minor queue for a human', async () => {
-    queuePending([pendingItem(held)]);
+  it.each([
+    ['flagged', held],
+    ['flagged and marked acceptable', { minor: true, acceptableMinor: true }],
+    ['marked acceptable', { minor: false, acceptableMinor: true }],
+  ])('is never accepted on an approve when %s: it goes to the minor queue', async (_l, flags) => {
+    queuePending([pendingItem(flags)]);
     modelSees({});
 
     await reviewCollection(COLLECTION_ID, { ...config, escalationAction: 'reject' });
@@ -668,11 +672,8 @@ describe('reviewCollection: an image the scanner flagged as a minor', () => {
     expect(statusWrites()).toEqual(['REJECTED']);
   });
 
-  it.each([
-    ['not flagged', { minor: false, acceptableMinor: false }],
-    ['flagged but marked acceptable', { minor: true, acceptableMinor: true }],
-  ])('is accepted as before when %s', async (_label, flags) => {
-    queuePending([pendingItem(flags)]);
+  it('is accepted when not flagged', async () => {
+    queuePending([pendingItem({ minor: false, acceptableMinor: false })]);
     modelSees({});
 
     await reviewCollection(COLLECTION_ID, config);
