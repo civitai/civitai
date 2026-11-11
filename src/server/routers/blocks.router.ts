@@ -426,6 +426,7 @@ import {
   assertGenerationInputsUsable,
   isAppSourcePendingError,
   opaqueInputUrlsIn,
+  type GenerationInputPhase,
 } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -6967,6 +6968,7 @@ export const blocksRouter = router({
       }
       if (input.body.kind === 'workflow' || input.body.kind === 'step') {
         const pending = await assertStepOrWorkflowInputsUsable(input.body, claims, {
+          phase: 'submit',
           confirmedSubmit:
             input.body.kind === 'step' &&
             isPassThroughStepBody(input.body) &&
@@ -9747,7 +9749,9 @@ async function estimateBlockWorkflowCell(
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
   if (input.body.kind === 'workflow' || input.body.kind === 'step') {
-    const pending = await assertStepOrWorkflowInputsUsable(input.body, claims);
+    const pending = await assertStepOrWorkflowInputsUsable(input.body, claims, {
+      phase: 'estimate',
+    });
     if (pending) return pending;
   }
   if (input.body.kind === 'workflow') {
@@ -10145,7 +10149,12 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (isInlineComfyBody(body)) {
     const verdict = checkInlineComfyGraph(body.workflow);
     if (!verdict.runnable) return { snapshot: verdict.snapshot };
-    const pending = await checkInlineComfySources({ graph: verdict.graph, userId, claims });
+    const pending = await checkInlineComfySources({
+      graph: verdict.graph,
+      userId,
+      claims,
+      phase: 'estimate',
+    });
     if (pending) return pending;
     return {
       snapshot: {
@@ -10266,7 +10275,12 @@ async function submitCustomComfyWorkflow(opts: {
     // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
     //     which is what makes gating that flat array sufficient.
     assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
-    const pending = await checkInlineComfySources({ graph: inlineBody.workflow, userId, claims });
+    const pending = await checkInlineComfySources({
+      graph: inlineBody.workflow,
+      userId,
+      claims,
+      phase: 'submit',
+    });
     if (pending) return pending;
     // (b) ENTITLEMENT — the real belt (early-access `hasAccess` + Private
     //     subscription + anti-drop + anti-substitute) over the declared AIRs.
@@ -10913,8 +10927,14 @@ function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
 async function assertStepOrWorkflowInputsUsable(
   body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
   claims: BlockClaims,
-  /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
-  { confirmedSubmit = false }: { confirmedSubmit?: boolean } = {}
+  {
+    phase,
+    confirmedSubmit = false,
+  }: {
+    phase: GenerationInputPhase;
+    /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
+    confirmedSubmit?: boolean;
+  }
 ) {
   // The arm's own token checks first: a caller refused those never pays for the walk below.
   const userId = confirmedSubmit
@@ -10952,7 +10972,7 @@ async function assertStepOrWorkflowInputsUsable(
       entry,
       isApiCaller: false,
       opaqueInput: true,
-      appBlockLog: { appBlockId: claims.appBlockId, stepTypes: bodyStepTypes(body) },
+      appBlockLog: { appBlockId: claims.appBlockId, stepTypes: bodyStepTypes(body), phase },
     });
   } catch (error) {
     if (!isAppSourcePendingError(error)) throw error;
@@ -10976,6 +10996,7 @@ async function checkInlineComfySources(opts: {
   graph: ComfyGraph;
   userId: number;
   claims: BlockClaims;
+  phase: GenerationInputPhase;
 }): Promise<{ snapshot: BlockWorkflowSnapshot } | null> {
   const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(opts.graph);
   if (tooDeep) {
@@ -10991,7 +11012,11 @@ async function checkInlineComfySources(opts: {
       entry: 'appBlocksInlineComfy',
       isApiCaller: false,
       opaqueInput: true,
-      appBlockLog: { appBlockId: opts.claims.appBlockId, stepTypes: 'customComfy' },
+      appBlockLog: {
+        appBlockId: opts.claims.appBlockId,
+        stepTypes: 'customComfy',
+        phase: opts.phase,
+      },
     });
   } catch (error) {
     if (!isAppSourcePendingError(error)) throw error;

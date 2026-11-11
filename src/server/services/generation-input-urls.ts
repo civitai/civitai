@@ -342,6 +342,34 @@ const refusalCounter = registerCounterWithLabels({
   labelNames: ['entry', 'class', 'caller', 'mode'] as const,
 });
 
+/**
+ * Orchestrator sources on App Blocks entries, counted only: nothing is refused on this count.
+ * `host-orchestrator-source` is a consumer-blob path; `host-unparsable` is any other orchestrator
+ * path, such as a job output.
+ */
+const appBlockHostSourceCounter = registerCounterWithLabels({
+  name: 'app_block_host_source_total',
+  help: 'Orchestrator-hosted generation sources on App Blocks entries, by entry point and reason.',
+  labelNames: ['entry', 'reason'] as const,
+});
+
+/** An App Blocks source check runs on the estimate and again on the submit of the same run. */
+export type GenerationInputPhase = 'estimate' | 'submit';
+
+type AppBlockHostSourceReason = 'host-orchestrator-source' | 'host-unparsable';
+
+const CONSUMER_BLOB_PATH = /\/v\d+\/consumer\/blobs\/[^/]+$/i;
+
+function appBlockHostSourceReason(url: string): AppBlockHostSourceReason {
+  try {
+    return CONSUMER_BLOB_PATH.test(new URL(url).pathname)
+      ? 'host-orchestrator-source'
+      : 'host-unparsable';
+  } catch {
+    return 'host-unparsable';
+  }
+}
+
 /** Schemes a fetcher may resolve. `urn:` (AIR ids) is not one of them. */
 const FETCH_SCHEMES = new Set([
   'http:',
@@ -813,7 +841,7 @@ export async function assertGenerationInputsUsable({
    */
   opaqueInput?: boolean;
   /** Who and what an App Blocks entry's source log lines are about. Never a url or image id. */
-  appBlockLog?: { appBlockId?: string; stepTypes?: string };
+  appBlockLog?: { appBlockId?: string; stepTypes?: string; phase?: GenerationInputPhase };
   now?: Date;
 }) {
   const given = [...new Set(urls.filter((url): url is string => !!url))];
@@ -834,7 +862,7 @@ export async function assertGenerationInputsUsable({
   let refuseExternal: boolean | undefined;
   const appBlock = APP_BLOCK_ENTRIES.has(entry);
   const logAppSource = (
-    reason: AppSourceRefusal | 'external',
+    reason: AppSourceRefusal | 'external' | AppBlockHostSourceReason,
     extra: Record<string, unknown> = {}
   ) =>
     void logToAxiom({
@@ -844,6 +872,7 @@ export async function assertGenerationInputsUsable({
       reason,
       appBlockId: appBlockLog?.appBlockId,
       stepTypes: appBlockLog?.stepTypes,
+      phase: appBlockLog?.phase,
       ...extra,
     }).catch(() => undefined);
   const appBlockKeys = appBlock
@@ -875,6 +904,9 @@ export async function assertGenerationInputsUsable({
           refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
           throw appSourceNotOnCivitaiError();
         }
+        const reason = appBlockHostSourceReason(url);
+        appBlockHostSourceCounter.inc({ entry, reason });
+        logAppSource(reason, { mode: 'log' });
       }
       continue;
     }

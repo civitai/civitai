@@ -596,6 +596,66 @@ describe('an App Blocks generation source', () => {
       expect(await check([BLOB], entry)).toBe(`refused: ${APP_SOURCE_NOT_ON_CIVITAI_MESSAGE}`);
     expect(await check([BLOB], 'generateFromGraph')).toBe('accepted');
   });
+
+  describe('the orchestrator source count', () => {
+    const JOB_OUTPUT = 'https://orchestration.civitai.com/v2/consumer/jobs/J1/outputs/out.png';
+    const hostRows = () =>
+      loggingMock.logToAxiom.mock.calls
+        .map(([data]) => data as Record<string, unknown>)
+        .filter((data) => String(data.reason).startsWith('host-'));
+
+    beforeEach(() => loggingMock.logToAxiom.mockClear());
+
+    it('counts a consumer blob and any other orchestrator path, refusing neither', async () => {
+      for (const entry of APP_ENTRIES) {
+        loggingMock.logToAxiom.mockClear();
+        expect(await check([BLOB, JOB_OUTPUT], entry)).toBe('accepted');
+        expect(hostRows()).toEqual([
+          expect.objectContaining({
+            name: 'app-block-source-refusal',
+            entry,
+            reason: 'host-orchestrator-source',
+            mode: 'log',
+          }),
+          expect.objectContaining({ entry, reason: 'host-unparsable', mode: 'log' }),
+        ]);
+      }
+      const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls);
+      expect(logged).not.toContain('ABC123');
+      expect(logged).not.toContain('orchestration.civitai.com');
+    });
+
+    it('control: a Civitai image, or an orchestrator blob outside App Blocks, is not counted', async () => {
+      await givenImage({ userId: CALLER, postId: null });
+      expect(await check([CDN()], 'appBlocksPassThrough')).toBe('accepted');
+      expect(await check([BLOB], 'generateFromGraph')).toBe('accepted');
+      expect(hostRows()).toEqual([]);
+    });
+
+    it('tags each count with the app and with estimate or submit', async () => {
+      for (const phase of ['estimate', 'submit'] as const)
+        await assertGenerationInputsUsable({
+          urls: [BLOB],
+          userId: CALLER,
+          entry: 'appBlocksPassThrough',
+          isApiCaller: false,
+          appBlockLog: { appBlockId: 'apb_1', stepTypes: 'videoGen', phase },
+          now: AFTER,
+        });
+      expect(hostRows()).toEqual([
+        expect.objectContaining({ appBlockId: 'apb_1', stepTypes: 'videoGen', phase: 'estimate' }),
+        expect.objectContaining({ appBlockId: 'apb_1', stepTypes: 'videoGen', phase: 'submit' }),
+      ]);
+    });
+
+    it('a blob the scanned-rows flag refuses is not counted', async () => {
+      holder.scannedRows = true;
+      expect(await check([BLOB], 'appBlocksPassThrough')).toBe(
+        `refused: ${APP_SOURCE_NOT_ON_CIVITAI_MESSAGE}`
+      );
+      expect(hostRows()).toEqual([]);
+    });
+  });
 });
 
 describe('assertStoredImageUrlsUnblocked', () => {
