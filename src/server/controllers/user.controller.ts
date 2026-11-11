@@ -485,6 +485,12 @@ export const completeOnboardingHandler = async ({
         // address, and treating it as a change would revoke a verification the user already earned.
         const emailChanged =
           !!input.email && input.email.toLowerCase() !== current?.email?.toLowerCase();
+        // This step only sets a first address. Replacing one goes through `requestEmailChange`, which
+        // proves the new address before writing it.
+        if (emailChanged && current?.email)
+          throw throwBadRequestError(
+            'Your account already has an email address. Use Change email in your account settings to change it.'
+          );
         if (emailChanged) await assertEmailAllowed(input.email);
 
         // `emailVerified` attests to ONE address. Carrying it across a change would leave the flag
@@ -499,7 +505,7 @@ export const completeOnboardingHandler = async ({
         // left to re-stamp it. Stamped first, the same failure commits nothing and the retry is clean.
         //
         // Only when this step is genuinely ESTABLISHING the address — the first time it completes, or
-        // when it changes the address. A bare re-submit must not stamp: `onboarding` is caller-supplied
+        // when it sets a first address. A bare re-submit must not stamp: `onboarding` is caller-supplied
         // input, so without that condition any account could mark itself, including one that predates
         // the rule and has been posting for years.
         if (changed || emailChanged) await setEmailVerificationRequired(id, !verified);
@@ -509,8 +515,7 @@ export const completeOnboardingHandler = async ({
           data: {
             onboarding,
             username: input.username,
-            email: input.email,
-            ...(emailChanged ? { emailVerified: null } : {}),
+            ...(emailChanged ? { email: input.email, emailVerified: null } : {}),
           },
         });
         if (input.username && input.username !== current?.username) {
@@ -531,13 +536,7 @@ export const completeOnboardingHandler = async ({
         // every address change made this an unmetered way to mail an arbitrary third party from
         // Civitai's sending domain: alternate two addresses and loop. `changed` can be true at most
         // once per account, so this path sends at most once. A user who mistypes their address
-        // corrects it and uses the banner's resend.
-        //
-        // That does not close the primitive, only this path's unmetered version of it. Nothing binds
-        // `User.email` to the account holder — this step rewrites it without the immutability check in
-        // `updateUserById` — so `resendEmailVerification` still mails a caller-chosen address, at its
-        // 3/hour. Against `requestEmailChange`'s 2/day that is the residual, and it is a rate limit
-        // rather than a bound on WHO can be mailed.
+        // corrects it through Change email, which mails the corrected address.
         //
         // The address is passed rather than re-read: a replica read right after this write can still
         // hold the OLD row, and a token minted for the old address silently reverts the change when
@@ -608,7 +607,7 @@ export const completeOnboardingHandler = async ({
     // NEW user repeat the same step forever ("can't get through account creation"). Mirrors updateUserHandler.
     //
     // 🔴 Gating on `changed` ALONE is narrower than what this handler WRITES. The Profile step writes
-    // `username`/`email` unconditionally (see the switch above), and both are carried on the session shape — so a
+    // `username` unconditionally and a first `email` (see the switch above), and both are carried on the session shape — so a
     // re-submit of a step whose bit is already set advanced nothing, skipped the bust, and left the new username
     // in the database with the old one in the session for the rest of its 4h TTL. Bust on either condition.
     const wroteSessionIdentity =
@@ -657,6 +656,8 @@ export const updateUserHandler = async ({
   } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
+  // An address is only ever set from a signed-in session, as in `completeOnboardingStep`.
+  if (ctx.apiKeyId != null) delete data.email;
   if (username && !(await isUsernamePermitted(username)))
     throw throwBadRequestError('Invalid username');
 

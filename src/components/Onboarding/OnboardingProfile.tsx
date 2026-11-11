@@ -74,7 +74,19 @@ export function OnboardingProfile() {
         <StepperTitle title="Account Details" description="Please add your account details" />
         <Form form={form} onSubmit={handleSubmit}>
           <Stack>
-            <InputText size="lg" name="email" label="Email" type="email" withAsterisk />
+            <InputText
+              size="lg"
+              name="email"
+              label="Email"
+              type="email"
+              withAsterisk
+              readOnly={!!currentUser?.email}
+              description={
+                currentUser?.email
+                  ? 'You can change this later in your account settings.'
+                  : undefined
+              }
+            />
             <InputText
               size="lg"
               name="username"
