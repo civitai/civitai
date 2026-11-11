@@ -734,7 +734,7 @@ const featureFlags = createFeatureFlags({
   // submission naming it is refused (see `generation/ecosystem-gates.ts`). No Flipt key, so
   // opening it past moderators is a code change.
   minimaxH3ImageGenerator: { availability: ['mod'] },
-  // Gates Seedream v5.5 the same way: off ⇒ v5.5 is not offered, v5.0-pro stays the default, and a
+  // Gates Seedream v5.5 like krea3Ultra: off ⇒ v5.5 is not offered, v5.0-pro stays the default, and a
   // submitted v5.5 falls back to v5.0-pro (see `image/seedream.graph.ts`). Dark until the
   // orchestrator release that accepts v5.5 is live; Flipt alone opens it.
   seedream55: { availability: [], fliptKey: 'seedream-5-5' },

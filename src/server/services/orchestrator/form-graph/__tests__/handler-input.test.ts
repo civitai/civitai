@@ -377,7 +377,7 @@ describe('seedream.handler', () => {
     };
   };
 
-  it('with seedream55 off, the default and the version list are v5.0-pro and the five before it', async () => {
+  it('with seedream55 off, the default and the version list are v5.0-pro and the four before it', async () => {
     const steps = await dispatch({ workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat' });
     expect(firstInput(steps)).toMatchObject({ engine: 'seedream', version: 'v5.0-pro' });
 
@@ -421,7 +421,7 @@ describe('seedream.handler', () => {
     });
   });
 
-  // v5.5 downsamples like v5.0-pro, so no 2K/4K toggle: it renders at 2K.
+  // Like v5.0-pro, v5.5 is offered at 2K only, with no 2K/4K toggle.
   it('with seedream55 on, v5.5 has no resolution toggle and sends 2K sizes', async () => {
     const store = generationHub.createStore({ ext: { ...BASE, flags: ON } });
     store.set({ workflow: 'txt2img', ecosystem: 'Seedream' });
