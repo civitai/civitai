@@ -1,4 +1,8 @@
-import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import {
+  KNIGHTS_NSFW_LEVEL_QUESTION,
+  parseKnightsSourcesConfig,
+  type KnightsSourcesConfig,
+} from '@civitai/shared/new-order';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -7,29 +11,9 @@ import { enqueueKnightsItems } from '~/server/services/knights/enqueue.service';
 export const KNIGHTS_SOURCE_SCAN_SAMPLE = 'scan-sample';
 export const KNIGHTS_SOURCE_OWNER_RATING = 'owner-rating';
 
-export type KnightsSourcesConfig = { enabled: boolean; sfwRate: number; nsfwRate: number };
+export { parseKnightsSourcesConfig, type KnightsSourcesConfig };
 
-const DEFAULT_RATES = { sfwRate: 1, nsfwRate: 0.3 };
-const OFF: KnightsSourcesConfig = { enabled: false, ...DEFAULT_RATES };
-
-const rate = (value: unknown, fallback: number) =>
-  typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
-
-export function parseKnightsSourcesConfig(raw: string | Buffer | null): KnightsSourcesConfig {
-  if (raw == null) return OFF;
-  try {
-    const parsed = JSON.parse(Buffer.isBuffer(raw) ? raw.toString('utf8') : raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') return OFF;
-    const config = parsed as Record<string, unknown>;
-    return {
-      enabled: config.enabled === true,
-      sfwRate: rate(config.sfwRate, DEFAULT_RATES.sfwRate),
-      nsfwRate: rate(config.nsfwRate, DEFAULT_RATES.nsfwRate),
-    };
-  } catch {
-    return OFF;
-  }
-}
+const OFF = parseKnightsSourcesConfig(null);
 
 const CONFIG_TTL_MS = 30_000;
 const CONFIG_READ_TIMEOUT_MS = 500;

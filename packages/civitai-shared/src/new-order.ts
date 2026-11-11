@@ -29,3 +29,49 @@ export const KNIGHTS_BLOCK_REASONS = [
   { value: 'Bestiality', label: 'Bestiality' },
   { value: 'Other', label: 'Other' },
 ] as const;
+
+/**
+ * The Knights v2 image sources switch, stored as JSON under `system:knights-v2-sources` in sysRedis.
+ * The main app reads it to decide what to enqueue and the moderator app writes it, so the shape and the
+ * reader live here: a field added on one side cannot drift from the other.
+ */
+export type KnightsSourcesConfig = { enabled: boolean; sfwRate: number; nsfwRate: number };
+
+/** The rates used when the stored JSON omits one. Reading never turns a missing key on. */
+export const KNIGHTS_SOURCES_DEFAULT_RATES = { sfwRate: 1, nsfwRate: 0.3 } as const;
+
+const KNIGHTS_SOURCES_OFF: KnightsSourcesConfig = {
+  enabled: false,
+  ...KNIGHTS_SOURCES_DEFAULT_RATES,
+};
+
+const clampRate = (value: unknown, fallback: number) =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
+
+/** `stored` is false for an absent or unreadable value, which reads as off. */
+export function readKnightsSourcesConfig(raw: string | Buffer | null): {
+  config: KnightsSourcesConfig;
+  stored: boolean;
+} {
+  const off = { config: KNIGHTS_SOURCES_OFF, stored: false };
+  if (raw == null) return off;
+  try {
+    const parsed = JSON.parse(Buffer.isBuffer(raw) ? raw.toString('utf8') : raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return off;
+    const config = parsed as Record<string, unknown>;
+    return {
+      stored: true,
+      config: {
+        enabled: config.enabled === true,
+        sfwRate: clampRate(config.sfwRate, KNIGHTS_SOURCES_DEFAULT_RATES.sfwRate),
+        nsfwRate: clampRate(config.nsfwRate, KNIGHTS_SOURCES_DEFAULT_RATES.nsfwRate),
+      },
+    };
+  } catch {
+    return off;
+  }
+}
+
+export function parseKnightsSourcesConfig(raw: string | Buffer | null): KnightsSourcesConfig {
+  return readKnightsSourcesConfig(raw).config;
+}
