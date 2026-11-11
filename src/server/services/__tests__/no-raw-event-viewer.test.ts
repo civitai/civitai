@@ -147,8 +147,11 @@ function findViolations(files: { name: string; text: string }[]) {
   return hits;
 }
 
-/** A floor on the scan's reach, so a walk that silently stops finding files cannot pass. */
-const MIN_SCANNED_FILES = 80;
+/**
+ * Floors on the scan's reach, so a walk that silently drops a directory or most of its files cannot
+ * pass. Set a little under today's counts (131 routers, 46 controllers).
+ */
+const MIN_SCANNED_FILES: Record<string, number> = { routers: 120, controllers: 40 };
 
 describe('no-raw-event-viewer', () => {
   const files = SCAN_DIRS.flatMap((d) => walk(d)).map((file) => ({
@@ -156,8 +159,10 @@ describe('no-raw-event-viewer', () => {
     text: fs.readFileSync(file, 'utf-8'),
   }));
 
-  it('scans the routers and controllers', () => {
-    expect(files.length).toBeGreaterThanOrEqual(MIN_SCANNED_FILES);
+  it.each(Object.entries(MIN_SCANNED_FILES))('scans %s', (dir, min) => {
+    expect(files.filter((f) => f.name.startsWith(dir + path.sep)).length).toBeGreaterThanOrEqual(
+      min
+    );
   });
 
   it('asks every event-decoration gate about eventViewerOf(ctx)', () => {
