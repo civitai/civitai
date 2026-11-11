@@ -1,4 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type * as Crypto from 'node:crypto';
+
+const { randomBytes } = vi.hoisted(() => ({ randomBytes: vi.fn() }));
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof Crypto>();
+  randomBytes.mockImplementation(actual.randomBytes as never);
+  return { ...actual, randomBytes };
+});
 
 import { buildUploadKey } from '~/utils/upload-key';
 
@@ -25,8 +33,14 @@ describe('buildUploadKey', () => {
     expect(buildUploadKey('model', 42, 'My Model v1.0.safetensors')).toMatch(UPLOAD_KEY_SHAPE);
   });
 
-  it('accepts no short token', () => {
-    expect('model/42/My_Model_v1_0.aB3x.safetensors').not.toMatch(UPLOAD_KEY_SHAPE);
+  it('takes its token from the system CSPRNG', () => {
+    const bytes = Buffer.alloc(16, 0xab);
+    randomBytes.mockReturnValueOnce(bytes as never);
+
+    expect(buildUploadKey('model', 42, 'a.safetensors')).toBe(
+      `model/42/a.${bytes.toString('hex')}.safetensors`
+    );
+    expect(randomBytes).toHaveBeenCalledWith(16);
   });
 
   it('gives two uploads of the same filename different keys', () => {
