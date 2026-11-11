@@ -135,6 +135,7 @@ export default function ModelReviews() {
   const handleModelVersionChange = (value: string | null) => {
     router.replace(
       {
+        pathname: router.pathname,
         query: removeEmpty({
           ...router.query,
           modelVersionId: value ? Number(value) : undefined,
@@ -148,14 +149,20 @@ export default function ModelReviews() {
 
   const handleFilterChange = (value: string) => {
     router.replace(
-      { query: removeEmpty({ ...router.query, filter: parseReviewsFilter(value), page: 1 }) },
+      {
+        // With the route pattern as pathname, `id` fills [id] instead of trailing as ?id=.
+        pathname: router.pathname,
+        query: removeEmpty({ ...router.query, filter: parseReviewsFilter(value), page: 1 }),
+      },
       undefined,
       { shallow: true }
     );
   };
 
   const handlePaginationChange = (page: number) => {
-    router.replace({ query: { ...router.query, page } }, undefined, { shallow: true });
+    router.replace({ pathname: router.pathname, query: { ...router.query, page } }, undefined, {
+      shallow: true,
+    });
   };
 
   if (!loadingModel && (!model || model?.status !== 'Published' || isBlocked)) return <NotFound />;
