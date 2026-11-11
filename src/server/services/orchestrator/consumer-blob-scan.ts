@@ -37,9 +37,9 @@ export async function uploadConsumerBlob({
 }
 
 /**
- * How many files a virus scan says it read: its count when it reports one, else the count in the
- * scanner's own summary, which is what the orchestrator returns today. Zero when it says neither.
- * A clean scan that read nothing has not cleared the file.
+ * How many files a virus scan says it read: scannedFileCount when reported, else the count in the
+ * scanner's summary line. Zero when it says neither. A clean scan that read nothing has not cleared
+ * the file.
  */
 export function clamFilesScanned(clam: {
   scannedFileCount?: number | null;

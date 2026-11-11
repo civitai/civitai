@@ -387,7 +387,7 @@ export const getFileForModelVersion = async ({
     (await trainingDataShareRestricted(dbRead, modelVersionId))
   )
     return { status: 'not-found' };
-  // Fails closed: a dataset whose scan has not completed is served to no one but its owner.
+  // Fails closed: an unscanned or failed dataset is served only to its owner and moderators.
   if (
     file.type === 'Training Data' &&
     !isOwner &&

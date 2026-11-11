@@ -203,8 +203,22 @@ describe('requeuePendingTrainingDataScans', () => {
     expect(h.submitWorkflow).toHaveBeenCalledTimes(1);
     expect(h.submitWorkflow.mock.calls[0][0].body.metadata.fileId).toBe(2);
     expect(result).toMatchObject({ page: 1, submitted: 1 });
-    const [sql, ids] = dbMock.dbWrite.$queryRaw.mock.calls[0];
-    expect(sql.join('?')).toMatch(/"scanRequestedAt" IS NULL/);
+    const [sql, ids, staleSeconds] = dbMock.dbWrite.$queryRaw.mock.calls[0];
     expect(ids).toEqual([1, 2]);
+    // A claim older than the in-flight window is taken again.
+    expect(sql.join('?')).toMatch(
+      /"scanRequestedAt" IS NULL\s+OR "scanRequestedAt" < now\(\) - \? \* interval '1 second'/
+    );
+    expect(staleSeconds).toBe(60 * 60);
+  });
+
+  it('claims the page before it submits any of it', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+
+    await requeuePendingTrainingDataScans({ limit: 50, dryRun: false });
+
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      h.submitWorkflow.mock.invocationCallOrder[0]
+    );
   });
 });

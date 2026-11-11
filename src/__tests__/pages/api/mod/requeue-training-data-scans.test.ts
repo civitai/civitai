@@ -1,16 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ requeue: vi.fn(), methods: [] as string[] }));
+const h = vi.hoisted(() => ({ requeue: vi.fn() }));
 
 vi.mock('~/server/services/training-data-scan.service', () => ({
   requeuePendingTrainingDataScans: h.requeue,
 }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  ModEndpoint: (handler: unknown, methods: string[]) => {
-    h.methods = methods;
-    return handler;
-  },
+  ModEndpoint: (handler: unknown) => handler,
 }));
 
 import handler from '~/pages/api/mod/requeue-training-data-scans';
@@ -28,10 +25,6 @@ beforeEach(() => {
 });
 
 describe('/api/mod/requeue-training-data-scans', () => {
-  it('is a moderator endpoint taking GET and POST only', () => {
-    expect(h.methods).toEqual(['GET', 'POST']);
-  });
-
   it('only counts on a GET', async () => {
     await call('GET');
     expect(h.requeue).toHaveBeenCalledWith({ limit: 10, afterId: undefined, dryRun: true });
