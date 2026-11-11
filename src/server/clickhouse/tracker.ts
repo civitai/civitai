@@ -1196,6 +1196,12 @@ export class Tracker {
     applied: boolean;
     promptTokens: number;
     completionTokens: number;
+    nsfwLevel: number;
+    minorUncertain: -1 | 0 | 1;
+    depictsMinor: -1 | 0 | 1;
+    isPhotorealistic: -1 | 0 | 1;
+    suggestiveStyling: -1 | 0 | 1;
+    sexualContent: -1 | 0 | 1;
   }) {
     return this.track(
       'collectionAiReviewEvents',

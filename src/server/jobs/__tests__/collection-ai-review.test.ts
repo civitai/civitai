@@ -693,3 +693,70 @@ describe('reviewCollection: an image the scanner flagged as a minor', () => {
     );
   });
 });
+
+describe('reviewCollection: the audit row', () => {
+  const trackedRow = () => trackReview.mock.calls[0][0] as Record<string, unknown>;
+
+  it('sends exactly the columns the table has', async () => {
+    queuePending([pendingItem()]);
+    modelSees({});
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(Object.keys(trackedRow()).sort()).toEqual(
+      [
+        'appliedAction',
+        'applied',
+        'collectionId',
+        'collectionItemId',
+        'completionTokens',
+        'decision',
+        'depictsMinor',
+        'entityId',
+        'escalations',
+        'isPhotorealistic',
+        'minorUncertain',
+        'model',
+        'nsfwLevel',
+        'promptTokens',
+        'reason',
+        'sexualContent',
+        'suggestiveStyling',
+        'userId',
+        'violations',
+      ].sort()
+    );
+  });
+
+  it("carries the image's level and the model's observations", async () => {
+    queuePending([pendingItem({ nsfwLevel: 2 })]);
+    modelSees({ minorUncertain: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(trackedRow()).toMatchObject({
+      nsfwLevel: 2,
+      minorUncertain: 1,
+      depictsMinor: 0,
+      isPhotorealistic: 0,
+      suggestiveStyling: 0,
+      sexualContent: 0,
+    });
+  });
+
+  it('records no observations when the model is not called', async () => {
+    queuePending([pendingItem({ nsfwLevel: 16 })]);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(reviewImage).not.toHaveBeenCalled();
+    expect(trackedRow()).toMatchObject({
+      nsfwLevel: 16,
+      minorUncertain: -1,
+      depictsMinor: -1,
+      isPhotorealistic: -1,
+      suggestiveStyling: -1,
+      sexualContent: -1,
+    });
+  });
+});

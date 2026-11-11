@@ -53,6 +53,27 @@ export const aiReviewObservationsSchema = z.object({
   hasBuzzReference: z.boolean(),
 });
 
+const OBSERVATION_COLUMNS = [
+  'minorUncertain',
+  'depictsMinor',
+  'isPhotorealistic',
+  'suggestiveStyling',
+  'sexualContent',
+] as const;
+export type AiReviewObservationColumns = Record<(typeof OBSERVATION_COLUMNS)[number], -1 | 0 | 1>;
+
+/** For the audit row: 1 or 0 as the model answered, -1 where there is no readable answer. */
+export function toObservationColumns(raw: unknown): AiReviewObservationColumns {
+  const parsed = aiReviewObservationsSchema.safeParse(raw);
+  const o = parsed.success ? parsed.data : undefined;
+  const columns = {} as AiReviewObservationColumns;
+  for (const key of OBSERVATION_COLUMNS) {
+    const value = o?.[key];
+    columns[key] = value === undefined ? -1 : value ? 1 : 0;
+  }
+  return columns;
+}
+
 export type AiReviewDecision = {
   decision: 'approve' | 'reject' | 'escalate';
   violations: AiReviewViolation[];
