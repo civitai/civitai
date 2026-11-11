@@ -1,5 +1,6 @@
 import type { NextApiRequest } from 'next';
 import type { Context } from '~/server/createContext';
+import { Flags } from '~/shared/utils/flags';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
@@ -120,6 +121,23 @@ export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'featu
   const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
   const isAuthorized = !!ctx.user || (verifiedBot !== null && canViewNsfw);
   return domainBrowsingLevelCap({ isAuthorized, canViewNsfw });
+}
+
+/**
+ * A parent's level (a bounty's, an entry's) is its images' combined level, so the cap on the
+ * parent does not reach each image: this drops those above the cap, and unrated ones. The owner
+ * and moderators keep them, since edit forms are filled from these reads and save back only the
+ * images they were shown.
+ */
+export function capNestedImages<T extends { nsfwLevel?: number | null }>(
+  images: T[],
+  ctx: Pick<Context, 'user' | 'features' | 'req'>,
+  { ownerId }: { ownerId?: number | null } = {}
+) {
+  const cap = requestDomainBrowsingLevelCap(ctx);
+  if (cap === undefined || ctx.user?.isModerator) return images;
+  if (ownerId != null && ctx.user?.id === ownerId) return images;
+  return images.filter((image) => Flags.intersects(Number(image.nsfwLevel) || 0, cap));
 }
 
 /** Every level a request may be served: its cap from `requestDomainBrowsingLevelCap`, or all. */
