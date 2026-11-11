@@ -7,7 +7,7 @@ import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/fil
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import type { ScanResultCode } from '~/shared/utils/prisma/enums';
+import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { hasFailedScan } from '~/server/utils/failed-scan';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -29,10 +29,7 @@ import {
 import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
 import { trainingDataShareRestricted } from './training-data-restricted.service';
-import {
-  trainingDataScanServable,
-  trainingDataServableOnHost,
-} from '~/shared/utils/training-data-visibility';
+import { trainingDataServableOnHost } from '~/shared/utils/training-data-visibility';
 import {
   getVersionEarlyAccess,
   isModelArchived,
@@ -390,7 +387,14 @@ export const getFileForModelVersion = async ({
     (await trainingDataShareRestricted(dbRead, modelVersionId))
   )
     return { status: 'not-found' };
-  if (!trainingDataScanServable(file, isOwner || isMod)) return { status: 'not-found' };
+  // Fails closed: an unscanned or failed dataset is served only to its owner and moderators.
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    file.virusScanResult !== ScanResultCode.Success
+  )
+    return { status: 'not-found' };
   if (!isMod && hasFailedScan(file)) return { status: 'failed-scan' };
 
   // Named against every file on the version, not only the files this request could pick from:
