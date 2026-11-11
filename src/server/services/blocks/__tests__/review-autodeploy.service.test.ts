@@ -22,6 +22,7 @@ const m = vi.hoisted(() => ({
   autodeployOn: vi.fn(async () => true),
   agentAutostartOn: vi.fn(async () => true),
   agentBaseOn: vi.fn(async () => true),
+  automationOn: vi.fn(async (): Promise<boolean> => true),
   startClaimedReviewBuild: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   startAgentReview: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   notifyModAlert: vi.fn(async (..._a: unknown[]): Promise<string> => 'delivered'),
@@ -32,6 +33,7 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   isAppBlocksReviewAutodeployEnabled: () => m.autodeployOn(),
   isAppBlocksAgenticReviewAutostartEnabled: () => m.agentAutostartOn(),
   isAppBlocksAgenticReviewEnabled: () => m.agentBaseOn(),
+  isAgentReviewAutomationEnabled: () => m.automationOn(),
 }));
 vi.mock('~/server/services/blocks/publish-request.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PublishRequestService>()),
@@ -196,6 +198,10 @@ beforeEach(() => {
   m.autodeployOn.mockResolvedValue(true);
   m.agentAutostartOn.mockResolvedValue(true);
   m.agentBaseOn.mockResolvedValue(true);
+  // The shared pair, as the real helper composes it, so tests that flip one flag still work.
+  m.automationOn.mockImplementation(
+    async () => (await m.agentAutostartOn()) && (await m.agentBaseOn())
+  );
   m.startClaimedReviewBuild.mockReset();
   m.startClaimedReviewBuild.mockResolvedValue({});
   m.startAgentReview.mockReset();
@@ -602,6 +608,13 @@ describe('agent review auto-start', () => {
     spend(0);
     dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue({ id: 'arar_1' });
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('already-reviewed');
+    expect(m.startAgentReview).not.toHaveBeenCalled();
+  });
+
+  it('🔴 reads the ONE shared switch pair (isAgentReviewAutomationEnabled), not its own copy', async () => {
+    spend(0);
+    m.automationOn.mockResolvedValue(false);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('disabled');
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
