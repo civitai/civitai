@@ -348,10 +348,7 @@ function ModeControl({
   );
 }
 
-/**
- * Static | Movement while the tray is open, held just above it. Movement puts the tray away,
- * because the timeline it opens sits where the tray is.
- */
+/** Movement closes the tray because the timeline it opens sits where the tray is. */
 function TrayModeToggle({
   video,
   draftId,
