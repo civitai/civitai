@@ -1,11 +1,5 @@
 import type { Filter } from 'meilisearch';
-import { buildBrowsingLevelClause } from '~/components/Search/search-filters';
-import {
-  BROWSING_LEVEL_ATTRIBUTE,
-  BROWSING_LEVEL_MATCH,
-} from '~/components/Search/search-index-filters';
-import type { ReverseSearchIndexKey } from '~/components/Search/search.types';
-import { reverseSearchIndexMap } from '~/components/Search/search.types';
+import { indexBrowsingLevelClause } from '~/components/Search/search-filters';
 import { env } from '~/env/server';
 import {
   ARTICLES_SEARCH_INDEX,
@@ -95,12 +89,7 @@ export function viewerSearchClauses(indexUid: string, viewer: SiteSearchViewer):
   }
 
   if (viewer.browsingLevelCap !== undefined) {
-    const indexKey = reverseSearchIndexMap[indexUid as ReverseSearchIndexKey];
-    const clause = buildBrowsingLevelClause(
-      indexKey ? BROWSING_LEVEL_ATTRIBUTE[indexKey] : undefined,
-      viewer.browsingLevelCap,
-      indexKey ? BROWSING_LEVEL_MATCH[indexKey] : undefined
-    );
+    const clause = indexBrowsingLevelClause(indexUid, viewer.browsingLevelCap);
     if (clause) clauses.push(clause);
   }
 
