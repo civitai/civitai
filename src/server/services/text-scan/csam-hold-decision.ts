@@ -10,6 +10,7 @@ import { dataForModelsCache } from '~/server/redis/caches';
 import type { ArticleMetadata } from '~/server/schema/article.schema';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { unpublishArticleById } from '~/server/services/article.service';
+import { TRACK_LYRICS_ENTITY_TYPE } from '~/server/services/audio-scan/track-lyrics';
 import { violationMetadata } from '~/server/services/text-scan/public-content';
 import { deleteChatMessage } from '~/server/services/chat.service';
 import { bulkSetCommentV3TosViolation } from '~/server/services/commentv3/moderation.service';
@@ -55,7 +56,7 @@ const REMOVABLE_ENTITY_TYPES = [
   'Post',
   'Model',
   'Article',
-  'TrackLyrics',
+  TRACK_LYRICS_ENTITY_TYPE,
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
   (REMOVABLE_ENTITY_TYPES as readonly string[]).includes(type);
@@ -134,7 +135,7 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
         reason: POST_UNPUBLISH_REASON,
       });
       return;
-    case 'TrackLyrics': {
+    case TRACK_LYRICS_ENTITY_TYPE: {
       // A song is an image in a post: unpublished with its post, as a Post hold is.
       const song = await dbWrite.image.findUnique({
         where: { id: entityId },
@@ -240,7 +241,9 @@ async function strikeAuthor(hold: HeldRow, { actor, holdId }: DecideArgs) {
     description: STRIKE_DESCRIPTION,
     internalNotes: `csam text hold #${holdId}`,
     // Every other csam hold type is an `EntityType`; a song's lyrics belong to its image.
-    entityType: (hold.entityType === 'TrackLyrics' ? 'Image' : hold.entityType) as EntityType,
+    entityType: (hold.entityType === TRACK_LYRICS_ENTITY_TYPE
+      ? 'Image'
+      : hold.entityType) as EntityType,
     entityId: hold.entityId,
     expiresInDays: 365,
     issuedBy: actor.id,
@@ -354,7 +357,7 @@ export async function decideCsamHold(args: DecideArgs) {
   }
 
   // The song left search when it was held. The decision is stored, so a failure here must not throw.
-  if (status === 'Dismissed' && hold.entityType === 'TrackLyrics') {
+  if (status === 'Dismissed' && hold.entityType === TRACK_LYRICS_ENTITY_TYPE) {
     const { queueImageSearchIndexUpdate } = await import('~/server/services/image.service');
     await queueImageSearchIndexUpdate({
       ids: [hold.entityId],

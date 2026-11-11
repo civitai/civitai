@@ -14,17 +14,6 @@ const render = (alias?: string) => {
 };
 
 describe('imageReviewedSql', () => {
-  it('keeps the terminal exclusion inside the mod-rated branch, not the top level', () => {
-    const sql = render();
-    const orIndex = sql.indexOf('OR', sql.indexOf('Scanned'));
-    // Both halves of the mod-rated branch must sit after the OR: if NOT IN escaped to
-    // the top level it would filter Scanned images too, and if the AND became an OR a
-    // mod rating alone would satisfy the predicate.
-    expect(sql.indexOf('nsfwLevelLocked')).toBeGreaterThan(orIndex);
-    expect(sql.indexOf('NOT IN')).toBeGreaterThan(sql.indexOf('nsfwLevelLocked'));
-    expect(sql).not.toMatch(/nsfwLevelLocked"\s*=\s*TRUE\s*\)?\s*OR/);
-  });
-
   it('honours an alias override', () => {
     expect(render('img')).toContain('"img"."ingestion"');
     expect(render('img')).not.toContain('"i"."ingestion"');

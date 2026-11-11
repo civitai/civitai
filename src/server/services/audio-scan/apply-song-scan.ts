@@ -108,7 +108,6 @@ type SongDecision = {
   workflowId: string;
   steps: unknown[];
   audio: SongScanResult['parsed'];
-  /** Decided because a lyrics verdict landed, not the audio callback. */
   fromLyrics?: boolean;
 };
 

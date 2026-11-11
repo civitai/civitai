@@ -37,6 +37,11 @@ beforeAll(async () => {
       (11, 'audio', 'Scanned', false),
       (12, 'image', 'Scanned', false),
       (13, 'audio', 'Scanned', false);
+    INSERT INTO "Image" (id, type, ingestion, "nsfwLevelLocked", metadata, "scanJobs") VALUES
+      (14, 'image', 'Blocked', true, NULL, NULL),
+      (15, 'image', 'Error', true, '{"nsfwLevelReason": "Knights Vote"}', NULL),
+      (16, 'image', 'Error', true, NULL, '{"error": {"failureClass": "permanent"}}'),
+      (17, 'image', 'Pending', false, NULL, NULL);
     CREATE TABLE "TextScanHold" (
       id serial PRIMARY KEY,
       "entityType" text NOT NULL,
@@ -96,6 +101,15 @@ describe('imageReviewedSql for a song', () => {
     expect(ids).toContain(4);
     expect(ids).toContain(5);
     expect(ids).toContain(6);
+  });
+
+  it('does not let a locked rating override a block, a Knights lock or a permanent failure on an errored scan, or count an unlocked stalled image', async () => {
+    const ids = await reviewed();
+
+    expect(ids).not.toContain(14);
+    expect(ids).not.toContain(15);
+    expect(ids).not.toContain(16);
+    expect(ids).not.toContain(17);
   });
 });
 
