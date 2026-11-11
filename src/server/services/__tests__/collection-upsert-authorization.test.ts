@@ -123,6 +123,56 @@ describe('upsertCollection authorization', () => {
     expect(updateArgs.data.mode).toBeUndefined();
   });
 
+  describe('collection mode', () => {
+    const created = { id: COLLECTION_ID, name: 'New', read: 'Private', userId: OWNER_ID };
+    const create = (actor: { isModerator?: boolean }) =>
+      upsertCollection({
+        input: {
+          name: 'New',
+          read: 'Private',
+          type: 'Image',
+          mode: 'Contest',
+          userId: OWNER_ID,
+          isMember: true,
+          ...actor,
+        },
+      } as never);
+    const update = (actor: { userId: number; isModerator?: boolean }) =>
+      upsertCollection({
+        input: {
+          id: COLLECTION_ID,
+          name: 'Mine',
+          mode: 'Contest',
+          isMember: true,
+          ...actor,
+        },
+      } as never);
+
+    it('is not set on create by a non-moderator', async () => {
+      mockDbWrite.collection.create.mockResolvedValue(created as never);
+      await create({});
+      expect(mockDbWrite.collection.create.mock.calls[0][0].data.mode).toBeUndefined();
+    });
+
+    it('is not changed on update by a non-moderator owner', async () => {
+      arrange({ actorId: OWNER_ID });
+      await update({ userId: OWNER_ID });
+      expect(mockDbWrite.collection.update.mock.calls[0][0].data.mode).toBeUndefined();
+    });
+
+    it('is set on create by a moderator', async () => {
+      mockDbWrite.collection.create.mockResolvedValue(created as never);
+      await create({ isModerator: true });
+      expect(mockDbWrite.collection.create.mock.calls[0][0].data.mode).toBe('Contest');
+    });
+
+    it('is changed on update by a moderator who does not own the collection', async () => {
+      arrange({ actorId: MANAGER_ID });
+      await update({ userId: MANAGER_ID, isModerator: true });
+      expect(mockDbWrite.collection.update.mock.calls[0][0].data.mode).toBe('Contest');
+    });
+  });
+
   describe('the cover image', () => {
     const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e34';
     const OTHER_ID = 555;
