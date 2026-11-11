@@ -78,11 +78,14 @@ export const transformData = async ({
 }) => {
   const records = articles
     .map(({ tags, stats, bannerImage, ...articleRecord }) => {
-      // The cover, else the banner, once servable. An article whose cover is not yet servable is
-      // still indexed, without an image; one with no cover and no servable banner is not.
-      const coverImage =
-        servableArticleImage(articleRecord.coverImage) ?? servableArticleImage(bannerImage);
-      if (!coverImage && !articleRecord.coverImage) return null;
+      // An article whose cover is blocked or under review is left out until the review closes.
+      // One whose cover has not finished scanning is indexed, without it (else the servable
+      // banner). One with no cover and no servable banner is left out.
+      const cover = articleRecord.coverImage;
+      if (cover && (cover.blockedFor || cover.needsReview || cover.ingestion === 'Blocked'))
+        return null;
+      const coverImage = servableArticleImage(cover) ?? servableArticleImage(bannerImage);
+      if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
         // `content` is a searchable attribute and is stored as HTML, so tag and

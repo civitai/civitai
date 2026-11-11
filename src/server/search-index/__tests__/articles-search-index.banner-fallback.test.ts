@@ -75,4 +75,21 @@ describe('articles search index', () => {
       expect(coverOnly[0].coverImage).toBeUndefined();
     }
   );
+
+  it.each([
+    ['blocked', { blockedFor: 'tos' }],
+    ['Blocked by its scan', { ingestion: 'Blocked' }],
+    ['awaiting review', { needsReview: 'minor' }],
+    ['flagged csam', { needsReview: 'csam' }],
+  ])('leaves out an article whose cover is %s, banner or not', async (_, state) => {
+    const cover = { ...image(10, 1), blockedFor: null, ...state };
+    const records = await transformData({
+      articles: [
+        article({ coverImage: cover, bannerImage: image(11, 1) }),
+        article({ coverImage: cover, bannerImage: null }),
+      ],
+      cosmetics: {},
+    });
+    expect(records).toHaveLength(0);
+  });
 });
