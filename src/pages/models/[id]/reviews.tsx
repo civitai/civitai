@@ -3,13 +3,12 @@ import {
   Alert,
   Card,
   Center,
+  Chip,
   Container,
-  Group,
   Loader,
   LoadingOverlay,
   Pagination,
   Paper,
-  SegmentedControl,
   Select,
   Skeleton,
   Stack,
@@ -17,13 +16,19 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconLock, IconMessageCircleOff } from '@tabler/icons-react';
+import {
+  IconFilter,
+  IconLock,
+  IconMessageCircleOff,
+  IconStack2,
+  IconThumbDown,
+  IconThumbUp,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BackButton } from '~/components/BackButton/BackButton';
-import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Meta } from '~/components/Meta/Meta';
 import {
@@ -77,6 +82,8 @@ export const getServerSideProps = createServerSideProps({
     const result = getResourceReviewPagedSchema.safeParse({
       modelId: params.id,
       ...ctx.query,
+      // The page lists text reviews only; thumbs-only ones still count in the summary.
+      writtenOnly: true,
       // Must equal the client's useBrowsingLevelDebounced() or the prefetch key misses.
       browsingLevel: getServerBrowsingLevel({
         canViewNsfw: features?.canViewNsfw ?? false,
@@ -129,6 +136,7 @@ export default function ModelReviews() {
   const queryParams = getResourceReviewPagedSchema.parse({
     modelId: router.query.id,
     ...router.query,
+    writtenOnly: true,
     hasImages: undefined,
     recommended: undefined,
     ...getReviewsFilterInput(filter),
@@ -193,9 +201,9 @@ export default function ModelReviews() {
   if (!loadingModel && (!model || model?.status !== 'Published' || isBlocked)) return <NotFound />;
 
   const Model = loadingModel ? (
-    <Skeleton height={44} />
+    <Skeleton height={56} />
   ) : model ? (
-    <Group gap="xs" wrap="nowrap">
+    <div className="flex min-w-0 items-center gap-2.5 sm:gap-3.5">
       <BackButton
         url={getModelUrl({
           modelId: model.id,
@@ -203,14 +211,23 @@ export default function ModelReviews() {
           modelVersionId,
         })}
       />
-      <Title lineClamp={1}>{model.name} Reviews</Title>
-    </Group>
+      <div className="min-w-0">
+        <Text className="text-xs font-semibold tracking-[0.5px] sm:text-[13px]" c="dimmed" lh={1.4}>
+          Reviews
+        </Text>
+        <Title order={1} className="text-xl font-extrabold sm:text-[30px]" lineClamp={1}>
+          {model.name}
+        </Title>
+      </div>
+    </div>
   ) : null;
   const Versions = loadingVersions ? (
     <Skeleton height={36} />
   ) : !!versions?.length ? (
     <Select
+      aria-label="Version"
       allowDeselect={false}
+      leftSection={<IconStack2 size={16} />}
       data={versions.map((version) => ({ label: version.name, value: version.id.toString() }))}
       value={(router.query.modelVersionId as string) ?? null}
       onChange={handleModelVersionChange}
@@ -227,7 +244,7 @@ export default function ModelReviews() {
   ) : (
     <UserResourceReviewComposite modelId={model.id} modelVersionId={modelVersionId}>
       {({ modelId, modelVersionId, modelName, userReview }) => (
-        <Card p="sm" style={{ position: 'sticky', top: 24 }} withBorder>
+        <Card p={20} withBorder>
           <Stack gap={8}>
             <Text size="md" fw={510}>
               Did you like this resource?
@@ -273,15 +290,70 @@ export default function ModelReviews() {
         description={`Explore user reviews of the ${model?.name} AI model on Civitai, rated ${ratingAverage} stars by ${ratingCount} users, and see how it has helped others bring their creative visions to life`}
         canonical={getModelReviewsCanonical(modelId, modelVersionId)}
       />
-      <Container size="xl">
-        <ContainerGrid2 gutter={48}>
-          <ContainerGrid2.Col span={{ base: 12, md: 7 }} offset={{ md: 2 }} order={{ md: 1 }}>
-            <Group gap={8} justify="space-between">
-              {Model}
-              {Versions}
-            </Group>
-          </ContainerGrid2.Col>
-          <ContainerGrid2.Col span={{ base: 12, md: 3 }} order={{ md: 3 }}>
+      <Container size={1120} className="pb-12 pt-7">
+        <div className="grid grid-cols-1 gap-x-10 gap-y-6 max-lg:gap-y-3.5 lg:grid-cols-[minmax(0,1fr)_320px] lg:grid-rows-[auto_auto_auto_1fr]">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between lg:col-span-2">
+            {Model}
+            <div className="md:w-[280px] md:shrink-0">{Versions}</div>
+          </div>
+
+          {summary && (
+            <Card
+              p={{ base: 14, sm: 20 }}
+              withBorder
+              className="order-1 flex flex-col gap-2 sm:gap-3.5 lg:col-start-2 lg:row-start-2"
+              data-testid="reviews-summary"
+            >
+              <div className="flex flex-col gap-0.5 sm:gap-1">
+                <Text
+                  fw={800}
+                  c={summary.color}
+                  tt="capitalize"
+                  className="text-[17px] leading-[17px] sm:text-[22px] sm:leading-[26px]"
+                >
+                  {summary.label}
+                </Text>
+                <Text c="dimmed" className="text-[13px]">
+                  {summary.percent}%
+                  <span className="hidden md:inline">
+                    {' '}
+                    of {summary.total.toLocaleString()} {summary.total === 1 ? 'review' : 'reviews'}{' '}
+                    recommend it
+                  </span>
+                  <span className="md:hidden">
+                    {' '}
+                    · {summary.total.toLocaleString()} {summary.total === 1 ? 'review' : 'reviews'}
+                  </span>
+                </Text>
+              </div>
+              <div
+                className="flex h-1.5 overflow-hidden rounded-full bg-red-6 sm:h-2"
+                role="img"
+                aria-label={`${thumbsUp.toLocaleString()} thumbs up, ${thumbsDown.toLocaleString()} thumbs down`}
+              >
+                <div
+                  className="bg-green-6"
+                  style={{ width: `${(thumbsUp / summary.total) * 100}%` }}
+                />
+              </div>
+              <div className="hidden items-center justify-between text-[13px] md:flex">
+                <span className="flex items-center gap-1.5 text-green-6">
+                  <IconThumbUp size={14} />
+                  <Text component="span" className="text-[13px]" c="var(--mantine-color-text)">
+                    {thumbsUp.toLocaleString()}
+                  </Text>
+                </span>
+                <span className="flex items-center gap-1.5 text-red-6">
+                  <Text component="span" className="text-[13px]" c="var(--mantine-color-text)">
+                    {thumbsDown.toLocaleString()}
+                  </Text>
+                  <IconThumbDown size={14} />
+                </span>
+              </div>
+            </Card>
+          )}
+
+          <div className="order-3 lg:col-start-2 lg:row-start-3">
             {isMuted ? (
               <Alert color="yellow" icon={<IconLock />}>
                 You cannot add reviews because you have been muted
@@ -289,67 +361,59 @@ export default function ModelReviews() {
             ) : model?.locked ? (
               <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
                 <Center>
-                  <Group gap="xs">
+                  <div className="flex items-center gap-2">
                     <ThemeIcon color="gray" size="xl" radius="xl">
                       <IconMessageCircleOff />
                     </ThemeIcon>
                     <Text size="lg" c="dimmed">
                       Reviews are turned off for this model.
                     </Text>
-                  </Group>
+                  </div>
                 </Center>
               </Paper>
             ) : (
               UserReview
             )}
-          </ContainerGrid2.Col>
-          <ContainerGrid2.Col span={{ base: 12, md: 7 }} offset={{ md: 2 }} order={{ md: 2 }}>
-            {summary && (
-              <div className="mb-4 flex flex-col gap-2" data-testid="reviews-summary">
-                <Text size="xl" fw={700} c={summary.color} tt="capitalize">
-                  {summary.label}
-                </Text>
-                <Text size="sm" c="dimmed">
-                  {summary.percent}% of {summary.total.toLocaleString()}{' '}
-                  {summary.total === 1 ? 'review' : 'reviews'}
-                </Text>
-                <div
-                  className="flex h-2 overflow-hidden rounded-full bg-red-6"
-                  role="img"
-                  aria-label={`${thumbsUp.toLocaleString()} thumbs up, ${thumbsDown.toLocaleString()} thumbs down`}
-                >
-                  <div
-                    className="bg-green-6"
-                    style={{ width: `${(thumbsUp / summary.total) * 100}%` }}
-                  />
+          </div>
+
+          <div className="order-2 min-w-0 lg:col-start-1 lg:row-span-3 lg:row-start-2">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <Chip.Group multiple={false} value={filter ?? 'all'} onChange={handleFilterChange}>
+                <div className="flex items-center gap-2" role="group" aria-label="Filter reviews">
+                  <FilterChip value="all">All</FilterChip>
+                  <FilterChip value="images">With images</FilterChip>
+                  <FilterChip value="up" icon={<IconThumbUp size={14} />}>
+                    Recommends
+                  </FilterChip>
+                  <FilterChip value="down" icon={<IconThumbDown size={14} />}>
+                    Doesn’t
+                  </FilterChip>
                 </div>
-              </div>
-            )}
-            <SegmentedControl
-              mb="md"
-              fullWidth
-              aria-label="Filter reviews"
-              value={filter ?? 'all'}
-              onChange={handleFilterChange}
-              data={[
-                { label: 'All', value: 'all' },
-                { label: 'With images', value: 'images' },
-                { label: '👍', value: 'up' },
-                { label: '👎', value: 'down' },
-              ]}
-            />
+              </Chip.Group>
+              <Select
+                aria-label="Sort reviews"
+                className="hidden w-[130px] shrink-0 sm:block"
+                size="xs"
+                allowDeselect={false}
+                leftSection={<IconFilter size={16} />}
+                data={[{ label: 'Newest', value: 'newest' }]}
+                value="newest"
+                onChange={() => undefined}
+              />
+            </div>
             {loadingResourceReviews ? (
               <Center p="xl">
                 <Loader />
               </Center>
             ) : (
-              <Stack style={{ position: 'relative' }}>
+              <Stack style={{ position: 'relative' }} gap="md">
                 <LoadingOverlay visible={refetchingResourceReviews} />
                 {resourceReviews?.items.map((review) => (
                   <ReviewCardWithImages
                     key={review.id}
                     review={review}
                     creatorId={model?.user.id}
+                    versionName={version?.name}
                   />
                 ))}
                 {resourceReviews && !resourceReviews.items.length && (
@@ -379,9 +443,39 @@ export default function ModelReviews() {
                 )}
               </Stack>
             )}
-          </ContainerGrid2.Col>
-        </ContainerGrid2>
+          </div>
+        </div>
       </Container>
     </>
+  );
+}
+
+function FilterChip({
+  value,
+  icon,
+  children,
+}: {
+  value: string;
+  icon?: React.ReactNode;
+  children: string;
+}) {
+  return (
+    <Chip
+      value={value}
+      variant="light"
+      size="sm"
+      radius="xl"
+      // The design's chips carry no check mark.
+      styles={{
+        iconWrapper: { display: 'none' },
+        label: { paddingInline: 12, fontSize: 12, fontWeight: 500 },
+      }}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        {icon}
+        {/* Phone chips with an icon show the icon alone; the text stays as the accessible name. */}
+        <span className={icon ? 'sr-only sm:not-sr-only' : undefined}>{children}</span>
+      </span>
+    </Chip>
   );
 }
