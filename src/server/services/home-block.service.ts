@@ -58,6 +58,7 @@ import { getCollectionBlockAudience } from '~/server/services/home-block-collect
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { GET_ALL_IMAGES_PER_MODEL_SLIM } from '~/server/utils/model-getall-images';
 import {
+  isPrismaRecordNotFound,
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
@@ -937,11 +938,18 @@ export const upsertHomeBlock = async ({
     // Only the row addressed. Clones resolve content and presentation from their source at
     // render, so propagating to them would write ~114k rows to no effect — and would refill the
     // metadata column that makes them pointers.
-    const updated = await dbWrite.homeBlock.update({
-      where: { id },
-      data: { metadata, index },
-      select: { id: true, type: true, metadata: true, userId: true },
-    });
+    // The check above reads the replica; the owner filter holds on the row actually written.
+    const updated = await dbWrite.homeBlock
+      .update({
+        where: { id, userId: isModerator ? undefined : userId },
+        data: { metadata, index },
+        select: { id: true, type: true, metadata: true, userId: true },
+      })
+      .catch((e) => {
+        if (isPrismaRecordNotFound(e))
+          throw throwAuthorizationError('You are not authorized to edit this home block.');
+        throw e;
+      });
 
     if (updated.userId === SYSTEM_HOMEBLOCK_USER_ID) await bustSystemHomeBlockCaches(updated);
 
@@ -1372,7 +1380,7 @@ export const setHomeBlocksOrder = async ({
   if (homeBlocksToRemove.length) {
     transactions.push(
       dbWrite.homeBlock.deleteMany({
-        where: { id: { in: homeBlocksToRemove.map((i) => i.id) } },
+        where: { id: { in: homeBlocksToRemove.map((i) => i.id) }, userId },
       })
     );
   }
