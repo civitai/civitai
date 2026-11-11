@@ -390,6 +390,7 @@ function findBlockedPattern(value: string, blockedPatterns: string[]) {
 function findBlockedPatternId(value: string, blockedPatterns: string[]) {
   const lowerValue = value.toLowerCase();
   return blockedPatterns.findIndex(
+    // Load-bearing: `includes('')` is true for every string, so one empty entry would block everything.
     (pattern) => pattern.trim().length > 0 && lowerValue.includes(pattern)
   );
 }
