@@ -662,7 +662,7 @@ describe('a file type change to or from training data on a trained version', () 
   it('keeps the scan of training data edited without a new type', async () => {
     withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
 
-    await updateFile({ id: 1, metadata: { note: 'x' }, userId: 7 });
+    await updateFile({ id: 1, metadata: { fp: 'fp16' }, userId: 7 });
 
     expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data).not.toHaveProperty(
       'virusScanResult'
