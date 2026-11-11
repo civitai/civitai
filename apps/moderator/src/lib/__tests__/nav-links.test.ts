@@ -223,13 +223,14 @@ describe('the Knights of New Order section', () => {
   const KNIGHTS = '/knights-of-new-order';
   const group = () => NAVIGATION.find((l) => l.label === 'Knights of New Order');
 
-  it('holds Inquisitor, Trials, Shop and Linked accounts under a group with no grant of its own', () => {
+  it('holds Inquisitor, Trials, Shop, Linked accounts and Config under a group with no grant of its own', () => {
     expect(group()?.path).toBeUndefined();
     expect(group()?.children?.map((c) => [c.path, c.label])).toEqual([
       [`${KNIGHTS}/inquisitor`, 'Inquisitor'],
       [`${KNIGHTS}/trials`, 'Trials'],
       [`${KNIGHTS}/shop`, 'Shop'],
       [KNIGHTS, 'Linked accounts'],
+      [`${KNIGHTS}/config`, 'Config'],
     ]);
   });
 
@@ -240,6 +241,7 @@ describe('the Knights of New Order section', () => {
       [`${KNIGHTS}/trials`, undefined],
       [`${KNIGHTS}/shop`, undefined],
       [KNIGHTS, 'knightsLinkReviews'],
+      [`${KNIGHTS}/config`, undefined],
     ]);
   });
 
@@ -325,6 +327,7 @@ describe('/admin grantable pages', () => {
         '/knights-of-new-order/inquisitor',
         '/knights-of-new-order/trials',
         '/knights-of-new-order',
+        '/knights-of-new-order/config',
       ])
     );
   });

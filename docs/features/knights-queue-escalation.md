@@ -15,3 +15,7 @@ When the window lapses and the item has no vote at its current stage, it stays a
 Extension lasts until two stage windows after the item entered the stage: an item whose stage entry (`escalatedAt`, else `createdAt`) is more than two windows old is handed up instead. With the default first window that is one extension; an item enqueued with a shorter custom `expiresAt` can be extended twice within the bound. This bounds the case where the only eligible players have already judged the image, so no one can answer it. An item at a stage nobody can serve is handed up at once, and an item with at least one vote at the stage goes on to rule 1 as well.
 
 The tick response carries `escalated`, `toInquisitor` and `extended`.
+
+## Sources
+
+Scan sampling and owner ratings feed the queue only while `system:knights-v2-sources` (`{enabled, sfwRate, nsfwRate}`) is on. Moderators switch the sources and set both rates from the moderator app's Knights of New Order Config page; each save is recorded in `ModActivity` with the value before and after. The main app reads the key with a 30 s cache.
