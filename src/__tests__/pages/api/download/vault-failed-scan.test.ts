@@ -112,11 +112,35 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
     }
   );
 
-  it('serves training data whose scan completed', async () => {
+  it('refuses training data vaulted earlier even once its scan completed', async () => {
     scanOf({ type: 'Training Data', pickleScanResult: 'Pending', virusScanResult: 'Success' });
     const { promise, res } = run();
     await promise;
-    expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'training data',
+      { type: 'Training Data', pickleScanResult: 'Pending', virusScanResult: 'Pending' },
+      404,
+    ],
+    [
+      'a failed scan',
+      { type: 'Model', pickleScanResult: 'Success', virusScanResult: 'Danger' },
+      403,
+    ],
+  ])('judges a deleted file by a live row holding the same bytes: %s', async (_, live, status) => {
+    dbMock.dbRead.modelFile.findUnique.mockResolvedValue(null);
+    dbMock.dbRead.modelFile.findFirst.mockResolvedValue(live as never);
+    const { promise, res } = run();
+    await promise;
+    expect(dbMock.dbRead.modelFile.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { url: 'files/model.safetensors' } })
+    );
+    expect(res.status).toHaveBeenCalledWith(status);
+    expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
   });
 
   it('serves a file whose scan only errored', async () => {

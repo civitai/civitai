@@ -1356,12 +1356,33 @@ describe('model-file-scan.service', () => {
 
         expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
         expect(mockDbWrite.modelFile.updateMany).toHaveBeenCalledWith({
-          where: { id: 1, url: ZIP, type: 'Training Data' },
+          where: {
+            id: 1,
+            url: ZIP,
+            type: 'Training Data',
+            virusScanResult: { not: ScanResultCode.Danger },
+          },
           data: expect.objectContaining({
             virusScanResult: ScanResultCode.Pending,
             scanRequestedAt: expect.any(Date),
           }),
         });
+      });
+
+      it('keeps a Danger verdict over a later clean one', async () => {
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          id: 1,
+          type: 'Training Data',
+          url: ZIP,
+          virusScanResult: ScanResultCode.Danger,
+          modelVersionId: 100,
+          modelVersion: { modelId: 200 },
+        });
+        scanned({ scannedFileCount: 12 });
+
+        await deliver();
+
+        expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
       });
 
       it('records a Danger verdict without the check', async () => {

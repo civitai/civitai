@@ -158,8 +158,10 @@ describe('submitTrainingDataScan', () => {
       h.resolveDownloadUrl.mockReturnValue(new Promise(() => undefined));
       const submit = submitTrainingDataScan(TARGET).catch((error: Error) => error);
 
+      let settled = false;
+      void submit.then(() => (settled = true));
       await vi.advanceTimersByTimeAsync(29_000);
-      expect(h.fetch).not.toHaveBeenCalled();
+      expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1_000);
 
       const error = await submit;
@@ -328,7 +330,7 @@ describe('requeuePendingTrainingDataScans', () => {
     expect(ids).toEqual([1, 2]);
     // A claim older than the in-flight window is taken again, and so is a row never submitted.
     expect(sql.join('?')).toMatch(
-      /"scanRequestedAt" < now\(\) - \? \* interval '1 second'\s+OR \(\?::boolean AND "scanRequestedAt" IS NULL\)/
+      /AND "type" = 'Training Data'\s+AND \("scanRequestedAt" < now\(\) - \? \* interval '1 second'\s+OR \(\?::boolean AND "scanRequestedAt" IS NULL\)/
     );
     expect(staleSeconds).toBe(60 * 60);
     expect(neverSubmitted).toBe(true);
@@ -402,7 +404,7 @@ describe('healStalledTrainingDataScans', () => {
 
     expect(h.submitWorkflow).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenCalledWith({
-      where: { id: 3, url: stalled.url, virusScanResult: 'Pending' },
+      where: { id: 3, url: stalled.url, type: 'Training Data', virusScanResult: 'Pending' },
       data: expect.objectContaining({ virusScanResult: 'Error' }),
     });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith({

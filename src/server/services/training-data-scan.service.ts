@@ -304,6 +304,7 @@ async function claimAndSubmit(
       await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "ModelFile" SET "scanRequestedAt" = now()
         WHERE id = ANY(${files.map((file) => file.id)}::int[])
+          AND "type" = 'Training Data'
           AND ("scanRequestedAt" < now() - ${REQUEUE_IN_FLIGHT_MS / 1000} * interval '1 second'
             OR (${neverSubmitted}::boolean AND "scanRequestedAt" IS NULL))
         RETURNING id`
@@ -336,7 +337,10 @@ export const HEAL_PAGE = 6;
 const HEAL_MAX_RESUBMITS = 3;
 const HEAL_ATTEMPTS_TTL_SECONDS = 14 * 24 * 60 * 60;
 
-/** Definite "can't read the zip" answers before it is given up on. Transient failures never count. */
+/**
+ * Definite "can't read the zip" answers before it is given up on. A transient submit failure never
+ * counts; a resubmit whose verdict could not be confirmed counts as accepted.
+ */
 const HEAL_MAX_UNREADABLE = 24;
 
 /** Per zip, not per file: a file that now holds another zip starts again. */
@@ -390,7 +394,12 @@ export async function healStalledTrainingDataScans() {
       if (!reason) return true;
 
       await dbWrite.modelFile.updateMany({
-        where: { id: file.id, url: file.url, virusScanResult: ScanResultCode.Pending },
+        where: {
+          id: file.id,
+          url: file.url,
+          type: 'Training Data',
+          virusScanResult: ScanResultCode.Pending,
+        },
         data: {
           virusScanResult: ScanResultCode.Error,
           virusScanMessage: 'The virus scan could not be completed.',

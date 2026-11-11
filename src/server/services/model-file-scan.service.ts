@@ -170,6 +170,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       id: true,
       type: true,
       url: true,
+      virusScanResult: true,
       modelVersionId: true,
       // SSHS_12 comes from the metadata-parse step, but the hash rebuild below deletes every row
       // for the file — so a hash-only rescan has to re-derive it from what is already stored.
@@ -213,6 +214,25 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         message: `Dropped a stale training data scan result for file ${fileId}`,
         fileId,
         modelVersionId: outcome.modelVersionId,
+      },
+      'webhooks'
+    ).catch();
+    return;
+  }
+
+  // A Danger on a dataset stands: a later clean result, perhaps from an older scan, never replaces it.
+  if (
+    isTrainingData &&
+    file.virusScanResult === ScanResultCode.Danger &&
+    outcome.virusScan &&
+    outcome.virusScan.result !== ScanResultCode.Danger
+  ) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'apply-scan-outcome',
+        message: `Kept the Danger verdict of training data file ${fileId}`,
+        fileId,
       },
       'webhooks'
     ).catch();
@@ -879,7 +899,12 @@ async function handleScanWorkflow(event: WorkflowEvent) {
     ) {
       // Not confirmed as the object that was scanned: it stays Pending, and the self-heal scans it again.
       await dbWrite.modelFile.updateMany({
-        where: { id: fileId, url: trainingDataUrl, type: 'Training Data' },
+        where: {
+          id: fileId,
+          url: trainingDataUrl,
+          type: 'Training Data',
+          virusScanResult: { not: ScanResultCode.Danger },
+        },
         data: {
           virusScanResult: ScanResultCode.Pending,
           virusScanMessage: null,

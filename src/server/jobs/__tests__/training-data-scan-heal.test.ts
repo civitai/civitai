@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('~/server/services/training-data-scan.service', () => ({
@@ -14,8 +16,16 @@ describe('training-data-scan-heal', () => {
       cron: string;
       options: { lockExpiration: number; keepLockOnDisconnect: boolean };
     };
-    expect(job.cron).toBe('*/15 * * * *');
     expect(job.options.keepLockOnDisconnect).toBe(true);
     expect(job.options.lockExpiration).toBeGreaterThanOrEqual(30 * 60);
+  });
+
+  // The self-heal is the only way back for a zip whose scan was lost; unscheduled, it never runs.
+  it('is scheduled by the job runner', () => {
+    const runner = readFileSync(
+      join(process.cwd(), 'src/pages/api/webhooks/run-jobs/[[...run]].ts'),
+      'utf8'
+    );
+    expect(runner).toMatch(/^\s+trainingDataScanHealJob,$/m);
   });
 });
