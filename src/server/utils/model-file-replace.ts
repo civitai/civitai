@@ -4,7 +4,6 @@ import { isDatasetEditable } from '~/shared/constants/training.constants';
 import type { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { ModelStatus, ModelUploadType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
-import { hasFailedScan } from '~/server/utils/failed-scan';
 import { getModelFileFormat, unscannedFile } from '~/utils/file-helpers';
 
 // A version that has been out in the world (or is about to be) keeps its files; new bytes go in a
@@ -81,13 +80,15 @@ type ScanResetFile = {
 };
 type FileChange = { type?: string; name?: string; format?: string | null };
 
+const nameFormat = (name: string) => getModelFileFormat(name.toLowerCase());
 const formatOf = (file: { name: string; metadata: unknown }) =>
-  (file.metadata as { format?: string } | null)?.format ?? getModelFileFormat(file.name);
+  (file.metadata as { format?: string } | null)?.format ?? nameFormat(file.name);
+const extension = (name: string) => /\.[^./]+$/.exec(name.toLowerCase())?.[0] ?? '';
+const NOT_CLEAN: ScanResultCode[] = [ScanResultCode.Danger, ScanResultCode.Error];
 
 /**
- * Refuses an owner's format that the file name does not imply: the loader picks how to open a file
- * by its format, and the scan verdict was reached on the old one. A zip's contents can't be told from
- * its name, so any format stands for it.
+ * Refuses an owner a format the file name does not have. A zip's contents can't be told from its
+ * name, so any format stands for it.
  */
 export function assertFormatChangeAllowed(
   file: { name: string; metadata: unknown },
@@ -96,27 +97,32 @@ export function assertFormatChangeAllowed(
 ) {
   if (isModerator || change.format == null || change.format === formatOf(file)) return;
   const name = change.name ?? file.name;
-  if (name.toLowerCase().endsWith('.zip')) return;
-  if (change.format !== getModelFileFormat(name))
+  if (extension(name) === '.zip') return;
+  if (change.format !== nameFormat(name))
     throw throwBadRequestError(
       "A file's format must match its file name. Upload the file again to change its format."
     );
 }
 
 /**
- * Training Data has only had a virus scan, so a file relabelled away from it goes back to unscanned.
- * A file that becomes loadable, or a loadable file whose format changes, does too: its pickle verdict
- * may have been reached on a file no loader opens. A Danger verdict stands.
+ * Training Data goes back to unscanned when it is relabelled, since it has only had a virus scan.
+ * Any other file does when it becomes a type a loader opens, or its name's extension or its format
+ * changes. A verdict that is not clean stands.
  */
 function resetsScan(file: ScanResetFile, change: FileChange) {
   const nextType = change.type && change.type !== file.type ? change.type : undefined;
   if (file.type === 'Training Data') return !!nextType;
-  if (hasFailedScan(file) || !LOADABLE_FILE_TYPES.includes(nextType ?? file.type)) return false;
-  const becameLoadable = !!nextType && !LOADABLE_FILE_TYPES.includes(file.type);
-  const renamedFormat =
-    !!change.name && getModelFileFormat(change.name) !== getModelFileFormat(file.name);
-  const changedFormat = change.format != null && change.format !== formatOf(file);
-  return becameLoadable || renamedFormat || changedFormat;
+  if (NOT_CLEAN.includes(file.pickleScanResult) || NOT_CLEAN.includes(file.virusScanResult))
+    return false;
+  const becameLoadable =
+    !!nextType &&
+    LOADABLE_FILE_TYPES.includes(nextType) &&
+    !LOADABLE_FILE_TYPES.includes(file.type);
+  const renamed = !!change.name && extension(change.name) !== extension(file.name);
+  const nextFormat =
+    change.format === undefined ? undefined : change.format ?? nameFormat(change.name ?? file.name);
+  const changedFormat = nextFormat !== undefined && nextFormat !== formatOf(file);
+  return becameLoadable || renamed || changedFormat;
 }
 
 /** The scan fields to write with a file change. */

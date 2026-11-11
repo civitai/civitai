@@ -745,6 +745,50 @@ describe('a file whose loader or format changes', () => {
     expect(write().data).toMatchObject(RESET);
   });
 
+  it("drops a reset file's version from the cached coverage", async () => {
+    scanned();
+
+    await updateFile({ id: 1, name: 'a.ckpt', userId: 7 });
+
+    expect(mockResourceDataBust).toHaveBeenCalledWith([FILE.modelVersionId]);
+    expect(mockBustFileAirs).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a rename to an upper-case extension', 'a.CKPT'],
+    ['a rename of a file no loader opens', 'a.pt'],
+  ])('goes back to unscanned on %s', async (label, name) => {
+    scanned(label.includes('no loader') ? { type: 'Config', name: 'a.yaml' } : {});
+
+    await updateFile({ id: 1, name, userId: 7 });
+
+    expect(write().data).toMatchObject(RESET);
+  });
+
+  it('goes back to unscanned when a cleared format leaves a different one', async () => {
+    scanned({ metadata: { format: 'PickleTensor' } });
+
+    await updateFile({ id: 1, metadata: { format: null }, userId: 7, isModerator: true });
+
+    expect(write().data).toMatchObject(RESET);
+  });
+
+  it('lets an owner declare the format an upper-case file name has', async () => {
+    scanned({ name: 'a.SAFETENSORS', metadata: { format: 'Other' } });
+
+    await updateFile({ id: 1, metadata: { format: 'SafeTensor' }, userId: 7 });
+
+    expect(write().data.metadata).toMatchObject({ format: 'SafeTensor' });
+  });
+
+  it('keeps an Error verdict through a change that would reset the scan', async () => {
+    scanned({ pickleScanResult: 'Error' });
+
+    await updateFile({ id: 1, name: 'a.ckpt', userId: 7 });
+
+    expect(write().data).not.toHaveProperty('pickleScanResult');
+  });
+
   it("refuses an owner a format the file's name does not have", async () => {
     scanned();
 

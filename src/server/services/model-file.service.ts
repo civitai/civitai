@@ -318,6 +318,7 @@ export async function updateFile({
   // write derives only the new one. Never throws.
   if (typeChanged) await bustOrchestratorModelCache(modelFile.modelVersionId);
 
+  const scanReset = scanResetForFileChange(modelFile, change);
   const { count } = await dbWrite.modelFile.updateMany({
     // A sent type writes only over the type `typeChanged` was judged against: an edit from a stale
     // tab would otherwise change it back with no bust.
@@ -326,7 +327,7 @@ export async function updateFile({
       ...(inputData.type !== undefined && { type: modelFile.type }),
       ...scanResetWriteGuard(modelFile, change),
     },
-    data: { ...inputData, metadata, ...scanResetForFileChange(modelFile, change) },
+    data: { ...inputData, metadata, ...scanReset },
   });
   // Replaced, deleted or retyped since the lookup above, or a new verdict on a relabel: nothing was
   // written.
@@ -336,8 +337,8 @@ export async function updateFile({
     throw throwNotFoundError();
   }
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
-  // GenerationCoverage decides by file type, so the version's cached coverage is stale.
-  if (typeChanged)
+  // GenerationCoverage decides by file type and scan, so the version's cached coverage is stale.
+  if (typeChanged || Object.keys(scanReset).length)
     await Promise.all([
       resourceDataCache.bust([modelFile.modelVersionId]),
       bustOrchestratorModelCache(modelFile.modelVersionId),
