@@ -910,7 +910,7 @@ export const upsertArticle = async ({
     const tags = withoutOfficialArticleTag(inputTags, officialTag);
     await throwOnBlockedUserContent(
       [data.title, data.content, ...(await newTagNames(tags?.map((tag) => tag.name)))],
-      { isModerator, surface: 'article' }
+      { isModerator, surface: 'article', entityType: 'Article', entityId: id, userId }
     );
 
     // For updates, fetch article early so we can enforce its stored locks and check cover
@@ -1012,7 +1012,13 @@ export const upsertArticle = async ({
 
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
-    await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
+    await throwOnBlockedUserContent(data.content, {
+      isModerator,
+      surface: 'article',
+      entityType: 'Article',
+      entityId: article?.id ?? id,
+      userId: article?.userId ?? userId,
+    });
     await assertNoShopArtworkInContent(data.content, article?.content);
 
     // TODO make coverImage required here and in db
@@ -1597,7 +1603,12 @@ export async function applyArticleContentChange({
    */
   context?: ArticleContentChangeContext;
 }) {
-  await throwOnBlockedUserContent(content, { surface: 'article' });
+  await throwOnBlockedUserContent(content, {
+    surface: 'article',
+    entityType: 'Article',
+    entityId: id,
+    userId,
+  });
 
   let resolved = context;
   if (!resolved) {
