@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   authorize: vi.fn(),
   assertEnabled: vi.fn(async () => undefined),
   confirmedStepFlag: vi.fn(async () => true),
+  trainingFlag: vi.fn(async () => true),
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
   submitWorkflow: vi.fn(),
   audit: vi.fn(
@@ -54,6 +55,7 @@ vi.mock('~/server/services/blocks/block-token-access.service', async (importOrig
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagModule>()),
   isAppBlocksConfirmedStepEnabled: (...a: unknown[]) => h.confirmedStepFlag(...(a as [])),
+  isAppBlocksTrainingKindEnabled: (...a: unknown[]) => h.trainingFlag(...(a as [])),
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
@@ -460,5 +462,72 @@ describe('log mode, what it records', () => {
         expect.objectContaining({ name: 'app-block-pass-through-prompt-audit', type: 'error' })
       )
     );
+  });
+});
+
+describe('a training run’s sample prompts', () => {
+  const trainingBody = (samplePrompts: string[]) => ({
+    kind: 'training',
+    items: [{ air: 'K1.jpeg', caption: 'a' }],
+    engine: 'ai-toolkit',
+    model: 'sdxl',
+    params: {
+      engine: 'ai-toolkit',
+      ecosystem: 'sdxl',
+      epochs: 5,
+      resolution: 1024,
+      lr: 0.0001,
+      textEncoderLr: null,
+      trainTextEncoder: false,
+      lrScheduler: 'cosine',
+      optimizerType: 'adamw8bit',
+      networkDim: 32,
+      networkAlpha: 16,
+      noiseOffset: null,
+      minSnrGamma: null,
+      flipAugmentation: false,
+      shuffleTokens: false,
+      keepTokens: 0,
+    },
+    triggerWord: 'mychar',
+    samplePrompts,
+    quoteId: `tq_${'a'.repeat(32)}`,
+  });
+
+  it('enforce: are audited before the quote is read', async () => {
+    await expect(submit(trainingBody(['mychar on a beach', 'mychar badword']))).rejects.toThrow(
+      REFUSED
+    );
+  });
+
+  it('control: clean or blank prompts reach the quote lookup', async () => {
+    const clean = submit(trainingBody(['mychar on a beach']));
+    await expect(clean).rejects.toThrow(/quote not found/);
+    await expect(clean).rejects.not.toThrow(REFUSED);
+    await expect(submit(trainingBody(['', '  ']))).rejects.not.toThrow(REFUSED);
+    expect(h.audit).toHaveBeenCalledTimes(1);
+  });
+
+  it('log mode: logs what enforce would have done, without the prompt text', async () => {
+    h.variant.mockImplementation(async () => 'log');
+    h.classify.mockImplementation(async () => ({
+      outcome: 'hard',
+      source: 'regex',
+      externalError: null,
+    }));
+    await expect(submit(trainingBody(['mychar badword']))).rejects.not.toThrow(REFUSED);
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'app-block-pass-through-prompt-audit',
+          stepTypes: 'trainingsampleprompts',
+          wouldRefuse: true,
+        })
+      )
+    );
+    expect(h.classify).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'mychar badword' }));
+    expect(h.audit).not.toHaveBeenCalled();
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls.map(([data]) => data));
+    expect(logged).not.toContain('badword');
   });
 });

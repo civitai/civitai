@@ -236,7 +236,6 @@ export async function getPassThroughPromptAuditMode(): Promise<PassThroughPrompt
 }
 
 type AuditContext = {
-  steps: ReadonlyArray<{ $type: string; input: unknown }>;
   userId: number;
   appBlockId: string;
   isGreen: boolean;
@@ -298,12 +297,48 @@ export async function shadowPassThroughPromptAudit(
  * request path.
  */
 export async function auditPassThroughPrompts(
-  ctx: AuditContext,
+  ctx: AuditContext & { steps: ReadonlyArray<{ $type: string; input: unknown }> },
   mode?: PassThroughPromptAuditMode
 ): Promise<void> {
   const resolved = mode ?? (await getPassThroughPromptAuditMode());
   if (resolved === 'off') return;
-  const collected = collectPassThroughAuditText(ctx.steps);
+  await runPromptAudit(ctx, collectPassThroughAuditText(ctx.steps), resolved);
+}
+
+/** Labels a training run's sample prompts in the audit log; not an orchestrator `$type`. */
+export const TRAINING_SAMPLE_PROMPTS_AUDIT_TYPE = 'trainingsampleprompts';
+
+/**
+ * The same gate for a training run's sample prompts, which the trainer renders to images
+ * during the run. Blank prompts are skipped, so the empty fallback is never audited.
+ */
+export async function auditTrainingSamplePrompts(
+  ctx: AuditContext & { samplePrompts: readonly string[] },
+  mode?: PassThroughPromptAuditMode
+): Promise<void> {
+  const resolved = mode ?? (await getPassThroughPromptAuditMode());
+  if (resolved === 'off') return;
+  const prompts = [...new Set(ctx.samplePrompts.map((p) => p.trim()).filter(Boolean))];
+  if (prompts.length === 0) return;
+  const prompt = prompts.join('\n');
+  await runPromptAudit(
+    ctx,
+    {
+      auditedTypes: [TRAINING_SAMPLE_PROMPTS_AUDIT_TYPE],
+      prompt,
+      negativePrompt: '',
+      promptRefs: [],
+      tooLarge: prompt.length > PASS_THROUGH_AUDIT_TEXT_MAX,
+    },
+    resolved
+  );
+}
+
+async function runPromptAudit(
+  ctx: AuditContext,
+  collected: PassThroughAuditText,
+  resolved: Exclude<PassThroughPromptAuditMode, 'off'>
+): Promise<void> {
   if (collected.auditedTypes.length === 0) return;
 
   if (resolved === 'log') {
