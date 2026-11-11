@@ -7,6 +7,10 @@ export function centsToDollars(cents: number) {
   return (cents / 100).toFixed(2);
 }
 
+export function dollars(cents: number) {
+  return `${cents < 0 ? '−' : ''}$${centsToDollars(Math.abs(cents))}`;
+}
+
 export function signedDollars(cents: number) {
   return `${cents < 0 ? '−' : '+'}$${centsToDollars(Math.abs(cents))}`;
 }

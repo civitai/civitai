@@ -129,7 +129,10 @@ export function CashManagementPage() {
   // The target's identity and balance must be on screen before an adjustment can be opened.
   const targetLoaded =
     validUserId && creatorData?.id === userId && !!creatorData.username && cashData?.id === userId;
-  const userNotFound = validUserId && (!!creatorError || (creatorFetched && !creatorData));
+  const userNotFound =
+    validUserId &&
+    (creatorError?.data?.code === 'NOT_FOUND' || (creatorFetched && !creatorError && !creatorData));
+  const userLoadFailed = validUserId && !!creatorError && !userNotFound;
   const canSubmit = targetLoaded && !!amount && amount > 0 && note.trim().length > 0;
 
   const openConfirm = () => {
@@ -165,6 +168,12 @@ export function CashManagementPage() {
         {userNotFound && (
           <Alert color="red" title="User not found">
             No user with id {userId}.
+          </Alert>
+        )}
+
+        {userLoadFailed && (
+          <Alert color="red" title="Could not load this user">
+            {creatorError?.message}
           </Alert>
         )}
 

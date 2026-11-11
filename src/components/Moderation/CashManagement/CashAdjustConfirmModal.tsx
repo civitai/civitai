@@ -1,6 +1,6 @@
 import { Alert, Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { useState } from 'react';
-import { centsToDollars } from '~/components/Moderation/CashManagement/cash-format';
+import { centsToDollars, dollars } from '~/components/Moderation/CashManagement/cash-format';
 import type {
   CashAccountType,
   CashAdjustmentDirection,
@@ -65,7 +65,7 @@ function ConfirmBody({
             {accountLabel} now
           </Text>
           <Text fw={600} data-testid="balance-now">
-            ${centsToDollars(currentBalance)}
+            {dollars(currentBalance)}
           </Text>
         </div>
         <div>
@@ -73,7 +73,7 @@ function ConfirmBody({
             {accountLabel} after
           </Text>
           <Text fw={600} data-testid="balance-after">
-            ${centsToDollars(balanceAfter)}
+            {dollars(balanceAfter)}
           </Text>
         </div>
       </div>

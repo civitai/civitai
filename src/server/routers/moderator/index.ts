@@ -105,9 +105,22 @@ export const modRouter = router({
       .query(({ input }) => getWithdrawalHistory(input.userId)),
     getCashTransactions: cashManagementProcedure
       .input(getCashTransactionsSchema)
-      .query(({ input: { userId, ...query } }) =>
-        getUserBuzzTransactions({ ...query, accountId: userId })
-      ),
+      .query(async ({ input: { userId, ...query } }) => {
+        const { cursor, transactions } = await getUserBuzzTransactions({
+          ...query,
+          accountId: userId,
+        });
+        // Only what the ledger shows: external ids would name the moderator behind each adjustment.
+        return {
+          cursor,
+          transactions: transactions.map(({ date, type, amount, description }) => ({
+            date,
+            type,
+            amount,
+            description,
+          })),
+        };
+      }),
     adjustBalance: cashManagementProcedure
       .input(modCashAdjustmentSchema)
       .mutation(({ input, ctx }) => modAdjustCashBalance({ ...input, modUserId: ctx.user.id })),

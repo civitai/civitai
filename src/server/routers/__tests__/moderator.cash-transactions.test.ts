@@ -51,6 +51,35 @@ describe('mod.cash.getCashTransactions', () => {
     );
   });
 
+  // A mod adjustment's external id embeds the acting moderator's id.
+  it('returns only the fields the ledger shows', async () => {
+    const date = new Date('2026-11-01T00:00:00Z');
+    mockGetTransactions.mockResolvedValue({
+      cursor: null,
+      transactions: [
+        {
+          date,
+          type: 5,
+          amount: -100,
+          description: 'Mod cash adjustment (deduct): x',
+          externalTransactionId: `mod-cash-${MOD_ID}-${TARGET_ID}-1`,
+          fromAccountId: 0,
+          toAccountId: TARGET_ID,
+          details: { a: 1 },
+        },
+      ],
+    });
+
+    const result = await callerFor({
+      isModerator: true,
+      cashManagement: true,
+    }).cash.getCashTransactions({ userId: TARGET_ID, accountType: 'cashSettled' });
+
+    expect(result.transactions).toEqual([
+      { date, type: 5, amount: -100, description: 'Mod cash adjustment (deduct): x' },
+    ]);
+  });
+
   it('refuses a moderator without the cashManagement flag', async () => {
     await expect(
       callerFor({ isModerator: true, cashManagement: false }).cash.getCashTransactions({
