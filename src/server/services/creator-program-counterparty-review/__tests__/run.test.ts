@@ -19,14 +19,11 @@ import {
   type Member,
 } from '~/server/services/creator-program-counterparty-review/detect';
 import {
-  renderWarningMessage,
-  WARNED_ACTION,
-} from '~/server/services/creator-program-counterparty-review/report';
-import {
+  parseFiledRecord,
   runCounterpartyReview,
+  type FiledRecord,
   type IndirectRecord,
   type ReviewDeps,
-  type WarningRecord,
 } from '~/server/services/creator-program-counterparty-review/run';
 
 const MIN = 1_000;
@@ -36,7 +33,7 @@ const creator: Member = { id: 11, username: 'creator_one' };
 type Row = { userId: number; counterpartyId: number; received: number; sent: number };
 type IndirectRow = { userId: number; path: number[]; amount: number };
 
-/** One review world: a ClickHouse that returns `rows`, a members table, and a warnings store. */
+/** One review world: a ClickHouse that returns `rows`, a members table, and a filed store. */
 function world({
   rows = [] as Row[],
   indirectRows = [] as IndirectRow[],
@@ -44,10 +41,9 @@ function world({
   minimum = MIN as number | null,
   maxIntermediaries = 2,
   now = afterCutover,
-  sendWarning = vi.fn(async () => ({ chatId: 500 })),
   reportFails = () => false,
 } = {}) {
-  const store = new Map<number, WarningRecord>();
+  const store = new Map<number, FiledRecord>();
   const indirectStore = new Map<number, IndirectRecord>();
   const reports: AbuseReportInput[] = [];
   const logs: { name: string; data: Record<string, unknown> }[] = [];
@@ -64,7 +60,7 @@ function world({
     readMinimum: async () => minimum,
     readMaxIntermediaries: async () => maxIntermediaries,
     findMembers: async (ids) => members.filter((m) => ids.includes(m.id)),
-    warnings: {
+    filed: {
       get: async (id) => store.get(id) ?? null,
       set: async (id, record) => void store.set(id, record),
     },
@@ -72,7 +68,6 @@ function world({
       get: async (id) => indirectStore.get(id) ?? null,
       set: async (id, record) => void indirectStore.set(id, record),
     },
-    sendWarning,
     sendReport: async (report) => {
       if (reportFails()) throw new Error('board unavailable');
       reports.push(report);
@@ -87,7 +82,6 @@ function world({
     indirectStore,
     reports,
     logs,
-    sendWarning,
     setRows: (r: Row[]) => (rows = r),
     setIndirectRows: (r: IndirectRow[]) => (indirectRows = r),
   };
@@ -109,7 +103,6 @@ describe('runCounterpartyReview', () => {
 
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ skipped: 'before-cutover' });
     expect(w.ch.$query).not.toHaveBeenCalled();
-    expect(w.sendWarning).not.toHaveBeenCalled();
   });
 
   // Both arms: unset skips loudly and reads nothing; set, the same world files.
@@ -126,73 +119,72 @@ describe('runCounterpartyReview', () => {
     expect(unset.reports).toHaveLength(0);
 
     const set = world({ rows: [pair(22, 5_000, 5_000)] });
-    expect(await runCounterpartyReview(set.deps)).toMatchObject({ warned: 1 });
+    expect(await runCounterpartyReview(set.deps)).toMatchObject({ filed: 1 });
     expect(set.reports).toHaveLength(1);
   });
 
-  it('warns a member once, records it, and files a finding that says so', async () => {
+  it('files a member for a moderator, unactioned, and records what was filed', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)] });
 
     expect(await runCounterpartyReview(w.deps)).toEqual({
       pairs: 1,
-      warned: 1,
+      filed: 1,
       repeats: 0,
-      failed: 0,
       indirect: 0,
     });
 
-    expect(w.sendWarning).toHaveBeenCalledTimes(1);
-    expect(w.sendWarning).toHaveBeenCalledWith(creator);
     expect(w.store.get(creator.id)).toEqual({
-      warnedAt: afterCutover.toISOString(),
-      chatId: 500,
+      filedAt: afterCutover.toISOString(),
       counterparties: { '22': 4_000 },
     });
     const [report] = w.reports;
     expect(() => abuseReportInput.parse(report)).not.toThrow();
     expect(report.detector).toBe(COUNTERPARTY_REVIEW_DETECTOR);
     expect(report.findings).toEqual([
-      expect.objectContaining({ userId: creator.id, actioned: true, action: WARNED_ACTION }),
+      expect.objectContaining({ userId: creator.id, actioned: false, confidence: 0.9 }),
     ]);
+    expect(report.findings[0]).not.toHaveProperty('action');
     expect(report.findings[0].reason).toContain(
       'with account 22: received 5,000 Buzz, sent back 4,000'
     );
   });
 
-  it('does not warn again, or file again, when nothing new happened', async () => {
+  it('does not file again when nothing new happened', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)] });
     await runCounterpartyReview(w.deps);
 
     expect(await runCounterpartyReview(w.deps)).toEqual({
       pairs: 1,
-      warned: 0,
+      filed: 0,
       repeats: 0,
-      failed: 0,
       indirect: 0,
     });
-    expect(w.sendWarning).toHaveBeenCalledTimes(1);
     expect(w.reports[1].findings).toEqual([]);
   });
 
-  it('files a warned member again for new volume of at least the minimum, without a second message', async () => {
+  it('files a member again for new volume of at least the minimum', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)] });
     await runCounterpartyReview(w.deps);
 
-    // Below the minimum of new volume since the warning: not filed.
+    // Below the minimum of new volume since the last filing: not filed.
     w.setRows([pair(22, 6_000, 4_999)]);
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ repeats: 0 });
 
     w.setRows([pair(22, 6_000, 5_000)]);
-    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 0, repeats: 1 });
-    expect(w.sendWarning).toHaveBeenCalledTimes(1);
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ filed: 0, repeats: 1 });
     const repeat = w.reports.at(-1)!;
     expect(() => abuseReportInput.parse(repeat)).not.toThrow();
     expect(repeat.findings).toEqual([
       expect.objectContaining({ userId: creator.id, actioned: false, confidence: 0.95 }),
     ]);
     expect(repeat.findings[0]).not.toHaveProperty('action');
-    expect(repeat.findings[0].reason).toContain(`Already warned on 2026-12-01`);
-    expect(w.store.get(creator.id)?.counterparties).toEqual({ '22': 5_000 });
+    expect(repeat.findings[0].reason).toContain(
+      'First filed on 2026-12-01, and the exchange grew again after that.'
+    );
+    expect(w.store.get(creator.id)).toEqual({
+      filedAt: afterCutover.toISOString(),
+      counterparties: { '22': 5_000 },
+    });
 
     // Filed once for that growth, not every day after it.
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ repeats: 0 });
@@ -227,7 +219,7 @@ describe('runCounterpartyReview', () => {
     });
   });
 
-  it('files a new counterparty after a warning as a repeat', async () => {
+  it('files a new counterparty after a filing as a repeat', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)] });
     await runCounterpartyReview(w.deps);
 
@@ -236,7 +228,7 @@ describe('runCounterpartyReview', () => {
     expect(w.store.get(creator.id)?.counterparties).toEqual({ '22': 4_000, '33': 2_000 });
   });
 
-  it('only messages current Creator Program members', async () => {
+  it('only files current Creator Program members', async () => {
     const w = world({
       rows: [
         pair(22, 5_000, 5_000),
@@ -246,24 +238,43 @@ describe('runCounterpartyReview', () => {
 
     await runCounterpartyReview(w.deps);
 
-    expect(w.sendWarning).toHaveBeenCalledTimes(1);
     expect(w.reports[0].findings.map((f) => f.userId)).toEqual([creator.id]);
   });
 
-  it('retries a warning that could not be sent, and does not record it as sent', async () => {
-    const sendWarning = vi
-      .fn<ReviewDeps['sendWarning']>()
-      .mockRejectedValueOnce(new Error('chat unavailable'))
-      .mockResolvedValue({ chatId: 501 });
-    const w = world({ rows: [pair(22, 5_000, 5_000)], sendWarning });
+  it('keeps a first filing for the next run when the report carrying it fails', async () => {
+    let failing = true;
+    const w = world({ rows: [pair(22, 5_000, 5_000)], reportFails: () => failing });
 
-    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 0, failed: 1 });
+    await expect(runCounterpartyReview(w.deps)).rejects.toThrow('board unavailable');
     expect(w.store.has(creator.id)).toBe(false);
-    expect(w.reports[0].findings[0]).toMatchObject({ actioned: false });
-    expect(w.reports[0].findings[0].reason).toContain('could not be sent (chat unavailable)');
 
-    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, failed: 0 });
-    expect(w.store.get(creator.id)?.chatId).toBe(501);
+    failing = false;
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ filed: 1 });
+    expect(w.store.has(creator.id)).toBe(true);
+  });
+
+  // Entries written while the review still messaged creators carry warnedAt and a chatId.
+  it('dedupes against an entry in the old shape and dates repeats from it', async () => {
+    const w = world({ rows: [pair(22, 5_000, 4_000)] });
+    const old = parseFiledRecord(
+      JSON.stringify({
+        warnedAt: '2026-11-20T10:00:00.000Z',
+        chatId: 500,
+        counterparties: { '22': 4_000 },
+      })
+    );
+    expect(old).toEqual({ filedAt: '2026-11-20T10:00:00.000Z', counterparties: { '22': 4_000 } });
+    w.store.set(creator.id, old!);
+
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ filed: 0, repeats: 0 });
+
+    w.setRows([pair(22, 6_000, 5_000)]);
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ repeats: 1 });
+    expect(w.reports.at(-1)!.findings[0].reason).toContain('First filed on 2026-11-20');
+    expect(w.store.get(creator.id)).toEqual({
+      filedAt: '2026-11-20T10:00:00.000Z',
+      counterparties: { '22': 5_000 },
+    });
   });
 });
 
@@ -274,18 +285,16 @@ describe('runCounterpartyReview, indirect transfers', () => {
     amount,
   });
 
-  it('files Buzz that came back through two other users for a moderator, without a warning', async () => {
+  it('files Buzz that came back through two other users for a moderator', async () => {
     const w = world({ indirectRows: [loop([22, 33], 3_000)] });
 
     expect(await runCounterpartyReview(w.deps)).toEqual({
       pairs: 0,
-      warned: 0,
+      filed: 0,
       repeats: 0,
-      failed: 0,
       indirect: 1,
     });
 
-    expect(w.sendWarning).not.toHaveBeenCalled();
     expect(w.store.has(creator.id)).toBe(false);
     const [report] = w.reports;
     expect(() => abuseReportInput.parse(report)).not.toThrow();
@@ -296,7 +305,9 @@ describe('runCounterpartyReview, indirect transfers', () => {
     expect(report.findings[0].reason).toContain(
       'through accounts 22 → 33: 3,000 Buzz (loop 11-22-33)'
     );
-    expect(report.findings[0].reason.startsWith('No warning message was sent')).toBe(true);
+    expect(
+      report.findings[0].reason.startsWith('Whether this is abuse is a moderator decision.')
+    ).toBe(true);
     expect(report.counters).toMatchObject({ indirect: 1 });
     expect(w.indirectStore.get(creator.id)).toEqual({ '22>33': 3_000 });
   });
@@ -340,19 +351,18 @@ describe('runCounterpartyReview, indirect transfers', () => {
     w.setIndirectRows([loop([22, 33], 4_000), loop([44, 55], 1_000)]);
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ indirect: 1 });
     expect(w.indirectStore.get(creator.id)).toEqual({ '22>33': 4_000, '44>55': 1_000 });
-    expect(w.sendWarning).not.toHaveBeenCalled();
   });
 
-  it('still warns and files direct exchanges when the indirect search fails', async () => {
+  it('still files direct exchanges when the indirect search fails', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)] });
     w.ch.$query.mockImplementation(async (sql: string) => {
       if (sql.includes('AS path')) throw new Error('timeout');
       return [pair(22, 5_000, 4_000)] as never[];
     });
 
-    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, indirect: 0 });
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ filed: 1, indirect: 0 });
     expect(w.reports[0].findings).toEqual([
-      expect.objectContaining({ userId: creator.id, action: WARNED_ACTION }),
+      expect.objectContaining({ userId: creator.id, actioned: false }),
     ]);
     expect(w.logs).toContainEqual({
       name: 'creator-program-counterparty-review-indirect-failed',
@@ -360,41 +370,16 @@ describe('runCounterpartyReview, indirect transfers', () => {
     });
   });
 
-  it('still warns and files direct exchanges when the hops setting cannot be read', async () => {
+  it('still files direct exchanges when the hops setting cannot be read', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)], indirectRows: [loop([22, 33], 3_000)] });
     w.deps.readMaxIntermediaries = async () => {
       throw new Error('redis down');
     };
 
-    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, indirect: 0 });
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ filed: 1, indirect: 0 });
     expect(w.reports[0].findings).toEqual([
-      expect.objectContaining({ userId: creator.id, action: WARNED_ACTION }),
+      expect.objectContaining({ userId: creator.id, actioned: false }),
     ]);
-  });
-
-  it('searches before any warning is sent', async () => {
-    const order: string[] = [];
-    const w = world({
-      rows: [pair(22, 5_000, 4_000)],
-      sendWarning: vi.fn(async () => {
-        order.push('warning');
-        return { chatId: 500 };
-      }),
-    });
-    w.ch.$query.mockImplementation(async (sql: string) => {
-      order.push(sql.includes('AS path') ? 'indirect' : 'pairs');
-      return (
-        sql.includes('AS path') ? [loop([22, 33], 3_000)] : [pair(22, 5_000, 4_000)]
-      ) as never[];
-    });
-    w.deps.indirect.get = async () => {
-      order.push('filed paths');
-      return null;
-    };
-
-    await runCounterpartyReview(w.deps);
-
-    expect(order).toEqual(['pairs', 'indirect', 'filed paths', 'warning']);
   });
 
   it('lists the largest paths and counts the rest, keeping the reason within its limit', async () => {
@@ -407,17 +392,16 @@ describe('runCounterpartyReview, indirect transfers', () => {
     expect(reason).toContain('through accounts 1000 → 2000: 9,000 Buzz');
     expect(reason).toContain('and 395 more');
     expect(reason).not.toContain('1005 → 2005');
-    expect(reason.startsWith('No warning message was sent')).toBe(true);
+    expect(reason.startsWith('Whether this is abuse is a moderator decision.')).toBe(true);
   });
 
   it('files a member with both a direct and an indirect exchange once, with both in the reason', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)], indirectRows: [loop([22, 33], 3_000)] });
 
-    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, indirect: 1 });
-    expect(w.sendWarning).toHaveBeenCalledTimes(1);
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ filed: 1, indirect: 1 });
     const { findings } = w.reports[0];
     expect(findings).toEqual([
-      expect.objectContaining({ userId: creator.id, confidence: 0.9, action: WARNED_ACTION }),
+      expect.objectContaining({ userId: creator.id, confidence: 0.9, actioned: false }),
     ]);
     expect(findings[0].reason).toContain('with account 22: received 5,000 Buzz, sent back 4,000');
     expect(findings[0].reason).toContain('through accounts 22 → 33: 3,000 Buzz (loop 11-22-33)');
@@ -445,16 +429,16 @@ describe('runCounterpartyReview, indirect transfers', () => {
     }
   });
 
-  it('still warns and files direct exchanges when reading filed indirect paths fails', async () => {
+  it('still files direct exchanges when reading filed indirect paths fails', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)], indirectRows: [loop([22, 33], 3_000)] });
     w.deps.indirect.get = async () => {
       throw new Error('redis down');
     };
 
-    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, indirect: 0 });
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ filed: 1, indirect: 0 });
     expect(w.reports).toHaveLength(1);
     expect(w.reports[0].findings).toEqual([
-      expect.objectContaining({ userId: creator.id, action: WARNED_ACTION }),
+      expect.objectContaining({ userId: creator.id, actioned: false }),
     ]);
     expect(w.reports[0].findings[0].reason).not.toContain('through accounts');
     expect(w.logs).toContainEqual({
@@ -490,10 +474,12 @@ describe('runCounterpartyReview, indirect transfers', () => {
 
     const { reason } = w.reports[0].findings[0];
     expect(reason.length).toBeLessThanOrEqual(2_000);
-    expect(reason).toContain('Sent the one-time warning message from the Civitai account.');
+    expect(reason).toContain(
+      'Removing the account from the Creator Program is a moderator decision.'
+    );
   });
 
-  it('tells the moderator a member filed only for indirect transfers was warned before', async () => {
+  it('tells the moderator a member filed only for indirect transfers was filed before', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)] });
     await runCounterpartyReview(w.deps);
 
@@ -501,8 +487,7 @@ describe('runCounterpartyReview, indirect transfers', () => {
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ repeats: 0, indirect: 1 });
     const [finding] = w.reports.at(-1)!.findings;
     expect(finding).toMatchObject({ confidence: 0.7, actioned: false });
-    expect(finding.reason).toContain('Already warned on 2026-12-01 for a direct exchange.');
-    expect(w.sendWarning).toHaveBeenCalledTimes(1);
+    expect(finding.reason).toContain('First filed on 2026-12-01 for a direct exchange.');
   });
 
   it('files only current Creator Program members', async () => {
@@ -570,26 +555,6 @@ describe('indirectTransfersSql', () => {
     expect(
       squash(indirectTransfersSql({ since: BANKABLE_CUTOVER, min: 0.5, intermediaries: 2 }))
     ).toContain('WHERE amount >= 1 ');
-  });
-});
-
-describe('renderWarningMessage', () => {
-  it('explains netting and moderator review, without threatening removal', () => {
-    const message = renderWarningMessage('creator_one');
-    expect(message.startsWith('Hi creator\\_one,\n\n')).toBe(true);
-    expect(message).toContain(
-      "Our systems noticed Buzz moving back and forth between your account and another account through tips, donations or purchases. Buzz that moves back and forth between accounts doesn't count toward your bankable earnings; it's netted out at cash-out. Cycling Buzz to inflate earnings is against the Creator Program rules. If it keeps happening, a moderator will review your account."
-    );
-    expect(message).not.toContain('one and only warning');
-    expect(message).not.toContain('will be removed');
-    expect(message).toContain('[contact support](/support)');
-  });
-
-  it('escapes markdown in the username', () => {
-    expect(renderWarningMessage('[x](http://a)*b*').split('\n')[0]).toBe(
-      'Hi \\[x\\](http://a)\\*b\\*,'
-    );
-    expect(renderWarningMessage(null).split('\n')[0]).toBe('Hi there,');
   });
 });
 

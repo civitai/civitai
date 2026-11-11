@@ -387,7 +387,20 @@ export const getImagesForModelVersionHandler = async ({
   ctx: Context;
 }) => {
   if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
-  return getImagesForModelVersionCache([input.id]);
+  const byVersion = await getImagesForModelVersionCache([input.id]);
+  // Any version id can be asked for, so the cap applies per image.
+  keepCrawlerAnswerOutOfEdgeCache(ctx);
+  return Object.fromEntries(
+    Object.entries(byVersion).map(([versionId, entry]) => [
+      versionId,
+      {
+        ...entry,
+        images: entry.images.filter((image) =>
+          canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } })
+        ),
+      },
+    ])
+  );
 };
 
 /**

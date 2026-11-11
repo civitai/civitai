@@ -57,8 +57,6 @@ function makeDeps(rows: Rows, over: Partial<PrepayoutReviewDeps> = {}) {
   const deps: PrepayoutReviewDeps = {
     ch,
     readLimits: async () => limits,
-    readCounterpartyMinimum: async () => null,
-    getWarnedAt: async () => new Map(),
     getCarriedUserIds: async () => [],
     loadAccounts: async (ids) =>
       new Map(ids.map((id) => [id, account({ username: `u${id}`, muted: id === 3 })])),
@@ -136,13 +134,13 @@ describe('runPrepayoutReview', () => {
     ]);
   });
 
-  it('feeds payout history and prior warnings into the signals', async () => {
+  it('feeds payout history into the signals', async () => {
     const rows: Rows = {
       ...batchRows,
       // Creator 4 usually gets 100 cents; 9_000 is 90x and the top of the batch.
       batch: [...batchRows.batch, { userId: 4, payoutCents: 9_000 }],
       totals: [...batchRows.totals, { userId: 4, amount: 500_000 }],
-      pairs: [{ userId: 3, payerId: 901, received: 600, sent: 600 }],
+      pairs: [],
       prior: [
         { userId: '4', period: '2026-09', payoutCents: '100' },
         { userId: '4', period: '2026-08', payoutCents: '100' },
@@ -150,14 +148,11 @@ describe('runPrepayoutReview', () => {
     };
     const { deps, store } = makeDeps(rows, {
       loadAccounts: async (ids) => new Map(ids.map((id) => [id, account()])),
-      readCounterpartyMinimum: async () => 500,
-      getWarnedAt: async () => new Map([[3, '2026-09-02T10:00:00.000Z']]),
     });
 
     await runPrepayoutReview(deps);
 
     expect(store.saveFlag.mock.calls.map(([f]) => [f.userId, f.signals])).toEqual([
-      [3, ['warned-again']],
       [4, ['payout-jump']],
     ]);
   });
