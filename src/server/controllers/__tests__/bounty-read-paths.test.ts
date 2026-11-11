@@ -8,6 +8,7 @@ import type * as FileService from '~/server/services/file.service';
 import type * as UserService from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
 
 const {
   mockAssert,
@@ -17,6 +18,8 @@ const {
   mockGetEntryFiles,
   mockUpsertBounty,
   mockDeleteBounty,
+  mockBountyImages,
+  mockImagesForBounties,
 } = vi.hoisted(() => ({
   mockAssert: vi.fn(),
   mockGetEntries: vi.fn(async () => []),
@@ -25,6 +28,8 @@ const {
   mockGetEntryFiles: vi.fn(async () => []),
   mockUpsertBounty: vi.fn(),
   mockDeleteBounty: vi.fn(),
+  mockBountyImages: vi.fn(async (): Promise<unknown[]> => []),
+  mockImagesForBounties: vi.fn(async (): Promise<Record<number, unknown[]>> => ({})),
 }));
 
 // The showcase hat is a cache read beside these checks; it has its own test.
@@ -43,8 +48,8 @@ vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BountyService>()),
   upsertBounty: mockUpsertBounty,
   deleteBountyById: mockDeleteBounty,
-  getBountyImages: vi.fn(async () => []),
-  getImagesForBounties: vi.fn(async () => ({})),
+  getBountyImages: mockBountyImages,
+  getImagesForBounties: mockImagesForBounties,
 }));
 vi.mock('~/server/services/file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FileService>()),
@@ -107,7 +112,9 @@ const {
   upsertBountyEntryHandler,
   submitBountyEntryHandler,
 } = await import('../bountyEntry.controller');
-const stranger = { user: { id: 6 } } as never;
+// A mature domain, signed in: the domain caps nothing.
+const uncapped = { features: { canViewNsfw: true } };
+const stranger = { user: { id: 6 }, ...uncapped } as never;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -181,7 +188,11 @@ describe('bounty write responses', () => {
     name: 'B',
     meta: { textScanFlags: { poi: { reason: 'r', names: ['Jane Doe'] } } },
   };
-  const ctx = { user: { id: 5 }, track: { bounty: vi.fn(async () => undefined) } } as never;
+  const ctx = {
+    user: { id: 5 },
+    ...uncapped,
+    track: { bounty: vi.fn(async () => undefined) },
+  } as never;
 
   it('upsert never returns meta', async () => {
     mockUpsertBounty.mockResolvedValue(row);
@@ -235,7 +246,10 @@ describe('bounty detail and feed visibility', () => {
     ['the owner', { id: OWNER }],
     ['a moderator', { id: 77, isModerator: true }],
   ])('getBounty returns it to %s, without meta', async (_label, user) => {
-    const result = await getBountyHandler({ input: { id: 9 }, ctx: { user } as never });
+    const result = await getBountyHandler({
+      input: { id: 9 },
+      ctx: { user, ...uncapped } as never,
+    });
     expect(result.id).toBe(9);
     expect(result).not.toHaveProperty('meta');
   });
@@ -251,5 +265,78 @@ describe('bounty detail and feed visibility', () => {
     expect(where.AND).toContainEqual({
       OR: [{ availability: { not: 'Private' } }, { userId: 6 }],
     });
+  });
+});
+
+describe('bounty images on a capped site', () => {
+  const OWNER = 5;
+  const sfwSite = { features: { canViewNsfw: false } };
+  const image = (id: number, nsfwLevel: number) => ({
+    id,
+    nsfwLevel,
+    nsfwLefel: nsfwLevel,
+    tags: [],
+  });
+  const feedBounty = (id: number) => ({
+    id,
+    name: 'B',
+    nsfw: false,
+    nsfwLevel: 3,
+    tags: [],
+    user: { id: OWNER },
+  });
+  const detailBounty = {
+    id: 9,
+    name: 'B',
+    availability: 'Public',
+    poi: false,
+    user: { id: OWNER },
+    details: null,
+    tags: [],
+    meta: {},
+  };
+  const feedInput = { limit: 10, period: 'AllTime', sort: 'Newest' } as never;
+  const ids = (images: { id: number }[]) => images.map((i) => i.id);
+
+  it('the feed sends a capped viewer no image above the cap, and drops a bounty left with none', async () => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([feedBounty(1), feedBounty(2)]);
+    mockImagesForBounties.mockResolvedValue({
+      1: [image(10, NsfwLevel.PG), image(11, NsfwLevel.X), image(12, 0)],
+      2: [image(20, NsfwLevel.R)],
+    });
+    const { items } = await getInfiniteBountiesHandler({ input: feedInput, ctx: sfwSite as never });
+    expect(items.map((b) => b.id)).toEqual([1]);
+    expect(ids(items[0].images)).toEqual([10]);
+  });
+
+  it('the detail page sends a capped viewer no image above the cap', async () => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue(detailBounty);
+    mockBountyImages.mockResolvedValue([image(10, NsfwLevel.PG13), image(11, NsfwLevel.R)]);
+    const result = await getBountyHandler({
+      input: { id: 9 },
+      ctx: { user: { id: OWNER }, ...sfwSite } as never,
+    });
+    expect(ids(result.images)).toEqual([10]);
+  });
+
+  it('the detail page sends a bounty with no image inside the cap no image', async () => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue(detailBounty);
+    mockBountyImages.mockResolvedValue([image(11, NsfwLevel.X)]);
+    const result = await getBountyHandler({ input: { id: 9 }, ctx: sfwSite as never });
+    expect(result.images).toEqual([]);
+  });
+
+  it('an uncapped viewer keeps every image', async () => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([feedBounty(1)]);
+    mockImagesForBounties.mockResolvedValue({
+      1: [image(10, NsfwLevel.PG), image(11, NsfwLevel.X)],
+    });
+    const { items } = await getInfiniteBountiesHandler({ input: feedInput, ctx: stranger });
+    expect(ids(items[0].images)).toEqual([10, 11]);
+
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue(detailBounty);
+    mockBountyImages.mockResolvedValue([image(10, NsfwLevel.PG), image(11, NsfwLevel.X)]);
+    const result = await getBountyHandler({ input: { id: 9 }, ctx: stranger });
+    expect(ids(result.images)).toEqual([10, 11]);
   });
 });

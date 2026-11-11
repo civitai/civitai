@@ -42,6 +42,15 @@ import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
+import { requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
+import { Flags } from '~/shared/utils/flags';
+
+/** A bounty's level is its images' combined level, so the cap on the bounty does not reach each. */
+function capBountyImages<T extends { nsfwLevel?: number | null }>(images: T[], ctx: Context) {
+  const cap = requestDomainBrowsingLevelCap(ctx);
+  if (cap === undefined) return images;
+  return images.filter((image) => Flags.intersects(Number(image.nsfwLevel) || 0, cap));
+}
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -106,22 +115,25 @@ export const getInfiniteBountiesHandler = async ({
       nextCursor,
       items: items
         .map((item) => {
-          const itemImages = images[item.id];
           const tags = item.tags;
           const user = item.user;
-          // if there are no images, we don't want to show the bounty
-          if (!itemImages?.length || !user) return null;
-
-          return {
-            ...item,
-            nsfwLevel: item.nsfw ? NsfwLevel.XXX : item.nsfwLevel,
-            user,
-            images: itemImages.map((image) => ({
+          const itemImages = capBountyImages(
+            (images[item.id] ?? []).map((image) => ({
               ...image,
               tagIds: image.tags.map((x) => x.id),
               // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
               nsfwLevel: item.nsfw ? NsfwLevel.XXX : image.nsfwLefel,
             })),
+            ctx
+          );
+          // if there are no images, we don't want to show the bounty
+          if (!itemImages.length || !user) return null;
+
+          return {
+            ...item,
+            nsfwLevel: item.nsfw ? NsfwLevel.XXX : item.nsfwLevel,
+            user,
+            images: itemImages,
             tags: tags.map(({ tagId }) => tagId),
           };
         })
@@ -199,7 +211,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
             ctx?.user?.isModerator
           )
         : ({} as BountyDetailsSchema),
-      images: images.map((image) => ({
+      images: capBountyImages(images, ctx).map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,
         metadata: image?.metadata as MixedObject,
