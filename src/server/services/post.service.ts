@@ -1757,10 +1757,13 @@ export const addPostImage = async ({
   });
 
   // A song whose lyrics failed to save shows none, so nothing unscanned is shown.
-  if (song?.lyrics)
-    await saveGeneratedTrackLyrics({ imageId: partialResult.id, text: song.lyrics }).catch(
-      handleLogError
-    );
+  if (song?.lyrics) {
+    const saved = await saveGeneratedTrackLyrics({
+      imageId: partialResult.id,
+      text: song.lyrics,
+    }).catch(handleLogError);
+    if (saved) scanEntityInBackground({ entityType: 'TrackLyrics', entityId: partialResult.id });
+  }
   await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
 
   const result = await dbWrite.image.findUnique({

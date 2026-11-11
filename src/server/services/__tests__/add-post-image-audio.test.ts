@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
   getWorkflow: vi.fn(),
   createImage: vi.fn(),
+  scanEntityInBackground: vi.fn(),
   music: false,
 }));
 
@@ -86,6 +87,10 @@ vi.mock('~/server/redis/caches', () => {
     userPostCountCache: cacheStub(),
   };
 });
+
+vi.mock('~/server/services/text-scan/submit', () => ({
+  scanEntityInBackground: mocks.scanEntityInBackground,
+}));
 
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 
@@ -228,6 +233,17 @@ describe('addPostImage — audio', () => {
     });
   });
 
+  it('scans the saved lyrics as TrackLyrics text', async () => {
+    mocks.music = true;
+    createThenStop();
+    mocks.getWorkflow.mockResolvedValue({ steps: [{ $type: 'yuE2', input: { lyrics: 'sun' } }] });
+    await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('An unexpected error');
+    expect(mocks.scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'TrackLyrics',
+      entityId: 11,
+    });
+  });
+
   it('ignores the lyrics the client sent when the workflow has lyrics', async () => {
     mocks.music = true;
     createThenStop();
@@ -292,6 +308,7 @@ describe('addPostImage — audio', () => {
     ).rejects.toThrow('An unexpected error');
     expect(mocks.createImage.mock.calls[0][0].metadata).toEqual(song);
     expect(dbMock.dbWrite.trackLyrics.upsert).not.toHaveBeenCalled();
+    expect(mocks.scanEntityInBackground).not.toHaveBeenCalled();
   });
 
   it('reads the workflow once for both the song details and the provenance', async () => {

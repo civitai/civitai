@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import type { Tracker } from '~/server/clickhouse/client';
-import { BanReasonCode } from '~/server/common/enums';
+import { BanReasonCode, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
@@ -55,6 +55,7 @@ const REMOVABLE_ENTITY_TYPES = [
   'Post',
   'Model',
   'Article',
+  'TrackLyrics',
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
   (REMOVABLE_ENTITY_TYPES as readonly string[]).includes(type);
@@ -133,6 +134,20 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
         reason: POST_UNPUBLISH_REASON,
       });
       return;
+    case 'TrackLyrics': {
+      // A song is an image in a post: unpublished with its post, as a Post hold is.
+      const song = await dbWrite.image.findUnique({
+        where: { id: entityId },
+        select: { postId: true },
+      });
+      if (!song?.postId) return;
+      await unpublishPostAsModerator({
+        id: song.postId,
+        userId: actor.id,
+        reason: POST_UNPUBLISH_REASON,
+      });
+      return;
+    }
     case 'Model': {
       const model = await dbWrite.model.findUnique({
         where: { id: entityId },
@@ -224,8 +239,8 @@ async function strikeAuthor(hold: HeldRow, { actor, holdId }: DecideArgs) {
     points: STRIKE_POINTS,
     description: STRIKE_DESCRIPTION,
     internalNotes: `csam text hold #${holdId}`,
-    // Every csam hold type is an `EntityType`.
-    entityType: hold.entityType as EntityType,
+    // Every other csam hold type is an `EntityType`; a song's lyrics belong to its image.
+    entityType: (hold.entityType === 'TrackLyrics' ? 'Image' : hold.entityType) as EntityType,
     entityId: hold.entityId,
     expiresInDays: 365,
     issuedBy: actor.id,
@@ -336,6 +351,23 @@ export async function decideCsamHold(args: DecideArgs) {
       () => null
     );
     throw error;
+  }
+
+  // The song left search when it was held. The decision is stored, so a failure here must not throw.
+  if (status === 'Dismissed' && hold.entityType === 'TrackLyrics') {
+    const { queueImageSearchIndexUpdate } = await import('~/server/services/image.service');
+    await queueImageSearchIndexUpdate({
+      ids: [hold.entityId],
+      action: SearchIndexUpdateQueueAction.Update,
+    }).catch((error) =>
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'csam hold: re-index after dismissal failed',
+        holdId,
+        error: (error as Error).message,
+      }).catch(() => null)
+    );
   }
 
   return { status, entityType: hold.entityType, entityId: hold.entityId, userId: hold.userId };
