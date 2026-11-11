@@ -98,14 +98,21 @@ beforeAll(async () => {
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Model');
     CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
-    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text);
+    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text, "needsReview" text);
+    CREATE TABLE "CsamQueueSetAside" ("imageId" int PRIMARY KEY, outcome text NOT NULL);
+    CREATE TABLE "EvidenceHold" (id serial PRIMARY KEY, "userId" int NOT NULL, "releaseAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int
+    );
     CREATE TABLE "Model" (id int PRIMARY KEY, "deletedAt" timestamp(3), "deletedBy" int);
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     -- Stand in for the hold-marker view and its kept-image record, which the appeal checks read.
     CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY, "heldUntil" timestamp(3));
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY, "userId" int NOT NULL);
-    CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "CsamReport" (
+      id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
+    );
     CREATE TABLE "Appeal" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -133,6 +140,13 @@ beforeAll(async () => {
     }
     return rows;
   }) as never);
+  dbMock.dbWrite.$executeRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const flat = Prisma.sql(strings, ...(values as never[]));
+    return (await holder.db.query(flat.text, flat.values as unknown[])).affectedRows ?? 0;
+  }) as never);
 });
 
 beforeEach(async () => {
@@ -142,7 +156,8 @@ beforeEach(async () => {
   holder.afterPick = null;
   holder.clickhouse = 'normal';
   await holder.db.exec(`
-    TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "EvidenceHeldUser", "Appeal";
+    TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "EvidenceHeldUser", "Appeal",
+      "CsamQueueSetAside", "EvidenceHold", "ModActivity";
     INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 30) g;
     INSERT INTO "EvidenceHeldUser" ("userId") VALUES (30);
     UPDATE "User" SET "deletedAt" = now() WHERE id = 26;
@@ -417,6 +432,206 @@ describe('voidOrphanedAppeals against Postgres', () => {
       expect(second).toMatchObject({ closedUnreviewed: 0 });
       expect(holder.refundMulti).not.toHaveBeenCalled();
       expect(holder.notify).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('an appeal on an image dismissed from the CSAM review queue', () => {
+    // 41 is past the deadline from its filing, 42 a day short; 43's image is flagged but not
+    // dismissed; 44 and 45 match the owner check.
+    beforeEach(async () => {
+      await holder.db.exec(`
+        INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
+          (1041, 12, 'csam', 'moderated'), (1042, 12, 'csam', 'moderated'),
+          (1043, 12, 'csam', 'moderated'), (1044, 21, 'csam', 'moderated'),
+          (1045, 15, 'csam', 'moderated');
+        INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES
+          (1041, 'Dismissed'), (1042, 'Dismissed'), (1044, 'Dismissed'), (1045, 'Dismissed');
+        INSERT INTO "EvidenceHold" ("userId", "releaseAt") VALUES (15, now() - interval '1 day');
+      `);
+      await holder.db.query(
+        `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+           "buzzTransactionId") VALUES
+           (41, 12, 'Image', 1041, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-12-41'),
+           (42, 12, 'Image', 1042, 'Pending', now() - make_interval(days => $1 - 1), now(), 'appeal-12-42'),
+           (43, 12, 'Image', 1043, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-12-43'),
+           (44, 21, 'Image', 1044, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-21-44'),
+           (45, 15, 'Image', 1045, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-15-45')`,
+        [ROUTED_APPEAL_REVIEW_DAYS]
+      );
+    });
+    const withheldRows = async () =>
+      (
+        await holder.db.query<{ entityId: number; userId: number | null }>(
+          `SELECT "entityId", "userId" FROM "ModActivity" WHERE activity = 'deferredNoticeWithheld' ORDER BY 1`
+        )
+      ).rows;
+    const flagOf = async (imageId: number) =>
+      (
+        await holder.db.query<{ needsReview: string | null }>(
+          `SELECT "needsReview" FROM "Image" WHERE id = $1`,
+          [imageId]
+        )
+      ).rows[0].needsReview;
+
+    it('is closed, refunded and told as an unreviewed one, counted from its filing', async () => {
+      const result = await voidOrphanedAppeals();
+
+      expect(await seenBy(41, 'appeal-12-41')).toEqual({
+        status: 'Void',
+        resolvedReason: 'removed-before-review',
+        resolved: true,
+        routed: false,
+        notices: [
+          {
+            key: 'entity-appeal-content-removed:#:closed-unreviewed',
+            outcome: 'closed-unreviewed',
+            refunded: true,
+          },
+        ],
+        refunded: true,
+      });
+      expect(result).toMatchObject({ closedDismissedReview: 3, closedUnreviewed: 0 });
+    });
+
+    it('is not one the routed-appeal close can see, since nothing stamps its removal', async () => {
+      await holder.db.exec(`DELETE FROM "CsamQueueSetAside"`);
+
+      const result = await voidOrphanedAppeals();
+
+      expect(result).toMatchObject({ closedUnreviewed: 0, closedDismissedReview: 0 });
+      expect((await appeals()).get(41)).toMatchObject({ status: 'Pending' });
+    });
+
+    it('leaves the image and its flag as they are', async () => {
+      await voidOrphanedAppeals();
+
+      expect(await flagOf(1041)).toBe('csam');
+    });
+
+    it('leaves one a day short, and one not dismissed, Pending', async () => {
+      await voidOrphanedAppeals();
+      const rows = await appeals();
+
+      expect(rows.get(42)).toMatchObject({ status: 'Pending', resolvedAt: null });
+      expect(rows.get(43)).toMatchObject({ status: 'Pending', resolvedAt: null });
+      expect(refundedPrefixes()).not.toContain('appeal-12-42');
+      expect(refundedPrefixes()).not.toContain('appeal-12-43');
+    });
+
+    it('refunds and tells nothing on a second run', async () => {
+      await voidOrphanedAppeals();
+      vi.clearAllMocks();
+
+      expect(await voidOrphanedAppeals()).toMatchObject({ closedDismissedReview: 0 });
+      expect(holder.refundMulti).not.toHaveBeenCalled();
+      expect(holder.notify).not.toHaveBeenCalled();
+    });
+
+    it('closes and refunds without a notice when the owner check matches', async () => {
+      await voidOrphanedAppeals();
+
+      for (const [id, fee] of [
+        [44, 'appeal-21-44'],
+        [45, 'appeal-15-45'],
+      ] as const)
+        expect(await seenBy(id, fee)).toMatchObject({
+          status: 'Void',
+          notices: [],
+          refunded: true,
+        });
+      expect(await withheldRows()).toEqual([
+        { entityId: 1044, userId: null },
+        { entityId: 1045, userId: null },
+      ]);
+    });
+
+    it('refunds every one it closed when writing a log row fails', async () => {
+      await holder.db.exec(`ALTER TABLE "ModActivity" RENAME TO "ModActivity_gone"`);
+      try {
+        await voidOrphanedAppeals();
+      } finally {
+        await holder.db.exec(`ALTER TABLE "ModActivity_gone" RENAME TO "ModActivity"`);
+      }
+
+      expect(refundedPrefixes()).toEqual(
+        expect.arrayContaining(['appeal-12-41', 'appeal-21-44', 'appeal-15-45'])
+      );
+    });
+
+    it('refunds every one it closed when a notice fails', async () => {
+      holder.notify.mockImplementation((async (n: { key: string }) => {
+        if (n.key.includes(':41:')) throw new Error('notifications down');
+      }) as never);
+      await voidOrphanedAppeals().catch(() => undefined);
+
+      expect(refundedPrefixes()).toEqual(
+        expect.arrayContaining(['appeal-12-41', 'appeal-21-44', 'appeal-15-45'])
+      );
+    });
+
+    describe('whose appellant was removed since the dismissal', () => {
+      // 46's image was removed for CSAM; 47's owner has another image removed for CSAM; 48's owner
+      // has a CSAM-reason user report; 49's owner is deleted.
+      beforeEach(async () => {
+        await holder.db.exec(`
+          INSERT INTO "User" (id, "deletedAt") VALUES (19, now()) ON CONFLICT (id) DO UPDATE SET "deletedAt" = now();
+          INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
+            (1046, 16, 'csam', 'CSAM'), (1047, 17, 'csam', 'moderated'), (2047, 17, NULL, 'CSAM'),
+            (1048, 18, 'csam', 'moderated'), (1049, 19, 'csam', 'moderated');
+          INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES
+            (1046, 'Dismissed'), (1047, 'Dismissed'), (1048, 'Dismissed'), (1049, 'Dismissed');
+          INSERT INTO "Report" (id, reason) VALUES (9048, 'CSAM');
+          INSERT INTO "UserReport" ("userId", "reportId") VALUES (18, 9048);
+        `);
+        await holder.db.query(
+          `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+             "buzzTransactionId") VALUES
+             (46, 16, 'Image', 1046, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-16-46'),
+             (47, 17, 'Image', 1047, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-17-47'),
+             (48, 18, 'Image', 1048, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-18-48'),
+             (49, 19, 'Image', 1049, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-19-49')`,
+          [ROUTED_APPEAL_REVIEW_DAYS]
+        );
+      });
+
+      it('closes the appeal with no refund and no notice', async () => {
+        await voidOrphanedAppeals();
+
+        for (const [id, fee] of [
+          [46, 'appeal-16-46'],
+          [47, 'appeal-17-47'],
+          [48, 'appeal-18-48'],
+        ] as const)
+          expect(await seenBy(id, fee)).toMatchObject({
+            status: 'Void',
+            notices: [],
+            refunded: false,
+          });
+        expect((await withheldRows()).map((r) => r.entityId)).not.toContain(1046);
+        expect(await seenBy(41, 'appeal-12-41')).toMatchObject({ refunded: true });
+      });
+
+      it('refunds a deleted appellant without a notice', async () => {
+        await voidOrphanedAppeals();
+
+        expect(await seenBy(49, 'appeal-19-49')).toMatchObject({
+          status: 'Void',
+          notices: [],
+          refunded: true,
+        });
+      });
+    });
+
+    it('holds every notice when the check itself fails', async () => {
+      await holder.db.exec(`ALTER TABLE "EvidenceHold" RENAME TO "EvidenceHold_gone"`);
+      try {
+        await voidOrphanedAppeals();
+      } finally {
+        await holder.db.exec(`ALTER TABLE "EvidenceHold_gone" RENAME TO "EvidenceHold"`);
+      }
+
+      expect((await seenBy(41, 'appeal-12-41')).notices).toEqual([]);
+      expect((await withheldRows()).map((r) => r.entityId)).toEqual([1041, 1044, 1045]);
     });
   });
 

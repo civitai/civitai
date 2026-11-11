@@ -4257,6 +4257,16 @@ export interface CsamQueueSetAside {
   createdAt: Date;
 }
 
+export interface ImageDeferredBlockEffect {
+  imageId: number;
+  violationType: string | null;
+  notifyOwner: boolean;
+  reportReason: string | null;
+  reportIds: number[];
+  blockedBy: number | null;
+  createdAt: Date;
+}
+
 export interface CsamReportAudit {
   id: number;
   csamReportId: number;

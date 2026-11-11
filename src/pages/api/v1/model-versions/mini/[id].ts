@@ -21,14 +21,14 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type {
   LicensingFeeSettlementCurrency,
   LicensingFeeType,
   ModelType,
   ModelHashType,
-  ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { Availability, ModelFileVisibility, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
@@ -397,9 +397,30 @@ export default MixedAuthEndpoint(async function handler(
     })}`;
   }
 
+  const downloadUrls = [downloadUrl];
+  const sha256 = targetFile.hashes.SHA256;
+  // The hash route offers a non-owner only these copies (findHashCandidates); anything else would
+  // lead with a url that refuses where the id url serves.
+  const hashRouteServes =
+    targetFile.visibility === ModelFileVisibility.Public &&
+    modelVersion.usageControl === ModelUsageControl.Download &&
+    modelVersion.availability !== Availability.Private &&
+    modelVersion.status === 'Published' &&
+    modelVersion.modelStatus === 'Published';
+  if (
+    !trainingResults &&
+    hashRouteServes &&
+    sha256 &&
+    // A scan that never ran writes 64 zeros, which every such file would share.
+    !/^0+$/.test(sha256) &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.DOWNLOAD_HASH_URLS, String(targetFile.id)))
+  )
+    downloadUrls.unshift(`${baseUrl}/api/download/sha256/${sha256.toLowerCase()}`);
+
   // if req url domain contains `api.`, strip /api/ from the download url
   if (req.headers.host?.includes('api.')) {
-    downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
+    for (const [i, url] of downloadUrls.entries())
+      downloadUrls[i] = url.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
   }
   const { format } = targetFile.metadata;
 
@@ -562,7 +583,7 @@ export default MixedAuthEndpoint(async function handler(
     fileName: targetFile.name,
     // nullable - hashes (all available hash types)
     hashes: targetFile.hashes,
-    downloadUrls: withholdEpochUrl ? [] : [downloadUrl], // nullable
+    downloadUrls: withholdEpochUrl ? [] : downloadUrls, // nullable
     format, // nullable
     canGenerate,
     isFeatured,
