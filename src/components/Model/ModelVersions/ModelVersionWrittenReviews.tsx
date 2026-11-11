@@ -1,5 +1,6 @@
 import { Button, Container, Text, Title } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { getModelReviewsCanonical } from '~/components/ResourceReview/model-reviews-url';
 import { ReviewCard } from '~/components/ResourceReview/ReviewCard/ReviewCard';
@@ -22,8 +23,9 @@ export function ModelVersionWrittenReviews({
   thumbsDownCount?: number;
 }) {
   const { modelPageReviews } = useFeatureFlags();
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data } = trpc.resourceReview.getPaged.useQuery(
-    { modelId, modelVersionId, limit: REVIEW_COUNT, page: 1, writtenOnly: true },
+    { modelId, modelVersionId, limit: REVIEW_COUNT, page: 1, writtenOnly: true, browsingLevel },
     { enabled: !!modelPageReviews }
   );
 

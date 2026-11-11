@@ -543,8 +543,9 @@ export const writtenReviewSql = Prisma.sql`(
 )`;
 
 // A post can keep an `unpublishedAt` stamp with `publishedAt` still set; the stamp hides it.
-const servablePostImageSql = Prisma.sql`
-  i."needsReview" IS NULL
+const servablePostImageSql = (browsingLevel: number) => Prisma.sql`
+  (i."nsfwLevel" & ${browsingLevel}) != 0
+  AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
   AND ${imageReviewedSql('i')}
@@ -566,13 +567,15 @@ const COUNT_LIMIT = REVIEW_IMAGE_COUNT_CAP + 1;
  * review's own post, or, for a review written outside a post, from any of the reviewer's posts.
  * That fallback walks whichever of the version's images or the reviewer's images is smaller.
  */
-const reviewImageCountSql = (limit: number) => Prisma.sql`
+const reviewImageCountSql = (limit: number, browsingLevel: number) => Prisma.sql`
   CASE
     WHEN rr."postId" IS NOT NULL THEN (
       SELECT COUNT(*)::int FROM (
         SELECT 1 FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
-        WHERE i."postId" = rr."postId" AND ${servablePostImageSql} AND ${usedReviewedVersionSql}
+        WHERE i."postId" = rr."postId" AND ${servablePostImageSql(
+          browsingLevel
+        )} AND ${usedReviewedVersionSql}
         LIMIT ${limit}
       ) c
     )
@@ -592,7 +595,9 @@ const reviewImageCountSql = (limit: number) => Prisma.sql`
           AND (
             SELECT true FROM "Image" i
             JOIN "Post" p ON p.id = i."postId"
-            WHERE i.id = vir."imageId" AND i."userId" = rr."userId" AND ${servablePostImageSql}
+            WHERE i.id = vir."imageId" AND i."userId" = rr."userId" AND ${servablePostImageSql(
+              browsingLevel
+            )}
           )
         LIMIT ${limit}
       ) c
@@ -601,17 +606,19 @@ const reviewImageCountSql = (limit: number) => Prisma.sql`
       SELECT COUNT(*)::int FROM (
         SELECT 1 FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
-        WHERE i."userId" = rr."userId" AND ${servablePostImageSql} AND ${usedReviewedVersionSql}
+        WHERE i."userId" = rr."userId" AND ${servablePostImageSql(
+          browsingLevel
+        )} AND ${usedReviewedVersionSql}
         LIMIT ${limit}
       ) c
     )
   END
 `;
 
-const getReviewImageCounts = async (reviewIds: number[]) => {
+const getReviewImageCounts = async (reviewIds: number[], browsingLevel: number) => {
   if (!reviewIds.length) return new Map<number, number>();
   const rows = await dbRead.$queryRaw<{ id: number; imageCount: number }[]>`
-    SELECT rr.id, ${reviewImageCountSql(COUNT_LIMIT)} AS "imageCount"
+    SELECT rr.id, ${reviewImageCountSql(COUNT_LIMIT, browsingLevel)} AS "imageCount"
     FROM "ResourceReview" rr
     WHERE rr.id = ANY(${reviewIds}::int[])
   `;
@@ -625,8 +632,17 @@ export const getPagedResourceReviews = async ({
   input: GetResourceReviewPagedInput;
   userId?: number;
 }) => {
-  const { limit, page, modelId, modelVersionId, username, writtenOnly, hasImages, recommended } =
-    input;
+  const {
+    limit,
+    page,
+    modelId,
+    modelVersionId,
+    username,
+    writtenOnly,
+    hasImages,
+    recommended,
+    browsingLevel,
+  } = input;
   const skip = page && page > 0 ? limit * (page - 1) : 0;
   const AND = [
     modelVersionId
@@ -636,7 +652,7 @@ export const getPagedResourceReviews = async ({
   ];
   if (writtenOnly) AND.push(writtenReviewSql);
   if (recommended !== undefined) AND.push(Prisma.sql`rr.recommended = ${recommended}`);
-  if (hasImages) AND.push(Prisma.sql`${reviewImageCountSql(1)} > 0`);
+  if (hasImages) AND.push(Prisma.sql`${reviewImageCountSql(1, browsingLevel)} > 0`);
   if (username) {
     const user = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (user) AND.push(Prisma.sql`rr."userId" = ${user.id}`);
@@ -733,7 +749,10 @@ export const getPagedResourceReviews = async ({
     getBasicDataForUsers(userIds),
     getCosmeticsForUsers(userIds),
     getProfilePicturesForUsers(userIds),
-    getReviewImageCounts(itemsRaw.map((item) => item.id)),
+    getReviewImageCounts(
+      itemsRaw.map((item) => item.id),
+      browsingLevel
+    ),
   ]);
   const items = itemsRaw.map(({ userId, ...item }) => {
     const user = users[userId];

@@ -21,6 +21,7 @@ import { IconLock, IconMessageCircleOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -77,7 +78,6 @@ export const getServerSideProps = createServerSideProps({
     const { modelId, modelVersionId } = result.data;
 
     await Promise.all([
-      ssg?.resourceReview.getPaged.prefetch(result.data),
       ssg?.model.getSimple.prefetch({ id: modelId }),
       ssg?.model.getById.prefetch({ id: modelId }),
       ssg?.model.getVersions.prefetch({ id: modelId }),
@@ -91,12 +91,14 @@ export default function ModelReviews() {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const filter = parseReviewsFilter(router.query.filter);
+  const browsingLevel = useBrowsingLevelDebounced();
   const queryParams = getResourceReviewPagedSchema.parse({
     modelId: router.query.id,
     ...router.query,
     hasImages: undefined,
     recommended: undefined,
     ...getReviewsFilterInput(filter),
+    browsingLevel,
   });
   const { modelId, modelVersionId, page } = queryParams;
   const isMuted = currentUser?.muted ?? false;

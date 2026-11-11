@@ -40,6 +40,7 @@ vi.mock('~/server/schema/resourceReview.schema', async (importOriginal) => ({
 const { getPagedResourceReviews } = await import('~/server/services/resourceReview.service');
 const { REVIEW_IMAGE_COUNT_CAP } = await import('~/server/schema/resourceReview.schema');
 const { NsfwLevel } = await import('~/server/common/enums');
+const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
 
 const MODEL = 10;
 const V1 = 20;
@@ -152,9 +153,20 @@ const page = (
     writtenOnly?: boolean;
     hasImages?: boolean;
     recommended?: boolean;
+    browsingLevel?: number;
   },
   userId?: number
-) => getPagedResourceReviews({ input: { modelId: MODEL, limit: 10, page: 1, ...input }, userId });
+) =>
+  getPagedResourceReviews({
+    input: {
+      modelId: MODEL,
+      limit: 10,
+      page: 1,
+      browsingLevel: allBrowsingLevelsFlag,
+      ...input,
+    },
+    userId,
+  });
 
 describe('getPagedResourceReviews', () => {
   it("lists every version's reviews of the model when no version is selected", async () => {
@@ -188,6 +200,44 @@ describe('getPagedResourceReviews', () => {
 
     const [review] = (await page({ modelVersionId: V1 })).items;
     expect(review.imageCount).toBe(1);
+  });
+
+  describe("the viewer's browsing level", () => {
+    const AUTHOR = 40;
+    beforeEach(async () => {
+      await pg.exec(`
+        INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+          (2000, ${AUTHOR}, now() - interval '1 day'),
+          (2001, ${AUTHOR}, now() - interval '1 day');
+        INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel") VALUES
+          (50, ${AUTHOR}, 2000, ${NsfwLevel.PG}),
+          (51, ${AUTHOR}, 2000, ${NsfwLevel.R}),
+          (52, ${AUTHOR}, 2001, ${NsfwLevel.R});
+        INSERT INTO "ImageResourceNew" VALUES (50, ${V1}), (51, ${V1}), (52, ${V1});
+      `);
+      await insertReviews([
+        { id: 1, userId: AUTHOR, postId: 2000, daysAgo: 1 },
+        { id: 2, userId: AUTHOR, postId: 2001, daysAgo: 2 },
+      ]);
+    });
+
+    it('does not count images above the level', async () => {
+      const sfw = await page({ modelVersionId: V1, browsingLevel: NsfwLevel.PG });
+      expect(sfw.items.map((r) => [r.id, r.imageCount])).toEqual([
+        [1, 1],
+        [2, 0],
+      ]);
+      const all = await page({ modelVersionId: V1 });
+      expect(all.items.map((r) => [r.id, r.imageCount])).toEqual([
+        [1, 2],
+        [2, 1],
+      ]);
+    });
+
+    it('keeps in hasImages only reviews with an image within the level', async () => {
+      const sfw = await page({ modelVersionId: V1, hasImages: true, browsingLevel: NsfwLevel.PG });
+      expect(sfw.items.map((r) => r.id)).toEqual([1]);
+    });
   });
 
   // The version having fewer images than the reviewer, or more, picks which side the count walks.

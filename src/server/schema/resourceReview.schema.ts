@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { santizeHtmlOptions } from '~/utils/html-sanitize-helpers';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { numericString } from '~/utils/zod-helpers';
@@ -105,6 +106,8 @@ export const getResourceReviewPagedSchema = paginationSchema
     writtenOnly: z.boolean().optional(),
     hasImages: z.boolean().optional(),
     recommended: z.boolean().optional(),
+    // The image feed's level: images above it are not counted and do not satisfy `hasImages`.
+    browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
   })
   // Without a version, writtenOnly regex-filters every review of the model before the first match.
   .refine((input) => !input.writtenOnly || input.modelVersionId, {
