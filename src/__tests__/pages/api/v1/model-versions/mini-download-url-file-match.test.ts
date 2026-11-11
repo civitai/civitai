@@ -1356,8 +1356,16 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
     expect(body.downloadUrls).toEqual([FRESH]);
   });
 
-  it('serves a stored url that is still valid when the orchestrator refuses the refresh', async () => {
-    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone' }]);
+  it('answers 404 for a blocked blob even while the stored url is valid', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'blocked' }]);
+
+    const { status } = await runPlaceholder(blobUrl('2099-01-01T00:00:00Z'));
+
+    expect(status).toBe(404);
+  });
+
+  it('serves a stored url that is still valid when the orchestrator cannot find the blob', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'missing' }]);
     const valid = blobUrl('2099-01-01T00:00:00Z');
 
     const { status, body } = await runPlaceholder(valid);
@@ -1367,7 +1375,7 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
   });
 
   it('answers 404 when the orchestrator says the blob is gone and the stored url has expired', async () => {
-    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone' }]);
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'missing' }]);
 
     const { status, body } = await runPlaceholder(EXPIRED);
 

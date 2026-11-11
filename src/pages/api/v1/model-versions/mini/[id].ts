@@ -611,8 +611,12 @@ export default MixedAuthEndpoint(async function handler(
       : undefined;
   if (blobId) {
     const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId, user?.id);
-    // A refusal is the answer only once the stored url is dead too; until then it is served.
-    if (resigned.status === 'gone' && shouldRefreshBlobUrl(downloadUrls[0]))
+    // A blocked blob is never served. Any other refusal is the answer only once the stored url is
+    // dead too; until then it is served.
+    if (
+      resigned.status === 'gone' &&
+      (resigned.reason !== 'missing' || shouldRefreshBlobUrl(downloadUrls[0]))
+    )
       return res.status(404).json({ error: 'Missing epoch' });
     if (resigned.status === 'refreshed') {
       res.setHeader('Cache-Control', 'private, no-store');
