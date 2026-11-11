@@ -1,8 +1,9 @@
 import type { NextApiRequest } from 'next';
 import type { Session } from '~/types/session';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
-import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import type { BearerCredential } from '~/server/auth/full-user-credential';
+import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
+import { ApiKeyType, ModelStatus } from '~/shared/utils/prisma/enums';
 
 export type MiniModerationSource = {
   versionStatus: string;
@@ -33,9 +34,27 @@ export type MiniModerationState = {
 
 export const MINI_MODERATION_EXPIRES_MS = 60 * 60 * 1000;
 
-/** A moderator by browser session or full-scope personal key; never a narrower token. */
-export const receivesMiniModeration = (req: NextApiRequest, user: Session['user'] | undefined) =>
-  !!user?.isModerator && isFullScopeSession(req);
+/**
+ * A moderator by browser session or by a personal key of any scope; never by an OAuth client's
+ * token or `?token=`. Reads `req.context`, so it runs after the session is resolved.
+ */
+export function receivesMiniModeration(
+  req: NextApiRequest,
+  user: Session['user'] | undefined
+): boolean {
+  if (!user?.isModerator || requestCarriesQueryToken(req)) return false;
+  const context = (
+    req as NextApiRequest & { context?: BearerCredential & { apiKeyId?: number | null } }
+  ).context;
+  const presentedBearer =
+    !!req.headers?.authorization ||
+    context?.apiKeyId != null ||
+    context?.apiKeyType != null ||
+    context?.subject != null ||
+    context?.tokenScope != null;
+  if (!presentedBearer) return true;
+  return context?.apiKeyType === ApiKeyType.User && context.subject?.type === 'apiKey';
+}
 
 export function getMiniModerationState(source: MiniModerationSource): MiniModerationState {
   const gated = {

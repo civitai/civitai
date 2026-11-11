@@ -14,12 +14,13 @@ const h = vi.hoisted(() => ({
   bearerSession: vi.fn(),
   canGenerate: { value: true },
   publicOverride: { value: false },
+  hubSession: { value: null as unknown },
 }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: h.bearerSession }));
 vi.mock('~/server/auth/session-client', () => ({
-  getHubSession: vi.fn(async () => null),
+  getHubSession: vi.fn(async () => h.hubSession.value),
   maybeRollHubCookie: vi.fn(async () => undefined),
   maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
@@ -122,6 +123,7 @@ const KEYS: Record<string, ReturnType<typeof sessionFor>> = {
   'mod-key': sessionFor(MOD_ID, true),
   'mod-narrow-key': sessionFor(MOD_ID, true, { tokenScope: TokenScope.ModelsRead }),
   'mod-oauth': sessionFor(MOD_ID, true, { oauth: true }),
+  'mod-oauth-user-type': { ...sessionFor(MOD_ID, true, { oauth: true }), apiKeyType: 'User' },
   'owner-key': sessionFor(OWNER_ID, false),
   'other-key': sessionFor(OTHER_ID, false),
 };
@@ -200,6 +202,7 @@ const MODERATION_DEFAULT = {
 
 beforeEach(() => {
   loggingMock.logToAxiom.mockClear();
+  h.hubSession.value = null;
   h.canGenerate.value = true;
   h.publicOverride.value = false;
   h.bearerSession.mockReset();
@@ -226,8 +229,8 @@ describe('mini/[id] moderation block: who gets it', () => {
     ['the owner', 'Bearer owner-key'],
     ['the orchestrator service token, which resolves to no session', `Bearer ${SERVICE_TOKEN}`],
     ['a key the session layer does not know', 'Bearer not-a-key'],
-    ['a moderator by a narrow-scope key', 'Bearer mod-narrow-key'],
     ['a moderator by an OAuth token', 'Bearer mod-oauth'],
+    ['a moderator by an OAuth subject on a User-type key', 'Bearer mod-oauth-user-type'],
   ])('gives %s no block and no X-Expires', async (_, authorization) => {
     const { status, body, headers } = await call(authorization);
     expect(status).toBe(200);
@@ -237,18 +240,38 @@ describe('mini/[id] moderation block: who gets it', () => {
   });
 });
 
-describe('mini/[id] moderation block: limited moderator credentials', () => {
+describe('mini/[id] moderation block: moderator credentials', () => {
   it.each([
-    ['a narrow-scope key', 'Bearer mod-narrow-key'],
-    ['an OAuth token', 'Bearer mod-oauth'],
-  ])('answers a moderator by %s as any credentialed non-moderator', async (_, authorization) => {
+    ['a narrow-scope personal key', 'Bearer mod-narrow-key'],
+    ['a browser session', undefined],
+  ])('gives a moderator by %s the block, private and unstored', async (_, authorization) => {
+    if (!authorization) h.hubSession.value = { user: KEYS['mod-key'].user };
+    const { body, headers } = await call(authorization);
+    expect(body?.moderation).toEqual(MODERATION_DEFAULT);
+    expect(headers['cache-control']).toBe('private, no-store');
+    expect(headers).toHaveProperty('x-expires');
+  });
+
+  it('answers a moderator by an OAuth token as any credentialed non-moderator', async () => {
     const row = { modelMode: 'TakenDown' };
-    const limited = await call(authorization, row);
+    const limited = await call('Bearer mod-oauth', row);
     const other = await call('Bearer other-key', row);
     expect(limited.body).not.toHaveProperty('moderation');
     expect(limited.body?.canGenerate).toBe(false);
     expect(limited.headers['cache-control']).toBe(other.headers['cache-control']);
     expect(limited.headers['cache-control']).not.toBe('private, no-store');
+  });
+
+  it('reads a moderator who is also the placeholder owner as a moderator, and still refuses', async () => {
+    KEYS['owner-mod-key'] = sessionFor(OWNER_ID, true, { tokenScope: TokenScope.ModelsRead });
+    const { body } = await call('Bearer owner-mod-key', { modelDeletedAt: new Date() });
+    expect(body?.moderation).toMatchObject({ deleted: true });
+    expect(body?.canGenerate).toBe(false);
+    expect(
+      (loggingMock.logToAxiom.mock.calls as unknown as [Record<string, unknown>][])
+        .map(([entry]) => entry)
+        .filter((entry) => entry?.name === 'mini-moderation-caller')
+    ).toEqual([expect.objectContaining({ principal: 'moderator', moderationIncluded: true })]);
   });
 
   it('gives a full-scope moderator key passed as ?token= no block', async () => {
