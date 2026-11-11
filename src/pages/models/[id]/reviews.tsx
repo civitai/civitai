@@ -51,11 +51,19 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { TRPCError } from '@trpc/server';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRatingLabel } from '~/utils/rating-label';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+
+// Only a missing model or version reads as "no version"; any other lookup error must surface,
+// not redirect away from a valid version or cache a 404.
+const nullIfNotFound = (error: unknown) => {
+  if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
+  throw error;
+};
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -91,10 +99,10 @@ export const getServerSideProps = createServerSideProps({
     // The list is always one version's: send a request without a usable version to the model
     // page's default (first published) one.
     const requested = modelVersionId
-      ? await getDefaultModelVersion({ modelId, modelVersionId }).catch(() => null)
+      ? await getDefaultModelVersion({ modelId, modelVersionId }).catch(nullIfNotFound)
       : null;
     if (!modelVersionId || requested?.id !== modelVersionId) {
-      const fallback = await getDefaultModelVersion({ modelId }).catch(() => null);
+      const fallback = await getDefaultModelVersion({ modelId }).catch(nullIfNotFound);
       if (!fallback) return { notFound: true };
       return {
         redirect: {
@@ -355,7 +363,9 @@ export default function ModelReviews() {
                     No reviews match this filter.
                   </Text>
                 )}
-                {resourceReviews && 'hasMore' in resourceReviews
+                {resourceReviews &&
+                'hasMore' in resourceReviews &&
+                resourceReviews.hasMore !== undefined
                   ? (page > 1 || resourceReviews.hasMore) && (
                       <Group justify="center" mt="md">
                         <Button

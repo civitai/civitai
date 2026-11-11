@@ -107,7 +107,12 @@ export const getResourceReviewPagedSchema = paginationSchema
     hasImages: z.boolean().optional(),
     recommended: z.boolean().optional(),
     // The image feed's level: images above it are not counted and do not satisfy `hasImages`.
-    browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+    browsingLevel: z
+      .number()
+      .int()
+      .min(0)
+      .max(allBrowsingLevelsFlag)
+      .default(allBrowsingLevelsFlag),
   })
   // Without a version, writtenOnly regex-filters every review of the model before the first match.
   .refine((input) => !input.writtenOnly || input.modelVersionId, {
