@@ -171,8 +171,9 @@
         <h3>Hearts and pace</h3>
         <ul>
           <li>
-            You have {facts.hearts.max} hearts. Poor judging can cost one, and a lost heart comes back after
-            {facts.hearts.returnAfterDays} days. Lose all {facts.hearts.max} and your career restarts.
+            You have {facts.hearts.max} hearts. Poor judging can cost one. A lost heart comes back after
+            {facts.hearts.returnAfterDays} days, or sooner if you judge well, and restarting your career restores
+            them all. Lose all {facts.hearts.max} and your career restarts.
           </li>
           <li>Judging very fast pauses you for a short while.</li>
         </ul>
@@ -242,8 +243,8 @@
         <h3>Gold to Buzz</h3>
         <ul>
           <li>
-            {facts.conversion.goldPerBuzz} gold is 1 Buzz. You convert by buying a Buzz pack in the shop, and
-            each conversion takes at least {facts.conversion.minGold} gold ({facts.conversion.minBuzz} Buzz).
+            Buzz packs in the shop turn your gold into Buzz. Each pack shows its gold price and the Buzz it
+            gives, and bigger packs give more Buzz for your gold.
           </li>
         </ul>
       </div>

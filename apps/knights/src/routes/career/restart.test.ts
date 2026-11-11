@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const restartCareer = vi.hoisted(() => vi.fn());
 const forgetLegacyCounters = vi.hoisted(() => vi.fn());
-const playerRow = vi.hoisted(() => ({ value: undefined as { exp: number } | undefined }));
+const playerRow = vi.hoisted(() => ({
+  value: undefined as { exp: number; goldEarned: number; goldConverted: number } | undefined,
+}));
 const getPlayerStatus = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({
   db: {
@@ -117,12 +119,14 @@ describe('restart losses', () => {
   });
 
   it('tells a player what a restart would take, for the confirmation', async () => {
-    playerRow.value = { exp: 1200 };
-    getPlayerStatus.mockResolvedValue({ level: 7, goldEarned: 5, goldPending: 2 });
+    playerRow.value = { exp: 1200, goldEarned: 20000, goldConverted: 15000 };
+    getPlayerStatus.mockResolvedValue({ level: 7, goldEarned: 20000, goldPending: 2 });
     const { losses } = await run();
     expect(losses.map((loss: { title: string }) => loss.title)).toContain(
       'Your level and experience'
     );
     expect(losses[1].detail).toMatch(/Level 7/);
+    // Converted gold is already out of the account, so only the unconverted part is lost.
+    expect(losses[2].detail).toBe('5,000 unspent and 2 still pending.');
   });
 });

@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import { restartLosses } from '$lib/chrome';
 import { restartCareer } from '$lib/server/career/restart.service';
 import { forgetLegacyCounters } from '$lib/server/career/runtime';
+import { spendableOf } from '$lib/server/conversion/balance';
 import { db } from '$lib/server/db';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -12,12 +13,14 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ locals }) => {
   const player = await db
     .selectFrom('NewOrderPlayer')
-    .select('exp')
+    .select(['exp', 'goldEarned', 'goldConverted'])
     .where('userId', '=', locals.user.id)
     .executeTakeFirst();
   const status = player ? await getPlayerStatus(db, locals.user.id) : null;
   if (!player || !status) return json({ losses: null });
-  return json({ losses: restartLosses({ ...status, exp: player.exp }) });
+  return json({
+    losses: restartLosses({ ...status, exp: player.exp, goldUnspent: spendableOf(player) }),
+  });
 };
 
 const refuse = (status: number, message: string) => json({ ok: false, message }, { status });

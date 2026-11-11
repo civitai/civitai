@@ -1,6 +1,6 @@
 import { count } from './format';
 
-type Perks = { voteWeight: number; goldMultiplier: number; dailyGoldCap: number };
+type Perks = { goldMultiplier: number; dailyGoldCap: number };
 
 const times = (n: number) => (n === 0 ? 'None' : `${n}×`);
 const cap = (n: number) => (n === 0 ? 'None' : count(n));
@@ -9,12 +9,6 @@ const cap = (n: number) => (n === 0 ? 'None' : count(n));
 export function rankUpChanges(previous: Perks | undefined, now: Perks | undefined) {
   if (!previous || !now) return [];
   return [
-    {
-      key: 'weight',
-      label: 'Vote weight',
-      from: times(previous.voteWeight),
-      to: times(now.voteWeight),
-    },
     {
       key: 'gold',
       label: 'Gold multiplier',

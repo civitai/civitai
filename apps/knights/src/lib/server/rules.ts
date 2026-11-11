@@ -4,7 +4,6 @@ import { goldForRank, PROGRESSION, RATING } from './progression/config';
 import { rankTable } from './progression/rating';
 import { SMITES } from './smites/config';
 import { APPRENTICE } from './apprenticeship/config';
-import { CONVERSION } from './conversion/config';
 import { RANK_RULES } from './ranks';
 import { STREAK_BADGE_IDS } from './daily/streak-badges';
 
@@ -25,6 +24,13 @@ export function ratingGuide() {
     description: browsingLevelDescriptions[level],
   }));
 }
+
+/** The Watch-streak days that earn a badge; a milestone whose badge is not set up yet is left out. */
+export const badgeStreaksOf = (ids: Record<number, number | null>) =>
+  Object.entries(ids)
+    .filter(([, id]) => id !== null)
+    .map(([milestone]) => Number(milestone))
+    .sort((a, b) => a - b);
 
 /** Numbers the rules page quotes, read from the game's config. */
 export function rulesFacts() {
@@ -54,19 +60,12 @@ export function rulesFacts() {
         Paladin: RANK_RULES.Paladin.dailyGoldCap,
       },
     },
-    conversion: {
-      goldPerBuzz: CONVERSION.goldPerBuzz,
-      minBuzz: CONVERSION.minBuzz,
-      minGold: CONVERSION.goldPerBuzz * CONVERSION.minBuzz,
-    },
     watch: {
       size: DAILY.watchSize,
       bonusGold: streakBonusGold(1),
       streakCap: DAILY.streakCap,
       maxShields: DAILY.maxShields,
-      badgeStreaks: Object.keys(STREAK_BADGE_IDS)
-        .map(Number)
-        .sort((a, b) => a - b),
+      badgeStreaks: badgeStreaksOf(STREAK_BADGE_IDS),
     },
     fervor: {
       scale: PROGRESSION.fervorScale,

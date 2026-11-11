@@ -238,11 +238,12 @@ describe('play load', () => {
     expect(page.progress).toMatchObject({
       kind: 'rank',
       rank: 'Templar',
-      voteWeight: 1.5,
       goldMultiplier: 1.25,
       dailyGoldCap: 7500,
-      previous: { voteWeight: 1, goldMultiplier: 1, dailyGoldCap: 5000 },
+      previous: { goldMultiplier: 1, dailyGoldCap: 5000 },
     });
+    expect(page.progress).not.toHaveProperty('voteWeight');
+    expect(page.progress.previous).not.toHaveProperty('voteWeight');
   });
 
   it("takes a skipped rank's 'what changed' from the rank the player was last told about", async () => {
@@ -252,7 +253,7 @@ describe('play load', () => {
     expect(page.progress).toMatchObject({
       kind: 'rank',
       rank: 'Paladin',
-      previous: { voteWeight: 1, goldMultiplier: 1, dailyGoldCap: 5000 },
+      previous: { goldMultiplier: 1, dailyGoldCap: 5000 },
     });
   });
 
@@ -554,7 +555,6 @@ describe('play load notices', () => {
       rank: 'Templar',
       level: 50,
       levels: '50–89',
-      voteWeight: 1.5,
       goldMultiplier: 1.25,
     });
   });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DAILY } from './daily/config';
 import { PROGRESSION, RANK_LADDER } from './progression/config';
-import { rulesFacts } from './rules';
+import { badgeStreaksOf, rulesFacts } from './rules';
 import { SMITES } from './smites/config';
 import { APPRENTICE } from './apprenticeship/config';
 
@@ -33,11 +33,14 @@ describe('rulesFacts', () => {
     });
   });
 
-  it('quotes the daily gold caps, the Buzz conversion and the Vigil streaks from config', () => {
+  it('quotes the daily gold caps and the Vigil streaks from config', () => {
     const facts = rulesFacts();
     expect(facts.gold.dailyCaps).toEqual({ Knight: 5000, Templar: 7500, Paladin: 10000 });
-    expect(facts.conversion).toEqual({ goldPerBuzz: 20, minBuzz: 5, minGold: 100 });
     expect(facts.watch.badgeStreaks).toEqual([7, 30, 100]);
+  });
+
+  it('promises a Vigil badge only for a milestone whose badge exists', () => {
+    expect(badgeStreaksOf({ 7: 1, 30: null, 100: 3 })).toEqual([7, 100]);
   });
 
   it('keeps behind-the-scenes numbers out of the facts', () => {

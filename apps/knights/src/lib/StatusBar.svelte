@@ -41,7 +41,7 @@
     {:else}
       Accuracy {percent(status.rating.accuracy)} · the bar for a {status.rank} is {percent(status.rating.bar)}
       {#if status.rating.belowBar}
-        · <strong class="below">below it: reduced weight and gold</strong>
+        · <strong class="below">below it: reduced gold</strong>
       {/if}
     {/if}
     · <a href="/codex#ranks">Ranks</a>

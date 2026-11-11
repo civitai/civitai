@@ -14,7 +14,6 @@
     rank,
     level,
     levels,
-    voteWeight,
     goldMultiplier,
     dailyGoldCap,
     previous,
@@ -26,11 +25,10 @@
     rank: string;
     level: number;
     levels?: string;
-    voteWeight?: number;
     goldMultiplier?: number;
     dailyGoldCap?: number;
     /** The rank below's perks, for the before and after. */
-    previous?: { voteWeight: number; goldMultiplier: number; dailyGoldCap: number };
+    previous?: { goldMultiplier: number; dailyGoldCap: number };
     /** The rank's badge image; without one the crest shows. */
     badge?: string | null;
     message: string | null;
@@ -40,9 +38,9 @@
 
   let form = $state<HTMLFormElement>();
   const changes = $derived(
-    voteWeight === undefined || goldMultiplier === undefined || dailyGoldCap === undefined
+    goldMultiplier === undefined || dailyGoldCap === undefined
       ? []
-      : rankUpChanges(previous, { voteWeight, goldMultiplier, dailyGoldCap })
+      : rankUpChanges(previous, { goldMultiplier, dailyGoldCap })
   );
   onMount(() => sound.play(rank === 'Knight' ? 'knighting-ring' : 'rankup'));
   const close = () => {
@@ -76,8 +74,8 @@
             </div>
           {/each}
         </dl>
-      {:else if voteWeight !== undefined && goldMultiplier !== undefined}
-        <p class="lead">Your votes now weigh {voteWeight}x and your gold {goldMultiplier}x.</p>
+      {:else if goldMultiplier !== undefined}
+        <p class="lead">Your gold now counts {goldMultiplier}x.</p>
       {:else}
         <p class="lead">You are now a {rank} of the Order, at level {level}.</p>
       {/if}

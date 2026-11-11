@@ -49,7 +49,6 @@ describe('codex load', () => {
 
   it('quotes the rules facts, with the fervor formula read from config', async () => {
     const page = await run();
-    expect(page.facts.conversion.goldPerBuzz).toBe(20);
     expect(page.facts.hearts.max).toBe(3);
     expect(page.facts.fervor).toMatchObject({ scale: 100, windowDays: 7 });
     expect(page.fervorExample.sum).toBe('100 × 100 × 80% × 80% = 6,400');
