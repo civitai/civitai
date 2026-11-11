@@ -130,6 +130,25 @@ describe('lookupTrainings', () => {
     expect(queries.some((q) => q.includes(REFUND))).toBe(true);
     expect(queries.filter((q) => q.includes(CHARGE) && q.includes(REFUND))).toEqual([]);
   });
+
+  it("sums the refunds paid back to the run's payer", async () => {
+    routes = [
+      { match: CHARGE, rows: () => [charge(2002, 'yellow', 500)] },
+      {
+        match: REFUND,
+        rows: (q) =>
+          q.includes('toAccountId = 2002') ? [{ amount: '200' }, { amount: '100' }] : [],
+      },
+    ];
+    expect((await lookupTrainings([WF_A])).runs[0].charge.refunded).toBe(300);
+  });
+
+  it('reads refunded as 0 when none was found and null when the refund read failed', async () => {
+    routes = [{ match: CHARGE, rows: () => [charge(1001, 'yellow', 500)] }];
+    expect((await lookupTrainings([WF_A])).runs[0].charge.refunded).toBe(0);
+    routes.push({ match: REFUND, rows: fail });
+    expect((await lookupTrainings([WF_A])).runs[0].charge.refunded).toBeNull();
+  });
 });
 
 describe('getAccountTrainings', () => {
@@ -202,6 +221,13 @@ describe('getAccountTrainings', () => {
     expect(out.runs[0].charge.refunded).toBe(500);
     const queries = chQuery.mock.calls.map(([q]) => q);
     expect(queries.filter((q) => q.includes(CHARGE) && q.includes(REFUND))).toEqual([]);
+  });
+
+  it('reads refunded as 0 when none was found and null when the refund read failed', async () => {
+    routes = [{ match: CHARGE, rows: () => [run(1001, WF_A)] }];
+    expect((await getAccountTrainings([1001], 30)).runs[0].charge.refunded).toBe(0);
+    routes.push({ match: REFUND, rows: fail });
+    expect((await getAccountTrainings([1001], 30)).runs[0].charge.refunded).toBeNull();
   });
 
   it('reports an unreadable ledger as unreachable, not as no trainings', async () => {
