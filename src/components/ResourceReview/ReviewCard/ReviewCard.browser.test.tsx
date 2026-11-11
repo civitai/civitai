@@ -97,3 +97,28 @@ describe('ReviewCard, full variant', () => {
     expect(link?.getAttribute('href')).toContain('reviewId=42');
   });
 });
+
+describe('ReviewCard, excluded-from-count badge', () => {
+  const badge = /Excluded from count/;
+
+  test('an excluded review shows it', async () => {
+    await renderWithProviders(
+      <ReviewCard review={makeReview({ exclude: true, imageCount: 2 })} variant="full" />
+    );
+    expect(card().textContent).toMatch(badge);
+  });
+
+  test('the model owner’s own review shows it', async () => {
+    await renderWithProviders(
+      <ReviewCard review={makeReview({ imageCount: 2 })} creatorId={101} variant="full" />
+    );
+    expect(card().textContent).toMatch(badge);
+  });
+
+  test('another reviewer’s counted review does not', async () => {
+    await renderWithProviders(
+      <ReviewCard review={makeReview({ imageCount: 2 })} creatorId={999} variant="full" />
+    );
+    expect(card().textContent).not.toMatch(badge);
+  });
+});

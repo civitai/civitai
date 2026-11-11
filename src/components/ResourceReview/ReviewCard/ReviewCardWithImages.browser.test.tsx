@@ -19,6 +19,7 @@ vi.mock('~/components/ResourceReview/ReviewCard/ReviewCard', () => ({
   ReviewCard: () => <div data-testid="card" />,
 }));
 
+import { MAX_CONCURRENT_IMAGE_LOADS } from './imageLoadLimiter';
 import { ReviewCardWithImages } from './ReviewCardWithImages';
 
 const makeReview = (overrides: Partial<ResourceReviewPagedModel> = {}) =>
@@ -68,5 +69,43 @@ describe('ReviewCardWithImages', () => {
   test('does not load for a review with no images', async () => {
     await renderWithProviders(<ReviewCardWithImages review={makeReview({ imageCount: 0 })} />);
     expect(useQueryImages.mock.calls.every(([, options]) => options.enabled === false)).toBe(true);
+  });
+
+  describe.each([
+    ['succeeds', { isSuccess: true, isError: false }],
+    ['fails', { isSuccess: false, isError: true }],
+  ])('when a card’s query %s', (_, settled) => {
+    test('it frees its slot for the next waiting card, which stays disabled until then', async () => {
+      // Cards are told apart in the mock's calls by their reviewer's id.
+      const cards = Array.from({ length: MAX_CONCURRENT_IMAGE_LOADS + 1 }, (_, i) =>
+        makeReview({ id: i + 1, user: { id: 1000 + i } as ResourceReviewPagedModel['user'] })
+      );
+      const waitingUserId = 1000 + MAX_CONCURRENT_IMAGE_LOADS;
+      const callsFor = (userId: number) =>
+        useQueryImages.mock.calls.filter(([filters]) => filters.userId === userId);
+      const control = { settle: false };
+      useQueryImages.mockImplementation((filters) => ({
+        images: [],
+        ...(control.settle && filters.userId === 1000
+          ? settled
+          : { isSuccess: false, isError: false }),
+      }));
+      const list = () => (
+        <>
+          {cards.map((review) => (
+            <ReviewCardWithImages key={review.id} review={review} />
+          ))}
+        </>
+      );
+
+      const screen = await renderWithProviders(list());
+      await vi.waitFor(() => expect(callsFor(1000).at(-1)![1]).toEqual({ enabled: true }));
+      expect(callsFor(waitingUserId).length).toBeGreaterThan(0);
+      expect(callsFor(waitingUserId).every(([, options]) => options.enabled === false)).toBe(true);
+
+      control.settle = true;
+      await screen.rerender(list());
+      await vi.waitFor(() => expect(callsFor(waitingUserId).at(-1)![1]).toEqual({ enabled: true }));
+    });
   });
 });
