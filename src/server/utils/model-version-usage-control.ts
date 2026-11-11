@@ -4,8 +4,8 @@ export const GENERATION_ONLY_FEATURE_KEY = 'generationOnlyModels';
 
 /**
  * Which branch of the `generationOnlyModels` gate let a non-Download usage control through.
- * `tier` is the branch that resolves off the SESSION's tier value, so it is the only outcome
- * whose correctness depends on how fresh that session is.
+ * `tier` is a regular user let through by the flag's availability list (any signed-in user since the
+ * flag opened to everyone); the value is kept so existing log queries still match.
  */
 export type GenerationOnlyGateOutcome = 'moderator' | 'granted' | 'tier' | 'denied';
 

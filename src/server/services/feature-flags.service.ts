@@ -663,7 +663,8 @@ const featureFlags = createFeatureFlags({
   blocklists: ['granted'],
   toolSearch: ['public'],
   comicSearch: ['public'],
-  generationOnlyModels: ['mod', 'granted', 'gold'],
+  // Open to every signed-in creator; kept as a flag so an env override can still switch it off.
+  generationOnlyModels: ['user'],
   appTour: ['public'],
   privateModels: ['public'],
   auctions: ['blue', 'red', 'green', 'public'],

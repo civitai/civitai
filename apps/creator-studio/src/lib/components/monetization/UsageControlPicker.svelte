@@ -1,7 +1,6 @@
 <script lang="ts">
   import {
     CREATOR_USAGE_CONTROLS,
-    GENERATION_ONLY_HINT,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
 
@@ -14,7 +13,7 @@
     value: CreatorUsageControl;
     name?: string;
     disabled?: boolean;
-    /** Gold-gated server-side; false greys out the gen-only option but still allows a move back to Download. */
+    /** False greys out the gen-only option but still allows a move back to Download. */
     allowGenerationOnly?: boolean;
   } = $props();
 </script>
@@ -26,7 +25,6 @@
     <button
       type="button"
       disabled={optDisabled}
-      title={optDisabled && !disabled ? GENERATION_ONLY_HINT : undefined}
       onclick={() => (value = opt.value)}
       class="flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors {value ===
       opt.value
