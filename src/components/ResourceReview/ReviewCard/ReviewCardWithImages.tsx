@@ -32,7 +32,6 @@ export function ReviewCardWithImages({
   return (
     <div ref={ref} className="w-full">
       <ReviewCard
-        postTitle={images[0]?.postTitle}
         {...props}
         review={review}
         variant="full"

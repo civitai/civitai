@@ -56,7 +56,7 @@ type CarouselProps = {
 };
 
 function ReviewGallery({ userId, username, modelVersionId, reviewId, postId }: CarouselProps) {
-  const mobile = useIsMobile({ type: 'media' });
+  const mobile = !!useIsMobile({ type: 'media' });
   // Without a post or a username there is nothing to look the images up by.
   const canLoad = !!postId || !!username;
 
@@ -90,7 +90,6 @@ function ReviewGallery({ userId, username, modelVersionId, reviewId, postId }: C
   if (!images.length && !hiddenExplained.hasHidden) return <NoReviewImages />;
 
   const hasMore = fetched.length > MAX_IMAGES;
-  const postTitle = images[0]?.postTitle;
   const viewMoreHref = postId
     ? `/posts/${postId}`
     : `/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`;
@@ -150,11 +149,7 @@ function ReviewGallery({ userId, username, modelVersionId, reviewId, postId }: C
         <span className="flex min-w-0 items-center gap-2">
           <IconLibraryPhoto size={14} className="shrink-0" />
           <span className="truncate">
-            {postId
-              ? postTitle
-                ? `From the post “${postTitle}”`
-                : 'From the post'
-              : 'Images made with this version'}
+            {postId ? 'From the post' : 'Images made with this version'}
           </span>
         </span>
         <Link

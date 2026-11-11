@@ -103,7 +103,6 @@ const makeImage = (id: number) => ({
   name: `img${id}`,
   type: 'image',
   nsfwLevel: 1,
-  postTitle: 'Night market set',
   user: { id: 101 },
   stats: {},
 });
@@ -126,7 +125,7 @@ describe('ResourceReviewDetail', () => {
     await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
     const gallery = document.querySelector('[data-testid="review-gallery"]')!;
     expect(viewPost()?.textContent).toMatch(/View post/);
-    expect(document.body.textContent).toContain('From the post “Night market set”');
+    expect(document.body.textContent).toContain('From the post');
     expect(follows(gallery, viewPost()!)).toBe(true);
     expect(follows(viewPost()!, document.querySelector('[data-testid="review-text"]')!)).toBe(true);
   });

@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { trpc } from '~/utils/trpc';
@@ -12,8 +11,8 @@ export function useReviewImages(
   { reviewId, limit }: { reviewId: number; limit: number },
   { enabled = true }: { enabled?: boolean } = {}
 ) {
-  const browsingLevel = useBrowsingLevelDebounced();
-  const { settings } = useBrowsingSettingsAddons();
+  // The level the addon filters were resolved at, so one request never pairs mismatched values.
+  const { settings, browsingLevel } = useBrowsingSettingsAddons();
   const { data, isLoading, ...rest } = trpc.resourceReview.getImages.useQuery(
     {
       reviewId,
