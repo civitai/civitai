@@ -121,6 +121,7 @@ type VersionRow = {
   userFlags: number;
   ownerDeletedAt: Date | null;
   ownerBannedAt: Date | null;
+  modelDeletedAt: Date | null;
 };
 type FileRow = {
   id: number;
@@ -174,6 +175,7 @@ export default MixedAuthEndpoint(async function handler(
       m.mode as "modelMode",
       m.availability as "modelAvailability",
       m.poi,
+      m."deletedAt" AS "modelDeletedAt",
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
@@ -509,6 +511,7 @@ export default MixedAuthEndpoint(async function handler(
     modelMode: modelVersion.modelMode,
     modelAvailability: modelVersion.modelAvailability,
     poi: modelVersion.poi,
+    modelDeletedAt: modelVersion.modelDeletedAt,
     ownerDeletedAt: modelVersion.ownerDeletedAt,
     ownerBannedAt: modelVersion.ownerBannedAt,
   });

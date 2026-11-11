@@ -82,6 +82,7 @@ const baseRow = {
   userFlags: 0,
   ownerDeletedAt: null as Date | null,
   ownerBannedAt: null as Date | null,
+  modelDeletedAt: null as Date | null,
 };
 type Row = typeof baseRow;
 
@@ -253,6 +254,29 @@ describe('mini/[id] moderation block: limited moderator credentials', () => {
   it('gives a full-scope moderator key passed as ?token= no block', async () => {
     const { body } = await call(undefined, {}, 'mod-key');
     expect(body).not.toHaveProperty('moderation');
+  });
+});
+
+describe('mini/[id] deleted model with Published versions', () => {
+  const at = new Date('2026-01-01T00:00:00Z');
+  it.each<[string, Partial<Row>]>([
+    ['status Deleted', { modelStatus: 'Deleted' }],
+    ['only deletedAt set', { modelDeletedAt: at }],
+    ['status Deleted and deletedAt set', { modelStatus: 'Deleted', modelDeletedAt: at }],
+  ])('refuses generation to every caller when the model has %s', async (_, row) => {
+    for (const authorization of [
+      undefined,
+      'Bearer other-key',
+      'Bearer owner-key',
+      `Bearer ${SERVICE_TOKEN}`,
+    ]) {
+      const { status, body } = await call(authorization, row);
+      expect(status).toBe(200);
+      expect(body?.canGenerate).toBe(false);
+    }
+    const mod = await call('Bearer mod-key', row);
+    expect(mod.body?.canGenerate).toBe(false);
+    expect(mod.body?.moderation).toMatchObject({ versionStatus: 'Published', deleted: true });
   });
 });
 

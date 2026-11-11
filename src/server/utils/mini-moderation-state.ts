@@ -11,6 +11,7 @@ export type MiniModerationSource = {
   modelMode: string | null;
   modelAvailability: string;
   poi: boolean;
+  modelDeletedAt: Date | null;
   ownerDeletedAt: Date | null;
   ownerBannedAt: Date | null;
 };
@@ -45,7 +46,8 @@ export function getMiniModerationState(source: MiniModerationSource): MiniModera
     versionStatus: source.versionStatus,
     modelStatus: source.modelStatus,
     modelMode: source.modelMode,
-    deleted: isModelDeleted(gated),
+    // An account delete can stamp `deletedAt` and leave the versions Published.
+    deleted: isModelDeleted(gated) || source.modelDeletedAt != null,
     takenDown: isModelTakenDown(gated),
     unpublishedViolation:
       source.versionStatus === ModelStatus.UnpublishedViolation ||
