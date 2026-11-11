@@ -491,6 +491,10 @@ export const createTrainingWorkflow = async ({
   if (isAudioTrainingBaseType(baseModelType) && !features.audioTraining)
     throw throwBadRequestError('Audio training is not currently enabled.');
 
+  // Same reason: MiniMax H3 is AI Toolkit-only, so nothing above reads its rollout flag.
+  if (baseModelType === 'minimaxh3' && !features.minimaxh3Training)
+    throw throwBadRequestError('MiniMax H3 training is not currently enabled.');
+
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
     : await getGetUrl(modelVersion.trainingUrl);
