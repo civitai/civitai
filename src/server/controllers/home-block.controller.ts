@@ -98,9 +98,20 @@ export const getHomeBlocksHandler = async ({
               collectionId: (homeBlock.metadata as HomeBlockMetaSchema).collection?.id,
               viewer: ctx.user,
             });
-            // Still listed, so saving the editor keeps it, but without its collection.
-            if (audience === 'none')
-              return { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
+            // Saving the editor removes any of the viewer's blocks it did not list, so a block
+            // that cannot be shown (not readable, or its collection gone) is listed without it.
+            const unlisted = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
+            if (audience === 'none') return unlisted;
+            const data = await getHomeBlockData({
+              homeBlock,
+              user: ctx.user,
+              input,
+              coverage,
+            }).catch((error) => {
+              if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
+              throw error;
+            });
+            return data ?? unlisted;
           }
           return getHomeBlockData({ homeBlock, user: ctx.user, input, coverage });
         })

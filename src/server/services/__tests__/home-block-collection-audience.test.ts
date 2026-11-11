@@ -5,6 +5,7 @@ import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
+import { TRPCError } from '@trpc/server';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 
@@ -311,6 +312,34 @@ describe('a clone of a system block', () => {
     dbMock.dbRead.homeBlock.findMany.mockResolvedValue([] as never);
     dbMock.dbRead.homeBlock.findFirst.mockResolvedValue(null as never);
     expect(await errorOf(loadAs(STRANGER))).toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe("the block editor's list of a clone", () => {
+  it('lists a clone whose system block points at a collection that is gone', async () => {
+    seed({ read: 'Public', userId: COLLECTION_OWNER, type: 'Image' }, BLOCK_OWNER);
+    const { getCollectionById } = await import('~/server/services/collection.service');
+    vi.mocked(getCollectionById).mockRejectedValueOnce(
+      new TRPCError({ code: 'NOT_FOUND', message: 'Collection not found' })
+    );
+    dbMock.dbRead.homeBlock.findFirst.mockResolvedValue({
+      metadata: { collection: { id: COLLECTION_ID } },
+    } as never);
+    dbMock.dbRead.homeBlock.findMany.mockResolvedValue([
+      {
+        id: BLOCK_ID,
+        type: HomeBlockType.Collection,
+        userId: BLOCK_OWNER,
+        sourceId: 3,
+        index: 0,
+        metadata: {},
+      },
+    ] as never);
+    const listed = await getHomeBlocksHandler({
+      ctx: ctxFor({ id: BLOCK_OWNER }),
+      input: { withCoreData: true, ownedOnly: true },
+    });
+    expect(listed.map((b) => b.id)).toEqual([BLOCK_ID]);
   });
 });
 
