@@ -6,6 +6,7 @@ import {
 } from '@civitai/shared/post-scheduling';
 import {
   constants,
+  MAX_MANUAL_RESOURCES_PER_IMAGE,
   POST_IMAGE_LIMIT,
   POST_TAG_LIMIT,
   POST_TITLE_MAX_LENGTH,
@@ -41,6 +42,9 @@ export const postsFilterSchema = z.object({
 const postInclude = z.enum(['cosmetics']);
 export type ImageInclude = z.infer<typeof postInclude>;
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
+export type GetPostResourceCoversInput = z.infer<typeof getPostResourceCoversSchema>;
+export const getPostResourceCoversSchema = baseQuerySchema.extend({ id: z.number() });
+
 export const postsQuerySchema = baseQuerySchema.merge(
   postsFilterSchema.extend({
     limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
@@ -339,6 +343,8 @@ export const scheduleBatchSchema = z.object({
   tags: z.array(z.string().trim().min(1)).max(POST_TAG_LIMIT).default([]),
   tools: z.array(z.number().int().positive()).default([]),
   techniques: z.array(z.number().int().positive()).default([]),
+  /** Credited to every image as uploader-asserted (`detected: false`), like a hand-added resource. */
+  resourceIds: z.array(z.number().int().positive()).max(MAX_MANUAL_RESOURCES_PER_IMAGE).default([]),
   posts: z
     .array(scheduleBatchPostSchema)
     .min(1)

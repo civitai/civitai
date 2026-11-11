@@ -126,11 +126,21 @@ export default AuthedEndpoint(
         if (modelVersion && isModelTakenDown(modelVersion) && !user.isModerator)
           return onError(404, 'File not found');
         if (!user.isModerator) {
-          const scan = await dbRead.modelFile.findUnique({
-            where: { id: file.id },
-            select: { pickleScanResult: true, virusScanResult: true },
-          });
-          if (scan && hasFailedScan(scan)) return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
+          const select = { type: true, pickleScanResult: true, virusScanResult: true } as const;
+          // A deleted row's bytes may still be other live rows': judge them by every one of those.
+          const own = await dbRead.modelFile.findUnique({ where: { id: file.id }, select });
+          const rows = own
+            ? [own]
+            : await dbRead.modelFile.findMany({ where: { url: file.url }, select });
+          if (rows.some(hasFailedScan)) return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
+          // Training data is never a vault's file; the site's own rules decide who gets it. With no row
+          // left, the name it was stored under (`getFileDisplayName`) still says what it was.
+          if (
+            rows.length
+              ? rows.some((row) => row.type === 'Training Data')
+              : file.displayName === 'Training Data'
+          )
+            return onError(404, 'File not found');
         }
         const { url } = await resolveDownloadUrl(file.id, file.url, file.displayName, {
           caller: 'vault',

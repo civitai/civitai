@@ -234,7 +234,13 @@ async function assertGalleryPromotable({
   if (!modelVersionIds.length)
     throw throwBadRequestError('promotion: that post was not made with this model');
 
-  const tagIds = await tagIdsForImagesCache.fetch(images.map((image) => image.id));
+  // Past this process's L1: this refuses a paid promotion for an image carrying a host-hidden tag,
+  // judged at purchase and at accept and not again while the run serves. A tag edit refreshes Redis
+  // at once, but reaches another process's L1 only when its entry expires.
+  const tagIds = await tagIdsForImagesCache.fetch(
+    images.map((image) => image.id),
+    { bypassLocal: true }
+  );
   const refusal = galleryPromotionRefusal({
     placerId,
     images: images.map((image) => ({

@@ -120,6 +120,21 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({
   limitConcurrency: mockLimitConcurrency,
 }));
 
+const { mockSubmitTrainingDataScanSafe, mockTrainingDataObjectUnchanged, mockUncount } = vi.hoisted(
+  () => ({
+    mockSubmitTrainingDataScanSafe: vi.fn(),
+    mockTrainingDataObjectUnchanged: vi.fn(),
+    mockUncount: vi.fn(),
+  })
+);
+vi.mock('~/server/services/training-data-scan.service', () => ({
+  TRAINING_DATA_BLOB_SCAN: 'training-data-blob',
+  submitTrainingDataScanSafe: mockSubmitTrainingDataScanSafe,
+  trainingDataObjectUnchanged: mockTrainingDataObjectUnchanged,
+  uncountUnconfirmedResubmit: mockUncount,
+  HEAL_OP: 'self-heal',
+}));
+
 // model.service.ts has a heavy import surface (clickhouse, redis, search-index,
 // etc) but we only need its `unpublishModelById` for unpublishBlockedModel.
 // Stub the whole module to avoid loading its dep tree.
@@ -1287,6 +1302,327 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.virusScanMessage).toBeNull();
     });
 
+    describe('a virus scan that could not read the whole file', () => {
+      const virusVerdict = async (output: Record<string, unknown>) => {
+        mockGetWorkflow.mockResolvedValue({
+          data: { metadata: { fileId: 1 }, steps: [{ $type: 'modelClamScan', output }] },
+        });
+        await processModelFileScanResult(
+          makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+        );
+        return mockDbWrite.modelFile.update.mock.calls[0][0].data.virusScanResult;
+      };
+
+      it.each([
+        ['encrypted', { status: 'encrypted', exitCode: 1 }, ScanResultCode.Error],
+        ['limitsExceeded', { status: 'limitsExceeded', exitCode: 2 }, ScanResultCode.Error],
+        ['limitsExceeded, exit 0', { status: 'limitsExceeded', exitCode: 0 }, ScanResultCode.Error],
+        ['clean', { status: 'clean', exitCode: 0 }, ScanResultCode.Success],
+        ['infected', { status: 'infected', infected: true, exitCode: 1 }, ScanResultCode.Danger],
+      ])('status %s is stored as %s', async (_, output, expected) => {
+        expect(await virusVerdict(output)).toBe(expected);
+      });
+
+      it('stores a model file the scan stopped at a limit as an Error too', async () => {
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          id: 1,
+          type: 'Model',
+          modelVersionId: 100,
+          modelVersion: { modelId: 200 },
+        });
+        expect(await virusVerdict({ status: 'limitsExceeded', exitCode: 0 })).toBe(
+          ScanResultCode.Error
+        );
+      });
+
+      it.each([
+        [
+          'an encrypted alert',
+          0,
+          '/m/a.zip: OK\nzip-precheck: Heuristics.Encrypted.ZipPreCheck FOUND\n',
+          ScanResultCode.Error,
+        ],
+        [
+          'an encrypted alert with exit 1',
+          1,
+          '/m/a.zip: Heuristics.Encrypted.Zip FOUND\n',
+          ScanResultCode.Danger,
+        ],
+        [
+          'a file-count limit with exit 1',
+          1,
+          '/m/a.zip: Heuristics.Limits.Exceeded.MaxFiles FOUND\n',
+          ScanResultCode.Danger,
+        ],
+        [
+          'a size limit',
+          2,
+          '/m/a.zip: Heuristics.Limits.Exceeded.MaxFileSize FOUND\n/m/a.zip: Virus(es) detected ERROR\n',
+          ScanResultCode.Error,
+        ],
+        [
+          'a pre-check limit after an OK',
+          0,
+          '/m/a.zip: OK\nzip-precheck: Heuristics.Limits.Exceeded.ZipPreCheck.PrependedData FOUND\n',
+          ScanResultCode.Error,
+        ],
+        [
+          'an encrypted alert in CRLF output',
+          0,
+          '/m/a.zip: OK\r\nzip-precheck: Heuristics.Encrypted.ZipPreCheck FOUND\r\n',
+          ScanResultCode.Error,
+        ],
+        [
+          'a real signature beside an encrypted alert',
+          1,
+          '/m/a.zip: Heuristics.Encrypted.Zip FOUND\n/m/a.zip: Win.Test.EICAR_HDB-1 FOUND\n',
+          ScanResultCode.Danger,
+        ],
+        [
+          'a real signature alone',
+          1,
+          '/m/a.zip: Win.Test.EICAR_HDB-1 FOUND\n',
+          ScanResultCode.Danger,
+        ],
+        ['no alert', 0, '/m/a.zip: OK\n', ScanResultCode.Success],
+      ])(
+        'with no status, %s (exit %i) gets the verdict in its row',
+        async (_, exitCode, output, expected) => {
+          expect(await virusVerdict({ status: null, exitCode, output })).toBe(expected);
+        }
+      );
+    });
+
+    describe('a Training Data zip scanned as a blob', () => {
+      const ZIP = 'https://bucket/training-images/7/data.zip';
+      const dataset = (url = ZIP) =>
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          id: 1,
+          type: 'Training Data',
+          url,
+          modelVersionId: 100,
+          modelVersion: { modelId: 200 },
+        });
+      const scanned = (
+        output: Record<string, unknown>,
+        metadata: Record<string, unknown> = {
+          scan: 'training-data-blob',
+          url: ZIP,
+          etag: '"e1"',
+          size: 2048,
+        }
+      ) =>
+        mockGetWorkflow.mockResolvedValue({
+          data: {
+            metadata: { fileId: 1, ...metadata },
+            steps: [{ $type: 'modelClamScan', output: { status: 'clean', ...output } }],
+          },
+        });
+      const deliver = (status = 'succeeded') =>
+        processModelFileScanResult(makeReq({ workflowId: 'wf-1', type: 'workflow', status }));
+      const verdict = async () => {
+        await deliver();
+        const { data } = mockDbWrite.modelFile.update.mock.calls[0][0];
+        return { result: data.virusScanResult, message: data.virusScanMessage };
+      };
+
+      beforeEach(() => {
+        dataset();
+        mockTrainingDataObjectUnchanged.mockReset().mockResolvedValue(true);
+        mockDbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 1 });
+      });
+
+      it('checks a clean verdict against the object it scanned', async () => {
+        scanned({ scannedFileCount: 12 });
+
+        expect((await verdict()).result).toBe(ScanResultCode.Success);
+        expect(mockTrainingDataObjectUnchanged).toHaveBeenCalledWith({
+          fileId: 1,
+          url: ZIP,
+          etag: '"e1"',
+          size: 2048,
+        });
+      });
+
+      it('keeps the zip Pending, for the self-heal to scan again, when the object is not confirmed', async () => {
+        mockTrainingDataObjectUnchanged.mockResolvedValue(false);
+        scanned({ scannedFileCount: 12 });
+
+        await deliver();
+
+        expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+        expect(mockDbWrite.modelFile.updateMany).toHaveBeenCalledWith({
+          where: {
+            id: 1,
+            url: ZIP,
+            type: 'Training Data',
+            virusScanResult: { notIn: [ScanResultCode.Danger, ScanResultCode.Error] },
+          },
+          data: expect.objectContaining({
+            virusScanResult: ScanResultCode.Pending,
+            scanRequestedAt: expect.any(Date),
+          }),
+        });
+      });
+
+      it('keeps a Danger verdict over a later clean one', async () => {
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          id: 1,
+          type: 'Training Data',
+          url: ZIP,
+          virusScanResult: ScanResultCode.Danger,
+          modelVersionId: 100,
+          modelVersion: { modelId: 200 },
+        });
+        scanned({ scannedFileCount: 12 });
+
+        await deliver();
+
+        expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['a self-heal resubmit, which is taken back', { op: 'self-heal' }, 1],
+        ['any other submit, which was never counted', {}, 0],
+      ])('when the object is not confirmed after %s', async (_, op, calls) => {
+        mockUncount.mockReset();
+        mockTrainingDataObjectUnchanged.mockResolvedValue(false);
+        scanned(
+          { scannedFileCount: 12 },
+          { scan: 'training-data-blob', url: ZIP, etag: '"e1"', size: 2048, ...op }
+        );
+
+        await deliver();
+
+        expect(mockUncount).toHaveBeenCalledTimes(calls);
+        if (calls)
+          expect(mockUncount).toHaveBeenCalledWith({ fileId: 1, url: ZIP, workflowId: 'wf-1' });
+      });
+
+      it('takes nothing back when the reset wrote nothing (a Danger or a given-up Error stands)', async () => {
+        mockUncount.mockReset();
+        mockTrainingDataObjectUnchanged.mockResolvedValue(false);
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
+        scanned(
+          { scannedFileCount: 12 },
+          { scan: 'training-data-blob', url: ZIP, etag: '"e1"', size: 2048, op: 'self-heal' }
+        );
+
+        await deliver();
+
+        expect(mockUncount).not.toHaveBeenCalled();
+      });
+
+      it('records a Danger verdict without the check', async () => {
+        mockTrainingDataObjectUnchanged.mockResolvedValue(false);
+        scanned({ status: 'infected', output: 'Eicar FOUND' });
+
+        expect((await verdict()).result).toBe(ScanResultCode.Danger);
+        expect(mockTrainingDataObjectUnchanged).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['encrypted', '/m/a.zip: Heuristics.Encrypted.Zip FOUND\n'],
+        ['limitsExceeded', '/m/a.zip: Heuristics.Limits.Exceeded.MaxFileSize FOUND\n'],
+      ])('stores the %s verdict as an Error with its output', async (status, output) => {
+        scanned({ status, output, scannedFileCount: 1 });
+        expect(await verdict()).toEqual({ result: ScanResultCode.Error, message: output });
+      });
+
+      it.each([
+        ['its count', { scannedFileCount: 12 }],
+        ['its summary', { output: 'Infected files: 0\nScanned files: 12\n' }],
+      ])('is a Success when the scan says by %s that it read files', async (_, output) => {
+        scanned(output);
+        expect(await verdict()).toEqual({ result: ScanResultCode.Success, message: null });
+      });
+
+      it.each([
+        ['a zero count', { scannedFileCount: 0 }],
+        ['no count at all', { output: 'scan summary text' }],
+      ])('is an Error, never a Success, when the scan read nothing (%s)', async (_, output) => {
+        scanned(output);
+        expect(await verdict()).toEqual({
+          result: ScanResultCode.Error,
+          message: 'The virus scan read no files',
+        });
+      });
+
+      it.each([
+        [
+          'a scan of the zip it held before',
+          { scan: 'training-data-blob', url: 'https://old/zip' },
+        ],
+        ['a model-file scan', {}],
+      ])('writes nothing from %s', async (_, metadata) => {
+        scanned({ scannedFileCount: 12 }, metadata);
+
+        await deliver();
+
+        expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      });
+
+      it('writes the verdict only over the zip it checked', async () => {
+        scanned({ scannedFileCount: 12 });
+
+        await deliver();
+
+        expect(mockDbWrite.modelFile.update.mock.calls[0][0].where).toEqual({
+          id: 1,
+          url: ZIP,
+          type: 'Training Data',
+        });
+      });
+
+      it.each(['succeeded', 'failed'])(
+        'writes nothing from a %s blob scan of a file relabelled since, which awaits the model-file scan',
+        async (status) => {
+          mockDbWrite.modelFile.findUnique.mockResolvedValue({
+            id: 1,
+            type: 'Other',
+            url: ZIP,
+            modelVersionId: 100,
+            modelVersion: { modelId: 200 },
+          });
+          scanned({ scannedFileCount: 12 });
+
+          await deliver(status);
+
+          expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+        }
+      );
+
+      it('marks a failed workflow of the zip it holds for a later retry, over that zip only', async () => {
+        scanned({});
+
+        await deliver('failed');
+
+        expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+          where: { id: 1, url: ZIP, type: 'Training Data' },
+          data: { scanRequestedAt: expect.any(Date) },
+        });
+      });
+
+      it('marks nothing for a failed workflow of a zip it no longer holds', async () => {
+        scanned({}, { scan: 'training-data-blob', url: 'https://old/zip' });
+
+        await deliver('failed');
+
+        expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      });
+
+      it('leaves a model file scan that reports no count a Success', async () => {
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          id: 1,
+          type: 'Model',
+          modelVersionId: 100,
+          modelVersion: { modelId: 200 },
+        });
+        scanned({ output: 'scan summary text' }, {});
+        expect((await verdict()).result).toBe(ScanResultCode.Success);
+      });
+    });
+
     it('maps clamScan infected=true to virusScan.Danger and surfaces output message', async () => {
       mockGetWorkflow.mockResolvedValue({
         data: {
@@ -1584,6 +1920,61 @@ describe('model-file-scan.service', () => {
         priority: 'normal',
       });
       expect(result).toEqual({ sent: 2, failed: 0 });
+    });
+
+    it('sends a Training Data zip to its own scan, never the AIR scan', async () => {
+      mockDbRead.modelFile.findMany.mockResolvedValue([
+        {
+          id: 3,
+          url: 's3://data.zip',
+          type: 'Training Data',
+          sizeKB: 2048,
+          modelVersion: { id: 30, baseModel: 'SDXL', model: { id: 300, type: 'LORA' } },
+        },
+      ]);
+      mockSubmitTrainingDataScanSafe.mockReset().mockResolvedValue(true);
+
+      const result = await rescanModel({ id: 300 });
+
+      expect(mockCreateModelFileScanRequest).not.toHaveBeenCalled();
+      expect(mockSubmitTrainingDataScanSafe).toHaveBeenCalledWith(
+        { fileId: 3, modelVersionId: 30, url: 's3://data.zip' },
+        'rescan-model'
+      );
+      expect(result).toEqual({ sent: 1, failed: 0 });
+    });
+
+    it('sends no scan for a Training Studio placeholder, which has no zip yet', async () => {
+      mockDbRead.modelFile.findMany.mockResolvedValue([
+        {
+          id: 3,
+          url: 'https://orch.example/v2/consumer/blobs/E.safetensors',
+          type: 'Training Data',
+          sizeKB: 0,
+          modelVersion: { id: 30, baseModel: 'SDXL', model: { id: 300, type: 'LORA' } },
+        },
+      ]);
+      mockSubmitTrainingDataScanSafe.mockReset();
+
+      await rescanModel({ id: 300 });
+
+      expect(mockSubmitTrainingDataScanSafe).not.toHaveBeenCalled();
+      expect(mockCreateModelFileScanRequest).not.toHaveBeenCalled();
+    });
+
+    it('counts a Training Data zip whose scan could not be submitted as failed', async () => {
+      mockDbRead.modelFile.findMany.mockResolvedValue([
+        {
+          id: 3,
+          url: 's3://data.zip',
+          type: 'Training Data',
+          sizeKB: 2048,
+          modelVersion: { id: 30, baseModel: 'SDXL', model: { id: 300, type: 'LORA' } },
+        },
+      ]);
+      mockSubmitTrainingDataScanSafe.mockReset().mockResolvedValue(false);
+
+      expect(await rescanModel({ id: 300 })).toEqual({ sent: 0, failed: 1 });
     });
 
     it('skips files with a null modelVersion (orphaned/soft-deleted) without crashing', async () => {

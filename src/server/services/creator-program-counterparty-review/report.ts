@@ -15,8 +15,7 @@ export function renderWarningMessage(username: string | null) {
   const name = username ? username.replace(/[\\*_[\]`<>]/g, '\\$&') : 'there';
   return [
     `Hi ${name},`,
-    `Our systems noticed Buzz moving back and forth between your account and another account through tips, donations or purchases. Buzz that circulates like this does not count toward your bankable Creator Program earnings, and using it to raise them is against the Creator Program rules.`,
-    `Consider this your one and only warning. If it happens again, your account will be removed from the Creator Program.`,
+    `Our systems noticed Buzz moving back and forth between your account and another account through tips, donations or purchases. Buzz that moves back and forth between accounts doesn't count toward your bankable earnings; it's netted out at cash-out. Cycling Buzz to inflate earnings is against the Creator Program rules. If it keeps happening, a moderator will review your account.`,
     `If you think we got this wrong, for example you and a collaborator genuinely support each other's work, [contact support](/support) and a moderator will review it.`,
     `— Civitai Moderation`,
   ].join('\n\n');

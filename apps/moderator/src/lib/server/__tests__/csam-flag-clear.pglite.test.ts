@@ -1,5 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -20,6 +24,14 @@ vi.mock('../db', () => ({
   },
 }));
 
+const { fireDeferredBlockEffects } = vi.hoisted(() => ({
+  fireDeferredBlockEffects: vi.fn(async (_c: unknown, _o: unknown) => undefined),
+}));
+vi.mock('../deferred-block-effects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../deferred-block-effects')>()),
+  fireDeferredBlockEffects,
+}));
+
 const { clearUserCsamFlags, clearRemovedFlagsUnlessHeld, HOLD_MARKER_TABLE, HOLD_MARKER_VIEW } =
   await import('../csam-flag-clear');
 
@@ -32,6 +44,9 @@ CREATE TABLE "Image" (
   "needsReview" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
 );
+${SET_ASIDE_TABLE_SQL}
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
+CREATE TABLE IF NOT EXISTS "Appeal" (id serial PRIMARY KEY, "entityType" text, "entityId" int, status text);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
   "images" JSONB NOT NULL DEFAULT '[]'
@@ -336,5 +351,57 @@ describe('a hold marker', () => {
 
     expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
     expect(await flagged(id)).toHaveLength(3);
+  });
+});
+
+describe('clearing a user whose block put effects off', () => {
+  const USER = 177;
+  const [A, B] = [USER * 10 + 1, USER * 10 + 2];
+
+  it('claims and fires them once, and puts a Pending appeal back in its queue', async () => {
+    await db.exec(`
+      INSERT INTO "User" ("id") VALUES (${USER});
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
+        (${A}, ${USER}, 'csam', 'Blocked'), (${B}, ${USER}, 'csam', 'Blocked');
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId", "violationType") VALUES (${A}, 'gore');
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${B}, 'Pending');
+    `);
+
+    fireDeferredBlockEffects.mockClear();
+    expect(await clear(USER)).toMatchObject({ ok: true, cleared: 2 });
+
+    expect(fireDeferredBlockEffects).toHaveBeenCalledTimes(1);
+    expect(fireDeferredBlockEffects).toHaveBeenCalledWith(
+      [{ imageId: A, violationType: 'gore', notifyOwner: true, reportReason: null, reportIds: [] }],
+      { moderatorId: MOD }
+    );
+    expect((await db.query(`SELECT * FROM "ImageDeferredBlockEffect"`)).rows).toEqual([]);
+    expect(
+      (await db.query(`SELECT id, "needsReview" FROM "Image" WHERE id IN (${A}, ${B}) ORDER BY id`))
+        .rows
+    ).toEqual([
+      { id: A, needsReview: null },
+      { id: B, needsReview: 'appeal' },
+    ]);
+  });
+
+  it('fires nothing, and keeps them, when the clear rolls back', async () => {
+    const C = 1781;
+    await db.exec(`
+      INSERT INTO "User" ("id") VALUES (178);
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES (${C}, 178, 'csam', 'Blocked');
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId") VALUES (${C});
+    `);
+    fireDeferredBlockEffects.mockClear();
+
+    expect(await clearUserCsamFlags({ userId: 178, expectedCount: 5, moderatorId: MOD })).toEqual({
+      ok: false,
+      reason: 'changed',
+    });
+    expect(fireDeferredBlockEffects).not.toHaveBeenCalled();
+    expect(
+      (await db.query(`SELECT "imageId" FROM "ImageDeferredBlockEffect" WHERE "imageId" = ${C}`))
+        .rows
+    ).toHaveLength(1);
   });
 });

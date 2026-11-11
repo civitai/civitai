@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import type * as ImageService from '~/server/services/image.service';
 import type * as NotificationService from '~/server/services/notification.service';
 
@@ -97,5 +98,26 @@ describe('setTosViolationHandler re-removal hold', () => {
     await expect(setTosViolationHandler({ input, ctx })).rejects.toThrow();
     expect(holdRemovals).not.toHaveBeenCalled();
     expect(reportsActioned).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('setTosViolationHandler on a feedback page capture', () => {
+  const removeAs = async (userId: number) => {
+    findFirst.mockResolvedValue({ nsfwLevel: 4, userId, postId: null, pHash: null, post: null });
+    canConfirmReRemoval.mockResolvedValue(true);
+    reportsActioned.mockResolvedValue([]);
+    // Whatever happens after the notice is out of scope here.
+    await setTosViolationHandler({ input, ctx }).catch(() => undefined);
+  };
+
+  it('tells no one', async () => {
+    await removeAs(FEEDBACK_CAPTURE_OWNER_ID);
+    expect(reportsActioned).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("tells an ordinary image's owner (control)", async () => {
+    await removeAs(9);
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
   });
 });

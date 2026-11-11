@@ -388,6 +388,11 @@ export const userSettingsSchema = z.object({
   assistantPersonality: userAssistantPersonality.optional(),
   airEmail: z.email().optional(),
   creatorsProgramCodeOfConductAccepted: z.union([z.boolean(), z.date()]).optional(),
+  // Generation licences accepted, by terms key. Written only by `acceptGenerationLicense`, which
+  // stamps the server's time; see `generation-license.constants.ts`.
+  generationLicenseAcceptances: z
+    .record(z.string(), z.object({ version: z.number(), acceptedAt: z.coerce.date() }))
+    .optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),

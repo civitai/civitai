@@ -17,7 +17,7 @@ function pairs(tag: string, n: number, over: Partial<SnapshotCandidate> = {}): S
     confidence: 70,
     flaggedAt: new Date('2026-10-01T00:00:00Z'),
     authorId: 1,
-    entityType: 'commentV2',
+    entityType: 'commentV3',
     entityId: 1,
     ...over,
   }));

@@ -50,6 +50,7 @@ import {
   emptyTrainingOverlay,
 } from '~/server/services/orchestrator/training/workflow-state';
 import { eventEngine } from '~/server/events';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import {
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
@@ -691,7 +692,7 @@ export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
       biasImageSlice: slim,
       metricPrivacyEnabled,
       // model.getAll never edge-caches a signed-in response (skipEdgeCache).
-      eventDecorationViewer: ctx.user,
+      eventDecorationViewer: eventViewerOf(ctx),
       coverage: await coverageAudience(ctx.user ?? undefined),
     };
 
@@ -755,13 +756,14 @@ export const getModelsPagedSimpleHandler = async ({
       name: true,
       nsfw: true,
       meta: true,
-      modelVersions: input.needsReview
-        ? {
-            select: { id: true, name: true, meta: true },
-            where: { meta: { path: ['needsReview'], equals: true } },
-            take: 1,
-          }
-        : false,
+      modelVersions:
+        input.needsReview && ctx.user?.isModerator
+          ? {
+              select: { id: true, name: true, meta: true },
+              where: { meta: { path: ['needsReview'], equals: true } },
+              take: 1,
+            }
+          : false,
     },
   });
 
@@ -1315,7 +1317,9 @@ export const getDownloadCommandHandler = async ({
       throw throwAuthorizationError();
     }
 
-    const { model, files } = modelVersion;
+    const { model } = modelVersion;
+    // The command hands out model files only, to everyone.
+    const files = modelVersion.files.filter((f) => f.type !== 'Training Data');
     const castedFiles = files as Array<
       Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
     >;

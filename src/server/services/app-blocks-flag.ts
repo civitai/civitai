@@ -976,6 +976,19 @@ export async function isAppBlocksAgenticReviewAutostartEnabled(): Promise<boolea
 }
 
 /**
+ * The ONE switch pair for AUTOMATIC agent reviews: the autostart flag AND the agent-review flag's
+ * base value (both evaluated with no user). Read by the automatic start on a settled review build
+ * and by the impersonation check on an approved app's listing edit, so the two cannot drift.
+ */
+export async function isAgentReviewAutomationEnabled(): Promise<boolean> {
+  const [autostart, base] = await Promise.all([
+    isAppBlocksAgenticReviewAutostartEnabled(),
+    isAppBlocksAgenticReviewEnabled(),
+  ]);
+  return autostart && base;
+}
+
+/**
  * GLOBAL flag: publish review previews to the shared static server instead of rendering a
  * per-preview Deployment/Service/route. ON: the review apply Job runs the smoke test then the
  * review-lane publish; reachability is an origin probe through the shared route; teardown runs
@@ -986,6 +999,22 @@ export const APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG = 'app-blocks-review-shared-se
 
 export async function isAppBlocksReviewSharedServerEnabled(): Promise<boolean> {
   return isFlipt(APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG);
+}
+
+/**
+ * GLOBAL flag: a review build publishes its preview to the shared static server ITSELF, with no
+ * per-preview image. ON, and only while APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG is also on: the
+ * review trigger asks for a direct publish, and its success callback (which then says
+ * `directPublish: true`) skips the review apply Job and goes straight to the shared-route
+ * probe. OFF: the review build pushes a review image and the apply Job publishes it, unchanged.
+ * Read when the build is triggered; the callback trusts what the signed callback body says, so
+ * flipping the flag mid-build does not change how that build is served. Base-value evaluation
+ * (no user), like the other machine-side flags.
+ */
+export const APP_BLOCKS_REVIEW_DIRECT_PUBLISH_FLAG = 'app-blocks-review-direct-publish';
+
+export async function isAppBlocksReviewDirectPublishEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_REVIEW_DIRECT_PUBLISH_FLAG);
 }
 
 /**
@@ -1545,5 +1574,33 @@ function reportSilentStoreGate(user: SessionUser): void {
     }).catch(() => null);
   } catch {
     /* never throw from telemetry — a detection net must not break the read path */
+  }
+}
+
+/**
+ * The user-visible half of membership-tiered app limits: at the plan's daily app Buzz cap the
+ * running app shows a paused notice with an upgrade prompt and the option to continue on the
+ * viewer's own Buzz for the rest of the UTC day (`user.optInAppBuzzToday`). Off, nobody can opt
+ * in, and `resolveUserAppCaps` ignores any opt-in already recorded, so the cap enforced is the
+ * plan's. The per-tier caps themselves are NOT behind it.
+ *
+ * No user → `false`: an opt-in belongs to a viewer, and there is no subject to ask for. An
+ * absent flag and an unreachable Flipt evaluate `false` too. Mirrors `appLimitsUpgradePrompt`
+ * in `feature-flags.service.ts`, which carries it to the client.
+ */
+export const APP_LIMITS_UPGRADE_PROMPT_FLAG = 'app-limits-upgrade-prompt';
+
+export async function isAppLimitsUpgradePromptEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(APP_LIMITS_UPGRADE_PROMPT_FLAG, String(user.id), buildFliptContext(user))) ===
+      true
+    );
+  } catch {
+    return false;
   }
 }

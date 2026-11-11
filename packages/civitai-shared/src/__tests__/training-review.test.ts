@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  TRAINING_REVIEW_COPY,
   TRAINING_REVIEW_RAISE_AFTER_HOURS,
   canRaiseTrainingReview,
   trainingHeldSince,
+  trainingReviewPendingBody,
   trainingReviewState,
 } from '../training-review';
 
@@ -61,5 +63,23 @@ describe('trainingReviewState', () => {
     expect(trainingReviewState('approved')).toBeNull();
     expect(trainingReviewState('evaluating')).toBeNull();
     expect(trainingReviewState(undefined)).toBeNull();
+  });
+});
+
+describe('trainingReviewPendingBody', () => {
+  it('says "before it starts training" only while no checkpoint exists', () => {
+    expect(trainingReviewPendingBody(0, 10)).toBe(TRAINING_REVIEW_COPY.pendingBody);
+    expect(trainingReviewPendingBody(0, undefined)).toBe(TRAINING_REVIEW_COPY.pendingBody);
+  });
+
+  it('says training finished once every planned checkpoint exists', () => {
+    expect(trainingReviewPendingBody(10, 10)).toBe(TRAINING_REVIEW_COPY.pendingFinishedBody);
+    // Sparse epoch numbering can put the highest stored epoch past the plan (52 of 50).
+    expect(trainingReviewPendingBody(11, 10)).toBe(TRAINING_REVIEW_COPY.pendingFinishedBody);
+  });
+
+  it('says partway when some checkpoints exist, or the plan is unknown', () => {
+    expect(trainingReviewPendingBody(3, 10)).toBe(TRAINING_REVIEW_COPY.pendingPartwayBody);
+    expect(trainingReviewPendingBody(3, null)).toBe(TRAINING_REVIEW_COPY.pendingPartwayBody);
   });
 });

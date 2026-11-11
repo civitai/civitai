@@ -49,7 +49,7 @@ type CsamReportUserActivity = {
   ip: string;
   time: string;
   details?: {
-    type: 'post' | 'model-version' | 'image-upload-request';
+    type: 'post' | 'model-version' | 'image-upload-request' | 'feedback-capture-upload';
     id: number;
   };
 };

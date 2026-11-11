@@ -1,8 +1,5 @@
 import type { Filter } from 'meilisearch';
-import { buildBrowsingLevelClause } from '~/components/Search/search-filters';
-import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
-import type { ReverseSearchIndexKey } from '~/components/Search/search.types';
-import { reverseSearchIndexMap } from '~/components/Search/search.types';
+import { indexBrowsingLevelClause } from '~/components/Search/search-filters';
 import { env } from '~/env/server';
 import {
   ARTICLES_SEARCH_INDEX,
@@ -21,7 +18,7 @@ import type {
   SiteSearchParams,
 } from '~/server/schema/site-search.schema';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
-import { Flags } from '~/shared/utils/flags';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const SITE_SEARCH_TIMEOUT_MS = 5_000;
@@ -92,11 +89,7 @@ export function viewerSearchClauses(indexUid: string, viewer: SiteSearchViewer):
   }
 
   if (viewer.browsingLevelCap !== undefined) {
-    const indexKey = reverseSearchIndexMap[indexUid as ReverseSearchIndexKey];
-    const clause = buildBrowsingLevelClause(
-      indexKey ? BROWSING_LEVEL_ATTRIBUTE[indexKey] : undefined,
-      viewer.browsingLevelCap
-    );
+    const clause = indexBrowsingLevelClause(indexUid, viewer.browsingLevelCap);
     if (clause) clauses.push(clause);
   }
 
@@ -120,11 +113,11 @@ type ModelHit = Record<string, unknown> & {
   _formatted?: Record<string, unknown>;
 };
 
-/** Drops the images the site may not serve; the model-level cap does not reach them. */
+/** Drops the images the site may not serve; the hit-level cap does not reach them. */
 function capImages(images: unknown, browsingLevelCap: number | undefined) {
   if (browsingLevelCap === undefined || !Array.isArray(images)) return images;
   return images.filter((image: { nsfwLevel?: unknown }) =>
-    Flags.intersects(Number(image?.nsfwLevel) || 0, browsingLevelCap)
+    isRatingWithinCap(image?.nsfwLevel, browsingLevelCap)
   );
 }
 
@@ -152,9 +145,51 @@ export function shapeModelHit(
   return rest;
 }
 
+type ComicHit = Record<string, unknown> & {
+  coverImageNsfwLevel?: unknown;
+  _formatted?: Record<string, unknown>;
+};
+
+/**
+ * A capped site gets a cover only when every level it carries is inside the cap, stricter than
+ * model images (any overlap). An unrated cover counts as outside.
+ */
+function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
+  if (browsingLevelCap === undefined) return hit;
+  const level = Number(hit.coverImageNsfwLevel) || 0;
+  if (level > 0 && (level & ~browsingLevelCap) === 0) return hit;
+
+  const { coverImageUrl: _url, ...rest } = hit;
+  if (rest._formatted) {
+    const { coverImageUrl: _formattedUrl, ...formatted } = rest._formatted;
+    rest._formatted = formatted;
+  }
+  return rest;
+}
+
+type BountyHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+
+/**
+ * A bounty's own level is its images' combined level, which passes the cap when any one image
+ * does, so each image is capped here.
+ */
+function shapeBountyHit(hit: BountyHit, browsingLevelCap: number | undefined): BountyHit {
+  if (browsingLevelCap === undefined) return hit;
+  const shaped: BountyHit = { ...hit };
+  if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
+  if (shaped._formatted) shaped._formatted = shapeBountyHit(shaped._formatted, browsingLevelCap);
+  return shaped;
+}
+
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
-  if (indexUid !== MODELS_SEARCH_INDEX || !Array.isArray(hits)) return hits;
-  return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
+  if (!Array.isArray(hits)) return hits;
+  if (indexUid === MODELS_SEARCH_INDEX)
+    return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
+  if (indexUid === COMICS_SEARCH_INDEX)
+    return hits.map((hit: ComicHit) => shapeComicHit(hit, viewer.browsingLevelCap));
+  if (indexUid === BOUNTIES_SEARCH_INDEX)
+    return hits.map((hit: BountyHit) => shapeBountyHit(hit, viewer.browsingLevelCap));
+  return hits;
 }
 
 function assertSiteSearchIndex(indexUid: string) {
@@ -251,9 +286,9 @@ export async function siteMultiSearch(input: SiteMultiSearchInput, viewer: SiteS
     status: 200,
     body: {
       ...body,
-      results: body.results?.map((result) => ({
+      results: body.results?.map((result, i) => ({
         ...result,
-        hits: shapeHits(result.indexUid, result.hits, viewer),
+        hits: shapeHits(result.indexUid ?? input.queries[i]?.indexUid, result.hits, viewer),
       })),
     },
   };

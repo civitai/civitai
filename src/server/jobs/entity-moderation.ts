@@ -47,10 +47,7 @@ const tracker = new Tracker();
 
 const autoMuteCleanup: Partial<Record<AllModKeys, ScamCleanup>> = {
   Chat: 'chatMessages',
-  // The commentsV2 cleanup also hides comments on surfaces that write CommentV3, model comments among them.
-  Comment: 'commentsV2',
-  CommentV2: 'commentsV2',
-  CommentV3: 'commentsV2',
+  CommentV3: 'comments',
 };
 
 /** The newest flagged message a sender wrote in one flagged chat group. */
@@ -147,14 +144,6 @@ Adding a new entry:
 // TODO possibly add modelVersion
 
 const queues = {
-  Comment: {
-    fields: { content: true },
-    selector: dbRead.comment,
-  },
-  CommentV2: {
-    fields: { content: true },
-    selector: dbRead.commentV2,
-  },
   // Only plain columns, so the delegate is safe here; it drops `path`, which nothing reads.
   CommentV3: {
     fields: { content: true },

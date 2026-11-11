@@ -62,4 +62,33 @@ describe('createTrainingWorkflow on a blocked base model', () => {
     // The next check after the blocked-model gate is the AI Toolkit flag (off in `features`).
     await expect(submit()).rejects.toThrow('AI Toolkit training is not currently enabled');
   });
+
+  describe('on a custom base blocked in code', () => {
+    const customVersion = (baseModel: string, resolvedModelId: number) => {
+      dbMock.dbWrite.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            trainingDetails: { baseModel, params: { engine: 'ai-toolkit' } },
+            userId: 7,
+            modelVersionId: 55,
+          },
+        ])
+        .mockResolvedValueOnce([{ fmt: 'SafeTensor', modelId: resolvedModelId }]);
+    };
+    const message = 'This custom model is blocked from training. Pick another.';
+
+    it('refuses it with the ops list empty', async () => {
+      status.value = { available: true, blockedModels: [] };
+      customVersion('urn:air:anima:checkpoint:civitai:2855007@3224434', 2855007);
+      await expect(submit()).rejects.toMatchObject({ code: 'BAD_REQUEST', message });
+      expect(submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('refuses it by the model the version belongs to, not the AIR it was sent under', async () => {
+      status.value = { available: true, blockedModels: [] };
+      customVersion('urn:air:anima:checkpoint:civitai:1@3224434', 2855007);
+      await expect(submit()).rejects.toMatchObject({ code: 'BAD_REQUEST', message });
+      expect(submitWorkflow).not.toHaveBeenCalled();
+    });
+  });
 });

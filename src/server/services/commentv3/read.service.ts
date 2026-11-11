@@ -439,7 +439,7 @@ export async function getCommentEntity(db: CommentV3Db, commentId: number) {
 }
 
 /**
- * The model comment a model-page link names. Links and notifications sent before the model flip
+ * The model comment a model-page link names. Links and notifications sent earlier
  * carry the old v1 id (`modelPageId`), which on another model or surface can be a different
  * comment's id. On the same model no comment's id is another's v1 id, so a v1 id found there wins,
  * and any other id is taken as the comment's own.

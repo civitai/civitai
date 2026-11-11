@@ -37,6 +37,22 @@ describe("blockWorkflowBodySchema — kind:'workflow'", () => {
     expect(blockWorkflowBodySchema.parse(one)).toEqual(one);
   });
 
+  it('refuses a step $type that is not ASCII letters and digits', () => {
+    for (const $type of [
+      'cu\u017ftomComfy',
+      'custom Comfy',
+      'customComfy\u200b',
+      '\uff43omfy',
+      'x_guard_moderation',
+      'xGuard-Moderation',
+      'a.b',
+    ]) {
+      expect(
+        blockWorkflowBodySchema.safeParse(body({ steps: [{ $type, input: {} }] })).success
+      ).toBe(false);
+    }
+  });
+
   it('refuses an EMPTY step list', () => {
     const r = blockWorkflowBodySchema.safeParse(body({ steps: [] }));
     expect(r.success).toBe(false);

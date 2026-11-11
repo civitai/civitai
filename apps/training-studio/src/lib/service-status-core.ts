@@ -1,3 +1,7 @@
+import {
+  BLOCKED_CUSTOM_MODEL_MESSAGE,
+  isBlockedCustomModel,
+} from '@civitai/shared/training-custom-model';
 import { ecosystemDefaultVersion, findByAir, MODEL_CARDS } from './data/trainingModels';
 
 // The training service status the main app's moderators set (`training.setStatus`, stored in the sys
@@ -79,16 +83,15 @@ export function blockedRunMessage(
   run: RunModelRef,
   status: TrainingServiceStatus | null | undefined
 ): string | null {
-  if (!status) return null;
   // The checkpoint the run trains, as the submit sends it: a custom base wins over the pinned base AIR,
   // and a run naming neither trains on the ecosystem's default base.
   const trained = run.customModel || run.model;
+  if (trained && isBlockedCustomModel(trained)) return BLOCKED_CUSTOM_MODEL_MESSAGE;
+  if (!status) return null;
   const match = trained ? findByAir(trained) : ecosystemDefaultVersion(run);
   if (!match) {
     // Not a catalog checkpoint: a custom base, refused only when that AIR itself is blocked.
-    return trained && status.blockedModels.includes(trained)
-      ? 'This custom model is blocked from training. Pick another.'
-      : null;
+    return trained && status.blockedModels.includes(trained) ? BLOCKED_CUSTOM_MODEL_MESSAGE : null;
   }
   const down = modelUnavailability(status, match.version.key);
   if (!down) return null;
