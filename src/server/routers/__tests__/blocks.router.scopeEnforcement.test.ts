@@ -1073,6 +1073,8 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
         mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 5000 }));
         orchestratorQuoting(cost);
         const out = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+        // A passing check clears the refusal record without being awaited: let it land.
+        await new Promise((resolve) => setImmediate(resolve));
         kv.set(keyUnder(DAILY_PREFIX), String(counters.get(keyUnder(DAILY_PREFIX))));
         return out;
       };

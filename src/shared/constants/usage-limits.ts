@@ -280,8 +280,8 @@ export const usageLimitDefs = [
   // (`server/services/blocks/user-app-caps.service.ts`), which both enforcement and the
   // account Limits section call, so the two cannot disagree. Never `rateLimit()` rules.
   //
-  // The per-tier table. Free (`base`) is what every user had before tiers (the doc store's
-  // `userBytes` / `userDocs` for storage); Founder, a legacy paid
+  // The per-tier table. Free is `base` (the doc store's `userBytes` / `userDocs` for storage);
+  // Founder, a legacy paid
   // tier with no row in the table, gets Bronze's. Change a value with a `byTier` override in the
   // `usage-limits` KeyValue row, no deploy needed (an override's `byTier` replaces this one whole,
   // so it repeats every tier it keeps). `kind: 'abuse'` so an override can raise or lower these

@@ -554,8 +554,6 @@ export async function maybeAutoStartAgentReview(
         (await import('./agent-review.service')).startAgentReview(args),
       ...deps,
     };
-    // Both: the autostart flag AND the agent-review feature flag's base value. While agent review
-    // is dark (base off) no pod is provisioned automatically, whatever the autostart flag says.
     if (!(await d.automationOn())) return 'disabled';
 
     const [{ dbRead }, { env }] = await Promise.all([

@@ -698,8 +698,12 @@ const LEDGER: Record<string, LedgerEntry> = {
       'type:identifier:domain with no user segment, so the body itself must stay ' +
       'caller-independent. An ungated row answers the same for everyone and stays edge-cached; ' +
       'a gated row answers 200 to some and not-found to others, so the handler sets ' +
-      'ctx.cache.skip for it (edgeCacheIt re-reads skip after the resolver, #4368). Behaviour ' +
-      'is pinned by home-block-flag-gate.test.ts (T4, T5) and the edge-cache-chain test (T6).',
+      'ctx.cache.skip for it (edgeCacheIt re-reads skip after the resolver, #4368). A Collection ' +
+      'row whose collection not everyone may read is refused the same way ' +
+      '(getCollectionBlockAudience, also before getHomeBlockCached); when it is served, the body ' +
+      'is still read with no user, outside the shared entry, and the handler skips the edge and ' +
+      'zeroes its TTLs. Behaviour is pinned by home-block-flag-gate.test.ts (T4, T5), ' +
+      'home-block-collection-audience.test.ts and the edge-cache-chain test (T6).',
     gate: 'canViewHomeBlock(',
     sharedRead: 'getHomeBlockCached(',
     skipWhen: 'isHomeBlockGated(',

@@ -9,6 +9,7 @@ import {
   buzzCapRedisKey,
   buzzCapRefusedRedisKey,
   buzzOptInRedisKey,
+  clearDailyCapRefusal,
 } from '~/server/services/blocks/block-buzz-cap';
 import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
 import { calendarWindow } from '~/server/services/usage-limit-counters';
@@ -123,7 +124,9 @@ export async function optInAppBuzzToday(user: SessionUser): Promise<MyAppBuzzCap
   }
   await sysRedis.set(buzzOptInRedisKey(user.id), '1', { EX: BUZZ_OPT_IN_TTL_SECONDS });
   // The refusal that paused the app was at the plan cap; the raised cap has not refused anything.
-  await sysRedis.del(buzzCapRefusedRedisKey(user.id));
+  // Best-effort is enough: a record left behind is at the plan cap, which no longer equals the
+  // raised cap, so the notice reads as not paused either way.
+  await clearDailyCapRefusal(user.id);
   const status = await getMyAppBuzzCap(user);
   if (!status) throw new TRPCError({ code: 'FORBIDDEN', message: 'not available' });
   return status;
