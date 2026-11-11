@@ -454,7 +454,14 @@ describe('materialEditBlockedReason', () => {
       'name',
       'contentRating',
       'sourceRepoUrl',
+      'issueTrackerUrl',
     ]);
+  });
+
+  it('names the issue tracker among the locked fields, on both kinds', () => {
+    const offsite = materialEditBlockedReason(makeCtx({ status: 'removed' }))!;
+    const onsite = materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite' }))!;
+    for (const copy of [offsite, onsite]) expect(copy).toMatch(/issue tracker/i);
   });
 });
 
