@@ -26,7 +26,7 @@ export const createSeedreamInput = defineHandler<EcosystemData<'Seedream'>, [Ima
           prompt: data.prompt,
           width: data.aspectRatio?.width,
           height: data.aspectRatio?.height,
-          // @ai: the client's SeedreamVersion has no 'v5.5' yet (0.2.2); drop this cast on the bump that adds it.
+          // @ai: the client's SeedreamVersion lacks 'v5.5'; drop this cast once a client release adds it.
           version: version as SeedreamImageGenInput['version'],
           images: data.images?.map((x) => x.url),
           guidanceScale: data.cfgScale,

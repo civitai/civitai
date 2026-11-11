@@ -152,13 +152,13 @@ function VersionLevelDropdown({
   );
 }
 
+const isVersionNew = (o: VersionOption) => !!o.newUntil && Date.now() < o.newUntil.getTime();
+
 /**
  * Hierarchical version selector — parent levels as compact dropdowns, leaf as
  * a button group. Registers every version id with ResourceDataProvider for
  * batch hydration.
  */
-const isVersionNew = (o: VersionOption) => !!o.newUntil && Date.now() < o.newUntil.getTime();
-
 export function VersionGroupSelector({
   versions,
   modelId,

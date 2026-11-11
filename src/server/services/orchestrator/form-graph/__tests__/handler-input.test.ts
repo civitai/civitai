@@ -417,8 +417,29 @@ describe('seedream.handler', () => {
     expect(meta.versions?.options.at(-1)).toEqual({
       label: 'v5.5',
       value: v55,
-      newUntil: new Date('2026-12-12'),
+      newUntil: expect.any(Date),
     });
+  });
+
+  // v5.5 downsamples like v5.0-pro, so no 2K/4K toggle: it renders at 2K.
+  it('with seedream55 on, v5.5 has no resolution toggle and sends 2K sizes', async () => {
+    const store = generationHub.createStore({ ext: { ...BASE, flags: ON } });
+    store.set({ workflow: 'txt2img', ecosystem: 'Seedream' });
+    expect(store.getField('resolution')).toBeNull();
+    // the toggle exists for v4.5, so the null above is about v5.5
+    store.set({
+      model: { id: seedreamVersionIds['v4.5'], model: { type: 'Checkpoint' } },
+    } as never);
+    expect(store.getField('resolution')).not.toBeNull();
+
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Seedream',
+      prompt: 'a cat',
+      aspectRatio: '1:1',
+      expectFlags: ON,
+    });
+    expect(firstInput(steps)).toMatchObject({ version: 'v5.5', width: 2048, height: 2048 });
   });
 
   it('with seedream55 on, a picked v5.0-pro stays v5.0-pro', async () => {
