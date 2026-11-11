@@ -120,3 +120,31 @@ export function buildSearchPageUrl(index: SearchIndexKey, search: string) {
 
   return queryString ? `/search/${index}?${queryString}` : `/search/${index}`;
 }
+
+/**
+ * Search v3: what a header search applies to the images feed. `@user` becomes the feed's user
+ * filter; `#tag` words stay in the query, which the search matches by meaning.
+ */
+export function parseFeedSearch(search: string) {
+  const username = [...search.matchAll(USER_TOKEN)].find((match) => !match.groups?.not)?.groups
+    ?.value;
+  const query = search
+    .replace(USER_TOKEN, ' ')
+    .replace(TAG_TOKEN, (...args) => {
+      const groups = args.at(-1) as { not?: string; value: string };
+      return groups.not ? ' ' : ` ${groups.value}`;
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { query: query || undefined, username };
+}
+
+/**
+ * The feed a header search lands on, for an index whose feed answers `?query=` (images so far);
+ * null for the rest, which still open their search page.
+ */
+export function buildFeedSearchUrl(index: SearchIndexKey, search: string) {
+  if (index !== 'images') return null;
+  const queryString = QS.stringify(parseFeedSearch(search));
+  return queryString ? `/images?${queryString}` : '/images';
+}

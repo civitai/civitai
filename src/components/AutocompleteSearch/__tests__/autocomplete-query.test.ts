@@ -1,7 +1,11 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { buildSearchPageUrl, parseQuery } from '~/components/AutocompleteSearch/autocomplete-query';
+import {
+  buildFeedSearchUrl,
+  buildSearchPageUrl,
+  parseQuery,
+} from '~/components/AutocompleteSearch/autocomplete-query';
 import { buildBrowsingLevelFilters, joinFilterClauses } from '~/components/Search/search-filters';
 import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
@@ -221,5 +225,18 @@ describe('the AutocompleteSearch InstantSearch tree', () => {
   it('routes every /search push through buildSearchPageUrl', () => {
     expect(source.match(/router\.push\(`\/search\/[^`]*`/g) ?? []).toEqual([]);
     expect(source).toContain('buildSearchPageUrl');
+  });
+});
+
+describe('buildFeedSearchUrl', () => {
+  it('lands an images search on the feed, with @user as its user filter and #tag words kept', () => {
+    const url = buildFeedSearchUrl('images', 'red #dragon @someone -#blurry');
+    const params = new URL(url!, 'https://x').searchParams;
+    expect(params.get('query')).toBe('red dragon');
+    expect(params.get('username')).toBe('someone');
+  });
+
+  it('leaves other indexes on their search page', () => {
+    expect(buildFeedSearchUrl('models', 'flux')).toBeNull();
   });
 });

@@ -40,6 +40,8 @@ export const imagesQueryParamSchema = z
     periodMode: z.enum(['stats', 'published']).optional(),
     postId: numericString(),
     prioritizedUserIds: numericStringArray(),
+    // Search v3: a feed that opts in (`ImagesInfinite searchable`) answers this from the semantic search.
+    query: z.string(),
     reactions: z.preprocess(
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.enum(ReviewReactions))

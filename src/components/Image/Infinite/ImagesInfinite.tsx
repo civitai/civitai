@@ -1,4 +1,4 @@
-import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
+import { Button, Center, Group, Loader, LoadingOverlay, Text } from '@mantine/core';
 import { getQueryKey } from '@trpc/react-query';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
@@ -24,6 +24,12 @@ import { getImagesSpanMaxHeight } from '~/components/Image/Infinite/images-span'
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { toSemanticImageSearchInput } from '~/components/Image/Infinite/image-feed-search';
+import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
+import {
+  useImageFeedSearchQuery,
+  useSemanticImageFeed,
+} from '~/components/Image/Infinite/useImageFeedSearch';
 import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
@@ -57,6 +63,8 @@ type ImagesInfiniteProps = {
   /** Let a 16:9-or-wider image cover two columns (still needs the flag). Off unless a page asks. */
   landscapeSpan?: boolean;
   hideHatTurf?: boolean;
+  /** Answer a `?query=` from the semantic search (Search v3, behind `feedSearch`). */
+  searchable?: boolean;
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
@@ -78,14 +86,17 @@ export function ImagesInfiniteContent({
   emptyMessage,
   disableStoreFilters = false,
   landscapeSpan,
+  searchable,
   ...imageProviderProps
 }: ImagesInfiniteProps) {
   const features = useFeatureFlags();
   const imageFilters = useImageFilters(filterType);
-  const computedFilters = removeEmpty({
+  const { query: rawSearchQuery, ...computedFilters } = removeEmpty({
     ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
     withTags,
   });
+  const featureSearchQuery = useImageFeedSearchQuery();
+  const searchQuery = searchable && rawSearchQuery ? featureSearchQuery : undefined;
   // Stabilize identity so effects/query keys only fire on real content change.
   const filtersRef = useRef(computedFilters);
   if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
@@ -105,20 +116,24 @@ export function ImagesInfiniteContent({
   const browsingLevel = capToPublic
     ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
     : rawBrowsingLevel;
-  const {
-    images,
-    fetchNextPage,
-    refetch,
-    hasNextPage,
-    isRefetching,
-    isFetching,
-    isError,
-    debugRetryActive,
-    debugDelayMs,
-  } = useQueryImages(
-    { ...filters, browsingLevel, include: ['cosmetics'] },
-    { keepPreviousData: true }
+  const searchInput = useMemo(
+    () =>
+      searchQuery
+        ? toSemanticImageSearchInput({ query: searchQuery, filters, browsingLevel })
+        : undefined,
+    [searchQuery, filters, browsingLevel]
   );
+  const search = useSemanticImageFeed(searchInput);
+  // A search that fails falls back to the plain feed with a banner, never an empty page.
+  const searchFailed = !!searchInput && search.isError;
+  const searching = !!searchInput && !searchFailed;
+  const feed = useQueryImages(
+    { ...filters, browsingLevel, include: ['cosmetics'] },
+    { keepPreviousData: true, enabled: !searching }
+  );
+  const { debugRetryActive, debugDelayMs } = feed;
+  const { images, fetchNextPage, refetch, hasNextPage, isRefetching, isFetching, isError } =
+    searching ? search : feed;
 
   //#region [abort orphaned in-flight feed requests on filter change]
   // When filters change, the previous useInfiniteQuery observer
@@ -166,14 +181,15 @@ export function ImagesInfiniteContent({
   // quick succession can collapse into a single `true` state from React's
   // perspective, leaving the effect stale).
   useEffect(() => {
-    if (!isFetching) {
+    // A cold semantic search legitimately takes several seconds; aborting it would only start it over.
+    if (!isFetching || searching) {
       setIsSlow(false);
       return;
     }
     setIsSlow(false);
     const t = setTimeout(() => setIsSlow(true), SEARCH_SLOW_THRESHOLD_MS);
     return () => clearTimeout(t);
-  }, [isFetching, retryAttempt]);
+  }, [isFetching, retryAttempt, searching]);
   //#endregion
 
   const handleRetry = useCallback(async () => {
@@ -228,6 +244,15 @@ export function ImagesInfiniteContent({
 
   return (
     <>
+      {searchInput && (
+        <ImageFeedSearchSummary
+          query={searchInput.query ?? ''}
+          correctedQuery={searching ? search.correctedQuery : undefined}
+          filters={filters}
+          failed={searchFailed}
+          onRetry={() => search.refetch()}
+        />
+      )}
       {!images.length && isFetching && !isRetrying ? (
         <Center p="xl">
           <Loader />
@@ -273,11 +298,23 @@ export function ImagesInfiniteContent({
               </Center>
             </InViewLoader>
           ) : null}
-          {!hasNextPage && !isRetrying && showEof && <EndOfFeed />}
+          {!hasNextPage && !isRetrying && searching && (
+            <Text c="dimmed" ta="center" size="sm" py="xl">
+              That&rsquo;s every match. Try other words, or clear the search to see the whole feed.
+            </Text>
+          )}
+          {!hasNextPage && !isRetrying && showEof && !searching && <EndOfFeed />}
         </div>
       ) : (
-        <NoContent py="lg" message={emptyMessage}>
-          {showEmptyCta && (
+        <NoContent
+          py="lg"
+          message={
+            searching
+              ? 'No images match this search. Try other words, or remove a filter.'
+              : emptyMessage
+          }
+        >
+          {showEmptyCta && !searching && (
             <Group>
               <Link href="/posts/create">
                 <Button variant="default" radius="xl">

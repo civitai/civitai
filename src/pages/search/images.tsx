@@ -11,6 +11,8 @@ import { IconCloudOff, IconPhotoSearch } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { resolveTagIds } from '~/server/services/semantic-search-client';
+import { imageFeedUrlFromLegacySearch } from '~/components/Image/Infinite/image-feed-search';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
@@ -231,8 +233,19 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features }) => {
+  resolver: async ({ features, ctx }) => {
     if (!features?.imageSearch)
       return { redirect: { destination: '/search/models', permanent: false } };
+    // Search v3: the search page is the images feed with the query applied.
+    if (features.feedSearch) {
+      const tagNames = [ctx.query.tags ?? []].flat().filter(Boolean).slice(0, 20);
+      const tagIds = tagNames.length ? await resolveTagIds(tagNames) : [];
+      return {
+        redirect: {
+          destination: imageFeedUrlFromLegacySearch(ctx.query, tagIds),
+          permanent: false,
+        },
+      };
+    }
   },
 });

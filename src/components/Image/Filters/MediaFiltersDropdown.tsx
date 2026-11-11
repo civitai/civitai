@@ -1,5 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
-import { Chip, Divider, Drawer, Indicator, ScrollArea, Stack, Group } from '@mantine/core';
+import { Chip, Divider, Drawer, Indicator, ScrollArea, Stack, Group, Text } from '@mantine/core';
 import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
@@ -29,6 +29,15 @@ import type { MediaFilterKey } from '~/components/Image/Filters/media-filter-key
 
 export type { MediaFilterKey };
 
+const moderatorKeys: MediaFilterKey[] = [
+  'poiOnly',
+  'minorOnly',
+  'disablePoi',
+  'disableMinor',
+  'notPublished',
+];
+const hatTurfKeys: MediaFilterKey[] = ['hatTeams', 'hatTurfMine', 'hideTurfHats', 'hideWornHats'];
+
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
   (value) => value === 'image' || value === 'video'
@@ -44,6 +53,7 @@ export function MediaFiltersDropdown({
   hideMediaTypes = false,
   hideTools = false,
   exclude,
+  unavailable,
   jumpToSort,
   style,
   ...buttonProps
@@ -66,17 +76,39 @@ export function MediaFiltersDropdown({
   const excluded = useMemo<MediaFilterKey[]>(
     () => [
       ...(exclude ?? []),
+      ...(unavailable?.keys ?? []),
       ...(hideMediaTypes ? (['types'] as const) : []),
       ...(hideBaseModels ? (['baseModels'] as const) : []),
       ...(hideTools ? (['tools'] as const) : []),
     ],
-    [exclude, hideMediaTypes, hideBaseModels, hideTools]
+    [exclude, unavailable, hideMediaTypes, hideBaseModels, hideTools]
   );
   const shows = useCallback((key: MediaFilterKey) => !excluded.includes(key), [excluded]);
   // Hat Turf's filters, on the main image feed for players only (as the server serves them).
   const showTurf = filterType === 'images' && !!isFeed && !!turfPlayer && shows('hideTurfHats');
   // A section whose every chip is excluded would otherwise render as a lone divider.
   const showResources = shows('hideManualResources') || shows('hideAutoResources');
+  // Greyed only where the control would otherwise appear for this viewer.
+  const offeredHere = (key: MediaFilterKey) => {
+    if (moderatorKeys.includes(key)) return !!isModerator;
+    if (hatTurfKeys.includes(key)) return filterType === 'images' && !!isFeed && !!turfPlayer;
+    switch (key) {
+      case 'scheduled':
+        return !!currentUser;
+      case 'requiringMeta':
+        return !!(isSameUser || isModerator);
+      case 'hidden':
+        return !!isFeed && !!currentUser;
+      case 'hideManualResources':
+      case 'hideAutoResources':
+        return filterType === 'modelImages';
+      case 'hideChallenges':
+        return showChallengeToggle;
+      default:
+        return true;
+    }
+  };
+  const greyed = unavailable?.keys.filter(offeredHere) ?? [];
   const showModerator = (
     ['poiOnly', 'minorOnly', 'disablePoi', 'disableMinor', 'notPublished', 'scheduled'] as const
   ).some(shows);
@@ -558,6 +590,21 @@ export function MediaFiltersDropdown({
           </>
         )}
       </Stack>
+      {unavailable && greyed.length > 0 && (
+        <Stack gap={4} className="opacity-60" aria-disabled>
+          <Divider label={unavailable.title} className="text-sm font-bold" mb={4} />
+          <Text size="xs" c="dimmed">
+            {unavailable.reason}
+          </Text>
+          <div className="flex flex-wrap gap-2">
+            {greyed.map((key) => (
+              <FilterChip key={key} checked={false} disabled>
+                <span>{unavailable.labels[key]}</span>
+              </FilterChip>
+            ))}
+          </div>
+        </Stack>
+      )}
     </Stack>
   );
 
@@ -640,6 +687,13 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   hideTools?: boolean;
   /** Controls this caller cannot honour. Omitted keys render as usual. */
   exclude?: MediaFilterKey[];
+  /** Controls shown greyed in their own section, with the reason, instead of in place. */
+  unavailable?: {
+    title: string;
+    reason: string;
+    keys: readonly MediaFilterKey[];
+    labels: Record<MediaFilterKey, string>;
+  };
   /** Offer the jump-to-month control; it only applies while this is a chronological sort. */
   jumpToSort?: string;
 };
