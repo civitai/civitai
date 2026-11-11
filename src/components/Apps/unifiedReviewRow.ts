@@ -527,8 +527,8 @@ function combineCodeAndMediaRows(
 /**
  * A PENDING row's queue lane, from its agent review (see `agentReviewLane`). A row with no
  * decision signals (a listing-only row, a history row) or a viewer without the agentic surface
- * is `waiting`. A review preview that failed to build keeps an otherwise clean row OUT of the
- * fast lane: the app did not run.
+ * is `waiting`. Only a LIVE review preview lets a clean row into the fast lane: a failed,
+ * expired, missing or still-building preview keeps it out.
  */
 export function reviewRowLane(
   row: Pick<UnifiedReviewRow, 'signals' | 'listingEditCheck'>
@@ -539,8 +539,16 @@ export function reviewRowLane(
   if (result.lane === 'agent-clean' && listingEditCheckBadge(row.listingEditCheck)) {
     return { lane: 'flagged', reasons: ['the listing edit hit the impersonation check'] };
   }
-  if (result.lane === 'agent-clean' && signals.previewState === 'preview-failed') {
-    return { lane: 'flagged', reasons: ['the review preview failed to build'] };
+  // POSITIVE: only a LIVE review preview can be agent-clean (the app was seen running).
+  if (result.lane === 'agent-clean' && signals.previewState !== 'preview-live') {
+    return {
+      lane: 'flagged',
+      reasons: [
+        signals.previewState === 'preview-failed'
+          ? 'the review preview failed to build'
+          : 'the review preview is not live',
+      ],
+    };
   }
   return result;
 }

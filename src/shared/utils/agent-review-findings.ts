@@ -26,7 +26,53 @@ export type AgentReviewSummary = {
   sectionsOk?: boolean;
   /** The impersonation check's record status (`complete` | `failed`), or null when none ran. */
   impersonationCheck?: string | null;
+  /** The fingerprint of the listing the impersonation check looked at, as recorded. */
+  impersonationFingerprint?: string | null;
+  /**
+   * `false` only when the live listing still matches that fingerprint (set by the queue, which
+   * compares it with the listing as it is now). Absent or `true` → not fast-laned.
+   */
+  impersonationStale?: boolean;
 };
+
+/** The raw per-request row the queue's summary query returns. */
+export type AgentReviewQueueRow = {
+  status: string;
+  severities: (string | null)[] | null;
+  overBroad: number | null;
+  underDeclared: number | null;
+  inaccurate: number | null;
+  sectionsOk: boolean | null;
+  impersonationCheck: string | null;
+  impersonationFingerprint: string | null;
+};
+
+/**
+ * The queue row → summary. A finding with NO severity is counted as `unrated` — it must still
+ * keep the row out of the fast lane, not drop out of the count.
+ */
+export function agentReviewSummaryFromQueueRow(row: AgentReviewQueueRow): AgentReviewSummary {
+  return {
+    status: row.status,
+    severities: (row.severities ?? []).map((x) =>
+      typeof x === 'string' && x.trim() ? x : 'unrated'
+    ),
+    overBroad: row.overBroad ?? 0,
+    underDeclared: row.underDeclared ?? 0,
+    inaccurate: row.inaccurate ?? 0,
+    sectionsOk: row.sectionsOk === true,
+    impersonationCheck: row.impersonationCheck ?? null,
+    impersonationFingerprint: row.impersonationFingerprint ?? null,
+  };
+}
+
+/** Only a present fingerprint equal to the live listing's is fresh. */
+export function isImpersonationCheckStale(
+  recorded: string | null | undefined,
+  current: string | null | undefined
+): boolean {
+  return !recorded || !current || recorded !== current;
+}
 
 /** Severity buckets, worst first — the order the counts are written in. */
 export const AGENT_FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'] as const;
@@ -129,9 +175,10 @@ export function agentReviewDisplay(
 /**
  * Where a pending submission sits in the moderator queue, from its agent review.
  *
- * - `agent-clean` — the review finished, every analysis and the impersonation check completed,
- *   and nothing was found that needs a person's judgement first: no finding rated medium or
- *   worse (or unrated), no scope flag. These sort to the TOP of the queue. A moderator still
+ * - `agent-clean` — the review finished, every analysis and the impersonation check completed
+ *   on the listing as it still is (its fingerprint matches), and nothing was found that needs a
+ *   person's judgement first: no finding rated medium or worse (or unrated, or with no
+ *   severity), no scope flag. (The row also needs a LIVE review preview — `reviewRowLane`.) These sort to the TOP of the queue. A moderator still
  *   opens and approves every one of them; nothing is approved without a person.
  * - `flagged` — the review finished but found something, or did not complete (a failed or
  *   cost-capped run, a failed analysis, a missing or failed impersonation check). Normal queue,
@@ -173,6 +220,8 @@ export function agentReviewLane(
           ? 'the impersonation check did not complete'
           : 'the impersonation check has not run'
       );
+    } else if (summary.impersonationStale !== false) {
+      reasons.push('the listing changed after the impersonation check: re-run the review');
     }
     const flagging = (Object.keys(display.counts) as AgentFindingSeverity[]).reduce(
       (n, k) => n + (FLAGGING_SEVERITIES.has(k) ? display.counts[k] : 0),
@@ -203,7 +252,8 @@ export const AGENT_REVIEW_LANE_BADGES: Record<
  * cover — nothing was checked and the row looks as it always did.
  */
 export type ListingEditCheckSummary = {
-  status: 'complete' | 'failed';
+  /** `missing` = an identity-changing edit with no stored result at all. */
+  status: 'complete' | 'failed' | 'pending' | 'skipped' | 'missing';
   /** Findings rated medium or worse. */
   flagging: number;
   /** Their titles, for the badge's tooltip. */
@@ -215,6 +265,20 @@ export function listingEditCheckBadge(
   summary: ListingEditCheckSummary | null | undefined
 ): { label: string; color: string; title: string | undefined } | null {
   if (!summary) return null;
+  if (summary.status === 'pending') {
+    return {
+      label: 'Impersonation not checked yet: check the listing by hand',
+      color: 'orange',
+      title: undefined,
+    };
+  }
+  if (summary.status === 'skipped') {
+    return {
+      label: 'Impersonation check skipped (daily budget spent): check the listing by hand',
+      color: 'orange',
+      title: undefined,
+    };
+  }
   if (summary.status !== 'complete') {
     return {
       label: 'Impersonation check incomplete: check the listing by hand',

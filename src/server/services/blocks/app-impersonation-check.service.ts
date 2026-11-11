@@ -1,11 +1,12 @@
 import { BlocklistType } from '~/server/common/enums';
-import { AI_MODELS } from '~/server/services/ai/openrouter';
+import { AI_MODELS, type TokenUsage } from '~/server/services/ai/openrouter';
 import type { AppReviewAgentReport, Prisma } from '@prisma/client';
 import { agentSectionFailureMessage } from '~/shared/constants/agent-review-section.constants';
 import {
   listingNameMatchFindings,
+  impersonationFingerprint,
   mergeImpersonationIntoSecurityAudit,
-  modelJudgementFindings,
+  parseModelJudgement,
   protectedTermFindings,
   type ImpersonationCheckOutcome,
   type ImpersonationCheckRecord,
@@ -37,6 +38,10 @@ export type ImpersonationInputs = {
   coverUrl: string | null;
   others: OtherListing[];
   protectedTerms: string[];
+  /** What the check looked at ({@link impersonationFingerprint}); recorded with the result. */
+  fingerprint?: string;
+  /** Set when the inputs themselves are incomplete (e.g. no store listing): the check fails. */
+  incompleteReason?: string;
 };
 
 export type ModelCall = (args: {
@@ -66,7 +71,7 @@ export async function runImpersonationChecks(
   const nameFindings = listingNameMatchFindings(subject, inputs.others);
   const termFindings = protectedTermFindings(subject, inputs.protectedTerms);
 
-  let judgement: ModelJudgement | null = null;
+  let judgement: unknown = null;
   let costUsd: number | null = null;
   let modelError: string | null = null;
   try {
@@ -82,7 +87,10 @@ export async function runImpersonationChecks(
     modelError = err instanceof Error ? err.message.slice(0, 200) : 'model call failed';
   }
 
-  const modelFindings = judgement ? modelJudgementFindings(judgement) : [];
+  // A malformed answer is a model ERROR (check incomplete), never "found nothing".
+  const parsed = modelError ? null : parseModelJudgement(judgement);
+  if (parsed && !parsed.ok) modelError = parsed.error;
+  const modelFindings = parsed && parsed.ok ? parsed.findings : [];
 
   const outcome = (fs: ImpersonationFinding[]): ImpersonationCheckOutcome =>
     fs.length > 0 ? 'fired' : 'clear';
@@ -90,6 +98,7 @@ export async function runImpersonationChecks(
   // the record fails and the submission stays out of the fast lane until the list is filled in.
   const noTerms = inputs.protectedTerms.every((t) => !t.trim());
   const errors = [
+    ...(inputs.incompleteReason ? [inputs.incompleteReason] : []),
     ...(noTerms ? ['no protected brand terms are configured'] : []),
     ...(modelError ? [`model judgement: ${modelError}`] : []),
   ];
@@ -102,6 +111,7 @@ export async function runImpersonationChecks(
       'model-judgement': modelError ? 'failed' : outcome(modelFindings),
     },
     model: IMPERSONATION_MODEL,
+    ...(inputs.fingerprint ? { fingerprint: inputs.fingerprint } : {}),
     ...(errors.length > 0 ? { error: errors.join('; ') } : {}),
   };
   return { findings: [...nameFindings, ...termFindings, ...modelFindings], record, costUsd };
@@ -119,6 +129,11 @@ const SYSTEM_PROMPT = [
   'Reply with JSON only: {"findings":[{"severity":"high|medium|low","title":"...","detail":"...","quote":"exact listing text or null"}]}. An empty findings array means you found no impersonation.',
 ].join('\n');
 
+/** `<` / `>` as JSON unicode escapes: same characters to the model, but no tag can be closed. */
+function escapeTags(json: string): string {
+  return json.replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+}
+
 function listingBlock(
   subject: ImpersonationSubject,
   deterministic: ImpersonationFinding[]
@@ -130,10 +145,13 @@ function listingBlock(
     description: (subject.description ?? '').slice(0, MAX_DESCRIPTION_CHARS) || null,
   };
   const hits = deterministic.map((f) => f.title);
+  // Author text must not be able to close the tags it is wrapped in: `<` and `>` are written as
+  // JSON unicode escapes, which the model reads as the same characters inside the data.
+  const listingJson = escapeTags(JSON.stringify(listing));
   return [
-    `<listing>${JSON.stringify(listing)}</listing>`,
+    `<listing>${listingJson}</listing>`,
     hits.length > 0
-      ? `Automatic checks already matched: ${JSON.stringify(hits)}.`
+      ? `Automatic checks already matched: ${escapeTags(JSON.stringify(hits))}.`
       : 'Automatic checks matched nothing.',
   ].join('\n');
 }
@@ -164,10 +182,32 @@ export const callImpersonationModel: ModelCall = async ({
       },
     ],
   });
-  const cost =
-    typeof usage.costUsd === 'number' && Number.isFinite(usage.costUsd) ? usage.costUsd : null;
-  return { judgement: content, costUsd: cost };
+  return { judgement: content, costUsd: impersonationCallCostUsd(usage) };
 };
+
+/**
+ * List price of {@link IMPERSONATION_MODEL}, USD per million tokens — the ONE place this rate
+ * lives. Image inputs are billed as prompt tokens, so they are inside `promptTokens`.
+ */
+export const IMPERSONATION_MODEL_USD_PER_MTOK = { prompt: 0.15, completion: 0.6 } as const;
+
+/**
+ * What one model call cost. The OpenRouter SDK strips the vendor's own `usage.cost` from chat
+ * responses (see `extractUsage`), so it is computed from the token counts at the pinned list
+ * price; a vendor-reported cost is used instead if one ever survives. Always a number, so the
+ * check's spend is always metered.
+ */
+export function impersonationCallCostUsd(usage: TokenUsage): number {
+  if (typeof usage.costUsd === 'number' && Number.isFinite(usage.costUsd) && usage.costUsd >= 0) {
+    return usage.costUsd;
+  }
+  const tokens = (n: number) => (Number.isFinite(n) && n > 0 ? n : 0);
+  return (
+    (tokens(usage.promptTokens) * IMPERSONATION_MODEL_USD_PER_MTOK.prompt +
+      tokens(usage.completionTokens) * IMPERSONATION_MODEL_USD_PER_MTOK.completion) /
+    1_000_000
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Gather + persist
@@ -189,8 +229,9 @@ export async function runImpersonationCheckForRequest(
 ): Promise<'checked' | 'no-report' | 'no-request' | 'error'> {
   try {
     const callModel = deps.callModel ?? callImpersonationModel;
-    const { dbRead, dbWrite } = await import('~/server/db/client');
-    const report = (await dbRead.appReviewAgentReport.findFirst({
+    // PRIMARY: this runs right after the agent's callback wrote the report.
+    const { dbWrite } = await import('~/server/db/client');
+    const report = (await dbWrite.appReviewAgentReport.findFirst({
       where: { publishRequestId },
       orderBy: { startedAt: 'desc' },
       select: { id: true, status: true, securityAudit: true, costUsd: true },
@@ -232,68 +273,77 @@ export async function runImpersonationCheckForRequest(
   }
 }
 
-/** The submission as the store would show it, plus everything it is compared against. */
+/**
+ * The submission as the store would show it, plus everything it is compared against. Read from
+ * the PRIMARY (this runs right after the agent's callback). The listing is the APP's — found by
+ * its slug, whoever submitted the version (a collaborator's submission is checked against the
+ * owner's listing). No listing → the check is incomplete, never complete.
+ */
 export async function gatherImpersonationInputs(
   publishRequestId: string
 ): Promise<ImpersonationInputs | null> {
-  const [{ dbRead }, { appDisplayName }, { listingIconUrl, listingCoverUrl }] = await Promise.all([
+  const [{ dbWrite }, { appDisplayName }, { listingIconUrl, listingCoverUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('~/shared/utils/app-display-name'),
     import('./listing-media-url'),
   ]);
-  const request = await dbRead.appBlockPublishRequest.findUnique({
+  const request = await dbWrite.appBlockPublishRequest.findUnique({
     where: { id: publishRequestId },
-    select: { slug: true, manifest: true, submittedByUserId: true },
+    select: { slug: true, appBlockId: true, manifest: true, submittedByUserId: true },
   });
   if (!request) return null;
 
-  // The author's own on-site listing for this slug — the text, icon and cover users will see.
-  const listing = await dbRead.appListing.findFirst({
-    where: {
-      slug: request.slug,
-      kind: 'onsite',
-      revisionOfId: null,
-      userId: request.submittedByUserId,
-    },
+  const found = await dbWrite.appListing.findFirst({
+    where: { slug: request.slug, kind: 'onsite', revisionOfId: null },
     select: {
       id: true,
       name: true,
+      slug: true,
       tagline: true,
       description: true,
+      iconId: true,
+      coverId: true,
+      userId: true,
+      appBlockId: true,
       icon: { select: { url: true } },
       cover: { select: { url: true } },
     },
   });
+  // A listing keyed to a different app is not this app's listing.
+  const listing =
+    found && !(found.appBlockId && request.appBlockId && found.appBlockId !== request.appBlockId)
+      ? found
+      : null;
 
   // The fork columns are not on the generated client types (`@no-type`), so they are read raw,
   // as the fork service does.
   const [reqFork, listingFork] = (await Promise.all([
-    dbRead.$queryRaw`SELECT "fork_of_app_block_id" AS "v" FROM "app_block_publish_requests" WHERE "id" = ${publishRequestId}`,
+    dbWrite.$queryRaw`SELECT "fork_of_app_block_id" AS "v" FROM "app_block_publish_requests" WHERE "id" = ${publishRequestId}`,
     listing
-      ? dbRead.$queryRaw`SELECT "fork_of_listing_id" AS "v" FROM "app_listings" WHERE "id" = ${listing.id}`
+      ? dbWrite.$queryRaw`SELECT "fork_of_listing_id" AS "v" FROM "app_listings" WHERE "id" = ${listing.id}`
       : Promise.resolve([]),
   ])) as Array<Array<{ v: string | null }> | undefined>;
   const firstValue = (rows: Array<{ v: string | null }> | undefined) =>
     Array.isArray(rows) && typeof rows[0]?.v === 'string' && rows[0].v ? rows[0].v : null;
-  const fork = { forkOfAppBlockId: firstValue(reqFork), forkOfListingId: firstValue(listingFork) };
 
-  const manifest = (request.manifest ?? {}) as Record<string, unknown>;
-  const manifestDescription =
-    typeof manifest.description === 'string' ? manifest.description : null;
   const subject: ImpersonationSubject = {
     name: listing?.name || appDisplayName(request.manifest, request.slug),
     slug: request.slug,
     tagline: listing?.tagline ?? null,
-    description: listing?.description ?? manifestDescription,
-    forkOfAppBlockId: fork.forkOfAppBlockId,
-    forkOfListingId: fork.forkOfListingId,
+    description: listing?.description ?? null,
+    forkOfAppBlockId: firstValue(reqFork),
+    forkOfListingId: firstValue(listingFork),
   };
 
   return {
     subject,
     iconUrl: listingIconUrl(listing?.icon ?? null),
     coverUrl: listingCoverUrl(listing?.cover ?? null, null),
-    ...(await loadComparisonSet(request.submittedByUserId)),
+    // The listing OWNER's other apps are theirs; without a listing, the submitter's.
+    ...(await loadComparisonSet(listing?.userId ?? request.submittedByUserId)),
+    ...(listing
+      ? { fingerprint: impersonationFingerprint(listing) }
+      : { incompleteReason: 'no store listing was found for this app' }),
   };
 }
 

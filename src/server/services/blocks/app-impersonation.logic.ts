@@ -56,6 +56,9 @@ export type ImpersonationCheckRecord = {
   checks: Record<ImpersonationCheck, ImpersonationCheckOutcome>;
   model?: string;
   error?: string;
+  /** {@link impersonationFingerprint} of the listing the check looked at. The queue compares it
+   *  with the listing as it is now; a mismatch means the check is stale. */
+  fingerprint?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -116,18 +119,67 @@ const LOOKALIKES: Record<string, string> = {
   τ: 't',
   υ: 'u',
   χ: 'x',
+  // More lower-case look-alikes outside the Latin block.
+  ı: 'i',
+  ɑ: 'a',
+  ɡ: 'g',
+  һ: 'h',
+  ԍ: 'g',
+  օ: 'o',
 };
 
 /**
- * The comparable SKELETON of a name: compatibility-decomposed, accents dropped, lower-cased,
- * look-alike characters folded, everything that is not a letter or digit removed, and the two
+ * CAPITAL look-alikes, folded BEFORE lower-casing. Lower-casing first would send a Greek capital
+ * through its own lower-case letter, which looks like something else entirely (Η → η reads as n,
+ * Ν → ν as v, Υ → υ as u). Each maps to the Latin capital it looks like, lower-cased.
+ */
+const CAPITAL_LOOKALIKES: Record<string, string> = {
+  // Greek
+  Α: 'a',
+  Β: 'b',
+  Ε: 'e',
+  Ζ: 'z',
+  Η: 'h',
+  Ι: 'i',
+  Κ: 'k',
+  Μ: 'm',
+  Ν: 'n',
+  Ο: 'o',
+  Ρ: 'p',
+  Τ: 't',
+  Υ: 'y',
+  Χ: 'x',
+  // Cyrillic
+  А: 'a',
+  В: 'b',
+  Е: 'e',
+  К: 'k',
+  М: 'm',
+  Н: 'h',
+  О: 'o',
+  Р: 'p',
+  С: 'c',
+  Т: 't',
+  Х: 'x',
+};
+
+/**
+ * The comparable SKELETON of a name: compatibility-decomposed, accents dropped, capital
+ * look-alikes folded, then lower-cased and lower-case look-alikes folded, everything that is not a letter or digit removed, and the two
  * common multi-letter look-alikes (`rn` for `m`, `vv` for `w`) folded. Two names that render
  * alike end up equal here.
  */
 export function impersonationSkeleton(value: string): string {
-  const lowered = value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
+  const stripped = value.normalize('NFKD').replace(/\p{M}/gu, '');
   let folded = '';
-  for (const ch of lowered) folded += LOOKALIKES[ch] ?? ch;
+  for (const ch of stripped) {
+    const capital = CAPITAL_LOOKALIKES[ch];
+    if (capital) {
+      folded += capital;
+      continue;
+    }
+    for (const lower of ch.toLowerCase()) folded += LOOKALIKES[lower] ?? lower;
+  }
   return folded
     .replace(/[^a-z0-9]/g, '')
     .replace(/rn/g, 'm')
@@ -250,26 +302,38 @@ function boundedText(value: unknown, max: number): string | null {
   return t ? t.slice(0, max) : null;
 }
 
+const UNTITLED_FINDING = 'Untitled impersonation finding';
+
+export type ParsedModelJudgement =
+  | { ok: true; findings: ImpersonationFinding[] }
+  | { ok: false; error: string };
+
 /**
- * The model's findings, normalised: at most a few, each with a known severity (an unknown one
- * reads as `medium`, so an odd answer still flags rather than vanishing) and bounded text.
- * Adversarial-input caveat: these strings were produced while reading author-written text and
- * are rendered as inert text only.
+ * The model's answer, validated. A well-formed answer is `{ findings: [ {…}, … ] }`; anything
+ * else (no object, `findings` not an array, an entry that is not an object) is a MODEL ERROR and
+ * the check is incomplete — never "found nothing". Findings are normalised: at most a few, each
+ * with a known severity (an unknown one reads as `medium`, so an odd answer still flags), an
+ * untitled one kept under a placeholder title, text bounded. Adversarial-input caveat: these
+ * strings were produced while reading author-written text and are rendered as inert text only.
  */
-export function modelJudgementFindings(judgement: ModelJudgement | null): ImpersonationFinding[] {
-  const raw = Array.isArray(judgement?.findings) ? (judgement?.findings as unknown[]) : [];
-  const out: ImpersonationFinding[] = [];
-  for (const f of raw) {
-    if (out.length >= MAX_MODEL_FINDINGS) break;
-    if (!f || typeof f !== 'object') continue;
+export function parseModelJudgement(judgement: unknown): ParsedModelJudgement {
+  if (!judgement || typeof judgement !== 'object' || Array.isArray(judgement)) {
+    return { ok: false, error: 'malformed model output: not an object' };
+  }
+  const raw = (judgement as ModelJudgement).findings;
+  if (!Array.isArray(raw)) return { ok: false, error: 'malformed model output: no findings list' };
+  if (raw.some((f) => !f || typeof f !== 'object' || Array.isArray(f))) {
+    return { ok: false, error: 'malformed model output: a finding is not an object' };
+  }
+  const findings: ImpersonationFinding[] = [];
+  for (const f of raw.slice(0, MAX_MODEL_FINDINGS)) {
     const o = f as Record<string, unknown>;
-    const title = boundedText(o.title, 200);
-    if (!title) continue;
+    const title = boundedText(o.title, 200) ?? UNTITLED_FINDING;
     const sev = typeof o.severity === 'string' ? o.severity.toLowerCase() : '';
     const severity: ImpersonationSeverity =
       sev === 'high' || sev === 'low' || sev === 'medium' ? sev : 'medium';
     const quote = boundedText(o.quote, 300);
-    out.push({
+    findings.push({
       severity,
       category: IMPERSONATION_CATEGORY,
       check: 'model-judgement',
@@ -278,7 +342,37 @@ export function modelJudgementFindings(judgement: ModelJudgement | null): Impers
       evidence: ['check: model-judgement', ...(quote ? [`quote: ${quote}`] : [])],
     });
   }
-  return out;
+  return { ok: true, findings };
+}
+
+/** The listing fields the check reads. */
+export type ImpersonationFingerprintInput = {
+  name: string;
+  slug: string;
+  tagline: string | null;
+  description: string | null;
+  iconId: number | null;
+  coverId: number | null;
+};
+
+/**
+ * A digest of exactly what the impersonation check looked at. Recorded with the check and
+ * recomputed from the live listing by the review queue, so an edit made in place after a clean
+ * check (a new app's draft or pending listing is edited without re-review) makes the check
+ * STALE and keeps the submission out of the fast lane until the review is re-run.
+ */
+export function impersonationFingerprint(input: ImpersonationFingerprintInput): string {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { createHash } = require('crypto') as typeof import('crypto');
+  const canonical = JSON.stringify([
+    input.name,
+    input.slug,
+    input.tagline ?? null,
+    input.description ?? null,
+    input.iconId ?? null,
+    input.coverId ?? null,
+  ]);
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
 }
 
 // ---------------------------------------------------------------------------
