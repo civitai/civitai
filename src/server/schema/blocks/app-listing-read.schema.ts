@@ -528,6 +528,19 @@ export type ListingDetail = {
    */
   sourceRepoUrl: string | null;
   /**
+   * PUBLIC ISSUE-TRACKER / SUPPORT link ("report a problem here"), or null.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. A link the AUTHOR chose to publish, moderator-gated on both kinds
+   * like `sourceRepoUrl` (manifest `bugs` re-reviewed on approve for on-site; a MATERIAL patch
+   * field staged on a shadow revision for off-site), and normalised by `validateIssueTrackerUrl`
+   * (https, no credentials, no port, ≤200 chars). ANY host, unlike the source link, which is why
+   * the store renders it `rel="noopener noreferrer nofollow ugc"`.
+   *
+   * DETAIL-ONLY, for the reason `sourceRepoUrl` gives. Null while the manual-apply column is
+   * outstanding (it is read by raw SQL, never selected on the row).
+   */
+  issueTrackerUrl: string | null;
+  /**
    * The app's APPROVED scope ids (`AppBlock.approved_scopes`), for the pre-launch
    * permission disclosure. `[]` in THREE cases, and the third is the one readers miss:
    *   1. the listing's `kind` is not `onsite`;

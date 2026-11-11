@@ -22,6 +22,7 @@ import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconApps,
   IconArrowLeft,
+  IconBug,
   IconCategory,
   IconClock,
   IconCode,
@@ -829,6 +830,7 @@ const DETAIL_ROW_ICONS: Record<ListingDetailRow['key'], Icon> = {
   category: IconCategory,
   rating: IconShield,
   source: IconCode,
+  support: IconBug,
   reviews: IconThumbUp,
   plays: IconPlayerPlay,
   installs: IconDownload,
@@ -901,7 +903,9 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                     size="sm"
                     href={row.href}
                     target="_blank"
-                    rel="noopener noreferrer"
+                    // The row model may widen this (`support`: + `nofollow ugc`, an any-host
+                    // author link); it always keeps `noopener noreferrer`.
+                    rel={row.rel ?? 'noopener noreferrer'}
                     underline="always"
                     data-listing-detail-link={row.key}
                     style={{ wordBreak: 'break-all' }}

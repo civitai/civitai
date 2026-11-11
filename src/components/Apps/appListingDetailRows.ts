@@ -54,10 +54,22 @@ import {
 import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
+/** The `rel` of the Support row's outbound, author-chosen, any-host link. */
+export const SUPPORT_LINK_REL = 'noopener noreferrer nofollow ugc';
+
 /** A single label/value row of the Details panel. */
 export type ListingDetailRow = {
   /** Stable key — also the row's `data-listing-detail-row` attribute in the DOM. */
-  key: 'kind' | 'category' | 'rating' | 'reviews' | 'plays' | 'installs' | 'updated' | 'source';
+  key:
+    | 'kind'
+    | 'category'
+    | 'rating'
+    | 'reviews'
+    | 'plays'
+    | 'installs'
+    | 'updated'
+    | 'source'
+    | 'support';
   /** Dimmed left-hand label. */
   label: string;
   /** Right-hand display value. */
@@ -75,6 +87,13 @@ export type ListingDetailRow = {
    * this is defence in depth on a link we already constrain, not the only control.
    */
   href?: string;
+  /**
+   * The `rel` for an {@link href} row, when it must say MORE than `noopener noreferrer`. Only
+   * the `support` row sets it, to `noopener noreferrer nofollow ugc`: its destination is ANY
+   * host the author chose (the source link is host-allowlisted), so the store neither vouches
+   * for it (`nofollow`) nor presents it as its own (`ugc`). It always includes `noopener`.
+   */
+  rel?: string;
   /**
    * When set, the row's value renders as a SAME-PAGE fragment link to this element id.
    * Only the `reviews` row sets it, and only when there is something to jump to.
@@ -148,7 +167,7 @@ export function buildListingDetailRows(
     | 'installCount'
     | 'updatedAt'
   > &
-    Partial<Pick<ListingDetail, 'sourceRepoUrl'>>,
+    Partial<Pick<ListingDetail, 'sourceRepoUrl' | 'issueTrackerUrl'>>,
   opts: { preview?: boolean; formatDate: (iso: string) => string }
 ): ListingDetailRow[] {
   const rows: ListingDetailRow[] = [];
@@ -209,6 +228,19 @@ export function buildListingDetailRows(
       // would produce a relative link to a path on civitai.com.
       value: detail.sourceRepoUrl.replace(/^https:\/\//, ''),
       href: detail.sourceRepoUrl,
+    });
+  }
+
+  // SUPPORT — where to report a problem (the issue tracker), right after Source. Present in
+  // `preview` for the reason Source is: the shadow carries it and approving publishes it.
+  // Runtime-guarded on the type for the same cast-producer reason.
+  if (typeof detail.issueTrackerUrl === 'string' && detail.issueTrackerUrl.length > 0) {
+    rows.push({
+      key: 'support',
+      label: 'Support',
+      value: detail.issueTrackerUrl.replace(/^https:\/\//, '').replace(/\/$/, ''),
+      href: detail.issueTrackerUrl,
+      rel: SUPPORT_LINK_REL,
     });
   }
 

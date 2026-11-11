@@ -1606,7 +1606,7 @@ async function submitListingReadiness(args: {
   try {
     const [
       { dbWrite },
-      { computeListingProblems, floorProblems, listingProblemInput },
+      { computeListingProblems, floorProblems, listingProblemInput, listingProblemLinksFrom },
       { loadListingAssetScansBatch },
     ] = await Promise.all([
       import('~/server/db/client'),
@@ -1673,12 +1673,37 @@ async function submitListingReadiness(args: {
       [{ id: row.id, iconId: row.iconId, coverId: row.coverId }],
       dbWrite
     );
+    // The trust-link nudge. On-site links are manifest-governed and reach the listing only at
+    // approve, so the SUBMITTED manifest is what this submit is about: its `repository` / `bugs`
+    // decide the nudge. The columns are still read, for one thing only — whether each exists
+    // here: a link whose column is absent is reported as unknown (no nudge), never as missing.
+    const kind = row.kind === 'offsite' ? 'offsite' : 'onsite';
+    const [
+      { readListingProblemLinkMaps },
+      { resolveListingIssueTracker, resolveListingSourceRepo },
+    ] = await Promise.all([
+      import('./app-listing-issue-tracker.service'),
+      import('./app-listing-mapper'),
+    ]);
+    const linkMaps = await readListingProblemLinkMaps([row.id], dbWrite);
+    const links =
+      kind === 'onsite'
+        ? {
+            sourceRepoUrl: linkMaps.sourceRepoUrls.has(row.id)
+              ? resolveListingSourceRepo(args.manifest)
+              : undefined,
+            issueTrackerUrl: linkMaps.issueTrackerUrls.has(row.id)
+              ? resolveListingIssueTracker(args.manifest)
+              : undefined,
+          }
+        : listingProblemLinksFrom(row.id, linkMaps);
     const { problems } = computeListingProblems(
       listingProblemInput(row, {
-        kind: row.kind === 'offsite' ? 'offsite' : 'onsite',
+        kind,
         appRating:
           typeof args.manifest.contentRating === 'string' ? args.manifest.contentRating : null,
         assetScans: scans.get(row.id) ?? [],
+        links,
       })
     );
     return {
@@ -3776,7 +3801,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // OauthClient owner are mirrored faithfully — important for the transition case
   // where an app approved BEFORE this feature (possibly already curated) has its
   // first listing minted now on a subsequent-version approve.
-  const { mapAppBlockToListing, buildListingScalarSync } = await import('./app-listing-mapper');
+  const { mapAppBlockToListing, buildListingScalarSync, buildListingIssueTrackerSync } =
+    await import('./app-listing-mapper');
   // Is the manual-apply `app_listings.source_repo_url` column there yet? Probed ONCE
   // and threaded into all three write branches below. 🔴 It is deliberately probed
   // rather than assumed: naming a missing column in any of these payloads throws, and
@@ -3788,6 +3814,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // on it must land in this block's log-and-continue rather than abort the approve.
     const { isSourceRepoColumnAvailable } = await import('./app-listing-source-repo.service');
     const sourceRepoAvailable = await isSourceRepoColumnAvailable(dbWrite);
+    // The manual-apply `issue_tracker_url` column (manifest `bugs`), probed the same way. It is a
+    // no-type column, so it is never part of the Prisma payloads below: each branch writes it by
+    // raw SQL right after its own write, and only when this says the column exists.
+    const {
+      isIssueTrackerColumnAvailable,
+      writeIssueTrackerBestEffort,
+      writeListingIssueTrackerUrl,
+      writeOnsiteListingIssueTrackerUrlByAppBlock,
+    } = await import('./app-listing-issue-tracker.service');
+    const issueTrackerAvailable = await isIssueTrackerColumnAvailable(dbWrite);
     // (3b-transition) W13 draft-at-submit — an app SUBMITTED after this feature
     // shipped has a pre-approval on-site DRAFT AppListing (kind='onsite',
     // appBlockId=NULL, status='draft', slug=request.slug) minted at submit, carrying
@@ -3891,6 +3927,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           },
         });
         if (transitioned.count > 0) {
+          const tracker = buildListingIssueTrackerSync({
+            manifest: abForTransition.manifest,
+            issueTrackerAvailable,
+          });
+          if (tracker.write) {
+            await writeIssueTrackerBestEffort(`approve draft ${request.slug}`, () =>
+              writeListingIssueTrackerUrl(dbWrite, draftListing.id, tracker.value)
+            );
+          }
           await recordListingRatingChangeAfterCommit({
             appListingId: draftListing.id,
             slug: request.slug,
@@ -3959,10 +4004,19 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // (don't throw into the already-side-effecting approve flow); the backfill
       // remains the recovery path for such an anomaly.
       if (ab && ab.app && typeof ab.app.userId === 'number') {
-        await dbWrite.appListing.create({
+        const created = await dbWrite.appListing.create({
           data: mapAppBlockToListing(ab as SourceAppBlock, { sourceRepoAvailable }),
           select: { id: true },
         });
+        const tracker = buildListingIssueTrackerSync({
+          manifest: ab.manifest,
+          issueTrackerAvailable,
+        });
+        if (tracker.write && tracker.value !== null && created?.id) {
+          await writeIssueTrackerBestEffort(`approve create ${request.slug}`, () =>
+            writeListingIssueTrackerUrl(dbWrite, created.id, tracker.value)
+          );
+        }
       }
     } else {
       // (3b-sync) MANIFEST-GOVERNED COPY RE-SYNC (subsequent-version approve).
@@ -4022,6 +4076,17 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
               sourceRepoAvailable,
             }),
           });
+          // Re-synced from the manifest on every approved version, like `repository`: removing
+          // `bugs` clears the link.
+          const tracker = buildListingIssueTrackerSync({
+            manifest: ab.manifest,
+            issueTrackerAvailable,
+          });
+          if (tracker.write) {
+            await writeIssueTrackerBestEffort(`approve re-sync ${request.slug}`, () =>
+              writeOnsiteListingIssueTrackerUrlByAppBlock(dbWrite, appBlockId, tracker.value)
+            );
+          }
           if (synced.count === 0) {
             // The replica said a listing exists but the PRIMARY matched no row —
             // replica lag, or the row changed kind between the two reads. Benign

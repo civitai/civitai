@@ -191,6 +191,9 @@ export function buildListingDetailPreview(
     // mod who only ever saw THIS builder's output would not see the source link, so:
     // if the fallback ever becomes the primary path, this must be revisited.
     sourceRepoUrl: null,
+    // Same limitation, same reason, as `sourceRepoUrl` just above: the review row carries no
+    // issue-tracker link, and the real preview (`getListingPreviewForReview`) does.
+    issueTrackerUrl: null,
     // 🔴 `[]`, NEVER omitted. `AppListingDetailBody` reads `detail.scopes.length` to
     // decide whether to render the pre-launch permission disclosure, so leaving this
     // field off would not degrade the preview — it would THROW on every render of

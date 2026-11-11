@@ -225,6 +225,7 @@ import { getModelShowcaseImages } from '~/server/services/blocks/showcase.servic
 import {
   computeListingProblems,
   listingProblemInput,
+  listingProblemLinksFrom,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
 // The ONE spelling of "which moderation actions can explain a removal". Value import:
@@ -3407,6 +3408,17 @@ export const blocksRouter = router({
     const scansByListingId = await loadListingAssetScansBatch(
       problemListings.map((l) => ({ id: l.id, iconId: l.iconId, coverId: l.coverId }))
     );
+    // The trust-link nudge's inputs, for the KEYED listings only: their columns are what the
+    // store shows (synced from the approved manifest). A pre-approval draft carries no links
+    // until approve copies them from the manifest, so its links are reported as unknown rather
+    // than as missing — the submit's own readiness reads the submitted manifest instead.
+    const { readListingProblemLinkMaps } = await import(
+      '~/server/services/blocks/app-listing-issue-tracker.service'
+    );
+    const linkMaps = await readListingProblemLinkMaps(
+      [...listingByBlockId.values()].map((l) => l.id),
+      dbRead
+    );
 
     // For every REMOVED backing listing, its MOST-RECENT STATUS-CHANGING moderation-event
     // action — so the UI distinguishes an owner-hidden listing (last event
@@ -3481,6 +3493,7 @@ export const blocksRouter = router({
                 kind: problemsListing.kind,
                 appRating: r.appBlock?.contentRating,
                 assetScans: scansByListingId.get(problemsListing.id) ?? [],
+                links: listing ? listingProblemLinksFrom(listing.id, linkMaps) : {},
               })
             ).problems
           : [],

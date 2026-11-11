@@ -36,6 +36,7 @@ import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 import {
   MAX_REPOSITORY_URL_LENGTH,
   REPOSITORY_HOST_ALLOWLIST,
+  validateIssueTrackerUrl,
   validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 // Single source for the per-scope justification length bound — shared with the
@@ -108,6 +109,13 @@ interface RawManifest {
    * never be conflated in either direction.
    */
   repository?: unknown;
+  /**
+   * OPTIONAL public issue-tracker / support link, npm-style: a URL string or `{ url, email }`
+   * (`email` is ignored). Shown as a `Support` row on the store DETAIL page and re-synced from
+   * the manifest on every approved version, like `repository`. The URL must pass
+   * `validateIssueTrackerUrl`: https, no credentials, no port, ≤200 chars, any host.
+   */
+  bugs?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -549,6 +557,32 @@ export class BlockManifestValidator {
     if (m.repository !== undefined) {
       const repo = validateRepositoryUrl(m.repository);
       if (!repo.ok) errors.push(repo.error.replace('sourceRepoUrl', 'repository'));
+    }
+
+    // Optional `bugs` (the public issue-tracker / support link), npm-style: a URL string or
+    // `{ url, email }`. Only `url` is used; `email` is accepted and ignored (the store shows no
+    // mailto link). The URL goes through the SHARED `validateIssueTrackerUrl`, the function the
+    // off-site listing form uses, re-labelled to the manifest key.
+    if (m.bugs !== undefined) {
+      const bugs = m.bugs as unknown;
+      let bugsUrl: unknown;
+      if (typeof bugs === 'string') {
+        bugsUrl = bugs;
+      } else if (bugs && typeof bugs === 'object' && !Array.isArray(bugs)) {
+        bugsUrl = (bugs as { url?: unknown }).url;
+        if (bugsUrl === undefined) bugsUrl = null;
+      } else {
+        errors.push('bugs must be a URL string or an object with a "url"');
+        bugsUrl = null;
+      }
+      if (bugsUrl !== null) {
+        const tracker = validateIssueTrackerUrl(bugsUrl);
+        if (!tracker.ok) {
+          errors.push(
+            tracker.error.replace('issueTrackerUrl', typeof bugs === 'string' ? 'bugs' : 'bugs.url')
+          );
+        }
+      }
     }
 
     if (!Array.isArray(m.scopes)) {

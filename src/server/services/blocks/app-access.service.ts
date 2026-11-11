@@ -19,7 +19,9 @@ import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import {
   computeListingProblems,
   listingProblemInput,
+  listingProblemLinksFrom,
 } from '~/server/services/blocks/listing-problems';
+import { readListingProblemLinkMaps } from '~/server/services/blocks/app-listing-issue-tracker.service';
 import type {
   AppRole,
   ListingCapability,
@@ -1234,6 +1236,12 @@ async function hydrateMyAppListings(
       }))
     ),
   ]);
+  // The trust-link nudge's inputs (source repo + issue tracker), AFTER the reads above and
+  // degrading to "unknown" on any error, so it can only ever add an advisory, never fail the page.
+  const linkMaps = await readListingProblemLinkMaps(
+    rows.map((r: { id: string }) => r.id),
+    dbRead
+  );
   const lastActionByListingId = new Map<string, string>(
     (lastEvents as Array<{ appListingId: string | null; action: string }>)
       .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
@@ -1288,6 +1296,7 @@ async function hydrateMyAppListings(
             kind,
             appRating: r.appBlock?.contentRating,
             assetScans: scansByListingId.get(r.id) ?? [],
+            links: listingProblemLinksFrom(r.id, linkMaps),
           })
         ).problems,
         // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
