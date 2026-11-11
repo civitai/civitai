@@ -63,6 +63,7 @@ import {
   imageReviewedSql,
   pendingLevelImageSql,
   pendingOthersImageConditions,
+  songReviewedSql,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
 } from '~/server/common/image-visibility';
 import {
@@ -6921,6 +6922,7 @@ export const getImagesForPosts = async ({
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
+    imageWhere.push(songReviewedSql());
   }
 
   if (disablePoi) {
@@ -8053,7 +8055,7 @@ export const getEntityCoverImage = async ({
         ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
-    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL
+    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND ${songReviewedSql()}
     -- An Article draws a row from its own branch (the cover) and one from CONNECTIONS (a
     -- content image). A UNION has no order of its own, so without this the lower image id
     -- came first and a content image could replace the cover. The connection is a fallback.

@@ -77,6 +77,12 @@ export const imageReviewedSql = (alias = 'i') => {
   )`;
 };
 
+/** `imageReviewedSql` for songs alone, for reads that gate images and videos by level only. */
+export const songReviewedSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(${t}."type" <> ${MediaType.audio}::"MediaType" OR ${imageReviewedSql(alias)})`;
+};
+
 /**
  * What a signed-in non-moderator's `pending` read requires of another user's image, over `Image`
  * aliased `i`: not awaiting moderator review, not `acceptableMinor`, and reviewed if rated. The
