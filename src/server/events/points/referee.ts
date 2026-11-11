@@ -30,6 +30,7 @@ import { sysRedis } from '~/server/redis/client';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
+import { freezeEventAwards } from '~/server/events/scoring/award-results';
 import { loadTeamAwards } from '~/server/events/scoring/team-awards';
 import type { TeamAward } from '~/server/events/base.event';
 
@@ -86,6 +87,8 @@ export type RefereeEvent = {
   teams: readonly string[];
   previewFrom?: Date;
   scoring: EventScoring;
+  // Finds an entrant's team when an award result is frozen.
+  join?: { claimKey: string; design: string };
 };
 
 export type RefereeRow = {
@@ -519,11 +522,14 @@ export async function runEventPointsReferee(
   if (window.cut <= window.start) return { season, rows: 0, changed: 0, final: false };
   await alertOnStaleCut(sysRedis, event, season, window.removeCut);
   const rows = await queryReferee(event, window, deadline);
+  // Before the snapshot: if an award source can't be read, the settle stops here and the last good
+  // base stands, rather than publishing totals that are missing awards.
+  await freezeEventAwards(event);
+  // A preview's cut never passes the start, so no award reaches its base.
+  const awards = await loadTeamAwards(event, window.cut);
   await writeDailySnapshot(event, window, rows);
   const final = await finalDayTotals(event, window);
   const totals = refereeTotals([...final, ...rows]);
-  // A preview's cut never passes the start, so no award reaches its base.
-  const awards = await loadTeamAwards(event, window.cut);
   for (const { team, points } of awards)
     totals.team.set(team, (totals.team.get(team) ?? 0) + points);
   const changed = await resetLiveBase(sysRedis, event, season, window, totals);

@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Push from '~/server/events/points/push';
@@ -55,6 +57,11 @@ const BLUE = 101;
 const TEAMLESS = 102;
 const BANNED = 103;
 const EXCLUDED = 104;
+
+const AWARD_RESULT_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20270103120000_event_award_result/migration.sql'
+);
 
 let db: PGlite;
 const hashes = new Map<string, Map<string, string>>();
@@ -124,6 +131,8 @@ beforeAll(async () => {
     INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey") VALUES
       (${BLUE}, 11, 'claimed'), (${BANNED}, 11, 'claimed'), (${EXCLUDED}, 11, 'claimed');
   `);
+  // The settle also reads the frozen award results.
+  await db.exec(readFileSync(AWARD_RESULT_MIGRATION, 'utf8'));
 });
 afterAll(async () => db.close());
 
