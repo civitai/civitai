@@ -234,6 +234,44 @@ describe('onboarding Profile step — email-verification stamp', () => {
     expect(mockSend).not.toHaveBeenCalled();
   });
 
+  it('accepts the step with no email when the account already has one', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ emailVerified: VERIFIED_AT }));
+
+    await completeOnboardingHandler({
+      input: { step: OnboardingSteps.Profile, username: 'ada' },
+      ctx: ctx(),
+    } as Parameters<typeof completeOnboardingHandler>[0]);
+
+    expect(writtenData()).not.toHaveProperty('email');
+    expect(writtenData()).not.toHaveProperty('emailVerified');
+  });
+
+  it('mails the stored unverified address when the step sends no email', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row());
+
+    await completeOnboardingHandler({
+      input: { step: OnboardingSteps.Profile, username: 'ada' },
+      ctx: ctx(),
+    } as Parameters<typeof completeOnboardingHandler>[0]);
+
+    expect(stampWrites()[0].values).toEqual([true, USER_ID]);
+    expect(mockSend.mock.calls[0][0]).toMatchObject({ to: PROVIDER_EMAIL });
+  });
+
+  it('requires an email when the account has none', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: null }));
+
+    await expect(
+      completeOnboardingHandler({
+        input: { step: OnboardingSteps.Profile, username: 'ada' },
+        ctx: ctx({ email: null }),
+      } as Parameters<typeof completeOnboardingHandler>[0])
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+    expect(stampWrites()).toHaveLength(0);
+  });
+
   it('leaves emailVerified alone when the address is unchanged', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ emailVerified: VERIFIED_AT }));
 

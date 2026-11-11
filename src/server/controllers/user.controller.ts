@@ -487,11 +487,12 @@ export const completeOnboardingHandler = async ({
           !!input.email && input.email.toLowerCase() !== current?.email?.toLowerCase();
         // This step only sets a first address. Replacing one goes through `requestEmailChange`, which
         // proves the new address before writing it.
+        if (!input.email && !current?.email) throw throwBadRequestError('Please provide an email');
         if (emailChanged && current?.email)
           throw throwBadRequestError(
             'Your account already has an email address. Use Change email in your account settings to change it.'
           );
-        if (emailChanged) await assertEmailAllowed(input.email);
+        if (emailChanged && input.email) await assertEmailAllowed(input.email);
 
         // `emailVerified` attests to ONE address. Carrying it across a change would leave the flag
         // vouching for an address nobody proved, and would hand the gate a free bypass: sign in with a
@@ -543,10 +544,11 @@ export const completeOnboardingHandler = async ({
         // its link is clicked — `confirmEmailChange` writes the address the TOKEN carries, not the one
         // the mail reached. Best-effort: the step is committed above, and a mail failure must not
         // report a step the user then re-submits.
-        if (changed && !verified && input.email)
+        const address = input.email ?? current?.email;
+        if (changed && !verified && address)
           await issueEmailVerification(
             id,
-            input.email,
+            address,
             input.username ?? current?.username ?? null
           ).catch(handleLogError);
         break;
