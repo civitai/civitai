@@ -28,7 +28,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
-import { OWNER_ID, VERSION_ID, versionRow } from './mini-epoch-fixtures';
+import { EPOCH_URL, OWNER_ID, TRAINING_FILE, VERSION_ID, versionRow } from './mini-epoch-fixtures';
 
 const SERVICE_ID = -1;
 const service = { id: SERVICE_ID, isModerator: true };
@@ -60,8 +60,10 @@ function versionQuery(row: Record<string, unknown>) {
   return async (_strings: TemplateStringsArray, ...values: unknown[]) => {
     const where = values.find((v) => isSql(v) && v.sql.includes('mv.id'));
     if (!isSql(where)) throw new Error('version query without its WHERE');
-    const visibility = where.sql.includes(`mv.status = 'Published'`);
-    if (!visibility) return [row];
+    if (!where.sql.includes(`mv.status = 'Published'`)) return [row];
+    // The clause must compare the model's owner column; anything else is not the rule faked here.
+    if (!/\(mv\.status = 'Published' OR m\."userId" = (\?|\$\d+)\)/.test(where.sql))
+      throw new Error(`unexpected visibility clause: ${where.sql}`);
     const callerId = where.values[1];
     return row.status === 'Published' || row.modelUserId === callerId ? [row] : [];
   };
@@ -148,6 +150,14 @@ describe('mini/[id] for a service account', () => {
       expect.anything(),
       expect.objectContaining({ user: { id: SERVICE_ID, isModerator: false } })
     );
+  });
+
+  it("does not get a deleted model's epoch url; a moderator does", async () => {
+    const deleted = { ...versionRow, modelStatus: 'Deleted' };
+    expect((await request(service, deleted, TRAINING_FILE)).body.downloadUrls).toEqual([]);
+    expect((await request(humanModerator, deleted, TRAINING_FILE)).body.downloadUrls).toEqual([
+      EPOCH_URL,
+    ]);
   });
 
   it('is served a Published public version as before', async () => {

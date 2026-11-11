@@ -450,11 +450,16 @@ export const serverSchema = z
       .transform((ids) => ids.filter((id) => id !== 0)),
     PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
     // Service accounts that look versions up on /api/v1/model-versions/mini. Their lookups are answered
-    // as for any signed-in non-moderator. A malformed list reads as unset.
-    ORCHESTRATOR_MINI_USER_IDS: commaDelimitedNumberArray()
-      .default([])
-      .catch([])
-      .transform((ids) => ids.filter((id) => id !== 0)),
+    // as for any signed-in non-moderator. An entry that is not an integer is dropped on its own.
+    ORCHESTRATOR_MINI_USER_IDS: z
+      .string()
+      .optional()
+      .transform((value) =>
+        (value ?? '')
+          .split(',')
+          .map((entry) => Number(entry.trim()))
+          .filter((id) => Number.isInteger(id) && id !== 0)
+      ),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may
