@@ -5,6 +5,7 @@ import { dbKV } from '~/server/db/db-helpers';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { usageLimits } from '~/shared/constants/usage-limits';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   studioAutoLabelPollSchema,
   studioAutoLabelSubmitSchema,
@@ -162,7 +163,13 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
     .use(rateLimit(usageLimits('auto-label.upload')))
-    .mutation(({ input, ctx }) => getAutoLabelUploadUrl({ ...input, userId: ctx.user.id, ctx })),
+    .mutation(({ input, ctx }) =>
+      getAutoLabelUploadUrl({
+        ...input,
+        userId: ctx.user.id,
+        getUserToken: () => getOrchestratorToken(ctx.user.id, ctx),
+      })
+    ),
   submitAutoLabelWorkflow: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(submitAutoLabelWorkflowSchema)

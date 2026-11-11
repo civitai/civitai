@@ -14,8 +14,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   internalClient: { kind: 'internal' },
   presign: vi.fn(),
-  getOrchestratorToken: vi.fn(async (userId: number) => `orchestrator-token-of-${userId}`),
+  getUserToken: vi.fn(async () => USER_TOKEN),
 }));
+const USER_TOKEN = 'orchestrator-token-of-the-requesting-user';
 
 vi.mock('@civitai/orchestration-client', () => ({
   getConsumerBlobUploadUrl: h.presign,
@@ -26,9 +27,6 @@ vi.mock('@civitai/orchestration-client', () => ({
 vi.mock('~/server/services/orchestrator/client', () => ({
   internalOrchestratorClient: h.internalClient,
   createOrchestratorClient: vi.fn((token: string) => ({ kind: 'user', token })),
-}));
-vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
-  getOrchestratorToken: h.getOrchestratorToken,
 }));
 // `default` is required for the pre-bundled CJS interop; its absence shows up as a
 // near-empty collect rather than a failure.
@@ -61,7 +59,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const MODEL_ID = 991;
 const USER_ID = 42;
 const OTHER_USER_ID = 7;
-const ctx = { req: { headers: {} }, res: {} } as never;
 
 const ownModel = (userId: number) =>
   dbMock.dbRead.model.findUnique.mockResolvedValue({
@@ -72,9 +69,11 @@ const ownModel = (userId: number) =>
   } as never);
 
 const request = () =>
-  getAutoLabelUploadUrl({ modelId: MODEL_ID, userId: USER_ID, ctx } as Parameters<
-    typeof getAutoLabelUploadUrl
-  >[0]);
+  getAutoLabelUploadUrl({
+    modelId: MODEL_ID,
+    userId: USER_ID,
+    getUserToken: h.getUserToken,
+  } as Parameters<typeof getAutoLabelUploadUrl>[0]);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -94,11 +93,11 @@ describe('getAutoLabelUploadUrl', () => {
       expiresAt: '2026-01-01T00:00:00Z',
     });
 
-    expect(h.getOrchestratorToken).toHaveBeenCalledWith(USER_ID, ctx);
+    expect(h.getUserToken).toHaveBeenCalledTimes(1);
     expect(h.presign).toHaveBeenCalledTimes(1);
     const [{ client }] = h.presign.mock.calls[0] as [{ client: unknown }];
     expect(client).not.toBe(h.internalClient);
-    expect(client).toEqual({ kind: 'user', token: `orchestrator-token-of-${USER_ID}` });
+    expect(client).toEqual({ kind: 'user', token: USER_TOKEN });
   });
 
   // Invariant guard (holds before and after the change): no token is minted for, and no presign
@@ -107,7 +106,7 @@ describe('getAutoLabelUploadUrl', () => {
     ownModel(OTHER_USER_ID);
 
     await expect(request()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(h.getOrchestratorToken).not.toHaveBeenCalled();
+    expect(h.getUserToken).not.toHaveBeenCalled();
     expect(h.presign).not.toHaveBeenCalled();
   });
 });

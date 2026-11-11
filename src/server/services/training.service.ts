@@ -31,7 +31,6 @@ import type {
   TrainingServiceStatus,
 } from '~/server/schema/training.schema';
 import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
-import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
@@ -796,17 +795,20 @@ export function toOrchestratorError(error: unknown): never {
   }
 }
 
-/** The upload is the user's own media, so the URL is minted with their orchestrator token. */
+/**
+ * The upload is the user's own media, so the URL is minted with their orchestrator token.
+ * `getUserToken` resolves the requesting user's token; it runs only once ownership is checked.
+ */
 export async function getAutoLabelUploadUrl({
   userId,
   modelId,
-  ctx,
+  getUserToken,
 }: GetAutoLabelUploadUrlInput & {
   userId: number;
-  ctx: NonNullable<Parameters<typeof getOrchestratorToken>[1]>;
+  getUserToken: () => Promise<string>;
 }) {
   await assertModelOwnership(modelId, userId);
-  const token = await getOrchestratorToken(userId, ctx);
+  const token = await getUserToken();
   const { uploadUrl, expiresAt } = await getConsumerBlobUploadUrlService({ token });
   return { uploadUrl, expiresAt };
 }

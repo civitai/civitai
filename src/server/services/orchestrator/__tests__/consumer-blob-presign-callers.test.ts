@@ -19,7 +19,7 @@ const SDK_CALLS: Record<string, string[]> = {
 const SERVICE_CALLS: Record<string, string[]> = {
   // OrchestratorEndpoint hands the handler the caller's own token.
   'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts': ['token'],
-  // The training wizard's auto-label upload: getOrchestratorToken(userId, ctx).
+  // The training wizard's auto-label upload: the router's getOrchestratorToken(ctx.user.id, ctx).
   'src/server/services/training.service.ts': ['token'],
 };
 
