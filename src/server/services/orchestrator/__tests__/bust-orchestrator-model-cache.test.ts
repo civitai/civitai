@@ -13,6 +13,7 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import {
   bustOrchestratorModelCache,
   bustOrchestratorScannedFileCache,
+  invalidateOrchestratorVersionsOrThrow,
 } from '~/server/services/orchestrator/models';
 import { modelVersionAirSelect } from '~/server/utils/resource-air';
 
@@ -126,5 +127,33 @@ describe('bustOrchestratorScannedFileCache', () => {
       expect.stringMatching(/:checkpoint:civitai:2438778@2990235\+2869903$/),
     ]);
     expect(new URL(fetchMock.mock.calls[0][0] as string).searchParams.get('etag')).toBe('0/ABC');
+  });
+});
+
+describe('invalidateOrchestratorVersionsOrThrow', () => {
+  it('throws when an invalidation fails, where the swallowing bust only logs', async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([diffusionModelCheckpoint]);
+    fetchMock.mockResolvedValue({ ok: false, status: 503, statusText: 'Unavailable' });
+
+    await expect(invalidateOrchestratorVersionsOrThrow([2990235])).rejects.toThrow('503');
+    await expect(bustOrchestratorModelCache(2990235)).resolves.toBeUndefined();
+  });
+
+  it('throws when the orchestrator is not configured, rather than busting nothing', async () => {
+    setEnv({ ORCHESTRATOR_ENDPOINT: '', ORCHESTRATOR_ACCESS_TOKEN: '' });
+
+    await expect(invalidateOrchestratorVersionsOrThrow([2990235])).rejects.toThrow(
+      'not configured'
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('invalidates every AIR of the versions and returns how many', async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([diffusionModelCheckpoint]);
+
+    const count = await invalidateOrchestratorVersionsOrThrow([2990235]);
+
+    expect(count).toBe(invalidatedAirs().length);
+    expect(count).toBeGreaterThan(0);
   });
 });
