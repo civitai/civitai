@@ -16,6 +16,7 @@ import {
   UNAVAILABLE_IMAGE_REJECTION,
   recordFailedAttempt,
   resolveAutomatedRejectionReason,
+  HELD_MINOR_ESCALATION,
   reviewCollection,
 } from '~/server/jobs/collection-ai-review';
 
@@ -24,7 +25,9 @@ const {
   updateCollectionItemsStatus,
   queueImageSearchIndexUpdate,
   bustCachesForPosts,
+  trackReview,
 } = vi.hoisted(() => ({
+  trackReview: vi.fn(),
   reviewImage: vi.fn(),
   updateCollectionItemsStatus: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
@@ -54,7 +57,7 @@ vi.mock('~/server/services/collection.service', async (importOriginal) => ({
 vi.mock('~/server/clickhouse/tracker', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackerModule>()),
   Tracker: class {
-    collectionAiReview = vi.fn();
+    collectionAiReview = trackReview;
   },
 }));
 
@@ -83,6 +86,8 @@ function pendingItem(overrides: Record<string, unknown> = {}) {
     nsfwLevel: 1,
     ingestion: 'Scanned',
     prompt: null,
+    minor: false,
+    acceptableMinor: false,
     ...overrides,
   };
 }
@@ -118,6 +123,7 @@ function queuePending(
 
 beforeEach(() => {
   reviewImage.mockReset();
+  trackReview.mockReset();
   updateCollectionItemsStatus.mockReset();
   queueImageSearchIndexUpdate.mockReset().mockResolvedValue(undefined);
   bustCachesForPosts.mockReset().mockResolvedValue(undefined);
@@ -614,5 +620,76 @@ describe('reviewCollection: a rating label the rules do not recognise', () => {
     await reviewCollection(COLLECTION_ID, config);
 
     expect(statusWrites()).toEqual(['REJECTED']);
+  });
+});
+
+describe('reviewCollection: an image the scanner flagged as a minor', () => {
+  const held = { minor: true, acceptableMinor: false };
+
+  it('is never accepted on an approve: it goes to the minor queue for a human', async () => {
+    queuePending([pendingItem(held)]);
+    modelSees({});
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual([]);
+    expect(claimCalls()).toHaveLength(1);
+    expect(minorFlagCalls()).toHaveLength(1);
+    expect(trackReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'escalate',
+        appliedAction: 'stamp',
+        escalations: [HELD_MINOR_ESCALATION],
+        applied: true,
+      })
+    );
+  });
+
+  it('is held for a human even when escalations are configured to stamp', async () => {
+    queuePending([pendingItem(held)]);
+    modelSees({});
+
+    await reviewCollection(COLLECTION_ID, { ...config, escalationAction: 'stamp' });
+
+    expect(statusWrites()).toEqual([]);
+    expect(minorFlagCalls()).toHaveLength(1);
+  });
+
+  it('is logged as an escalation and touches nothing in a dry run', async () => {
+    queuePending([pendingItem(held)]);
+    modelSees({});
+
+    await reviewCollection(COLLECTION_ID, { ...config, dryRun: true });
+
+    expect(statusWrites()).toEqual([]);
+    expect(minorFlagCalls()).toHaveLength(0);
+    expect(trackReview).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'escalate', appliedAction: 'none' })
+    );
+  });
+
+  it('is still rejected for a real violation', async () => {
+    queuePending([pendingItem(held)]);
+    modelSees({ depictsRealPerson: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual(['REJECTED']);
+  });
+
+  it.each([
+    ['not flagged', { minor: false, acceptableMinor: false }],
+    ['flagged but marked acceptable', { minor: true, acceptableMinor: true }],
+  ])('is accepted as before when %s', async (_label, flags) => {
+    queuePending([pendingItem(flags)]);
+    modelSees({});
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual(['ACCEPTED']);
+    expect(minorFlagCalls()).toHaveLength(0);
+    expect(trackReview).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'approve', appliedAction: 'accept', escalations: [] })
+    );
   });
 });

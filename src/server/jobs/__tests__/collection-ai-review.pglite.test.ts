@@ -80,6 +80,8 @@ beforeAll(async () => {
       meta jsonb,
       "needsReview" text,
       "postId" int,
+      minor boolean NOT NULL DEFAULT false,
+      "acceptableMinor" boolean NOT NULL DEFAULT false,
       "updatedAt" timestamp(3)
     );
     CREATE TABLE "CollectionItem" (
@@ -184,5 +186,45 @@ describe('reviewCollection: an image re-rated before its outcome is written', ()
 
     expect(await claimedIds()).toEqual([1]);
     expect(statusWrites()).toEqual([{ status: 'REJECTED', ids: [1] }]);
+  });
+});
+
+describe('reviewCollection: an image flagged as a minor before its outcome is written', () => {
+  it('leaves the accept unclaimed, and accepts the rest', async () => {
+    await seed([
+      { id: 1, nsfwLevel: PG },
+      { id: 2, nsfwLevel: PG },
+      { id: 3, nsfwLevel: PG },
+    ]);
+    reviewImage.mockImplementation(async () => {
+      if (reviewImage.mock.calls.length === 1) {
+        await db.query(`UPDATE "Image" SET minor = true WHERE id = 1`);
+        await db.query(`UPDATE "Image" SET minor = true, "acceptableMinor" = true WHERE id = 3`);
+      }
+      return { observations: clean, usage: { promptTokens: 1, completionTokens: 1 } };
+    });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(await claimedIds()).toEqual([2, 3]);
+    expect(statusWrites()).toEqual([{ status: 'ACCEPTED', ids: [2, 3] }]);
+  });
+
+  it('holds it for a human on the next run', async () => {
+    await seed([{ id: 1, nsfwLevel: PG }]);
+    await db.query(`UPDATE "Image" SET minor = true WHERE id = 1`);
+    reviewImage.mockResolvedValue({
+      observations: clean,
+      usage: { promptTokens: 1, completionTokens: 1 },
+    });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(await claimedIds()).toEqual([1]);
+    expect(statusWrites()).toEqual([]);
+    const image = await db.query<{ needsReview: string | null }>(
+      `SELECT "needsReview" FROM "Image" WHERE id = 1`
+    );
+    expect(image.rows[0].needsReview).toBe('minor');
   });
 });

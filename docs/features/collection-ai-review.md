@@ -141,6 +141,11 @@ collection. Lifting that restriction means fixing the notification path first.
   submissions and tell the submitters they broke a rule. An unrecognized label alongside a real
   violation, or alongside any other escalation, is handled as that finding would be; the label
   alone never rejects.
+- **An image the scanner flagged `minor` (and not `acceptableMinor`) is never accepted by the job.**
+  An approve on one is logged as `decision = 'escalate'` with the escalation
+  `scanner-flagged minor`, left for a human regardless of `escalationAction`, and routed to the
+  image minor queue. The accept claim re-checks the flag, so an image flagged mid-run is held on
+  the next run instead. Findings that reject are handled as for any other image.
 - **`minorUncertain` alone does not escalate.** The prompt invites that hedge on exactly the
   stylized art these collections are made of, so on its own it would sweep up a large share of
   ordinary submissions. It escalates alongside a sexualized presentation, or when the image is
