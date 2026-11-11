@@ -559,8 +559,7 @@ describe('hunyuan.handler', () => {
 });
 
 describe('hi-dream-o1.handler', () => {
-  // The orchestrator refuses any side past 2048 ("The field Width must be between 64 and
-  // 2048"); 2K once sent 2816 × 1536 and failed every ratio but 1:1.
+  // The orchestrator refuses any side past 2048.
   it('every preset, at every resolution, keeps each side within 64-2048 on a /64 grid', () => {
     const presets = Object.entries(hiDreamO1AspectRatiosByResolution).flatMap(([res, options]) =>
       options.map((o) => ({ res, ...o }))
@@ -597,7 +596,7 @@ describe('hi-dream-o1.handler', () => {
     expect(firstInput(steps)).toMatchObject({ width: 1408, height: 768 });
   });
 
-  // Edit at 1K came back garbled; a stale client still sending 1K is clamped, not refused.
+  // A stale client still sending 1K is clamped to 2K, not refused.
   it('edit never submits 1K', async () => {
     const steps = await dispatch({
       workflow: 'img2img:edit',

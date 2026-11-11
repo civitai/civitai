@@ -12,7 +12,7 @@ import { familyResources, familyScope, makeTextBlock, modelIdOf, type FamilyExt 
 
 /**
  * HiDream-O1 (full + dev). Both variants
- * carry LoRAs, a 1K/2K resolution tier, and a negative prompt; dev is the
+ * carry LoRAs, a 1K/2K resolution tier (edit is 2K only), and a negative prompt; dev is the
  * distilled build (cfg 1). No snippets key at all, even with the wildcards flag on.
  */
 
@@ -41,10 +41,7 @@ const hiDreamO1ResolutionOptions = [
 /** Edit output at 1K comes back garbled; 2K is clean. */
 const hiDreamO1EditResolutionOptions = [{ label: '2K', value: '2K' }] as const;
 
-/**
- * 2K long sides stop at 2048: the orchestrator refuses any side above it ("The field
- * Width must be between 64 and 2048"), so a 2816 × 1536 16:9 failed every 2K ratio but 1:1.
- */
+/** Every side must stay within 64-2048: the orchestrator refuses more ("The field Width must be between 64 and 2048"). */
 export const hiDreamO1AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
   '1K': [
     { label: '16:9', value: '16:9', width: 1408, height: 768 },
