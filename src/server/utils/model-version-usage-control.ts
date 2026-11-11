@@ -3,9 +3,9 @@ import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 export const GENERATION_ONLY_FEATURE_KEY = 'generationOnlyModels';
 
 /**
- * Which branch of the `generationOnlyModels` gate let a non-Download usage control through.
- * `tier` is the branch that resolves off the SESSION's tier value, so it is the only outcome
- * whose correctness depends on how fresh that session is.
+ * The label the `generationOnlyModels` gate's log line carries for a non-Download usage control. The flag
+ * admits every signed-in user, so `moderator` and `granted` only describe the caller, and `tier` is any
+ * other user; `denied` means an env override switched the flag off. Values kept for existing log queries.
  */
 export type GenerationOnlyGateOutcome = 'moderator' | 'granted' | 'tier' | 'denied';
 

@@ -412,3 +412,29 @@ describe('bounty images on a capped site', () => {
     expect(ids(entry.images)).toEqual([30, 31]);
   });
 });
+
+describe('entry detail image count', () => {
+  const OWNER = 5;
+  const twelve = Array.from({ length: 12 }, (_, i) => ({ id: 100 + i, entityId: 3, nsfwLevel: 1 }));
+  const entryImageCount = async (ctx: object) => {
+    const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: ctx as never });
+    return entry.images.length;
+  };
+
+  beforeEach(() => {
+    mockAssert.mockResolvedValue(undefined);
+    mockImagesByEntity.mockImplementation((async ({ imagesPerId = 4 }: { imagesPerId?: number }) =>
+      twelve.slice(0, imagesPerId)) as never);
+  });
+
+  it.each([
+    ['owner', { user: { id: OWNER }, ...uncapped }],
+    ['moderator', { user: { id: 7, isModerator: true }, ...uncapped }],
+  ])('gives the %s every image so an edit keeps them', async (_who, ctx) => {
+    expect(await entryImageCount(ctx)).toBe(12);
+  });
+
+  it('still gives other viewers 10', async () => {
+    expect(await entryImageCount(stranger as object)).toBe(10);
+  });
+});
