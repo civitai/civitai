@@ -549,6 +549,7 @@ export async function resolveScanOutcome({
   workflowId,
   prompt,
   negativePrompt,
+  fixed,
   log = LEGACY_SCAN_LOG,
 }: {
   image: ScanImage;
@@ -557,6 +558,12 @@ export async function resolveScanOutcome({
   workflowId: string;
   prompt?: string;
   negativePrompt?: string;
+  /**
+   * For media with nothing to audit (a song has no tags): the level to store, and the reason when the
+   * scan blocked it, and the metadata to store with the verdict. Replaces the tag audit; every guard
+   * below still runs.
+   */
+  fixed?: { nsfwLevel: number; blockedFor?: string; metadata?: Record<string, unknown> };
   log?: ScanLog;
 }): Promise<ScanOutcome> {
   const updatedAt = new Date();
@@ -579,12 +586,14 @@ export async function resolveScanOutcome({
     };
   }
 
-  const audit = await auditScanResults({
-    imageId: image.id,
-    userId: image.userId,
-    prompt,
-    negativePrompt,
-  });
+  const audit = fixed
+    ? fixedAudit(fixed)
+    : await auditScanResults({
+        imageId: image.id,
+        userId: image.userId,
+        prompt,
+        negativePrompt,
+      });
   let reviewKey = audit.reviewKey ?? null;
 
   const toUpdate: Prisma.ImageUpdateInput = { updatedAt, pHash };
@@ -619,7 +628,7 @@ export async function resolveScanOutcome({
   // metadata with the matched rule. Applied after the scan audit so a Block/Hold
   // takes precedence over the audit's own decision.
   const modRule = await evaluateImageModRules(image, audit.tags);
-  let metadataUpdate: Record<string, any> | undefined;
+  let metadataUpdate: Record<string, any> | undefined = fixed?.metadata;
   if (modRule) {
     metadataUpdate = modRule.metadata;
     if (modRule.ingestion) toUpdate.ingestion = modRule.ingestion;
@@ -750,6 +759,32 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
         source,
       })),
   ];
+}
+
+/** The audit of media that has nothing to audit: no tags, no review, the level it was given. */
+function fixedAudit({
+  nsfwLevel,
+  blockedFor,
+}: {
+  nsfwLevel: number;
+  blockedFor?: string;
+}): Awaited<ReturnType<typeof auditScanResults>> {
+  return {
+    tags: [],
+    nsfwLevel,
+    nsfw: false,
+    minorTags: [],
+    poiTags: [],
+    reviewTags: [],
+    tagReview: false,
+    poiReview: false,
+    minorReview: false,
+    newUserReview: false,
+    minor: false,
+    poi: false,
+    reviewKey: undefined,
+    blockedFor,
+  };
 }
 
 async function auditScanResults(args: {

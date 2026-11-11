@@ -50,14 +50,36 @@ describe('createImage — audio', () => {
 });
 
 describe('ingestImage — audio', () => {
-  it('does not submit a song to the video frame-extraction scan, and leaves its row untouched', async () => {
-    const sent = await ingestImage({
-      image: { id: 4242, url: KEY, type: 'audio' as never, width: null, height: null },
+  const song = { id: 4242, url: KEY, type: 'audio' as never, width: null, height: null };
+
+  it('submits the song for its scan and stamps the row like any other scan', async () => {
+    mockCreateImageIngestionRequest.mockResolvedValue({
+      data: { id: 'wf-song' },
+      useImageScanning: false,
     });
 
+    const sent = await ingestImage({ image: song });
+
+    expect(sent).toBe(true);
+    expect(mockCreateImageIngestionRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ imageId: 4242, type: 'audio' })
+    );
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a song the orchestrator did not take as unsent and records the failure for the retry', async () => {
+    mockCreateImageIngestionRequest.mockResolvedValue({
+      data: undefined,
+      status: 503,
+      useImageScanning: false,
+    });
+
+    const sent = await ingestImage({ image: song });
+
     expect(sent).toBe(false);
-    expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    // The failure is recorded for the cron's retry, not written as a scan request.
+    const [, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0] as unknown[];
+    expect(values.some((v) => typeof v === 'string' && v.includes('send-fail'))).toBe(true);
   });
 });
 

@@ -1,5 +1,9 @@
 import { getWorkflow } from '@civitai/orchestration-client';
-import type { Priority, WorkflowStepTemplate } from '@civitai/orchestration-client';
+import type {
+  Priority,
+  WorkflowStepTemplate,
+  WorkflowTemplate,
+} from '@civitai/orchestration-client';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
@@ -7,6 +11,8 @@ import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { audioMetadataSchema } from '~/server/schema/media.schema';
+import { buildSongScanSteps } from '~/server/services/audio-scan/song-scan';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 
@@ -18,6 +24,57 @@ export const AUDIO_SCAN_RESULT_VERSION = 1;
 
 export function audioScanCallbackUrl() {
   return `${env.NEXTAUTH_URL}/api/webhooks/audio-scan-result?token=${env.WEBHOOK_TOKEN}`;
+}
+
+/**
+ * Submits one audio scan workflow and records it as the image's pending scan. A re-ingested image
+ * starts over: the older workflow's callback no longer matches.
+ */
+async function submitAudioScanWorkflow({
+  imageId,
+  steps,
+  metadata,
+}: {
+  imageId: number;
+  steps: WorkflowStepTemplate[];
+  metadata: Record<string, unknown>;
+}) {
+  const body: WorkflowTemplate = {
+    externalId: randomUUID(),
+    metadata,
+    currencies: [],
+    steps,
+    callbacks: [
+      {
+        url: audioScanCallbackUrl(),
+        type: ['workflow:succeeded', 'workflow:failed', 'workflow:expired', 'workflow:canceled'],
+      },
+    ],
+  };
+  const submitted = await submitWorkflowWithRetry(
+    { client: internalOrchestratorClient, body },
+    { perAttemptTimeoutMs: SUBMIT_ATTEMPT_TIMEOUT_MS }
+  );
+  const result = { ...submitted, body };
+  const { data } = result;
+  if (!data?.id) return result;
+
+  const pending = {
+    workflowId: data.id,
+    status: 'Pending',
+    flagged: null,
+    hasAudio: null,
+    resultVersion: null,
+    error: null,
+    createdAt: new Date(),
+    completedAt: null,
+  };
+  await dbWrite.imageAudioScan.upsert({
+    where: { imageId },
+    create: { imageId, ...pending },
+    update: { ...pending, result: Prisma.DbNull },
+  });
+  return result;
 }
 
 /**
@@ -37,56 +94,21 @@ export async function submitVideoAudioScan({
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.VIDEO_AUDIO_SCAN, String(imageId)))) return;
 
     const metadata = { imageId, scan: 'audio' };
-    const { data, response } = await submitWorkflowWithRetry(
-      {
-        client: internalOrchestratorClient,
-        body: {
-          externalId: randomUUID(),
+    const { data, response } = await submitAudioScanWorkflow({
+      imageId,
+      metadata,
+      steps: [
+        {
+          $type: 'audioModeration',
+          name: 'audio',
           metadata,
-          currencies: [],
-          steps: [
-            {
-              $type: 'audioModeration',
-              name: 'audio',
-              metadata,
-              priority,
-              input: { mediaUrl, transcriber: 'auto' },
-            } as unknown as WorkflowStepTemplate,
-          ],
-          callbacks: [
-            {
-              url: audioScanCallbackUrl(),
-              type: [
-                'workflow:succeeded',
-                'workflow:failed',
-                'workflow:expired',
-                'workflow:canceled',
-              ],
-            },
-          ],
-        },
-      },
-      { perAttemptTimeoutMs: SUBMIT_ATTEMPT_TIMEOUT_MS }
-    );
+          priority,
+          input: { mediaUrl, transcriber: 'auto' },
+        } as unknown as WorkflowStepTemplate,
+      ],
+    });
     if (!data?.id)
       throw new Error(`audio scan submit failed (${response?.status ?? 'no response'})`);
-
-    // A re-ingested video starts over: the older workflow's callback no longer matches.
-    const pending = {
-      workflowId: data.id,
-      status: 'Pending',
-      flagged: null,
-      hasAudio: null,
-      resultVersion: null,
-      error: null,
-      createdAt: new Date(),
-      completedAt: null,
-    };
-    await dbWrite.imageAudioScan.upsert({
-      where: { imageId },
-      create: { imageId, ...pending },
-      update: { ...pending, result: Prisma.DbNull },
-    });
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -96,6 +118,40 @@ export async function submitVideoAudioScan({
       error: safeError(error),
     }).catch(() => null);
   }
+}
+
+/**
+ * Submits the scan that decides a song's ingestion. Unlike the video scan this is not behind a flag
+ * and does not swallow failure: the caller owns what an unsubmitted song becomes, so it gets the
+ * submit result as it would from the image scan.
+ */
+export async function submitSongScan({
+  imageId,
+  mediaUrl,
+  priority,
+}: {
+  imageId: number;
+  mediaUrl: string;
+  priority?: Priority;
+}) {
+  const image = await dbWrite.image.findUnique({
+    where: { id: imageId },
+    select: { metadata: true },
+  });
+  const lyrics = audioMetadataSchema.shape.lyrics.safeParse(
+    (image?.metadata as { lyrics?: unknown } | null)?.lyrics
+  );
+  const metadata = { imageId, scan: 'song' };
+  return submitAudioScanWorkflow({
+    imageId,
+    metadata,
+    steps: buildSongScanSteps({
+      mediaUrl,
+      lyrics: lyrics.success ? lyrics.data : undefined,
+      metadata,
+      priority,
+    }),
+  });
 }
 
 const scannedAudio = z
@@ -138,11 +194,16 @@ export type AudioScanParse =
       hasAudio: boolean;
       result: z.infer<typeof audioScanOutputV1>;
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; failureType?: string };
 
+const MODERATION_STEP_TYPES = ['audioModeration', 'audioTextModeration'];
+
+/** The verdict of a video's `audioModeration` step or of a song's `audioTextModeration` step: one output shape. */
 export function parseAudioScanSteps(steps: unknown[]): AudioScanParse {
-  const output = (steps as RawStep[]).find((step) => step.$type === 'audioModeration')?.output;
-  if (!output) return { ok: false, error: 'missing audioModeration output' };
+  const output = (steps as RawStep[]).find(
+    (step) => step.$type && MODERATION_STEP_TYPES.includes(step.$type)
+  )?.output;
+  if (!output) return { ok: false, error: 'missing audio moderation output' };
 
   const parsed = audioScanOutputV1.safeParse(output);
   if (!parsed.success)
@@ -155,12 +216,24 @@ export function parseAudioScanSteps(steps: unknown[]): AudioScanParse {
   return { ok: true, flagged: result.sexualizedMinors, hasAudio: true, result };
 }
 
+export type SongScanResult = {
+  imageId: number;
+  workflowId: string;
+  steps: unknown[];
+  parsed: AudioScanParse;
+};
+
 /**
  * Stores the result for an audio scan callback. The posted workflowId must match a pending row before
  * anything is fetched, so the route cannot be used to make us read arbitrary workflows; the verdict is
  * then read from the orchestrator, never from the posted body.
+ *
+ * A video's verdict stays on the scan row. A song's is handed back as `song`, once, for its ingestion
+ * to be decided.
  */
-export async function processAudioScanCallback(workflowId: unknown) {
+export async function processAudioScanCallback(
+  workflowId: unknown
+): Promise<{ stored: boolean; reason: string; song?: SongScanResult }> {
   if (typeof workflowId !== 'string' || !workflowId)
     return { stored: false, reason: 'no-workflow' };
 
@@ -180,10 +253,30 @@ export async function processAudioScanCallback(workflowId: unknown) {
   // The callback can land before the read-back settles; throwing has the orchestrator retry.
   if (!data.status || !TERMINAL_STATUSES.has(data.status))
     throw new Error(`workflow ${workflowId} not finished: ${data.status ?? 'unknown'}`);
-  if (data.status !== 'succeeded')
-    return finish(workflowId, { ok: false, error: `workflow ${data.status}` });
 
-  return finish(workflowId, parseAudioScanSteps(data.steps ?? []));
+  const steps = data.steps ?? [];
+  const parsed: AudioScanParse =
+    data.status === 'succeeded'
+      ? parseAudioScanSteps(steps)
+      : {
+          ok: false,
+          error: `workflow ${data.status}`,
+          failureType:
+            data.status === 'expired'
+              ? 'expired'
+              : data.status === 'canceled'
+              ? 'canceled'
+              : 'workflow-failed',
+        };
+  const result = await finish(workflowId, parsed);
+
+  if (!result.stored) return result;
+  const image = await dbWrite.image.findUnique({
+    where: { id: row.imageId },
+    select: { type: true },
+  });
+  if (image?.type !== 'audio') return result;
+  return { ...result, song: { imageId: row.imageId, workflowId, steps, parsed } };
 }
 
 async function finish(workflowId: string, parsed: AudioScanParse) {

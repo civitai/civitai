@@ -1780,10 +1780,6 @@ export const ingestImage = async ({
 
   const { url, id, type } = parsedImage.data;
 
-  // No audio scan exists yet, and the frame-extraction path below would run on a song. The row stays
-  // Pending with no scan requested, which no feed reads as visible.
-  if (type === MediaType.audio) return false;
-
   if (!isAllowedImageScanUrl(url)) {
     // Same guard createImageIngestionRequest applies (which would throw here); checking
     // first routes the rejection through the submit-failure machinery — status 400

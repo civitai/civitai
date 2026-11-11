@@ -26,6 +26,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   parseAudioScanSteps,
   processAudioScanCallback,
+  submitSongScan,
   submitVideoAudioScan,
 } from '~/server/services/video-audio-scan.service';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
@@ -247,6 +248,138 @@ describe('createImageIngestionRequest with the audio scan on', () => {
     await createImageIngestionRequest({ ...request, ...overrides });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(mockSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+const songStep = (output: unknown) => ({ $type: 'audioTextModeration', name: 'audio', output });
+
+describe('parseAudioScanSteps for a song', () => {
+  it('reads the verdict of the text moderation step', () => {
+    expect(parseAudioScanSteps([songStep(scanned(true))])).toMatchObject({
+      ok: true,
+      flagged: true,
+    });
+  });
+});
+
+describe('submitSongScan', () => {
+  const input = { imageId: 9, mediaUrl: 'https://image.test/s.mp3' };
+
+  beforeEach(() => {
+    mockIsFlipt.mockReset().mockResolvedValue(false);
+    mockSubmit.mockReset().mockResolvedValue({ data: { id: 'wf-song' }, attempts: 1 });
+    dbMock.dbWrite.imageAudioScan.upsert.mockReset().mockResolvedValue({});
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({
+      metadata: { duration: 10, lyrics: [{ t: null, text: 'la la' }] },
+    } as never);
+  });
+
+  it('scans the song with its stored lyrics even though the video flag is off', async () => {
+    await submitSongScan(input);
+
+    const { body } = mockSubmit.mock.calls[0][0];
+    expect(body.steps.map((s: { $type: string }) => s.$type)).toEqual([
+      'transcription',
+      'audioTextModeration',
+    ]);
+    expect(body.steps[1].input.lyrics).toBe('la la');
+    expect(body.metadata).toMatchObject({ imageId: 9 });
+    expect(new URL(body.callbacks[0].url).pathname).toBe('/api/webhooks/audio-scan-result');
+    expect(mockIsFlipt).not.toHaveBeenCalled();
+  });
+
+  it('stores a pending row for the callback to settle', async () => {
+    await submitSongScan(input);
+
+    expect(dbMock.dbWrite.imageAudioScan.upsert.mock.calls[0][0].create).toMatchObject({
+      imageId: 9,
+      workflowId: 'wf-song',
+      status: 'Pending',
+    });
+  });
+
+  it('hands back the submit result and stores nothing when the orchestrator did not accept it', async () => {
+    mockSubmit.mockResolvedValue({ data: undefined, attempts: 3, response: { status: 503 } });
+
+    const result = await submitSongScan(input);
+
+    expect(result.data).toBeUndefined();
+    expect(result.response?.status).toBe(503);
+    expect(dbMock.dbWrite.imageAudioScan.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('processAudioScanCallback by media type', () => {
+  beforeEach(() => {
+    mockGetWorkflow.mockReset();
+    dbMock.dbWrite.imageAudioScan.findFirst.mockReset().mockResolvedValue({ imageId: 7 });
+    dbMock.dbWrite.imageAudioScan.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    mockGetWorkflow.mockResolvedValue({
+      data: { status: 'succeeded', metadata: { imageId: 7 }, steps: [step(scanned(true))] },
+    });
+  });
+
+  it('hands a song on for its ingestion to be decided', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'audio' } as never);
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song).toMatchObject({ imageId: 7, workflowId: 'wf-1' });
+    expect(result.song?.parsed).toMatchObject({ ok: true, flagged: true });
+  });
+
+  it('keeps a video shadow-only: its verdict is stored on the scan row and never reaches the image', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'video' } as never);
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song).toBeUndefined();
+    expect(dbMock.dbWrite.imageAudioScan.updateMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('does not hand on a song whose result was already stored by an earlier callback', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'audio' } as never);
+    dbMock.dbWrite.imageAudioScan.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song).toBeUndefined();
+  });
+
+  it('hands on a failed song scan so it is retried, with the kind of failure', async () => {
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ type: 'audio' } as never);
+    mockGetWorkflow.mockResolvedValue({
+      data: { status: 'expired', metadata: { imageId: 7 }, steps: [] },
+    });
+
+    const result = await processAudioScanCallback('wf-1');
+
+    expect(result.song?.parsed).toMatchObject({ ok: false, failureType: 'expired' });
+  });
+});
+
+describe('createImageIngestionRequest for a song', () => {
+  beforeEach(() => {
+    mockIsFlipt.mockReset().mockResolvedValue(false);
+    mockSubmit.mockReset().mockResolvedValue({ data: { id: 'wf-song' }, attempts: 1 });
+    dbMock.dbWrite.imageAudioScan.upsert.mockReset().mockResolvedValue({});
+    dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValue({ metadata: {} } as never);
+  });
+
+  it('submits the song scan, never the video frame extraction', async () => {
+    const result = await createImageIngestionRequest({
+      imageId: 9,
+      url: 'https://image.civitai.com/x/s.mp3',
+      type: 'audio',
+      callbackUrl: 'https://civitai.test/api/webhooks/image-scan-result?token=t',
+    });
+
+    expect(result.data).toEqual({ id: 'wf-song' });
+    const steps = mockSubmit.mock.calls[0][0].body.steps.map((s: { $type: string }) => s.$type);
+    expect(steps).toEqual(['transcription', 'audioTextModeration']);
     expect(mockSubmit).toHaveBeenCalledTimes(1);
   });
 });
