@@ -591,7 +591,6 @@ describe('deleteUser under a legal hold', () => {
       // The generator reads versions through these caches; a stale entry still serves them.
       expect(versionCaches.bustMvCache).toHaveBeenCalledTimes(1);
       expect([...versionCaches.bustMvCache.mock.calls[0][0]].sort()).toEqual([1, 2]);
-      // Search and the public API stop serving the deleted models.
       expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledWith([
         { id: CLEAN_MODEL, action: SearchIndexUpdateQueueAction.Delete },
       ]);
@@ -601,7 +600,16 @@ describe('deleteUser under a legal hold', () => {
     it('leaves the versions alone when the models are kept', async () => {
       await deleteUser({ id: CLEAN, username: 'someone', removeModels: false });
 
-      expect((await statuses())[1]).toBe('Published');
+      expect(await statuses()).toEqual({
+        1: 'Published',
+        2: 'Scheduled',
+        3: 'Draft',
+        4: 'Unpublished',
+        5: 'Published',
+      });
+      expect(versionCaches.bustMvCache).not.toHaveBeenCalled();
+      expect(versionCaches.bustPublicModelResponseCache).not.toHaveBeenCalled();
+      expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
     });
 
     // The mocked transaction stops at the scrub's abort, so this pins the version write inside the

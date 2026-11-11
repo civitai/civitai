@@ -1157,10 +1157,7 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
 
 type DeletedVersionRow = { id: number };
 
-/**
- * After `deleteUser` deletes an account's models: the caches and search entries `deleteModelById`
- * drops for one deleted model, for all of them. Chunked: an account can have thousands of versions.
- */
+/** Busts the caches of the versions `deleteUser` deleted. Chunked: an account can have thousands. */
 async function dropDeletedVersionCaches(versionIds: number[]) {
   // Imported here: a static import joins user.service to the model-version import cycle.
   const { bustMvCache } = await import('~/server/services/model-version.service');
