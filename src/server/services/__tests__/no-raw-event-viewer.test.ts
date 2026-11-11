@@ -135,7 +135,10 @@ function isEventViewer(value: string, source: string, trailing = '') {
   if (EVENT_VIEWER_OF.test(v)) return v.replace(EVENT_VIEWER_OF, '').trim() === trailing;
   const id = /^([A-Za-z_$][\w$]*)/.exec(v)?.[1];
   if (!id || v.slice(id.length).trim() !== trailing) return false;
-  const assignments = [...source.matchAll(new RegExp(`\\b${id}\\s*=(?![=>])\\s*`, 'g'))];
+  // A type annotation (`const viewer: EventViewer = ...`) may sit between the name and its `=`.
+  const assignments = [
+    ...source.matchAll(new RegExp(`\\b${id}\\s*(?::[^=;(){}]+)?=(?![=>])\\s*`, 'g')),
+  ];
   // A parameter of that name is bound by its caller, not by these assignments.
   return (
     assignments.length > 0 &&
@@ -304,6 +307,17 @@ describe('no-raw-event-viewer', () => {
     expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([
       'fixture.ts:4: getEventData viewer',
       'fixture.ts:5: setHat user',
+    ]);
+  });
+
+  it('sees a type-annotated assignment of the same local', () => {
+    const text = [
+      'const viewer = eventViewerOf(ctx);',
+      'getViewerEventDecorations({ ids, entity, viewer });',
+      'const other = () => { const viewer: EventViewer = ctx.user; return viewer; };',
+    ].join('\n');
+    expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([
+      'fixture.ts:2: getViewerEventDecorations viewer',
     ]);
   });
 

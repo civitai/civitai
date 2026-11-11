@@ -11,6 +11,8 @@ import {
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
  * Two bootstrap members read the viewer's event cosmetic: the nav banners (whether the viewer
@@ -84,7 +86,7 @@ afterEach(() => {
 
 describe('settings bootstrap: the event cosmetic is read once per request', () => {
   it('reads it once for the nav banners and the event seeds together', async () => {
-    const seeds = await resolveSettingsBootstrapSeeds(req, session);
+    const seeds = await resolveSettingsBootstrapSeeds(req, session, {});
 
     // Both members consumed the read: the banner shows its joined cta and the seed carries it.
     // Without these, a single call could mean one member simply stopped reading.
@@ -101,8 +103,43 @@ describe('settings bootstrap: the event cosmetic is read once per request', () =
   });
 
   it('does not share a read across requests', async () => {
-    await resolveSettingsBootstrapSeeds(req, session);
-    await resolveSettingsBootstrapSeeds(req, session);
+    await resolveSettingsBootstrapSeeds(req, session, {});
+    await resolveSettingsBootstrapSeeds(req, session, {});
     expect(h.getEventCosmetic).toHaveBeenCalledTimes(2);
+  });
+});
+
+// A moderator is in every event's flag audience only on a session or a full-access personal key.
+describe('settings bootstrap: event visibility follows the request credential', () => {
+  const moderator = {
+    user: { id: USER_ID, username: 'mod', isModerator: true },
+  } as unknown as Session;
+  const scopedKey = {
+    apiKeyId: 7,
+    apiKeyType: ApiKeyType.User,
+    subject: { type: 'apiKey' as const, id: 7 },
+    tokenScope: TokenScope.UserRead,
+  };
+  const bannerShown = (seeds: Awaited<ReturnType<typeof resolveSettingsBootstrapSeeds>>) =>
+    !!seeds.navBanners?.some((b) => b.id === `event:${BIRTHDAY_2026_EVENT}`);
+  const seededViewers = () =>
+    h.getViewerEventAccess.mock.calls.map(([args]) => (args as { viewer?: unknown }).viewer);
+
+  beforeEach(() => {
+    // Launched for nobody: only the flag's moderator shortcut lets anyone in.
+    testerFlag.reset({ public: false });
+    h.getViewerEventAccess.mockClear();
+  });
+
+  it('shows a moderator on a session the unlaunched event', async () => {
+    expect(bannerShown(await resolveSettingsBootstrapSeeds(req, moderator, {}))).toBe(true);
+    expect(seededViewers()).toContainEqual(expect.objectContaining({ isModerator: true }));
+  });
+
+  it('reads a moderator on a scoped key as the user alone', async () => {
+    expect(bannerShown(await resolveSettingsBootstrapSeeds(req, moderator, scopedKey))).toBe(false);
+    expect(seededViewers().length).toBeGreaterThan(0);
+    for (const viewer of seededViewers())
+      expect(viewer).toEqual(expect.objectContaining({ isModerator: false }));
   });
 });

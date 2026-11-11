@@ -97,7 +97,7 @@ export const getHomeBlocksHandler = async ({
             const audience = await getCollectionBlockAudience({
               blockUserId: fromSystem ? -1 : homeBlock.userId,
               collectionId: (homeBlock.metadata as HomeBlockMetaSchema).collection?.id,
-              viewer: ctx.user,
+              viewer: eventViewerOf(ctx),
             });
             // Saving the editor removes any of the viewer's blocks it did not list, so a block
             // that cannot be shown (not readable, or its collection gone) is listed without it.
