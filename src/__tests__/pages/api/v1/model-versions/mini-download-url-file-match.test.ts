@@ -1121,7 +1121,13 @@ describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', (
     mockQueryRaw.mockReset();
     const pending = run([SAFETENSOR, DATASET], { modelFileId: String(DATASET.id) }, {}, host);
     mockQueryRaw.mockResolvedValueOnce([
-      { id: DATASET.id, nsfwLevel: 4, fullyRated: true, restricted: false },
+      {
+        id: DATASET.id,
+        nsfwLevel: 4,
+        fullyRated: true,
+        restricted: false,
+        virusScanResult: 'Success',
+      },
     ]);
     return pending;
   };
@@ -1338,7 +1344,13 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
       { availability: 'Private' }
     );
     mockQueryRaw.mockResolvedValueOnce([
-      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+      {
+        id: 3350379,
+        nsfwLevel: 1,
+        fullyRated: true,
+        restricted: false,
+        virusScanResult: 'Success',
+      },
     ]);
     return pending;
   };
@@ -1548,7 +1560,13 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
       { availability: 'Private', modelMode: 'TakenDown' }
     );
     mockQueryRaw.mockResolvedValueOnce([
-      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+      {
+        id: 3350379,
+        nsfwLevel: 1,
+        fullyRated: true,
+        restricted: false,
+        virusScanResult: 'Success',
+      },
     ]);
     const { body } = await pending;
 
