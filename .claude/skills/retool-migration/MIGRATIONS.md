@@ -379,7 +379,8 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
       a colour failing renders `—` beside a yellow figure that is still true.
       Not ported: `SubTierStatus` (a site-wide roll-up, not per-user), `CreatorClub`/`CreatorClubBuzz`
       (Stripe-Connect payouts — a different domain from moderation).
-- [x] **Reviews / comments** — `ComboComments` as a list in `/api/user-account/[userId]`. `ReviewList`
+- [x] **Reviews / comments** — `ComboComments` as a keyset-paged list on its own endpoint,
+      `/api/user-comments/[userId]` (50 a page plus the account total). `ReviewList`
       moved to its own paged endpoint (2026-10-26), `/api/user-reviews/[userId]`: Written / Received
       tabs, 50 rows a page, filters (owner, rating, flags, text) applied in the query, with
       ToS/excluded/nsfw flags and links to the model.
@@ -593,8 +594,11 @@ on /admin — keep that deliberate.
       citext[], and the driver returns the raw literal as a STRING that the panel's `.join()` throws on.
       `coalesce` keeps purged accounts visible: 8,589 users with a NULL username hold 34,147 membership
       rows, and dropping them made the list and the member panel disagree about who was in a chat.
-- [x] **Transcript + members** — `FindChatById`, `FindChatMembers`. Newest 300, reversed for reading
-      order, cap disclosed. System rows excluded: 274,106 are `Embed` type whose content is raw JSON,
+- [x] **Transcript + members** — `FindChatById`, `FindChatMembers`. Pages of 300 in reading order,
+      opening on the newest; `msgBefore` / `msgAfter` in the URL (`chat-transcript-cursor.ts`) walk
+      older and newer, so no message is unreachable. Ordered by `(createdAt, id)`, not `id`: by id the
+      planner walks the primary key backwards (2.2s against ~40ms for the oldest page of a 17k-message
+      chat). System rows excluded: 274,106 are `Embed` type whose content is raw JSON,
       rendered verbatim attributed to "civitai".
 - [x] **Chat reports** — `ChatReport`, served by the SHARED `reports.service.ts` rather than a third
       hand-written join. That also settles a policy split: this page and `/reports` previously

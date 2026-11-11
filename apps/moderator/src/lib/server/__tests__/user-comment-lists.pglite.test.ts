@@ -58,4 +58,27 @@ describe("a user's comment list, which moderators bulk-delete and flag by id", (
     expect(items.map((r) => r.id)).toEqual([2, 3]);
     expect(truncated).toBe(true);
   });
+
+  it('pages through the whole history from the cursor each page hands back', async () => {
+    const first = await getComments(10, 2);
+    const second = await getComments(10, 2, first.next!);
+    expect(second.items.map((r) => r.id)).toEqual([1]);
+    expect(second.next).toBeNull();
+  });
+
+  it('breaks a createdAt tie on id rather than skipping the rows that share it', async () => {
+    await db.exec(`INSERT INTO "CommentV3" VALUES
+      (6, 10, 'image', 81, 'same instant', false, NULL, NULL, '2026-11-07 00:00:00.000123'),
+      (7, 10, 'image', 82, 'same instant', false, NULL, NULL, '2026-11-07 00:00:00.000123')`);
+    const first = await getComments(10, 2);
+    const rest = await getComments(10, 50, first.next!);
+    expect([...first.items, ...rest.items].map((r) => r.id)).toEqual([2, 7, 6, 3, 1]);
+  });
+
+  it('still finds the next page when the comment it ended on has since been deleted', async () => {
+    const first = await getComments(10, 2);
+    await db.exec(`DELETE FROM "CommentV3" WHERE id = ${first.items.at(-1)!.id}`);
+    const rest = await getComments(10, 2, first.next!);
+    expect(rest.items.map((r) => r.id)).toEqual([1]);
+  });
 });
