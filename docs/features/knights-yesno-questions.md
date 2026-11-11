@@ -46,6 +46,8 @@ The CSV comes from the question producer (an offline pipeline that proposes the 
 | `case_id`, `source_purpose`, `source_batch_id`, `promotion_status`, `policy_sha256` | Optional; stored in the item's `meta`                                                                                                        |
 | `reword_of`                                                                         | Optional; the producer id a cleaned-up row rewords. Stored as `meta.rewordOf`, as a moderator reword is; left out when empty                 |
 
+A cleaned-up file replaces each reworded producer row with its `<question_id>:r1` row, and the original id must not appear in it at all. Listed as inactive, the import retires the reworded row in the same run (an open item whose `rewordOf` names a withdrawn id is closed); listed as active, both wordings are open at once. For the same reason, never import the producer's raw file after a cleaned one.
+
 A sample, with placeholder ids (use ids of images that exist in your local database):
 
 ```csv
