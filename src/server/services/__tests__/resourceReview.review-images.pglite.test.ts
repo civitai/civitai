@@ -240,11 +240,31 @@ describe('getReviewImageIds', () => {
 
       const level = allBrowsingLevelsFlag & ~NsfwLevel.R;
       const ids = await getReviewImageIds({ reviewId: 1, limit: 50, browsingLevel: level });
-      // Only the reviewer's published, servable images of V1: not 3 (V2), not 4 (another
-      // user's), not 31-35 (unservable) and not 36 (above the level).
       expect([...ids].sort((a, b) => a - b)).toEqual([1, 2, 30]);
       expect(ids.length).toBe(await countOf(1, level));
       expect(ids).toEqual([...ids].sort((a, b) => b - a));
+    });
+  });
+
+  describe('a review without a post, when the version and the reviewer both have many images', () => {
+    it('walks only the reviewer’s newest images', async () => {
+      await seedPosts();
+      await pg.exec(`
+        INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel")
+          SELECT g, ${AUTHOR}, 100, 1 FROM generate_series(1, 5100) g;
+        INSERT INTO "ImageResourceNew" VALUES (1, ${V1}), (5000, ${V1}), (5100, ${V1});
+        INSERT INTO "ImageResourceNew" SELECT 100000 + g, ${V1} FROM generate_series(1, 1000) g;
+      `);
+      await insertReview(1, null);
+
+      const ids = await getReviewImageIds({
+        reviewId: 1,
+        limit: 10,
+        browsingLevel: allBrowsingLevelsFlag,
+      });
+      // Image 1 is older than the reviewer's newest 5000 images, so it is not found.
+      expect(ids).toEqual([5100, 5000]);
+      expect(await countOf(1)).toBe(2);
     });
   });
 
@@ -255,11 +275,14 @@ describe('getReviewImageIds', () => {
       await pg.exec(`INSERT INTO "ImageResourceNew" VALUES (1, ${V1});`);
     });
 
-    it('is empty for a review written from an unpublished post, except to its author', async () => {
+    it('is empty for a review written from an unpublished post, even to its author', async () => {
+      // The post-image predicate already hides an unpublished post's images, so the author gets none
+      // either; the visibility check only returns before the exclusion lookups.
       await insertReview(1, 102);
       const input = { reviewId: 1, limit: 10, browsingLevel: allBrowsingLevelsFlag };
       expect(await getReviewImageIds({ ...input })).toEqual([]);
       expect(await getReviewImageIds({ ...input, userId: 77 })).toEqual([]);
+      expect(await getReviewImageIds({ ...input, userId: AUTHOR })).toEqual([]);
     });
 
     it('is empty for a hidden or blocking reviewer, and for a review that does not exist', async () => {

@@ -563,6 +563,10 @@ const servablePostImageSql = (browsingLevel: number) => Prisma.sql`
 const usedReviewedVersionSql = Prisma.sql`(SELECT true FROM "ImageResourceNew" ir
   WHERE ir."imageId" = i.id AND ir."modelVersionId" = rr."modelVersionId")`;
 const SMALL_SIDE = 1000;
+// Both sides are large, so only the reviewer's newest images are walked: an unbounded walk costs
+// seconds for a creator with tens of thousands of images. A reviewer's matching image older than
+// this window is not found, so such a review shows none (and `hasImages` can still list it).
+const REVIEWER_WALK_CAP = 5000;
 
 const COUNT_LIMIT = REVIEW_IMAGE_COUNT_CAP + 1;
 
@@ -571,7 +575,8 @@ type ReviewImageSet = 'count' | 'ids';
 /**
  * Per review row `rr`, the published images that used its version, up to `limit`: from the
  * review's own post, or, for a review written outside a post, from any of the reviewer's posts.
- * That fallback walks whichever of the version's images or the reviewer's images is smaller.
+ * That fallback walks whichever of the version's images or the reviewer's images is smaller (the
+ * reviewer's newest `REVIEWER_WALK_CAP` when both are large).
  * `count` is how many, `ids` which ones (a post's in its own order, the rest newest first).
  */
 const reviewImagesSql = (set: ReviewImageSet, limit: number, browsingLevel: number) => {
@@ -617,10 +622,12 @@ const reviewImagesSql = (set: ReviewImageSet, limit: number, browsingLevel: numb
     `)}
     ELSE ${wrap(Prisma.sql`
         SELECT ${pick(Prisma.sql`i.id`)} FROM "Image" i
+        JOIN (
+          SELECT ri.id FROM "Image" ri WHERE ri."userId" = rr."userId"
+          ORDER BY ri.id DESC LIMIT ${REVIEWER_WALK_CAP}
+        ) recent ON recent.id = i.id
         JOIN "Post" p ON p.id = i."postId"
-        WHERE i."userId" = rr."userId" AND ${servablePostImageSql(
-          browsingLevel
-        )} AND ${usedReviewedVersionSql}
+        WHERE ${servablePostImageSql(browsingLevel)} AND ${usedReviewedVersionSql}
         ${order(Prisma.sql`i.id DESC`)}
         LIMIT ${limit}
     `)}
@@ -661,9 +668,6 @@ const reviewersWithImagesCte = (modelVersionId: number, browsingLevel: number) =
   )
 `;
 
-/**
- * The reviewers whose reviews the viewer does not see: hidden, blocked, or blocking them.
- */
 const getExcludedReviewerIds = async ({
   userId,
   modelId,
