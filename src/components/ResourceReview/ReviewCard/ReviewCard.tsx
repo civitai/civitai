@@ -20,13 +20,13 @@ const MAX_FULL_IMAGES = 4;
 
 export type ReviewCardProps = {
   review: ResourceReviewPagedModel;
-  /** `compact` is ~270px wide for the model page; `full` fills its column and shows the review's images. */
+  /** `compact` is text-only, for the model page's carousel; `full` also shows the review's images. */
   variant: 'compact' | 'full';
   /** The review's post images, shown by the `full` variant only. */
   images?: ImagesInfiniteModel[];
   /** Title of the review's post, shown in the "From the post" link of the `full` variant. */
   postTitle?: string | null;
-  /** The model owner's id: their own review is excluded from the count. */
+  /** The model owner's id; their own review gets the "Excluded from count" badge. */
   creatorId?: number;
 };
 
@@ -156,7 +156,7 @@ export function ReviewCard({
         </div>
       )}
 
-      {/* An empty link stretched over the whole card, so the card is the click target and keyboard stop. Interactive children sit above it (`z-10`) so they don't double-fire. */}
+      {/* Stretched link makes the whole card clickable; interactive children need `z-10` to sit above it. */}
       <RoutedDialogLink
         name="resourceReview"
         state={{ reviewId: review.id }}

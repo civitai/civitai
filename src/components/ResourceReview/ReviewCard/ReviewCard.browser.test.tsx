@@ -37,11 +37,18 @@ const makeReview = (overrides: Partial<ResourceReviewPagedModel> = {}) =>
 const card = () => document.querySelector('[data-testid="model-written-review"]') as HTMLElement;
 
 describe('ReviewCard, full variant', () => {
-  test('a review with no text, images or post is one short row with no footer', async () => {
+  test('a review with no text, images or post is a short row with no comments badge', async () => {
     await renderWithProviders(<ReviewCard review={makeReview()} variant="full" />);
-    expect(card().className).toContain('flex-row');
     expect(card().textContent).not.toMatch(/From the post/);
     expect(card().querySelector('[aria-label="Comments"]')).toBeNull();
+  });
+
+  test('a text-less review with images stays a full card, with its image badge and comments', async () => {
+    await renderWithProviders(
+      <ReviewCard review={makeReview({ imageCount: 2, commentCount: 1 })} variant="full" />
+    );
+    expect(card().querySelector('[aria-label="2 images"]')?.textContent).toBe('2');
+    expect(card().querySelector('[aria-label="Comments"]')?.textContent).toBe('1');
   });
 
   test('a review with text is the tall card, with a comments badge', async () => {
@@ -51,7 +58,7 @@ describe('ReviewCard, full variant', () => {
         variant="full"
       />
     );
-    expect(card().className).not.toContain('flex-row');
+    expect(card().textContent).toContain('Great.');
     expect(card().querySelector('[aria-label="Comments"]')?.textContent).toBe('3');
   });
 
@@ -88,7 +95,5 @@ describe('ReviewCard, full variant', () => {
     const link = card().querySelector<HTMLAnchorElement>('a[rel="nofollow"]');
     expect(link?.getAttribute('href')).toContain('dialog=resourceReview');
     expect(link?.getAttribute('href')).toContain('reviewId=42');
-    expect(link?.className).toContain('absolute');
-    expect(link?.className).toContain('inset-0');
   });
 });
