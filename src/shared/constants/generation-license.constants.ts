@@ -28,9 +28,9 @@ export const GENERATION_LICENSE_TERMS: readonly GenerationLicenseTerms[] = [
     licenseUrl:
       'https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/492fd8c4eca666f1085f57e30738c1e0d86b3439/LICENSE',
     intro:
-      'MiniMax-H3-Image is licensed under the MiniMax-H3-Image Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved. Its use restrictions (Section V) and Acceptable Use Policy (Exhibit A) apply to you when you generate with it.',
+      'MiniMax-H3-Image is licensed under the MiniMax-H3-Image Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved. When you generate with it, its use restrictions (Section V) and Acceptable Use Policy (Exhibit A) apply to you, except the territory limits in Section V.4 and Exhibit A item 1, which are not part of these terms.',
     restrictions: [
-      'You will follow the use restrictions in Section V of the licence and its Acceptable Use Policy (Exhibit A).',
+      'You will follow those use restrictions and the Acceptable Use Policy.',
       'You may not use MiniMax-H3-Image or anything it generates to improve any other AI model.',
     ],
   },

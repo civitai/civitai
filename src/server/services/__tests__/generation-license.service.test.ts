@@ -27,6 +27,8 @@ describe('generation licence acceptance', () => {
     expect(text).toContain('MiniMax-H3-Image Community License Agreement');
     expect(text).toContain('Acceptable Use Policy');
     expect(text).toMatch(/improve any other AI model/);
+    // The licence's territory clauses are not ours to bind users to (Legal, 11 Nov 2026).
+    expect(terms.intro).toMatch(/except the territory limits in Section V\.4 and Exhibit A item 1/);
     expect(terms.licenseUrl).toMatch(/MiniMax-H3-Image\/blob\/[0-9a-f]{40}\/LICENSE$/);
   });
 
