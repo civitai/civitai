@@ -1543,6 +1543,21 @@ function buildDocStore(deps: DocStoreDeps) {
     return { userBytes: limits.userBytes, userDocs: limits.userDocs };
   }
 
+  /**
+   * The viewer's ceiling, resolved BEFORE a write's transaction opens (`resolveViewerCeiling`), so
+   * the charge never waits on the resolver while holding the app's usage-row lock that
+   * `SQL_CHARGE_APP` takes. Keyed on the call's context; refreshed at the start of every write.
+   */
+  const viewerCeilings = new WeakMap<
+    DocStoreContext,
+    { uid: number; ceiling: { userBytes: number; userDocs: number } }
+  >();
+
+  async function resolveViewerCeiling(ctx: DocStoreContext, uid: number): Promise<void> {
+    if (!deps.userLimits) return;
+    viewerCeilings.set(ctx, { uid, ceiling: await viewerLimits(uid) });
+  }
+
   /** Charge one write: `usage_app` (which also yields the seq), then the caller's `usage_user`. */
   async function charge(
     c: DocStoreClient,
@@ -1564,7 +1579,15 @@ function buildDocStore(deps: DocStoreDeps) {
     }
     if (user.bytes !== 0 || user.docs !== 0) {
       // A charge that only frees passes whatever the ceiling (SQL_CHARGE_USER), so it reads none.
-      const ceiling = user.bytes > 0 || user.docs > 0 ? await viewerLimits(user.uid) : limits;
+      // A charge to the viewer uses the ceiling resolved before the transaction. Only a charge to
+      // someone else — a counter's creator when another viewer's increment grows it, a migration's
+      // document owners — resolves here, under the lock.
+      const pre = viewerCeilings.get(ctx);
+      const ceiling = !(user.bytes > 0 || user.docs > 0)
+        ? limits
+        : pre && pre.uid === user.uid
+        ? pre.ceiling
+        : await viewerLimits(user.uid);
       const res = await c.query(SQL_CHARGE_USER, [
         ctx.appId,
         ctx.ns,
@@ -1624,6 +1647,7 @@ function buildDocStore(deps: DocStoreDeps) {
     const indexRows = indexRowsFor(coll, data as Record<string, unknown>);
     const scope = scopeUid(ctx, coll);
     const base = [ctx.appId, ctx.ns, coll.name, scope, key];
+    await resolveViewerCeiling(ctx, viewer);
 
     return withTx(ctx, async (c) => {
       // Two passes at most: a concurrent creator of the same key can win the
@@ -1817,6 +1841,7 @@ function buildDocStore(deps: DocStoreDeps) {
       throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
     }
     const viewer = requireViewer(ctx);
+    await resolveViewerCeiling(ctx, viewer);
     return withTx(ctx, async (c) => {
       const bump = async () =>
         Number(

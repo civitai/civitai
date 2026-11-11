@@ -12,7 +12,7 @@ export type UserAppCaps = {
   buzzPerDay: number;
   /** The daily app Buzz cap of the viewer's membership tier. */
   planBuzzPerDay: number;
-  /** What `buzzPerDay` rises to after opting in; equal to `planBuzzPerDay` when nothing to opt in to. */
+  /** What `buzzPerDay` rises to after opting in: `OPT_IN_MULTIPLIER` times the plan's cap. */
   optInBuzzPerDay: number;
   /** Whether the viewer opted in to continue on their own Buzz for this UTC day. */
   optedIn: boolean;
@@ -24,10 +24,16 @@ export type UserAppCaps = {
 /** The registry entries (`usage-limits.ts`) that hold the per-tier values. */
 export const USER_APP_CAP_IDS = {
   buzzPerDay: 'apps.buzz-daily',
-  optInBuzzPerDay: 'apps.buzz-daily-opt-in',
   docBytes: 'apps.storage-bytes',
   docCount: 'apps.storage-docs',
 } as const;
+
+/**
+ * Opting in to continue on your own Buzz raises the daily cap to this multiple of the viewer's
+ * tier cap for the rest of the UTC day. Applied to the RESOLVED cap, so a cap override carries
+ * through.
+ */
+export const OPT_IN_MULTIPLIER = 2;
 
 type PlanCaps = Omit<UserAppCaps, 'buzzPerDay' | 'optedIn'>;
 
@@ -41,27 +47,6 @@ function capFor(config: UsageLimitConfig, id: string, tier: string | null | unde
   return resolveUsageLimitValues(values, { tier }).limit;
 }
 
-/** A tier with no opt-in rule continues to this multiple of its daily cap. */
-export const OPT_IN_DEFAULT_MULTIPLIER = 2;
-
-/**
- * The opt-in ceiling of `tier`: its `apps.buzz-daily-opt-in` rule applied to its OWN daily cap
- * (`{ multiplier: m }` → m × the cap, `{ limit: n }` → n), or twice the cap with no rule. Not
- * `capFor`: the registry would scale the entry's own base, and the ceiling must follow the cap.
- */
-function optInCeilingFor(
-  config: UsageLimitConfig,
-  tier: string | null | undefined,
-  planBuzzPerDay: number
-): number {
-  const id = USER_APP_CAP_IDS.optInBuzzPerDay;
-  const values = config.get(id) ?? getUsageLimitDef(id);
-  const rule = resolveUsageLimitValues(values, { tier }).tierRule;
-  if (rule && 'limit' in rule) return rule.limit;
-  const multiplier = rule ? rule.multiplier : OPT_IN_DEFAULT_MULTIPLIER;
-  return Math.floor(planBuzzPerDay * multiplier);
-}
-
 /** The plan caps of `tier` (no tier, or an unknown one, reads as free). Pure. */
 export function planCapsForTier(
   config: UsageLimitConfig,
@@ -70,23 +55,20 @@ export function planCapsForTier(
   const planBuzzPerDay = capFor(config, USER_APP_CAP_IDS.buzzPerDay, tier);
   return {
     planBuzzPerDay,
-    // Opting in can only ever widen: a ceiling set below the plan's cap gives nothing to opt in to.
-    optInBuzzPerDay: Math.max(planBuzzPerDay, optInCeilingFor(config, tier, planBuzzPerDay)),
+    optInBuzzPerDay: planBuzzPerDay * OPT_IN_MULTIPLIER,
     docBytes: capFor(config, USER_APP_CAP_IDS.docBytes, tier),
     docCount: capFor(config, USER_APP_CAP_IDS.docCount, tier),
   };
 }
 
-/** The lowest value every cap takes across all tiers, with no opt-in: what a failure serves. */
-export function strictestUserAppCaps(config: UsageLimitConfig): UserAppCaps {
+/** The lowest value every cap takes across all tiers: what a failed user read serves. */
+export function strictestPlanCaps(config: UsageLimitConfig): PlanCaps {
   const all = usageLimitTiers.map((tier) => planCapsForTier(config, tier));
   const min = (pick: (c: PlanCaps) => number) => Math.min(...all.map(pick));
   const planBuzzPerDay = min((c) => c.planBuzzPerDay);
   return {
-    buzzPerDay: planBuzzPerDay,
     planBuzzPerDay,
-    optInBuzzPerDay: planBuzzPerDay,
-    optedIn: false,
+    optInBuzzPerDay: planBuzzPerDay * OPT_IN_MULTIPLIER,
     docBytes: min((c) => c.docBytes),
     docCount: min((c) => c.docCount),
   };
@@ -119,24 +101,14 @@ const defaults: Required<UserAppCapsDeps> = {
 };
 
 /**
- * One user's app-platform caps: Buzz spent through apps per UTC day, and document storage per
- * app, from their membership tier (`SessionUser.tier`, the tier the account Limits section and
- * every other per-tier limit read). Per USER, not the per-APP `spendTier` caps in
- * `app-cap-limits.service.ts`.
- *
- * THE one source: the blocks router's daily Buzz reservation, the doc store's per-user ceiling
- * and the account Limits section all read it, so what a user is shown is what is enforced
- * (`__tests__/user-app-caps.seam.test.ts` pins the callers). The per-tier values are the
- * `apps.*` entries of the usage-limit registry, overridable from the `usage-limits` KeyValue row.
- *
- * Never throws. A failed config read serves the code defaults; a failed or empty user read
- * serves the strictest caps of any tier, with no opt-in; a failed opt-in read is "not opted in".
+ * The plan caps of the user's tier, and the user (null when it could not be read, which serves
+ * the strictest tier's caps). No opt-in lookup. Never throws: a failed config read serves the
+ * code defaults.
  */
-export async function resolveUserAppCaps(
+async function resolvePlan(
   userId: number,
-  deps: UserAppCapsDeps = {}
-): Promise<UserAppCaps> {
-  const d = { ...defaults, ...deps };
+  d: Required<UserAppCapsDeps>
+): Promise<{ plan: PlanCaps; user: SessionUser | null }> {
   let config: UsageLimitConfig = defaultUsageLimitConfig;
   try {
     config = await d.getConfig();
@@ -149,15 +121,39 @@ export async function resolveUserAppCaps(
   } catch {
     user = null;
   }
-  if (!user) return strictestUserAppCaps(config);
+  if (!user) return { plan: strictestPlanCaps(config), user: null };
+  return { plan: planCapsForTier(config, user.tier), user };
+}
 
-  const plan = planCapsForTier(config, user.tier);
+/**
+ * One user's app-platform caps: Buzz spent through apps per UTC day, and document storage per
+ * app, from their membership tier (`SessionUser.tier`, the tier the account Limits section and
+ * every other per-tier limit read). Per USER, not the per-APP `spendTier` caps in
+ * `app-cap-limits.service.ts`.
+ *
+ * THE one source: the blocks router's daily Buzz reservation, the doc store's per-user ceiling
+ * (through `docStoreUserLimits`, the same plan resolution without the opt-in) and the account
+ * Limits section all read it, so what a user is shown is what is enforced
+ * (`__tests__/user-app-caps.seam.test.ts` pins the callers). The per-tier values are the
+ * `apps.*` entries of the usage-limit registry, overridable from the `usage-limits` KeyValue row.
+ *
+ * The opt-in is read record-first: one Redis GET, and the flag is evaluated only when a record
+ * exists (one is written only while the flag is on), so a viewer who never opted in costs no
+ * flag evaluation. With the flag since turned off, a record is ignored.
+ *
+ * Never throws. A failed config read serves the code defaults; a failed or empty user read
+ * serves the strictest caps of any tier, with no opt-in; a failed opt-in read is "not opted in".
+ */
+export async function resolveUserAppCaps(
+  userId: number,
+  deps: UserAppCapsDeps = {}
+): Promise<UserAppCaps> {
+  const d = { ...defaults, ...deps };
+  const { plan, user } = await resolvePlan(userId, d);
   let optedIn = false;
-  // No flag read and no Redis read where there is nothing to opt in to (an override that sets the
-  // ceiling at or below the cap): then this is exactly the plan's cap, whatever was recorded.
-  if (plan.optInBuzzPerDay > plan.planBuzzPerDay) {
+  if (user) {
     try {
-      optedIn = (await d.isOptInEnabled(user)) && (await d.readOptIn(userId));
+      optedIn = (await d.readOptIn(userId)) && (await d.isOptInEnabled(user));
     } catch {
       optedIn = false;
     }
@@ -165,10 +161,15 @@ export async function resolveUserAppCaps(
   return { ...plan, buzzPerDay: optedIn ? plan.optInBuzzPerDay : plan.planBuzzPerDay, optedIn };
 }
 
-/** The doc store's per-user ceiling (`DocStoreDeps.userLimits`), from the same resolver. */
+/**
+ * The doc store's per-user ceiling (`DocStoreDeps.userLimits`): the same plan resolution as
+ * `resolveUserAppCaps`, with no opt-in lookup at all (storage has no opt-in), so it makes no
+ * Redis read and no flag evaluation.
+ */
 export async function docStoreUserLimits(
-  userId: number
+  userId: number,
+  deps: UserAppCapsDeps = {}
 ): Promise<{ userBytes: number; userDocs: number }> {
-  const caps = await resolveUserAppCaps(userId);
-  return { userBytes: caps.docBytes, userDocs: caps.docCount };
+  const { plan } = await resolvePlan(userId, { ...defaults, ...deps });
+  return { userBytes: plan.docBytes, userDocs: plan.docCount };
 }

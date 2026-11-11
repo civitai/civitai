@@ -64,7 +64,7 @@ export type MyAppBuzzCap = {
   optedIn: boolean;
   /** At the plan's cap: the running app is paused until the reset, an upgrade, or an opt-in. */
   paused: boolean;
-  /** Opting in would raise the cap (and has not happened yet today). */
+  /** Not opted in yet today: the opt-in is offered. */
   canOptIn: boolean;
   resetAt: string;
 };
@@ -85,7 +85,7 @@ export async function getMyAppBuzzCap(user: SessionUser): Promise<MyAppBuzzCap |
     optInLimit: caps.optInBuzzPerDay,
     optedIn: caps.optedIn,
     paused: used >= caps.buzzPerDay,
-    canOptIn: !caps.optedIn && caps.optInBuzzPerDay > caps.planBuzzPerDay,
+    canOptIn: !caps.optedIn,
     resetAt: resetAtIso(),
   };
 }
@@ -97,19 +97,11 @@ export async function getMyAppBuzzCap(user: SessionUser): Promise<MyAppBuzzCap |
  * (now under `optInBuzzPerDay`), the per-app consent budget the viewer set, and the per-app cap.
  * Nothing here names or reaches an app or its owner, so an owner is never billed for it.
  *
- * Refused where the flag is off for this viewer (FORBIDDEN) and where opting in would raise
- * nothing (BAD_REQUEST). Idempotent within the day.
+ * Refused where the flag is off for this viewer (FORBIDDEN). Idempotent within the day.
  */
 export async function optInAppBuzzToday(user: SessionUser): Promise<MyAppBuzzCap> {
   if (!(await isAppBlocksEnabled({ user })) || !(await isAppLimitsUpgradePromptEnabled({ user }))) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'not available' });
-  }
-  const caps = await resolveUserAppCaps(user.id);
-  if (caps.optInBuzzPerDay <= caps.planBuzzPerDay) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'your plan has no higher daily app Buzz limit to continue to',
-    });
   }
   await sysRedis.set(buzzOptInRedisKey(user.id), '1', { EX: BUZZ_OPT_IN_TTL_SECONDS });
   const status = await getMyAppBuzzCap(user);

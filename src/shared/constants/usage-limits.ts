@@ -281,13 +281,14 @@ export const usageLimitDefs = [
   // account Limits section call, so the two cannot disagree. Never `rateLimit()` rules.
   //
   // The per-tier table (decided 2026-11-10). Free (`base`) is the pre-tier constants
-  // (`BLOCK_BUZZ_CAP_PER_DAY`, the doc store's `userBytes` / `userDocs`); Founder, a legacy paid
+  // (50,000 Buzz/day, the doc store's `userBytes` / `userDocs`); Founder, a legacy paid
   // tier with no row in the table, gets Bronze's. Change a value with a `byTier` override in the
   // `usage-limits` KeyValue row, no deploy needed (an override's `byTier` replaces this one whole,
   // so it repeats every tier it keeps). `kind: 'abuse'` so an override can raise or lower these
   // but never `disabled` them (an unbounded spend or storage ceiling).
   {
-    // Buzz spent through apps per UTC day, across all of a user's apps.
+    // Buzz spent through apps per UTC day, across all of a user's apps. Opting in to continue on
+    // your own Buzz raises it to `OPT_IN_MULTIPLIER` (2) times this for the rest of the UTC day.
     id: 'apps.buzz-daily',
     area: 'apps',
     kind: 'abuse',
@@ -299,26 +300,6 @@ export const usageLimitDefs = [
       bronze: { limit: 75_000 },
       silver: { limit: 100_000 },
       gold: { limit: 200_000 },
-    },
-  },
-  {
-    // What `apps.buzz-daily` rises to for the rest of the UTC day once the viewer opts in to
-    // continue on their own Buzz at the limit: TWICE the viewer's tier cap. Read as a rule on the
-    // tier's own cap, not as a figure: a tier's `{ multiplier: m }` is m times its
-    // `apps.buzz-daily` cap and `{ limit: n }` is n Buzz; a tier with no rule (an override that
-    // names other tiers only) keeps twice its cap. `base` is unused. Never below the plan cap.
-    id: 'apps.buzz-daily-opt-in',
-    area: 'apps',
-    kind: 'abuse',
-    label: 'Daily Buzz cap across apps after opting in',
-    window: { type: 'utc-day' },
-    base: 100_000,
-    byTier: {
-      free: { multiplier: 2 },
-      founder: { multiplier: 2 },
-      bronze: { multiplier: 2 },
-      silver: { multiplier: 2 },
-      gold: { multiplier: 2 },
     },
   },
   {

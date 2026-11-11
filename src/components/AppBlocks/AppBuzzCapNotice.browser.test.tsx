@@ -63,7 +63,7 @@ describe('AppBuzzCapNoticeView', () => {
     expect(onOptIn).toHaveBeenCalledTimes(1);
   });
 
-  test('no higher ceiling (today): the upgrade only, no opt-in', async () => {
+  test('opt-in not offered (canOptIn false): the upgrade only', async () => {
     const container = await renderBeside(
       status({ limit: 50_000, planLimit: 50_000, optInLimit: 50_000, canOptIn: false })
     );

@@ -6,7 +6,7 @@ export function buzzCapWindowKey(): string {
 }
 
 /**
- * The per-user daily Buzz counter that `BLOCK_BUZZ_CAP_PER_DAY` is enforced against. Per user,
+ * The per-user daily Buzz counter the per-user daily cap (`resolveUserAppCaps`) is enforced against. Per user,
  * not per app: all of a user's apps share one daily ceiling.
  */
 export function buzzCapRedisKey(
