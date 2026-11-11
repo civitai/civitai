@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BOUNTIES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
@@ -239,5 +240,72 @@ describe('bounty images', () => {
     respond({ hits: [{ id: 1, images }] });
     const hit = firstHit((await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, uncapped)).body);
     expect(hit.images).toEqual(images);
+  });
+});
+
+describe('collection images', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const uncapped = { showSfwFace: false };
+  const pg = { id: 11, nsfwLevel: NsfwLevel.PG };
+  const inCapMixed = { id: 14, nsfwLevel: NsfwLevel.PG | NsfwLevel.PG13 };
+  const images = [
+    { id: 10, nsfwLevel: NsfwLevel.X },
+    pg,
+    { id: 12, nsfwLevel: 0 },
+    { id: 13, nsfwLevel: NsfwLevel.PG | NsfwLevel.XXX },
+    inCapMixed,
+  ];
+  const srcs = ['https://image.test/a.jpeg'];
+  const respond = (body: unknown) =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }))
+    );
+  const hitsOf = (body: unknown) => (body as { hits: Record<string, any>[] }).hits;
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a capped viewer gets only images inside the cap, highlight included, and no srcs', async () => {
+    respond({ hits: [{ id: 1, image: null, images, srcs, _formatted: { images, srcs } }] });
+    const [hit] = hitsOf(
+      (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, capped)).body
+    );
+    expect(hit.images).toEqual([pg, inCapMixed]);
+    expect(hit._formatted.images).toEqual([pg, inCapMixed]);
+    expect(hit).not.toHaveProperty('srcs');
+    expect(hit._formatted).not.toHaveProperty('srcs');
+  });
+
+  it.each([
+    ['above the cap', { id: 20, nsfwLevel: NsfwLevel.R }, null],
+    ['a mixed rating reaching above it', { id: 21, nsfwLevel: NsfwLevel.PG | NsfwLevel.X }, null],
+    ['unrated', { id: 22, nsfwLevel: 0 }, null],
+    ['inside the cap', pg, pg],
+  ])('a capped viewer gets a cover %s as %o', async (_label, cover, expected) => {
+    respond({ hits: [{ id: 1, image: cover, images: [] }] });
+    const [hit] = hitsOf(
+      (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, capped)).body
+    );
+    expect(hit.image).toEqual(expected);
+  });
+
+  it('a multi-search shapes collection hits too', async () => {
+    respond({ results: [{ hits: [{ id: 1, images, srcs }] }] });
+    const { body } = await siteMultiSearch(
+      { queries: [{ indexUid: COLLECTIONS_SEARCH_INDEX, q: 'x' }] },
+      capped
+    );
+    const [result] = (body as { results: { hits: Record<string, any>[] }[] }).results;
+    expect(result.hits[0].images).toEqual([pg, inCapMixed]);
+    expect(result.hits[0]).not.toHaveProperty('srcs');
+  });
+
+  it('an uncapped viewer keeps every image, the cover and srcs', async () => {
+    const cover = { id: 20, nsfwLevel: NsfwLevel.R };
+    respond({ hits: [{ id: 1, image: cover, images, srcs }] });
+    const [hit] = hitsOf(
+      (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, uncapped)).body
+    );
+    expect(hit).toMatchObject({ image: cover, images, srcs });
   });
 });

@@ -181,6 +181,29 @@ function shapeBountyHit(hit: BountyHit, browsingLevelCap: number | undefined): B
   return shaped;
 }
 
+type CollectionHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+
+/**
+ * A collection's own level is its items' combined level, which passes the cap when any one item
+ * does, so its cover and item images are capped here. `srcs` carry no rating, so a capped site
+ * gets none.
+ */
+function shapeCollectionHit(
+  hit: CollectionHit,
+  browsingLevelCap: number | undefined
+): CollectionHit {
+  if (browsingLevelCap === undefined) return hit;
+  const { srcs: _srcs, ...shaped }: CollectionHit = { ...hit };
+  if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
+  if ('image' in shaped && shaped.image) {
+    const image = shaped.image as { nsfwLevel?: unknown };
+    shaped.image = isRatingWithinCap(image.nsfwLevel, browsingLevelCap) ? image : null;
+  }
+  if (shaped._formatted)
+    shaped._formatted = shapeCollectionHit(shaped._formatted, browsingLevelCap);
+  return shaped;
+}
+
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
   if (!Array.isArray(hits)) return hits;
   if (indexUid === MODELS_SEARCH_INDEX)
@@ -189,6 +212,8 @@ function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSear
     return hits.map((hit: ComicHit) => shapeComicHit(hit, viewer.browsingLevelCap));
   if (indexUid === BOUNTIES_SEARCH_INDEX)
     return hits.map((hit: BountyHit) => shapeBountyHit(hit, viewer.browsingLevelCap));
+  if (indexUid === COLLECTIONS_SEARCH_INDEX)
+    return hits.map((hit: CollectionHit) => shapeCollectionHit(hit, viewer.browsingLevelCap));
   return hits;
 }
 
