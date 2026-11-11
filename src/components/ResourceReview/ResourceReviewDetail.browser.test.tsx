@@ -105,30 +105,43 @@ describe('ResourceReviewDetail', () => {
     await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
     const gallery = document.querySelector('[data-testid="review-gallery"]')!;
     expect(viewPost()?.textContent).toMatch(/View post/);
-    expect(document.body.textContent).toContain(
-      'From the post “Night market set” · 4 images made with this version'
-    );
+    expect(document.body.textContent).toContain('From the post “Night market set”');
     expect(follows(gallery, viewPost()!)).toBe(true);
     expect(follows(viewPost()!, document.querySelector('[data-testid="review-text"]')!)).toBe(true);
   });
 
-  test('clicking a thumbnail swaps it into the large slot', async () => {
-    const screen = await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+  test('shows at most eight images and a see-all link to the post when there are more', async () => {
+    state.images = Array.from({ length: 9 }, (_, i) => makeImage(i + 1));
+    await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
     const gallery = document.querySelector('[data-testid="review-gallery"]')!;
-    const large = () => gallery.querySelector('a[href^="/images/"]')!.getAttribute('href');
-    expect(large()).toBe('/images/1');
-    expect(gallery.querySelectorAll('button[aria-label="Show this image"]')).toHaveLength(3);
-    await screen.getByRole('button', { name: 'Show this image' }).first().click();
-    expect(large()).toBe('/images/2');
+
+    expect(asked.calls.at(-1)![0]).toEqual({ reviewId: 7, limit: 9 });
+    expect(gallery.querySelectorAll('[data-testid="review-slide"]')).toHaveLength(8);
+    const seeAll = [...gallery.querySelectorAll('a')].find((a) =>
+      a.textContent?.includes('See all their images')
+    )!;
+    expect(seeAll.getAttribute('href')).toBe('/posts/55');
+    expect(seeAll.getAttribute('rel')).toBe('nofollow');
   });
 
-  test('asks for the review’s images by id, one over what it shows, and says when there are more', async () => {
-    state.review = makeReview({ postId: 55 });
-    state.images = Array.from({ length: 11 }, (_, i) => makeImage(i + 1));
+  test('a post-less review sends see-all to the reviewer’s images of the version', async () => {
+    state.review = makeReview();
+    state.images = Array.from({ length: 9 }, (_, i) => makeImage(i + 1));
     await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+    const seeAll = [...document.querySelectorAll('a')].find((a) =>
+      a.textContent?.includes('See all their images')
+    )!;
+    expect(seeAll.getAttribute('href')).toBe(
+      '/images?view=feed&periodMode=stats&modelVersionId=2&userId=101'
+    );
+  });
 
-    expect(asked.calls.at(-1)![0]).toEqual({ reviewId: 7, limit: 11 });
-    expect(document.body.textContent).toContain('10+ images made with this version');
+  test('exactly eight images show no see-all slide', async () => {
+    state.images = Array.from({ length: 8 }, (_, i) => makeImage(i + 1));
+    await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+    const gallery = document.querySelector('[data-testid="review-gallery"]')!;
+    expect(gallery.querySelectorAll('[data-testid="review-slide"]')).toHaveLength(8);
+    expect(document.body.textContent).not.toContain('See all their images');
   });
 
   test('the text comes before the comments', async () => {
@@ -143,7 +156,7 @@ describe('ResourceReviewDetail', () => {
     await expect.element(screen.getByText('No images in this review')).toBeVisible();
     expect(document.querySelector('[data-testid="review-gallery"]')).toBeNull();
     expect(viewPost()).toBeNull();
-    expect(document.body.textContent).not.toMatch(/made with this version/);
+    expect(document.body.textContent).not.toContain('See all their images');
   });
 
   test('a review without a post links to the reviewer’s images of the version instead', async () => {

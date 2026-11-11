@@ -1,6 +1,5 @@
 import { Button, Loader, Text } from '@mantine/core';
 import { IconInfoCircle, IconLibraryPhoto, IconPhotoOff } from '@tabler/icons-react';
-import { useState } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -11,16 +10,21 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useReviewImages } from '~/components/ResourceReview/useReviewImages';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import classes from './ResourceReviewCarousel.module.css';
 
-const GALLERY_LIMIT = 10;
-// Beside the large image.
-const MAX_THUMBNAILS = 3;
+const MAX_IMAGES = 8;
+// The tallest an image gets, so a portrait fits the dialog without cropping.
+const MAX_IMAGE_HEIGHT = '60vh';
+const SLIDE_CLASS =
+  'flex flex-[0_0_100%] items-center justify-center pl-3 md:flex-[0_0_50%] md:pl-6';
 
 /**
- * The review dialog's gallery: the images its `imageCount` counts, with a strip linking to the rest.
+ * The review dialog's gallery: up to eight of the images its `imageCount` counts, each shown whole,
+ * with a final slide linking to the rest.
  */
 export function ResourceReviewCarousel({
   userId,
@@ -35,7 +39,7 @@ export function ResourceReviewCarousel({
   reviewId: number;
   postId: number | null;
 }) {
-  const [activeId, setActiveId] = useState<number | null>(null);
+  const mobile = useIsMobile({ type: 'media' });
   // Without a post or a username there is nothing to look the images up by.
   const canLoad = !!postId || !!username;
 
@@ -45,8 +49,8 @@ export function ResourceReviewCarousel({
     isLoading,
     isError,
     refetch,
-  } = useReviewImages({ reviewId, limit: GALLERY_LIMIT + 1 }, { enabled: canLoad });
-  const images = fetched.slice(0, GALLERY_LIMIT);
+  } = useReviewImages({ reviewId, limit: MAX_IMAGES + 1 }, { enabled: canLoad });
+  const images = fetched.slice(0, MAX_IMAGES);
 
   if (!canLoad) return <NoReviewImages />;
   if (isLoading)
@@ -66,10 +70,9 @@ export function ResourceReviewCarousel({
     );
   if (!images.length) return <NoReviewImages />;
 
-  const hasMore = fetched.length > GALLERY_LIMIT;
-  const large = images.find((image) => image.id === activeId) ?? images[0];
-  const thumbnails = images.filter((image) => image.id !== large.id).slice(0, MAX_THUMBNAILS);
-  const countLabel = `${images.length}${hasMore ? '+' : ''}`;
+  const hasMore = fetched.length > MAX_IMAGES;
+  const totalSlides = images.length + (hasMore ? 1 : 0);
+  const fits = mobile ? 1 : 2;
   const postTitle = images[0]?.postTitle;
   const viewMoreHref = postId
     ? `/posts/${postId}`
@@ -77,50 +80,53 @@ export function ResourceReviewCarousel({
 
   return (
     <div>
-      <div
-        className="grid grid-cols-1 gap-2 bg-gray-0 px-5 py-4 md:h-[452px] md:grid-cols-[minmax(0,1fr)_140px] dark:bg-dark-7"
-        data-testid="review-gallery"
-      >
-        <LargeImage key={large.id} image={large} images={images} reviewId={reviewId} />
-        {thumbnails.length > 0 && (
-          <div className="grid grid-cols-3 gap-2 md:flex md:min-h-0 md:flex-col">
-            {thumbnails.map((image) => (
-              <ImageGuard2 key={image.id} image={image} connectType="review" connectId={reviewId}>
-                {(safe) => (
-                  <button
-                    type="button"
-                    aria-label="Show this image"
-                    onClick={() => setActiveId(image.id)}
-                    className="relative aspect-square min-h-0 cursor-pointer overflow-hidden rounded-md border-0 bg-gray-2 p-0 md:aspect-auto md:flex-1 dark:bg-dark-6"
+      <div className="bg-gray-0 px-5 py-4 dark:bg-dark-7" data-testid="review-gallery">
+        <Embla
+          key={reviewId}
+          align={totalSlides > fits ? 'start' : 'center'}
+          withControls={totalSlides > fits}
+        >
+          <Embla.Viewport>
+            <Embla.Container className="-ml-3 flex md:-ml-6">
+              {images.map((image, i) => (
+                <Embla.Slide key={image.id} index={i} className={SLIDE_CLASS}>
+                  {({ inView }) => (
+                    <ReviewImage
+                      image={image}
+                      images={images}
+                      reviewId={reviewId}
+                      inView={inView}
+                    />
+                  )}
+                </Embla.Slide>
+              ))}
+              {hasMore && (
+                <Embla.Slide className={SLIDE_CLASS}>
+                  <Button
+                    component={Link}
+                    href={viewMoreHref}
+                    rel="nofollow"
+                    variant="outline"
+                    fullWidth
+                    radius="md"
+                    className="h-full min-h-60"
                   >
-                    {!safe ? (
-                      <MediaHash {...image} />
-                    ) : (
-                      <EdgeMedia
-                        src={image.url}
-                        name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
-                        type={image.type}
-                        width={320}
-                        placeholder="empty"
-                        className="size-full object-cover"
-                      />
-                    )}
-                  </button>
-                )}
-              </ImageGuard2>
-            ))}
-          </div>
-        )}
+                    See all their images →
+                  </Button>
+                </Embla.Slide>
+              )}
+            </Embla.Container>
+          </Embla.Viewport>
+        </Embla>
       </div>
       <div className="flex items-center justify-between gap-3 border-b border-solid border-gray-3 px-5 py-2.5 text-[13px] text-gray-6 dark:border-dark-4 dark:text-dark-2">
         <span className="flex min-w-0 items-center gap-2">
           <IconLibraryPhoto size={14} className="shrink-0" />
           <span className="truncate">
             {postId
-              ? `${postTitle ? `From the post “${postTitle}”` : 'From the post'} · ${countLabel} ${
-                  countLabel === '1' ? 'image' : 'images'
-                } made with this version`
+              ? postTitle
+                ? `From the post “${postTitle}”`
+                : 'From the post'
               : 'Images made with this version'}
           </span>
         </span>
@@ -148,21 +154,43 @@ function NoReviewImages() {
   );
 }
 
-function LargeImage({
+function ReviewImage({
   image,
   images,
   reviewId,
+  inView,
 }: {
   image: ImagesInfiniteModel;
   images: ImagesInfiniteModel[];
   reviewId: number;
+  // Off-screen slides keep their size but skip the heavy content.
+  inView: boolean;
 }) {
   const features = useFeatureFlags();
+  // The wrapper takes the image's own shape so `MediaHash` (absolute, inset-0) has a size to fill.
+  const ratio = image.width && image.height ? image.width / image.height : 1;
+  const size = {
+    aspectRatio: ratio,
+    width: `min(100%, calc(${MAX_IMAGE_HEIGHT} * ${ratio}))`,
+  };
+
+  if (!inView)
+    return (
+      <div
+        className="rounded-md bg-gray-2 dark:bg-dark-9"
+        data-testid="review-slide"
+        style={size}
+      />
+    );
 
   return (
     <ImageGuard2 image={image} connectType="review" connectId={reviewId}>
       {(safe) => (
-        <div className="relative aspect-[4/3] min-h-0 overflow-hidden rounded-md bg-gray-2 md:aspect-auto dark:bg-dark-9">
+        <div
+          className="relative overflow-hidden rounded-md bg-gray-2 dark:bg-dark-9"
+          data-testid="review-slide"
+          style={size}
+        >
           <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
           <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
 
@@ -179,11 +207,11 @@ function LargeImage({
                 name={image.name ?? image.id.toString()}
                 alt={image.name ?? undefined}
                 type={image.type}
-                width={1200}
+                width={800}
                 hiDpi={features.hiDpiPreviews}
                 sourceWidth={image.width}
                 placeholder="empty"
-                className="size-full object-cover"
+                className="size-full"
               />
             )}
           </RoutedDialogLink>
