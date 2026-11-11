@@ -18,7 +18,12 @@ export type CachedLookupOptions<T extends object> = {
   key: RedisKeyTemplateCache;
   idKey: keyof T;
   lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<string, T>>;
-  appendFn?: (results: Set<T>) => Promise<void>;
+  /**
+   * Read-side decorator run on every fetch's results. `options.bypassLocal` is the calling fetch's
+   * own flag, so an appendFn that reads another L1-backed cache can pass it on: a caller that asked
+   * for Redis-fresh values then gets them for the decorated fields too.
+   */
+  appendFn?: (results: Set<T>, options: { bypassLocal: boolean }) => Promise<void>;
   ttl?: number;
   // Seconds a bust holds an id back. Unset, each bust flavour keeps its own default (see
   // NON_SWR_BUST_WINDOW and SWR_INVALIDATE_WINDOW); set, it applies to both, as it always did.
@@ -415,7 +420,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // Degraded origin (DB) fetch used when a CLUSTER read rejects. Returns the SAME shape as the
     // healthy `fetch` but reads nothing from and writes nothing to Redis. A genuine lookupFn error
     // still propagates (the fetch itself is never wrapped).
-    async function fetchFromOriginDegraded(distinctIds: number[]): Promise<T[]> {
+    async function fetchFromOriginDegraded(
+      distinctIds: number[],
+      bypassLocal: boolean
+    ): Promise<T[]> {
       metrics.failOpenDegraded(key);
       // Partition into ids already in flight on this pod (capturing the promise reference NOW so a
       // concurrent settle+delete can't make us miss it) vs. ids we must originate.
@@ -464,7 +472,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       // other's results. Shallow is enough: the appendFns reassign/delete TOP-LEVEL fields.
       const degraded = new Set<T>();
       for (const r of settled) if (r) degraded.add({ ...r } as T);
-      if (appendFn) await appendFn(degraded);
+      if (appendFn) await appendFn(degraded, { bypassLocal });
       return [...degraded].map((x) => {
         if ('cachedAt' in x) delete (x as AnyRecord).cachedAt;
         return x;
@@ -515,7 +523,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           key,
           ids: distinctIds.length,
         });
-        const degraded = await fetchFromOriginDegraded(distinctIds);
+        const degraded = await fetchFromOriginDegraded(distinctIds, bypassLocal);
         // Backfill L1 even during a wedge (short TTL; helps bound the DB herd) and merge any ids
         // already served from L1 before the read failed. Honor dontCacheFn (dontCache is a Redis-hit
         // concept, not reachable on this path).
@@ -721,7 +729,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             )
           );
 
-      if (appendFn) await appendFn(results);
+      if (appendFn) await appendFn(results, { bypassLocal });
 
       const final = [...results].map((x) => {
         // cachedAt is internal.

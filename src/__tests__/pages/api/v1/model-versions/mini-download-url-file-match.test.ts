@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * Regression coverage for `GET /api/v1/model-versions/mini/[id]`.
@@ -39,8 +40,10 @@ const {
   mockResolveCanGenerateForVersions,
   mockGetShouldChargeForResources,
   mockGetFeaturedModels,
+  mockIsFlipt,
   currentUser,
 } = vi.hoisted(() => ({
+  mockIsFlipt: vi.fn(),
   mockQueryRaw: vi.fn(),
   mockResolveCanGenerateForVersions: vi.fn(),
   mockGetShouldChargeForResources: vi.fn(),
@@ -56,6 +59,11 @@ vi.mock('~/server/db/client', () => ({
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: mockResolveCanGenerateForVersions,
   getShouldChargeForResources: mockGetShouldChargeForResources,
+}));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: mockIsFlipt,
 }));
 
 vi.mock('~/server/services/model.service', () => ({
@@ -207,6 +215,8 @@ const versionRow = {
   modelName: 'Test Model',
   baseModel: 'SD 1.5',
   status: 'Published',
+  modelStatus: 'Published',
+  modelMode: null as string | null,
   type: 'Checkpoint',
   requireAuth: false,
   checkPermission: false,
@@ -312,6 +322,8 @@ beforeEach(() => {
   );
   mockGetShouldChargeForResources.mockResolvedValue({ 77: false });
   mockGetFeaturedModels.mockResolvedValue([]);
+  // Off, as in production until the ramp: every other test here pins the flag-off response.
+  mockIsFlipt.mockResolvedValue(false);
 });
 
 describe('createModelFileDownloadUrl', () => {
@@ -1113,5 +1125,134 @@ describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', (
     const { status, body } = await fetchDataset('civitai.com');
     expect(status).toBe(200);
     expect(body.fileName).toBe(DATASET.name);
+  });
+});
+
+describe('content-hash download url (download-hash-urls flag)', () => {
+  const hashPath = (c = 'a', prefix = '/api') => `${prefix}/download/sha256/${c.repeat(64)}`;
+  /** The hash url's path, after checking it is on the same origin as the id url. */
+  const firstPath = (body: Body) => {
+    const [hash, id] = body.downloadUrls.map((u) => new URL(u));
+    expect(hash.origin).toBe(id.origin);
+    return hash.pathname;
+  };
+
+  it('flag off: the id url alone, exactly as before', async () => {
+    const { body } = await run([SAFETENSOR], { modelFileId: String(SAFETENSOR.id) });
+
+    expect(body.downloadUrls).toHaveLength(1);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+
+  it('flag on: the lower-case sha256 url first, the id url as the fallback', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+
+    const { body } = await run([SAFETENSOR], { modelFileId: String(SAFETENSOR.id) });
+
+    expect(body.downloadUrls).toHaveLength(2);
+    expect(firstPath(body)).toBe(hashPath());
+    expect(new URL(body.downloadUrls[1]).searchParams.get('fileId')).toBe(String(SAFETENSOR.id));
+    expect(body.hashes).toEqual(SAFETENSOR.hashes);
+  });
+
+  it('rolls out per file: the flag is asked about the file the response describes', async () => {
+    mockIsFlipt.mockImplementation(async (_flag: string, entityId: string) => entityId === '202');
+
+    expect((await run([SAFETENSOR, GGUF], { modelFileId: '101' })).body.downloadUrls).toHaveLength(
+      1
+    );
+    expect(firstPath((await run([SAFETENSOR, GGUF], { modelFileId: '202' })).body)).toBe(
+      hashPath('b')
+    );
+    expect(mockIsFlipt).toHaveBeenCalledWith('download-hash-urls', '202');
+  });
+
+  it("flag on, no file named: hashes the file the response describes, chosen by the caller's preferences", async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    currentUser.value = { id: OTHER_USER_ID, filePreferences: GGUF_PREFERENCES };
+
+    const { body } = await run([SAFETENSOR, GGUF]);
+
+    expect(body.fileName).toBe(GGUF.name);
+    expect(firstPath(body)).toBe(hashPath('b'));
+    expect(mockIsFlipt).toHaveBeenCalledWith('download-hash-urls', String(GGUF.id));
+  });
+
+  it('flag on, api host: both urls drop /api/ for the api host', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+
+    const { body } = await run([SAFETENSOR], { modelFileId: '101' }, {}, 'api.civitai.com');
+
+    expect(firstPath(body)).toBe(hashPath('a', ''));
+    expect(new URL(body.downloadUrls[1]).pathname).not.toContain('/api/');
+  });
+
+  it('flag on: a placeholder all-zero sha256 keeps the id url alone', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+
+    const { body } = await run([{ ...SAFETENSOR, hashes: { SHA256: '0'.repeat(64) } }], {
+      modelFileId: '101',
+    });
+
+    expect(body.downloadUrls).toHaveLength(1);
+  });
+
+  it.each([
+    ['a non-public file seen by its owner', [PRIVATE_MODEL], {}, true],
+    ['a generation-only version', [SAFETENSOR], { usageControl: 'Generation' }, false],
+    ['a private version seen by its owner', [SAFETENSOR], { availability: 'Private' }, true],
+    ['an unpublished version seen by its owner', [SAFETENSOR], { status: 'Draft' }, true],
+    ['an unpublished model seen by its owner', [SAFETENSOR], { modelStatus: 'Unpublished' }, true],
+  ] as const)(
+    'flag on: %s keeps the id url alone, since the hash route would not serve it',
+    async (_, files, versionOverrides, asOwner) => {
+      mockIsFlipt.mockResolvedValue(true);
+      currentUser.value = asOwner ? { id: OWNER_ID } : { id: OTHER_USER_ID, isModerator: true };
+
+      const { status, body } = await run(
+        [...files],
+        { modelFileId: String(files[0].id) },
+        versionOverrides as Partial<typeof versionRow>
+      );
+
+      expect(status).toBe(200);
+      expect(body.downloadUrls).toHaveLength(1);
+    }
+  );
+
+  it('flag on: a file with no sha256 keeps the id url alone', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+
+    const { body } = await run([{ ...SAFETENSOR, hashes: {} }], { modelFileId: '101' });
+
+    expect(body.downloadUrls).toHaveLength(1);
+  });
+
+  it('flag on: the private training-epoch url is untouched', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    currentUser.value = { id: OWNER_ID };
+
+    const { body } = await run(
+      [TRAINING_FILE],
+      { modelFileId: String(TRAINING_FILE.id) },
+      { availability: 'Private' }
+    );
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  // A public training file on a private version still takes the epoch arm, so only the epoch
+  // guards keep the hash url off it: the trainingResults check and the private-version term.
+  it('flag on: a public training file on a private version gets the epoch url alone', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    currentUser.value = { id: OWNER_ID };
+
+    const { body } = await run(
+      [PUBLIC_TRAINING_FILE],
+      { modelFileId: String(PUBLIC_TRAINING_FILE.id) },
+      { availability: 'Private' }
+    );
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
   });
 });

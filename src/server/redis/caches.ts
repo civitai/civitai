@@ -111,7 +111,10 @@ export const tagIdsForImagesCache = createCachedObject<{
   // another process's L1 only after ≤localTtl, so the client's hidden-tag filter and the server-side
   // `excludedTagIds` filter on model-feed images (model.service) can lag a tag edit by as much.
   // 🔴 A caller that makes an access, moderation or payment decision from these ids must read past
-  // the L1 (`{ bypassLocal: true }`), as the gallery-promotion refusal (promotion.service) does.
+  // the L1 (`{ bypassLocal: true }`), as the gallery-promotion refusal (promotion.service) does. So
+  // must a caller that persists them: the search-index builders (collections, images, metrics-images,
+  // and models through imagesForModelVersionsCache's appendFn) bake them into documents kept until
+  // the next reindex, so an L1 entry from before a tag edit would outlive the L1 window by that much.
   // `tag-ids-for-images-l1-large` switches to a larger tier (TTL and caps in l1-switches); off is the
   // tier above. When a process inserts more distinct ids per TTL window than the off tier's entry
   // cap, its caps, not its TTL, bound its hit ratio.
