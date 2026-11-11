@@ -1,9 +1,7 @@
-import { isEqual } from 'lodash-es';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
-import { audioMetadataSchema } from '~/server/schema/media.schema';
-import { alignLyrics } from '~/server/services/audio-scan/lyric-alignment';
-import { readTranscriptionWords, songVerdict } from '~/server/services/audio-scan/song-scan';
+import { songVerdict } from '~/server/services/audio-scan/song-scan';
+import { hasTrackLyrics } from '~/server/services/audio-scan/track-lyrics';
 import {
   applyIngestionSideEffects,
   extractFailedSteps,
@@ -18,25 +16,6 @@ import type { SongScanResult } from '~/server/services/video-audio-scan.service'
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const SONG_SCAN_LOG: ScanLog = { name: 'song-scan', source: 'apply-song-scan' };
-
-/**
- * The song's metadata with its lyrics timed against the transcription, or nothing when they cannot
- * be. The lyrics go through `audioMetadataSchema` with the rest of the metadata, so a row that no
- * longer parses keeps what it had.
- */
-function syncedMetadata(metadata: unknown, steps: unknown[]) {
-  const stored = audioMetadataSchema.safeParse(metadata);
-  const words = readTranscriptionWords(steps as { $type?: string; output?: unknown }[]);
-  if (!stored.success || (!stored.data.lyrics?.length && !words.length)) return;
-
-  const lyrics = alignLyrics({ lyrics: stored.data.lyrics, words });
-  if (!lyrics.length) return;
-  // Nothing to write when the alignment left the lyrics as stored.
-  if (isEqual(lyrics, stored.data.lyrics)) return;
-  const synced = audioMetadataSchema.safeParse({ ...stored.data, lyrics });
-  if (!synced.success) return;
-  return { ...(metadata as Record<string, unknown>), lyrics: synced.data.lyrics };
-}
 
 async function failSong({
   imageId,
@@ -93,11 +72,7 @@ export async function applySongScanResult({ imageId, workflowId, steps, parsed }
   let outcome: Awaited<ReturnType<typeof resolveScanOutcome>>;
   try {
     image = await loadImageForScan(imageId);
-    const storedLyrics = audioMetadataSchema.shape.lyrics.safeParse(
-      (image.metadata as { lyrics?: unknown } | null)?.lyrics
-    );
-    const hasStoredLyrics = storedLyrics.success && !!storedLyrics.data?.length;
-    const verdict = songVerdict(parsed, hasStoredLyrics);
+    const verdict = songVerdict(parsed, await hasTrackLyrics(imageId));
 
     if (verdict.action === 'retry') {
       await failSong({
@@ -110,16 +85,13 @@ export async function applySongScanResult({ imageId, workflowId, steps, parsed }
       return;
     }
 
-    // Stored with the verdict, and read by the writer's moderation rules, so no later write can undo it.
-    const metadata = verdict.action === 'clean' ? syncedMetadata(image.metadata, steps) : undefined;
-    if (metadata) image = { ...image, metadata: metadata as typeof image.metadata };
     outcome = await resolveScanOutcome({
       image,
       workflowId,
       fixed:
         verdict.action === 'block'
           ? { nsfwLevel: NsfwLevel.Blocked, blockedFor: BlockedReason.TOS, minor: true }
-          : { nsfwLevel: NsfwLevel.PG, metadata },
+          : { nsfwLevel: NsfwLevel.PG },
       log: SONG_SCAN_LOG,
     });
   } catch (error) {
