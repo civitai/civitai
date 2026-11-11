@@ -11,6 +11,7 @@ import type {
 } from '~/server/services/blocks/pass-through-quote-failure';
 import type {
   CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
+  INLINE_NODE_REFUSED_ERROR_CODE,
   SOURCE_SCAN_PENDING_ERROR_CODE,
 } from '~/shared/constants/block-scope.constants';
 import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
@@ -1144,6 +1145,11 @@ export type BlockWorkflowSnapshot = {
    * an AIR. The codes are `checkComfyGraph`'s from `@civitai/app-sdk/blocks`. Returned
    * by the estimate and the submit alike, with no `cost`, before anything is reserved.
    *
+   * `'inline-node-refused'` — an inline `customComfy` graph uses a node the host does not
+   * run inline: one that reads or writes a file path, or a loader that takes an input from
+   * another node instead of a literal value. Estimate and submit alike, before anything is
+   * reserved.
+   *
    * `'source-scan-pending'` — a `kind:'step'` or `kind:'workflow'` input, or an inline
    * `customComfy` graph, names the viewer's own upload whose scan has not finished. Retry once the scan completes. Estimate and
    * submit alike, before anything is reserved.
@@ -1154,6 +1160,7 @@ export type BlockWorkflowSnapshot = {
     | StepQuoteErrorCode
     | BlockWorkflowErrorCode
     | InlineComfyRefusedCode
+    | typeof INLINE_NODE_REFUSED_ERROR_CODE
     | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE
     | typeof SOURCE_SCAN_PENDING_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of

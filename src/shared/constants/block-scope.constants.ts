@@ -583,6 +583,13 @@ export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as c
  */
 export const SOURCE_SCAN_PENDING_ERROR_CODE = 'source-scan-pending' as const;
 
+/**
+ * An inline `customComfy` graph uses a node the host does not run inline: one that reads or
+ * writes a file path, or a loader that takes an input from another node instead of a literal
+ * value. Returned by the estimate and the submit as a failed snapshot's `errorCode`.
+ */
+export const INLINE_NODE_REFUSED_ERROR_CODE = 'inline-node-refused' as const;
+
 /** Where a viewer sets, raises or removes their per-app daily Buzz limit. */
 export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
 

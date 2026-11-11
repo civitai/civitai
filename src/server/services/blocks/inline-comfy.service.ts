@@ -9,6 +9,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { AIR_URN_PREFIX } from '~/server/services/blocks/steps';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import type { ComfyGraph } from '~/server/services/blocks/recipes';
+import { INLINE_NODE_REFUSED_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks customComfy INLINE-GRAPH belt.
@@ -322,7 +323,7 @@ export type InlineComfyRefusalSnapshot = {
   workflowId: 'failed';
   status: 'failed';
   error: string;
-  errorCode: InlineComfyRefusedCode;
+  errorCode: InlineComfyRefusedCode | typeof INLINE_NODE_REFUSED_ERROR_CODE;
 };
 
 export type InlineComfyGraphVerdict =
@@ -370,7 +371,9 @@ function refusalMessage(reason: RefusedReason): string {
  * the rest are left alone.
  *
  * At most one refused code can apply: the SDK checks `model-filenames` only on an
- * API-format graph, so the refusal carries a single `errorCode`.
+ * API-format graph, so the refusal carries a single `errorCode`. A graph that passes
+ * the SDK's rules is then refused with `INLINE_NODE_REFUSED_ERROR_CODE` if a node
+ * touches a file path or a loader takes a linked input (`findRefusedInlineNodes`).
  *
  * A runnable verdict carries the graph re-parsed through the strict API-node
  * schema. The wire schema already enforced it on API-shaped graphs, so this parse
@@ -393,7 +396,126 @@ export function checkInlineComfyGraph(workflow: Record<string, unknown>): Inline
   }
   const parsed = inlineComfyApiGraphSchema.safeParse(workflow);
   if (!parsed.success) throw badRequest('inline workflow is not a valid ComfyUI API-format graph');
+  const refusedNodes = findRefusedInlineNodes(parsed.data);
+  if (refusedNodes.length > 0) {
+    return {
+      runnable: false,
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: refusedNodesMessage(refusedNodes),
+        errorCode: INLINE_NODE_REFUSED_ERROR_CODE,
+      },
+    };
+  }
   return { runnable: true, graph: parsed.data };
+}
+
+// ComfyUI input and output dirs are shared by every job on a worker, so a node that
+// reads or writes a path can reach another job's files whether the path is literal
+// or linked. Matched by name, failing closed: the worker's node set is not enumerable.
+const FILESYSTEM_CLASS_RE = /path|dir|folder/i;
+const FILESYSTEM_INPUT_RE = /path|director|folder|(^|_)(sub)?(dir|root)s?(_|$)/i;
+const FILESYSTEM_CLASSES: ReadonlySet<string> = new Set([
+  'VHS_LoadAudio',
+  'LoadImageOutput',
+  'WebcamCapture',
+  'ImageReceiver',
+  'Get Batch From History (mtb)',
+  'LoadText|pysssss',
+  'SaveText|pysssss',
+]);
+
+// File-backed core loaders read a bare filename from the shared input dir. Their media
+// input must be a URL or an upload key, which the source gate then checks.
+const MEDIA_INPUTS_BY_LOADER: ReadonlyMap<string, string> = new Map([
+  ['LoadImage', 'image'],
+  ['LoadImageMask', 'image'],
+  ['LoadAudio', 'audio'],
+  ['LoadVideo', 'file'],
+  ['Load3D', 'model_file'],
+]);
+const MEDIA_URL_RE = /^https?:\/\/[^\s[\]]+$/i;
+const UPLOAD_KEY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// A loader input built at run time (a linked string) is never seen by the source gate,
+// which reads literal values only.
+const LOADER_CLASS_RE = /load|url|fetch|download/i;
+
+// Core loaders whose linked inputs carry a model, CLIP or LoRA, never a string.
+const LOADER_LINKED_INPUTS_ALLOWED: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['LoraLoader', new Set(['model', 'clip'])],
+  ['LoraLoaderModelOnly', new Set(['model'])],
+  ['LoraLoaderBypass', new Set(['model', 'clip'])],
+  ['LoraLoaderBypassModelOnly', new Set(['model'])],
+  ['LoraModelLoader', new Set(['model', 'lora'])],
+  ['HypernetworkLoader', new Set(['model'])],
+  ['DiffControlNetLoader', new Set(['model'])],
+]);
+
+type RefusedInlineNode = { nodeId: string; classType: string; reason: string };
+
+/** ComfyUI reads every array input as a link (`[nodeId, slot]`), so this does too. */
+function isLinkedInput(value: unknown): boolean {
+  return Array.isArray(value);
+}
+
+function findRefusedInlineNodes(graph: ComfyGraph): RefusedInlineNode[] {
+  const refused: RefusedInlineNode[] = [];
+  for (const [nodeId, node] of Object.entries(graph)) {
+    const classType = node.class_type;
+    const inputs = Object.entries(node.inputs);
+    if (
+      FILESYSTEM_CLASSES.has(classType) ||
+      FILESYSTEM_CLASS_RE.test(classType) ||
+      inputs.some(([name]) => FILESYSTEM_INPUT_RE.test(name))
+    ) {
+      refused.push({ nodeId, classType, reason: 'reads or writes a file path' });
+      continue;
+    }
+    const mediaInput = MEDIA_INPUTS_BY_LOADER.get(classType);
+    const media = mediaInput === undefined ? undefined : node.inputs[mediaInput];
+    if (
+      media !== undefined &&
+      !isLinkedInput(media) &&
+      !(typeof media === 'string' && (MEDIA_URL_RE.test(media) || UPLOAD_KEY_RE.test(media)))
+    ) {
+      refused.push({
+        nodeId,
+        classType,
+        reason: `names a local file in ${mediaInput}; upload the media and pass its URL`,
+      });
+      continue;
+    }
+    if (!LOADER_CLASS_RE.test(classType)) continue;
+    const allowed = LOADER_LINKED_INPUTS_ALLOWED.get(classType);
+    const linked = inputs
+      .filter(([name, value]) => isLinkedInput(value) && !allowed?.has(name))
+      .map(([name]) => name);
+    if (linked.length > 0) {
+      refused.push({
+        nodeId,
+        classType,
+        reason: `takes ${linked.join(', ')} from another node instead of a literal value`,
+      });
+    }
+  }
+  return refused;
+}
+
+function refusedNodesMessage(nodes: RefusedInlineNode[]): string {
+  const shown = nodes
+    .slice(0, INLINE_FILENAME_INPUTS_SHOWN)
+    .map((n) => `node ${n.nodeId} (${n.classType.slice(0, 128)}) ${n.reason}`)
+    .join('; ');
+  const more =
+    nodes.length > INLINE_FILENAME_INPUTS_SHOWN
+      ? ` and ${nodes.length - INLINE_FILENAME_INPUTS_SHOWN} more`
+      : '';
+  return (
+    `inline workflow uses nodes the host does not run inline: ${shown}${more}. ` +
+    'Give loader inputs as literal values, and bring media in as Civitai uploads.'
+  );
 }
 
 /**
