@@ -11,7 +11,6 @@ vi.mock('~/components/RenderHtml/RenderHtml', () => ({
   RenderHtml: ({ html }: { html: string }) => <span>{html.replace(/<[^>]+>/g, '')}</span>,
 }));
 
-// The menu reads the session; its own behaviour is not under test here.
 vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   function ImageGuard2({ children }: { children: (safe: boolean) => React.ReactNode }) {
     return <>{children(true)}</>;
@@ -89,7 +88,6 @@ describe('ReviewCard, full variant', () => {
       />
     );
     const tiles = Array.from(document.querySelectorAll('[data-testid="review-more-images"]'));
-    // Phone strip shows two images, the wider one four.
     expect(tiles.map((tile) => tile.textContent)).toEqual(['+10images', '+8images']);
   });
 
@@ -156,7 +154,7 @@ describe('ReviewCard, full variant', () => {
     expect(card().textContent).not.toMatch(/From the post/);
   });
 
-  test('the whole card is wrapped by the link that opens the review dialog', async () => {
+  test('the card carries the link to the review dialog', async () => {
     await renderWithProviders(<ReviewCard review={makeReview({ id: 42 })} variant="full" />);
     expect(link().getAttribute('href')).toContain('dialog=resourceReview');
     expect(link().getAttribute('href')).toContain('reviewId=42');

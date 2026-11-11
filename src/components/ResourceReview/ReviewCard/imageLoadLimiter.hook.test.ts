@@ -42,7 +42,6 @@ describe('useImageLoadSlot', () => {
     rerender(true);
     expect(result.current?.granted).toBe(true);
 
-    // Every slot is still free: a re-entered card took none.
     const grants = Array.from({ length: MAX_CONCURRENT_IMAGE_LOADS }, () => vi.fn());
     const slots = grants.map((grant) => acquireImageLoadSlot(grant));
     expect(grants.every((g) => g.mock.calls.length === 1)).toBe(true);

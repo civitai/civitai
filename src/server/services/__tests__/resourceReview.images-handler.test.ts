@@ -59,6 +59,30 @@ describe('getResourceReviewImagesHandler', () => {
       expect(call.input.browsingLevel).toBe(NsfwLevel.PG);
   });
 
+  it('passes the signed-in viewer to the service for its visibility checks, and nothing for anonymous', async () => {
+    getReviewImageIds.mockResolvedValue([]);
+    const viewer = { id: 9, showNsfw: true, browsingLevel: NsfwLevel.PG };
+
+    await getResourceReviewImagesHandler({ input, ctx: ctxFor(viewer) });
+    await getResourceReviewImagesHandler({ input, ctx: ctxFor() });
+
+    expect(getReviewImageIds.mock.calls[0][0].userId).toBe(9);
+    expect(getReviewImageIds.mock.calls[1][0].userId).toBeUndefined();
+  });
+
+  it('returns nothing without reading when the requested level is outside the viewer’s own', async () => {
+    const viewer = { id: 9, showNsfw: true, browsingLevel: NsfwLevel.PG };
+
+    const result = await getResourceReviewImagesHandler({
+      input: { ...input, browsingLevel: NsfwLevel.X },
+      ctx: ctxFor(viewer),
+    });
+
+    expect(result).toEqual({ items: [] });
+    expect(getReviewImageIds).not.toHaveBeenCalled();
+    expect(getInfiniteImagesHandler).not.toHaveBeenCalled();
+  });
+
   it('skips the image read when no image qualifies', async () => {
     getReviewImageIds.mockResolvedValue([]);
     expect(await getResourceReviewImagesHandler({ input, ctx: ctxFor() })).toEqual({ items: [] });
