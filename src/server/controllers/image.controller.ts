@@ -81,6 +81,7 @@ import {
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import {
   canViewImageMedia,
+  keepCrawlerAnswerOutOfEdgeCache,
   viewerCanSeeImageMedia,
   withoutMedia,
 } from '~/server/utils/image-media-visibility';
@@ -1222,6 +1223,7 @@ export const getEntitiesCoverImageHandler = async ({
       eventDecorationViewer: eventViewerOf(ctx),
     });
     // Any entity id can be asked for, so each cover is held to the request's cap like a single image.
+    keepCrawlerAnswerOutOfEdgeCache(ctx);
     return covers.filter((cover) =>
       canViewImageMedia(ctx, { nsfwLevel: cover.nsfwLevel, user: { id: cover.userId } })
     );

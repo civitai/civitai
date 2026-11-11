@@ -182,11 +182,12 @@ function shapeBountyHit(hit: BountyHit, browsingLevelCap: number | undefined): B
 }
 
 type CollectionHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+type RatedImage = { id?: unknown; nsfwLevel?: unknown };
 
 /**
  * A collection's own level is its items' combined level, which passes the cap when any one item
  * does, so its cover and item images are capped here. `srcs` carry no rating, so a capped site
- * gets none.
+ * gets none. The highlight copy keeps only the images the hit itself kept.
  */
 function shapeCollectionHit(
   hit: CollectionHit,
@@ -194,13 +195,26 @@ function shapeCollectionHit(
 ): CollectionHit {
   if (browsingLevelCap === undefined) return hit;
   const { srcs: _srcs, ...shaped }: CollectionHit = { ...hit };
-  if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
-  if ('image' in shaped && shaped.image) {
-    const image = shaped.image as { nsfwLevel?: unknown };
-    shaped.image = isRatingWithinCap(image.nsfwLevel, browsingLevelCap) ? image : null;
+  // Meilisearch sends the highlight copy's numbers as strings.
+  const keptIds = new Set<string>();
+  if ('images' in shaped) {
+    shaped.images = capImages(shaped.images, browsingLevelCap);
+    if (Array.isArray(shaped.images))
+      for (const image of shaped.images as RatedImage[])
+        if (image?.id != null) keptIds.add(String(image.id));
   }
-  if (shaped._formatted)
-    shaped._formatted = shapeCollectionHit(shaped._formatted, browsingLevelCap);
+  const cover = shaped.image as RatedImage | null | undefined;
+  const coverKept = !!cover && isRatingWithinCap(cover.nsfwLevel, browsingLevelCap);
+  if ('image' in shaped && cover) shaped.image = coverKept ? cover : null;
+  if (shaped._formatted) {
+    const { srcs: _formattedSrcs, ...formatted } = shaped._formatted;
+    if (Array.isArray(formatted.images))
+      formatted.images = (formatted.images as RatedImage[]).filter(
+        (image) => image?.id != null && keptIds.has(String(image.id))
+      );
+    if ('image' in formatted && formatted.image && !coverKept) formatted.image = null;
+    shaped._formatted = formatted;
+  }
   return shaped;
 }
 

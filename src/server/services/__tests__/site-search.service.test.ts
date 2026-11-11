@@ -289,6 +289,28 @@ describe('collection images', () => {
     expect(hit.image).toEqual(expected);
   });
 
+  it('the highlight copy keeps only what the hit kept, whatever ratings it carries', async () => {
+    const over = { id: 20, nsfwLevel: NsfwLevel.R };
+    // The copy's numbers arrive as strings, and its ratings are not trusted.
+    const formatted = images.map((i) => ({ ...i, id: String(i.id), nsfwLevel: '1' }));
+    respond({
+      hits: [
+        {
+          id: 1,
+          image: over,
+          images,
+          _formatted: { image: { ...over, nsfwLevel: '1' }, images: formatted, srcs },
+        },
+      ],
+    });
+    const [hit] = hitsOf(
+      (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, capped)).body
+    );
+    expect(hit._formatted.images.map((i: { id: string }) => i.id)).toEqual(['11', '14']);
+    expect(hit._formatted.image).toBeNull();
+    expect(hit._formatted).not.toHaveProperty('srcs');
+  });
+
   it('a multi-search shapes collection hits too', async () => {
     respond({ results: [{ hits: [{ id: 1, images, srcs }] }] });
     const { body } = await siteMultiSearch(
