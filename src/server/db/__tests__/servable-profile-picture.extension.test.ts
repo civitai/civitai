@@ -1,0 +1,139 @@
+import { describe, expect, it, vi } from 'vitest';
+import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import {
+  gateProfilePictures,
+  servableProfilePictureExtension,
+} from '~/server/db/servable-profile-picture.extension';
+
+const picture = (ingestion: string) => ({ id: 1, url: `avatar-${ingestion}`, ingestion });
+const user = (ingestion: string) => ({ id: 1, username: 'u', profilePicture: picture(ingestion) });
+
+/** A find query returning `result`, recording the args it ran with. */
+const queryReturning = <T>(result: T) => vi.fn(async (..._args: unknown[]) => result);
+
+describe('the servable profile picture gate', () => {
+  it.each(['Pending', 'Error', 'Blocked'])(
+    'nulls a %s picture under a nested simpleUserSelect and keeps a Scanned one',
+    async (state) => {
+      const rows = [
+        { id: 10, user: user(state) },
+        { id: 11, user: user('Scanned') },
+      ];
+      const args = { select: { id: true, user: { select: simpleUserSelect } } };
+      const result = await gateProfilePictures(args, queryReturning(rows), vi.fn());
+
+      expect(result[0].user.profilePicture).toBeNull();
+      expect(result[1].user.profilePicture?.url).toBe('avatar-Scanned');
+    }
+  );
+
+  it('matches the select by shape, so a spread or hand-built copy is gated too', async () => {
+    const copies = [
+      { ...simpleUserSelect },
+      { ...userWithCosmeticsSelect },
+      { id: true, profilePicture: { select: { id: true, url: true, ingestion: true } } },
+      { id: true, profilePicture: true },
+    ];
+    for (const select of copies) {
+      const result = await gateProfilePictures(
+        { include: { user: { select } } },
+        queryReturning({ id: 1, user: user('Pending') }),
+        vi.fn()
+      );
+      expect(result.user.profilePicture).toBeNull();
+    }
+  });
+
+  it('gates a user read itself and every nesting depth', async () => {
+    const top = await gateProfilePictures(
+      { where: { id: 1 }, select: simpleUserSelect },
+      queryReturning(user('Pending')),
+      vi.fn()
+    );
+    expect(top.profilePicture).toBeNull();
+
+    const deep = await gateProfilePictures(
+      { select: { post: { select: { user: { select: simpleUserSelect } } } } },
+      queryReturning([{ post: { user: user('Pending') } }, { post: null }]),
+      vi.fn()
+    );
+    expect(deep[0].post?.user.profilePicture).toBeNull();
+  });
+
+  it('adds ingestion to a picture select that lacks it, and strips it from the result', async () => {
+    const select = { id: true, profilePicture: { select: { id: true, url: true } } };
+    const query = vi.fn(async (args: unknown) => {
+      const sent = (args as { select: { profilePicture: { select: Record<string, boolean> } } })
+        .select.profilePicture.select;
+      expect(sent.ingestion).toBe(true);
+      return [user('Scanned'), user('Pending')];
+    });
+
+    const result = await gateProfilePictures({ select }, query, vi.fn());
+
+    expect(result[0].profilePicture).toEqual({ id: 1, url: 'avatar-Scanned' });
+    expect(result[1].profilePicture).toBeNull();
+    // The caller's select, often a shared module constant, is not changed.
+    expect(select.profilePicture.select).toEqual({ id: true, url: true });
+  });
+
+  it('passes a query without a servable picture through untouched: same args, same result', async () => {
+    const withoutPicture = [
+      { where: { id: 1 } },
+      { select: { id: true, username: true } },
+      { include: { posts: { select: { id: true } } } },
+      // An ownership check: a picture select without `url` carries nothing servable.
+      { select: { profilePicture: { select: { userId: true } } } },
+      undefined,
+    ];
+    for (const args of withoutPicture) {
+      const rows = [{ id: 1, profilePicture: { userId: 1, ingestion: 'Pending' } }];
+      const query = queryReturning(rows);
+      const result = await gateProfilePictures(args, query, vi.fn());
+
+      expect(result).toBe(rows);
+      expect(result[0].profilePicture).toBe(rows[0].profilePicture);
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(query.mock.calls[0][0]).toBe(args);
+    }
+  });
+
+  it('lets a failing query fail as it would without the gate', async () => {
+    const failure = new Error('db down');
+    const onError = vi.fn();
+    await expect(
+      gateProfilePictures({ select: simpleUserSelect }, () => Promise.reject(failure), onError)
+    ).rejects.toBe(failure);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('on its own error, reports it and nulls every picture instead of failing the query', async () => {
+    const onError = vi.fn();
+    const broken = Object.defineProperty({}, 'select', {
+      enumerable: true,
+      get() {
+        throw new Error('unreadable args');
+      },
+    });
+    const rows = [{ id: 1, user: user('Scanned') }];
+
+    const result = await gateProfilePictures(broken, queryReturning(rows), onError);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(result[0].user.profilePicture).toBeNull();
+  });
+
+  it('registers on find queries only, so writes return what they wrote', () => {
+    const config = servableProfilePictureExtension(vi.fn())({
+      $extends: (extension: unknown) => extension,
+    } as never) as unknown as { query: { $allModels: Record<string, unknown> } };
+
+    expect(Object.keys(config.query.$allModels).sort()).toEqual([
+      'findFirst',
+      'findFirstOrThrow',
+      'findMany',
+      'findUnique',
+      'findUniqueOrThrow',
+    ]);
+  });
+});
