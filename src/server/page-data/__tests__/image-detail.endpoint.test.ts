@@ -692,10 +692,19 @@ describe('page-data flushes its headers before the body', () => {
   });
 });
 
-// The seeds' event viewer follows the credential this request's own session lookup recorded.
 describe('page-data hands the bootstrap seeds the session lookup’s credential', () => {
   afterEach(() => {
     bearer.result = null;
+  });
+
+  it('passes a moderator session’s lookup context', async () => {
+    const { req, done } = startPageData({
+      ...ownerFixture,
+      user: { ...USERS.owner, isModerator: true },
+    });
+    await done;
+    expect(h.seeds).toHaveBeenCalledTimes(1);
+    expect(h.seeds.mock.calls[0][2]).toBe((req as { context?: unknown }).context);
   });
 
   it('passes the bearer credential the lookup recorded', async () => {
@@ -716,6 +725,7 @@ describe('page-data hands the bootstrap seeds the session lookup’s credential'
     const res = fakeResponse();
     await handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
     expect(h.seeds).toHaveBeenCalledTimes(1);
+    expect(h.seeds.mock.calls[0][2]).toBe((req as { context?: unknown }).context);
     expect(h.seeds.mock.calls[0][2]).toMatchObject(credential);
   });
 });

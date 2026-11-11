@@ -36,11 +36,12 @@ const h = vi.hoisted(() => ({
 vi.mock('~/server/services/event.service', () => h);
 // The bearer lookup: what getServerAuthSession records on the request it was given.
 const bearer = vi.hoisted(() => ({ result: null as Record<string, unknown> | null }));
+const hub = vi.hoisted(() => ({ result: null as Record<string, unknown> | null }));
 vi.mock('~/server/auth/bearer-token', () => ({
   getSessionFromBearerToken: vi.fn(async () => bearer.result),
 }));
 vi.mock('~/server/auth/session-client', () => ({
-  getHubSession: vi.fn(async () => null),
+  getHubSession: vi.fn(async () => hub.result),
   maybeRollHubCookie: vi.fn(async () => undefined),
   maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
@@ -120,7 +121,6 @@ describe('settings bootstrap: the event cosmetic is read once per request', () =
   });
 });
 
-// A moderator is in every event's flag audience only on a session or a full-access personal key.
 describe('settings bootstrap: event visibility follows the request credential', () => {
   const moderator = {
     user: { id: USER_ID, username: 'mod', isModerator: true },
@@ -162,14 +162,17 @@ describe('settings bootstrap: event visibility follows the request credential', 
   });
 });
 
-// The credential is read off the request the session lookup filled, not handed in by the caller.
 describe('settings bootstrap: the credential comes from the session lookup', () => {
   const moderatorUser = { id: USER_ID, username: 'mod', isModerator: true };
-  const bootstrapFor = (credential: Record<string, unknown>) => {
-    bearer.result = { user: moderatorUser, ...credential };
+  const bootstrapFor = (credential: Record<string, unknown> | 'session') => {
+    bearer.result = credential === 'session' ? null : { user: moderatorUser, ...credential };
+    hub.result = credential === 'session' ? { user: moderatorUser } : null;
     return resolveSettingsBootstrap({
       req: {
-        headers: { host: 'civitai.com', authorization: 'Bearer key' },
+        headers: {
+          host: 'civitai.com',
+          ...(credential === 'session' ? {} : { authorization: 'Bearer key' }),
+        },
         cookies: {},
         url: '/api/user/settings',
       },
@@ -196,7 +199,12 @@ describe('settings bootstrap: the credential comes from the session lookup', () 
     for (const viewer of viewers()) expect(viewer).toMatchObject({ isModerator: false });
   });
 
-  // Control: the credential is really read, so a full-access key keeps the moderator.
+  it('keeps a moderator on a session', async () => {
+    const seeds = await bootstrapFor('session');
+    expect(seeds.navBanners?.some((b) => b.id === `event:${BIRTHDAY_2026_EVENT}`)).toBe(true);
+    expect(viewers()).toContainEqual(expect.objectContaining({ isModerator: true }));
+  });
+
   it('keeps a moderator on a full-access personal key', async () => {
     const seeds = await bootstrapFor({
       tokenScope: TokenScope.Full,

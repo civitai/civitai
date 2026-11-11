@@ -23,10 +23,6 @@ import { createCallerFactory } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
-/**
- * The shop's moderator flag decides which event items show before launch, so it is a moderator's
- * only on a session or a full-access personal key (eventViewerOf), as for moderatorProcedure.
- */
 const MODERATOR = { id: 10, isModerator: true };
 const credentials = {
   session: {},

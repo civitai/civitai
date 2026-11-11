@@ -8,7 +8,6 @@ vi.mock('~/env/client', () => ({
   formatErrors: () => [],
 }));
 
-// An unlaunched event: only a moderator (in every flag audience) can see it.
 const { service, navBanners, watch, moderatorOnly } = vi.hoisted(() => {
   const ok = () => vi.fn(async () => ({ ok: 1 }));
   const moderatorOnly = async ({ viewer }: { viewer?: { isModerator?: boolean } }) =>
@@ -55,11 +54,6 @@ import { eventRouter } from '~/server/routers/event.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
-/**
- * A moderator is in every event's flag audience, but only on a session or a full-access personal
- * key (eventViewerOf). Each event route is run through its real middleware chain and resolver, and
- * this pins the viewer the service is asked about.
- */
 type Ctx = Record<string, unknown> & { user?: { id: number; isModerator?: boolean } };
 type Middleware = (opts: {
   input?: unknown;
@@ -142,7 +136,6 @@ async function run(name: string, ctx: Ctx) {
   return step(ctx);
 }
 
-// Every route that asks an event gate, with the service it calls and how it passes the viewer.
 const ROUTES: [route: string, fn: string, passed: 'viewer' | 'user'][] = [
   ['getAccess', 'getViewerEventAccess', 'viewer'],
   ['getData', 'getEventData', 'viewer'],
@@ -168,7 +161,6 @@ const ROUTES: [route: string, fn: string, passed: 'viewer' | 'user'][] = [
   ['setShowcaseHat', 'setShowcaseHat', 'user'],
   ['getUserRank', 'getUserRank', 'user'],
 ];
-// The routes behind eventGate.
 const GATED_ROUTES = [
   'getData',
   'getTeamScores',
@@ -214,7 +206,6 @@ describe.each(['a scoped personal key', 'an OAuth token'] as const)(
     });
 
     it.each(ROUTES)('event.%s asks %s about the user alone', async (route, fn, passed) => {
-      // Past the gate, so each resolver's own viewer is what is pinned.
       service.getViewerEventAccess.mockResolvedValue('open');
       await run(route, ctx());
       expect(lastViewer(fn, passed)).toEqual({ id: MODERATOR.id, isModerator: false });

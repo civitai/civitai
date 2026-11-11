@@ -35,11 +35,6 @@ import { createCallerFactory } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
-/**
- * Home blocks gate Event blocks on the event's flag, and a moderator is in every flag audience,
- * but only on a session or a full-access personal key (eventViewerOf). Pins the viewer each gate
- * is asked about, through the real router and handlers.
- */
 const MODERATOR = { id: 10, isModerator: true };
 const credentials = {
   session: {},
@@ -66,7 +61,6 @@ const caller = (credential: Record<string, unknown>) =>
     ...credential,
   } as unknown as Context);
 
-// Each route, and the gate call whose viewer it decides.
 const ROUTES: [
   route: string,
   call: (c: ReturnType<typeof caller>) => Promise<unknown>,

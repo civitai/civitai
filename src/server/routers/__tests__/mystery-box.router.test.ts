@@ -369,8 +369,6 @@ describe('the Inventory reads hand the service the flag, the country and the vie
   });
 });
 
-// Event boxes are gated on the event's flag audience, which a moderator is in only on a session or
-// a full-access personal key (eventViewerOf).
 describe('a moderator on a scoped key reads event boxes as the user alone', () => {
   const scopedModerator = {
     user: { ...holder, isModerator: true },
