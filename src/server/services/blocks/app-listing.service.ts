@@ -1604,8 +1604,10 @@ export async function listAvailableListings(
   // deliberately outside the statement hash. See
   // {@link catalogPageCache}.
   //
-  // TTL = `CacheTTL.sm` (180s). Rows enter and leave only through moderator or owner
-  // actions, and every one of those paths calls `bustAppListingCatalogCache()`.
+  // TTL = `CacheTTL.sm` (180s). Moderator and owner actions on a listing call
+  // `bustAppListingCatalogCache()`. Banning or deleting the owner (or a sub-listing's
+  // author) also removes rows, through `storeOwnerEligibleWhere`, and those paths bust
+  // nothing: they are bounded by the TTL alone.
   //
   // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
   // no mutation to hang a bust on. It is NOT a redis-outage backstop: `queryCache` has no
