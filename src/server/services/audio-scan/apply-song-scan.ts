@@ -1,3 +1,4 @@
+import { isEqual } from 'lodash-es';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { audioMetadataSchema } from '~/server/schema/media.schema';
@@ -26,10 +27,12 @@ const SONG_SCAN_LOG: ScanLog = { name: 'song-scan', source: 'apply-song-scan' };
 function syncedMetadata(metadata: unknown, steps: unknown[]) {
   const stored = audioMetadataSchema.safeParse(metadata);
   const words = readTranscriptionWords(steps as { $type?: string; output?: unknown }[]);
-  if (!stored.success || !words.length) return;
+  if (!stored.success || (!stored.data.lyrics?.length && !words.length)) return;
 
   const lyrics = alignLyrics({ lyrics: stored.data.lyrics, words });
   if (!lyrics.length) return;
+  // Nothing to write when the alignment left the lyrics as stored.
+  if (isEqual(lyrics, stored.data.lyrics)) return;
   const synced = audioMetadataSchema.safeParse({ ...stored.data, lyrics });
   if (!synced.success) return;
   return { ...(metadata as Record<string, unknown>), lyrics: synced.data.lyrics };
@@ -115,7 +118,7 @@ export async function applySongScanResult({ imageId, workflowId, steps, parsed }
       workflowId,
       fixed:
         verdict.action === 'block'
-          ? { nsfwLevel: NsfwLevel.Blocked, blockedFor: BlockedReason.TOS }
+          ? { nsfwLevel: NsfwLevel.Blocked, blockedFor: BlockedReason.TOS, minor: true }
           : { nsfwLevel: NsfwLevel.PG, metadata },
       log: SONG_SCAN_LOG,
     });

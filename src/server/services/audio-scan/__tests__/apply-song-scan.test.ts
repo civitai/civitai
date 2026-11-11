@@ -62,7 +62,7 @@ describe('a song the scan flagged', () => {
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({
         workflowId: 'wf',
-        fixed: { nsfwLevel: NsfwLevel.Blocked, blockedFor: 'tos' },
+        fixed: { nsfwLevel: NsfwLevel.Blocked, blockedFor: 'tos', minor: true },
       })
     );
     expect(pipeline.applyIngestionSideEffects).toHaveBeenCalledWith(
@@ -121,6 +121,17 @@ describe('a song the scan did not flag', () => {
     await run(scanned(false), []);
 
     expect(pipeline.resolveScanOutcome.mock.calls[0][0].fixed.metadata).toBeUndefined();
+  });
+
+  it('never keeps a time the client sent: with nothing transcribed the lines are stored unsynced', async () => {
+    const image = song({ metadata: { duration: 30, lyrics: [{ t: 99, text: 'la la love' }] } });
+
+    await run(scanned(false), [], image);
+
+    expect(pipeline.resolveScanOutcome.mock.calls[0][0].fixed.metadata).toEqual({
+      duration: 30,
+      lyrics: [{ t: null, text: 'la la love' }],
+    });
   });
 
   it('is cleared as an instrumental when the scan found no audio and none was stored', async () => {

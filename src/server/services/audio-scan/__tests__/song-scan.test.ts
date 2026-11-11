@@ -39,7 +39,7 @@ describe('buildSongScanSteps', () => {
     expect(steps[1].input.transcription).toBeDefined();
   });
 
-  it('skips the transcription when every lyric line is already timed', () => {
+  it('transcribes even when the client sent a time for every line, so lyrics never stand in for the audio check', () => {
     const steps = buildSongScanSteps({
       ...base,
       lyrics: [
@@ -48,8 +48,8 @@ describe('buildSongScanSteps', () => {
       ],
     }) as any[];
 
-    expect(steps.map((s) => s.$type)).toEqual(['audioTextModeration']);
-    expect(steps[0].input).toEqual({ lyrics: 'timed\nalso timed' });
+    expect(steps.map((s) => s.$type)).toEqual(['transcription', 'audioTextModeration']);
+    expect(steps[1].input.transcription).toEqual({ $ref: 'transcribe', path: 'output' });
   });
 });
 

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // A posted song is scanned like an image: the cron re-sends a Pending song whose scan has not
-// reported back, ages a stuck one to Error for the capped retry lane, and queues a Pending song
-// that has no JobQueue entry (songs posted before their scan existed were pruned from it).
+// reported back, sends one that was never sent however old it is, and ages a stuck one to Error for
+// the capped retry lane.
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -39,6 +39,11 @@ const ROWS = [
   row({ id: 3, createdAt: new Date(now - 2 * HOUR), scanRequestedAt: new Date(now - 2 * HOUR) }),
   // Requested long ago, within the age-out: re-sent.
   row({ id: 4, scanRequestedAt: new Date(now - 20 * MINUTE) }),
+  // A song whose first submit never happened (the orchestrator was down), old enough to age out: it
+  // has never been scanned, so it is sent, not failed unsent.
+  row({ id: 6, createdAt: new Date(now - 2 * HOUR), scanRequestedAt: null }),
+  // No longer awaiting a scan: the one genuinely stale row, which the cron prunes.
+  row({ id: 5, ingestion: 'Scanned' }),
 ];
 
 const { execLog, mockIngestImage } = vi.hoisted(() => ({
@@ -94,13 +99,14 @@ describe('ingest-images with songs', () => {
   it('re-sends a Pending song whose scan has not reported back, and only those past the cooldown', async () => {
     await run();
 
-    expect(sentIds().sort()).toEqual([1, 4]);
+    expect(sentIds().sort()).toEqual([1, 4, 6]);
   });
 
   it('leaves a song whose scan is in flight in the queue', async () => {
     await run();
 
     const prunedIds = (pruned()?.values.find(Array.isArray) as number[] | undefined) ?? [];
+    expect(prunedIds).toContain(5);
     expect(prunedIds).not.toContain(2);
     expect(prunedIds).not.toContain(1);
   });
@@ -115,12 +121,13 @@ describe('ingest-images with songs', () => {
     expect(sentIds()).not.toContain(3);
   });
 
-  it('queues a Pending song that has no JobQueue entry, once and without touching the others', async () => {
+  it('sends a song that was never sent exactly once, however old, and does not age it out', async () => {
     await run();
 
-    const insert = execLog.find((c) => c.sql.includes('INSERT INTO "JobQueue"'));
-    expect(insert?.sql).toContain("type = 'audio'");
-    expect(insert?.sql).toContain("ingestion = 'Pending'");
-    expect(insert?.sql).toContain('ON CONFLICT DO NOTHING');
+    expect(sentIds().filter((id) => id === 6)).toHaveLength(1);
+    const update = execLog.find(
+      (c) => c.sql.includes('UPDATE "Image"') && c.sql.includes("'Pending'")
+    );
+    expect(update?.values.find(Array.isArray)).not.toContain(6);
   });
 });

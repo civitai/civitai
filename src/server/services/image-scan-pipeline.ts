@@ -563,7 +563,13 @@ export async function resolveScanOutcome({
    * scan blocked it, and the metadata to store with the verdict. Replaces the tag audit; every guard
    * below still runs.
    */
-  fixed?: { nsfwLevel: number; blockedFor?: string; metadata?: Record<string, unknown> };
+  fixed?: {
+    nsfwLevel: number;
+    blockedFor?: string;
+    metadata?: Record<string, unknown>;
+    /** The scan found a minor involved, which the image row records as `minor`. */
+    minor?: boolean;
+  };
   log?: ScanLog;
 }): Promise<ScanOutcome> {
   const updatedAt = new Date();
@@ -645,6 +651,7 @@ export async function resolveScanOutcome({
         userId: image.userId,
         reason: modRule.ruleReason,
         log,
+        type: image.type,
       });
     }
   }
@@ -765,9 +772,11 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
 function fixedAudit({
   nsfwLevel,
   blockedFor,
+  minor = false,
 }: {
   nsfwLevel: number;
   blockedFor?: string;
+  minor?: boolean;
 }): Awaited<ReturnType<typeof auditScanResults>> {
   return {
     tags: [],
@@ -780,7 +789,7 @@ function fixedAudit({
     poiReview: false,
     minorReview: false,
     newUserReview: false,
-    minor: false,
+    minor,
     poi: false,
     reviewKey: undefined,
     blockedFor,
@@ -996,11 +1005,13 @@ async function notifyImageAutoBlocked({
   userId,
   reason,
   log,
+  type,
 }: {
   imageId: number;
   userId: number;
   reason?: string | null;
   log: ScanLog;
+  type?: string;
 }) {
   await createNotification({
     category: NotificationCategory.System,
@@ -1008,7 +1019,9 @@ async function notifyImageAutoBlocked({
     type: 'system-message',
     userId,
     details: {
-      message: `One of your images has been blocked due to a moderation rule violation${
+      message: `One of your ${
+        type === 'audio' ? 'songs' : 'images'
+      } has been blocked due to a moderation rule violation${
         reason ? ` by the following reason: ${reason}` : ''
       }. If you believe this is a mistake, you can appeal this decision.`,
       url: `/images/${imageId}`,

@@ -8452,6 +8452,7 @@ export async function resolveIngestionError({
     where: { id },
     select: {
       ingestion: true,
+      type: true,
       postId: true,
       userId: true,
       metadata: true,
@@ -8462,6 +8463,11 @@ export async function resolveIngestionError({
     },
   });
   if (!image) throw new Error('Image not found');
+  // A song is published only by its own scan; the ingest cron retries it, so no rating here can.
+  if (image.type === MediaType.audio)
+    throw throwBadRequestError(
+      'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
+    );
   const refusal = ingestionResolveRefusal({
     blockedFor: image.blockedFor,
     needsReview: image.needsReview,

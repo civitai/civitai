@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  alignLyrics,
-  lyricsAreSynced,
-  type TranscribedWord,
-} from '~/server/services/audio-scan/lyric-alignment';
+import { alignLyrics, type TranscribedWord } from '~/server/services/audio-scan/lyric-alignment';
 
 /** Words spaced 0.5s apart starting at `start`, as a transcriber reports them. */
 const say = (text: string, start: number): TranscribedWord[] =>
@@ -14,28 +10,6 @@ const say = (text: string, start: number): TranscribedWord[] =>
   }));
 
 const lines = (...texts: string[]) => texts.map((text) => ({ t: null, text }));
-
-describe('lyricsAreSynced', () => {
-  it('is true only when every line has a numeric offset', () => {
-    expect(
-      lyricsAreSynced([
-        { t: 1, text: 'a' },
-        { t: 0, text: 'b' },
-      ])
-    ).toBe(true);
-    expect(
-      lyricsAreSynced([
-        { t: 1, text: 'a' },
-        { t: null, text: 'b' },
-      ])
-    ).toBe(false);
-  });
-
-  it('is false with no lyrics, so there is something to build', () => {
-    expect(lyricsAreSynced(undefined)).toBe(false);
-    expect(lyricsAreSynced([])).toBe(false);
-  });
-});
 
 describe('alignLyrics with stored lyrics', () => {
   it('places each line at the start of its first word', () => {
@@ -143,15 +117,53 @@ describe('alignLyrics with stored lyrics', () => {
     expect(alignLyrics({ lyrics: stored, words: [] })).toEqual(stored);
   });
 
-  it('does not run the alignment when the lyrics are already synced', () => {
-    const synced = [
-      { t: 1.5, text: 'already timed' },
-      { t: 4, text: 'also timed' },
+  it('discards times the client sent: a placed line gets the transcribed time, an unplaced one null', () => {
+    const clientTimed = [
+      { t: 99, text: 'Line one is here' },
+      { t: 100, text: 'Never sung by anybody at all' },
     ];
 
-    expect(alignLyrics({ lyrics: synced, words: say('totally unrelated speech', 30) })).toEqual(
-      synced
-    );
+    const result = alignLyrics({ lyrics: clientTimed, words: say('line one is here', 4) });
+
+    expect(result).toEqual([
+      { t: 4, text: 'Line one is here' },
+      { t: null, text: 'Never sung by anybody at all' },
+    ]);
+  });
+
+  it('discards every client time when nothing was transcribed', () => {
+    const result = alignLyrics({ lyrics: [{ t: 5, text: 'timed by the client' }], words: [] });
+
+    expect(result).toEqual([{ t: null, text: 'timed by the client' }]);
+  });
+
+  it('aligns a realistic long song, with misheard words and a repeated chorus', () => {
+    const verse = (n: number) =>
+      [0, 1, 2, 3].map((l) => `verse ${n} line ${l} walking through golden morning light`);
+    const chorus = [
+      'oh we are shining brighter than the stars tonight',
+      'hold on to me and never let me go',
+      'we are shining brighter than the stars tonight',
+      'singing out loud until the morning comes',
+    ];
+    const text = [...[1, 2, 3].flatMap((n) => ['[Verse]', ...verse(n), '[Chorus]', ...chorus])];
+    const sung = text.filter((l) => !l.startsWith('['));
+    const words: TranscribedWord[] = [];
+    let clock = 10;
+    sung.forEach((line, i) => {
+      // Every fifth line has a word the transcriber got wrong.
+      const heard =
+        i % 5 === 0 ? line.replace('golden', 'goldie').replace('shining', 'shinning') : line;
+      words.push(...say(heard, clock));
+      clock += heard.split(' ').length * 0.5 + 1.5;
+    });
+
+    const result = alignLyrics({ lyrics: lines(...text), words });
+
+    const placed = result.filter((l) => l.t !== null && !l.text.startsWith('['));
+    expect(placed.length).toBeGreaterThanOrEqual(sung.length * 0.9);
+    const times = placed.map((l) => l.t as number);
+    expect(times).toEqual([...times].sort((a, b) => a - b));
   });
 });
 

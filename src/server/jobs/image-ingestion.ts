@@ -151,19 +151,6 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // cap — this cron is only the retry/backfill path.
   const maxPerRun = env.IMAGE_SCANNING_MAX_PER_RUN;
 
-  // A song posted before songs had a scan was pruned from the queue, and nothing queues it again.
-  // The Pending partial index keeps this to the rows still awaiting a scan; the conflict clause
-  // leaves every song already queued as it is.
-  if (isProd) {
-    await dbWrite.$executeRaw`
-      INSERT INTO "JobQueue" (type, "entityType", "entityId")
-      SELECT ${JobQueueType.ImageScan}::"JobQueueType", ${EntityType.Image}::"EntityType", i.id
-      FROM "Image" i
-      WHERE i.ingestion = 'Pending'::"ImageIngestionStatus" AND i.type = 'audio'
-      ON CONFLICT DO NOTHING
-    `;
-  }
-
   // Pull from JobQueue instead of scanning Image table with partial indexes
   const jobQueue = await dbRead.jobQueue.findMany({
     where: { type: JobQueueType.ImageScan, entityType: EntityType.Image },
@@ -272,6 +259,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         img.ingestion === 'Pending' &&
         !img.isBackfill &&
         !isRateLimitExempt(img) &&
+        // A song never sent (no scan requested) has had no scan to lose: it is sent, not failed unsent.
+        !(img.type === 'audio' && !img.scanRequestedAt) &&
         img.createdAt <= pendingTimeoutDate
     )
     .map((img) => img.id);

@@ -19,6 +19,7 @@ describe('handleAudioScanCallback', () => {
 
     const result = await handleAudioScanCallback('wf');
 
+    expect(mocks.apply).toHaveBeenCalledTimes(1);
     expect(mocks.apply).toHaveBeenCalledWith(song);
     expect(result).toEqual({ stored: true, reason: 'succeeded' });
   });

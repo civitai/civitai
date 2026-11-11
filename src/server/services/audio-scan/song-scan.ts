@@ -1,10 +1,6 @@
 import type { Priority, WorkflowStepTemplate } from '@civitai/orchestration-client';
 import { z } from 'zod';
-import {
-  lyricsAreSynced,
-  type LyricLine,
-  type TranscribedWord,
-} from '~/server/services/audio-scan/lyric-alignment';
+import type { LyricLine, TranscribedWord } from '~/server/services/audio-scan/lyric-alignment';
 import type { AudioScanParse } from '~/server/services/video-audio-scan.service';
 
 const TRANSCRIBE_STEP = 'transcribe';
@@ -16,8 +12,16 @@ function lyricsText(lyrics: LyricLine[] | undefined) {
 }
 
 /**
- * The steps that scan one song: a word-timed transcription (skipped when the lyrics already carry
- * their own times) feeding the text moderation, which also reads the lyrics we stored. Step output is
+ * Whether a song's audio is transcribed when it is scanned. Always: lyrics and times the client sent
+ * are never taken on trust, so they cannot stand in for checking what is actually sung. This is the
+ * one place the policy lives.
+ */
+export function shouldTranscribe(_lyrics: LyricLine[] | undefined) {
+  return true;
+}
+
+/**
+ * The steps that scan one song: a word-timed transcription feeding the text moderation, which also reads the lyrics we stored. Step output is
  * handed on by `$ref`, as the video frame scan hands its frames to the rating steps.
  */
 export function buildSongScanSteps({
@@ -31,7 +35,7 @@ export function buildSongScanSteps({
   metadata: Record<string, unknown>;
   priority?: Priority;
 }) {
-  const transcribe = !lyricsAreSynced(lyrics);
+  const transcribe = shouldTranscribe(lyrics);
   const steps = [
     ...(transcribe
       ? [

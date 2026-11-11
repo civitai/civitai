@@ -40,6 +40,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { getImagesModRules } from '~/server/services/image.service';
+import { createNotification } from '~/server/services/notification.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
@@ -164,8 +165,9 @@ const row = async (id: number) =>
       blockedFor: string | null;
       needsReview: string | null;
       metadata: unknown;
+      minor: boolean;
     }>(
-      `SELECT ingestion, "nsfwLevel", "blockedFor", "needsReview", metadata FROM "Image" WHERE id = $1`,
+      `SELECT ingestion, "nsfwLevel", "blockedFor", "needsReview", metadata, minor FROM "Image" WHERE id = $1`,
       [id]
     )
   ).rows[0];
@@ -176,7 +178,7 @@ const scanMinors = (image: ScanImage) =>
   resolveScanOutcome({
     image,
     workflowId: 'wf',
-    fixed: { nsfwLevel: BLOCKED, blockedFor: 'tos' },
+    fixed: { nsfwLevel: BLOCKED, blockedFor: 'tos', minor: true },
   });
 
 describe('a song scan', () => {
@@ -200,6 +202,17 @@ describe('a song scan', () => {
       nsfwLevel: BLOCKED,
       blockedFor: 'tos',
     });
+  });
+
+  it('records a song blocked for minors as minor, and a clean one as not', async () => {
+    await insertSong(12);
+    await insertSong(13);
+
+    await scanMinors(loaded(12));
+    await scanClean(loaded(13));
+
+    expect((await row(12)).minor).toBe(true);
+    expect((await row(13)).minor).toBe(false);
   });
 
   it('leaves the lyrics already written to the row alone', async () => {
@@ -254,6 +267,11 @@ describe('a song scan', () => {
 
     expect(outcome.ingestion).toBe('Blocked');
     expect(await row(6)).toMatchObject({ ingestion: 'Blocked', nsfwLevel: BLOCKED });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({ message: expect.stringContaining('songs') }),
+      })
+    );
   });
 
   it('keeps a song under appeal blocked and in the appeals queue after a clean scan', async () => {

@@ -9,17 +9,13 @@ const MIN_LINE_SCORE = 0.6;
 const SHORT_LINE_TOKENS = 2;
 // How far past the previous line a line may start. Bounds the cost and stops a lost line from
 // being matched to a verse sung minutes later.
-const LOOKAHEAD_TOKENS = 120;
+const LOOKAHEAD_TOKENS = 40;
 // Extra transcript words read past a line's length, for words the transcriber added.
 const WINDOW_SLACK = 2;
 const PAUSE_BREAK_SECONDS = 1;
 const MAX_WORDS_PER_BUILT_LINE = 12;
 
 const SECTION_TAG = /^\s*[[({][^\])}]*[\])}]\s*$/;
-
-export function lyricsAreSynced(lyrics: LyricLine[] | undefined) {
-  return !!lyrics?.length && lyrics.every((line) => typeof line.t === 'number');
-}
 
 function tokenize(text: string) {
   return text
@@ -44,60 +40,110 @@ function editDistance(a: string, b: string) {
   return prev[b.length];
 }
 
-/** Equal, or a near miss of a word long enough that one wrong letter is still that word. */
-function sameWord(a: string, b: string) {
-  if (a === b) return true;
-  const longest = Math.max(a.length, b.length);
-  return Math.min(a.length, b.length) >= 4 && editDistance(a, b) <= Math.floor(longest / 4);
+/**
+ * Equal, or a near miss of a word long enough that one wrong letter is still that word. Memoized per
+ * pair: a long song asks about the same few thousand pairs many times over.
+ */
+function wordMatcher() {
+  const seen = new Map<string, boolean>();
+  return (a: string, b: string) => {
+    if (a === b) return true;
+    const shortest = Math.min(a.length, b.length);
+    const longest = Math.max(a.length, b.length);
+    const allowed = Math.floor(longest / 4);
+    // Too short, too different in length, or a different first letter: no edit distance needed.
+    if (shortest < 4 || longest - shortest > allowed || a[0] !== b[0]) return false;
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+    let same = seen.get(key);
+    if (same === undefined) {
+      same = editDistance(a, b) <= allowed;
+      seen.set(key, same);
+    }
+    return same;
+  };
 }
 
 type Token = { token: string; start: number };
 type Cell = { len: number; first: number; last: number };
+/** One DP row, reused for every window. */
+type Scratch = { len: Int32Array; first: Int32Array; last: Int32Array };
 
 /** The best ordered, fuzzy overlap of a line with the start of a transcript window. */
-function overlap(line: string[], window: Token[]): Cell {
-  const none: Cell = { len: 0, first: -1, last: -1 };
-  let prev: Cell[] = Array.from({ length: window.length + 1 }, () => none);
+function overlap(
+  line: string[],
+  window: Token[],
+  same: (a: string, b: string) => boolean,
+  { len, first, last }: Scratch
+): Cell {
+  const n = window.length;
+  len.fill(0, 0, n + 1);
+  first.fill(-1, 0, n + 1);
+  last.fill(-1, 0, n + 1);
   for (let i = 1; i <= line.length; i++) {
-    const row: Cell[] = [none];
-    for (let j = 1; j <= window.length; j++) {
-      let best = prev[j];
-      if (
-        row[j - 1].len > best.len ||
-        (row[j - 1].len === best.len && row[j - 1].first < best.first)
-      )
-        best = row[j - 1];
-      if (sameWord(line[i - 1], window[j - 1].token)) {
-        const diag = prev[j - 1];
-        const cell: Cell = {
-          len: diag.len + 1,
-          first: diag.len === 0 ? j - 1 : diag.first,
-          last: j - 1,
-        };
-        if (cell.len > best.len || (cell.len === best.len && cell.first <= best.first)) best = cell;
+    // The previous row's value to the left, which the in-place update has already overwritten.
+    let dLen = 0;
+    let dFirst = -1;
+    let dLast = -1;
+    for (let j = 1; j <= n; j++) {
+      const uLen = len[j];
+      const uFirst = first[j];
+      const uLast = last[j];
+      let bLen = uLen;
+      let bFirst = uFirst;
+      let bLast = uLast;
+      if (len[j - 1] > bLen || (len[j - 1] === bLen && first[j - 1] < bFirst)) {
+        bLen = len[j - 1];
+        bFirst = first[j - 1];
+        bLast = last[j - 1];
       }
-      row[j] = best;
+      if (same(line[i - 1], window[j - 1].token)) {
+        const cLen = dLen + 1;
+        const cFirst = dLen === 0 ? j - 1 : dFirst;
+        if (cLen > bLen || (cLen === bLen && cFirst <= bFirst)) {
+          bLen = cLen;
+          bFirst = cFirst;
+          bLast = j - 1;
+        }
+      }
+      dLen = uLen;
+      dFirst = uFirst;
+      dLast = uLast;
+      len[j] = bLen;
+      first[j] = bFirst;
+      last[j] = bLast;
     }
-    prev = row;
   }
-  return prev[window.length];
+  return { len: len[n], first: first[n], last: last[n] };
 }
 
 function alignToStored(lyrics: LyricLine[], words: TranscribedWord[]): LyricLine[] {
   const transcript: Token[] = words.flatMap((word) =>
     tokenize(word.text).map((token) => ({ token, start: word.startTime }))
   );
+  const lines = lyrics.map(({ text }) => tokenize(text));
+  const size = Math.max(0, ...lines.map((l) => l.length)) + WINDOW_SLACK + 1;
+  const scratch: Scratch = {
+    len: new Int32Array(size),
+    first: new Int32Array(size),
+    last: new Int32Array(size),
+  };
+  const same = wordMatcher();
   let cursor = 0;
 
-  return lyrics.map(({ text }) => {
+  return lyrics.map(({ text }, index) => {
     const unplaced = { t: null, text };
-    const line = tokenize(text);
+    const line = lines[index];
     if (!line.length || SECTION_TAG.test(text)) return unplaced;
 
     let best: { score: number; at: number; cell: Cell } | undefined;
     const lastStart = Math.min(cursor + LOOKAHEAD_TOKENS, transcript.length - 1);
     for (let p = cursor; p <= lastStart; p++) {
-      const cell = overlap(line, transcript.slice(p, p + line.length + WINDOW_SLACK));
+      const cell = overlap(
+        line,
+        transcript.slice(p, p + line.length + WINDOW_SLACK),
+        same,
+        scratch
+      );
       const score = cell.len / line.length;
       if (cell.len && (!best || score > best.score)) best = { score, at: p, cell };
     }
@@ -144,6 +190,5 @@ export function alignLyrics({
   words: TranscribedWord[];
 }): LyricLine[] {
   if (!lyrics?.length) return buildFromWords(words);
-  if (lyricsAreSynced(lyrics)) return lyrics;
   return alignToStored(lyrics, words);
 }
