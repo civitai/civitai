@@ -705,7 +705,6 @@ describe('a file type change to or from training data on a trained version', () 
   );
 });
 
-// The domain stamp gates which domain a paid training submit may run under; it is the server's.
 describe('a file whose loader or format changes', () => {
   const RESET = { virusScanResult: 'Pending', pickleScanResult: 'Pending', scannedAt: null };
   const scanned = (overrides: Record<string, unknown> = {}) => {
@@ -744,8 +743,23 @@ describe('a file whose loader or format changes', () => {
     await updateFile({ id: 1, metadata: { format: 'PickleTensor' }, userId: 7, isModerator: true });
 
     expect(write().data).toMatchObject(RESET);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'model-file-format-override', fileId: 1, moderatorId: 7 })
+    const overrides = () =>
+      vi
+        .mocked(loggingMock.logToAxiom)
+        .mock.calls.filter(
+          ([entry]) => (entry as { name?: string }).name === 'model-file-format-override'
+        );
+    expect(overrides()).toHaveLength(1);
+    expect(overrides()[0][0]).toMatchObject({ fileId: 1, moderatorId: 7, to: 'PickleTensor' });
+  });
+
+  it('logs no override for a moderator setting the format the name has', async () => {
+    scanned();
+
+    await updateFile({ id: 1, metadata: { format: 'SafeTensor' }, userId: 7, isModerator: true });
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'model-file-format-override' })
     );
   });
 
@@ -759,14 +773,22 @@ describe('a file whose loader or format changes', () => {
   });
 
   it.each([
-    ['a rename to an upper-case extension', 'a.CKPT'],
-    ['a rename of a file no loader opens', 'a.pt'],
-  ])('goes back to unscanned on %s', async (label, name) => {
-    scanned(label.includes('no loader') ? { type: 'Config', name: 'a.yaml' } : {});
+    ['a rename to a pickle extension', {}, 'a.ckpt'],
+    ['a rename of a file no loader opens', { type: 'Config', name: 'a.yaml' }, 'a.pt'],
+  ])('goes back to unscanned on %s', async (_, stored, name) => {
+    scanned(stored);
 
     await updateFile({ id: 1, name, userId: 7 });
 
     expect(write().data).toMatchObject(RESET);
+  });
+
+  it('keeps the scan of a rename that only changes the case of its extension', async () => {
+    scanned({ name: 'a.ckpt' });
+
+    await updateFile({ id: 1, name: 'a.CKPT', userId: 7 });
+
+    expect(write().data).not.toHaveProperty('pickleScanResult');
   });
 
   it('goes back to unscanned when a cleared format leaves a different one', async () => {
@@ -802,7 +824,7 @@ describe('a file whose loader or format changes', () => {
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
   });
 
-  it.each([
+  it.each<[string, Partial<Parameters<typeof updateFile>[0]>]>([
     ['the format its name already has', { metadata: { format: 'SafeTensor' } }],
     ['a rename within the same format', { name: 'b.safetensors' }],
     ['a change to a type no loader opens', { type: 'Config' }],
@@ -840,6 +862,7 @@ describe('a file whose loader or format changes', () => {
   });
 });
 
+// The domain stamp gates which domain a paid training submit may run under; it is the server's.
 describe('the upload domain on a new dataset', () => {
   it("stamps the request's domain on training data even when the request omits the type", async () => {
     withFile({ type: 'Training Data', metadata: { uploadDomain: 'red', numImages: 3 } });

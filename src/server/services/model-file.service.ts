@@ -263,7 +263,7 @@ export async function updateFile({
 
   assertFileTypeChangeAllowed(modelFile, inputData.type);
   const change = { type: inputData.type, name: inputData.name, format: metadata?.format };
-  assertFormatChangeAllowed(modelFile, change, isModerator);
+  assertFormatChangeAllowed(modelFile, change, !!isModerator);
   if (isModerator && formatMismatch(modelFile, change))
     logToAxiom({
       type: 'info',

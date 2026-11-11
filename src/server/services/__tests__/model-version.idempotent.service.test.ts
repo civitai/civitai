@@ -357,6 +357,24 @@ describe('mergeVersions file remaps', () => {
     await expect(merge([{ fileId: FILE, metadata: { format: 'PickleTensor' } }])).rejects.toThrow(
       "A file's format must match its file name."
     );
+    expect(fileUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('sends a loadable file whose format a merge changes back to the scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({
+        name: 'pack.zip',
+        metadata: { format: 'Other' },
+        virusScanResult: 'Success',
+        pickleScanResult: 'Success',
+      }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, metadata: { format: 'Diffusers' } }])).rejects.toThrow(
+      PAST_REMAP
+    );
+
+    expect(fileUpdateMany.mock.calls[0][0].data).toMatchObject({ pickleScanResult: 'Pending' });
   });
 
   it('sends training data relabelled in a merge back to the model-file scan', async () => {

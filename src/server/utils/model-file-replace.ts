@@ -5,6 +5,7 @@ import type { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { ModelStatus, ModelUploadType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
 import { getModelFileFormat, unscannedFile } from '~/utils/file-helpers';
+import { getFileExtension } from '~/utils/string-helpers';
 
 // A version that has been out in the world (or is about to be) keeps its files; new bytes go in a
 // new version. Unpublished counts, since publishing it again brings back what it had.
@@ -83,14 +84,14 @@ type FileChange = { type?: string; name?: string; format?: string | null };
 const nameFormat = (name: string) => getModelFileFormat(name.toLowerCase());
 const formatOf = (file: { name: string; metadata: unknown }) =>
   (file.metadata as { format?: string } | null)?.format ?? nameFormat(file.name);
-const extension = (name: string) => /\.[^./]+$/.exec(name.toLowerCase())?.[0] ?? '';
+const extension = (name: string) => getFileExtension(name.toLowerCase());
 const NOT_CLEAN: ScanResultCode[] = [ScanResultCode.Danger, ScanResultCode.Error];
 
 /** A new format the file's name does not have. A zip's contents can't be told from its name. */
 export function formatMismatch(file: { name: string; metadata: unknown }, change: FileChange) {
   if (change.format == null || change.format === formatOf(file)) return false;
   const name = change.name ?? file.name;
-  return extension(name) !== '.zip' && change.format !== nameFormat(name);
+  return extension(name) !== 'zip' && change.format !== nameFormat(name);
 }
 
 /** Refuses an owner a format the file name does not have. */
@@ -133,8 +134,8 @@ export function scanResetForFileChange(file: ScanResetFile, change: FileChange) 
 }
 
 /**
- * The condition a file change's write must add: the reset may only replace the verdicts it was
- * judged on, never one that landed since.
+ * The condition a write that resets a scan (a relabel, a rename, a format change, a file becoming
+ * loadable) must add: it may only replace the verdicts it was judged on, never one that landed since.
  */
 export function scanResetWriteGuard(file: ScanResetFile, change: FileChange) {
   if (!resetsScan(file, change)) return {};
