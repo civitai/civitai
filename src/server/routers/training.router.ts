@@ -155,8 +155,9 @@ export const trainingRouter = router({
   //   2) submitAutoLabelWorkflow with the resulting blob URLs (≤16 per call)
   //   3) getAutoLabelWorkflow on a poll loop until each step is succeeded/failed
   //
-  // Tagging/captioning is free; the orchestrator work is billed to the system token
-  // and not the user, so each endpoint needs a per-user rate cap to prevent abuse.
+  // Tagging/captioning is free; the workflow is billed to the system token and not
+  // the user, so each endpoint needs a per-user rate cap to prevent abuse. The upload
+  // URL in step 1 is minted with the user's own token, as every consumer upload is.
   getAutoLabelUploadUrl: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(getAutoLabelUploadUrlSchema)

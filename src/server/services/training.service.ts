@@ -640,9 +640,12 @@ export async function updateTrainingWorkflowRecords(
 // Auto-label v2 (orchestrator workflows)
 //
 // These three functions replace the legacy zip → S3 → legacy job API pipeline.
-// Everything runs through the v2 consumer endpoints with the system token — the
-// work is billed to the system account so users pay nothing for tag/caption
-// runs, and the workflow isn't visible under the user's own token.
+// The upload URL is minted with the user's own orchestrator token, like every
+// consumer upload, so the upload is attributed to and processed for the user.
+// The workflow submit and poll run on the system token: the work is billed to the
+// system account so users pay nothing for tag/caption runs, and the workflow isn't
+// visible under the user's own token. The submit therefore accepts only
+// orchestrator-hosted media (assertCivitaiMediaUrls), as Training Studio's does.
 // =============================================================================
 
 type AutoLabelWorkflowMetadata = {
@@ -822,6 +825,8 @@ export async function submitAutoLabelWorkflow({
 }: SubmitAutoLabelWorkflowInput & { userId: number }) {
   await assertModelOwnership(modelId, userId);
   assertSafeMediaUrls(images.map((i) => i.mediaUrl));
+  // Submitted on the system token, so only orchestrator-hosted media, as Training Studio's submit.
+  assertCivitaiMediaUrls(images.map((i) => i.mediaUrl));
 
   const steps: WorkflowStepTemplate[] = images.map((img, index) => {
     const stepMetadata: AutoLabelStepMetadata = { filename: img.filename };
