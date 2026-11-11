@@ -134,7 +134,8 @@ describe('resetLiveBase', () => {
       EVENT,
       'live',
       cutAt(NEW_CUT),
-      totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 }, {}, { 'view:a': 3 })
+      totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 }, {}, { 'view:a': 3 }),
+      new Date(cutAt(NEW_CUT).getTime() + 3_600_000)
     );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: '15', b: '4', c: '1' });
     expect(fake.hashes.get(keys.base('count'))).toEqual({ 'view:a': '3', settled: '1' });
@@ -150,6 +151,8 @@ describe('resetLiveBase', () => {
         // The counts move with the points: a reader never pairs new counts with the old cut.
         `rename ${keys.base('count')}:next ${keys.base('count')}`,
         `set ${keys.cut} ${NEW_CUT}`,
+        // What the stale-cut alert measures a later run against, past the season's end too.
+        `set ${keys.removeCut} ${cutAt(NEW_CUT).getTime() + 3_600_000}`,
       ],
     ]);
     // No staging key survives.

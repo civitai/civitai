@@ -440,7 +440,8 @@ export async function resetLiveBase(
   event: { name: string },
   season: EventPointSeason,
   cut: Date,
-  totals: ReturnType<typeof refereeTotals>
+  totals: ReturnType<typeof refereeTotals>,
+  removeCut = cut
 ) {
   const keys = eventSeasonKeys(event.name, season);
   const oldCutBucket = Number((await redis.get(keys.cut)) ?? 0);
@@ -473,21 +474,29 @@ export async function resetLiveBase(
     else multi.del(keys.base(scope));
   }
   multi.set(keys.cut, String(newCutBucket));
+  multi.set(keys.removeCut, String(removeCut.getTime()));
   await multi.exec();
   return changed;
 }
 
-// Measured against the cut this run should reach, not the clock, so a season past its end never
-// trips it.
+// Measured against the removal cut this run should reach, not the clock: it moves with every settle
+// until the finalize window closes (the cut stops at the season's end), and then stops, so a season
+// that is fully settled never trips it.
 export async function alertOnStaleCut(
   redis: Pick<RefereeRedis, 'get'>,
   event: { name: string },
   season: EventPointSeason,
-  cut: Date
+  removeCut: Date
 ) {
-  const stored = Number((await redis.get(eventSeasonKeys(event.name, season).cut)) ?? 0);
+  const keys = eventSeasonKeys(event.name, season);
+  const [cutBucket, settledTo] = await Promise.all([
+    redis.get(keys.cut),
+    redis.get(keys.removeCut),
+  ]);
+  // A base written before the removal cut was stored: its cut is where its removals were settled to.
+  const stored = Number(settledTo ?? 0) || Number(cutBucket ?? 0) * LIVE_BUCKET_MS;
   if (!stored) return;
-  const lagMs = cut.getTime() - stored * LIVE_BUCKET_MS;
+  const lagMs = removeCut.getTime() - stored;
   if (lagMs <= STALE_CUT_ALERT_MS) return;
   logToAxiom({
     type: 'error',
@@ -495,7 +504,7 @@ export async function alertOnStaleCut(
     event: event.name,
     season,
     cutAgeMinutes: Math.round(lagMs / 60_000),
-    storedCut: new Date(stored * LIVE_BUCKET_MS).toISOString(),
+    storedCut: new Date(stored).toISOString(),
   }).catch(() => undefined);
 }
 
@@ -510,7 +519,7 @@ export async function runEventPointsReferee(
 ) {
   const window = refereeWindow(event, season, now);
   if (window.cut <= window.start) return { season, rows: 0, changed: 0, final: false };
-  await alertOnStaleCut(sysRedis, event, season, window.cut);
+  await alertOnStaleCut(sysRedis, event, season, window.removeCut);
   const rows = await queryReferee(event, window, deadline);
   await writeDailySnapshot(event, window, rows);
   const final = await finalDayTotals(event, window);
@@ -519,7 +528,14 @@ export async function runEventPointsReferee(
   const awards = await loadTeamAwards(event, window.cut);
   for (const { team, points } of awards)
     totals.team.set(team, (totals.team.get(team) ?? 0) + points);
-  const changed = await resetLiveBase(sysRedis, event, season, window.cut, totals);
+  const changed = await resetLiveBase(
+    sysRedis,
+    event,
+    season,
+    window.cut,
+    totals,
+    window.removeCut
+  );
   // This runs in a job: its corrections go out before it returns, not on a later window, except the
   // team totals while another server holds their push lease: this server retries those on its own
   // timer a window later, so it relies on the job running in a long-lived app process. A season's
