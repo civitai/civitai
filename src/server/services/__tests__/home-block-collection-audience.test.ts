@@ -244,7 +244,9 @@ describe('deleting a block', () => {
   it('lets the owner delete a block whose collection they may no longer read', async () => {
     seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Image' }, BLOCK_OWNER);
     await expect(deleteAs({ id: BLOCK_OWNER })).resolves.toMatchObject({ id: BLOCK_ID });
-    expect(dbMock.dbWrite.homeBlock.delete).toHaveBeenCalledWith({ where: { id: BLOCK_ID } });
+    expect(dbMock.dbWrite.homeBlock.delete).toHaveBeenCalledWith({
+      where: { id: BLOCK_ID, userId: BLOCK_OWNER },
+    });
   });
 
   it("answers a stranger's delete as a missing block, not a refusal", async () => {
