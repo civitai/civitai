@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   ledgerQuery: vi.fn(),
   creator: 'loaded' as CreatorState,
   cashLoaded: true,
+  cashOtherId: false,
   ledgerRows: [] as unknown[],
 }));
 
@@ -60,7 +61,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       getCashForUser: {
         useQuery: ({ userId }: { userId: number }) => ({
           data: h.cashLoaded
-            ? { id: userId, pending: 2000, ready: 5000, withdrawn: 0, status: 'ready' }
+            ? {
+                // A balance still on screen for the id typed before this one.
+                id: h.cashOtherId ? userId + 1 : userId,
+                pending: 2000,
+                ready: 5000,
+                withdrawn: 0,
+                status: 'ready',
+              }
             : undefined,
           isLoading: !h.cashLoaded,
           error: null,
@@ -93,6 +101,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.creator = 'loaded';
   h.cashLoaded = true;
+  h.cashOtherId = false;
   h.ledgerRows = [];
 });
 
@@ -113,13 +122,21 @@ describe('CashManagementPage adjustment', () => {
   // Opening the confirm before the target's name and balance are on screen is how a mistyped id
   // reaches the wrong account unseen.
   test.each([
-    ['nothing has loaded', { creator: 'loading', cashLoaded: false }],
-    ['the balance has not loaded', { creator: 'loaded', cashLoaded: false }],
-    ['the user has not loaded', { creator: 'loading', cashLoaded: true }],
-    ['the user on screen belongs to another id', { creator: 'other-id', cashLoaded: true }],
+    ['nothing has loaded', { creator: 'loading', cashLoaded: false, cashOtherId: false }],
+    ['the balance has not loaded', { creator: 'loaded', cashLoaded: false, cashOtherId: false }],
+    ['the user has not loaded', { creator: 'loading', cashLoaded: true, cashOtherId: false }],
+    [
+      'the user on screen belongs to another id',
+      { creator: 'other-id', cashLoaded: true, cashOtherId: false },
+    ],
+    [
+      'the balance on screen belongs to another id',
+      { creator: 'loaded', cashLoaded: true, cashOtherId: true },
+    ],
   ] as const)('cannot open the confirm while %s', async (_, state) => {
     h.creator = state.creator;
     h.cashLoaded = state.cashLoaded;
+    h.cashOtherId = state.cashOtherId;
     renderWithProviders(<CashManagementPage />);
     await fillForm('1000');
 
