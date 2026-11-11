@@ -46,14 +46,10 @@ describe('decideFromObservations', () => {
     expect(result.escalations).toContain('unreadable model response');
   });
 
-  // These collections are mostly stylized art, which is exactly what the prompt tells the model it
-  // may be unsure about. Escalating on the hedge alone would sweep up ordinary submissions.
   it('approves an age-ambiguous subject when nothing else is flagged', () => {
     expect(decideFromObservations({ ...clean, minorUncertain: true }).decision).toBe('approve');
   });
 
-  // rules/minors.md makes photorealism the bright line for minors in ANY context, so an ambiguous
-  // age matters there even when the image is otherwise wholesome.
   it.each([
     ['a suggestive context', { suggestiveStyling: true }],
     ['a photorealistic image', { isPhotorealistic: true }],

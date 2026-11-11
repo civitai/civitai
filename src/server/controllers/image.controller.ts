@@ -1227,7 +1227,7 @@ export const getEntitiesCoverImageHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getEntityCoverImage({
+    const covers = await getEntityCoverImage({
       ...input,
       include: ['tags'],
       viewer: ctx.user,
@@ -1235,6 +1235,11 @@ export const getEntitiesCoverImageHandler = async ({
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
       eventDecorationViewer: eventViewerOf(ctx),
     });
+    // Any entity id can be asked for, so each cover is held to the request's cap like a single image.
+    keepCrawlerAnswerOutOfEdgeCache(ctx);
+    return covers.filter((cover) =>
+      canViewImageMedia(ctx, { nsfwLevel: cover.nsfwLevel, user: { id: cover.userId } })
+    );
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
