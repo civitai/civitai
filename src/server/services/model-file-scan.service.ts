@@ -529,7 +529,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 }
 
 // Text encoders are opened by loaders outside the generator too.
-const PICKLE_LOADED_FILE_TYPES = [...LOADABLE_FILE_TYPES, 'Text Encoder'];
+export const PICKLE_LOADED_FILE_TYPES = [...LOADABLE_FILE_TYPES, 'Text Encoder'];
 
 function pickleVerdictFor(
   pickleScan: NonNullable<ScanOutcome['pickleScan']>,
@@ -546,9 +546,11 @@ function pickleVerdictFor(
 }
 
 /**
- * The result of a scan-only rescan: only the pickle verdict is written, the virus verdict only when
- * it finds something, and nothing acts on it. A Pending result writes nothing, so the file stays
- * selected for the next run. Every Danger is logged for a moderator to decide.
+ * The result of a scan-only rescan. It writes the pickle verdict (an unread one as Error, as for any
+ * scan) and the virus verdict only when that finds something. It rebuilds no hashes, runs no hash
+ * checks and unpublishes nothing; a changed verdict refreshes caches and search. A Pending result
+ * writes nothing, so the file stays selected for the next run. Every Danger is logged for a
+ * moderator to decide.
  */
 export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> {
   const { fileId } = outcome;
@@ -577,7 +579,7 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
   if (!pickle && !virusDanger)
     return void log('warning', { kept: file.pickleScanResult, result: verdict?.result ?? null });
 
-  // An unread pickle result leaves rawScanResult as it was, so the file stays selected.
+  // A Pending result leaves rawScanResult as stored, so the file stays selected.
   const data: Prisma.ModelFileUpdateManyMutationInput = { scannedAt: new Date() };
   if (pickle) {
     data.pickleScanResult = pickle.result;

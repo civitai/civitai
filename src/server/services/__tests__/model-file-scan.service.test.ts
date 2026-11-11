@@ -1897,6 +1897,25 @@ describe('model-file-scan.service', () => {
         expect(data).not.toHaveProperty('rawScanResult');
       });
 
+      it('refreshes caches and search when the verdict changes, and only then', async () => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
+        await rescan([pickle({ status: 'clean', scannedFileCount: 1 })]);
+        expect(mockResourceDataBust).not.toHaveBeenCalled();
+
+        await rescan([pickle({ status: 'clean' })]);
+        expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+        expect(mockModelsSearchIndexQueueUpdate).toHaveBeenCalledTimes(1);
+      });
+
+      it('refreshes nothing when the verdict changed since the submit', async () => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
+
+        await rescan([pickle({ status: 'clean' })]);
+
+        expect(mockResourceDataBust).not.toHaveBeenCalled();
+        expect(mockModelsSearchIndexQueueUpdate).not.toHaveBeenCalled();
+      });
+
       it('runs the full path for a scan the rescan did not submit', async () => {
         await rescan([DANGER, HASH], {});
 

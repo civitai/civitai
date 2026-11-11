@@ -28,7 +28,7 @@ import {
   ModelFileScanSubmissionError,
 } from '~/server/services/orchestrator/orchestrator.service';
 import { SCAN_ONLY_RESCAN_OP } from '~/server/services/orchestrator/model-scan-ops';
-import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
+import { PICKLE_LOADED_FILE_TYPES } from '~/server/services/model-file-scan.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 
@@ -57,7 +57,6 @@ const fileIds = flag('file-ids')?.split(',').map(Number);
 // A submission inside this window is still in flight; submitting again would only double the work.
 const IN_FLIGHT_MS = 24 * 60 * 60 * 1000;
 const PAGE = 1000;
-const RESCAN_TYPES = [...LOADABLE_FILE_TYPES, 'Text Encoder'];
 // Safetensors and GGUF honestly read no pickle; 'null' is a file with no recorded format.
 const PICKLE_CAPABLE_FORMATS = ['PickleTensor', 'pt', 'Diffusers', 'Other', 'null'];
 
@@ -81,7 +80,7 @@ function selectPage(afterId: number) {
     JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE mf.id > ${afterId}
-      AND mf.type IN (${Prisma.join(RESCAN_TYPES)})
+      AND mf.type IN (${Prisma.join(PICKLE_LOADED_FILE_TYPES)})
       AND mf."pickleScanResult" = 'Success'
       AND (
         (mf."rawScanResult"->>'picklescanOutput' LIKE '%Scanned files: 0%'
