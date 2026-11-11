@@ -780,8 +780,8 @@ failed snapshot whose `errorCode` is `'inline-node-refused'`, before anything is
 - a node that reads or writes a file path or directory, whatever the path's value;
 - a loader that takes an input from another node instead of a literal value. The model,
   CLIP and strength inputs of the core LoRA loaders may still be linked;
-- a loader input that names a local file, or a URL that is not a public `https` address.
-  Upload the media and pass its URL or upload key.
+- a loader input that names a local file or an upload key, or a URL that is not a public
+  `https` address. Upload the media and pass its URL.
 
 ### Training runs (`kind: 'training'`)
 

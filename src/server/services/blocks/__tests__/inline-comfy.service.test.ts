@@ -805,6 +805,12 @@ describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
       URL_REFUSED,
     ]),
     ['LoadImage', { image: 'abc [output]' }, LOCAL],
+    ['LoadImage', { image: 'abc' }, LOCAL],
+    ['LoadImage', { image: KEY }, LOCAL],
+    ['LoadImage', { image: `0001_${KEY.replace(/-/g, '')}` }, LOCAL],
+    ['VHS_LoadAudioUpload', { audio: 'clip' }, LOCAL],
+    ['CustomLoader', { source: `0001_${KEY.replace(/-/g, '')}` }, LOCAL],
+    ['CustomLoader', { source: KEY }, LOCAL],
     ['PreviewBridge', { images: ['2', 0], image: 'x' }, PATH],
     ['LoraLoader', { model: ['1', 0], lora_name: AIR, my_strength: ['2', 0] }, LINKED],
     ['LoraLoader', { model: ['1', 0], lora_name: AIR, prev_hooks: ['2', 0] }, LINKED],
@@ -823,9 +829,8 @@ describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
 
   it.each([
     ['LoadImage', { image: `https://image.civitai.com/x/${KEY}/original=true`, upload: 'image' }],
-    ['LoadImage', { image: KEY }],
-    ['LoadImage', { image: KEY.replace(/-/g, '') }],
-    ['LoadImageMask', { image: KEY, channel: 'alpha' }],
+    ['LoadImageMask', { image: AIR, channel: 'alpha' }],
+    ['UNETLoader', { unet_name: AIR, weight_dtype: 'fp8_e4m3fn' }],
     ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_model: ['2', 0] }],
     ['LoraLoaderModelOnly', { model: ['1', 0], lora_name: AIR, strength_model: 1 }],
     ['LoraLoaderBypass', { model: ['1', 0], clip: ['1', 1], lora_name: AIR }],
@@ -838,7 +843,7 @@ describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
     ['ImageStitch', { image1: ['2', 0], direction: 'right', match_image_size: true }],
     ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength: ['2', 0] }],
     ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_clip: ['2', 0] }],
-    ['LoadImage', { image: KEY, upload: null, keep_alpha: true }],
+    ['LoadImage', { image: `https://image.civitai.com/x/${KEY}/a.png`, upload: null, keep: true }],
   ])('runs %s %j', (classType, inputs) => {
     expect(verdictFor(classType, inputs).runnable).toBe(true);
   });

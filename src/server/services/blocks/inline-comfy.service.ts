@@ -459,6 +459,18 @@ const LOADER_LINKED_INPUTS_ALLOWED: ReadonlyMap<string, ReadonlySet<string>> = n
 const AIR_RE = /^urn:air:/i;
 const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const FILE_LIKE_RE = /[./\\[\]]/;
+// The worker stages inputs under extensionless names built from blob keys, which the
+// source gate does not resolve. A media input takes only an AIR or a URL.
+const MEDIA_INPUT_NAMES: ReadonlySet<string> = new Set([
+  'image',
+  'audio',
+  'video',
+  'file',
+  'model_file',
+  'latent',
+  'mask',
+]);
+const KEY_LIKE_RE = /[0-9a-f]{16}|[0-9a-f]{8}-[0-9a-f]{4}-/i;
 const PRIVATE_HOST_RE =
   /^localhost$|\.(localhost|local|internal|intranet|lan|corp|home\.arpa|svc)$/i;
 
@@ -491,7 +503,7 @@ function literalLoaderInputRefusal(name: string, value: unknown): string | null 
   if (HAS_SCHEME_RE.test(value)) {
     return isFetchableMediaUrl(value) ? null : `gives ${name} a URL the host does not fetch`;
   }
-  if (FILE_LIKE_RE.test(value)) {
+  if (MEDIA_INPUT_NAMES.has(name) || FILE_LIKE_RE.test(value) || KEY_LIKE_RE.test(value)) {
     return `names a local file in ${name}; upload the media and pass its URL`;
   }
   return null;

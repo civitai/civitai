@@ -2497,7 +2497,9 @@ describe('inline customComfy — the generation input gate', () => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
     await given();
     loggingMock.logToAxiom.mockClear();
-    await expect(submit(inline({ image: OWN_KEY }))).rejects.toMatchObject({
+    const body = inline();
+    (body.workflow['2'].inputs as Record<string, unknown>).text = `restyle ${OWN_KEY}`;
+    await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: APP_SOURCE_UNUSABLE_MESSAGE,
     });
