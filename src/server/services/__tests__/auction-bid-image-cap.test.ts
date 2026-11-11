@@ -12,8 +12,9 @@ vi.mock('~/utils/signal-client', () => ({
   signalClient: { send: vi.fn(), topicSend: vi.fn(async () => undefined) },
 }));
 
-const { capAuctionBidImages, publicSignalData } = await import('~/server/services/auction.service');
-const { canViewImageMedia } = await import('~/server/utils/image-media-visibility');
+const { bidImagesFor, capAuctionBidImages, capBidImages, publicSignalData } = await import(
+  '~/server/services/auction.service'
+);
 
 const OWNER = 5;
 const auction = (...levels: number[]) => ({
@@ -34,11 +35,7 @@ const shown = (a: { bids: { entityData?: { image?: { id: number } } }[] }) =>
 
 describe('auction bid images', () => {
   const forViewer = (ctx: object) =>
-    shown(
-      capAuctionBidImages(auction(...LEVELS) as never, (image) =>
-        canViewImageMedia(ctx as never, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } })
-      )
-    );
+    shown(capAuctionBidImages(auction(...LEVELS) as never, bidImagesFor(ctx as never)));
 
   it('a capped viewer gets only bid images whose every rating bit is inside the cap', () => {
     expect(forViewer({ user: { id: 6 }, features: { canViewNsfw: false } })).toEqual([
@@ -59,6 +56,17 @@ describe('auction bid images', () => {
     expect(forViewer(ctx)).toEqual([1, 2, 3, 4, 5]);
   });
 
+  it('My Bids and My Recurring Bids lists are capped the same way', () => {
+    const capped = capBidImages(
+      auction(...LEVELS).bids as never,
+      bidImagesFor({
+        user: { id: 6 },
+        features: { canViewNsfw: false },
+      } as never)
+    );
+    expect(shown({ bids: capped })).toEqual([1, null, null, null, 5]);
+  });
+
   it('the bid stays when its image is dropped', () => {
     const [bid] = publicSignalData(auction(NsfwLevel.X) as never).bids;
     expect(bid).toMatchObject({ id: 1, entityData: { model: { id: 1 } } });
@@ -76,14 +84,26 @@ describe('auction bid images', () => {
     ]);
   });
 
-  it('getBySlug and every bid-change signal go through the cap', () => {
+  it('every bid read and every bid-change signal go through the cap', () => {
     const read = (path: string) => readFileSync(join(process.cwd(), path), 'utf8');
     const router = read('src/server/routers/auction.router.ts');
-    const route = router.slice(router.indexOf('getBySlug:'), router.indexOf('getMyBids:'));
-    expect(route).toContain('capAuctionBidImages(await getAuctionBySlug(input)');
+    const procedure = (name: string, next: string) =>
+      router.slice(router.indexOf(`${name}:`), router.indexOf(`${next}:`));
+    const bySlug = procedure('getBySlug', 'getMyBids');
+    expect(bySlug).toContain('keepCrawlerAnswerOutOfEdgeCache(ctx)');
+    expect(bySlug).toMatch(
+      /capAuctionBidImages\(await getAuctionBySlug\(input\), bidImagesFor\(ctx\)\)/
+    );
+    expect(procedure('getMyBids', 'getMyRecurringBids')).toMatch(
+      /capBidImages\(await getMyBids\([^)]*\), bidImagesFor\(ctx\)\)/
+    );
+    expect(procedure('getMyRecurringBids', 'createBid')).toMatch(
+      /capBidImages\(await getMyRecurringBids\([^)]*\), bidImagesFor\(ctx\)\)/
+    );
     const service = read('src/server/services/auction.service.ts');
+    expect(service.match(/SignalMessages\.AuctionBidChange/g)).toHaveLength(3);
     const sends = service.match(/target: SignalMessages\.AuctionBidChange,\s*data: [^,]+,/g) ?? [];
-    expect(sends.length).toBeGreaterThan(0);
+    expect(sends).toHaveLength(3);
     for (const send of sends) expect(send).toContain('publicSignalData(');
   });
 });
