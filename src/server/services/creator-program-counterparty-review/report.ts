@@ -54,7 +54,7 @@ export function renderReason(
   );
 }
 
-/** Repeats sort above first filings. */
+/** Repeats sort above first filings: they are the rows that need a moderator. */
 export function toFinding(
   userId: number,
   pairs: CounterpartyPair[],

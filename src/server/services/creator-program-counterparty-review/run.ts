@@ -17,7 +17,6 @@ import { renderSummary, toFinding, toIndirectFinding } from './report';
 type Finding = AbuseReportInput['findings'][number];
 
 export type FiledRecord = {
-  /** When the creator was first filed. */
   filedAt: string;
   /** Two-way amount per counterparty when the creator was last filed. */
   counterparties: Record<string, number>;
