@@ -1822,6 +1822,10 @@ describe('model-file-scan.service', () => {
     });
 
     describe('a scan-only rescan', () => {
+      beforeEach(() => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
+      });
+
       const stored = {
         id: 1,
         name: 'model.ckpt',
@@ -1830,7 +1834,12 @@ describe('model-file-scan.service', () => {
         pickleScanResult: ScanResultCode.Success,
         virusScanResult: ScanResultCode.Success,
         hashes: [{ type: ModelHashType.SHA256, hash: SHA256_FIXTURE }],
-        modelVersion: { status: 'Published', modelId: 200 },
+        modelVersion: {
+          status: 'Published',
+          modelId: 200,
+          baseModel: 'SDXL 1.0',
+          model: { type: 'Checkpoint' },
+        },
         url: 's3://k',
         sizeKB: 4096,
       };
@@ -1903,8 +1912,32 @@ describe('model-file-scan.service', () => {
         expect(mockResourceDataBust).not.toHaveBeenCalled();
 
         await rescan([pickle({ status: 'clean' })]);
+        expect(mockResourceDataBust).toHaveBeenCalledTimes(1);
         expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+        expect(mockDeleteFilesForModelVersionCache).toHaveBeenCalledWith(100);
         expect(mockModelsSearchIndexQueueUpdate).toHaveBeenCalledTimes(1);
+      });
+
+      it("refreshes the version's file-pinned AIRs when the file leaves generation", async () => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
+        mockDbWrite.modelFile.findMany.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+
+        await rescan([pickle({ status: 'clean' })]);
+
+        expect(
+          mockBustOrchestratorScannedFileCache.mock.calls.map(([f]) => f.fileId).sort()
+        ).toEqual([1, 2]);
+      });
+
+      it('logs a Danger it found even when the verdict changed since the submit', async () => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
+
+        await rescan([DANGER]);
+
+        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'scan-only-rescan', danger: true }),
+          'webhooks'
+        );
       });
 
       it('refreshes nothing when the verdict changed since the submit', async () => {

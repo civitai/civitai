@@ -547,10 +547,10 @@ function pickleVerdictFor(
 
 /**
  * The result of a scan-only rescan. It writes the pickle verdict (an unread one as Error, as for any
- * scan) and the virus verdict only when that finds something. It rebuilds no hashes, runs no hash
- * checks and unpublishes nothing; a changed verdict refreshes caches and search. A Pending result
- * writes nothing, so the file stays selected for the next run. Every Danger is logged for a
- * moderator to decide.
+ * scan) and the virus verdict only when that finds something, and only over the Success the file was
+ * selected with. It rebuilds no hashes, runs no hash checks and unpublishes nothing; a changed
+ * verdict refreshes caches and search. A Pending pickle result is not written, so the file stays
+ * selected. Every result is logged, with every Danger the scanner returned, written or not.
  */
 export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> {
   const { fileId } = outcome;
@@ -564,7 +564,9 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
       pickleScanResult: true,
       virusScanResult: true,
       hashes: { select: { type: true, hash: true } },
-      modelVersion: { select: { status: true, modelId: true } },
+      modelVersion: {
+        select: { status: true, modelId: true, baseModel: true, model: { select: { type: true } } },
+      },
     },
   });
   const log = (type: 'info' | 'warning', fields: Record<string, unknown>) =>
@@ -596,7 +598,10 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
     where: { id: fileId, pickleScanResult: ScanResultCode.Success },
     data,
   });
-  if (!count) return void log('warning', { skipped: 'verdict changed since submit' });
+  if (!count) {
+    const found = pickle?.result === ScanResultCode.Danger || virusDanger;
+    return void log('warning', { skipped: 'verdict changed since submit', danger: found });
+  }
   const pickleAfter = pickle?.result ?? file.pickleScanResult;
 
   const stored = (type: ModelHashType) => file.hashes.find((h) => h.type === type)?.hash;
@@ -626,10 +631,19 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
   await modelsSearchIndex.queueUpdate([
     { id: file.modelVersion.modelId, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  if (danger || LOADABLE_FILE_TYPES.includes(file.type))
+  const virusAfter = virusDanger ? ScanResultCode.Danger : file.virusScanResult;
+  const coverageMoved =
+    excludedFromCoverage(file) !==
+    excludedFromCoverage({
+      type: file.type,
+      pickleScanResult: pickleAfter,
+      virusScanResult: virusAfter,
+    });
+  if (coverageMoved || LOADABLE_FILE_TYPES.includes(file.type))
     await Promise.all([
       resourceDataCache.bust([file.modelVersionId]),
       bustOrchestratorModelCache(file.modelVersionId),
+      coverageMoved && bustVersionScannedFileAirs(file.modelVersionId, file.modelVersion),
     ]).catch((e) => log('warning', { bust: String(e) }));
 }
 
