@@ -51,7 +51,7 @@ export const tagRouter = router({
       cacheIt<GetTagsInput & UserPreferencesInput>({
         ttl: 60,
         excludeKeys: ['excludedImageIds', 'excludedUserIds', 'excludedModelIds'],
-        // With a modelId the answer depends on whether this viewer may open the model.
+        // Per-viewer key: with a modelId the answer depends on the viewer.
         varyBy: (ctx, input) => ({
           adminTags: ctx.features.adminTags,
           ...(input?.modelId && {

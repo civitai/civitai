@@ -140,15 +140,17 @@ describe('post.getContestCollectionDetails visibility', () => {
   it('answers a Private collection as none for a viewer who may not read it', async () => {
     postIs({});
     collectionPrivate = true;
-    for (const user of [ANON, STRANGER]) expect(await detailsFor(user)).toEqual(MISSING);
+    // WRITER may add to it but not read it.
+    for (const user of [ANON, STRANGER, { id: WRITER }])
+      expect(await detailsFor(user)).toEqual(MISSING);
     expect(m.getCollectionById).not.toHaveBeenCalled();
     expect(dbMock.dbRead.collectionItem.findMany).not.toHaveBeenCalled();
   });
 
-  it("serves a Private collection's entries to its owner, a writer, a moderator and the post's owner", async () => {
+  it("serves a Private collection's entries to its owner, a moderator and the post's owner", async () => {
     postIs({});
     collectionPrivate = true;
-    for (const user of [{ id: COLLECTION_OWNER }, { id: WRITER }, MOD, SELF]) {
+    for (const user of [{ id: COLLECTION_OWNER }, MOD, SELF]) {
       expect(itemImageIds(await detailsFor(user)).length).toBeGreaterThan(0);
       expect(m.getCollectionById).toHaveBeenLastCalledWith(
         expect.objectContaining({ viewer: { id: user.id, isModerator: user.isModerator } })

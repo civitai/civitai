@@ -162,6 +162,7 @@ import {
   type ContestCollectionItem,
   type SharedContestCollectionItem,
 } from '~/server/services/contest-collection-items.cache';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
@@ -8892,18 +8893,16 @@ export const getImageContestCollectionDetails = async ({
   const permissionsFor = (item: { collection: { id: number } }) =>
     allPermissions.find((p) => p.collectionId === item.collection.id);
   // The items are cached per image for every viewer, so the collection read rule
-  // (collection.getById's) is applied here, per viewer. Submitters always see their own entry.
+  // (canReadCollectionItems) is applied here, per viewer. Submitters always see their own entry.
   const items = cachedItems.filter((item) => {
     if (!!userId && userId === item.addedById) return true;
-    const p = permissionsFor(item);
-    return !!p && (p.read || p.write || p.manage);
+    return canReadCollectionItems(permissionsFor(item));
   });
 
   // This endpoint is public. The reason — and above all the reviewer's free text about
   // someone else's entry — is only for the submitter, whoever manages the collection,
   // and site moderators investigating reports about reviewer behaviour.
   const canReadRejection = (item: SharedContestCollectionItem) =>
-    // `manage` includes moderators: the permissions above are read with isModerator.
     (!!userId && userId === item.addedById) || !!permissionsFor(item)?.manage;
 
   // The shared value carries no rejection fields (see SharedContestCollectionItem), so with the
@@ -8924,8 +8923,7 @@ export const getImageContestCollectionDetails = async ({
 
     return {
       ...i,
-      // Every judge's score only for the collection's managers and moderators (manage); anyone
-      // else sees their own.
+      // Other judges' scores are for managers only.
       scores: permissions?.manage
         ? i.scores
         : i.scores.filter((s) => !!userId && s.userId === userId),

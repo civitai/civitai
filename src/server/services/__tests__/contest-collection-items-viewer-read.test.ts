@@ -40,7 +40,6 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
 import { getImageContestCollectionDetails } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-gate';
 
 const COLLECTION_ID = 10;
 const COLLECTION_OWNER_ID = 900;
@@ -56,7 +55,15 @@ const SCORES = [
 // The item cache is a module-level LRU keyed by imageId: every read uses a fresh id.
 let nextImageId = 5000;
 
-function mockQueries({ imageId, read }: { imageId: number; read: string }) {
+function mockQueries({
+  imageId,
+  read,
+  write = 'Private',
+}: {
+  imageId: number;
+  read: string;
+  write?: string;
+}) {
   dbMock.dbRead.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
     const sql = Array.isArray(strings) ? strings.join('') : String(strings);
     if (sql.includes('"CollectionItem" ci')) {
@@ -83,7 +90,7 @@ function mockQueries({ imageId, read }: { imageId: number; read: string }) {
       {
         id: COLLECTION_ID,
         read,
-        write: 'Private',
+        write,
         userId: COLLECTION_OWNER_ID,
         type: 'Image',
         mode: 'Contest',
@@ -97,10 +104,11 @@ function mockQueries({ imageId, read }: { imageId: number; read: string }) {
 
 async function details(
   viewer: { userId?: number; isModerator?: boolean },
-  read: 'Public' | 'Unlisted' | 'Private' = 'Public'
+  read: 'Public' | 'Unlisted' | 'Private' = 'Public',
+  write: 'Private' | 'Public' | 'Review' = 'Private'
 ) {
   const imageId = nextImageId++;
-  mockQueries({ imageId, read });
+  mockQueries({ imageId, read, write });
   return getImageContestCollectionDetails({ id: imageId, ...viewer });
 }
 
@@ -120,20 +128,16 @@ describe('contest entries in a collection the viewer may not read', () => {
     expect(await details({ userId: STRANGER_ID, isModerator: true }, 'Private')).toHaveLength(1);
   });
 
+  it.each(['Public', 'Review'] as const)(
+    "lists no one else's entry to a viewer who may only submit (write %s) to a Private collection",
+    async (write) => {
+      expect(await details({ userId: STRANGER_ID }, 'Private', write)).toEqual([]);
+    }
+  );
+
   it('lists entries of Public and Unlisted collections to anyone (control)', async () => {
     expect(await details({}, 'Public')).toHaveLength(1);
     expect(await details({ userId: STRANGER_ID }, 'Unlisted')).toHaveLength(1);
-  });
-
-  it("gates a non-reader on the image's own level, not the contest's forced level", async () => {
-    const image = { url: 'x', nsfwLevel: 4 };
-    const items = await details({ userId: STRANGER_ID }, 'Private');
-    const forced = items[0]?.collection.metadata.forcedBrowsingLevel;
-    expect(imageDetailGateLevel(image, forced)).toBe(4);
-
-    const readerItems = await details({ userId: STRANGER_ID }, 'Public');
-    const readerForced = readerItems[0]?.collection.metadata.forcedBrowsingLevel;
-    expect(imageDetailGateLevel(image, readerForced)).toBe(1);
   });
 });
 

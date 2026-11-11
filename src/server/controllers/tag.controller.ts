@@ -42,7 +42,6 @@ export const getAllTagsHandler = async ({ input, ctx }: { input?: GetTagsInput; 
     const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
     const { take, skip } = getPagination(limit, page);
 
-    // A model the viewer may not open answers as a model with no tags.
     if (input?.modelId && !(await canViewerOpenModel(input.modelId, ctx.user)))
       return getPagingData({ items: [] as TagListItem[] }, take, page);
 

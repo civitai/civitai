@@ -62,6 +62,7 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
   enqueueCollectionRebuild,
@@ -2250,10 +2251,10 @@ export const getPostContestCollectionDetails = async ({
     userId,
     isModerator,
   });
-  // collection.getById's read rule: a collection the viewer may not read answers as none. The
-  // post's owner submitted it, so they always see it.
+  // A collection whose items the viewer may not read answers as none. The post's owner submitted
+  // it, so they always see it.
   const isPostOwner = !!userId && userId === post.userId;
-  if (!isPostOwner && !permissions.read && !permissions.write && !permissions.manage)
+  if (!isPostOwner && !canReadCollectionItems(permissions))
     return {
       collection: null,
       permissions: null,
