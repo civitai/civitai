@@ -59,10 +59,8 @@ type PendingItem = {
   acceptableMinor: boolean;
 };
 
-// Appended to a guarded item's escalations so the audit can tell it from a model escalation.
 export const HELD_MINOR_ESCALATION = 'scanner-flagged minor';
 
-// The scanner's minor flag outranks the model: such an image is never accepted unattended.
 const isHeldMinor = (item: Pick<PendingItem, 'minor' | 'acceptableMinor'>) =>
   !!item.minor && !item.acceptableMinor;
 
@@ -218,8 +216,6 @@ async function classifyItem({
     }
   }
 
-  // Logged as an escalation, not an approve, so an audit counting approvals by decision never
-  // counts one that was held.
   const heldMinor = decision.decision === 'approve' && isHeldMinor(item);
   if (heldMinor)
     decision = {
@@ -432,7 +428,7 @@ async function applyOutcomes({
           : Prisma.empty
       }
       ${
-        // The scanner can flag a minor after the item was selected; the next run holds it.
+        // Re-checks the minor flag for accepts; an unclaimed item is held on the next run.
         acceptIds.length
           ? Prisma.sql`AND NOT (
               ci.id IN (${Prisma.join(acceptIds)})

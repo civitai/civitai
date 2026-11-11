@@ -228,7 +228,7 @@ describe('reviewCollection: an image flagged as a minor before its outcome is wr
     expect(image.rows[0].needsReview).toBe('minor');
   });
 
-  // Alongside an accept, so the accept-only re-check is in the claim and has to leave this one be.
+  // Alongside an accept, so the claim carries the accept-only re-check.
   it('still claims and rejects it for a real violation', async () => {
     await seed([
       { id: 1, nsfwLevel: PG },

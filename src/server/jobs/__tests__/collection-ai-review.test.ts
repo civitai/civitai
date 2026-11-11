@@ -626,7 +626,6 @@ describe('reviewCollection: a rating label the rules do not recognise', () => {
 describe('reviewCollection: an image the scanner flagged as a minor', () => {
   const held = { minor: true, acceptableMinor: false };
 
-  // Escalations configured to reject are the case that would otherwise reject the held item.
   it('is never accepted on an approve: it goes to the minor queue for a human', async () => {
     queuePending([pendingItem(held)]);
     modelSees({});
