@@ -5,6 +5,7 @@ import { getUserCreatorRow, getUserStatRow } from '@civitai/db-queries/hot-reads
 import { constants } from '~/server/common/constants';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -159,7 +160,8 @@ export async function readUserCreatorViaKysely(
         data: cosmetic.cosmeticData,
       },
     })),
-    profilePicture: profilePictureOf(row),
+    // Shared by every viewer (cached, edge-cached), so the owner gets no exception here.
+    profilePicture: servableProfilePicture(profilePictureOf(row)),
   };
 
   return { user: user as unknown as UserCreatorUser, modelCount: row.modelCount ?? 0 };

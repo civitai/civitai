@@ -96,13 +96,13 @@ const reviewSubmissionSql = ({ collectionId, userId }: ReviewViewer) => Prisma.s
 )`;
 
 /**
- * The images a collection's reviewer may see before they are rated: those that are REVIEW or
- * REJECTED submissions of that collection by their uploader, when the viewer owns it or has
- * MANAGE on it. Used as an arm of `getAllImages`' pending filter over `Image` aliased `i`; every
+ * The images a collection's reviewer may see before they are rated: those that are reviewed
+ * (`imageReviewedSql`) REVIEW or REJECTED submissions of that collection by their uploader, when
+ * the viewer owns it or has MANAGE on it. Used as an arm of `getAllImages`' pending filter over `Image` aliased `i`; every
  * other filter of that read still applies.
  */
 export const reviewCollectionImageSql = (viewer: ReviewViewer) =>
-  Prisma.sql`(i."nsfwLevel" = 0 AND ${reviewSubmissionSql(viewer)})`;
+  Prisma.sql`(i."nsfwLevel" = 0 AND ${imageReviewedSql()} AND ${reviewSubmissionSql(viewer)})`;
 
 /**
  * `getAllImages`' `pending` filter for a signed-in non-moderator, over `Image` aliased `i` joined to

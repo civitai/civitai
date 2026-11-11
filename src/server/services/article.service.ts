@@ -602,7 +602,9 @@ export const getArticles = async ({
       .map(({ tags, user, userCosmetics, cursorV, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
-        const coverImage = coverImages.find((x) => x.id === article.coverId);
+        const cover = coverImages.find((x) => x.id === article.coverId);
+        const isOwnerOrMod = !!sessionUser?.isModerator || article.userId === sessionUser?.id;
+        const coverImage = isArticleImageViewable(cover, isOwnerOrMod) ? cover : undefined;
         const match = articleStats[article.id];
 
         return {
@@ -709,7 +711,9 @@ export const getCivitaiNews = async () => {
 
   const articles = articlesRaw.map((article) => {
     const user = users.find((x) => x.id === article.userId);
-    const coverImage = coverImages.find((x) => x.id === article.coverId);
+    const cover = coverImages.find((x) => x.id === article.coverId);
+    // A public page with no viewer: no owner exception.
+    const coverImage = isArticleImageViewable(cover, false) ? cover : undefined;
     return {
       ...article,
       user: user ?? null,
@@ -857,13 +861,21 @@ export const getArticleById = async ({
 
 type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
 
+/** Whether a reader may see this cover or banner; see `viewableArticleImage`. */
+function isArticleImageViewable<T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview'>>(
+  image: T | null | undefined,
+  isOwnerOrMod: boolean
+): image is T {
+  if (!image) return false;
+  return isOwnerOrMod || (image.ingestion === 'Scanned' && !image.needsReview);
+}
+
 /**
  * The cover or banner as a reader may see it: owners and moderators always, anyone else only once
  * the image has been scanned and is not waiting on review.
  */
 function viewableArticleImage(image: ArticleImageRow | null | undefined, isOwnerOrMod: boolean) {
-  if (!image) return undefined;
-  if (!isOwnerOrMod && (image.ingestion !== 'Scanned' || image.needsReview)) return undefined;
+  if (!isArticleImageViewable(image, isOwnerOrMod)) return undefined;
   return {
     ...image,
     nsfwLevel: image.nsfwLevel as NsfwLevel,
