@@ -157,6 +157,7 @@ import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
+import { trainingDataScanServable } from '~/shared/utils/training-data-visibility';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import {
   getPrimaryFile,
@@ -289,7 +290,12 @@ function ModelVersionDetailsContent({
   const isExternalGeneration = version.usageControl === ModelUsageControl.ExternalGeneration;
   const hasFiles = filesCount > 0 || isExternalGeneration;
   const filesVisible = useMemo(
-    () => version.files?.filter((f) => f.visibility === ModelFileVisibility.Public || isOwnerOrMod),
+    () =>
+      version.files?.filter(
+        (f) =>
+          (f.visibility === ModelFileVisibility.Public || isOwnerOrMod) &&
+          trainingDataScanServable(f, !!isOwnerOrMod)
+      ),
     [version.files, isOwnerOrMod]
   );
   const filesVisibleCount = filesVisible.length;

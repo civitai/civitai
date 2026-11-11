@@ -1,5 +1,5 @@
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ScanResultCode } from '~/shared/utils/prisma/enums';
 
 /** A training dataset is public only when its owner holds the rights and chose to share it. */
 export function trainingDataVisibility({
@@ -26,4 +26,14 @@ export function trainingDataServableOnHost(
   if (metadata?.fullyRated === false) return false;
   const level = metadata?.nsfwLevel;
   return typeof level !== 'number' || (level & ~sfwBrowsingLevelsFlag) === 0;
+}
+
+/** A `Training Data` file is served to anyone but its owner and moderators only once its virus scan passed. */
+export function trainingDataScanServable(
+  file: { type: string; virusScanResult: ScanResultCode },
+  isOwnerOrMod: boolean
+): boolean {
+  return (
+    file.type !== 'Training Data' || isOwnerOrMod || file.virusScanResult === ScanResultCode.Success
+  );
 }
