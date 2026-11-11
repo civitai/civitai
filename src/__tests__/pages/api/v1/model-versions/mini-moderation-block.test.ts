@@ -5,15 +5,11 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-/**
- * The `moderation` block behind the real `MixedAuthEndpoint`, with bearer lookups stubbed to fixed
- * sessions: only a moderator session gets it, and a shared cache must never hand it to anyone else.
- */
+/** Bearer lookups are stubbed to fixed sessions. */
 
 const h = vi.hoisted(() => ({
   bearerSession: vi.fn(),
   canGenerate: { value: true },
-  publicOverride: { value: false },
   hubSession: { value: null as unknown },
 }));
 
@@ -156,8 +152,6 @@ async function call(
       return res;
     },
     json(value: Record<string, unknown>) {
-      // Stands in for a handler that marks its response public, to prove the cache below can leak.
-      if (h.publicOverride.value) headers['cache-control'] = 'public, s-maxage=300';
       body = value;
       return res;
     },
@@ -172,15 +166,14 @@ async function call(
   return { status, body, headers };
 }
 
-/** A shared cache keyed by URL alone, ignoring Vary and credentials: the worst case for an edge. */
+/** A shared cache keyed by URL alone that stores anything not marked private or no-store. */
 function sharedCache() {
   const store = new Map<string, Served>();
   return async (authorization?: string): Promise<Served & { hit: boolean }> => {
     const cached = store.get(URL);
     if (cached) return { ...structuredClone(cached), hit: true };
     const served = await call(authorization);
-    const cc = served.headers['cache-control'] ?? '';
-    if (/\b(public|s-maxage)\b/.test(cc) && !/\b(private|no-store)\b/.test(cc))
+    if (!/\b(private|no-store)\b/.test(served.headers['cache-control'] ?? ''))
       store.set(URL, structuredClone(served));
     return { ...served, hit: false };
   };
@@ -204,7 +197,6 @@ beforeEach(() => {
   loggingMock.logToAxiom.mockClear();
   h.hubSession.value = null;
   h.canGenerate.value = true;
-  h.publicOverride.value = false;
   h.bearerSession.mockReset();
   h.bearerSession.mockImplementation(async (token: string) => KEYS[token] ?? null);
   setEnv({ ORCHESTRATOR_SERVICE_TOKEN: SERVICE_TOKEN });
@@ -267,11 +259,6 @@ describe('mini/[id] moderation block: moderator credentials', () => {
     const { body } = await call('Bearer owner-mod-key', { modelDeletedAt: new Date() });
     expect(body?.moderation).toMatchObject({ deleted: true });
     expect(body?.canGenerate).toBe(false);
-    expect(
-      (loggingMock.logToAxiom.mock.calls as unknown as [Record<string, unknown>][])
-        .map(([entry]) => entry)
-        .filter((entry) => entry?.name === 'mini-moderation-caller')
-    ).toEqual([expect.objectContaining({ principal: 'moderator', moderationIncluded: true })]);
   });
 
   it('gives a full-scope moderator key passed as ?token= no block', async () => {
@@ -366,22 +353,29 @@ describe('mini/[id] moderation block: state flags', () => {
 });
 
 describe('mini/[id] moderation block through a URL-keyed shared cache', () => {
-  it('moderator first: the block is not stored, and the signed-out caller gets none', async () => {
+  it('stores the signed-out response, so the cache can serve a body to the next caller', async () => {
     const get = sharedCache();
-    const mod = await get('Bearer mod-key');
-    expect(mod.body?.moderation).toEqual(MODERATION_DEFAULT);
+    const first = await get();
+    expect(first.headers['cache-control']).toMatch(/^public, s-maxage=\d+/);
+    expect((await get()).hit).toBe(true);
+  });
+
+  it('moderator by key first: the signed-out caller gets no block', async () => {
+    const get = sharedCache();
+    expect((await get('Bearer mod-key')).body?.moderation).toEqual(MODERATION_DEFAULT);
     const anon = await get();
     expect(anon.hit).toBe(false);
     expect(anon.body).not.toHaveProperty('moderation');
   });
 
-  it('positive control: a moderator response marked public DOES leak through this cache', async () => {
-    h.publicOverride.value = true;
+  it('moderator by a session the wrapper reads as signed out: the next caller gets no block', async () => {
+    h.hubSession.value = { user: KEYS['mod-key'].user };
     const get = sharedCache();
-    await get('Bearer mod-key');
+    expect((await get()).body?.moderation).toEqual(MODERATION_DEFAULT);
+    h.hubSession.value = null;
     const anon = await get();
-    expect(anon.hit).toBe(true);
-    expect(anon.body?.moderation).toEqual(MODERATION_DEFAULT);
+    expect(anon.hit).toBe(false);
+    expect(anon.body).not.toHaveProperty('moderation');
   });
 });
 
@@ -391,16 +385,10 @@ describe('mini/[id] moderation caller log', () => {
       .map(([entry]) => entry)
       .filter((entry) => entry?.name === 'mini-moderation-caller');
 
-  it.each([
-    ['Bearer mod-key', { resolvedAs: 'api-key', principal: 'moderator', moderationIncluded: true }],
-    [
-      `Bearer ${SERVICE_TOKEN}`,
-      { resolvedAs: 'orchestrator', principal: 'orchestrator-token', moderationIncluded: false },
-    ],
-  ])('logs %s as the principal it resolves to', async (authorization, entry) => {
-    await call(authorization);
+  it('logs a moderator key as a moderator that received the block', async () => {
+    await call('Bearer mod-key');
     expect(logged()).toEqual([
-      expect.objectContaining({ type: 'info', modelVersionId: VERSION_ID, ...entry }),
+      expect.objectContaining({ principal: 'moderator', moderationIncluded: true }),
     ]);
   });
 

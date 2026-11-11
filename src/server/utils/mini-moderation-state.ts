@@ -1,8 +1,7 @@
 import type { NextApiRequest } from 'next';
 import type { Session } from '~/types/session';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
-import type { BearerCredential } from '~/server/auth/full-user-credential';
-import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
+import { isSessionOrAcceptedBearer } from '~/server/utils/require-full-scope-session';
 import { ApiKeyType, ModelStatus } from '~/shared/utils/prisma/enums';
 
 export type MiniModerationSource = {
@@ -42,18 +41,11 @@ export function receivesMiniModeration(
   req: NextApiRequest,
   user: Session['user'] | undefined
 ): boolean {
-  if (!user?.isModerator || requestCarriesQueryToken(req)) return false;
-  const context = (
-    req as NextApiRequest & { context?: BearerCredential & { apiKeyId?: number | null } }
-  ).context;
-  const presentedBearer =
-    !!req.headers?.authorization ||
-    context?.apiKeyId != null ||
-    context?.apiKeyType != null ||
-    context?.subject != null ||
-    context?.tokenScope != null;
-  if (!presentedBearer) return true;
-  return context?.apiKeyType === ApiKeyType.User && context.subject?.type === 'apiKey';
+  if (!user?.isModerator) return false;
+  return isSessionOrAcceptedBearer(
+    req,
+    (context) => context?.apiKeyType === ApiKeyType.User && context.subject?.type === 'apiKey'
+  );
 }
 
 export function getMiniModerationState(source: MiniModerationSource): MiniModerationState {
@@ -65,7 +57,8 @@ export function getMiniModerationState(source: MiniModerationSource): MiniModera
     versionStatus: source.versionStatus,
     modelStatus: source.modelStatus,
     modelMode: source.modelMode,
-    // An account delete can stamp `deletedAt` and leave the versions Published.
+    // Account deletion (`deleteUser` with `removeModels`) sets these on the model without changing
+    // its versions.
     deleted: isModelDeleted(gated) || source.modelDeletedAt != null,
     takenDown: isModelTakenDown(gated),
     unpublishedViolation:

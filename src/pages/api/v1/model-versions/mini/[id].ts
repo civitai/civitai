@@ -713,7 +713,7 @@ export default MixedAuthEndpoint(async function handler(
   res.status(200).json(data);
 });
 
-/** Which principal the orchestrator's configured credential resolves to, for the moderation rollout. */
+/** Logs which principal the request's credential resolves to. */
 function logMiniModerationCaller(
   req: NextApiRequest,
   user: Session['user'] | undefined,
