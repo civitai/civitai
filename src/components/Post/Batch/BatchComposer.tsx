@@ -660,7 +660,7 @@ function ReviewScreen({
             tags: shared.tags,
             tools: shared.tools.map((tool) => tool.id),
             techniques: shared.techniques.map((technique) => technique.id),
-            extraResourceIds: shared.resources.map((resource) => resource.id),
+            resourceIds: shared.resources.map((resource) => resource.id),
           }}
           viewScheduledHref={viewScheduledHref}
           calendarHref={calendarHref}

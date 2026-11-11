@@ -9,6 +9,7 @@ import {
 } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
+import { capNestedImages } from '~/server/utils/browsing-level';
 import {
   awardBountyEntry,
   deleteBountyEntry,
@@ -26,6 +27,7 @@ import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getBountyById } from '../services/bounty.service';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyStarted } from '~/server/services/bounty-schedule';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
@@ -68,12 +70,13 @@ export const getBountyEntryHandler = async ({
       if (blocked) throw throwNotFoundError();
     }
 
+    const canEdit = !!ctx.user && (ctx.user.isModerator || ctx.user.id === entry.user?.id);
     const images = await getImagesByEntity({
       id: entry.id,
       type: 'BountyEntry',
       isModerator: ctx.user?.isModerator,
       userId: ctx.user?.id,
-      imagesPerId: 10,
+      imagesPerId: canEdit ? constants.bounties.maxEntryImagesForEdit : 10,
     });
     const files = await getBountyEntryFilteredFiles({
       id: entry.id,
@@ -85,7 +88,7 @@ export const getBountyEntryHandler = async ({
 
     return {
       ...entry,
-      images: images.map((i) => ({
+      images: capNestedImages(images, ctx, { ownerId: entry.user?.id }).map((i) => ({
         ...i,
         metadata: i.metadata as MixedObject,
       })),

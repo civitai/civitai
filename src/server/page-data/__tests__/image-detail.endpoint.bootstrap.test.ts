@@ -200,7 +200,8 @@ describe('the page-data endpoint’s settings bootstrap request', () => {
   it('answers with every seed the settings bootstrap gives a server render', async () => {
     const seeds = await resolveSettingsBootstrapSeeds(
       { headers: { host: PUBLIC_HOST }, cookies: cookies(), url: '/images/101' } as never,
-      { user: USERS.owner } as never
+      { user: USERS.owner } as never,
+      {}
     );
     const { res, body } = await fetchPageData();
     expect(res.statusCode).toBe(200);

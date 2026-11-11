@@ -4,6 +4,7 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import type * as ImageService from '~/server/services/image.service';
 import type * as ModelService from '~/server/services/model.service';
 import type * as PostService from '~/server/services/post.service';
+import { NsfwLevel } from '~/server/common/enums';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 
@@ -14,7 +15,9 @@ const { fetches, versionImages, posts } = vi.hoisted(() => ({
     nextCursor: undefined,
   })),
   versionImages: vi.fn(async (ids: number[]) =>
-    Object.fromEntries(ids.map((id) => [id, { modelVersionId: id, images: [{ id: 1 }] }]))
+    Object.fromEntries(
+      ids.map((id) => [id, { modelVersionId: id, images: [{ id: 1, nsfwLevel: 1, userId: 5 }] }])
+    )
   ),
 }));
 
@@ -189,5 +192,52 @@ describe.each(surfaces)('%s on a taken-down model', (_name, run) => {
 
   it("serves another user the images of a model that isn't taken down", async () => {
     expect(await run({ id: 99 }, undefined, 20)).not.toEqual([]);
+  });
+});
+
+describe('image.getImagesForModelVersion on a capped site', () => {
+  const image = (id: number, nsfwLevel: number) => ({ id, nsfwLevel, userId: OWNER });
+  const run = async (context: object) => {
+    versionImages.mockResolvedValueOnce({
+      20: {
+        modelVersionId: 20,
+        images: [
+          image(1, NsfwLevel.PG),
+          image(2, NsfwLevel.X),
+          image(3, 0),
+          image(4, NsfwLevel.PG | NsfwLevel.XXX),
+          image(5, NsfwLevel.PG | NsfwLevel.PG13),
+        ],
+      },
+    } as never);
+    const result = await getImagesForModelVersionHandler({
+      input: { id: 20 },
+      ctx: { req: { headers: {} }, ip: '127.0.0.1', ...context } as never,
+    });
+    return result[20].images.map((i) => i.id);
+  };
+
+  it('sends a capped viewer only images whose every rating bit is inside the cap', async () => {
+    expect(await run({ user: { id: 6 }, features: { canViewNsfw: false } })).toEqual([1, 5]);
+    expect(await run({ features: { canViewNsfw: true } })).toEqual([1]);
+  });
+
+  it.each([
+    ['the owner', { user: { id: OWNER }, features: { canViewNsfw: false } }],
+    ['a moderator', { user: { id: 7, isModerator: true }, features: { canViewNsfw: false } }],
+    ['an uncapped viewer', { user: { id: 6 }, features: { canViewNsfw: true } }],
+  ])('keeps every image for %s', async (_label, context) => {
+    expect(await run(context)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("keeps a verified crawler's answer out of the edge cache, since humans get a capped one", async () => {
+    const cache = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
+    const req = { headers: { 'x-civitai-verified-bot': 'googlebot' } };
+    await run({ features: { canViewNsfw: true }, req, cache });
+    expect(cache).toEqual({ edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 });
+
+    const human = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
+    await run({ features: { canViewNsfw: true }, req: { headers: {} }, cache: human });
+    expect(human).toEqual({ edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 });
   });
 });

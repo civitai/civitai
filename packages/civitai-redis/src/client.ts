@@ -2754,9 +2754,9 @@ export const REDIS_SYS_KEYS = {
     // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
     // (`readMinimum`).
     COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
-    // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
-    // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
-    // and only new volume after that is filed again. No TTL.
+    // Hash: field = creator userId, value = JSON { filedAt, counterparties: { [userId]: two-way
+    // amount when last filed } }, so only new volume is filed again. Older entries have `warnedAt`
+    // and `chatId` in place of `filedAt` (`parseFiledRecord`). No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
     // String. How many other users the review follows Buzz through before it reaches the creator
     // again; the review clamps it to what it supports (`runCounterpartyReview`).
@@ -3280,6 +3280,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // only delays a brand-new epoch becoming generatable. See
     // `validateRawAirResources` in orchestration-new.service.
     TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
+    // `<ownerId>:<blobId>` -> a freshly signed url for a published training epoch, re-signed with
+    // the owner's orchestrator token. Short TTL, well under the signed lifetime; see mini/[id].ts.
+    EPOCH_BLOB_RESIGNED_URL: 'packed:caches:epoch-blob-resigned-url',
     // Per-user creator card (`user.getCreator` by id): the user row slice, links, stats, rank,
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.

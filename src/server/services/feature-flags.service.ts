@@ -663,7 +663,9 @@ const featureFlags = createFeatureFlags({
   blocklists: ['granted'],
   toolSearch: ['public'],
   comicSearch: ['public'],
-  generationOnlyModels: ['mod', 'granted', 'gold'],
+  // Open to every signed-in creator; kept as a flag so an env override can switch it off in the main app
+  // (Creator Studio's canSetGenerationOnly restates the default and doesn't read it).
+  generationOnlyModels: ['user'],
   appTour: ['public'],
   privateModels: ['public'],
   auctions: ['blue', 'red', 'green', 'public'],
@@ -734,6 +736,10 @@ const featureFlags = createFeatureFlags({
   // submission naming it is refused (see `generation/ecosystem-gates.ts`). No Flipt key, so
   // opening it past moderators is a code change.
   minimaxH3ImageGenerator: { availability: ['mod'] },
+  // Gates Seedream v5.5 like krea3Ultra: off ⇒ v5.5 is not offered, v5.0-pro stays the default, and a
+  // submitted v5.5 falls back to v5.0-pro (see `image/seedream.graph.ts`). Dark until the
+  // orchestrator release that accepts v5.5 is live; Flipt alone opens it.
+  seedream55: { availability: [], fliptKey: 'seedream-5-5' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay

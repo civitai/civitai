@@ -9,7 +9,7 @@ import {
 } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import type { HashGate } from '~/server/services/download-by-hash.service';
+import type { HashGate, ProviderHashGate } from '~/server/services/download-by-hash.service';
 
 // The candidate SQL, run as written against an in-process Postgres; the gate is a fake per file.
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
@@ -19,7 +19,7 @@ vi.mock('~/server/db/kyselyDb.lazy', () => ({
   loadKyselyDb: async () => ({ kyselyRead: holder.kysely }),
 }));
 
-const { pickFileByHash, parseContentHash } = await import(
+const { pickFileByHash, pickProviderFileByHash, parseContentHash } = await import(
   '~/server/services/download-by-hash.service'
 );
 
@@ -65,7 +65,7 @@ CREATE TABLE "ModelVersion" (
 CREATE TABLE "ModelFile" (
   id int PRIMARY KEY, "modelVersionId" int NOT NULL, "sizeKB" double precision NOT NULL,
   visibility text NOT NULL DEFAULT 'Public', "pickleScanResult" text NOT NULL DEFAULT 'Success',
-  "virusScanResult" text NOT NULL DEFAULT 'Success'
+  "virusScanResult" text NOT NULL DEFAULT 'Success', type text NOT NULL DEFAULT 'Model'
 );
 CREATE TABLE "ModelFileHash" ("fileId" int NOT NULL, type text NOT NULL, hash text NOT NULL);
 CREATE INDEX ON "ModelFileHash" (hash);
@@ -490,5 +490,112 @@ describe('the hash in the URL', () => {
     expect(parseContentHash(HASH.slice(1))).toBeNull();
     expect(parseContentHash(`${HASH.slice(1)}G`)).toBeNull();
     expect(parseContentHash([HASH])).toBeNull();
+  });
+});
+
+describe('a provider token holder', () => {
+  /** A provider gate that passes the listed files and refuses each other one as listed. */
+  function providerGate(pass: number[], refusals: Record<number, string> = {}) {
+    return vi.fn<ProviderHashGate>(async ({ fileId, modelVersionId }) =>
+      pass.includes(fileId)
+        ? ({ ok: true, fileId, modelVersionId } as Awaited<ReturnType<ProviderHashGate>>)
+        : ({ ok: false, error: refusals[fileId] ?? 'not-found' } as Awaited<
+            ReturnType<ProviderHashGate>
+          >)
+    );
+  }
+  const providerPick = (gate: ProviderHashGate) =>
+    pickProviderFileByHash({ hash: HASH, kind: 'sha256', provider: 'RunPods', gate });
+  const providerTried = (gate: ReturnType<typeof providerGate>) =>
+    gate.mock.calls.map(([a]) => a.fileId);
+
+  it.each([
+    ['a private model', { modelAvailability: 'Private' }],
+    ['a private file', { visibility: 'Private' }],
+    ['generation-only use', { version: { usageControl: 'Generation' } }],
+    ['a draft version', { versionStatus: 'Draft' }],
+    ['an unpublished model', { modelStatus: 'Unpublished' }],
+  ] as [string, Copy][])('is offered a copy on %s that a stranger is not', async (_, c) => {
+    await copy(1, c);
+
+    const result = await providerPick(providerGate([1]));
+    expect(result).toMatchObject({ ok: true, fileId: 1 });
+
+    const stranger = fakeGate([1]);
+    expect((await pick(stranger, { id: STRANGER })).fileResult.status).toBe('not-found');
+    expect(stranger).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a taken-down model', { mode: 'TakenDown' }],
+    ['an archived model', { mode: 'Archived' }],
+    ['a deleted model', { modelStatus: 'Deleted' }],
+    ['a model with a deletion date', { model: { deletedAt: new Date() } }],
+    ['a deleted version', { versionStatus: 'Deleted' }],
+    ['a model unpublished for a violation', { modelStatus: 'UnpublishedViolation' }],
+    ['a POI model', { model: { poi: true } }],
+    ['a failed pickle scan', { scan: 'Danger' }],
+    ['a failed virus scan', { file: { virusScanResult: 'Danger' } }],
+    ['a training dataset', { file: { type: 'Training Data' } }],
+  ] as [string, Copy][])('is never offered a copy on %s', async (_, excluded) => {
+    await copy(1, excluded);
+    await copy(2);
+    const gate = providerGate([]);
+
+    await providerPick(gate);
+    expect(providerTried(gate)).toEqual([2]);
+  });
+
+  it('is refused as not-found without running the gate when only an excluded copy exists', async () => {
+    await copy(1, { mode: 'TakenDown' });
+    const gate = providerGate([1]);
+
+    expect(await providerPick(gate)).toEqual({ ok: false, error: 'not-found' });
+    expect(gate).not.toHaveBeenCalled();
+  });
+
+  it('serves the next copy the gate passes, and answers the most specific refusal', async () => {
+    await copy(1);
+    await copy(2);
+
+    const gate = providerGate([2], { 1: 'in-review' });
+    expect(await providerPick(gate)).toMatchObject({ ok: true, fileId: 2 });
+    expect(providerTried(gate)).toEqual([1, 2]);
+
+    expect(await providerPick(providerGate([], { 1: 'not-found', 2: 'in-review' }))).toEqual({
+      ok: false,
+      error: 'in-review',
+    });
+  });
+
+  it.each([
+    [{ 1: 'in-review', 2: 'not-found' }, 'in-review'],
+    [{ 1: 'failed-scan', 2: 'no-generation' }, 'failed-scan'],
+    [{ 1: 'no-generation', 2: 'failed-scan' }, 'failed-scan'],
+    [{ 1: 'unsupported-file', 2: 'not-found' }, 'unsupported-file'],
+  ] as const)(
+    'answers the more specific refusal whichever copy holds it (%o)',
+    async (refusals, error) => {
+      await copy(1);
+      await copy(2);
+
+      expect(await providerPick(providerGate([], refusals))).toEqual({ ok: false, error });
+    }
+  );
+
+  it('names the provider beside the URL kind in the hash logs', async () => {
+    await copy(1, { mode: 'TakenDown' });
+    await copy(2);
+
+    await providerPick(providerGate([2]));
+
+    expect(logs()).toContainEqual(
+      expect.objectContaining({
+        message: 'served_with_taken_down_copy',
+        urlKind: 'sha256',
+        provider: 'RunPods',
+        servedFileId: 2,
+      })
+    );
   });
 });
