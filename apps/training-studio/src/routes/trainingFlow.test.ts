@@ -38,6 +38,8 @@ import {
   autoLabelTargets,
   handLabelOnlyCount,
   labelTextAfterSwitch,
+  matchesTagFilter,
+  withFilterTags,
   withTags,
   withTrigger,
   versionOptions,
@@ -652,6 +654,47 @@ describe('withTags', () => {
   });
 });
 
+describe('matchesTagFilter', () => {
+  const tags = ['1girl', 'dress', 'smile'];
+  it('keeps an image with every included tag and none of the excluded ones', () => {
+    expect(matchesTagFilter(tags, { include: ['dress'], exclude: ['crown'] })).toBe(true);
+    expect(matchesTagFilter([...tags, 'crown'], { include: ['dress'], exclude: ['crown'] })).toBe(
+      false
+    );
+    expect(matchesTagFilter(tags, { include: ['dress', 'crown'], exclude: [] })).toBe(false);
+  });
+  it('an exclude-only filter surfaces the images missing the tag, unlabeled ones included', () => {
+    expect(matchesTagFilter(['1girl'], { include: [], exclude: ['dress'] })).toBe(true);
+    expect(matchesTagFilter([], { include: [], exclude: ['dress'] })).toBe(true);
+    expect(matchesTagFilter(tags, { include: [], exclude: ['dress'] })).toBe(false);
+  });
+  it("ignores case, so a typed tag finds the tagger's", () => {
+    expect(matchesTagFilter(tags, { include: ['Dress'], exclude: [] })).toBe(true);
+    expect(matchesTagFilter(tags, { include: [], exclude: ['SMILE'] })).toBe(false);
+  });
+});
+
+describe('withFilterTags', () => {
+  it('adds a comma paste to one side and moves a tag already on the other side', () => {
+    expect(
+      withFilterTags({ include: ['dress'], exclude: ['crown'] }, 'Crown, hat', 'include')
+    ).toEqual({
+      include: ['dress', 'Crown', 'hat'],
+      exclude: [],
+    });
+    expect(withFilterTags({ include: ['dress'], exclude: [] }, 'dress', 'exclude')).toEqual({
+      include: [],
+      exclude: ['dress'],
+    });
+  });
+  it('does not list a tag twice on the same side', () => {
+    expect(withFilterTags({ include: ['dress'], exclude: [] }, 'DRESS', 'include')).toEqual({
+      include: ['DRESS'],
+      exclude: [],
+    });
+  });
+});
+
 describe('per-model flag gates', () => {
   const imageTypes = (flags: string[]) => cardsForMedia('image', new Set(flags)).map((c) => c.type);
 
@@ -755,6 +798,14 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
     expect(
       blockedSelectionMessage([run], parseServiceStatus({ blockedModels: [run.customAir] }))
     ).toBe('This custom model is blocked from training. Pick another.');
+  });
+
+  it('blocks a code-blocked custom base even when the ops list is empty or unread', () => {
+    const anima = { ...newRun(illustrious, on), versionKey: CUSTOM_VERSION_KEY };
+    const run = { ...anima, customAir: 'urn:air:anima:checkpoint:civitai:2855007@3224434' };
+    const message = 'This custom model is blocked from training. Pick another.';
+    expect(blockedSelectionMessage([run], parseServiceStatus(null))).toBe(message);
+    expect(blockedSelectionMessage([run], null)).toBe(message);
   });
 
   it('starts a partly-down card on a version that is up', () => {

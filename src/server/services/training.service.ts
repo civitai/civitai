@@ -259,7 +259,7 @@ export async function setTrainingServiceStatus(input: {
 }) {
   // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
   // getTrainingServiceStatus() here: if its read failed open and the
-  // hSet succeeded, ops-configured blockedModels / blockedCustomModels
+  // hSet succeeded, ops-configured blockedModels
   // would be wiped back to schema defaults. Fail-loud is the right
   // behavior for admin writes.
   const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS);

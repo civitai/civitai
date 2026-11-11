@@ -18,7 +18,7 @@ import type {
   SiteSearchParams,
 } from '~/server/schema/site-search.schema';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
-import { Flags } from '~/shared/utils/flags';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const SITE_SEARCH_TIMEOUT_MS = 5_000;
@@ -113,11 +113,11 @@ type ModelHit = Record<string, unknown> & {
   _formatted?: Record<string, unknown>;
 };
 
-/** Drops the images the site may not serve; the model-level cap does not reach them. */
+/** Drops the images the site may not serve; the hit-level cap does not reach them. */
 function capImages(images: unknown, browsingLevelCap: number | undefined) {
   if (browsingLevelCap === undefined || !Array.isArray(images)) return images;
   return images.filter((image: { nsfwLevel?: unknown }) =>
-    Flags.intersects(Number(image?.nsfwLevel) || 0, browsingLevelCap)
+    isRatingWithinCap(image?.nsfwLevel, browsingLevelCap)
   );
 }
 
@@ -167,12 +167,28 @@ function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
   return rest;
 }
 
+type BountyHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+
+/**
+ * A bounty's own level is its images' combined level, which passes the cap when any one image
+ * does, so each image is capped here.
+ */
+function shapeBountyHit(hit: BountyHit, browsingLevelCap: number | undefined): BountyHit {
+  if (browsingLevelCap === undefined) return hit;
+  const shaped: BountyHit = { ...hit };
+  if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
+  if (shaped._formatted) shaped._formatted = shapeBountyHit(shaped._formatted, browsingLevelCap);
+  return shaped;
+}
+
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
   if (!Array.isArray(hits)) return hits;
   if (indexUid === MODELS_SEARCH_INDEX)
     return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
   if (indexUid === COMICS_SEARCH_INDEX)
     return hits.map((hit: ComicHit) => shapeComicHit(hit, viewer.browsingLevelCap));
+  if (indexUid === BOUNTIES_SEARCH_INDEX)
+    return hits.map((hit: BountyHit) => shapeBountyHit(hit, viewer.browsingLevelCap));
   return hits;
 }
 
