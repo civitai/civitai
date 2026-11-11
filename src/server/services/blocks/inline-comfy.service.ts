@@ -415,34 +415,30 @@ export function checkInlineComfyGraph(workflow: Record<string, unknown>): Inline
 // reads or writes a path can reach another job's files whether the path is literal
 // or linked. Matched by name, failing closed: the worker's node set is not enumerable.
 const FILESYSTEM_CLASS_RE = /path|dir|folder/i;
-const FILESYSTEM_INPUT_RE = /path|director|folder|(^|_)(sub)?(dir|root)s?(_|$)/i;
+const FILESYSTEM_INPUT_RE = /path|folder|dir|root/i;
 const FILESYSTEM_CLASSES: ReadonlySet<string> = new Set([
   'VHS_LoadAudio',
   'LoadImageOutput',
   'WebcamCapture',
+  'RecordAudio',
   'ImageReceiver',
+  'LatentReceiver',
   'Get Batch From History (mtb)',
   'LoadText|pysssss',
   'SaveText|pysssss',
 ]);
 
-// File-backed core loaders read a bare filename from the shared input dir. Their media
-// input must be a URL or an upload key, which the source gate then checks.
-const MEDIA_INPUTS_BY_LOADER: ReadonlyMap<string, string> = new Map([
-  ['LoadImage', 'image'],
-  ['LoadImageMask', 'image'],
-  ['LoadAudio', 'audio'],
-  ['LoadVideo', 'file'],
-  ['Load3D', 'model_file'],
-]);
-const MEDIA_URL_RE = /^https?:\/\/[^\s[\]]+$/i;
-const UPLOAD_KEY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// A loader input built at run time (a linked string) is never seen by the source gate,
-// which reads literal values only.
+// The source gate reads literal values only, so a loader input must be a literal it can
+// check: an AIR, an upload key, a public https URL, or a plain option word.
 const LOADER_CLASS_RE = /load|url|fetch|download/i;
+const LOADER_CLASSES: ReadonlySet<string> = new Set([
+  'CreateHookLora',
+  'CreateHookLoraModelOnly',
+  'CreateHookModelAsLora',
+]);
 
-// Core loaders whose linked inputs carry a model, CLIP or LoRA, never a string.
+// Linked inputs that carry a model, CLIP, LoRA, hooks or a number, never a string.
+const LINKED_STRENGTH_RE = /^strength(_model|_clip)?$/;
 const LOADER_LINKED_INPUTS_ALLOWED: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['LoraLoader', new Set(['model', 'clip'])],
   ['LoraLoaderModelOnly', new Set(['model'])],
@@ -451,7 +447,50 @@ const LOADER_LINKED_INPUTS_ALLOWED: ReadonlyMap<string, ReadonlySet<string>> = n
   ['LoraModelLoader', new Set(['model', 'lora'])],
   ['HypernetworkLoader', new Set(['model'])],
   ['DiffControlNetLoader', new Set(['model'])],
+  ['CreateHookLora', new Set(['prev_hooks'])],
+  ['CreateHookLoraModelOnly', new Set(['prev_hooks'])],
+  ['CreateHookModelAsLora', new Set(['prev_hooks'])],
 ]);
+
+const AIR_RE = /^urn:air:/i;
+const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+const FILE_LIKE_RE = /[./\\[\]]/;
+const PRIVATE_HOST_RE = /^(localhost|.*\.(localhost|local|internal))$/i;
+
+/** A public https URL: no credentials, port, IP-literal or internal host, no traversal. */
+function isFetchableMediaUrl(value: string): boolean {
+  if (/[\s[\]\\]/.test(value)) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
+  const host = url.hostname;
+  if (!host.includes('.') || host.includes(':') || /^[\d.]+$/.test(host)) return false;
+  if (PRIVATE_HOST_RE.test(host)) return false;
+  let path: string;
+  try {
+    path = decodeURIComponent(url.pathname);
+  } catch {
+    return false;
+  }
+  return !/\.\.|[\s[\]\\]/.test(path);
+}
+
+function literalLoaderInputRefusal(name: string, value: unknown): string | null {
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return null;
+  if (typeof value !== 'string') return `passes ${name} as an object`;
+  if (AIR_RE.test(value)) return null;
+  if (HAS_SCHEME_RE.test(value)) {
+    return isFetchableMediaUrl(value) ? null : `gives ${name} a URL the host does not fetch`;
+  }
+  if (FILE_LIKE_RE.test(value)) {
+    return `names a local file in ${name}; upload the media and pass its URL`;
+  }
+  return null;
+}
 
 type RefusedInlineNode = { nodeId: string; classType: string; reason: string };
 
@@ -473,31 +512,27 @@ function findRefusedInlineNodes(graph: ComfyGraph): RefusedInlineNode[] {
       refused.push({ nodeId, classType, reason: 'reads or writes a file path' });
       continue;
     }
-    const mediaInput = MEDIA_INPUTS_BY_LOADER.get(classType);
-    const media = mediaInput === undefined ? undefined : node.inputs[mediaInput];
-    if (
-      media !== undefined &&
-      !isLinkedInput(media) &&
-      !(typeof media === 'string' && (MEDIA_URL_RE.test(media) || UPLOAD_KEY_RE.test(media)))
-    ) {
-      refused.push({
-        nodeId,
-        classType,
-        reason: `names a local file in ${mediaInput}; upload the media and pass its URL`,
-      });
-      continue;
-    }
-    if (!LOADER_CLASS_RE.test(classType)) continue;
+    if (!LOADER_CLASSES.has(classType) && !LOADER_CLASS_RE.test(classType)) continue;
     const allowed = LOADER_LINKED_INPUTS_ALLOWED.get(classType);
     const linked = inputs
-      .filter(([name, value]) => isLinkedInput(value) && !allowed?.has(name))
-      .map(([name]) => name);
+      .filter(([, value]) => isLinkedInput(value))
+      .map(([name]) => name)
+      .filter((name) => !allowed?.has(name) && !LINKED_STRENGTH_RE.test(name));
     if (linked.length > 0) {
       refused.push({
         nodeId,
         classType,
         reason: `takes ${linked.join(', ')} from another node instead of a literal value`,
       });
+      continue;
+    }
+    for (const [name, value] of inputs) {
+      if (isLinkedInput(value)) continue;
+      const reason = literalLoaderInputRefusal(name, value);
+      if (reason) {
+        refused.push({ nodeId, classType, reason });
+        break;
+      }
     }
   }
   return refused;
@@ -506,7 +541,7 @@ function findRefusedInlineNodes(graph: ComfyGraph): RefusedInlineNode[] {
 function refusedNodesMessage(nodes: RefusedInlineNode[]): string {
   const shown = nodes
     .slice(0, INLINE_FILENAME_INPUTS_SHOWN)
-    .map((n) => `node ${n.nodeId} (${n.classType.slice(0, 128)}) ${n.reason}`)
+    .map((n) => `node ${n.nodeId} (${n.classType}) ${n.reason}`)
     .join('; ');
   const more =
     nodes.length > INLINE_FILENAME_INPUTS_SHOWN

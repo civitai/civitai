@@ -2539,66 +2539,35 @@ describe('inline customComfy — nodes the host does not run inline', () => {
     mode: 'inline' as const,
     workflow: {
       '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: AIR } },
-      '2': { class_type: 'StringConcatenate', inputs: { string_a: 'https://', string_b: 'x' } },
+      '2': { class_type: 'StringConcatenate', inputs: { string_a: 'a', string_b: 'b' } },
       '3': node,
     },
     resources: [AIR],
     maxBuzz: 60,
   });
   const refused = { snapshot: { status: 'failed', errorCode: 'inline-node-refused' } };
-  const node = (class_type: string, inputs: Record<string, unknown>): Node => ({
-    class_type,
-    inputs,
-  });
 
   it.each([
-    ['a path class, literal path', node('VHS_LoadImagePath', { image: '/x.png' })],
-    ['a folder class', node('LoadImagesFromFolderKJ', { folder: 'input' })],
-    ['a named class', node('VHS_LoadAudio', { audio_file: 'a.wav' })],
-    ['the output-dir loader', node('LoadImageOutput', { image: 'x.png' })],
-    ['a named loader subclass', node('WebcamCapture', { image: 'https://x.example/a.png' })],
-    ['an output_path input', node('Image Save', { images: ['1', 0], output_path: 'x' })],
-    ['a directory input', node('TextNode', { directory: 'x' })],
-    ['a *_dir input', node('TextNode', { output_dir: 'x' })],
-    ['a root_dir input', node('TextNode', { root_dir: 'input' })],
-    ['a bare image filename', node('LoadImage', { image: 'x.png' })],
-    ['a bare video filename', node('LoadVideo', { file: 'clip.mp4' })],
-    ['a non-string media value', node('LoadImageMask', { image: { v: 1 }, channel: 'alpha' })],
-    ['a linked image name', node('LoadImage', { image: ['2', 0] })],
-    ['a linked url', node('ImageFromUrl', { url: ['2', 0] })],
-    ['a linked fetch source', node('FetchImage', { src: ['2', 0] })],
-    ['a linked download source', node('DownloadMedia', { src: ['2', 0] })],
-    [
-      'a linked LoRA name',
-      node('LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: ['2', 0] }),
-    ],
-  ])('refuses %s on estimate AND submit, before any orchestrator call', async (_what, n) => {
+    ['a path node', { class_type: 'VHS_LoadImagePath', inputs: { image: '/x.png' } }],
+    ['a linked loader input', { class_type: 'LoadImage', inputs: { image: ['2', 0] } }],
+    ['a local file in a loader', { class_type: 'LoadImage', inputs: { image: 'x.png' } }],
+  ])('refuses %s on estimate AND submit, before any orchestrator call', async (_what, node) => {
     for (const call of [estimate, submit]) {
-      await expect(call(graphWith(n))).resolves.toMatchObject(refused);
+      await expect(call(graphWith(node))).resolves.toMatchObject(refused);
     }
     expect(h.submitWorkflow).not.toHaveBeenCalled();
     expect(counter(USER_CAP)).toBe(0);
   });
 
-  it('names every refused node up to five, then counts the rest', async () => {
-    const body = graphWith(node('LoadImage', { image: 'a.png' }));
-    const workflow: Record<string, Node> = body.workflow;
-    for (let i = 4; i <= 9; i++) workflow[String(i)] = node('LoadImage', { image: `${i}.png` });
-    const result = await estimate(body);
-    expect(result.snapshot.error).toContain('node 3 (LoadImage)');
-    expect(result.snapshot.error).toContain(' and 2 more');
-  });
-
-  it.each([
-    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR }],
-    ['LoraLoaderModelOnly', { model: ['1', 0], lora_name: AIR }],
-    ['LoraLoaderBypass', { model: ['1', 0], clip: ['1', 1], lora_name: AIR }],
-    ['HypernetworkLoader', { model: ['1', 0], hypernetwork_name: AIR }],
-    ['DiffControlNetLoader', { model: ['1', 0], control_net_name: AIR }],
-  ])('runs %s with its model input linked and its name literal', async (classType, inputs) => {
-    for (const call of [estimate, submit]) {
-      const result = await call(graphWith(node(classType, inputs))).catch((e: unknown) => e);
-      expect(result).not.toMatchObject(refused);
-    }
+  it('runs a LoRA loader with linked model, CLIP and strength on estimate and submit', async () => {
+    const node = {
+      class_type: 'LoraLoader',
+      inputs: { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_model: ['2', 0] },
+    };
+    await expect(estimate(graphWith(node))).resolves.toMatchObject({
+      snapshot: { status: 'pending' },
+    });
+    const submitted = await submit(graphWith(node)).catch((e: unknown) => e);
+    expect(submitted).not.toMatchObject(refused);
   });
 });

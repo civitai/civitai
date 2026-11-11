@@ -778,11 +778,10 @@ Some nodes are refused in an inline graph, by the estimate and the submit alike,
 failed snapshot whose `errorCode` is `'inline-node-refused'`, before anything is reserved:
 
 - a node that reads or writes a file path or directory, whatever the path's value;
-- a core file loader (`LoadImage`, `LoadImageMask`, `LoadAudio`, `LoadVideo`, `Load3D`)
-  whose media input is a local file name. Upload the media and pass its URL or upload key;
-- a loader that takes an input from another node instead of a literal value. Give the
-  loader its input directly, and bring media in as Civitai uploads. The model and CLIP
-  inputs of the core LoRA loaders may still be linked.
+- a loader that takes an input from another node instead of a literal value. The model,
+  CLIP and strength inputs of the core LoRA loaders may still be linked;
+- a loader input that names a local file, or a URL that is not a public `https` address.
+  Upload the media and pass its URL or upload key.
 
 ### Training runs (`kind: 'training'`)
 
