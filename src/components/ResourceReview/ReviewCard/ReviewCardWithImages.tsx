@@ -20,7 +20,7 @@ export function ReviewCardWithImages({
 
   const wanted = inView && review.imageCount > 0;
   const { granted, release } = useImageLoadSlot(wanted);
-  const { images, flatData, isSuccess, isError } = useReviewImages(
+  const { images, flatData, isLoading, isSuccess, isError } = useReviewImages(
     { reviewId: review.id, limit: IMAGES_FETCHED },
     { enabled: wanted && granted }
   );
@@ -36,7 +36,8 @@ export function ReviewCardWithImages({
         review={review}
         variant="full"
         images={images}
-        hiddenImageCount={flatData.length - images.length}
+        // Until the viewer's preferences load, `images` is empty and every row would read as hidden.
+        hiddenImageCount={isLoading ? 0 : flatData.length - images.length}
       />
     </div>
   );
