@@ -113,11 +113,30 @@ type ModelHit = Record<string, unknown> & {
   _formatted?: Record<string, unknown>;
 };
 
+type RatedImage = { id?: unknown; nsfwLevel?: unknown };
+
 /** Drops the images the site may not serve; the hit-level cap does not reach them. */
 function capImages(images: unknown, browsingLevelCap: number | undefined) {
   if (browsingLevelCap === undefined || !Array.isArray(images)) return images;
-  return images.filter((image: { nsfwLevel?: unknown }) =>
+  return images.filter((image: RatedImage) =>
     isRatingWithinCap(image?.nsfwLevel, browsingLevelCap)
+  );
+}
+
+/**
+ * The highlight copy's images that the hit itself kept. The copy's values are shaped by the
+ * request's highlight and crop options, so its own ratings are not read; Meilisearch also sends
+ * its numbers as strings.
+ */
+function keepCopiesOf(copies: unknown, kept: unknown) {
+  if (!Array.isArray(copies)) return copies;
+  const keptIds = new Set(
+    (Array.isArray(kept) ? (kept as RatedImage[]) : [])
+      .filter((image) => image?.id != null)
+      .map((image) => String(image.id))
+  );
+  return (copies as RatedImage[]).filter(
+    (image) => image?.id != null && keptIds.has(String(image.id))
   );
 }
 
@@ -138,8 +157,8 @@ export function shapeModelHit(
   if (rest._formatted) {
     const { sfwName: formattedSfwName, ...formatted } = rest._formatted;
     if (useFace) formatted.name = formattedSfwName ?? sfwName;
-    if ('images' in formatted)
-      formatted.images = capImages(formatted.images, viewer.browsingLevelCap);
+    if ('images' in formatted && viewer.browsingLevelCap !== undefined)
+      formatted.images = keepCopiesOf(formatted.images, rest.images);
     rest._formatted = formatted;
   }
   return rest;
@@ -177,7 +196,37 @@ function shapeBountyHit(hit: BountyHit, browsingLevelCap: number | undefined): B
   if (browsingLevelCap === undefined) return hit;
   const shaped: BountyHit = { ...hit };
   if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
-  if (shaped._formatted) shaped._formatted = shapeBountyHit(shaped._formatted, browsingLevelCap);
+  if (shaped._formatted && 'images' in shaped._formatted)
+    shaped._formatted = {
+      ...shaped._formatted,
+      images: keepCopiesOf(shaped._formatted.images, shaped.images),
+    };
+  return shaped;
+}
+
+type CollectionHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+
+/**
+ * A collection's own level is its items' combined level, which passes the cap when any one item
+ * does, so its cover and item images are capped here. `srcs` carry no rating, so a capped site
+ * gets none.
+ */
+function shapeCollectionHit(
+  hit: CollectionHit,
+  browsingLevelCap: number | undefined
+): CollectionHit {
+  if (browsingLevelCap === undefined) return hit;
+  const { srcs: _srcs, ...shaped }: CollectionHit = { ...hit };
+  if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
+  const cover = shaped.image as RatedImage | null | undefined;
+  const coverKept = !!cover && isRatingWithinCap(cover.nsfwLevel, browsingLevelCap);
+  if ('image' in shaped && cover) shaped.image = coverKept ? cover : null;
+  if (shaped._formatted) {
+    const { srcs: _formattedSrcs, ...formatted } = shaped._formatted;
+    if ('images' in formatted) formatted.images = keepCopiesOf(formatted.images, shaped.images);
+    if ('image' in formatted && formatted.image && !coverKept) formatted.image = null;
+    shaped._formatted = formatted;
+  }
   return shaped;
 }
 
@@ -189,6 +238,8 @@ function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSear
     return hits.map((hit: ComicHit) => shapeComicHit(hit, viewer.browsingLevelCap));
   if (indexUid === BOUNTIES_SEARCH_INDEX)
     return hits.map((hit: BountyHit) => shapeBountyHit(hit, viewer.browsingLevelCap));
+  if (indexUid === COLLECTIONS_SEARCH_INDEX)
+    return hits.map((hit: CollectionHit) => shapeCollectionHit(hit, viewer.browsingLevelCap));
   return hits;
 }
 
