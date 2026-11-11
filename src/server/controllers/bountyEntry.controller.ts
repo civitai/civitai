@@ -9,6 +9,7 @@ import {
 } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
+import { capNestedImages } from '~/server/utils/browsing-level';
 import {
   awardBountyEntry,
   deleteBountyEntry,
@@ -85,7 +86,7 @@ export const getBountyEntryHandler = async ({
 
     return {
       ...entry,
-      images: images.map((i) => ({
+      images: capNestedImages(images, ctx, { ownerId: entry.user?.id }).map((i) => ({
         ...i,
         metadata: i.metadata as MixedObject,
       })),
