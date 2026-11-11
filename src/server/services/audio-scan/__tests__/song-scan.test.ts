@@ -14,7 +14,7 @@ const unsynced = [
 ];
 
 describe('buildSongScanSteps', () => {
-  it('transcribes with timestamps, then moderates the transcription together with the stored lyrics', () => {
+  it('takes the verdict from audioModeration and runs the transcription beside it, with no reference between them', () => {
     const [transcribe, moderate] = buildSongScanSteps({ ...base, lyrics: unsynced }) as any[];
 
     expect(transcribe).toMatchObject({
@@ -23,20 +23,16 @@ describe('buildSongScanSteps', () => {
       input: { mediaUrl: base.mediaUrl, returnTimeStamps: true },
     });
     expect(moderate).toMatchObject({
-      $type: 'audioTextModeration',
-      input: {
-        lyrics: '[Verse]\nla la la',
-        transcription: { $ref: 'transcribe', path: 'output' },
-      },
+      $type: 'audioModeration',
+      input: { mediaUrl: base.mediaUrl, transcriber: 'auto' },
     });
+    expect(JSON.stringify(moderate)).not.toContain('$ref');
   });
 
-  it('still scans a song that has no stored lyrics, from its transcription alone', () => {
+  it('builds the same steps for a song with no stored lyrics', () => {
     const steps = buildSongScanSteps({ ...base, lyrics: undefined }) as any[];
 
-    expect(steps).toHaveLength(2);
-    expect(steps[1].input.lyrics).toBeUndefined();
-    expect(steps[1].input.transcription).toBeDefined();
+    expect(steps.map((s) => s.$type)).toEqual(['transcription', 'audioModeration']);
   });
 
   it('transcribes even when the client sent a time for every line, so lyrics never stand in for the audio check', () => {
@@ -48,8 +44,7 @@ describe('buildSongScanSteps', () => {
       ],
     }) as any[];
 
-    expect(steps.map((s) => s.$type)).toEqual(['transcription', 'audioTextModeration']);
-    expect(steps[1].input.transcription).toEqual({ $ref: 'transcribe', path: 'output' });
+    expect(steps.map((s) => s.$type)).toEqual(['transcription', 'audioModeration']);
   });
 });
 
@@ -66,6 +61,11 @@ describe('readTranscriptionWords', () => {
     ['no transcription step', []],
     ['an output without timestamps', [step({ text: 'hi' })]],
     ['malformed timestamps', [step({ timeStamps: [{ text: 'x' }] })]],
+    ['empty timestamps', [step({ text: 'hi', timeStamps: [] })]],
+    [
+      'a transcription that failed',
+      [{ ...step({ timeStamps: [{ text: 'x', startTime: 1, endTime: 2 }] }), status: 'failed' }],
+    ],
   ])('reads nothing from %s, so the lyrics stay unsynced', (_, steps) => {
     expect(readTranscriptionWords(steps)).toEqual([]);
   });

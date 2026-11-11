@@ -183,7 +183,7 @@ const noAudio = z
 /** Version 1 of the audioModeration output. A shape it does not know is an error, never a pass. */
 const audioScanOutputV1 = z.union([scannedAudio, noAudio]);
 
-type RawStep = { $type?: string; output?: unknown };
+type RawStep = { $type?: string; status?: string; output?: unknown };
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
@@ -196,13 +196,13 @@ export type AudioScanParse =
     }
   | { ok: false; error: string; failureType?: string };
 
-const MODERATION_STEP_TYPES = ['audioModeration', 'audioTextModeration'];
-
-/** The verdict of a video's `audioModeration` step or of a song's `audioTextModeration` step: one output shape. */
+/** The verdict of the `audioModeration` step, from its own status and output. */
 export function parseAudioScanSteps(steps: unknown[]): AudioScanParse {
-  const output = (steps as RawStep[]).find(
-    (step) => step.$type && MODERATION_STEP_TYPES.includes(step.$type)
-  )?.output;
+  const step = (steps as RawStep[]).find((candidate) => candidate.$type === 'audioModeration');
+  // A workflow with another step that failed is itself `failed`; this step's own status decides.
+  if (step?.status && step.status !== 'succeeded')
+    return { ok: false, error: `audio moderation step ${step.status}` };
+  const output = step?.output;
   if (!output) return { ok: false, error: 'missing audio moderation output' };
 
   const parsed = audioScanOutputV1.safeParse(output);
@@ -255,27 +255,33 @@ export async function processAudioScanCallback(
     throw new Error(`workflow ${workflowId} not finished: ${data.status ?? 'unknown'}`);
 
   const steps = data.steps ?? [];
-  const parsed: AudioScanParse =
-    data.status === 'succeeded'
-      ? parseAudioScanSteps(steps)
-      : {
-          ok: false,
-          error: `workflow ${data.status}`,
-          failureType:
-            data.status === 'expired'
-              ? 'expired'
-              : data.status === 'canceled'
-              ? 'canceled'
-              : 'workflow-failed',
-        };
-  const result = await finish(workflowId, parsed);
-
-  if (!result.stored) return result;
   const image = await dbWrite.image.findUnique({
     where: { id: row.imageId },
     select: { type: true },
   });
-  if (image?.type !== 'audio') return result;
+  const isSong = image?.type === 'audio';
+
+  const workflowFailure: AudioScanParse = {
+    ok: false,
+    error: `workflow ${data.status}`,
+    failureType:
+      data.status === 'expired'
+        ? 'expired'
+        : data.status === 'canceled'
+        ? 'canceled'
+        : 'workflow-failed',
+  };
+  let parsed: AudioScanParse;
+  if (data.status === 'succeeded') parsed = parseAudioScanSteps(steps);
+  else if (isSong) {
+    // A song's workflow also runs the transcription, whose failure fails the whole workflow. The
+    // verdict is read from its own step: a succeeded verdict stands, anything else is the failure.
+    const verdict = parseAudioScanSteps(steps);
+    parsed = verdict.ok ? verdict : workflowFailure;
+  } else parsed = workflowFailure;
+  const result = await finish(workflowId, parsed);
+
+  if (!result.stored || !isSong) return result;
   return { ...result, song: { imageId: row.imageId, workflowId, steps, parsed } };
 }
 

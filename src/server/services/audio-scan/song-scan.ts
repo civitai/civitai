@@ -5,12 +5,6 @@ import type { AudioScanParse } from '~/server/services/video-audio-scan.service'
 
 const TRANSCRIBE_STEP = 'transcribe';
 
-/** The stored lyrics as the one text the moderation step reads. */
-function lyricsText(lyrics: LyricLine[] | undefined) {
-  const text = lyrics?.map((line) => line.text).join('\n');
-  return text || undefined;
-}
-
 /**
  * Whether a song's audio is transcribed when it is scanned. Always: lyrics and times the client sent
  * are never taken on trust, so they cannot stand in for checking what is actually sung. This is the
@@ -21,8 +15,10 @@ export function shouldTranscribe(_lyrics: LyricLine[] | undefined) {
 }
 
 /**
- * The steps that scan one song: a word-timed transcription feeding the text moderation, which also reads the lyrics we stored. Step output is
- * handed on by `$ref`, as the video frame scan hands its frames to the rating steps.
+ * The steps that scan one song. The verdict comes from `audioModeration`, the step the video scan
+ * already runs. The transcription is its own step with no `$ref` between them: it only supplies word
+ * times for the lyrics, so its failure or empty timestamps must never stand between the song and its
+ * verdict.
  */
 export function buildSongScanSteps({
   mediaUrl,
@@ -35,9 +31,8 @@ export function buildSongScanSteps({
   metadata: Record<string, unknown>;
   priority?: Priority;
 }) {
-  const transcribe = shouldTranscribe(lyrics);
   const steps = [
-    ...(transcribe
+    ...(shouldTranscribe(lyrics)
       ? [
           {
             $type: 'transcription',
@@ -49,14 +44,11 @@ export function buildSongScanSteps({
         ]
       : []),
     {
-      $type: 'audioTextModeration',
+      $type: 'audioModeration',
       name: 'audio',
       metadata,
       priority,
-      input: {
-        lyrics: lyricsText(lyrics),
-        transcription: transcribe ? { $ref: TRANSCRIBE_STEP, path: 'output' } : undefined,
-      },
+      input: { mediaUrl, transcriber: 'auto' },
     },
   ];
   // The client's step types predate these steps.
@@ -71,10 +63,11 @@ const transcriptionOutput = z.object({
 
 /** The word timestamps of a finished workflow's transcription step; nothing when it has none. */
 export function readTranscriptionWords(
-  steps: readonly { $type?: string; output?: unknown }[]
+  steps: readonly { $type?: string; status?: string; output?: unknown }[]
 ): TranscribedWord[] {
-  const output = steps.find((step) => step.$type === 'transcription')?.output;
-  const parsed = transcriptionOutput.safeParse(output);
+  const step = steps.find((candidate) => candidate.$type === 'transcription');
+  if (step?.status && step.status !== 'succeeded') return [];
+  const parsed = transcriptionOutput.safeParse(step?.output);
   return parsed.success ? parsed.data.timeStamps : [];
 }
 

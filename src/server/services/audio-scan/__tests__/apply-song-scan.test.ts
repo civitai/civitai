@@ -106,6 +106,30 @@ describe('a song the scan did not flag', () => {
     expect(call.image.metadata).toEqual(call.fixed.metadata);
   });
 
+  it.each([
+    [
+      'empty timestamps',
+      { $type: 'transcription', output: { text: 'la la love', timeStamps: [] } },
+    ],
+    [
+      'a failed transcription',
+      { $type: 'transcription', status: 'failed', output: { timeStamps: [word('la', 1)] } },
+    ],
+  ])('is still Scanned at PG with unsynced lyrics after %s', async (_, step) => {
+    const image = song({ metadata: { duration: 30, lyrics: [{ t: 99, text: 'la la love' }] } });
+
+    await run(scanned(false), [step], image);
+
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fixed: {
+          nsfwLevel: NsfwLevel.PG,
+          metadata: { duration: 30, lyrics: [{ t: null, text: 'la la love' }] },
+        },
+      })
+    );
+  });
+
   it('gets lines built from the transcription when it has no stored lyrics', async () => {
     const image = song({ metadata: { duration: 30 } });
 
