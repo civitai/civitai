@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** MiniMax H3 trains on AI Toolkit only, so the per-model AI Toolkit check passes it whatever the
- *  flags say. With minimaxh3Training off, a direct API submit is refused before the version is
- *  claimed or a workflow is submitted; the flag is not only the form's. */
+/** AI Toolkit-only base types pass the per-model AI Toolkit check whatever the flags say. With a
+ *  type's rollout flag off, a direct API submit is refused before the version is claimed or a
+ *  workflow is submitted; the flag is not only the form's. */
 
 import type * as TrainingConstants from '~/shared/constants/training.constants';
 
@@ -25,6 +25,7 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 }));
 
 import { createTrainingWorkflow } from '~/server/services/orchestrator/training/training.orch';
+import { isAiToolkitMandatory, isAudioTrainingBaseType, trainingModelInfo } from '~/utils/training';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -78,21 +79,49 @@ const givenVersion = ({
   dbMock.dbWrite.modelFile.count.mockResolvedValue(1);
 };
 
-const submit = (minimaxh3Training: boolean, audioTraining = true) =>
+// Every AI Toolkit-only catalog entry and the rollout flag the training form hides it behind
+// (TrainingSubmitModelSelect). ACE-Step has no flag of its own: audioTraining gates it.
+const ROLLOUT_FLAG_BY_MODEL: Record<string, string> = {
+  qwen_image: 'qwenTraining',
+  zimageturbo: 'zimageturboTraining',
+  zimagebase: 'zimagebaseTraining',
+  ernie: 'ernieTraining',
+  hidream_o1: 'hidreamO1Training',
+  anima: 'animaTraining',
+  boogu: 'booguTraining',
+  krea2: 'krea2Training',
+  mageflow: 'mageflowTraining',
+  flux2klein_4b: 'fluxTwoKleinTraining',
+  flux2klein_9b: 'fluxTwoKleinTraining',
+  ltx2: 'ltx2Training',
+  ltx23: 'ltx23Training',
+  ltx25: 'ltx25Training',
+  minimaxh3: 'minimaxh3Training',
+  ming: 'mingTraining',
+  qwen21: 'qwen21Training',
+  yue2: 'yue2Training',
+};
+const ALL_ON = Object.fromEntries(
+  [...Object.values(ROLLOUT_FLAG_BY_MODEL), 'audioTraining'].map((flag) => [flag, true])
+);
+
+const submitWith = (features: Record<string, boolean>) =>
   createTrainingWorkflow({
     modelVersionId: 55,
     token: 'tok',
     user: { id: 7, isModerator: false } as never,
     features: {
-      minimaxh3Training,
-      audioTraining,
+      ...ALL_ON,
       kohyaTraining: true,
       trainingStepsPricing: true,
+      ...features,
     } as never,
     domain: 'red',
   } as never);
+const submit = (minimaxh3Training: boolean, audioTraining = true) =>
+  submitWith({ minimaxh3Training, audioTraining });
 
-describe('createTrainingWorkflow MiniMax H3 gate', () => {
+describe('createTrainingWorkflow rollout flags', () => {
   beforeEach(() => {
     setEnv({ WEBHOOK_URL: 'https://webhook.test', WEBHOOK_TOKEN: 't' });
     vi.mocked(submitWorkflow).mockReset();
@@ -164,5 +193,42 @@ describe('createTrainingWorkflow MiniMax H3 gate', () => {
   it('submits a MiniMax H3 run while the flag is on', async () => {
     await submit(true);
     expect(submitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('names a flag for every AI Toolkit-only catalog entry', () => {
+    const gated = Object.entries(trainingModelInfo)
+      .filter(([, info]) => !info.disabled && isAiToolkitMandatory(info.type))
+      .filter(([, info]) => info.type === 'yue2' || !isAudioTrainingBaseType(info.type))
+      .map(([key]) => key);
+    expect(gated.sort()).toEqual(Object.keys(ROLLOUT_FLAG_BY_MODEL).sort());
+  });
+
+  describe.each(Object.entries(ROLLOUT_FLAG_BY_MODEL))('%s', (model, flag) => {
+    const info = trainingModelInfo[model as keyof typeof trainingModelInfo];
+    beforeEach(() => {
+      givenVersion({
+        baseModel: model,
+        baseModelType: info.type,
+        params: {
+          ...aiToolkitParams(info.aiToolkit!.ecosystem),
+          modelVariant: info.aiToolkit!.modelVariant,
+        },
+      });
+    });
+
+    it(`is refused with ${flag} off`, async () => {
+      const error = await submitWith({ [flag]: false }).catch((e: Error) => e);
+      expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+      expect((error as Error).message).toMatch(
+        /^(?!AI Toolkit).* training is not currently enabled\.$/
+      );
+      expect(submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    // Control: with the flag on, the run gets past every rollout gate.
+    it(`gets past the rollout gates with ${flag} on`, async () => {
+      const error = await submitWith({}).catch((e: Error) => e);
+      expect(String((error as Error | undefined)?.message)).not.toMatch(/not currently enabled/);
+    });
   });
 });

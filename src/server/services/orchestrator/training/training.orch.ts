@@ -57,7 +57,7 @@ import {
   isInvalidRapid,
   isInvalidAiToolkit,
   isAiToolkitEnabled,
-  isAudioTrainingBaseType,
+  trainingRolloutRefusal,
   isKohyaEnabled,
   isRetiredTrainingTarget,
   trainingModelInfo,
@@ -485,25 +485,23 @@ export const createTrainingWorkflow = async ({
       'Kohya training is no longer available. Please switch this run to AI Toolkit and submit again.'
     );
 
-  // Audio and MiniMax H3 are AI Toolkit-only, so isAiToolkitEnabled passes them whatever the
-  // flags say; their rollout flags are enforced here. baseModelType is caller-written, so the gates
-  // also read the catalog's type for the base model and the type of the AI Toolkit ecosystem in
-  // params: what is actually trained.
+  // AI Toolkit-only types pass isAiToolkitEnabled whatever their rollout flags say. baseModelType
+  // is caller-written, so the gate also reads the catalog's type for the base model and the type of
+  // the AI Toolkit ecosystem in params: what is actually trained.
   const ecosystemTypes =
     trainingParams.engine === 'ai-toolkit'
       ? Object.values(trainingModelInfo)
           .filter((info) => info.aiToolkit?.ecosystem === trainingParams.ecosystem)
           .map((info) => info.type)
       : [];
-  const trainedTypes = [
-    baseModelType,
-    ...(catalogEntry ? [catalogEntry.type] : []),
-    ...ecosystemTypes,
-  ];
-  if (trainedTypes.some(isAudioTrainingBaseType) && !features.audioTraining)
-    throw throwBadRequestError('Audio training is not currently enabled.');
-  if (trainedTypes.includes('minimaxh3') && !features.minimaxh3Training)
-    throw throwBadRequestError('MiniMax H3 training is not currently enabled.');
+  const rolloutRefusal = trainingRolloutRefusal(
+    {
+      types: [baseModelType, ...(catalogEntry ? [catalogEntry.type] : []), ...ecosystemTypes],
+      ecosystem: trainingParams.engine === 'ai-toolkit' ? trainingParams.ecosystem : undefined,
+    },
+    features
+  );
+  if (rolloutRefusal) throw throwBadRequestError(rolloutRefusal);
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
