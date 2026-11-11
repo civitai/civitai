@@ -13,6 +13,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: vi.fn(async () => wan22MultiStep),
 }));
 
+import { hiDreamO1AspectRatiosByResolution } from '~/shared/form-graph/generation/image/hi-dream-o1.graph';
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
 import { seedreamVersionIds } from '~/shared/form-graph/generation/image/seedream.graph';
 import { flux3VideoVersionIds } from '~/shared/generation/version-ids';
@@ -645,6 +646,75 @@ describe('hunyuan.handler', () => {
       model: 1314512,
     });
     expect(firstInput(steps)).toMatchObject({ checkpointModel: 'urn:air:test:1313562' });
+  });
+});
+
+describe('hi-dream-o1.handler', () => {
+  // The orchestrator refuses any side past 2048.
+  it('every preset, at every resolution, keeps each side within 64-2048 on a /64 grid', () => {
+    const presets = Object.entries(hiDreamO1AspectRatiosByResolution).flatMap(([res, options]) =>
+      options.map((o) => ({ res, ...o }))
+    );
+    expect(presets.length).toBeGreaterThan(0);
+    for (const { res, label, width, height } of presets) {
+      for (const side of [width, height]) {
+        expect(side, `${res} ${label}`).toBeGreaterThanOrEqual(64);
+        expect(side, `${res} ${label}`).toBeLessThanOrEqual(2048);
+        expect(side % 64, `${res} ${label}`).toBe(0);
+      }
+    }
+  });
+
+  it('submits 2K 16:9 at 2048 × 1152', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'HiDream-O1',
+      prompt: 'a cat',
+      resolution: '2K',
+      aspectRatio: '16:9',
+    });
+    expect(firstInput(steps)).toMatchObject({ width: 2048, height: 1152 });
+  });
+
+  it('txt2img 1K is unchanged', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'HiDream-O1',
+      prompt: 'a cat',
+      resolution: '1K',
+      aspectRatio: '16:9',
+    });
+    expect(firstInput(steps)).toMatchObject({ width: 1408, height: 768 });
+  });
+
+  // A stale client still sending 1K is clamped to 2K, not refused.
+  it('edit never submits 1K', async () => {
+    const steps = await dispatch({
+      workflow: 'img2img:edit',
+      ecosystem: 'HiDream-O1',
+      prompt: 'a cat',
+      resolution: '1K',
+      aspectRatio: '16:9',
+      images: [IMAGE],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      operation: 'editImage',
+      width: 2048,
+      height: 1152,
+    });
+  });
+
+  it('a saved 1K comes back on returning from edit to txt2img', () => {
+    const store = generationHub.createStore({ ext: BASE });
+    store.set({ workflow: 'txt2img', ecosystem: 'HiDream-O1', prompt: 'a cat' });
+    store.set({ resolution: '1K' });
+    const resolution = () => (store.getSnapshot().state as { resolution?: string }).resolution;
+
+    store.set({ workflow: 'img2img:edit' });
+    expect(resolution()).toBe('2K');
+
+    store.set({ workflow: 'txt2img' });
+    expect(resolution()).toBe('1K');
   });
 });
 
