@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { isImageReviewed, LYRICS_HOLD_HIDING_STATUSES } from '~/server/common/image-visibility';
+import {
+  isImageReviewed,
+  LYRICS_HOLD_HIDING_STATUSES,
+  SONG_LYRICS_HOLD,
+} from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -1227,9 +1231,8 @@ export async function getHiddenImagesForUser({
       ? (
           await dbRead.textScanHold.findMany({
             where: {
-              entityType: 'TrackLyrics',
+              ...SONG_LYRICS_HOLD,
               entityId: { in: songIds },
-              label: 'csam',
               status: { in: [...LYRICS_HOLD_HIDING_STATUSES] },
             },
             select: { entityId: true },

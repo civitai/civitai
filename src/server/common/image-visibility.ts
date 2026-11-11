@@ -28,6 +28,22 @@ const ingestionStatesModRatingCannotOverride: ImageIngestionStatus[] = [
   ImageIngestionStatus.NotFound,
 ];
 
+/** A song's lyrics csam hold in `TextScanHold`, whose `entityId` is the song's image id. */
+export const SONG_LYRICS_HOLD = { entityType: 'TrackLyrics', label: 'csam' } as const;
+
+/** Statuses of a song's lyrics csam hold that keep the song hidden: awaiting a moderator, or confirmed. */
+export const LYRICS_HOLD_HIDING_STATUSES = ['Pending', 'Confirmed'] as const;
+
+export const lyricsHeldSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "TextScanHold" h
+    WHERE h."entityType" = ${SONG_LYRICS_HOLD.entityType} AND h."entityId" = ${t}."id"
+      AND h."label" = ${SONG_LYRICS_HOLD.label}
+      AND h."status"::text IN (${Prisma.join([...LYRICS_HOLD_HIDING_STATUSES])})
+  )`;
+};
+
 /**
  * Scans stall. When one does, the image stays `Pending`/`Error` — even after a mod
  * rates it, because `updateImageNsfwLevel` sets the level but not the ingestion state.
@@ -40,19 +56,6 @@ const ingestionStatesModRatingCannotOverride: ImageIngestionStatus[] = [
  * `Error` is stricter: a scan that errored never ran its minor/POI/prompt checks, so only
  * a moderator's lock stands in for it, and not when the media itself failed permanently.
  */
-/** Statuses of a song's lyrics csam hold that keep the song hidden: awaiting a moderator, or confirmed. */
-export const LYRICS_HOLD_HIDING_STATUSES = ['Pending', 'Confirmed'] as const;
-
-/** Whether the song aliased `alias` has its lyrics held for csam; `lyricsHeld` in `isImageReviewed`. */
-export const lyricsHeldSql = (alias = 'i') => {
-  const t = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`EXISTS (
-    SELECT 1 FROM "TextScanHold" h
-    WHERE h."entityType" = 'TrackLyrics' AND h."entityId" = ${t}."id" AND h."label" = 'csam'
-      AND h."status"::text IN (${Prisma.join([...LYRICS_HOLD_HIDING_STATUSES])})
-  )`;
-};
-
 export const imageReviewedSql = (alias = 'i') => {
   const t = Prisma.raw(`"${alias}"`);
   return Prisma.sql`(

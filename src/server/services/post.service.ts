@@ -1765,8 +1765,7 @@ export const addPostImage = async ({
       imageId: partialResult.id,
       text: song.lyrics,
     }).catch(handleLogError);
-    if (saved)
-      submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
+    if (saved) submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
   }
   await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
 

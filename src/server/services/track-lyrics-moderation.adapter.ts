@@ -1,13 +1,11 @@
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
-  submitTrackLyricsScan,
-  TRACK_LYRICS_ENTITY_TYPE,
-} from '~/server/services/audio-scan/track-lyrics';
+import { SONG_LYRICS_HOLD } from '~/server/common/image-visibility';
+import { submitTrackLyricsScan } from '~/server/services/audio-scan/track-lyrics';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 
-// Imported here: both are large graphs the moderation registry should not load.
+// Both dynamic imports below: large graphs the moderation registry should not load.
 async function decideSong(imageId: number) {
   const { applySongLyricsVerdict } = await import('~/server/services/audio-scan/apply-song-scan');
   await applySongLyricsVerdict(imageId);
@@ -16,12 +14,7 @@ async function decideSong(imageId: number) {
 async function removeHeldSongFromSearch(imageId: number) {
   // A detection on text a moderator already ruled on writes no hold.
   const held = await dbWrite.textScanHold.findFirst({
-    where: {
-      entityType: TRACK_LYRICS_ENTITY_TYPE,
-      entityId: imageId,
-      label: 'csam',
-      status: 'Pending',
-    },
+    where: { ...SONG_LYRICS_HOLD, entityId: imageId, status: 'Pending' },
     select: { id: true },
   });
   if (!held) return;
@@ -33,9 +26,8 @@ async function removeHeldSongFromSearch(imageId: number) {
 }
 
 /**
- * A song's lyrics. Their verdict, from XGuard or the text scan, is what a song with lyrics waits on
- * to go public. A csam detection is held for a moderator and the held song leaves search; the nsfw
- * verdict is recorded but does not rate the song yet.
+ * A song's lyrics: their text-scan verdict is what a song with lyrics waits on to go public. A csam
+ * detection is held for a moderator and the held song leaves search.
  */
 export const trackLyricsModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
@@ -49,7 +41,6 @@ export const trackLyricsModerationAdapter: ModerationAdapter = {
   // Only the retry cron calls submit.
   submit: ({ entityId }) => submitTrackLyricsScan({ imageId: entityId, fromRetry: true }),
 
-  // The song counts the failed scan toward its retry cap.
   applyFailure: async ({ entityId }) => {
     await decideSong(entityId);
   },
