@@ -6806,9 +6806,11 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
 
     return records;
   },
-  appendFn: async (records) => {
+  appendFn: async (records, { bypassLocal }) => {
     const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
-    const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
+    // Passed on so the models search index, which fetches with bypassLocal, writes Redis-fresh tag
+    // ids into its documents instead of ones this process's L1 may hold from before a tag edit.
+    const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds, { bypassLocal });
     for (const entry of records) {
       for (const image of entry.images) {
         image.tags = tagIdsVar?.[image.id]?.tags ?? [];
