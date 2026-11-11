@@ -685,8 +685,7 @@ export const updateUserHandler = async ({
     });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-    // The client sends the current picture's id when it re-saves it, and no id for a new upload,
-    // so any other picture is always created as a new row.
+    // The client sends the current picture's id when it re-saves it, and no id for a new upload.
     // The edit form fills a missing picture with `{ url: user.image }`; re-sent unchanged, that is
     // no new upload. A picture withheld from its owner's read must not be replaced by it.
     const isImageFallback =

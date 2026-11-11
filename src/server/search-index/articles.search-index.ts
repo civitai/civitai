@@ -5,6 +5,7 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
@@ -81,8 +82,7 @@ export const transformData = async ({
       // Blocked or under-review cover: not indexed. Unscanned cover: indexed without it, so the
       // article stays searchable.
       const cover = articleRecord.coverImage;
-      if (cover && (cover.blockedFor || cover.needsReview || cover.ingestion === 'Blocked'))
-        return null;
+      if (cover && (hasBlockMarker(cover) || cover.needsReview)) return null;
       const coverImage = servableArticleImage(cover) ?? servableArticleImage(bannerImage);
       if (!coverImage && !cover) return null;
       return {

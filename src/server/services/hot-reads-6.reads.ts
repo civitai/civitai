@@ -44,7 +44,7 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
     username: row.username,
     deletedAt: row.deletedAt,
     image: row.image,
-    // One payload for every viewer (post detail, model version owner): no owner exception.
+    // One payload for every viewer: no owner exception.
     profilePicture: servableProfilePicture(
       row.profilePictureId !== null
         ? {
