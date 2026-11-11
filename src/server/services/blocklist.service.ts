@@ -386,6 +386,14 @@ function findBlockedPattern(value: string, blockedPatterns: string[]) {
   return blockedPatterns.find((pattern) => lowerValue.includes(pattern));
 }
 
+/** Position of the first entry `value` contains in the STORED list (empties keep their slot), or -1. */
+function findBlockedPatternId(value: string, blockedPatterns: string[]) {
+  const lowerValue = value.toLowerCase();
+  return blockedPatterns.findIndex(
+    (pattern) => pattern.trim().length > 0 && lowerValue.includes(pattern)
+  );
+}
+
 /**
  * Entries for a SUBSTRING match. Empties dropped, and deliberately NOT folded.
  *
@@ -492,7 +500,7 @@ export type BlockedContentKind = 'link' | 'pattern';
  */
 export type BlockedContentHit =
   | { kind: 'link'; index: number; matched: string[] }
-  | { kind: 'pattern'; index: number; matched: string };
+  | { kind: 'pattern'; index: number; matched: string; patternId: number };
 
 type UserText = string | null | undefined;
 
@@ -536,7 +544,6 @@ async function findBlockedText(
     getBlocklistData(BlocklistType.LinkDomain),
     getBlocklistData(BlocklistType.MessagePattern),
   ]);
-  const matchable = substringEntries(blockedPatterns);
   const matchableDomains = exactEntries(blockedDomains);
 
   const hits: BlockedContentHit[] = [];
@@ -552,9 +559,9 @@ async function findBlockedText(
     }
 
     for (const form of exemptFromPatterns ? [] : forms) {
-      const matched = findBlockedPattern(form, matchable);
-      if (matched !== undefined) {
-        hits.push({ kind: 'pattern', index, matched });
+      const patternId = findBlockedPatternId(form, blockedPatterns);
+      if (patternId !== -1) {
+        hits.push({ kind: 'pattern', index, matched: blockedPatterns[patternId], patternId });
         break;
       }
     }
@@ -600,7 +607,7 @@ async function throwOnBlockedText(
     exemptFromLinks: boolean;
     exemptFromPatterns: boolean;
     onLinkMatch: (matched: string[]) => void;
-    onPatternMatch: (matched: string) => Promise<void> | void;
+    onPatternMatch: (patternId: number) => Promise<void> | void;
   }
 ) {
   const hits = await findBlockedText(values, { exemptFromLinks, exemptFromPatterns });
@@ -609,7 +616,7 @@ async function throwOnBlockedText(
       onLinkMatch(hit.matched);
       return;
     }
-    await onPatternMatch(hit.matched);
+    await onPatternMatch(hit.patternId);
   }
 }
 
@@ -696,10 +703,18 @@ export async function throwOnBlockedUserContent(
   {
     isModerator = false,
     surface,
+    entityType,
+    entityId,
+    userId,
     onBlocked,
   }: {
     isModerator?: boolean;
     surface?: string;
+    /** The row being written, for the pattern-match log. Omitted on a create (no id yet). */
+    entityType?: string;
+    entityId?: number;
+    /** Whose content it is. Omitted where no user is in the loop (a fan-out re-check). */
+    userId?: number;
     /**
      * Replaces the thrown `BAD_REQUEST` for a caller that has its own error type. It is handed
      * WHICH list rejected the text, so a caller that classifies a block never has to read the
@@ -720,7 +735,7 @@ export async function throwOnBlockedUserContent(
     exemptFromLinks: false,
     exemptFromPatterns: isModerator,
     onLinkMatch: (blockedFor) => reject('link', `invalid urls: ${blockedFor.join(', ')}`),
-    onPatternMatch: async (matched) => {
+    onPatternMatch: async (patternId) => {
       // No try/catch: `getBoolean` swallows its own failures and returns `false`, so an
       // unreachable or uninitialised Flipt already degrades to recording. A catch here would be
       // unreachable code that reads as a safety net, and the only test able to exercise it would
@@ -736,7 +751,8 @@ export async function throwOnBlockedUserContent(
         message: enforce
           ? 'Blocked pattern found in user content; write rejected'
           : 'Blocked pattern found in user content; not enforced on this surface yet',
-        details: { surface, matched, enforced: enforce },
+        // Ids only. The matched text would copy a blocklist entry into every event.
+        details: { surface, entityType, entityId, userId, patternId, enforced: enforce },
       }).catch(() => undefined);
 
       if (enforce) {

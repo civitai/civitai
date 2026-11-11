@@ -108,7 +108,35 @@ describe('throwOnBlockedUserContent', () => {
 
       const logs = patternLogs();
       expect(logs).toHaveLength(1);
-      expect(logs[0][0].details).toMatchObject({ surface: 'model', matched: PHISH });
+      expect(logs[0][0].details).toMatchObject({ surface: 'model', enforced: false });
+    });
+
+    /**
+     * The event names WHAT was written and by whom, never the text. A log carrying the matched
+     * text and no ids could not be traced back to a row, and copied a blocklist entry into every
+     * event. `patternId` is the entry's position in the stored list, empties included, so it
+     * points at the same row a moderator sees.
+     */
+    it('records ids and the pattern position, never the matched text', async () => {
+      setLists({ patterns: ['', 'unrelated phrase', PHISH] });
+
+      await throwOnBlockedUserContent(`<p>${PHISH}</p>`, {
+        surface: 'article',
+        entityType: 'Article',
+        entityId: 41,
+        userId: 7,
+      });
+
+      const [[entry]] = patternLogs();
+      expect(entry.details).toEqual({
+        surface: 'article',
+        entityType: 'Article',
+        entityId: 41,
+        userId: 7,
+        patternId: 2,
+        enforced: false,
+      });
+      expect(JSON.stringify(entry)).not.toContain(PHISH);
     });
 
     it('throws on a pattern hit when enforcement is on', async () => {
