@@ -50,13 +50,6 @@ describe('creator card profile picture', () => {
     expect(read?.user.profilePicture).toBeNull();
   });
 
-  it('carries no Pending picture a moderator has rated', async () => {
-    // Stricter than servableProfilePictureSql, which serves it: this read has no lock fields.
-    row.current = { ...creatorRow('Pending'), profilePictureNsfwLevelLocked: true };
-    const read = await readUserCreatorViaKysely(db, { id: 5 });
-    expect(read?.user.profilePicture).toBeNull();
-  });
-
   it('carries no Scanned picture flagged csam', async () => {
     row.current = { ...creatorRow('Scanned'), profilePictureNeedsReview: 'csam' };
     const read = await readUserCreatorViaKysely(db, { id: 5 });

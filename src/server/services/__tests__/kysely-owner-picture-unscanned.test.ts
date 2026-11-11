@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
+import type * as HotReads10 from '@civitai/db-queries/hot-reads-10';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
 // The Kysely reads that carry a content owner's profile picture to every viewer (post detail,
 // model version owner, collection) carry it only once Scanned.
 
 const rows = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
+  ...(await importOriginal<typeof HotReads6>()),
   getModelVersionOwnerWithCosmetics: vi.fn(async () => rows.current),
 }));
-vi.mock('@civitai/db-queries/hot-reads-10', () => ({
+vi.mock('@civitai/db-queries/hot-reads-10', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads10>()),
   getCollectionByIdRow: vi.fn(async () => rows.current),
 }));
 

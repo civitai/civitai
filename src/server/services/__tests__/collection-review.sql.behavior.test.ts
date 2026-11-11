@@ -126,16 +126,9 @@ describe('the images a collection reviewer sees before they are rated', () => {
     ).map((r) => r.id);
 
   it("shows the owner and a manager the collection's reviewed, unrated REVIEW and REJECTED submissions", async () => {
+    // 2 and 11 (Pending) and 14 (Blocked) are the same submissions before a finished scan.
     expect(await visibleTo(OWNER)).toEqual([19, 20]);
     expect(await visibleTo(MANAGER)).toEqual([19, 20]);
-  });
-
-  it('withholds submissions whose scan has not finished from the owner and a manager', async () => {
-    // 2 and 11 are Pending, 14 is Blocked: the same submissions as 19 and 20 otherwise.
-    for (const viewer of [OWNER, MANAGER]) {
-      const ids = await visibleTo(viewer);
-      for (const id of [2, 11, 14]) expect(ids).not.toContain(id);
-    }
   });
 
   it('shows nothing to the manager of a different collection', async () => {

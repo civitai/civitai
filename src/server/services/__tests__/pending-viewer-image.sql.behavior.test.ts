@@ -108,14 +108,9 @@ describe('a pending image read by a signed-in non-moderator', () => {
   // viewer manages, within the viewer's level. Image 27 (unrated, not submitted by its uploader) and
   // 25 stay out.
   it("shows a judge the collection's acceptableMinor and scanned unrated submissions in the review queue", async () => {
+    // 21 is 28 before its scan finished: withheld.
     expect(await visibleTo(MANAGER, COLLECTION)).toEqual([2, 10, 20, 23, 28]);
     expect(await visibleTo(COLLECTION_OWNER, COLLECTION)).toEqual([2, 20, 23, 28]);
-  });
-
-  it('withholds a submission whose scan has not finished from a judge in the review queue', async () => {
-    // 21 is 28 before its scan finished.
-    expect(await visibleTo(MANAGER, COLLECTION)).not.toContain(21);
-    expect(await visibleTo(COLLECTION_OWNER, COLLECTION)).not.toContain(21);
   });
 
   it("hides the same submissions from the judge's reads outside the review queue", async () => {

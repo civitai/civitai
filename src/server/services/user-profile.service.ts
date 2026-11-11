@@ -26,6 +26,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { servableProfilePicture } from '~/server/services/profile-picture.servable';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -145,9 +146,7 @@ export const getUserWithProfile = async ({
 
     const shapeCoverImage = (coverImage: NonNullable<typeof profile>['coverImage']) => {
       if (!coverImage) return null;
-      const servable =
-        !coverImage.needsReview && coverImage.ingestion === ImageIngestionStatus.Scanned;
-      if (!servable && !canEdit) return null;
+      if (!canEdit && !servableArticleImage(coverImage)) return null;
 
       return {
         ...coverImage,

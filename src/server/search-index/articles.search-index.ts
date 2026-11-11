@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
@@ -128,10 +128,14 @@ export const transformData = async ({
     })
     .filter(isDefined);
 
-  return records;
+  // Articles pulled but not indexed: `updateDocs` upserts, so their documents are deleted.
+  const indexed = new Set(records.map((record) => record.id));
+  const disqualifiedIds = articles.map((a) => a.id).filter((id) => !indexed.has(id));
+
+  return { records, disqualifiedIds };
 };
 
-export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
+export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>['records'][number];
 
 const articleSelect = {
   ...articleDetailSelect,
@@ -177,6 +181,20 @@ export const articleSemanticEligibleWhere = {
   unlisted: false,
   user: { bannedAt: null },
 } satisfies Prisma.ArticleWhereInput;
+
+export const pushData = async (
+  { indexName }: { indexName: string },
+  { records, disqualifiedIds }: Awaited<ReturnType<typeof transformData>>
+) => {
+  await updateDocs({
+    indexName,
+    documents: records as any[],
+    batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+  });
+  // `updateDocs` upserts: an article that stopped qualifying keeps its old document otherwise.
+  if (disqualifiedIds.length > 0)
+    await onSearchIndexDocumentsCleanup({ indexName, ids: disqualifiedIds });
+};
 
 export const articlesSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
@@ -227,13 +245,10 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
     };
   },
   transformData,
-  pushData: async ({ indexName }, records) => {
-    await updateDocs({
-      indexName,
-      documents: records as any[],
-      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-    });
-
-    return;
-  },
+  pushData,
+  // A disqualified article is handled: `pushData` deletes its document.
+  getHandledIds: ({ records, disqualifiedIds }: Awaited<ReturnType<typeof transformData>>) => [
+    ...records.map((record) => record.id),
+    ...disqualifiedIds,
+  ],
 });
