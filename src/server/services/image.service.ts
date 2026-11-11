@@ -6909,6 +6909,7 @@ export const getImagesForPosts = async ({
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
+    imageWhere.push(imageReviewedSql());
   }
 
   if (disablePoi) {

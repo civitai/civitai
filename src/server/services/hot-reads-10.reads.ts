@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getCollectionByIdRow } from '@civitai/db-queries/hot-reads-10';
@@ -104,7 +105,8 @@ export async function readCollectionByIdViaKysely(
       username: row.ownerUsername,
       deletedAt: row.ownerDeletedAt,
       image: row.ownerImage,
-      profilePicture:
+      // One payload for every viewer: no owner exception.
+      profilePicture: servableProfilePicture(
         row.profilePictureId !== null
           ? {
               id: row.profilePictureId,
@@ -120,6 +122,8 @@ export async function readCollectionByIdViaKysely(
               metadata: row.profilePictureMetadata,
             }
           : null,
+        row.profilePictureNeedsReview
+      ),
       cosmetics: row.cosmetics.map((cosmetic) => ({
         data: cosmetic.data,
         cosmetic: {

@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
@@ -20,7 +21,7 @@ import {
   type UserWithCosmeticsRow,
 } from '@civitai/db-queries/hot-reads-6';
 import { postSelect } from '~/server/selectors/post.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import type { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 
@@ -43,7 +44,8 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
     username: row.username,
     deletedAt: row.deletedAt,
     image: row.image,
-    profilePicture:
+    // One payload for every viewer: no owner exception.
+    profilePicture: servableProfilePicture(
       row.profilePictureId !== null
         ? {
             id: row.profilePictureId,
@@ -59,6 +61,8 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
             metadata: row.profilePictureMetadata as Prisma.JsonValue,
           }
         : null,
+      row.profilePictureNeedsReview
+    ),
     cosmetics: row.cosmetics.map((cosmetic) => ({
       data: cosmetic.data as Prisma.JsonValue,
       cosmetic: {
