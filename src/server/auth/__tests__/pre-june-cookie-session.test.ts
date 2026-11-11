@@ -24,7 +24,9 @@ const h = await vi.hoisted(async () => {
   return {
     kp,
     verifier: undefined as undefined | CivitaiAuth.AuthVerifier,
-    getSessionUserById: undefined as unknown as ReturnType<typeof vi.fn>,
+    getSessionUserById: undefined as unknown as import('vitest').Mock<
+      (id: number) => Promise<unknown>
+    >,
   };
 });
 
