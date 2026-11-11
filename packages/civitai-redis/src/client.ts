@@ -2330,6 +2330,10 @@ export const REDIS_SYS_KEYS = {
     // (`system:blocks:agent-review-autostart-reserved:${YYYY-MM-DD}`): the per-review cap is
     // reserved before the start and released once its report row exists (or the start failed).
     AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
+    // Model spend of the impersonation check on approved apps' listing edits, in US cents, per
+    // UTC day (`system:blocks:listing-check-spend:${YYYY-MM-DD}`): added to the day's agent-review
+    // spend, so it counts against the same automatic-start budget.
+    LISTING_CHECK_SPEND: 'system:blocks:listing-check-spend',
     // Live app pointer on the shared static server, per app slug. TAKEDOWN
     // (`...:${slug}`, no TTL) is set to 'attempted' when this platform starts a live unpublish or
     // restore for the app (the evidence a relist restores on), upgraded to 'confirmed' when an
