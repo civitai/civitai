@@ -233,14 +233,26 @@ describe('healStalledTrainingDataScans', () => {
     dbMock.dbWrite.modelFile.findMany.mockReset().mockResolvedValue([stalled]);
     dbMock.dbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 1 });
     dbMock.dbWrite.$queryRaw.mockReset().mockResolvedValue([{ id: 3 }]);
+    redisMock.sysRedis.get.mockReset().mockResolvedValue(null);
     redisMock.sysRedis.incrBy.mockReset().mockResolvedValue(1);
   });
 
-  it('never picks a zip that was never submitted', async () => {
+  it('never picks a zip that was never submitted, nor one on a removed model', async () => {
     await healStalledTrainingDataScans();
 
-    const { where } = dbMock.dbWrite.modelFile.findMany.mock.calls[0][0];
-    expect(where).toMatchObject({ type: 'Training Data', virusScanResult: 'Pending' });
+    const { where, take } = dbMock.dbWrite.modelFile.findMany.mock.calls[0][0];
+    expect(take).toBe(6);
+    expect(where).toMatchObject({
+      type: 'Training Data',
+      virusScanResult: 'Pending',
+      modelVersion: {
+        model: {
+          deletedAt: null,
+          tosViolation: false,
+          status: { notIn: ['Deleted', 'UnpublishedViolation'] },
+        },
+      },
+    });
     expect(where.scanRequestedAt.not).toBeNull();
     const waited = Date.now() - where.scanRequestedAt.lt.getTime();
     expect(waited).toBeGreaterThanOrEqual(60 * 60_000);
@@ -250,21 +262,21 @@ describe('healStalledTrainingDataScans', () => {
     expect(neverSubmitted).toBe(false);
   });
 
-  it('resubmits a stalled zip, counting the attempt per zip', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValue(3);
+  it('resubmits a stalled zip and counts the accepted resubmit for that zip', async () => {
+    redisMock.sysRedis.get.mockResolvedValue('2');
 
     const result = await healStalledTrainingDataScans();
 
     expect(h.submitWorkflow).toHaveBeenCalledTimes(1);
-    expect(redisMock.sysRedis.incrBy.mock.calls[0][0]).toMatch(
-      /^system:training-data-scan:heal-attempts:3:[0-9a-f]{16}$/
-    );
+    const [key] = redisMock.sysRedis.incrBy.mock.calls[0];
+    expect(redisMock.sysRedis.get).toHaveBeenCalledWith(key);
+    expect(key).toMatch(/^system:training-data-scan:heal-attempts:3:[0-9a-f]{16}$/);
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ picked: 1, submitted: 1, gaveUp: [] });
   });
 
-  it('marks the zip Error, and submits nothing, on the 4th failure', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValue(4);
+  it('marks the zip Error, and submits nothing, after three accepted resubmits', async () => {
+    redisMock.sysRedis.get.mockResolvedValue('3');
 
     const result = await healStalledTrainingDataScans();
 
@@ -282,31 +294,50 @@ describe('healStalledTrainingDataScans', () => {
     expect(result).toMatchObject({ gaveUp: [3], submitted: 0 });
   });
 
+  it('gives up on no zip through an outage: a refused resubmit is not counted', async () => {
+    h.submitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+    let count = 0;
+    redisMock.sysRedis.get.mockImplementation(async () => String(count));
+    redisMock.sysRedis.incrBy.mockImplementation(async () => ++count);
+
+    for (let run = 0; run < 6; run++) await healStalledTrainingDataScans();
+
+    expect(h.submitWorkflow).toHaveBeenCalledTimes(6);
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith({
+      type: 'warning',
+      name: 'training-data-scan-heal-submit-failed',
+      count: 1,
+    });
+  });
+
   it('counts, gives up on and submits nothing it did not claim', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
-    redisMock.sysRedis.incrBy.mockResolvedValue(4);
+    redisMock.sysRedis.get.mockResolvedValue('3');
 
     await healStalledTrainingDataScans();
 
-    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('counts attempts per zip, so a file holding a new zip starts again', async () => {
+  it('keeps one count per zip: the same zip again, a new zip afresh', async () => {
     dbMock.dbWrite.modelFile.findMany
+      .mockResolvedValueOnce([stalled])
       .mockResolvedValueOnce([stalled])
       .mockResolvedValueOnce([{ ...stalled, url: 'https://bucket/3-new.zip' }]);
 
-    await healStalledTrainingDataScans();
-    await healStalledTrainingDataScans();
+    for (let run = 0; run < 3; run++) await healStalledTrainingDataScans();
 
-    const [[first], [second]] = redisMock.sysRedis.incrBy.mock.calls;
-    expect(first).not.toBe(second);
+    const [[first], [again], [fresh]] = redisMock.sysRedis.incrBy.mock.calls;
+    expect(again).toBe(first);
+    expect(fresh).not.toBe(first);
   });
 
-  it('neither resubmits nor gives up when the attempt count cannot be read', async () => {
-    redisMock.sysRedis.incrBy.mockRejectedValue(new Error('redis down'));
+  it('neither resubmits nor gives up when the count cannot be read', async () => {
+    redisMock.sysRedis.get.mockRejectedValue(new Error('redis down'));
 
     await healStalledTrainingDataScans();
 

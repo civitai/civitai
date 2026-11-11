@@ -11,7 +11,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { blobAir, uploadConsumerBlob } from '~/server/services/orchestrator/consumer-blob-scan';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
-import { ScanResultCode } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 
 /**
  * The virus scan for a Training Data zip. The zip is copied to the orchestrator as a consumer blob
@@ -125,12 +125,22 @@ export async function submitTrainingDataScanSafe(
   }
 }
 
-/** A Training Data zip still waiting for a verdict. A Studio placeholder (0 bytes) has no zip yet. */
+/**
+ * A Training Data zip still waiting for a verdict, on a model that is still up. A Studio placeholder
+ * (0 bytes) has no zip yet.
+ */
 const pendingTrainingDataWhere: Prisma.ModelFileWhereInput = {
   type: 'Training Data',
   virusScanResult: ScanResultCode.Pending,
   sizeKB: { gt: 0 },
   OR: [{ exists: null }, { exists: true }],
+  modelVersion: {
+    model: {
+      deletedAt: null,
+      tosViolation: false,
+      status: { notIn: [ModelStatus.Deleted, ModelStatus.UnpublishedViolation] },
+    },
+  },
 };
 
 const REQUEUE_CONCURRENCY = 3;
@@ -193,7 +203,12 @@ async function claimAndSubmit(
   {
     neverSubmitted,
     onClaimed = async () => true,
-  }: { neverSubmitted: boolean; onClaimed?: (file: PendingZip) => Promise<boolean> }
+    onSubmitted = async () => undefined,
+  }: {
+    neverSubmitted: boolean;
+    onClaimed?: (file: PendingZip) => Promise<boolean>;
+    onSubmitted?: (file: PendingZip) => Promise<void>;
+  }
 ) {
   const claimedIds = new Set(
     (
@@ -216,16 +231,19 @@ async function claimAndSubmit(
         { fileId: file.id, modelVersionId: file.modelVersionId, url: file.url },
         op
       );
-      if (ok) submitted++;
-      else failed.push(file.id);
+      if (ok) {
+        submitted++;
+        await onSubmitted(file);
+      } else failed.push(file.id);
     }),
     REQUEUE_CONCURRENCY
   );
   return { claimed, submitted, failed };
 }
 
-const HEAL_PAGE = 25;
-/** Resubmits after the first submit before the zip is given up on. */
+/** Two waves at the copy concurrency, so a run ends well inside its lock. */
+export const HEAL_PAGE = 6;
+/** Accepted resubmits after the first submit before the zip is given up on. */
 const HEAL_MAX_RESUBMITS = 3;
 const HEAL_ATTEMPTS_TTL_SECONDS = 14 * 24 * 60 * 60;
 
@@ -239,7 +257,8 @@ const healAttemptsKey = (file: PendingZip) =>
 /**
  * Resubmits Training Data zips that were submitted over an hour ago and still have no verdict,
  * oldest first. A zip that was never submitted is left to the upload paths and the mod requeue.
- * A zip still without a verdict after `HEAL_MAX_RESUBMITS` resubmits is marked Error.
+ * Only a resubmit the orchestrator accepted counts: one that failed (an outage) leaves the zip for the
+ * next run. A zip still without a verdict after `HEAL_MAX_RESUBMITS` accepted resubmits is marked Error.
  */
 export async function healStalledTrainingDataScans() {
   const files = await dbWrite.modelFile.findMany({
@@ -257,18 +276,15 @@ export async function healStalledTrainingDataScans() {
   const { claimed, submitted, failed } = await claimAndSubmit(files, 'self-heal', {
     neverSubmitted: false,
     onClaimed: async (file) => {
-      let attempts: number;
+      let accepted: number;
       try {
-        const key = healAttemptsKey(file);
-        attempts = await sysRedis.incrBy(key, 1);
-        await sysRedis.expire(key, HEAL_ATTEMPTS_TTL_SECONDS);
+        accepted = Number((await sysRedis.get(healAttemptsKey(file))) ?? 0);
       } catch {
         // Without a count the cap can't be kept; the next run tries again.
         return false;
       }
-      if (attempts <= HEAL_MAX_RESUBMITS) return true;
+      if (accepted < HEAL_MAX_RESUBMITS) return true;
 
-      const reason = `no verdict after ${HEAL_MAX_RESUBMITS} resubmits`;
       await dbWrite.modelFile.updateMany({
         where: { id: file.id, url: file.url, virusScanResult: ScanResultCode.Pending },
         data: {
@@ -282,10 +298,25 @@ export async function healStalledTrainingDataScans() {
         type: 'error',
         name: 'training-data-scan-gave-up',
         fileId: file.id,
-        reason,
+        reason: `no verdict after ${HEAL_MAX_RESUBMITS} resubmits`,
       }).catch(() => undefined);
       return false;
     },
+    onSubmitted: async (file) => {
+      const key = healAttemptsKey(file);
+      try {
+        await sysRedis.incrBy(key, 1);
+        await sysRedis.expire(key, HEAL_ATTEMPTS_TTL_SECONDS);
+      } catch {
+        // An uncounted resubmit only allows one more.
+      }
+    },
   });
+  if (failed.length)
+    logToAxiom({
+      type: 'warning',
+      name: 'training-data-scan-heal-submit-failed',
+      count: failed.length,
+    }).catch(() => undefined);
   return { picked: claimed.length, submitted, failed, gaveUp };
 }

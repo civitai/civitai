@@ -200,8 +200,11 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   }
 
   // A Training Data verdict counts only from its own blob scan of the file's current url: a late
-  // result from another scan, or from before the file's zip was swapped, is dropped.
-  if (file.type === 'Training Data' && outcome.trainingDataUrl !== file.url) {
+  // result from another scan, from before the file's zip was swapped, or for a file relabelled since
+  // (which needs the model-file scan instead) is dropped.
+  const isTrainingData = file.type === 'Training Data';
+  const isBlobScan = outcome.trainingDataUrl !== undefined;
+  if ((isTrainingData || isBlobScan) && (!isTrainingData || outcome.trainingDataUrl !== file.url)) {
     logToAxiom(
       {
         type: 'warning',

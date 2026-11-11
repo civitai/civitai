@@ -1368,6 +1368,24 @@ describe('model-file-scan.service', () => {
         expect(mockDbWrite.modelFile.update.mock.calls[0][0].where).toEqual({ id: 1, url: ZIP });
       });
 
+      it.each(['succeeded', 'failed'])(
+        'writes nothing from a %s blob scan of a file relabelled since, which awaits the model-file scan',
+        async (status) => {
+          mockDbWrite.modelFile.findUnique.mockResolvedValue({
+            id: 1,
+            type: 'Other',
+            url: ZIP,
+            modelVersionId: 100,
+            modelVersion: { modelId: 200 },
+          });
+          scanned({ scannedFileCount: 12 });
+
+          await deliver(status);
+
+          expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+        }
+      );
+
       it('marks nothing for a failed workflow of a zip it no longer holds', async () => {
         scanned({}, { scan: 'training-data-blob', url: 'https://old/zip' });
 
