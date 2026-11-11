@@ -21,6 +21,7 @@ import {
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
 import { filterViewableHomeBlocks, isHomeBlockGated } from '~/server/services/home-block-access';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { getCollectionBlockAudience } from '~/server/services/home-block-collection-access';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getFeaturedCollectionsState } from '~/server/jobs/refresh-featured-collections-eligibility';
@@ -57,7 +58,7 @@ export const getHomeBlocksHandler = async ({
       userId: ctx.user?.id,
       ownedOnly,
       includeSource: true,
-      viewer: ctx.user,
+      viewer: eventViewerOf(ctx),
     });
 
     let homeBlocks = _homeBlocks.filter((homeBlock) => {
@@ -82,7 +83,7 @@ export const getHomeBlocksHandler = async ({
       homeBlocks = await getHomeBlocks({
         ids: systemHomeBlockIds,
         includeSource: true,
-        viewer: ctx.user,
+        viewer: eventViewerOf(ctx),
       });
     }
 
@@ -96,7 +97,7 @@ export const getHomeBlocksHandler = async ({
             const audience = await getCollectionBlockAudience({
               blockUserId: fromSystem ? -1 : homeBlock.userId,
               collectionId: (homeBlock.metadata as HomeBlockMetaSchema).collection?.id,
-              viewer: ctx.user,
+              viewer: eventViewerOf(ctx),
             });
             // Saving the editor removes any of the viewer's blocks it did not list, so a block
             // that cannot be shown (not readable, or its collection gone) is listed without it.
@@ -140,7 +141,7 @@ export const getSystemHomeBlocksHandler = async ({
     const { excludedSystemHomeBlockIds, systemHomeBlockIds } = input;
     const _homeBlocks = await filterViewableHomeBlocks(
       await getSystemHomeBlocks({ input }),
-      ctx.user
+      eventViewerOf(ctx)
     );
 
     const homeBlocks = _homeBlocks.filter((homeBlock) => {
@@ -175,7 +176,7 @@ export const getHomeBlocksByIdHandler = async ({
     let viewerOnly = false;
     const homeBlock = await getHomeBlockById({
       ...input,
-      viewer: ctx.user,
+      viewer: eventViewerOf(ctx),
       onViewerOnly: () => {
         viewerOnly = true;
       },
@@ -293,7 +294,10 @@ export const setHomeBlocksOrderHandler = async ({
   input: SetHomeBlocksOrderInputSchema;
 }) => {
   try {
-    await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id }, viewer: ctx.user });
+    await setHomeBlocksOrder({
+      input: { ...input, userId: ctx.user.id },
+      viewer: eventViewerOf(ctx),
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

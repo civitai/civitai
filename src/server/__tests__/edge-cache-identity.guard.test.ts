@@ -352,8 +352,11 @@ export function findFunctionSource(file: string, name: string): string | null {
 // carry WHO is asking. `ctx.cache`, `ctx.req`, `ctx.ip` etc. are deliberately absent:
 // they are not caller identity. Keep this list in step with `Context` in
 // `src/server/createContext.ts` when a new identity-bearing field is added.
-const IDENTITY_EXPR_RE = /\bctx\s*\??\.\s*(user|features|session)\b/;
-const IDENTITY_EXPR_RE_G = /\bctx\s*\??\.\s*(user|features|session)\b/g;
+// `eventViewerOf(ctx)` / `eventUserOf(ctx)` are the session user, read through the credential.
+const IDENTITY_SOURCE =
+  '\\bctx\\s*\\??\\.\\s*(user|features|session)\\b|\\bevent(?:Viewer|User)Of\\(\\s*ctx\\s*\\)';
+const IDENTITY_EXPR_RE = new RegExp(IDENTITY_SOURCE);
+const IDENTITY_EXPR_RE_G = new RegExp(IDENTITY_SOURCE, 'g');
 
 export type IdentitySite = { expr: string; index: number };
 
@@ -361,7 +364,8 @@ export function identitySites(text: string): IdentitySite[] {
   const out: IdentitySite[] = [];
   IDENTITY_EXPR_RE_G.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = IDENTITY_EXPR_RE_G.exec(text))) out.push({ expr: `ctx.${m[1]}`, index: m.index });
+  while ((m = IDENTITY_EXPR_RE_G.exec(text)))
+    out.push({ expr: `ctx.${m[1] ?? 'user'}`, index: m.index });
   return out;
 }
 
@@ -893,6 +897,17 @@ describe('parsing primitives (instrument validation)', () => {
     expect(analyzeIdentityUse(assigned).directUses).toBe(1);
     // Nothing at all: the zero must be reachable AND distinguishable from the above.
     expect(analyzeIdentityUse('return getThing(input);')).toEqual({ forwards: [], directUses: 0 });
+  });
+
+  it('reads eventViewerOf(ctx) and eventUserOf(ctx) as the session user', () => {
+    expect(analyzeIdentityUse('getThing({ ...input, viewer: eventViewerOf(ctx) });')).toEqual({
+      forwards: [{ callee: 'getThing', prop: 'viewer', expr: 'ctx.user' }],
+      directUses: 0,
+    });
+    expect(analyzeIdentityUse('getThing({ user: eventUserOf(ctx), ...input });')).toEqual({
+      forwards: [{ callee: 'getThing', prop: 'user', expr: 'ctx.user' }],
+      directUses: 0,
+    });
   });
 
   it('calleeUsesProp distinguishes ignored / used / destructured-but-unused / unknown', () => {

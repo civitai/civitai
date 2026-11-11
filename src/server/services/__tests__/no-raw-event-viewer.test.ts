@@ -3,9 +3,10 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Convention guard: the viewer an event-decoration gate is asked about, in a router or controller,
- * is `eventViewerOf(ctx)` (or a local every assignment binds to it), never the session user; and
- * the moderator flag a placement passes is `eventViewerOf(ctx).isModerator`.
+ * Convention guard: the viewer an event gate is asked about, in a router or controller, is
+ * `eventViewerOf(ctx)` or `eventUserOf(ctx)` (or a local every assignment binds to one), never the
+ * session user; and the moderator flag a placement or the shop passes is
+ * `eventViewerOf(ctx).isModerator`.
  *
  * Before an event launches only its flag audience sees its hats, and a moderator is in every flag
  * audience. `eventViewerOf` counts that only for a session or a full-access personal key, the same
@@ -18,19 +19,43 @@ const SERVER_DIR = path.resolve(__dirname, '../..');
 const SCAN_DIRS = ['routers', 'controllers'].map((d) => path.join(SERVER_DIR, d));
 
 /** Gates taking the viewer as an object field. */
-const FIELD_GATES = ['getEventDecorationsForEntity', 'getViewerEventDecorations'];
+const FIELD_GATES = [
+  'getEventDecorationsForEntity',
+  'getViewerEventDecorations',
+  'getViewerEventAccess',
+  'getNavBanners',
+  'getHomeBlocks',
+  'getHomeBlockById',
+  'setHomeBlocksOrder',
+  'getCollectionBlockAudience',
+];
 /** Gates taking the viewer as their second positional argument. */
-const POSITIONAL_GATES = ['getVisibleDecorationEvents', 'withoutHiddenEventDecorations'];
+const POSITIONAL_GATES = [
+  'getVisibleDecorationEvents',
+  'withoutHiddenEventDecorations',
+  'filterViewableHomeBlocks',
+  'markEventPointsWatched',
+];
+/** Every export of this module gates on the event: its `viewer` and `user` fields are viewers. */
+const EVENT_SERVICE = '~/server/services/event.service';
 /** Type arguments (`<T>`) may sit between a call's name and its `(`. */
 const TYPE_ARGS = '\\s*(?:<[^()]*>)?\\s*';
 const GATE_CALL = new RegExp(
   `\\b(${[...FIELD_GATES, ...POSITIONAL_GATES].join('|')})${TYPE_ARGS}\\(`,
   'g'
 );
-/** The placement gate takes the moderator flag rather than a viewer. */
-const PLACEMENT_CALL = new RegExp(`\\bequipCosmeticToEntity${TYPE_ARGS}\\(`, 'g');
+/** Gates taking the moderator flag rather than a viewer. */
+const MODERATOR_FLAG_GATES = [
+  'equipCosmeticToEntity',
+  'getShopSectionsWithItems',
+  'purchaseCosmeticShopItem',
+];
+const MODERATOR_FLAG_CALL = new RegExp(
+  `\\b(${MODERATOR_FLAG_GATES.join('|')})${TYPE_ARGS}\\(`,
+  'g'
+);
 const VIEWER_FIELD = /[{,]\s*eventDecorationViewer\b\s*(:\s*)?/g;
-const EVENT_VIEWER_OF = /^eventViewerOf\(\s*ctx\s*\)/;
+const EVENT_VIEWER_OF = /^event(?:Viewer|User)Of\(\s*ctx\s*\)/;
 
 function stripComments(source: string) {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
@@ -54,6 +79,38 @@ function callArgs(source: string, openParen: number) {
     else if (source[i] === ')' && --depth === 0) return source.slice(openParen + 1, i);
   }
   return source.slice(openParen + 1);
+}
+
+/** The local names a file imports from `module` (aliases resolved, type-only imports skipped). */
+function importedNames(source: string, module: string) {
+  const names: string[] = [];
+  const from = module.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  for (const m of source.matchAll(
+    new RegExp(`import\\s+(type\\s+)?\\{([^}]*)\\}\\s*from\\s*'${from}'`, 'g')
+  )) {
+    if (m[1]) continue;
+    for (const spec of m[2].split(',')) {
+      const s = spec.trim();
+      if (!s || s.startsWith('type ')) continue;
+      names.push(
+        s
+          .split(/\s+as\s+/)
+          .pop()!
+          .trim()
+      );
+    }
+  }
+  return names;
+}
+
+/** Whether `id` is bound as a function or arrow parameter anywhere in the file. */
+function isParameter(id: string, source: string) {
+  const word = new RegExp(`\\b${id}\\b`);
+  const lists = [
+    ...source.matchAll(/\bfunction\b[^(]*\(([^)]*)\)/g),
+    ...source.matchAll(/\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*(?::[^=;{]+)?=>/g),
+  ].map((m) => m[1]);
+  return lists.some((l) => word.test(l)) || new RegExp(`\\b${id}\\s*=>`).test(source);
 }
 
 /** A call's top-level arguments (commas inside brackets do not split). */
@@ -83,9 +140,14 @@ function isEventViewer(value: string, source: string, trailing = '') {
   if (EVENT_VIEWER_OF.test(v)) return v.replace(EVENT_VIEWER_OF, '').trim() === trailing;
   const id = /^([A-Za-z_$][\w$]*)/.exec(v)?.[1];
   if (!id || v.slice(id.length).trim() !== trailing) return false;
-  const assignments = [...source.matchAll(new RegExp(`\\b${id}\\s*=(?!=)\\s*`, 'g'))];
+  // A type annotation (`const viewer: EventViewer = ...`) may sit between the name and its `=`.
+  const assignments = [
+    ...source.matchAll(new RegExp(`\\b${id}\\s*(?::[^=;(){}]+)?=(?![=>])\\s*`, 'g')),
+  ];
+  // A parameter of that name is bound by its caller, not by these assignments.
   return (
     assignments.length > 0 &&
+    !isParameter(id, source) &&
     assignments.every((a) => EVENT_VIEWER_OF.test(source.slice(a.index + a[0].length)))
   );
 }
@@ -127,7 +189,9 @@ function findViolations(files: { name: string; text: string }[]) {
       if (FIELD_GATES.includes(m[1])) {
         for (const v of args.matchAll(/[{,]\s*viewer\b\s*(:\s*)?/g)) {
           const value = v[1] ? valueAt(args, v.index + v[0].length) : 'viewer';
-          if (!isEventViewer(value, source)) hits.push(`${where(m.index)}: ${m[1]} viewer`);
+          // `undefined` asks about a signed-out viewer.
+          if (value.trim() !== 'undefined' && !isEventViewer(value, source))
+            hits.push(`${where(m.index)}: ${m[1]} viewer`);
         }
       } else {
         const second = topLevelArgs(args)[1] ?? '';
@@ -135,12 +199,26 @@ function findViolations(files: { name: string; text: string }[]) {
           hits.push(`${where(m.index)}: ${m[1]} viewer`);
       }
     }
-    for (const m of source.matchAll(PLACEMENT_CALL)) {
+    for (const m of source.matchAll(MODERATOR_FLAG_CALL)) {
       const args = callArgs(source, m.index + m[0].length - 1);
       for (const v of args.matchAll(/[{,]\s*isModerator\b\s*(:\s*)?/g)) {
         const value = v[1] ? valueAt(args, v.index + v[0].length) : 'isModerator';
         if (!isEventViewer(value, source, '.isModerator'))
-          hits.push(`${where(m.index)}: equipCosmeticToEntity isModerator`);
+          hits.push(`${where(m.index)}: ${m[1]} isModerator`);
+      }
+    }
+    const eventServiceFns = importedNames(source, EVENT_SERVICE).filter(
+      (n) => !FIELD_GATES.includes(n)
+    );
+    if (eventServiceFns.length) {
+      const call = new RegExp(`\\b(${eventServiceFns.join('|')})${TYPE_ARGS}\\(`, 'g');
+      for (const m of source.matchAll(call)) {
+        const args = callArgs(source, m.index + m[0].length - 1);
+        for (const v of args.matchAll(/[{,]\s*(viewer|user)\b\s*(:\s*)?/g)) {
+          const value = v[2] ? valueAt(args, v.index + v[0].length) : v[1];
+          if (value.trim() !== 'undefined' && !isEventViewer(value, source))
+            hits.push(`${where(m.index)}: ${m[1]} ${v[1]}`);
+        }
       }
     }
   }
@@ -196,6 +274,77 @@ describe('no-raw-event-viewer', () => {
     ]);
   });
 
+  it('catches the session user passed to an event-access or home-block gate', () => {
+    const text = [
+      'getViewerEventAccess({ event, viewer: ctx.user });',
+      'filterViewableHomeBlocks(await getSystemHomeBlocks({ input }), ctx.user);',
+      'getHomeBlocks({ ids, viewer: ctx.user });',
+      'getNavBanners({ viewer: ctx.user });',
+      'getHomeBlockById({ ...input, viewer: ctx.user });',
+      'setHomeBlocksOrder({ input, viewer: ctx.user });',
+      'getCollectionBlockAudience({ blockUserId, collectionId, viewer: ctx.user });',
+      'markEventPointsWatched(input, ctx.user);',
+      'getShopSectionsWithItems({ ...input, isModerator: ctx?.user?.isModerator });',
+    ].join('\n');
+    expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([
+      'fixture.ts:1: getViewerEventAccess viewer',
+      'fixture.ts:2: filterViewableHomeBlocks viewer',
+      'fixture.ts:3: getHomeBlocks viewer',
+      'fixture.ts:4: getNavBanners viewer',
+      'fixture.ts:5: getHomeBlockById viewer',
+      'fixture.ts:6: setHomeBlocksOrder viewer',
+      'fixture.ts:7: getCollectionBlockAudience viewer',
+      'fixture.ts:8: markEventPointsWatched viewer',
+      'fixture.ts:9: getShopSectionsWithItems isModerator',
+    ]);
+  });
+
+  it('catches the session user passed to anything imported from the event service', () => {
+    const text = [
+      "import { getEventData, setShowcaseHat as setHat } from '~/server/services/event.service';",
+      "import type { getTeamRoster } from '~/server/services/event.service';",
+      'getTeamRoster({ viewer: ctx.user });',
+      'getEventData({ ...input, viewer: ctx.user });',
+      'setHat({ user: ctx.user, ...input });',
+      'getEventData({ ...input, viewer: eventViewerOf(ctx) });',
+      'setHat({ user: eventUserOf(ctx), ...input });',
+      'donate({ userId: ctx.user.id });',
+      'unrelated({ user: ctx.user });',
+    ].join('\n');
+    expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([
+      'fixture.ts:4: getEventData viewer',
+      'fixture.ts:5: setHat user',
+    ]);
+  });
+
+  it('sees a type-annotated assignment of the same local', () => {
+    const text = [
+      'const viewer = eventViewerOf(ctx);',
+      'getViewerEventDecorations({ ids, entity, viewer });',
+      'const other = () => { const viewer: EventViewer = ctx.user; return viewer; };',
+    ].join('\n');
+    expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([
+      'fixture.ts:2: getViewerEventDecorations viewer',
+    ]);
+  });
+
+  it('does not take a parameter for a local bound to eventViewerOf(ctx)', () => {
+    const text = [
+      'const viewer = eventViewerOf(ctx);',
+      'getViewerEventDecorations({ ids, entity, viewer });',
+      'function load(viewer: EventViewer) {',
+      '  return getViewerEventDecorations({ ids, entity, viewer });',
+      '}',
+      'const read = (eventViewer) => getVisibleDecorationEvents(entity, eventViewer);',
+      'const eventViewer = eventViewerOf(ctx);',
+    ].join('\n');
+    expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([
+      'fixture.ts:2: getViewerEventDecorations viewer',
+      'fixture.ts:4: getViewerEventDecorations viewer',
+      'fixture.ts:6: getVisibleDecorationEvents viewer',
+    ]);
+  });
+
   it('accepts eventViewerOf(ctx) and locals bound to it', () => {
     const text = [
       'const eventViewer = eventViewerOf(ctx);',
@@ -203,6 +352,7 @@ describe('no-raw-event-viewer', () => {
       'getImages({ eventDecorationViewer: eventViewer, other: 1 });',
       'getEventDecorationsForEntity({ ids, entity, viewer: eventViewer });',
       'getVisibleDecorationEvents(entity, undefined);',
+      'getViewerEventAccess({ event, viewer: undefined });',
       'withoutHiddenEventDecorations([{ cosmetic }], eventViewer);',
       'equipCosmeticToEntity({ ...input, isModerator: eventViewerOf(ctx).isModerator });',
     ].join('\n');
