@@ -11,8 +11,11 @@ import { describe, expect, it } from 'vitest';
 
 const srcRoot = path.resolve(__dirname, '../../..');
 const HELPER_FILE = path.join(srcRoot, 'components/Training/Form/TrainingParams.tsx');
-// `overrides?.[base]?.all`, `overrides?.[base]?.[engine]`, `baseOverride?.all`
-const HAND_LOOKUP = /overrides\??\.\[[^\]]+\]\??\.(?:all\b|\[)|[oO]verrides?\??\.all\b/;
+// Any `x.overrides?.[base]` / `x.overrides[base]` outside the helper, so reading the entries through an
+// alias (`const o = ts.overrides?.[base]; o?.all ?? o?.[engine]`) is caught at the index; plus
+// `baseOverride?.all`. A destructured bare `overrides[base]` is not matched — unrelated `overrides`
+// maps elsewhere in src/ use that form.
+const HAND_LOOKUP = /\.overrides\??\.?\[|[oO]verrides?\??\.all\b/;
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
