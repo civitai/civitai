@@ -240,14 +240,16 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     return;
   }
 
+  // A Training Data write names the url checked above, so a zip swapped in meanwhile is untouched.
+  const sameBytes = file.type === 'Training Data' ? { url: file.url, type: 'Training Data' } : {};
+
   // D4: failed workflow — bump scanRequestedAt to now so the file qualifies for
   // the fallback job's 24h-stale retry path, NOT the immediate-retry path. This
   // gives natural backoff (24h) for permanently-broken AIRs and avoids tight
   // loops if the orchestrator keeps rejecting the same file. Transient outages
   // are accepted as a 24h delay; we don't have a retry-counter column.
-  // A Training Data write also names the url checked above, so a zip swapped in meanwhile is untouched.
-  const sameBytes = file.type === 'Training Data' ? { url: file.url, type: 'Training Data' } : {};
-
+  // Training Data is not on that path: the fallback job skips it, and the self-heal
+  // resubmits it once this stamp is an hour old.
   if (outcome.failed) {
     await dbWrite.modelFile.update({
       where: { id: fileId, ...sameBytes },
