@@ -11,14 +11,7 @@ import { trpcVanilla } from '~/utils/trpc';
 
 const settingsKey = ['generation-license', 'settings'] as const;
 
-/**
- * The licence the selected ecosystem requires, and whether this user has accepted it. The server
- * refuses the submit either way; this only lets the form ask first instead of failing.
- *
- * Plain React Query over the vanilla client, and the optional session: the footer renders under
- * neither a tRPC provider nor a session in its component tests, and for every ecosystem without
- * terms this must cost nothing.
- */
+/** `useGenerationLicenseFor`, reading the ecosystem from a form-graph store. */
 export function useGenerationLicense(store: GenerationStore): GenerationLicenseState {
   const ecosystem = useSyncExternalStore(
     (cb) => store.subscribe(cb),
@@ -35,6 +28,14 @@ type GenerationLicenseState = {
   accepting: boolean;
 };
 
+/**
+ * The licence the ecosystem requires, and whether this user has accepted it. The server refuses
+ * the submit either way; this only lets the generator ask first instead of failing.
+ *
+ * Plain React Query over the vanilla client, and the optional session, so it works where neither a
+ * tRPC provider nor a session is mounted (FormFooter's component tests). Without terms, it fetches
+ * nothing.
+ */
 export function useGenerationLicenseFor(ecosystem: string | undefined): GenerationLicenseState {
   const terms = getGenerationLicenseTerms(ecosystem);
   const signedIn = useOptionalCivitaiSessionContext()?.type === 'authed';
