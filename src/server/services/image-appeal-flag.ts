@@ -55,8 +55,7 @@ export const REPORT_HOLD_RELEASE_MARGIN_DAYS = 7;
  * `CSAM_HOLD_MAX_DAYS - REPORT_HOLD_RELEASE_MARGIN_DAYS`, so a report that does not name the image's
  * owner (no owner on the report, another account's image) leaves the flag on. Narrower than the legal
  * hold `remove-blocked-images` applies (`legal-hold.ts`), so an image released here is still held
- * there. A feedback page capture has no owner a report can name: it is released once any report lists
- * it, which keeps it for as long as that report exists.
+ * there. A feedback page capture has no owner a report can name, so any report listing it releases it.
  */
 export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promise<number> {
   if (!imageIds.length) return 0;

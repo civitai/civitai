@@ -1,4 +1,4 @@
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 const SET_ASIDE_TABLE = 'CsamQueueSetAside';
@@ -46,15 +46,14 @@ const FEEDBACK_CAPTURE_OWNER_ID = -2;
  *  only `{ id }` entries. `image` is the table or alias the image row is read as. */
 export function listedInSentImageReport(image: string) {
   const col = (name: string) => sql.ref(`${image}.${name}`);
-  return sql<boolean>`exists (
+  // Two branches, so the owner match keeps its index path.
+  const listedIn = (onReport: RawBuilder<boolean>) => sql<boolean>`exists (
     select 1
     from "CsamReport" r
     cross join lateral jsonb_array_elements(
       case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
     ) e
-    where (r."userId" = ${col('userId')} or ${col('userId')} = ${sql.lit(
-    FEEDBACK_CAPTURE_OWNER_ID
-  )})
+    where ${onReport}
       and r."reportSentAt" is not null
       and r.type = 'Image'
       and e ->> 'id' = ${col('id')}::text
@@ -68,6 +67,9 @@ export function listedInSentImageReport(image: string) {
           and d ->> 'source' = 'missing'
       )
   )`;
+  return sql<boolean>`(${listedIn(sql<boolean>`r."userId" = ${col('userId')}`)} or (
+    ${col('userId')} = ${sql.lit(FEEDBACK_CAPTURE_OWNER_ID)} and ${listedIn(sql<boolean>`true`)}
+  ))`;
 }
 
 /** Out of the CSAM queue's pending count: covered by a sent report, or set aside. */

@@ -118,7 +118,7 @@
             <a href={imageLookupUrl(user.capture.imageId)} class={LINK_CLASS}>Image</a>
             <span class="text-dark-4">·</span>
             <a
-              href={csamCaptureReportUrl(data.civitaiUrl, user.capture.imageId, user.capture.feedbackId)}
+              href={csamCaptureReportUrl(data.civitaiUrl, user.capture.imageId)}
               target="_blank"
               rel="noreferrer"
               class={LINK_CLASS}>Report page</a

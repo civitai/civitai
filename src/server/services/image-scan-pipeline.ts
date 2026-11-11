@@ -969,7 +969,6 @@ async function notifyImageAutoBlocked({
   reason?: string | null;
   log: ScanLog;
 }) {
-  // A capture's owner stands for no one, and its reporter is not told either.
   if (isFeedbackCaptureOwner(userId)) return;
   await createNotification({
     category: NotificationCategory.System,

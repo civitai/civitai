@@ -46,4 +46,10 @@ describe('getCaptureReportContext', () => {
       path: null,
     });
   });
+
+  it('names no reporter or report the stamp gives as anything but a positive id', async () => {
+    image(FEEDBACK_CAPTURE_OWNER_ID, { feedbackCapture: { feedbackId: 0, reporterId: '7; drop' } });
+
+    expect(await getCaptureReportContext(5)).toMatchObject({ feedbackId: null, reporterId: null });
+  });
 });

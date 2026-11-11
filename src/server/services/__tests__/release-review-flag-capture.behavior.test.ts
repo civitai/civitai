@@ -75,6 +75,15 @@ describe('releaseReviewFlagsToReportHold', () => {
     ]);
   });
 
+  it("never releases another owner's image a report lists beside a capture", async () => {
+    await holder.db.exec(
+      `INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER + 1}, '[{"id": 1}, {"id": 3}]')`
+    );
+
+    expect(await releaseReviewFlagsToReportHold([1, 3])).toBe(1);
+    expect((await flags())[2]).toEqual({ id: 3, needsReview: 'csam' });
+  });
+
   it('releases a listed capture whatever state its report is in', async () => {
     await holder.db.exec(`
       INSERT INTO "CsamReport" ("userId", images, "createdAt", "reportSentAt", "archivedAt")

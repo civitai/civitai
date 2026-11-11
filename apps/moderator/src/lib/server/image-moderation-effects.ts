@@ -311,7 +311,6 @@ export async function notifyImageTosViolation(image: {
    *  before this field existed. */
   reason?: string;
 }): Promise<void> {
-  // A capture's owner stands for no one, and its reporter is not told either.
   if (isFeedbackCaptureOwner(image.ownerId)) return;
   try {
     await getNotifications().createNotification({

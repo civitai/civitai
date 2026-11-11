@@ -542,7 +542,7 @@
         <div class="flex gap-2 text-xs">
           {#if item.capture}
             <a
-              href={csamCaptureReportUrl(data.civitaiUrl, item.id, item.capture.feedbackId)}
+              href={csamCaptureReportUrl(data.civitaiUrl, item.id)}
               target="_blank"
               rel="noreferrer"
               class="link">Report page</a

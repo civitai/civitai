@@ -4,11 +4,7 @@ import { escapeClickhouseString } from '~/server/clickhouse/escape';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
-import {
-  FEEDBACK_CAPTURE_METADATA_KEY,
-  isFeedbackCaptureOwner,
-  type FeedbackCaptureMetadata,
-} from '@civitai/shared/feedback-capture';
+import { isFeedbackCaptureOwner, readFeedbackCaptureStamp } from '@civitai/shared/feedback-capture';
 
 /** How long before an image row was created its upload key may have been minted. */
 const UPLOAD_LOOKBACK_HOURS = 24;
@@ -56,22 +52,15 @@ export async function recordMintedUploadKey(
 export const UPLOAD_REQUEST_IP_NOTE =
   "Upload IP addresses are either the address that created the post containing the image or the address that requested the image's upload.";
 
-/**
- * Shown with a report's IP events when one is a feedback page capture's upload, which the reporter
- * requested. Only ever filed when the report's subject is that reporter.
- */
+/** Shown with a report's IP events when one is a feedback page capture's upload. */
 export const FEEDBACK_CAPTURE_UPLOAD_IP_NOTE =
   "One or more upload IP addresses come from a page capture this user submitted: a screenshot of a Civitai page that this user attached to a feedback report sent to Civitai. Each such address is the one that requested that screenshot's upload.";
 
 const chTime = (d: Date) => `parseDateTimeBestEffort('${d.toISOString()}')`;
 
 /** The reporter a feedback page capture's stamp names, or null for any other image. */
-function captureReporterId(image: { userId: number; metadata: unknown }): number | null {
-  if (!isFeedbackCaptureOwner(image.userId)) return null;
-  const stamp = (image.metadata as Record<string, unknown> | null)?.[FEEDBACK_CAPTURE_METADATA_KEY];
-  const reporterId = Number((stamp as Partial<FeedbackCaptureMetadata> | undefined)?.reporterId);
-  return Number.isSafeInteger(reporterId) && reporterId > 0 ? reporterId : null;
-}
+const captureReporterId = (image: { userId: number; metadata: unknown }) =>
+  isFeedbackCaptureOwner(image.userId) ? readFeedbackCaptureStamp(image.metadata).reporterId : null;
 
 /**
  * The IP that requested each image's upload key, for `userId`'s images among `imageIds`. Matched

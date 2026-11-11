@@ -64,15 +64,8 @@ export const csamReportUrl = (civitaiUrl: string, userId: number) =>
  * The main site's CSAM report filing for a feedback page capture: no subject preselected, since a
  * capture can show any account's content. The moderator picks one there.
  */
-export function csamCaptureReportUrl(
-  civitaiUrl: string,
-  imageId: number,
-  feedbackId: number | null
-): string {
-  const params = new URLSearchParams({ imageId: String(imageId) });
-  if (feedbackId != null) params.set('feedbackId', String(feedbackId));
-  return `${civitaiUrl}/moderator/csam/capture?${params}`;
-}
+export const csamCaptureReportUrl = (civitaiUrl: string, imageId: number) =>
+  `${civitaiUrl}/moderator/csam/capture?imageId=${imageId}`;
 
 /** The main site's generator evidence page for a user, with one restriction's triggers preselected. */
 export const csamGeneratorEvidenceUrl = (

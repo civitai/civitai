@@ -1,8 +1,4 @@
-import {
-  FEEDBACK_CAPTURE_METADATA_KEY,
-  isFeedbackCaptureOwner,
-  type FeedbackCaptureMetadata,
-} from '@civitai/shared/feedback-capture';
+import { isFeedbackCaptureOwner, readFeedbackCaptureStamp } from '@civitai/shared/feedback-capture';
 import { dbRead } from '~/server/db/client';
 
 /** What a moderator picks a CSAM report's subject from, for one feedback page capture. */
@@ -13,11 +9,6 @@ export type CaptureReportContext = {
   reporterUsername: string | null;
   /** The page the reporter was on, as their report recorded it. */
   path: string | null;
-};
-
-const positiveInt = (value: unknown) => {
-  const n = Number(value);
-  return Number.isSafeInteger(n) && n > 0 ? n : null;
 };
 
 /**
@@ -33,11 +24,7 @@ export async function getCaptureReportContext(
   });
   if (!image || !isFeedbackCaptureOwner(image.userId)) return null;
 
-  const stamp = (image.metadata as Record<string, unknown> | null)?.[
-    FEEDBACK_CAPTURE_METADATA_KEY
-  ] as Partial<FeedbackCaptureMetadata> | undefined;
-  const feedbackId = positiveInt(stamp?.feedbackId);
-  const reporterId = positiveInt(stamp?.reporterId);
+  const { feedbackId, reporterId } = readFeedbackCaptureStamp(image.metadata);
 
   const [reporter, feedback] = await Promise.all([
     reporterId

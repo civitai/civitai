@@ -273,7 +273,6 @@ export const setTosViolationHandler = async ({
         )
       );
 
-      // A capture's owner stands for no one, and its reporter is not told either.
       if (!isFeedbackCaptureOwner(image.userId))
         await createNotification({
           userId: image.userId,
