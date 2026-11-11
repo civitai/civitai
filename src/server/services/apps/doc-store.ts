@@ -100,6 +100,7 @@ import { escapeLiteral } from 'pg';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
 import type { StorageHoldings } from '~/shared/utils/app-storage-usage';
 import type {
@@ -1549,6 +1550,8 @@ function buildDocStore(deps: DocStoreDeps) {
    * usage-row lock that `SQL_CHARGE_APP` takes: the viewer's for a put or an increment, every
    * owner on the page for a migration. Keyed on the call's context; set at the start of each call.
    */
+  /** How many users' ceilings `resolveCeilings` looks up at once. */
+  const CEILING_LOOKUP_CONCURRENCY = 10;
   const preResolvedCeilings = new WeakMap<
     DocStoreContext,
     Map<number, { userBytes: number; userDocs: number }>
@@ -1556,9 +1559,15 @@ function buildDocStore(deps: DocStoreDeps) {
 
   async function resolveCeilings(ctx: DocStoreContext, uids: Iterable<number>): Promise<void> {
     if (!deps.userLimits) return;
-    const distinct = [...new Set(uids)];
-    const resolved = await Promise.all(distinct.map((uid) => viewerLimits(uid)));
-    preResolvedCeilings.set(ctx, new Map(distinct.map((uid, i) => [uid, resolved[i]])));
+    const resolved = new Map<number, { userBytes: number; userDocs: number }>();
+    // A migration page can name up to 1,000 owners: look their tiers up a bounded few at a time.
+    await limitConcurrency(
+      [...new Set(uids)].map((uid) => async () => {
+        resolved.set(uid, await viewerLimits(uid));
+      }),
+      CEILING_LOOKUP_CONCURRENCY
+    );
+    preResolvedCeilings.set(ctx, resolved);
   }
 
   /** Charge one write: `usage_app` (which also yields the seq), then the caller's `usage_user`. */

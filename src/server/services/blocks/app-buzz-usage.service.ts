@@ -71,9 +71,9 @@ export type MyAppBuzzCap = {
   optInLimit: number;
   optedIn: boolean;
   /**
-   * A spend was refused today at the cap enforced now: the running app is paused until the
-   * reset, an upgrade, or an opt-in. From the refusal record, not the counter (a refused spend
-   * is refunded, so the counter stays below the cap).
+   * The last daily-cap check refused, at the cap enforced now: the running app is paused until
+   * the reset, an upgrade, an opt-in, or a smaller spend that fits. From the refusal record, not
+   * the counter (a refused spend is refunded, so the counter stays below the cap).
    */
   paused: boolean;
   /** Not opted in yet today: the opt-in is offered. */

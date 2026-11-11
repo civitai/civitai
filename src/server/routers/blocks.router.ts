@@ -66,6 +66,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   buzzCapRedisKey,
   buzzCapWindowKey,
+  clearDailyCapRefusal,
   markDailyCapRefused,
 } from '~/server/services/blocks/block-buzz-cap';
 import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
@@ -1435,7 +1436,7 @@ async function refundBlockBuzzSpend(key: string, cost: number): Promise<void> {
 // re-confirming the consent CANNOT reset the ceiling within the window. Window =
 // the key's 25h TTL (re-armed on first write): the ceiling is cumulative per
 // (mod, publishRequestId) over a rolling ~25h, NOT reset per submit or per mint.
-// It is STRICTLY TIGHTER than the per-user daily cap (50,000 at Free, the lowest tier), so it binds;
+// It is STRICTLY TIGHTER than every tier's per-user daily cap (`resolveUserAppCaps`), so it binds;
 // the mod's OWN non-review block usage still counts against the daily key separately.
 const REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
@@ -1491,7 +1492,7 @@ async function reserveReviewRunForRealBuzzSpend(
 // requiring a consent budget would make this feature dead for most reviewers for
 // reasons entirely unrelated to it — a moderator has no reason to have ever consented
 // to an app they are reviewing the takedown of. The platform ceiling below is the
-// bound, and it is STRICTLY TIGHTER than the per-user daily cap it replaces (50,000 at Free).
+// bound, and it is STRICTLY TIGHTER than every tier's per-user daily cap it replaces.
 const PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
 function privateRunBuzzCapKey(
@@ -1705,7 +1706,9 @@ async function reserveBlockBuzzSpendForClaims(
   // the one place that sees every daily-cap refusal: record it for the paused notice. The
   // post-paid overage correction has no deny path, but a total over the cap there means the
   // NEXT spend is refused, so marking is right for it too.
+  // A check that passes clears it: "paused" means the LAST daily-cap check refused.
   if (total > buzzPerDay) await markDailyCapRefused(userId, buzzPerDay);
+  else await clearDailyCapRefusal(userId);
   if (claims.dev === true) return { ...platform, consent: null };
 
   // From here any throw must undo the platform reservation just taken — otherwise a
