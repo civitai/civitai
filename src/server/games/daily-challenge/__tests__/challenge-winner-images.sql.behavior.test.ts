@@ -39,6 +39,7 @@ beforeAll(async () => {
   pg.db = new PGlite();
   await pg.db.exec(`
     CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM
       ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "User" (id int PRIMARY KEY, username text);

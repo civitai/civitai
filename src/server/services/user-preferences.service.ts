@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { isImageReviewed } from '~/server/common/image-visibility';
+import { isImageReviewed, LYRICS_HOLD_HIDING_STATUSES } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -25,6 +25,7 @@ import {
 } from '~/server/services/user-engagement';
 import {
   Availability,
+  MediaType,
   ModelStatus,
   TagEngagementType,
   UserEngagementType,
@@ -1217,6 +1218,25 @@ export async function getHiddenImagesForUser({
   const coverImageIds = new Set(
     [profile?.coverImageId, profile?.sfwCoverImageId].filter(isDefined)
   );
+  const songIds = engagements
+    .slice(0, limit)
+    .filter(({ image }) => image.type === MediaType.audio)
+    .map(({ image }) => image.id);
+  const heldSongIds = new Set(
+    songIds.length
+      ? (
+          await dbRead.textScanHold.findMany({
+            where: {
+              entityType: 'TrackLyrics',
+              entityId: { in: songIds },
+              label: 'csam',
+              status: { in: [...LYRICS_HOLD_HIDING_STATUSES] },
+            },
+            select: { entityId: true },
+          })
+        ).map((hold) => hold.entityId)
+      : []
+  );
   const now = new Date();
   const hasMore = engagements.length > limit;
 
@@ -1235,6 +1255,7 @@ export async function getHiddenImagesForUser({
         isOwner ||
         (isImageReviewed({
           type: rest.type,
+          lyricsHeld: heldSongIds.has(image.id),
           ingestion,
           nsfwLevelLocked,
           nsfwLevelReason: (metadata as { nsfwLevelReason?: string | null } | null)

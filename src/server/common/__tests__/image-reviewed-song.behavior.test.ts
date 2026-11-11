@@ -31,7 +31,24 @@ beforeAll(async () => {
       (5, 'image', 'Error', true),
       (6, 'video', 'Pending', true),
       (7, 'audio', 'Pending', false),
-      (8, 'audio', 'Rescan', true);
+      (8, 'audio', 'Rescan', true),
+      (9, 'audio', 'Scanned', false),
+      (10, 'audio', 'Scanned', false),
+      (11, 'audio', 'Scanned', false),
+      (12, 'image', 'Scanned', false);
+    CREATE TABLE "TextScanHold" (
+      id serial PRIMARY KEY,
+      "entityType" text NOT NULL,
+      "entityId" int NOT NULL,
+      label text NOT NULL,
+      status text NOT NULL
+    );
+    INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES
+      ('TrackLyrics', 9, 'csam', 'Pending'),
+      ('TrackLyrics', 10, 'csam', 'Confirmed'),
+      ('TrackLyrics', 11, 'csam', 'Dismissed'),
+      ('TrackLyrics', 12, 'csam', 'Pending'),
+      ('Post', 3, 'csam', 'Pending');
   `);
 });
 afterAll(() => db.close());
@@ -55,6 +72,21 @@ describe('imageReviewedSql for a song', () => {
     expect(await reviewed()).toContain(3);
   });
 
+  it('hides a scanned song while its lyrics are held for csam or were confirmed', async () => {
+    const ids = await reviewed();
+
+    expect(ids).not.toContain(9);
+    expect(ids).not.toContain(10);
+  });
+
+  it('shows a song whose lyrics hold was dismissed, and is unaffected by other entity holds', async () => {
+    const ids = await reviewed();
+
+    expect(ids).toContain(11);
+    expect(ids).toContain(3);
+    expect(ids).toContain(12);
+  });
+
   it('keeps the rule for an image or video exactly: a locked rating stands in for a stalled scan', async () => {
     const ids = await reviewed();
 
@@ -65,13 +97,23 @@ describe('imageReviewedSql for a song', () => {
 });
 
 describe('isImageReviewed, the twin of that rule', () => {
-  const base = { nsfwLevelLocked: true, nsfwLevelReason: null, scanFailureClass: null };
+  const base = {
+    nsfwLevelLocked: true,
+    nsfwLevelReason: null,
+    scanFailureClass: null,
+    lyricsHeld: false,
+  };
 
   it.each([
     ['a locked song that is Pending', { type: 'audio', ingestion: 'Pending' }, false],
     ['a locked song in Error', { type: 'audio', ingestion: 'Error' }, false],
     ['a scanned song', { type: 'audio', ingestion: 'Scanned', nsfwLevelLocked: false }, true],
     ['a locked image that is Pending', { type: 'image', ingestion: 'Pending' }, true],
+    [
+      'a scanned song whose lyrics are held',
+      { type: 'audio', ingestion: 'Scanned', lyricsHeld: true },
+      false,
+    ],
   ] as const)('%s → %s', (_label, input, expected) => {
     expect(isImageReviewed({ ...base, ...input } as never)).toBe(expected);
   });

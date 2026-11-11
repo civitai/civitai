@@ -47,6 +47,7 @@ beforeAll(async () => {
   await pg.exec(`
     CREATE TYPE "CommentEntityType" AS ENUM ('review', 'challenge');
     CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Private', 'Unsearchable', 'EarlyAccess');
     CREATE TABLE "Post" (

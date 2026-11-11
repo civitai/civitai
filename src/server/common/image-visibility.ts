@@ -40,9 +40,24 @@ const ingestionStatesModRatingCannotOverride: ImageIngestionStatus[] = [
  * `Error` is stricter: a scan that errored never ran its minor/POI/prompt checks, so only
  * a moderator's lock stands in for it, and not when the media itself failed permanently.
  */
+/** Statuses of a song's lyrics csam hold that keep the song hidden: awaiting a moderator, or confirmed. */
+export const LYRICS_HOLD_HIDING_STATUSES = ['Pending', 'Confirmed'] as const;
+
+/** Whether the song aliased `alias` has its lyrics held for csam; `lyricsHeld` in `isImageReviewed`. */
+export const lyricsHeldSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "TextScanHold" h
+    WHERE h."entityType" = 'TrackLyrics' AND h."entityId" = ${t}."id" AND h."label" = 'csam'
+      AND h."status"::text IN (${Prisma.join([...LYRICS_HOLD_HIDING_STATUSES])})
+  )`;
+};
+
 export const imageReviewedSql = (alias = 'i') => {
   const t = Prisma.raw(`"${alias}"`);
   return Prisma.sql`(
+    (${t}."type" <> ${MediaType.audio}::"MediaType" OR NOT ${lyricsHeldSql(alias)})
+    AND (
     ${t}."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
     OR (
       ${t}."type" <> ${MediaType.audio}::"MediaType"
@@ -57,6 +72,7 @@ export const imageReviewedSql = (alias = 'i') => {
           OR COALESCE(${t}."scanJobs"->'error'->>'failureClass', '') = ${PERMANENT_SCAN_FAILURE}
         )
       )
+    )
     )
   )`;
 };
@@ -93,17 +109,21 @@ export const pendingLevelImageSql = (userId: number, browsingLevel: number) =>
  */
 export const isImageReviewed = ({
   type,
+  lyricsHeld,
   ingestion,
   nsfwLevelLocked,
   nsfwLevelReason,
   scanFailureClass,
 }: {
   type: MediaType | string;
+  /** `lyricsHeldSql`: the song's lyrics are held for csam. */
+  lyricsHeld: boolean;
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
   nsfwLevelReason: string | null | undefined;
   scanFailureClass: string | null | undefined;
 }) => {
+  if (type === MediaType.audio && lyricsHeld) return false;
   if (ingestion === ImageIngestionStatus.Scanned) return true;
   if (type === MediaType.audio) return false;
   if (!nsfwLevelLocked || ingestionStatesModRatingCannotOverride.includes(ingestion)) return false;
