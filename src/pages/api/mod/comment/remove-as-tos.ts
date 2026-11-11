@@ -1,11 +1,11 @@
-import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
+import { bulkSetCommentV3TosViolation } from '~/server/services/commentv3/moderation.service';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { commentAffected, commentIdSchema } from '~/server/schema/moderator/comment';
 
 export default defineModeratorEndpoint('comment.removeAsTos', {
   summary: 'Flag comments as a ToS violation, action their reports and notify the owners.',
-  returns: '{ commentV2: { count, notified, rewardedReports } }',
+  returns: '{ comments: { count, notified, rewardedReports } }',
   notes: ['Related TOSViolation reports are actioned, and their reporters rewarded.'],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: commentIdSchema,
@@ -20,7 +20,7 @@ export default defineModeratorEndpoint('comment.removeAsTos', {
     const ip = resolveClientIpOrNull(ctx.req) ?? undefined;
     const actor = { id: ctx.actor.id, ip };
 
-    const v2 = await bulkSetCommentV2TosViolation({ ids: input.commentV2Ids, actor });
-    return { commentV2: v2, affected: commentAffected(input) };
+    const comments = await bulkSetCommentV3TosViolation({ ids: input.commentIds, actor });
+    return { comments, affected: commentAffected(input) };
   },
 });

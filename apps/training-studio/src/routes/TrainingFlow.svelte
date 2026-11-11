@@ -71,9 +71,12 @@
   let samplePrompts = $state<SamplePrompt[]>([]);
   let promptsSeed: { labels: string; prompts: string } | null = null;
   let runParams = $state<Record<string, RunParams>>({});
-  // The trigger the current Review params were seeded with.
+  // The trigger and LoRA type the current Review params were seeded with.
   let paramsSeedTrigger = '';
+  let paramsSeedLoraType = '';
   let presetType = $state('');
+  let openAdvanced = $state('');
+  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
@@ -163,18 +166,22 @@
       samplePrompts = seeded.length ? seeded : seedPrompts(datasetLabels, t);
       promptsSeed = { labels, prompts: JSON.stringify(samplePrompts) };
     }
+    const { loraType } = selection;
     runParams = Object.fromEntries(
       selection.runs.map((run) => {
         const key = runParamsKey(run);
         const existing = runParams[key];
-        // Params still at the previous trigger's defaults follow a trigger change (shuffle/keep).
+        // Params still at the previous seed's defaults follow a trigger change (shuffle/keep) or a
+        // LoRA type change (network size).
         const untouched =
           existing &&
-          JSON.stringify(existing) === JSON.stringify(defaultRunParams(run, paramsSeedTrigger));
-        return [key, existing && !untouched ? existing : defaultRunParams(run, t)];
+          JSON.stringify(existing) ===
+            JSON.stringify(defaultRunParams(run, paramsSeedTrigger, paramsSeedLoraType));
+        return [key, existing && !untouched ? existing : defaultRunParams(run, t, loraType)];
       })
     );
     paramsSeedTrigger = t;
+    paramsSeedLoraType = loraType;
     leaveData();
     step = 3;
   }
@@ -320,6 +327,8 @@
       bind:prompts={samplePrompts}
       bind:params={runParams}
       bind:presetType
+      bind:openAdvanced
+      bind:acknowledgedAdvanced
       imageCount={trainableCount}
       {trainsPairs}
       {matureCount}

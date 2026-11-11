@@ -185,6 +185,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
           userId={data.user.id}
           modelVersionId={data.modelVersion.id}
           reviewId={reviewId}
+          postId={data.postId}
         />
       )}
       <Container pb="md" w="100%">

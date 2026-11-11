@@ -93,8 +93,10 @@ beforeAll(async () => {
       "userId" int,
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3),
+      images jsonb NOT NULL DEFAULT '[]',
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
+    CREATE TABLE "ImageDeferredBlockEffect" ("imageId" int PRIMARY KEY);
   `);
 });
 
@@ -103,7 +105,7 @@ beforeEach(async () => {
   softDeleteUser.mockClear();
   createSupplementalCsamReport.mockClear();
   await pg.exec(`
-    TRUNCATE "Image", "CsamReport";
+    TRUNCATE "Image", "CsamReport", "ImageDeferredBlockEffect";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${OWNED}, ${OWNER}, 'Scanned', 'csam'),
       (${OTHER_OWNERS}, ${OTHER_OWNER}, 'Blocked', 'csam'),
@@ -132,6 +134,14 @@ beforeEach(async () => {
   ) => {
     const flat = Prisma.sql(strings, ...(v as never[]));
     return (await pg.query(flat.text, flat.values as unknown[])).affectedRows ?? 0;
+  }) as never);
+  // The hold release's UPDATE … RETURNING.
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...v: unknown[]
+  ) => {
+    const flat = Prisma.sql(strings, ...(v as never[]));
+    return (await pg.query(flat.text, flat.values as unknown[])).rows;
   }) as never);
 });
 
@@ -180,6 +190,17 @@ describe('fileCsamReport', () => {
     await report(EXPIRED_HOLD_OWNER, [EXPIRED_HOLD]);
 
     expect(await flag(EXPIRED_HOLD)).toBe('csam');
+  });
+
+  it('drops the deferred block effects of every filed image, whether or not its flag comes off', async () => {
+    await pg.exec(`
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId") VALUES (${EXPIRED_HOLD}), (${PAST_MARGIN});
+    `);
+    await report(EXPIRED_HOLD_OWNER, [EXPIRED_HOLD]);
+
+    expect(await flag(EXPIRED_HOLD)).toBe('csam');
+    const { rows } = await pg.query(`SELECT "imageId" FROM "ImageDeferredBlockEffect"`);
+    expect(rows).toEqual([{ imageId: PAST_MARGIN }]);
   });
 
   it('keeps the flag when the report updates an open report past the release cutoff', async () => {

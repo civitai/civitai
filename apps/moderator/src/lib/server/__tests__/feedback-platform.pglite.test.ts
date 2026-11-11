@@ -502,7 +502,7 @@ describe('the resolution write', () => {
     ['an unparseable version', { fixedInVersion: 'latest' }, 'That version does not parse'],
     ['a version with no component', { fixedInComponent: '' }, 'Pick the component'],
     ['an unknown component', { fixedInComponent: 'server' }, 'Pick a component'],
-    ['a 301-character note', { publicNote: 'x'.repeat(301) }, 'at most 300 characters'],
+    ['a 1001-character note', { publicNote: 'x'.repeat(1001) }, 'at most 1000 characters'],
     ['a note with a NUL', { publicNote: 'a\u0000b' }, 'cannot be stored'],
     ['nothing to say', { fixedInComponent: '', fixedInVersion: '', publicNote: '  ' }, 'Pick what'],
   ])('refuses %s and writes nothing', async (_label, over, message) => {
@@ -526,9 +526,9 @@ describe('the resolution write', () => {
     expect((await readFeedback(db, id)).status).toBe('new');
   });
 
-  it('accepts a note of exactly 300 characters', async () => {
+  it('accepts a note of exactly 1000 characters', async () => {
     const id = await seedPlatform();
-    const note = 'y'.repeat(300);
+    const note = 'y'.repeat(1000);
     expect(await triageAction(event(resolutionForm(id, { publicNote: note })))).toEqual({
       success: true,
       triaged: id,

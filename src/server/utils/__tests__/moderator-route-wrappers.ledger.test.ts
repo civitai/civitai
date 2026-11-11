@@ -195,6 +195,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
     'moderators may download a vault copy of a file that failed its scan; the caller’s own vault only',
   'search/[...path]':
     'site search: moderators skip the POI and private-model filters, not the site’s browsing-level cap',
+  'search/token':
+    'site search token: moderators skip the POI and private-model rules, not the site’s browsing-level cap',
   'service-deals/files/[fileId]/download':
     'party access check: the seller, the paid buyer, or a moderator for dispute review',
   'training-studio/check-text':

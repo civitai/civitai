@@ -16,6 +16,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 }));
 
 const { pullData } = await import('~/server/search-index/collections.search-index');
+const { tagIdsForImagesCache } = await import('~/server/redis/caches');
 
 let pg: PGlite;
 const db = {
@@ -303,6 +304,18 @@ describe('collections search index covers', () => {
     expect(cover).toBeNull();
     // Its only item is the same image, so the fallback finds nothing either.
     expect(itemCovers).toEqual([]);
+  });
+
+  // The document keeps these tag ids until the next reindex, so they must not come from an L1 entry
+  // this process may hold from before a tag edit.
+  it("reads the cover images' tag ids past this process's L1", async () => {
+    const fetch = vi.mocked(tagIdsForImagesCache.fetch);
+    fetch.mockClear();
+    await pull(OWN_PUBLISHED);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [ids, options] = fetch.mock.calls[0];
+    expect(ids).toContain(100);
+    expect(options).toEqual({ bypassLocal: true });
   });
 
   it('uses an Image item a stranger could see as the fallback cover (control)', async () => {

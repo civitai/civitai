@@ -6,6 +6,7 @@ import type {
   ReceivedReview as ReceivedReviewRow,
   UserBounty,
   UserBountyEntry,
+  UserComment,
 } from '$lib/server/user-account.service';
 import type { Jsonified } from '$lib/format';
 
@@ -26,24 +27,7 @@ export type Bounty = Jsonified<UserBounty>;
 
 export type BountyEntry = Jsonified<UserBountyEntry>;
 
-export type Comment = {
-  id: number;
-  createdAt: string;
-  content: string;
-  nsfw: boolean | null;
-  tosViolation: boolean | null;
-  modelId: number | null;
-};
-
-export type CommentV2 = {
-  id: number;
-  createdAt: string;
-  content: string;
-  tosViolation: boolean | null;
-  threadId: number;
-  entityType: string | null;
-  entityId: number | null;
-};
+export type Comment = Jsonified<UserComment>;
 
 export type Cosmetic = {
   /** `${cosmeticId}:${claimKey}` — the cosmetic id alone repeats across claims. */
@@ -130,7 +114,6 @@ export type Capped<T> = { items: T[]; truncated: boolean };
 export type Account = {
   receivedReviews: Capped<ReceivedReview>;
   comments: Capped<Comment>;
-  commentsV2: Capped<CommentV2>;
   cosmetics: Capped<Cosmetic>;
   trainings: { runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null };
   bounties: Capped<Bounty>;

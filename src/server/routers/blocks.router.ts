@@ -52,17 +52,24 @@ import {
   BLOCK_POST_TITLE_MAX,
 } from '~/server/services/blocks/block-post.logic';
 import {
-  BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
   CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
+  SOURCE_SCAN_PENDING_ERROR_CODE,
   isKnownBlockScope,
   PRIVATE_RUN_BUZZ_CAP,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
   REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  buzzCapRedisKey,
+  buzzCapWindowKey,
+  clearDailyCapRefusal,
+  markDailyCapRefused,
+} from '~/server/services/blocks/block-buzz-cap';
+import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
@@ -267,6 +274,7 @@ import {
 import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
 import { collectTrainingTriggerWords } from '~/server/services/blocks/block-training-trigger-word';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
+import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -296,6 +304,7 @@ import {
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
   assertStepTypeAllowed,
+  foldStepTypeCase,
   isTrainingStepTypeIgnoringCase,
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
@@ -387,6 +396,10 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import {
+  auditPassThroughPrompts,
+  auditTrainingSamplePrompts,
+} from '~/server/services/blocks/pass-through-prompt-audit';
+import {
   cancelWorkflow,
   getWorkflow,
   queryWorkflows,
@@ -411,7 +424,10 @@ import {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import {
   assertGenerationInputsUsable,
+  countAppBlockHostSources,
+  isAppSourcePendingError,
   opaqueInputUrlsIn,
+  type GenerationInputPhase,
 } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -1322,17 +1338,6 @@ async function resolvePageLoraGates(opts: {
 // re-derived per day so a stale counter never bleeds into the next window.
 const BLOCK_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
-function buzzCapWindowKey(): string {
-  // UTC calendar day, e.g. '2026-06-02'.
-  return new Date().toISOString().slice(0, 10);
-}
-
-function buzzCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}` {
-  // PER-USER aggregate: appBlockId is intentionally NOT part of the key so all
-  // of a user's installed blocks share ONE daily ceiling (see comment above).
-  return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${userId}:${buzzCapWindowKey()}`;
-}
-
 /**
  * THE ONE reserve primitive behind every cumulative Buzz counter in this router
  * (per-user daily, run-for-real session, consent budget). Atomic INCRBY, then arm
@@ -1436,7 +1441,7 @@ async function refundBlockBuzzSpend(key: string, cost: number): Promise<void> {
 // re-confirming the consent CANNOT reset the ceiling within the window. Window =
 // the key's 25h TTL (re-armed on first write): the ceiling is cumulative per
 // (mod, publishRequestId) over a rolling ~25h, NOT reset per submit or per mint.
-// It is STRICTLY TIGHTER than the 50k/day cap, so it is the binding constraint;
+// It is STRICTLY TIGHTER than every tier's per-user daily cap (`resolveUserAppCaps`), so it binds;
 // the mod's OWN non-review block usage still counts against the daily key separately.
 const REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
@@ -1492,7 +1497,7 @@ async function reserveReviewRunForRealBuzzSpend(
 // requiring a consent budget would make this feature dead for most reviewers for
 // reasons entirely unrelated to it — a moderator has no reason to have ever consented
 // to an app they are reviewing the takedown of. The platform ceiling below is the
-// bound, and it is STRICTLY TIGHTER than the 50k/day cap it replaces.
+// bound, and it is STRICTLY TIGHTER than every tier's per-user daily cap it replaces.
 const PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
 function privateRunBuzzCapKey(
@@ -1521,7 +1526,7 @@ async function reservePrivateRunBuzzSpend(
 // ---- CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) ceiling the VIEWER set
 //      for THIS app at consent time (`app_user_scope_grants.buzz_budget_per_day`).
 //
-// The two caps above are PLATFORM caps: BLOCK_BUZZ_CAP_PER_DAY bounds one user
+// The two caps above are PLATFORM caps: the daily cap (`resolveUserAppCaps`) bounds one user
 // across ALL their apps (deliberately no appBlockId in the key), and the G8
 // per-app cap bounds one app across ALL users. Neither can express "I am happy for
 // THIS app to spend 500 of my Buzz a day and no more" — which is the thing a user
@@ -1636,7 +1641,7 @@ type BlockBuzzReservation = {
  * FAIL-CLOSED, IN EVERY DIRECTION THAT MATTERS. A Redis error on the consent leg
  * refunds the platform leg and rethrows, so a failed reservation never leaves the
  * user's daily allowance burned. A DB error reading the budget likewise throws
- * rather than being treated as "no budget": absent means UNBOUNDED-within-50k, so
+ * rather than being treated as "no budget": absent means unbounded within the per-user daily cap, so
  * swallowing the error would silently widen the ceiling the user consented to. And a
  * REVOKED grant refuses — with the same refund.
  */
@@ -1670,9 +1675,9 @@ async function reserveBlockBuzzSpendForClaims(
   // just a line number. `no-unthreaded-private-run-claim` asserts this order.
   //
   // ⚠️ THE RESIDUAL, STATED RATHER THAN DISCOVERED LATER: replacing the daily cap means
-  // a private run no longer counts against the viewer's 50k/day platform key, so ONE
+  // a private run no longer counts against the viewer's daily platform key, so ONE
   // viewer's spend summed across MANY delisted apps is bounded by
-  // (spend-capable delisted apps × PRIVATE_RUN_BUZZ_CAP) rather than by the flat 50k.
+  // (spend-capable delisted apps × PRIVATE_RUN_BUZZ_CAP) rather than by the per-user daily cap.
   //
   // 🔴 NO FIGURE IS QUOTED FOR THAT PRODUCT, AND THAT IS DELIBERATE TWICE OVER. It is a
   // count of a population MODERATORS MOVE — every delist, relist and approval changes it
@@ -1695,12 +1700,25 @@ async function reserveBlockBuzzSpendForClaims(
     const { total, key } = await reservePrivateRunBuzzSpend(userId, claims.appBlockId, cost);
     return { total, key, cap: PRIVATE_RUN_BUZZ_CAP, consent: null };
   }
+  // The per-user daily cap is the viewer's plan cap from `resolveUserAppCaps` — THE source the
+  // account Limits section reads too, so the cap shown is the cap enforced. It never throws (a
+  // failed read serves the strictest tier's cap), and it is read before the reservation so a
+  // read cannot strand one.
+  const { buzzPerDay } = await resolveUserAppCaps(userId);
   const { total, key } = await reserveBlockBuzzSpend(userId, cost);
-  const platform = { total, key, cap: BLOCK_BUZZ_CAP_PER_DAY };
+  const platform = { total, key, cap: buzzPerDay };
+  // Every spend caller refuses exactly when `total > cap` on this leg (and refunds), so this is
+  // the one place that sees every daily-cap refusal: record it for the paused notice. The
+  // post-paid overage correction has no deny path, but a total over the cap there means the
+  // NEXT spend is refused, so marking is right for it too.
+  // A check that passes clears it: "paused" means the LAST daily-cap check refused. Not awaited:
+  // it is off the spend's critical path, and the helper never throws.
+  if (total > buzzPerDay) await markDailyCapRefused(userId, buzzPerDay);
+  else void clearDailyCapRefusal(userId);
   if (claims.dev === true) return { ...platform, consent: null };
 
   // From here any throw must undo the platform reservation just taken — otherwise a
-  // failed attempt permanently burns the viewer's 50k/day allowance for a spend that
+  // failed attempt permanently burns the viewer's daily allowance for a spend that
   // never happened. Same rule the consent-DENY path below obeys, and the REVOKED exit
   // immediately after this read obeys it too: a refusal is a non-committed exit like any
   // other, and it is the one most likely to be repeated by a client that keeps retrying.
@@ -6950,13 +6968,16 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
-      if (input.body.kind === 'workflow' || input.body.kind === 'step')
-        await assertStepOrWorkflowInputsUsable(input.body, claims, {
+      if (input.body.kind === 'workflow' || input.body.kind === 'step') {
+        const pending = await assertStepOrWorkflowInputsUsable(input.body, claims, {
+          phase: 'submit',
           confirmedSubmit:
             input.body.kind === 'step' &&
             isPassThroughStepBody(input.body) &&
             input.body.quoteId !== undefined,
         });
+        if (pending) return pending;
+      }
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -7099,6 +7120,7 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
+      assertNoRestrictedBaseModels({ baseModels: [resolved.baseModel, checkpoint.baseModel] });
       // PAGE branch: pre-spend availability gate over the resources THIS gate
       // can see — the viewer-picked BODY version (`resolved.gate`) AND each
       // additional LoRA — a fail-fast UX layer in place of the skipped
@@ -7140,6 +7162,7 @@ export const blocksRouter = router({
           checkpointBaseModel: checkpoint.baseModel,
         });
         additionalResourceTypes = resourceTypes;
+        assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
@@ -7150,6 +7173,10 @@ export const blocksRouter = router({
           wildcardsEnabled: !!ctx.features.wildcards,
         });
       }
+      await countAppBlockHostSources({
+        urls: textToImageSourceUrls(input.body),
+        appBlockLog: { appBlockId: claims.appBlockId, stepTypes: 'textToImage', phase: 'submit' },
+      });
       const token = await getOrchestratorToken(userId, ctx);
 
       // Prompt audit before any orchestrator interaction (mirrors what
@@ -7415,7 +7442,7 @@ export const blocksRouter = router({
       // the platform cap on purpose: the platform cap is the one the user did not
       // choose, so when both are breached at once the message that explains the
       // situation is the platform one. 🔴 The refund is the load-bearing half —
-      // without it a denied attempt silently burns the user's 50k/day platform
+      // without it a denied attempt silently burns the user's daily platform
       // allowance for a generation the app was never allowed to run.
       if (consentBudgetExceeded(reservation)) {
         await refundBlockBuzzReservation(reservation, cost);
@@ -9727,8 +9754,12 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
-  if (input.body.kind === 'workflow' || input.body.kind === 'step')
-    await assertStepOrWorkflowInputsUsable(input.body, claims);
+  if (input.body.kind === 'workflow' || input.body.kind === 'step') {
+    const pending = await assertStepOrWorkflowInputsUsable(input.body, claims, {
+      phase: 'estimate',
+    });
+    if (pending) return pending;
+  }
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -9822,6 +9853,7 @@ async function estimateBlockWorkflowCell(
     userId,
     slotId: ctxSlotId,
   });
+  assertNoRestrictedBaseModels({ baseModels: [resolved.baseModel, checkpoint.baseModel] });
   // PAGE branch: pre-spend availability gate over the resources THIS gate
   // can see — the viewer-picked BODY version (`resolved.gate`) AND each
   // additional LoRA — as a fail-fast UX layer in place of the skipped
@@ -9858,6 +9890,7 @@ async function estimateBlockWorkflowCell(
       checkpointBaseModel: checkpoint.baseModel,
     });
     additionalResourceTypes = resourceTypes;
+    assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates: [buildGateVersion(resolved.gate), ...loraGates],
       viewer: { id: userId, isModerator: !!user.isModerator },
@@ -9868,6 +9901,10 @@ async function estimateBlockWorkflowCell(
       wildcardsEnabled: !!ctx.features.wildcards,
     });
   }
+  await countAppBlockHostSources({
+    urls: textToImageSourceUrls(input.body),
+    appBlockLog: { appBlockId: claims.appBlockId, stepTypes: 'textToImage', phase: 'estimate' },
+  });
   const token = await getOrchestratorToken(userId, ctx);
   const generateInput = buildTextToImageInput(input.body, {
     ...resolved,
@@ -10122,6 +10159,13 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (isInlineComfyBody(body)) {
     const verdict = checkInlineComfyGraph(body.workflow);
     if (!verdict.runnable) return { snapshot: verdict.snapshot };
+    const pending = await checkInlineComfySources({
+      graph: verdict.graph,
+      userId,
+      claims,
+      phase: 'estimate',
+    });
+    if (pending) return pending;
     return {
       snapshot: {
         workflowId: 'wf_estimate',
@@ -10241,6 +10285,13 @@ async function submitCustomComfyWorkflow(opts: {
     // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
     //     which is what makes gating that flat array sufficient.
     assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
+    const pending = await checkInlineComfySources({
+      graph: inlineBody.workflow,
+      userId,
+      claims,
+      phase: 'submit',
+    });
+    if (pending) return pending;
     // (b) ENTITLEMENT — the real belt (early-access `hasAccess` + Private
     //     subscription + anti-drop + anti-substitute) over the declared AIRs.
     await assertViewerEntitledToInlineResources({
@@ -10272,6 +10323,7 @@ async function submitCustomComfyWorkflow(opts: {
       const resolvedVersion = await resolvePageResourceContext(versionId);
       gates.push(buildGateVersion(resolvedVersion.gate));
     }
+    assertNoRestrictedBaseModels({ baseModels: gates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates,
       viewer: { id: userId, isModerator: !!user.isModerator },
@@ -10279,6 +10331,10 @@ async function submitCustomComfyWorkflow(opts: {
       wildcardsEnabled: !!ctx.features.wildcards,
     });
   }
+
+  // A recipe's Hugging Face AIRs depend on the engine its params pick, so check the built step's.
+  if (recipe && params)
+    assertNoRestrictedBaseModels({ airs: recipe.buildStep(params, {}).resources });
 
   const token = await getOrchestratorToken(userId, ctx);
 
@@ -10397,7 +10453,7 @@ async function submitCustomComfyWorkflow(opts: {
   // (2) Reserve the CEILING (not the 0 estimate) against the cumulative cap so
   // post-paid spend can't slip past it counted at ~0. A RUN-FOR-REAL review token
   // reserves against the tight per-(mod, publishRequestId) session ceiling; every
-  // other token keeps the per-user 50k/day cap (byte-identical).
+  // other token keeps the per-user daily cap (`resolveUserAppCaps`).
   // The reservation THROWS fail-closed on a redis error; release the claim first.
   let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
   try {
@@ -10867,7 +10923,7 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
  * Narrow a `kind:'step'` body to its PASS-THROUGH arm.
  *
  * 🔴 KEYED ON THE VALUE OF `step`, NOT `'step' in body`. The pass-through arm
- * declares `step: z.undefined()`, so a body carrying `step` as an own key is a
+ * declares `step: z.undefined().optional()`, so a body carrying `step` as an own key is a
  * LEGAL pass-through body (an SDK spreading an optional variable produces one,
  * and `undefined` survives superjson); a presence test routes it to
  * `resolveBlockStep`, which answers BAD_REQUEST. Same rule as
@@ -10877,12 +10933,26 @@ function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
 }
 
+/** A text-to-image body's source image urls, both wire shapes. */
+function textToImageSourceUrls(body: {
+  sourceImage?: { url: string };
+  sourceImages?: { url: string }[];
+}) {
+  return [body.sourceImage?.url, ...(body.sourceImages ?? []).map((image) => image.url)];
+}
+
 /** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
 async function assertStepOrWorkflowInputsUsable(
   body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
   claims: BlockClaims,
-  /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
-  { confirmedSubmit = false }: { confirmedSubmit?: boolean } = {}
+  {
+    phase,
+    confirmedSubmit = false,
+  }: {
+    phase: GenerationInputPhase;
+    /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
+    confirmedSubmit?: boolean;
+  }
 ) {
   // The arm's own token checks first: a caller refused those never pays for the walk below.
   const userId = confirmedSubmit
@@ -10897,13 +10967,15 @@ async function assertStepOrWorkflowInputsUsable(
       : isPassThroughStepBody(body)
       ? (['appBlocksPassThrough', body.input] as const)
       : (['appBlocksStep', body.params] as const);
-  // Only a registry step declares free text in its params (`freeTextParamPaths`, pinned against
-  // its param schema). A workflow or pass-through body is read whole: there any step can `$ref`
-  // any field, so a link in a text field may be wired into an image input.
+  // A registry step declares free text in its params (`freeTextParamPaths`, pinned against its
+  // param schema); a lone pass-through step by its `$type`. A workflow is read whole: there any
+  // step can `$ref` any field, so a link in a text field may be wired into an image input.
   const freeTextPaths =
-    body.kind === 'step' && !isPassThroughStepBody(body)
-      ? getStep(body.step)?.freeTextParamPaths
-      : undefined;
+    body.kind === 'workflow'
+      ? undefined
+      : isPassThroughStepBody(body)
+      ? PASS_THROUGH_FREE_TEXT_PATHS.get(foldStepTypeCase(body.$type))
+      : getStep(body.step)?.freeTextParamPaths;
   const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs, freeTextPaths);
   if (tooDeep) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
@@ -10911,14 +10983,95 @@ async function assertStepOrWorkflowInputsUsable(
   if (tooLarge) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
   }
-  await assertGenerationInputsUsable({
-    urls,
-    userId,
-    entry,
-    isApiCaller: false,
-    opaqueInput: true,
-  });
+  try {
+    await assertGenerationInputsUsable({
+      urls,
+      userId,
+      entry,
+      isApiCaller: false,
+      opaqueInput: true,
+      appBlockLog: { appBlockId: claims.appBlockId, stepTypes: bodyStepTypes(body), phase },
+    });
+  } catch (error) {
+    if (!isAppSourcePendingError(error)) throw error;
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: (error as TRPCError).message,
+        errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
+      } satisfies BlockWorkflowSnapshot,
+    };
+  }
 }
+
+/**
+ * The source images an inline customComfy graph reads must pass the app-block source gate. Read
+ * the whole graph: a node may link a text field into an image input. A pending source returns
+ * the failed snapshot; anything else throws.
+ */
+async function checkInlineComfySources(opts: {
+  graph: ComfyGraph;
+  userId: number;
+  claims: BlockClaims;
+  phase: GenerationInputPhase;
+}): Promise<{ snapshot: BlockWorkflowSnapshot } | null> {
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(opts.graph);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'workflow graph nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'workflow graph is too large to check' });
+  }
+  try {
+    await assertGenerationInputsUsable({
+      urls,
+      userId: opts.userId,
+      entry: 'appBlocksInlineComfy',
+      isApiCaller: false,
+      opaqueInput: true,
+      appBlockLog: {
+        appBlockId: opts.claims.appBlockId,
+        stepTypes: 'customComfy',
+        phase: opts.phase,
+      },
+    });
+  } catch (error) {
+    if (!isAppSourcePendingError(error)) throw error;
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: (error as TRPCError).message,
+        errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
+      } satisfies BlockWorkflowSnapshot,
+    };
+  }
+  return null;
+}
+
+/** The step types a body runs, for a log line: a registry step's id, else each `$type`. */
+function bodyStepTypes(body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>) {
+  if (body.kind === 'step' && !isPassThroughStepBody(body)) return body.step;
+  const steps = body.kind === 'workflow' ? body.steps : [body];
+  return steps.map((step) => foldStepTypeCase(step.$type)).join(',');
+}
+
+/**
+ * Free-text fields of a pass-through step's orchestrator input, by case-folded `$type`: text the
+ * orchestrator never fetches (message text, tool schemas). A media part beside them is still read.
+ */
+const PASS_THROUGH_FREE_TEXT_PATHS: ReadonlyMap<string, readonly string[]> = new Map([
+  [
+    'chatcompletion',
+    [
+      'messages[].content',
+      'messages[].tool_calls.**',
+      'tools[].function.**',
+      'tools[].parameters.**',
+    ],
+  ],
+]);
 
 /**
  * Settle-time observability labels for a pass-through submit.
@@ -12550,6 +12703,10 @@ async function submitPassThroughStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  await auditPassThroughPrompts({
+    ...passThroughAuditContext(claims, userId, isGreen),
+    steps: [body],
+  });
   // A pass-through body carries no `accountType` (its `.strict()` wire shape has
   // no such field), so currency selection is Auto — the domain-allowed set,
   // drained blue-first.
@@ -13213,6 +13370,10 @@ async function submitMultiStepWorkflow(opts: {
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  await auditPassThroughPrompts({
+    ...passThroughAuditContext(claims, userId, isGreen),
+    steps: prepared.steps,
+  });
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
@@ -14009,7 +14170,7 @@ type QuotedGrantSubmitArm = {
   /** Extra fields on the submit-failure log line. */
   logFields: Record<string, unknown>;
   /** Kind refusals that must run before anything costs something (after the gate). */
-  preflight?: () => void;
+  preflight?: (auth: QuotedGrantAuth) => void | Promise<void>;
   /**
    * The orchestrator `externalId` this job is submitted under, and what a DEFINITE
    * submit records. Computed before the replay claim.
@@ -14048,7 +14209,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
   const copy = QUOTED_GRANT_COPY[arm.kind];
   const auth = await assertQuotedGrantRequestAllowed(arm.kind, claims, ctx);
   const { userId } = auth;
-  arm.preflight?.();
+  await arm.preflight?.(auth);
   const quoteId = arm.quoteId;
   if (!quoteId) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: arm.missingQuoteMessage });
@@ -14661,10 +14822,15 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
       generationType: resolveBlockGenerationType(body),
       logFields: { stepType: body.$type },
       // Before anything that costs something: the platform denylist (the same rule as
-      // the unconfirmed arm), then no training `$type` through this door.
-      preflight: () => {
+      // the unconfirmed arm), then no training `$type` through this door, then the prompt gate.
+      preflight: async ({ userId }) => {
         assertPassThroughStepTypeAllowed(body.$type, body.input);
         assertNotTrainingStepType(body.$type);
+        const { isGreen } = resolveBlockMaturity(claims);
+        await auditPassThroughPrompts({
+          ...passThroughAuditContext(claims, userId, isGreen),
+          steps: [body],
+        });
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -14888,6 +15054,15 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
   }
 }
 
+function passThroughAuditContext(claims: BlockClaims, userId: number, isGreen: boolean) {
+  return {
+    userId,
+    appBlockId: claims.appBlockId,
+    isGreen,
+    loadIsModerator: async () => !!(await getBlockSessionUser(userId)).isModerator,
+  };
+}
+
 /** A `kind:'training'` body as the one training step the trigger-word rule reads. */
 function trainingBodyTriggerWordSteps(body: BlockTrainingBody) {
   return [{ $type: 'training', input: { triggerWord: body.triggerWord } }];
@@ -14925,6 +15100,13 @@ async function submitTrainingWorkflow(opts: {
       bodyHash: async () => hashTrainingBody(body),
       generationType: resolveBlockGenerationType(body),
       logFields: {},
+      preflight: async ({ userId }) => {
+        const { isGreen } = resolveBlockMaturity(claims);
+        await auditTrainingSamplePrompts({
+          ...passThroughAuditContext(claims, userId, isGreen),
+          samplePrompts: body.samplePrompts,
+        });
+      },
       runIdentity: async (auth) => {
         const owner = { userId: auth.userId, appBlockId: claims.appBlockId };
         return {

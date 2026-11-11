@@ -166,6 +166,9 @@ function seed(...table: Row[]) {
       r && { id: r.id, metadata: r.metadata, type: r.type, userId: r.userId, sourceId: r.sourceId }
     );
   });
+  // Every block here points at a Public collection; who may read a collection is
+  // home-block-collection-audience.test.ts's subject.
+  dbMock.dbRead.collection.findUnique.mockResolvedValue({ read: 'Public', userId: -1 } as never);
   // userHasCustomHomeBlocks: `... WHERE hb."userId"=${userId}`
   dbMock.dbRead.$queryRaw.mockImplementation(async (_s: unknown, userId: number) => [
     { exists: rows.some((r) => r.userId === userId) },

@@ -1,5 +1,6 @@
 import { logger } from '@/utils/logger';
 import { MixedStampError } from '../embedder';
+import { recordFlush, timeEmbeds, vectorSyncMetrics } from '../metrics';
 import { ModelMismatchError, type VectorStore } from '../qdrant';
 import {
   syncIds,
@@ -89,13 +90,15 @@ export class SyncLane<P extends DomainPayload> {
       // cannot stamp it differently.
       const embed = !!this.deps.embedder && !this.gateBlocked && (await this.refreshStamp());
       const started = Date.now();
-      const stats = await syncIds(
-        this.domain.getDocs,
-        ids,
-        embed ? this.deps : { ...this.deps, embedder: null }
-      );
+      const { embedder } = this.deps;
+      const stats = await syncIds(this.domain.getDocs, ids, {
+        ...this.deps,
+        embedder: embed && embedder ? timeEmbeds(this.domain.name, embedder) : null,
+      });
+      recordFlush(this.domain.name, stats);
       logger.info({ ids: ids.length, ms: Date.now() - started, ...stats }, `${this.log}: flushed`);
     } catch (err) {
+      vectorSyncMetrics.flushErrors.inc({ domain: this.domain.name });
       for (const id of ids) this.pending.add(id);
       for (const c of children) this.children.add(c);
       if (err instanceof ModelMismatchError || err instanceof MixedStampError) {
