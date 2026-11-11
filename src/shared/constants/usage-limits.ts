@@ -16,7 +16,9 @@ export type UsageLimitWindow =
   | { type: 'rolling'; seconds: number }
   /** Calendar windows in UTC. Not countable in a rate-limit bucket: the limit's owner counts them. */
   | { type: 'utc-day' }
-  | { type: 'utc-month' };
+  | { type: 'utc-month' }
+  /** A standing allowance with no window (storage held): it frees up only when usage drops. */
+  | { type: 'standing' };
 
 export const usageLimitTiers = ['free', 'founder', 'bronze', 'silver', 'gold'] as const;
 export type UsageLimitTier = (typeof usageLimitTiers)[number];
@@ -273,6 +275,62 @@ export const usageLimitDefs = [
       `You've claimed your ${numberWithCommas(limit)} ${
         limit === 1 ? 'gift' : 'gifts'
       } for this month. To get this one, reach out to the person who gave you the link.`,
+  },
+  // ── Per-user App Platform caps, by membership tier. Read ONLY through `resolveUserAppCaps`
+  // (`server/services/blocks/user-app-caps.service.ts`), which both enforcement and the
+  // account Limits section call, so the two cannot disagree. Never `rateLimit()` rules.
+  //
+  // The per-tier table. Free is `base` (the doc store's `userBytes` / `userDocs` for storage);
+  // Founder, a legacy paid
+  // tier with no row in the table, gets Bronze's. Change a value with a `byTier` override in the
+  // `usage-limits` KeyValue row, no deploy needed (an override's `byTier` replaces this one whole,
+  // so it repeats every tier it keeps). `kind: 'abuse'` so an override can raise or lower these
+  // but never `disabled` them (an unbounded spend or storage ceiling).
+  {
+    // Buzz spent through apps per UTC day, across all of a user's apps. Opting in to continue on
+    // your own Buzz raises it to `OPT_IN_MULTIPLIER` (2) times this for the rest of the UTC day.
+    id: 'apps.buzz-daily',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Daily Buzz cap across apps',
+    window: { type: 'utc-day' },
+    base: 50_000,
+    byTier: {
+      founder: { limit: 75_000 },
+      bronze: { limit: 75_000 },
+      silver: { limit: 100_000 },
+      gold: { limit: 200_000 },
+    },
+  },
+  {
+    // Bytes one user may hold in one app.
+    id: 'apps.storage-bytes',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Storage per app',
+    window: { type: 'standing' },
+    base: 2 * 1024 * 1024,
+    byTier: {
+      founder: { limit: 4 * 1024 * 1024 },
+      bronze: { limit: 4 * 1024 * 1024 },
+      silver: { limit: 8 * 1024 * 1024 },
+      gold: { limit: 16 * 1024 * 1024 },
+    },
+  },
+  {
+    // Documents one user may hold in one app.
+    id: 'apps.storage-docs',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Documents per app',
+    window: { type: 'standing' },
+    base: 1_000,
+    byTier: {
+      founder: { limit: 2_000 },
+      bronze: { limit: 2_000 },
+      silver: { limit: 5_000 },
+      gold: { limit: 10_000 },
+    },
   },
 ] as const satisfies readonly UsageLimitDef[];
 

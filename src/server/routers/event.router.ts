@@ -14,6 +14,7 @@ import {
   wornEventHatSchema,
 } from '~/server/schema/event.schema';
 import { markEventPointsWatched } from '~/server/events/points/watch.service';
+import { eventUserOf, eventViewerOf } from '~/server/events/event-viewer';
 import {
   activateEventCosmetic,
   donate,
@@ -52,7 +53,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 // never cached, at the edge or in Redis, where someone else could be served it.
 const eventGate = middleware(async ({ ctx, input, next }) => {
   const { event } = input as EventInput;
-  const access = await getViewerEventAccess({ event, viewer: ctx.user });
+  const access = await getViewerEventAccess({ event, viewer: eventViewerOf(ctx) });
   if (access === 'closed') throw throwNotFoundError("That event doesn't exist");
   if (!ctx.cache || !ctx.user) return next();
   if ((await getViewerEventAccess({ event, viewer: undefined })) === access) return next();
@@ -70,25 +71,25 @@ export const eventRouter = router({
   getAccess: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getViewerEventAccess({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) => getViewerEventAccess({ ...input, viewer: eventViewerOf(ctx) })),
   // The nav strips for events this viewer can play. Seeded by the settings bootstrap; see
   // nav-banner.service.ts for why it never reads cookies.
   getNavBanners: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
-    .query(({ ctx }) => getNavBanners({ viewer: ctx.user })),
+    .query(({ ctx }) => getNavBanners({ viewer: eventViewerOf(ctx) })),
   getData: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .use(eventGate)
     // .use(edgeCacheIt({ ttl: CacheTTL.lg }))
-    .query(({ ctx, input }) => getEventData({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) => getEventData({ ...input, viewer: eventViewerOf(ctx) })),
   getTeamScores: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ ctx, input }) =>
-      getTeamScores({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+      getTeamScores({ ...input, viewer: eventViewerOf(ctx), onDegraded: () => skipEdgeCache(ctx) })
     ),
   getTeamScoreHistory: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -96,28 +97,32 @@ export const eventRouter = router({
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ ctx, input }) =>
-      getTeamScoreHistory({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+      getTeamScoreHistory({
+        ...input,
+        viewer: eventViewerOf(ctx),
+        onDegraded: () => skipEdgeCache(ctx),
+      })
     ),
   getCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getEventCosmetic({ user: ctx.user, ...input })),
+    .query(({ ctx, input }) => getEventCosmetic({ user: eventUserOf(ctx), ...input })),
   getPartners: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.day }))
-    .query(({ ctx, input }) => getEventPartners({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) => getEventPartners({ ...input, viewer: eventViewerOf(ctx) })),
   getRewards: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.lg }))
-    .query(({ ctx, input }) => getEventRewards({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) => getEventRewards({ ...input, viewer: eventViewerOf(ctx) })),
   activateCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(eventSchema)
-    .mutation(({ ctx, input }) => activateEventCosmetic({ user: ctx.user, ...input })),
+    .mutation(({ ctx, input }) => activateEventCosmetic({ user: eventUserOf(ctx), ...input })),
   donate: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialTip, blockApiKeys: true })
     .input(eventSchema.extend({ amount: z.number() }))
@@ -138,32 +143,40 @@ export const eventRouter = router({
         tags: () => ['event-donors'],
       })
     )
-    .query(({ ctx, input }) => getEventContributors({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) => getEventContributors({ ...input, viewer: eventViewerOf(ctx) })),
   getStandings: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ ctx, input }) =>
-      getEventStandings({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+      getEventStandings({
+        ...input,
+        viewer: eventViewerOf(ctx),
+        onDegraded: () => skipEdgeCache(ctx),
+      })
     ),
   getHatCatalog: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.lg }))
-    .query(({ ctx, input }) => getEventHatCatalog({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) => getEventHatCatalog({ ...input, viewer: eventViewerOf(ctx) })),
   getMyCosmeticScores: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getMyEventCosmeticScores({ user: ctx.user, ...input })),
+    .query(({ ctx, input }) => getMyEventCosmeticScores({ user: eventUserOf(ctx), ...input })),
   getCosmeticScores: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventCosmeticScoresSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ ctx, input }) =>
-      getEventCosmeticScores({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+      getEventCosmeticScores({
+        ...input,
+        viewer: eventViewerOf(ctx),
+        onDegraded: () => skipEdgeCache(ctx),
+      })
     ),
   // The hat on one card, read when its popover opens. The same for every viewer who sees the event.
   // Short-lived at the edge: its points are a live total, and an open popover only moves on pushes.
@@ -173,21 +186,25 @@ export const eventRouter = router({
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ ctx, input }) =>
-      getWornEventHat({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+      getWornEventHat({
+        ...input,
+        viewer: eventViewerOf(ctx),
+        onDegraded: () => skipEdgeCache(ctx),
+      })
     ),
   // The caller's own hats and content: per user, so never cached.
   getMyHats: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getMyEventHats({ user: ctx.user, ...input })),
+    .query(({ ctx, input }) => getMyEventHats({ user: eventUserOf(ctx), ...input })),
   getPlaceableContent: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getPlaceableEventContent({ user: ctx.user, ...input })),
+    .query(({ ctx, input }) => getPlaceableEventContent({ user: eventUserOf(ctx), ...input })),
   getPlaceableContentPage: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(placeableContentPageSchema)
-    .query(({ ctx, input }) => getPlaceableEventContentPage({ user: ctx.user, ...input })),
+    .query(({ ctx, input }) => getPlaceableEventContentPage({ user: eventUserOf(ctx), ...input })),
   // Marks live point topics as on screen, so the pusher sends them (events/points/watch.ts). Called on
   // view and every 30s while in view; no Postgres on this path. A page refreshing its sections makes
   // about 6 a minute, plus one per section scrolled into view and one per 50 hats; anonymous viewers
@@ -196,7 +213,7 @@ export const eventRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(watchEventPointsSchema)
     .use(rateLimit({ limit: 60, period: 60 }))
-    .mutation(({ ctx, input }) => markEventPointsWatched(input, ctx.user)),
+    .mutation(({ ctx, input }) => markEventPointsWatched(input, eventViewerOf(ctx))),
   // One page of a team's roster: only members who opted in. The same for every viewer who sees the
   // event, so short-lived at the edge; cards then move on pushes.
   getTeamRoster: publicProcedure
@@ -204,31 +221,31 @@ export const eventRouter = router({
     .input(teamRosterSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(({ ctx, input }) => getTeamRoster({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) => getTeamRoster({ ...input, viewer: eventViewerOf(ctx) })),
   getMyRosterStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getMyRosterStatus({ user: ctx.user, ...input })),
+    .query(({ ctx, input }) => getMyRosterStatus({ user: eventUserOf(ctx), ...input })),
   setRosterOptIn: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(rosterOptInSchema)
     .use(rateLimit({ limit: 20, period: 60 }))
-    .mutation(({ ctx, input }) => setRosterOptIn({ user: ctx.user, ...input })),
+    .mutation(({ ctx, input }) => setRosterOptIn({ user: eventUserOf(ctx), ...input })),
   getMyShowcaseHat: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getMyShowcaseHat({ user: ctx.user, ...input })),
+    .query(({ ctx, input }) => getMyShowcaseHat({ user: eventUserOf(ctx), ...input })),
   getMyShowcaseHatArt: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getMyShowcaseHatArt({ user: ctx.user, ...input })),
+    .query(({ ctx, input }) => getMyShowcaseHatArt({ user: eventUserOf(ctx), ...input })),
   setShowcaseHat: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(showcaseHatSchema)
     .use(rateLimit({ limit: 20, period: 60 }))
-    .mutation(({ ctx, input }) => setShowcaseHat({ user: ctx.user, ...input })),
+    .mutation(({ ctx, input }) => setShowcaseHat({ user: eventUserOf(ctx), ...input })),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getUserRank({ user: ctx.user, ...input })),
+    .query(({ ctx, input }) => getUserRank({ user: eventUserOf(ctx), ...input })),
 });

@@ -195,6 +195,50 @@ describe('image.getInfinite on a held model', () => {
     }
   );
 
+  it.each([
+    ['a session', {}, 7],
+    [
+      'a full-access key',
+      {
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 1 },
+        tokenScope: TokenScope.Full,
+      },
+      7,
+    ],
+    [
+      'a scoped key',
+      {
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 1 },
+        tokenScope: TokenScope.ModelsRead,
+      },
+      undefined,
+    ],
+    ['an app', { subject: { type: 'oauth', id: 'app' } }, undefined],
+  ])(
+    'shows a hub viewer their own taken-down models on %s only if it is a full credential',
+    async (_name, credential, ownerId) => {
+      heldLevel.mockResolvedValue(undefined);
+      const input = { limit: 10, include: [], browsingLevel: allBrowsingLevelsFlag, hubId: 3 };
+
+      await getInfiniteImagesHandler({
+        input: input as never,
+        ctx: {
+          ...ctx(true),
+          features: { imageIndexFeed: true, userHubs: true },
+          ...credential,
+        } as unknown as Context,
+      });
+
+      expect(getAllImagesIndex).toHaveBeenCalledWith(
+        expect.objectContaining({ galleryOwnerId: ownerId })
+      );
+    }
+  );
+
   it('holds a signed-out viewer', async () => {
     heldLevel.mockResolvedValue(NsfwLevel.PG);
     const input = {

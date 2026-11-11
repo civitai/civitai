@@ -570,11 +570,34 @@ export type TriggerReviewBuildArgs = {
 };
 
 /**
+ * Whether a review build should publish its preview to the shared static server itself, with no
+ * per-preview image: both `app-blocks-review-direct-publish` and `app-blocks-review-shared-server`
+ * are on (a direct publish only exists on the shared server). Any flag-read error is OFF.
+ */
+export async function isReviewDirectPublishOn(): Promise<boolean> {
+  try {
+    const { isAppBlocksReviewDirectPublishEnabled, isAppBlocksReviewSharedServerEnabled } =
+      await import('~/server/services/app-blocks-flag');
+    const [direct, shared] = await Promise.all([
+      isAppBlocksReviewDirectPublishEnabled(),
+      isAppBlocksReviewSharedServerEnabled(),
+    ]);
+    return direct === true && shared === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Trigger a REVIEW build on the app-blocks-trigger receiver. Mirrors
  * {@link triggerBuild} exactly — same HMAC secret, same signed-body shape with
  * an integer `ts` for replay-freshness — but POSTs to the review endpoint and
  * carries `mode:'review'` + the publishRequestId + modUserId so the receiver
  * creates a review-labelled PipelineRun that builds from the in-review repo.
+ *
+ * With {@link isReviewDirectPublishOn} the body also carries `directPublish: true`: the build
+ * then publishes the preview itself and pushes no image. Off, the body is byte-for-byte the
+ * body it was before the field existed.
  */
 export async function triggerReviewBuild(args: TriggerReviewBuildArgs): Promise<{ name: string }> {
   const url = resolveReviewTriggerUrl(
@@ -586,6 +609,7 @@ export async function triggerReviewBuild(args: TriggerReviewBuildArgs): Promise<
     throw new Error('APPS_TEKTON_TRIGGER_SECRET not configured');
   }
 
+  const directPublish = await isReviewDirectPublishOn();
   const ts = Math.floor(Date.now() / 1000);
   const body = JSON.stringify({
     mode: 'review',
@@ -594,6 +618,7 @@ export async function triggerReviewBuild(args: TriggerReviewBuildArgs): Promise<
     publishRequestId: args.publishRequestId,
     modUserId: args.modUserId,
     callbackUrl: args.callbackUrl,
+    ...(directPublish ? { directPublish: true } : {}),
     ts,
   });
   const sig = createHmac('sha256', secret).update(body).digest('hex');

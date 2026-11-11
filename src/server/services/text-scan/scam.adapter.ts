@@ -8,8 +8,6 @@ import type { TextScanOutcome, TextScanSubject } from '~/server/services/text-sc
 
 export const SCAM_ENTITY_TYPES = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'ResourceReview',
   'User',
@@ -20,11 +18,7 @@ export const SCAM_TRIGGER_TEXT_CHARS = 2000;
 
 const SCAM_CLEANUP: Record<ScamEntityType, ScamCleanup> = {
   ChatMessage: 'chatMessages',
-  // A verdict on a scan from before the model flip; the author's model comments are CommentV3 now.
-  Comment: 'commentsV2',
-  CommentV2: 'commentsV2',
-  // The commentsV2 cleanup also hides the author's comments on CommentV3-write surfaces.
-  CommentV3: 'commentsV2',
+  CommentV3: 'comments',
   ResourceReview: 'none',
   User: 'none',
   UserProfile: 'none',

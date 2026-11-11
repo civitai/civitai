@@ -34,7 +34,7 @@ describe('searchFetch with siteSearchProxy on', () => {
     respond(200, { results: [] });
     await searchFetch('http://localhost/api/search/multi-search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer public-key' },
     });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('/api/search/multi-search');
@@ -60,18 +60,40 @@ describe('searchFetch with siteSearchProxy on', () => {
 describe('searchFetch with siteSearchProxy off (the kill switch)', () => {
   it('goes straight to Meilisearch with the viewer key, not through /api/search', async () => {
     vi.stubGlobal('fetch', fetchMock);
-    respond(200, { token: null }); // the token endpoint: no signing key, so the public key
+    respond(200, { token: 'tok-1', expiresAt: Date.now() + 3_600_000 });
     respond(200, { results: [] });
     await searchFetch('http://localhost/api/search/multi-search', { method: 'POST' });
 
     const [url, init] = fetchMock.mock.calls[1];
     expect(url).toBe('http://search.test/multi-search');
-    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer public-key');
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer tok-1');
+  });
+
+  it.each([
+    ['the server mints no token', () => respond(200, { token: null })],
+    ['the token endpoint fails', () => respond(500, { message: 'down' })],
+    [
+      'the token endpoint is unreachable',
+      () => fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch')),
+    ],
+  ])('searches through /api/search with no key when %s', async (_label, tokenResponse) => {
+    vi.stubGlobal('fetch', fetchMock);
+    tokenResponse();
+    respond(200, { results: [] });
+    await searchFetch('http://localhost/api/search/multi-search', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer public-key' },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2); // the token route, then the proxy only
+    const [url, init] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe('/api/search/multi-search');
+    expect(new Headers(init.headers).get('Authorization')).toBeNull();
   });
 
   it('switches back to the proxy on the next request once the flag turns on', async () => {
     vi.stubGlobal('fetch', fetchMock);
-    respond(200, { token: null });
+    respond(200, { token: 'tok-1', expiresAt: Date.now() + 3_600_000 });
     respond(200, { results: [] });
     await searchFetch('/api/search/multi-search', { method: 'POST' });
 

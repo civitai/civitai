@@ -7,6 +7,7 @@ import type { BuzzLimit } from '~/server/schema/api-key.schema';
 import { allowsModeratorWriteKeys, isSystemAccountMeta } from '@civitai/auth';
 import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
 import { holdsModeratorAccess } from '~/server/auth/moderator-access';
+import { isOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import {
   CLIENT_CREDENTIALS_ONLY_SCOPES,
@@ -33,6 +34,9 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   // A per-provider download token (`<provider>:<secret>`) is accepted by the download route alone
   // and never stands for a session. No API key contains `:`.
   if (key.includes(':')) return null;
+  // The orchestrator service token is not an API key; answer as for any unknown key without the
+  // lookup.
+  if (isOrchestratorServiceToken(key.trim())) return null;
   const token = generateSecretHash(key.trim());
 
   const now = new Date();

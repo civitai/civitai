@@ -46,6 +46,9 @@ import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import {
   assertFileTypeChangeAllowed,
+  scanResetForTypeChange,
+  scanResetWriteGuard,
+  TRAINING_DATA_SCAN_PENDING_MESSAGE,
   assertVersionAcceptsNewUpload,
 } from '~/server/utils/model-file-replace';
 import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
@@ -315,11 +318,20 @@ export async function updateFile({
   const { count } = await dbWrite.modelFile.updateMany({
     // A sent type writes only over the type `typeChanged` was judged against: an edit from a stale
     // tab would otherwise change it back with no bust.
-    where: { id, ...(inputData.type !== undefined && { type: modelFile.type }) },
-    data: { ...inputData, metadata },
+    where: {
+      id,
+      ...(inputData.type !== undefined && { type: modelFile.type }),
+      ...scanResetWriteGuard(modelFile, inputData.type),
+    },
+    data: { ...inputData, metadata, ...scanResetForTypeChange(modelFile, inputData.type) },
   });
-  // Replaced, deleted or retyped since the lookup above: nothing was written.
-  if (count === 0) throw throwNotFoundError();
+  // Replaced, deleted or retyped since the lookup above, or a new verdict on a relabel: nothing was
+  // written.
+  if (count === 0) {
+    if (Object.keys(scanResetWriteGuard(modelFile, inputData.type)).length)
+      throw throwBadRequestError(TRAINING_DATA_SCAN_PENDING_MESSAGE);
+    throw throwNotFoundError();
+  }
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
   // GenerationCoverage decides by file type, so the version's cached coverage is stale.
   if (typeChanged)
@@ -357,6 +369,7 @@ const replaceableFileSelect = {
   metadata: true,
   modelVersionId: true,
   sizeKB: true,
+  virusScanResult: true,
   modelVersion: {
     select: {
       modelId: true,

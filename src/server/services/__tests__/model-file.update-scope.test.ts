@@ -121,6 +121,7 @@ function withFile(
     type?: string;
     metadata?: Record<string, unknown>;
     uploadType?: string;
+    virusScanResult?: string;
     lockedAs?: Partial<VersionState>;
   } = {}
 ) {
@@ -133,6 +134,7 @@ function withFile(
     ...FILE,
     type: overrides.type ?? FILE.type,
     metadata: overrides.metadata ?? FILE.metadata,
+    virusScanResult: overrides.virusScanResult ?? 'Success',
     modelVersion: {
       ...FILE.modelVersion,
       status,
@@ -616,11 +618,90 @@ describe('a file type change to or from training data on a trained version', () 
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
   });
 
-  it("lets an uploaded model's owner relabel training data as another type", async () => {
+  it("lets an uploaded model's owner relabel scanned training data, which the model-file scan then takes", async () => {
     withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
 
     await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).resolves.toMatchObject({ id: 1 });
+    // Training Data had only a virus scan; as another type it needs the full one.
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data).toMatchObject({
+      type: 'Other',
+      virusScanResult: 'Pending',
+      pickleScanResult: 'Pending',
+      scanRequestedAt: null,
+      scannedAt: null,
+    });
+    // Prisma refuses a bare null for a Json column.
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data.rawScanResult).toBe(
+      Prisma.JsonNull
+    );
   });
+
+  it('leaves a Danger that landed after the relabel read it as clean', async () => {
+    withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
+    // The stored row turned Danger after the lookup: only a write that names Success misses it.
+    dbMock.dbWrite.modelFile.updateMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { virusScanResult?: string };
+    }) => ({ count: where.virusScanResult === 'Success' ? 0 : 1 })) as never);
+
+    await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).rejects.toThrow(
+      "Training data can't be changed to another type until its security scan completes."
+    );
+  });
+
+  it('keeps the scan of training data edited with its own type sent again', async () => {
+    withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
+
+    await updateFile({ id: 1, type: 'Training Data', userId: 7 });
+
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data).not.toHaveProperty(
+      'virusScanResult'
+    );
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].where).not.toHaveProperty(
+      'virusScanResult'
+    );
+  });
+
+  it('keeps the scan of training data edited without a new type', async () => {
+    withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
+
+    await updateFile({ id: 1, metadata: { fp: 'fp16' }, userId: 7 });
+
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data).not.toHaveProperty(
+      'virusScanResult'
+    );
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].where).not.toHaveProperty(
+      'virusScanResult'
+    );
+  });
+
+  it('keeps the scan of a model file relabelled as another type', async () => {
+    withFile({ type: 'Model', uploadType: 'Created', trainingStatus: null });
+
+    await updateFile({ id: 1, type: 'Other', userId: 7 });
+
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data).not.toHaveProperty(
+      'virusScanResult'
+    );
+  });
+
+  it.each(['Pending', 'Error', 'Danger'])(
+    'refuses relabeling training data whose scan is %s, which would serve it unscanned',
+    async (virusScanResult) => {
+      withFile({
+        type: 'Training Data',
+        uploadType: 'Created',
+        trainingStatus: null,
+        virusScanResult,
+      });
+
+      await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).rejects.toThrow(
+        "Training data can't be changed to another type until its security scan completes."
+      );
+      expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    }
+  );
 });
 
 // The domain stamp gates which domain a paid training submit may run under; it is the server's.

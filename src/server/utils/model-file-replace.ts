@@ -1,7 +1,9 @@
+import { Prisma } from '@prisma/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDatasetEditable } from '~/shared/constants/training.constants';
 import type { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelUploadType, ScanResultCode } from '~/shared/utils/prisma/enums';
+import { unscannedFile } from '~/utils/file-helpers';
 
 // A version that has been out in the world (or is about to be) keeps its files; new bytes go in a
 // new version. Unpublished counts, since publishing it again brings back what it had.
@@ -45,6 +47,7 @@ export function assertVersionAcceptsNewUpload(version: UploadTarget, fileType: s
 export function assertFileTypeChangeAllowed(
   file: {
     type: string;
+    virusScanResult: ScanResultCode;
     modelVersion: { uploadType: ModelUploadType; trainingStatus: TrainingStatus | null };
   },
   nextType: string | undefined
@@ -60,4 +63,29 @@ export function assertFileTypeChangeAllowed(
       file.modelVersion.trainingStatus != null)
   )
     throw throwBadRequestError("A file can't be changed to or from training data.");
+  if (file.type === 'Training Data' && file.virusScanResult !== ScanResultCode.Success)
+    throw throwBadRequestError(TRAINING_DATA_SCAN_PENDING_MESSAGE);
 }
+
+export const TRAINING_DATA_SCAN_PENDING_MESSAGE =
+  "Training data can't be changed to another type until its security scan completes.";
+
+/**
+ * The scan fields to write with a type change. Training Data has only had a virus scan, so a file
+ * relabelled away from it goes back to unscanned, and the model-file scan picks it up as its new type.
+ */
+export function scanResetForTypeChange(file: { type: string }, nextType: string | undefined) {
+  // A Json column takes Prisma.JsonNull, never a bare null.
+  return resetsScan(file, nextType) ? { ...unscannedFile, rawScanResult: Prisma.JsonNull } : {};
+}
+
+/**
+ * The condition a type change's write must add: the reset may only replace the Success it was
+ * judged on, never a verdict that landed since.
+ */
+export function scanResetWriteGuard(file: { type: string }, nextType: string | undefined) {
+  return resetsScan(file, nextType) ? { virusScanResult: ScanResultCode.Success } : {};
+}
+
+const resetsScan = (file: { type: string }, nextType: string | undefined) =>
+  file.type === 'Training Data' && !!nextType && nextType !== file.type;

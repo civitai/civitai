@@ -12,6 +12,7 @@ import type {
   GetVotableTagsSchema,
   RemoveTagVotesSchema,
 } from '~/server/schema/tag.schema';
+import { canViewerOpenModel } from '~/server/services/model-visibility.service';
 import { getHomeExcludedTags } from '~/server/services/system-cache';
 import {
   addTags,
@@ -34,10 +35,15 @@ export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTag
   }
 };
 
+type TagListItem = Awaited<ReturnType<typeof getTags>>['items'][number];
+
 export const getAllTagsHandler = async ({ input, ctx }: { input?: GetTagsInput; ctx: Context }) => {
   try {
     const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
     const { take, skip } = getPagination(limit, page);
+
+    if (input?.modelId && !(await canViewerOpenModel(input.modelId, ctx.user)))
+      return getPagingData({ items: [] as TagListItem[] }, take, page);
 
     const results = await getTags({
       ...input,

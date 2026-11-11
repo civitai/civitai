@@ -100,12 +100,15 @@ export const getUserWithProfile = async ({
   id,
   isModerator,
   sessionUserId,
-  eventViewer = { id: sessionUserId, isModerator },
+  eventViewer = { id: sessionUserId },
   domain,
 }: GetUserProfileSchema & {
   isModerator?: boolean;
   sessionUserId?: number;
-  /** Who the event preview gate is asked about; the request's `eventViewerOf` where there is one. */
+  /**
+   * Who the event preview gate is asked about: the request's `eventViewerOf`. Without one it is the
+   * session user as a non-moderator, never `isModerator`, which a scoped token may carry.
+   */
   eventViewer?: EventViewer;
   domain?: ColorDomain;
 }) => {

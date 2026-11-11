@@ -242,15 +242,15 @@ describe('toBatchImage', () => {
     objectUrl: 'blob:1',
   } as unknown as UploadedMedia;
 
-  it('merges extra resources without duplicating ones already in the metadata', () => {
-    const image = toBatchImage(media, [1, 2]);
-    expect(image.meta?.civitaiResources).toEqual([{ modelVersionId: 1 }, { modelVersionId: 2 }]);
+  it('passes the file’s own metadata through unchanged', () => {
+    const image = toBatchImage(media);
+    expect(image.meta).toEqual({ prompt: 'x', civitaiResources: [{ modelVersionId: 1 }] });
     expect(image.url).toBe('abc-key');
     expect(image.width).toBe(10);
   });
 
   it('sends no meta when there is none', () => {
-    const image = toBatchImage({ ...media, meta: undefined } as UploadedMedia, []);
+    const image = toBatchImage({ ...media, meta: undefined } as UploadedMedia);
     expect(image.meta).toBeUndefined();
   });
 });

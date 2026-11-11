@@ -23,27 +23,34 @@ export function ResourceReviewCarousel({
   userId,
   modelVersionId,
   reviewId,
+  postId,
 }: {
   userId: number;
   modelVersionId: number;
   reviewId: number;
+  postId: number | null;
 }) {
   const mobile = useContainerSmallerThan('md');
   const features = useFeatureFlags();
 
   // today, typescript was not cool.
   // functions will only check extra parameters if it's fresh
-  const filters: GetInfiniteImagesInput = {
-    userId,
-    modelVersionId,
-    sort: ImageSort.MostReactions,
-    period: MetricTimeframe.AllTime,
-    limit: 10,
-  };
+  const filters: GetInfiniteImagesInput = postId
+    ? { postId, modelVersionId, period: MetricTimeframe.AllTime, limit: 10 }
+    : {
+        userId,
+        modelVersionId,
+        sort: ImageSort.MostReactions,
+        period: MetricTimeframe.AllTime,
+        limit: 10,
+      };
 
   const { data, images, isLoading } = useQueryImages(filters);
 
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
+  const viewMoreHref = postId
+    ? `/posts/${postId}`
+    : `/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`;
 
   const totalItems = images.length + (viewMore ? 1 : 0);
   const slidesToShow = mobile ? 1 : 2;
@@ -138,7 +145,7 @@ export function ResourceReviewCarousel({
                     <div className="aspect-square w-full max-w-[450px]">
                       <Button
                         component={Link}
-                        href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`}
+                        href={viewMoreHref}
                         rel="nofollow"
                         variant="outline"
                         fullWidth
@@ -156,7 +163,9 @@ export function ResourceReviewCarousel({
         )}
 
         <Text size="xs" c="dimmed" mt="xs" mb="-xs">
-          Images this user generated with this resource
+          {postId
+            ? "Images from this review's post"
+            : 'Images this user generated with this resource'}
         </Text>
       </Container>
     </div>

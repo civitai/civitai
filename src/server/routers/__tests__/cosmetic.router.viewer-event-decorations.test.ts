@@ -38,6 +38,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 const decoration = (entity: string, id: number) => ({
   id: 90,
@@ -50,12 +51,17 @@ const decoration = (entity: string, id: number) => ({
   userId: 5,
 });
 
-function callerFor(user: { id: number } | undefined, cache = { edgeTTL: 0, browserTTL: 0 }) {
+function callerFor(
+  user: { id: number; isModerator?: boolean } | undefined,
+  cache = { edgeTTL: 0, browserTTL: 0 },
+  credential: Record<string, unknown> = {}
+) {
   return cosmeticRouter.createCaller({
     user,
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
+    ...credential,
     req: { headers: {} },
     res: { setHeader: () => undefined },
     cache,
@@ -96,6 +102,28 @@ describe('cosmetic.getViewerEventDecorations', () => {
     expect(decorationFetch[entityType]).toHaveBeenCalledWith([1, 2, 3], expect.anything());
     // Only the worn ids are checked for visibility.
     expect(publicFetch[entityType]).toHaveBeenCalledWith([1, 2]);
+  });
+
+  // A moderator is in every flag audience, but only on a session or a full-access key (eventViewerOf).
+  it.each([
+    ['a session', {}, true],
+    [
+      'a scoped token',
+      {
+        apiKeyId: 9,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey', id: 9 },
+        tokenScope: TokenScope.MediaRead,
+      },
+      false,
+    ],
+  ])('asks the hat gate about a moderator on %s', async (_label, credential, isModerator) => {
+    await callerFor(
+      { id: UNFLAGGED, isModerator: true },
+      undefined,
+      credential
+    ).getViewerEventDecorations({ entityType: 'Image', ids: [1] });
+    expect(visibleEvents).toHaveBeenCalledWith('Image', { id: UNFLAGGED, isModerator });
   });
 
   it('gives a signed-in viewer the flag is off for nothing', async () => {

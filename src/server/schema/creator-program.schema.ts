@@ -41,6 +41,14 @@ export const compensationPoolInputSchema = z.object({
   month: z.date().optional(),
 });
 
+export type GetCashTransactionsInput = z.infer<typeof getCashTransactionsSchema>;
+export const getCashTransactionsSchema = z.object({
+  userId: z.number().int().positive(),
+  accountType: z.enum(['cashPending', 'cashSettled']),
+  cursor: z.date().optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+});
+
 export type ModCashAdjustmentInput = z.infer<typeof modCashAdjustmentSchema>;
 export const modCashAdjustmentSchema = z.object({
   userId: z.number().int().positive(),

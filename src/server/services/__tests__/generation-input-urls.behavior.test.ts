@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 
@@ -12,15 +13,21 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
   refuseExternal: false,
+  scannedRows: false,
+  refuseExternalApp: true,
   clickhouseDown: false,
 }));
 
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: {
     GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS: 'generation-input-refuse-external-hosts',
+    APP_BLOCK_SOURCE_SCANNED_ROWS: 'app-block-source-scanned-rows',
+    APP_BLOCK_REFUSE_EXTERNAL_SOURCES: 'app-block-refuse-external-sources',
   },
   isFlipt: async (flag: string) =>
-    flag === 'generation-input-refuse-external-hosts' && holder.refuseExternal,
+    (flag === 'generation-input-refuse-external-hosts' && holder.refuseExternal) ||
+    (flag === 'app-block-source-scanned-rows' && holder.scannedRows) ||
+    (flag === 'app-block-refuse-external-sources' && holder.refuseExternalApp),
 }));
 
 // No upload request log rows: a key with no record is answered by the issue record alone.
@@ -52,6 +59,7 @@ vi.mock('~/server/services/image-url-ownership', async (importOriginal) => {
 
 const {
   assertGenerationInputsUsable,
+  countAppBlockHostSources,
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
   generationInputUrlsIn,
@@ -59,6 +67,9 @@ const {
   keySetSizeBucket,
   TOO_MANY_IDS_MESSAGE,
   GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+  APP_SOURCE_PENDING_MESSAGE,
+  APP_SOURCE_UNUSABLE_MESSAGE,
+  APP_SOURCE_NOT_ON_CIVITAI_MESSAGE,
 } = await import('~/server/services/generation-input-urls');
 const { registerCounterWithLabels } = await import('~/server/prom/client');
 const { __resetRecentExternalHostUsersForTest } = await import(
@@ -90,7 +101,8 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, url text NOT NULL, "postId" int,
       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "needsReview" text,
-      "tosViolation" boolean NOT NULL DEFAULT false);
+      "tosViolation" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
+      poi boolean NOT NULL DEFAULT false);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
@@ -106,6 +118,8 @@ beforeEach(async () => {
   `);
   redis.clear();
   holder.refuseExternal = false;
+  holder.scannedRows = false;
+  holder.refuseExternalApp = true;
   holder.clickhouseDown = false;
   redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
     redis.set(key, value);
@@ -308,6 +322,392 @@ describe('assertGenerationInputUrlsUsable', () => {
   });
 });
 
+describe('an App Blocks generation source', () => {
+  const CDN = (key = KEY) =>
+    `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${key}/original=true`;
+  const BLOB = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg?sig=s&exp=x';
+  const APP_ENTRIES = [
+    'appBlocks',
+    'appBlocksStep',
+    'appBlocksPassThrough',
+    'appBlocksWorkflow',
+  ] as const;
+  const check = (
+    urls: string[],
+    entry: Parameters<typeof assertGenerationInputsUsable>[0]['entry'],
+    opaqueInput = false
+  ) =>
+    assertGenerationInputsUsable({
+      urls,
+      userId: CALLER,
+      entry,
+      isApiCaller: false,
+      opaqueInput,
+      now: AFTER,
+    }).then(
+      () => 'accepted',
+      (e: unknown) => {
+        if (e instanceof TRPCError && e.code === 'BAD_REQUEST') return `refused: ${e.message}`;
+        throw e;
+      }
+    );
+
+  it.each([
+    ['flagged minor', { minor: true }, APP_SOURCE_UNUSABLE_MESSAGE],
+    ['flagged poi', { poi: true }, APP_SOURCE_UNUSABLE_MESSAGE],
+    ['still scanning', { ingestion: 'Pending' }, APP_SOURCE_PENDING_MESSAGE],
+    ['held for review', { needsReview: 'poi' }, APP_SOURCE_UNUSABLE_MESSAGE],
+  ])("refuses the caller's own image that is %s", async (_, over, message) => {
+    await givenImage({ userId: CALLER, postId: null });
+    for (const entry of APP_ENTRIES) expect(await check([CDN()], entry)).toBe('accepted');
+    await holder.db.query(`DELETE FROM "Image"`);
+    await givenImage({ userId: CALLER, postId: null, ...over });
+    for (const entry of APP_ENTRIES)
+      expect(await check([CDN()], entry)).toBe(`refused: ${message}`);
+  });
+
+  it.each([
+    ['flagged minor', { minor: true }],
+    ['still scanning', { ingestion: 'Pending' }],
+  ])("refuses another user's public image that is %s, without saying why", async (_, over) => {
+    await givenImage(over);
+    expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+      `refused: ${GENERATION_IMAGE_UNAVAILABLE_MESSAGE}`
+    );
+  });
+
+  it('refuses an upload key issued to the caller that has no image row yet', async () => {
+    const own = '11111111-2222-4333-8444-555555555555';
+    await recordUploadKeyOwner(own, CALLER);
+    expect(await check([CDN(own)], 'generateFromGraph')).toBe('accepted');
+    expect(await check([CDN(own)], 'appBlocksPassThrough')).toBe(
+      `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
+    );
+    expect(await check([own], 'appBlocksPassThrough', true)).toBe(
+      `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
+    );
+  });
+
+  it('control: an opaque uuid that names no upload at all still passes', async () => {
+    expect(await check([KEY], 'appBlocksPassThrough', true)).toBe('accepted');
+  });
+
+  it('refuses an external host whatever the external-host flag says', async () => {
+    holder.refuseExternal = false;
+    for (const entry of APP_ENTRIES)
+      expect(await check(['https://example.com/a.png'], entry)).toBe(
+        `refused: ${EXTERNAL_MESSAGE}`
+      );
+    expect(await check(['https://example.com/a.png'], 'generateFromGraph')).toBe('accepted');
+  });
+
+  it('while external refusal is off, allows an external host from an app and logs it without the url', async () => {
+    holder.refuseExternalApp = false;
+    loggingMock.logToAxiom.mockClear();
+    const url = 'https://example.com/secret-path/a.png';
+    await expect(
+      assertGenerationInputsUsable({
+        urls: [url],
+        userId: CALLER,
+        entry: 'appBlocksPassThrough',
+        isApiCaller: false,
+        now: AFTER,
+        appBlockLog: { appBlockId: 'apb_1', stepTypes: 'videogen' },
+      })
+    ).resolves.toBeUndefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-block-source-refusal',
+        reason: 'external',
+        mode: 'log',
+        appBlockId: 'apb_1',
+        stepTypes: 'videogen',
+        entry: 'appBlocksPassThrough',
+      })
+    );
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('secret-path');
+  });
+
+  it.each(['Rescan', 'PendingManualAssignment'])(
+    "refuses the caller's own image in %s as still being scanned",
+    async (ingestion) => {
+      await givenImage({ userId: CALLER, postId: null, ingestion });
+      expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+        `refused: ${APP_SOURCE_PENDING_MESSAGE}`
+      );
+    }
+  );
+
+  it.each(['NotFound', 'Error'])(
+    "refuses the caller's own image in %s as unusable, not as pending",
+    async (ingestion) => {
+      await givenImage({ userId: CALLER, postId: null, ingestion });
+      expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+        `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
+      );
+    }
+  );
+
+  it('with app external refusal off: the txt2img arm still refuses, the step arms log, the general flag still refuses', async () => {
+    holder.refuseExternalApp = false;
+    const url = 'https://example.com/a.png';
+    expect(await check([url], 'appBlocks')).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+    expect(await check([url], 'appBlocksPassThrough')).toBe('accepted');
+    holder.refuseExternal = true;
+    expect(await check([url], 'appBlocksPassThrough')).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+  });
+
+  it.each([
+    ['held', { needsReview: 'poi' }],
+    ['unscannable', { ingestion: 'NotFound' }],
+    ['pending', { ingestion: 'Pending' }],
+  ])('logs a %s refusal of an own image once, without naming the image', async (reason, over) => {
+    await givenImage({ userId: CALLER, postId: null, ...over });
+    loggingMock.logToAxiom.mockClear();
+    expect(await check([CDN()], 'appBlocksPassThrough')).toMatch(/^refused: /);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'app-block-source-refusal', reason })
+    );
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls).toLowerCase();
+    expect(logged).not.toContain(KEY);
+    expect(logged).not.toContain(KEY.replace(/-/g, ''));
+  });
+
+  describe('an inline customComfy graph (appBlocksInlineComfy)', () => {
+    const OWN = '11111111-2222-4333-8444-555555555555';
+    const unusable = `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`;
+    const logged = (reason: string) =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'app-block-source-refusal', reason })
+      );
+
+    it.each([
+      ['held', { needsReview: 'poi' }],
+      ['unscannable', { ingestion: 'NotFound' }],
+    ])('refuses an own %s image and logs the reason', async (reason, over) => {
+      await givenImage({ userId: CALLER, postId: null, ...over });
+      loggingMock.logToAxiom.mockClear();
+      expect(await check([CDN()], 'appBlocksInlineComfy', true)).toBe(unusable);
+      logged(reason);
+    });
+
+    it('returns pending for an own image still being scanned', async () => {
+      await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending' });
+      loggingMock.logToAxiom.mockClear();
+      const got = await check([CDN()], 'appBlocksInlineComfy', true);
+      expect(got).toMatch(/^refused: /);
+      expect(got).not.toBe(unusable);
+      logged('pending');
+    });
+
+    it('refuses an own upload with no image row', async () => {
+      await recordUploadKeyOwner(OWN, CALLER);
+      loggingMock.logToAxiom.mockClear();
+      expect(await check([OWN], 'appBlocksInlineComfy', true)).toBe(unusable);
+      logged('unrowed');
+    });
+
+    it('refuses a row-less key while an issue store is unreadable', async () => {
+      await recordUploadKeyOwner(OWN, CALLER);
+      redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+      loggingMock.logToAxiom.mockClear();
+      expect(await check([OWN], 'appBlocksInlineComfy', true)).toBe(unusable);
+      logged('store-unreadable');
+    });
+  });
+
+  it('logs an unrowed upload refusal', async () => {
+    const own = '11111111-2222-4333-8444-555555555555';
+    await recordUploadKeyOwner(own, CALLER);
+    loggingMock.logToAxiom.mockClear();
+    expect(await check([CDN(own)], 'appBlocksPassThrough')).toBe(
+      `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'unrowed' })
+    );
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls).toLowerCase();
+    expect(logged).not.toContain(own);
+    expect(logged).not.toContain(own.replace(/-/g, ''));
+  });
+
+  it('refuses a row-less key from an app while either issue store is unreadable, and logs it', async () => {
+    const own = '11111111-2222-4333-8444-555555555555';
+    await recordUploadKeyOwner(own, CALLER);
+    const unusable = `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`;
+
+    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    loggingMock.logToAxiom.mockClear();
+    expect(await check([own], 'appBlocksPassThrough', true)).toBe(unusable);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'app-block-source-refusal', reason: 'store-unreadable' })
+    );
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls).toLowerCase();
+    expect(logged).not.toContain(own);
+    expect(logged).not.toContain(own.replace(/-/g, ''));
+
+    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    expect(await check([CDN(own)], 'appBlocksPassThrough')).toMatch(/^refused: /);
+
+    holder.clickhouseDown = true;
+    expect(await check([KEY], 'appBlocksPassThrough', true)).toBe(unusable);
+    // Off the app paths one unreadable store still is not enough to refuse.
+    expect(await check([KEY], 'generateFromGraph', true)).toBe('accepted');
+  });
+
+  it('logs an external url refusal with mode refuse when the app refusal is on', async () => {
+    loggingMock.logToAxiom.mockClear();
+    await check(['https://example.com/a.png'], 'appBlocksPassThrough');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'external', mode: 'refuse' })
+    );
+  });
+
+  it('logs external urls once per host bucket in one call', async () => {
+    holder.refuseExternalApp = false;
+    loggingMock.logToAxiom.mockClear();
+    await check(['https://example.com/a.png', 'https://example.com/b.png'], 'appBlocksPassThrough');
+    expect(
+      loggingMock.logToAxiom.mock.calls.filter(
+        ([d]) => (d as { reason?: string }).reason === 'external'
+      )
+    ).toHaveLength(1);
+  });
+
+  it('refuses a key with one clean row and one held or pending row beside it', async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    await givenImage({ id: 101, userId: CALLER, postId: null, ingestion: 'Pending' });
+    expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+      `refused: ${APP_SOURCE_PENDING_MESSAGE}`
+    );
+  });
+
+  it('a row both held and still scanning is refused as unusable, not as pending', async () => {
+    await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending', needsReview: 'poi' });
+    expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+      `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
+    );
+  });
+
+  it('refuses an orchestrator blob once scanned source rows are on, and only from an app', async () => {
+    for (const entry of APP_ENTRIES) expect(await check([BLOB], entry)).toBe('accepted');
+    holder.scannedRows = true;
+    for (const entry of APP_ENTRIES)
+      expect(await check([BLOB], entry)).toBe(`refused: ${APP_SOURCE_NOT_ON_CIVITAI_MESSAGE}`);
+    expect(await check([BLOB], 'generateFromGraph')).toBe('accepted');
+  });
+
+  describe('the orchestrator source count', () => {
+    const JOB_OUTPUT = 'https://orchestration.civitai.com/v2/consumer/jobs/J1/outputs/out.png';
+    const hostRows = () =>
+      loggingMock.logToAxiom.mock.calls
+        .map(([data]) => data as Record<string, unknown>)
+        .filter((data) => data.name === 'app-block-host-source');
+    // `appBlocks` gates inside its step builder; its router counts with countAppBlockHostSources.
+    const GATE_COUNTED = APP_ENTRIES.filter((entry) => entry !== 'appBlocks');
+
+    // The setup mock's stub for the counter, found by name; captured at collection time.
+    const registered = vi.mocked(registerCounterWithLabels).mock;
+    const hostSourceCounter = registered.results[
+      registered.calls.findIndex(([def]) => def.name === 'app_block_host_source_total')
+    ]?.value as { inc: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      loggingMock.logToAxiom.mockClear();
+      hostSourceCounter.inc.mockClear();
+    });
+
+    it('counts a consumer blob and any other orchestrator path, refusing neither', async () => {
+      for (const entry of GATE_COUNTED) {
+        loggingMock.logToAxiom.mockClear();
+        hostSourceCounter.inc.mockClear();
+        expect(await check([BLOB, JOB_OUTPUT], entry)).toBe('accepted');
+        expect(hostSourceCounter.inc.mock.calls).toEqual([
+          [{ entry, reason: 'host-orchestrator-source' }],
+          [{ entry, reason: 'host-unparsable' }],
+        ]);
+        expect(hostRows()).toEqual([
+          expect.objectContaining({ entry, reason: 'host-orchestrator-source', count: 1 }),
+          expect.objectContaining({ entry, reason: 'host-unparsable', count: 1 }),
+        ]);
+      }
+      const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls);
+      expect(logged).not.toContain('ABC123');
+      expect(logged).not.toContain('orchestration.civitai.com');
+    });
+
+    it('writes one row per reason with its count', async () => {
+      const other = 'https://orchestration.civitai.com/v2/consumer/blobs/DEF456.png';
+      expect(await check([BLOB, other], 'appBlocksPassThrough')).toBe('accepted');
+      expect(hostSourceCounter.inc).toHaveBeenCalledTimes(2);
+      expect(hostRows()).toEqual([
+        expect.objectContaining({ reason: 'host-orchestrator-source', count: 2 }),
+      ]);
+    });
+
+    it('a call refused for another source counts nothing', async () => {
+      await givenImage({ userId: CALLER + 1, postId: null });
+      expect(await check([BLOB, CDN()], 'appBlocksPassThrough')).toMatch(/^refused/);
+      expect(hostRows()).toEqual([]);
+      expect(hostSourceCounter.inc).not.toHaveBeenCalled();
+    });
+
+    it('control: a Civitai image, an orchestrator blob outside App Blocks, or the step builder gate, is not counted', async () => {
+      await givenImage({ userId: CALLER, postId: null });
+      expect(await check([CDN()], 'appBlocksPassThrough')).toBe('accepted');
+      expect(await check([BLOB], 'generateFromGraph')).toBe('accepted');
+      expect(await check([BLOB], 'appBlocks')).toBe('accepted');
+      expect(hostRows()).toEqual([]);
+      expect(hostSourceCounter.inc).not.toHaveBeenCalled();
+    });
+
+    it('tags each count with the app and with estimate or submit', async () => {
+      for (const phase of ['estimate', 'submit'] as const)
+        await assertGenerationInputsUsable({
+          urls: [BLOB],
+          userId: CALLER,
+          entry: 'appBlocksPassThrough',
+          isApiCaller: false,
+          appBlockLog: { appBlockId: 'apb_1', stepTypes: 'videoGen', phase },
+          now: AFTER,
+        });
+      expect(hostRows()).toEqual([
+        expect.objectContaining({ appBlockId: 'apb_1', stepTypes: 'videoGen', phase: 'estimate' }),
+        expect.objectContaining({ appBlockId: 'apb_1', stepTypes: 'videoGen', phase: 'submit' }),
+      ]);
+    });
+
+    it('countAppBlockHostSources counts only orchestrator urls, under appBlocks, with the app', async () => {
+      await countAppBlockHostSources({
+        urls: [BLOB, JOB_OUTPUT, CDN(), undefined],
+        appBlockLog: { appBlockId: 'apb_1', stepTypes: 'textToImage', phase: 'submit' },
+      });
+      expect(hostSourceCounter.inc.mock.calls).toEqual([
+        [{ entry: 'appBlocks', reason: 'host-orchestrator-source' }],
+        [{ entry: 'appBlocks', reason: 'host-unparsable' }],
+      ]);
+      expect(hostRows()).toEqual([
+        expect.objectContaining({ entry: 'appBlocks', appBlockId: 'apb_1', phase: 'submit' }),
+        expect.objectContaining({ entry: 'appBlocks', reason: 'host-unparsable' }),
+      ]);
+      holder.scannedRows = true;
+      hostSourceCounter.inc.mockClear();
+      await countAppBlockHostSources({ urls: [BLOB], appBlockLog: {} });
+      expect(hostSourceCounter.inc).not.toHaveBeenCalled();
+    });
+
+    it('a blob the scanned-rows flag refuses is not counted', async () => {
+      holder.scannedRows = true;
+      expect(await check([BLOB], 'appBlocksPassThrough')).toBe(
+        `refused: ${APP_SOURCE_NOT_ON_CIVITAI_MESSAGE}`
+      );
+      expect(hostRows()).toEqual([]);
+      expect(hostSourceCounter.inc).not.toHaveBeenCalled();
+    });
+  });
+});
+
 describe('assertStoredImageUrlsUnblocked', () => {
   const stored = (urls: string[]) =>
     assertStoredImageUrlsUnblocked(urls).then(
@@ -496,7 +896,7 @@ describe('assertGenerationInputsUsable', () => {
     }
     // Control: the same host without the dot is just as refused, and a stranger's host is counted.
     expect(await gate([CDN()], 'appBlocksPassThrough')).toBe('refused');
-    expect(await gate(['https://example.com./a.png'], 'appBlocksPassThrough')).toBe('accepted');
+    expect(await gate(['https://example.com./a.png'], 'generateFromGraph')).toBe('accepted');
   });
 
   it('treats a host that only ends in a civitai name as external, not ours', async () => {
@@ -545,33 +945,59 @@ describe('assertGenerationInputsUsable', () => {
       for (const id of SPELLINGS) expect(await opaque([id])).toBe('refused');
     });
 
-    it('counts a plain link to one of our pages, and refuses one that carries a key or a url', async () => {
+    it('refuses an external url and a plain link to one of our pages from an app, whatever the flag', async () => {
       holder.refuseExternal = false;
-      expect(await opaque(['https://civitai.com/models/123'])).toBe('accepted');
-      expect(await gate(['https://civitai.com/models/123'], 'appBlocksPassThrough')).toBe(
-        'refused'
-      );
-      expect(await opaque([`https://civitai.com/api/redirect/${KEY}`])).toBe('refused');
-      expect(
-        await opaque([`https://civitai.com/r?to=${encodeURIComponent('https://example.com/a')}`])
-      ).toBe('refused');
-      expect(await opaque(['https://image.civitai.com/x/original=true/a.png'])).toBe('refused');
-      // The external-link interstitial carries its target but never fetches it.
-      const out = encodeURIComponent('https://example.com/post');
-      expect(await opaque([`https://civitai.com/leaving?url=${out}`])).toBe('accepted');
-      expect(await opaque([`https://civitai.com/_next/image?url=${out}`])).toBe('refused');
-      // An http page link is the same link; an http link carrying a key is not.
-      expect(await opaque(['http://civitai.com/models/123'])).toBe('accepted');
-      expect(await opaque(['HTTP://example.com/a.png'])).toBe('accepted');
-      expect(await opaque([`HTTP://civitai.com/api/redirect/${KEY}`])).toBe('refused');
-      holder.refuseExternal = true;
       expect(await opaque(['https://civitai.com/models/123'])).toBe('refused');
+      expect(
+        await opaque([
+          `https://civitai.com/leaving?url=${encodeURIComponent('https://example.com/post')}`,
+        ])
+      ).toBe('refused');
+      expect(await opaque(['http://civitai.com/models/123'])).toBe('refused');
+      expect(await opaque(['HTTP://example.com/a.png'])).toBe('refused');
+      expect(await opaque([`https://civitai.com/api/redirect/${KEY}`])).toBe('refused');
     });
 
-    it('refuses a url with a control byte inside, and counts the same url without it', async () => {
-      holder.refuseExternal = false;
-      expect(await opaque(['https://example.com/a\u0001.png'])).toBe('refused');
-      expect(await opaque(['https://example.com/a.png'])).toBe('accepted');
+    describe('with app external refusal off', () => {
+      const out = (url: string) => encodeURIComponent(url);
+      beforeEach(async () => {
+        holder.refuseExternal = false;
+        holder.refuseExternalApp = false;
+        await givenImage({ postId: null });
+      });
+
+      it.each([
+        [`https://civitai.com/api/redirect/${KEY}`],
+        [`HTTP://civitai.com/api/redirect/${KEY}`],
+        [`https://civitai.com/r?to=${out(`https://example.com/${KEY}.png`)}`],
+        [`https://civitai.com/_next/image?url=${out(`https://example.com/${KEY}.png`)}`],
+        [`https://proxy.example/fetch?u=${out(`https://example.com/${KEY}.png`)}`],
+      ])("refuses %s, which carries another user's private image key", async (url) => {
+        expect(await opaque([url])).toBe('refused');
+      });
+
+      it.each([
+        ['https://civitai.com/models/123'],
+        ['http://civitai.com/models/123'],
+        [`https://civitai.com/leaving?url=${out('https://example.com/post')}`],
+        ['https://proxy.example/fetch?u=https%3A%2F%2Fexample.com%2Fa.png'],
+      ])('counts %s, which carries no key, and lets it through', async (url) => {
+        expect(await opaque([url])).toBe('accepted');
+      });
+
+      it('refuses our image optimizer url even without a key: it fetches its target', async () => {
+        expect(
+          await opaque([`https://civitai.com/_next/image?url=${out('https://example.com/a.png')}`])
+        ).toBe('refused');
+      });
+
+      it('checks every url in one call, whatever comes before it', async () => {
+        const counted = 'https://example.com/a.png';
+        const refused = `https://civitai.com/api/redirect/${KEY}`;
+        expect(await opaque([counted, refused])).toBe('refused');
+        expect(await opaque([refused, counted])).toBe('refused');
+        expect(await opaque([counted, 'https://example.org/b.png'])).toBe('accepted');
+      });
     });
 
     it('reads many unrelated uuids in batches, and refuses past the bound', async () => {
@@ -633,24 +1059,10 @@ describe('assertGenerationInputsUsable', () => {
       expect(await opaque(keys)).toBe('refused');
     });
 
-    it('checks every url in one call, whatever comes before it', async () => {
+    it('refuses an http url on an external host from an app, and http to our image CDN', async () => {
       holder.refuseExternal = false;
-      const counted = 'https://example.com/a.png';
-      const refused = `https://civitai.com/api/redirect/${KEY}`;
-      expect(await opaque([counted, refused])).toBe('refused');
-      expect(await opaque([refused, counted])).toBe('refused');
-      expect(await opaque([counted, 'https://example.org/b.png'])).toBe('accepted');
-    });
-
-    it('counts an http url on an external host, and still refuses http to our image CDN', async () => {
-      holder.refuseExternal = false;
-      expect(await opaque(['http://json-schema.org/draft-07/schema#'])).toBe('accepted');
-      expect(await gate(['http://json-schema.org/draft-07/schema#'], 'appBlocksPassThrough')).toBe(
-        'refused'
-      );
-      expect(await opaque([`http://image.civitai.com/x/${KEY}/original=true`])).toBe('refused');
-      holder.refuseExternal = true;
       expect(await opaque(['http://json-schema.org/draft-07/schema#'])).toBe('refused');
+      expect(await opaque([`http://image.civitai.com/x/${KEY}/original=true`])).toBe('refused');
     });
   });
 
@@ -670,15 +1082,8 @@ describe('assertGenerationInputsUsable', () => {
     }
   });
 
-  it('allows an external host on the graph and opaque-input paths until the flag is on', async () => {
-    for (const entry of [
-      'generateFromGraph',
-      'whatIfFromGraph',
-      'appBlocksStep',
-      'appBlocksPassThrough',
-      'appBlocksWorkflow',
-      'enhancePrompt',
-    ] as const) {
+  it('allows an external host on the graph paths until the flag is on', async () => {
+    for (const entry of ['generateFromGraph', 'whatIfFromGraph', 'enhancePrompt'] as const) {
       holder.refuseExternal = false;
       expect(await gate(['https://example.com/a.png'], entry)).toBe('accepted');
       holder.refuseExternal = true;

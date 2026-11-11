@@ -85,7 +85,7 @@ import {
   toggleChallengeNotify,
   getTrackedChallengeIds,
 } from '~/server/services/challenge-engagement.service';
-import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
+import { getJudgeCommentForImage } from '~/server/services/challenge-judge-review.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 

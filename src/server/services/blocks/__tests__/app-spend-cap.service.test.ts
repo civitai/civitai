@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * G8 — per-APP aggregate generation-SPEND + VELOCITY cap. This is the dual of
- * the per-USER `BLOCK_BUZZ_CAP_PER_DAY`: it bounds the daily block-initiated
+ * the per-USER daily cap (`resolveUserAppCaps`): it bounds the daily block-initiated
  * generation SPEND (Buzz) AND the short-window generation VELOCITY funnelled
  * through ONE app across ALL viewers, so a Sybil ring of many accounts (each
  * under its own per-user ceiling) can't drive unbounded aggregate spend through

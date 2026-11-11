@@ -131,7 +131,7 @@ export interface SubmitOptions {
    *  nothing — an unknown field on the submit could get the whole workflow rejected. */
   traceMode?: string;
   /** The training service status read just before the submit. A run on a blocked model is refused
-   *  before any orchestrator call; omitted, nothing is refused on it. */
+   *  before any orchestrator call; omitted, only an `isBlockedCustomModel` base is refused. */
   status?: TrainingServiceStatus | null;
 }
 
@@ -140,8 +140,7 @@ export function unavailableRunMessage(
   run: RunModelRef,
   status: TrainingServiceStatus | null | undefined
 ): string | null {
-  if (!status) return null;
-  if (!status.available) return status.message ?? 'Training is unavailable right now.';
+  if (status && !status.available) return status.message ?? 'Training is unavailable right now.';
   return blockedRunMessage(run, status);
 }
 
@@ -714,7 +713,11 @@ async function buildContinuation(
   const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
   if (!ecosystem)
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
-  if (isRetiredEcosystem(ecosystem))
+  // A retired card can share a live ecosystem (Hunyuan trains as `wan`), so check the base too.
+  if (
+    isRetiredEcosystem(ecosystem) ||
+    (typeof input.model === 'string' && isRetiredBaseAir(input.model))
+  )
     throw new Error('keep training: this model is no longer offered for training');
   // The source's `model` is what it trained (`customModel || model` at submit).
   const unavailable = unavailableRunMessage(
