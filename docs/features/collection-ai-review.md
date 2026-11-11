@@ -131,8 +131,8 @@ collection. Lifting that restriction means fixing the notification path first.
   rejected, and picked up on a later run.
 - **`allowedNsfwLevels`** is a bitmask of `NsfwLevel` flags. Anything outside it is rejected with no
   vision call.
-- **Escalations go to a human.** A failed or unparseable model call never rejects a submission;
-  the item is left for a moderator.
+- **A failed or unparseable model call never rejects a submission.** The job retries it on later
+  runs, then stamps the item with its status unchanged, so a moderator decides it.
 - **Items a moderator has already decided are left alone.** The job claims rows only while they are
   still `REVIEW` with no reviewer, so a human decision made mid-run keeps both its outcome and its
   attribution. An accept, or a rejection for a level outside `allowedNsfwLevels`, is claimed only
