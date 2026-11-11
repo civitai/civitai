@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  BOUNTIES_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
@@ -95,6 +96,7 @@ describe('shapeModelHit', () => {
       { id: 10, nsfwLevel: NsfwLevel.X },
       { id: 11, nsfwLevel: NsfwLevel.PG },
       { id: 12, nsfwLevel: 0 },
+      { id: 13, nsfwLevel: NsfwLevel.PG | NsfwLevel.XXX },
     ];
     const shaped = shapeModelHit({ id: 3, name: 'M', images, _formatted: { images } }, comViewer);
     expect(shaped.images).toEqual([{ id: 11, nsfwLevel: NsfwLevel.PG }]);
@@ -176,5 +178,66 @@ describe('comic covers', () => {
     respond({ hits });
     const { body } = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: 'x' }, uncapped);
     expect(covers((body as { hits: unknown }).hits)).toEqual([cover, cover, cover, cover, cover]);
+  });
+});
+
+describe('bounty images', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const uncapped = { showSfwFace: false };
+  const pg = { id: 11, nsfwLevel: NsfwLevel.PG };
+  const images = [
+    { id: 10, nsfwLevel: NsfwLevel.X },
+    pg,
+    { id: 12, nsfwLevel: 0 },
+    { id: 13, nsfwLevel: NsfwLevel.PG | NsfwLevel.XXX },
+  ];
+  const respond = (body: unknown) =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }))
+    );
+  const firstHit = (body: unknown) => (body as { hits: Record<string, any>[] }).hits[0];
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a capped viewer gets no bounty image above the cap or unrated, highlight included', async () => {
+    // Meilisearch's highlight copy carries numbers as strings.
+    const formatted = images.map((i) => ({ ...i, nsfwLevel: String(i.nsfwLevel) }));
+    respond({ hits: [{ id: 1, images, _formatted: { images: formatted } }] });
+    const hit = firstHit((await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, capped)).body);
+    expect(hit.images).toEqual([pg]);
+    expect(hit._formatted.images).toEqual([{ id: 11, nsfwLevel: String(NsfwLevel.PG) }]);
+  });
+
+  it('a bounty with no image inside the cap is sent none', async () => {
+    respond({ hits: [{ id: 2, images: [images[0]] }] });
+    const hit = firstHit((await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, capped)).body);
+    expect(hit.images).toEqual([]);
+  });
+
+  it('a multi-search shapes bounty hits too', async () => {
+    respond({ results: [{ indexUid: BOUNTIES_SEARCH_INDEX, hits: [{ id: 1, images }] }] });
+    const { body } = await siteMultiSearch(
+      { queries: [{ indexUid: BOUNTIES_SEARCH_INDEX, q: 'x' }] },
+      capped
+    );
+    const [result] = (body as { results: { hits: Record<string, any>[] }[] }).results;
+    expect(result.hits[0].images).toEqual([pg]);
+  });
+
+  it('a multi-search result that does not name its index is shaped by its query', async () => {
+    respond({ results: [{ hits: [{ id: 1, images }] }] });
+    const { body } = await siteMultiSearch(
+      { queries: [{ indexUid: BOUNTIES_SEARCH_INDEX, q: 'x' }] },
+      capped
+    );
+    const [result] = (body as { results: { hits: Record<string, any>[] }[] }).results;
+    expect(result.hits[0].images).toEqual([pg]);
+  });
+
+  it('an uncapped viewer keeps every image', async () => {
+    respond({ hits: [{ id: 1, images }] });
+    const hit = firstHit((await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, uncapped)).body);
+    expect(hit.images).toEqual(images);
   });
 });
