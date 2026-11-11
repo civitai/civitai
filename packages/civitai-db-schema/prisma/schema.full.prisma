@@ -7019,6 +7019,22 @@ model CsamQueueSetAside {
   @@index([userId])
 }
 
+/// A block's owner notice and report actioning, deferred until the review flag's close. Written with
+/// the block; claimed (deleted) once by whichever close ends the review.
+model ImageDeferredBlockEffect {
+  imageId       Int      @id
+  /// The violation the moderator chose, if any; the notice states it.
+  violationType String?
+  /// False for a re-block of an image already removed: only its reports are deferred.
+  notifyOwner   Boolean  @default(true)
+  /// Open reports of this reason on the image are actioned at the close.
+  reportReason  String?
+  /// These reports are actioned at the close, if still open.
+  reportIds     Int[]    @default([])
+  blockedBy     Int?
+  createdAt     DateTime @default(now())
+}
+
 /// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
 model CsamReportAudit {
   id              Int       @id @default(autoincrement())

@@ -529,6 +529,17 @@ export const blockInlineComfyBodySchema = z
     path: ['workflow'],
     message: `inline workflow may contain at most ${INLINE_GRAPH_NODES_MAX} nodes`,
   })
+  // Image bytes in a node input would run without ever being uploaded or scanned.
+  .superRefine(
+    refuseInlineMedia(
+      (b: { workflow: unknown }): [InlineMediaPath, unknown][] => [[['workflow'], b.workflow]],
+      {
+        path: ['workflow'],
+        message: `inline workflow holds more than ${INLINE_MEDIA_MAX_VISITS} values`,
+      },
+      INLINE_GRAPH_BYTES_MAX
+    )
+  )
   .refine((b) => jsonLengthWithin([b.workflow], INLINE_GRAPH_BYTES_MAX), {
     path: ['workflow'],
     message: `inline workflow exceeds the ${INLINE_GRAPH_BYTES_MAX}-byte limit`,
@@ -1133,8 +1144,8 @@ export type BlockWorkflowSnapshot = {
    * an AIR. The codes are `checkComfyGraph`'s from `@civitai/app-sdk/blocks`. Returned
    * by the estimate and the submit alike, with no `cost`, before anything is reserved.
    *
-   * `'source-scan-pending'` — a `kind:'step'` or `kind:'workflow'` input names the viewer's
-   * own upload whose scan has not finished. Retry once the scan completes. Estimate and
+   * `'source-scan-pending'` — a `kind:'step'` or `kind:'workflow'` input, or an inline
+   * `customComfy` graph, names the viewer's own upload whose scan has not finished. Retry once the scan completes. Estimate and
    * submit alike, before anything is reserved.
    */
   errorCode?:
