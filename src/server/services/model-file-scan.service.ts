@@ -71,6 +71,9 @@ export type ScanOutcome = {
     message: string | null;
     /** Used for hash-blocking parity once re-enabled. */
     dangerousImports?: string[];
+    /** The scanner read no pickle. Clears a zip (picklescan reads its members by name) or a file
+     *  no loader opens, never a loadable weight. */
+    unread?: boolean;
   };
   /** Map of ModelHashType -> hex digest. Only present when hashes were computed. */
   hashes?: Partial<Record<ModelHashType, string>>;
@@ -170,6 +173,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     where: { id: fileId },
     select: {
       id: true,
+      name: true,
       type: true,
       url: true,
       modelVersionId: true,
@@ -282,8 +286,14 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   }
 
   if (outcome.pickleScan) {
-    data.pickleScanResult = outcome.pickleScan.result;
-    data.pickleScanMessage = stripNul(outcome.pickleScan.message);
+    const unread =
+      outcome.pickleScan.unread &&
+      LOADABLE_FILE_TYPES.includes(file.type) &&
+      !file.name.toLowerCase().endsWith('.zip');
+    data.pickleScanResult = unread ? ScanResultCode.Error : outcome.pickleScan.result;
+    data.pickleScanMessage = unread
+      ? PICKLE_NOT_READ_MESSAGE
+      : stripNul(outcome.pickleScan.message);
   }
 
   // Stripped once: SSHS_12 below is derived from this header and lands in a text column too.
@@ -773,11 +783,26 @@ function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>):
   return clamSignatureResult(output.output) ?? exitCodeToScanResult(output.exitCode);
 }
 
-function derivePickleScanResult(
-  output: NonNullable<ModelPickleScanStep['output']>
-): ScanResultCode {
+const PICKLE_NOT_READ_MESSAGE = 'The pickle scan could not read this file';
+
+type PickleScanOutput = NonNullable<ModelPickleScanStep['output']>;
+
+/** A skip for a format the scanner does not read, as opposed to one that cannot hold pickled code. */
+function isUnknownFormatSkip(output: PickleScanOutput) {
+  const status = output.status?.toLowerCase();
+  if (status) return status === 'skipped';
+  return output.skipped === true && !/^(safetensors|gguf)/.test(output.skipReason ?? '');
+}
+
+/** picklescan exits 0, and the step reports clean, when it found no pickle to read. */
+function isCleanReadingNothing(output: PickleScanOutput) {
+  const status = output.status?.toLowerCase();
+  const clean = status ? status === 'clean' : !output.skipped && output.exitCode === 0;
+  return clean && clamFilesScanned(output) === 0;
+}
+
+function derivePickleScanResult(output: PickleScanOutput): ScanResultCode {
   if (output.dangerousImportsFound === true) return ScanResultCode.Danger;
-  if (output.skipped === true) return ScanResultCode.Success;
   const status = output.status?.toLowerCase();
   if (status) {
     if (status === 'clean' || status.startsWith('skipped')) return ScanResultCode.Success;
@@ -785,6 +810,7 @@ function derivePickleScanResult(
     if (status.includes('error') || status.includes('fail')) return ScanResultCode.Error;
     return ScanResultCode.Pending;
   }
+  if (output.skipped === true) return ScanResultCode.Success;
   return exitCodeToScanResult(output.exitCode);
 }
 
@@ -973,10 +999,12 @@ async function handleScanWorkflow(event: WorkflowEvent) {
 
     const baseResult = derivePickleScanResult(pickleOut);
     const hasDanger = pickleOut.dangerousImportsFound === true || importsDanger;
+    const result = hasDanger ? ScanResultCode.Danger : baseResult;
     outcome.pickleScan = {
-      result: hasDanger ? ScanResultCode.Danger : baseResult,
-      message: pickleScanMessage,
+      result,
+      message: result === ScanResultCode.Error ? PICKLE_NOT_READ_MESSAGE : pickleScanMessage,
       dangerousImports: pickleOut.dangerousImports ?? undefined,
+      unread: !hasDanger && (isUnknownFormatSkip(pickleOut) || isCleanReadingNothing(pickleOut)),
     };
   }
 

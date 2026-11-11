@@ -1497,7 +1497,7 @@ describe('the finals malware scan', () => {
         ]),
         'Retry',
       ],
-      ['pickle parse error', workflow('succeeded', [CLEAN, pickle('parseError')]), 'Retry'],
+      ['pickle parse error', workflow('succeeded', [CLEAN, pickle('parseError')]), 'Failed'],
       ['pickle step missing', workflow('succeeded', [CLEAN]), 'Retry'],
       [
         'clean, counted in the step output',
