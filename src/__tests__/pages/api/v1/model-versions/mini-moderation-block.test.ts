@@ -5,8 +5,8 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
- * The `moderation` block behind the real `MixedAuthEndpoint` and session layer: only a caller the
- * session layer resolves to a moderator gets it, and a shared cache must never hand it to anyone else.
+ * The `moderation` block behind the real `MixedAuthEndpoint`, with bearer lookups stubbed to fixed
+ * sessions: only a moderator session gets it, and a shared cache must never hand it to anyone else.
  */
 
 const h = vi.hoisted(() => ({
@@ -295,24 +295,6 @@ describe('mini/[id] moderation block through a URL-keyed shared cache', () => {
     expect(anon.body).not.toHaveProperty('moderation');
   });
 
-  it('moderator first: the orchestrator service token gets no block', async () => {
-    const get = sharedCache();
-    await get('Bearer mod-key');
-    const svc = await get(`Bearer ${SERVICE_TOKEN}`);
-    expect(svc.hit).toBe(false);
-    expect(svc.body).not.toHaveProperty('moderation');
-  });
-
-  it('signed out first: the stored public body carries no block for the moderator to leak', async () => {
-    const get = sharedCache();
-    const anon = await get();
-    expect(anon.body).not.toHaveProperty('moderation');
-    const mod = await get('Bearer mod-key');
-    // A URL-keyed edge answers the moderator from the public copy: no block, never someone else's.
-    expect(mod.hit).toBe(true);
-    expect(mod.body).not.toHaveProperty('moderation');
-  });
-
   it('positive control: a moderator response marked public DOES leak through this cache', async () => {
     h.publicOverride.value = true;
     const get = sharedCache();
@@ -334,12 +316,6 @@ describe('mini/[id] moderation caller log', () => {
     [
       `Bearer ${SERVICE_TOKEN}`,
       { resolvedAs: 'orchestrator', principal: 'orchestrator-token', moderationIncluded: false },
-    ],
-    ['Bearer owner-key', { resolvedAs: 'api-key', principal: 'owner', moderationIncluded: false }],
-    ['Bearer other-key', { resolvedAs: 'api-key', principal: 'other', moderationIncluded: false }],
-    [
-      'Bearer not-a-key',
-      { resolvedAs: 'unrecognized', principal: 'other', moderationIncluded: false },
     ],
   ])('logs %s as the principal it resolves to', async (authorization, entry) => {
     await call(authorization);

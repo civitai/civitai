@@ -51,9 +51,6 @@ export function getMiniModerationState(source: MiniModerationSource): MiniModera
   };
 }
 
-/**
- * Applied to every caller: the orchestrator refuses on `canGenerate`, so this holds before its own
- * `moderation` rule ships. `ownerBanned` reports only, and Archived is not a refusal.
- */
+/** Applied to every caller. `ownerBanned` reports only, and Archived is not a refusal. */
 export const moderationBlocksGeneration = (state: MiniModerationState) =>
   state.deleted || state.takenDown || state.unpublishedViolation || state.ownerDeleted || state.poi;
