@@ -234,6 +234,7 @@ describe('the scan a new upload is sent to', () => {
   it('sends a Training Data zip to its own scan, never the AIR scan', async () => {
     await createFileHandler({ input: trainingInput, ctx });
 
+    expect(submitTrainingDataScanSafe).toHaveBeenCalledTimes(1);
     expect(submitTrainingDataScanSafe).toHaveBeenCalledWith(
       { fileId: 900, modelVersionId: 42, url: trainingInput.url },
       'createFileHandler'
@@ -262,6 +263,7 @@ describe('the scan a new upload is sent to', () => {
 
     await updateFileHandler({ input: { id: 900, url: trainingInput.url } as never, ctx });
 
+    expect(submitTrainingDataScanSafe).toHaveBeenCalledTimes(1);
     expect(submitTrainingDataScanSafe).toHaveBeenCalledWith(
       { fileId: 901, modelVersionId: 42, url: trainingInput.url },
       'updateFileHandler'

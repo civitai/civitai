@@ -10,7 +10,8 @@ import { ModEndpoint } from '~/server/utils/endpoint-helpers';
  *   POST ?limit=&afterId=   submits the page; pass the returned `nextAfterId` for the next one
  */
 const schema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  // Each zip is copied in full inside this request, so pages stay small.
+  limit: z.coerce.number().int().min(1).max(25).default(10),
   afterId: z.coerce.number().int().optional(),
 });
 

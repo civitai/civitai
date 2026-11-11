@@ -75,6 +75,9 @@ export type ScanOutcome = {
   headerData?: unknown;
   /** Full upstream payload (orchestrator step outputs or legacy ScanResult) for forensics. */
   rawScanResult?: unknown;
+  /** The stored url a Training Data blob scan copied. Only an outcome naming the file's current url
+   *  may write a Training Data file. */
+  trainingDataUrl?: string;
 };
 
 const exitCodeToScanResult = (exitCode: number | null | undefined): ScanResultCode => {
@@ -165,6 +168,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     select: {
       id: true,
       type: true,
+      url: true,
       modelVersionId: true,
       // SSHS_12 comes from the metadata-parse step, but the hash rebuild below deletes every row
       // for the file — so a hash-only rescan has to re-derive it from what is already stored.
@@ -187,6 +191,22 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         type: 'warning',
         name: 'apply-scan-outcome',
         message: `File not found: ${fileId}`,
+        fileId,
+        modelVersionId: outcome.modelVersionId,
+      },
+      'webhooks'
+    ).catch();
+    return;
+  }
+
+  // A Training Data verdict counts only from its own blob scan, of the bytes the file holds now: a
+  // late result from another scan, or from before the file's zip was swapped, is dropped.
+  if (file.type === 'Training Data' && outcome.trainingDataUrl !== file.url) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'apply-scan-outcome',
+        message: `Dropped a stale training data scan result for file ${fileId}`,
         fileId,
         modelVersionId: outcome.modelVersionId,
       },
@@ -785,6 +805,10 @@ async function handleScanWorkflow(event: WorkflowEvent) {
   if (!fileId) throw new Error(`missing workflow metadata.fileId - ${event.workflowId}`);
 
   const modelVersionId = data.metadata?.modelVersionId as number | undefined;
+  const trainingDataUrl =
+    data.metadata?.scan === TRAINING_DATA_BLOB_SCAN
+      ? (data.metadata?.url as string | undefined)
+      : undefined;
 
   if (event.status !== 'succeeded') {
     logToAxiom(
@@ -798,7 +822,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       },
       'webhooks'
     ).catch();
-    await applyScanOutcome({ fileId, modelVersionId, failed: true });
+    await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
     return;
   }
 
@@ -815,6 +839,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
   const outcome: ScanOutcome = {
     fileId,
     modelVersionId,
+    trainingDataUrl,
     rawScanResult: { source: 'orchestrator', workflowId: event.workflowId, steps },
   };
 
@@ -822,7 +847,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
     const derived = deriveClamScanResult(clamScan.output);
     // A zip's scan that read no files has not cleared it.
     const readNothing =
-      data.metadata?.scan === TRAINING_DATA_BLOB_SCAN &&
+      !!trainingDataUrl &&
       derived === ScanResultCode.Success &&
       clamFilesScanned(clamScan.output) === 0;
     const result = readNothing ? ScanResultCode.Error : derived;
@@ -911,6 +936,7 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
       id: true,
       url: true,
       type: true,
+      sizeKB: true,
       modelVersion: {
         select: {
           id: true,
@@ -933,6 +959,8 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
       return;
     }
     if (file.type === 'Training Data') {
+      // A Training Studio placeholder has no zip until the archive job swaps one in, and scans it then.
+      if (!file.sizeKB) return;
       const submitted = await submitTrainingDataScanSafe(
         { fileId: file.id, modelVersionId: file.modelVersion.id, url: file.url },
         'rescan-model'

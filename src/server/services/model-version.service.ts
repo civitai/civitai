@@ -3826,6 +3826,7 @@ export const mergeVersions = async ({
             id: true,
             type: true,
             metadata: true,
+            virusScanResult: true,
             modelVersion: { select: { uploadType: true, trainingStatus: true } },
           },
         });

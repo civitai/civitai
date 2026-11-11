@@ -73,7 +73,7 @@ describe('submitTrainingDataScan', () => {
     });
 
     const { body } = h.submitWorkflow.mock.calls[0][0];
-    const metadata = { fileId: 56, modelVersionId: 7, scan: 'training-data-blob' };
+    const metadata = { fileId: 56, modelVersionId: 7, url: TARGET.url, scan: 'training-data-blob' };
     expect(body.metadata).toEqual(metadata);
     expect(body.steps).toEqual([
       {
@@ -90,28 +90,23 @@ describe('submitTrainingDataScan', () => {
     ]);
   });
 
-  it('records the request before anything is sent', async () => {
-    h.resolveDownloadUrl.mockRejectedValue(new Error('resolver down'));
-
-    await expect(submitTrainingDataScan(TARGET)).rejects.toThrow('resolver down');
-    expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledWith({
-      where: { id: 56 },
-      data: { scanRequestedAt: expect.any(Date) },
-    });
-  });
-
   it.each([
     ['the zip read fails', () => h.fetch.mockResolvedValueOnce(source({ status: 404 }))],
     ['the zip has no length', () => h.fetch.mockResolvedValueOnce(source({ length: null }))],
     ['the zip is empty', () => h.fetch.mockResolvedValueOnce(source({ length: '0' }))],
     ['the upload is refused', () => orchestratorAnswers({ uploadStatus: 500 })],
     ['the upload names no blob', () => orchestratorAnswers({ upload: {} })],
-    ['the workflow is not accepted', () => h.submitWorkflow.mockResolvedValue({ data: undefined })],
-  ])('throws, and submits no scan of nothing, when %s', async (label, fail) => {
+  ])('throws, and submits no scan of nothing, when %s', async (_, fail) => {
     fail();
 
     await expect(submitTrainingDataScan(TARGET)).rejects.toThrow();
-    if (!label.startsWith('the workflow')) expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('throws when the scan workflow is not accepted', async () => {
+    h.submitWorkflow.mockResolvedValue({ data: undefined });
+
+    await expect(submitTrainingDataScan(TARGET)).rejects.toThrow('not accepted for file 56');
   });
 
   it('submits nothing, and writes no verdict, without an orchestrator token outside production', async () => {
@@ -162,19 +157,27 @@ describe('requeuePendingTrainingDataScans', () => {
       type: 'Training Data',
       virusScanResult: 'Pending',
       sizeKB: { gt: 0 },
+      OR: [{ exists: null }, { exists: true }],
       id: { gt: 0 },
     });
+    // Not one submitted within the hour, which may still be copying or scanning.
+    const [{ OR: notInFlight }] = where.AND;
+    expect(notInFlight[0]).toEqual({ scanRequestedAt: null });
+    expect(Date.now() - notInFlight[1].scanRequestedAt.lt.getTime()).toBeGreaterThanOrEqual(
+      60 * 60_000
+    );
     expect(orderBy).toEqual({ id: 'asc' });
   });
 
   it('submits each zip of the page and reports the ones that failed', async () => {
-    h.submitWorkflow
-      .mockResolvedValueOnce({ data: { id: 'wf-1' } })
-      .mockResolvedValueOnce({ data: undefined });
+    h.submitWorkflow.mockImplementation(
+      async ({ body }: { body: { metadata: { fileId: number } } }) =>
+        body.metadata.fileId === 2 ? { data: undefined } : { data: { id: 'wf-1' } }
+    );
 
     const result = await requeuePendingTrainingDataScans({ limit: 50, dryRun: false });
 
     expect(h.submitWorkflow).toHaveBeenCalledTimes(2);
-    expect(result).toMatchObject({ submitted: 1, failed: [expect.any(Number)], nextAfterId: null });
+    expect(result).toMatchObject({ submitted: 1, failed: [2], nextAfterId: null });
   });
 });

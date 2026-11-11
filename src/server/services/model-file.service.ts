@@ -357,6 +357,7 @@ const replaceableFileSelect = {
   metadata: true,
   modelVersionId: true,
   sizeKB: true,
+  virusScanResult: true,
   modelVersion: {
     select: {
       modelId: true,

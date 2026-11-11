@@ -1,7 +1,7 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDatasetEditable } from '~/shared/constants/training.constants';
 import type { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelUploadType, ScanResultCode } from '~/shared/utils/prisma/enums';
 
 // A version that has been out in the world (or is about to be) keeps its files; new bytes go in a
 // new version. Unpublished counts, since publishing it again brings back what it had.
@@ -45,6 +45,7 @@ export function assertVersionAcceptsNewUpload(version: UploadTarget, fileType: s
 export function assertFileTypeChangeAllowed(
   file: {
     type: string;
+    virusScanResult: ScanResultCode;
     modelVersion: { uploadType: ModelUploadType; trainingStatus: TrainingStatus | null };
   },
   nextType: string | undefined
@@ -60,4 +61,8 @@ export function assertFileTypeChangeAllowed(
       file.modelVersion.trainingStatus != null)
   )
     throw throwBadRequestError("A file can't be changed to or from training data.");
+  if (file.type === 'Training Data' && file.virusScanResult !== ScanResultCode.Success)
+    throw throwBadRequestError(
+      "Training data can't be changed to another type until its security scan completes."
+    );
 }

@@ -121,6 +121,7 @@ function withFile(
     type?: string;
     metadata?: Record<string, unknown>;
     uploadType?: string;
+    virusScanResult?: string;
     lockedAs?: Partial<VersionState>;
   } = {}
 ) {
@@ -133,6 +134,7 @@ function withFile(
     ...FILE,
     type: overrides.type ?? FILE.type,
     metadata: overrides.metadata ?? FILE.metadata,
+    virusScanResult: overrides.virusScanResult ?? 'Success',
     modelVersion: {
       ...FILE.modelVersion,
       status,
@@ -616,11 +618,28 @@ describe('a file type change to or from training data on a trained version', () 
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
   });
 
-  it("lets an uploaded model's owner relabel training data as another type", async () => {
+  it("lets an uploaded model's owner relabel scanned training data as another type", async () => {
     withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
 
     await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).resolves.toMatchObject({ id: 1 });
   });
+
+  it.each(['Pending', 'Error', 'Danger'])(
+    'refuses relabeling training data whose scan is %s, which would serve it unscanned',
+    async (virusScanResult) => {
+      withFile({
+        type: 'Training Data',
+        uploadType: 'Created',
+        trainingStatus: null,
+        virusScanResult,
+      });
+
+      await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).rejects.toThrow(
+        "Training data can't be changed to another type until its security scan completes."
+      );
+      expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    }
+  );
 });
 
 // The domain stamp gates which domain a paid training submit may run under; it is the server's.

@@ -1296,26 +1296,42 @@ describe('model-file-scan.service', () => {
     });
 
     describe('a Training Data zip scanned as a blob', () => {
-      const clean = (output: Record<string, unknown>, scan?: string) =>
+      const ZIP = 'https://bucket/training-images/7/data.zip';
+      const dataset = (url = ZIP) =>
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          id: 1,
+          type: 'Training Data',
+          url,
+          modelVersionId: 100,
+          modelVersion: { modelId: 200 },
+        });
+      const scanned = (
+        output: Record<string, unknown>,
+        metadata: Record<string, unknown> = { scan: 'training-data-blob', url: ZIP }
+      ) =>
         mockGetWorkflow.mockResolvedValue({
           data: {
-            metadata: { fileId: 1, ...(scan && { scan }) },
+            metadata: { fileId: 1, ...metadata },
             steps: [{ $type: 'modelClamScan', output: { status: 'clean', ...output } }],
           },
         });
+      const deliver = (status = 'succeeded') =>
+        processModelFileScanResult(makeReq({ workflowId: 'wf-1', type: 'workflow', status }));
       const verdict = async () => {
-        await processModelFileScanResult(
-          makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
-        );
+        await deliver();
         const { data } = mockDbWrite.modelFile.update.mock.calls[0][0];
         return { result: data.virusScanResult, message: data.virusScanMessage };
       };
+
+      beforeEach(() => {
+        dataset();
+      });
 
       it.each([
         ['its count', { scannedFileCount: 12 }],
         ['its summary', { output: 'Infected files: 0\nScanned files: 12\n' }],
       ])('is a Success when the scan says by %s that it read files', async (_, output) => {
-        clean(output, 'training-data-blob');
+        scanned(output);
         expect(await verdict()).toEqual({ result: ScanResultCode.Success, message: null });
       });
 
@@ -1323,15 +1339,43 @@ describe('model-file-scan.service', () => {
         ['a zero count', { scannedFileCount: 0 }],
         ['no count at all', { output: 'scan summary text' }],
       ])('is an Error, never a Success, when the scan read nothing (%s)', async (_, output) => {
-        clean(output, 'training-data-blob');
+        scanned(output);
         expect(await verdict()).toEqual({
           result: ScanResultCode.Error,
           message: 'The virus scan read no files',
         });
       });
 
+      it.each([
+        [
+          'a scan of the zip it held before',
+          { scan: 'training-data-blob', url: 'https://old/zip' },
+        ],
+        ['a model-file scan', {}],
+      ])('writes nothing from %s', async (_, metadata) => {
+        scanned({ scannedFileCount: 12 }, metadata);
+
+        await deliver();
+
+        expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      });
+
+      it('marks nothing for a failed workflow of a zip it no longer holds', async () => {
+        scanned({}, { scan: 'training-data-blob', url: 'https://old/zip' });
+
+        await deliver('failed');
+
+        expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      });
+
       it('leaves a model file scan that reports no count a Success', async () => {
-        clean({ output: 'scan summary text' });
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          id: 1,
+          type: 'Model',
+          modelVersionId: 100,
+          modelVersion: { modelId: 200 },
+        });
+        scanned({ output: 'scan summary text' }, {});
         expect((await verdict()).result).toBe(ScanResultCode.Success);
       });
     });
@@ -1641,6 +1685,7 @@ describe('model-file-scan.service', () => {
           id: 3,
           url: 's3://data.zip',
           type: 'Training Data',
+          sizeKB: 2048,
           modelVersion: { id: 30, baseModel: 'SDXL', model: { id: 300, type: 'LORA' } },
         },
       ]);
@@ -1656,12 +1701,31 @@ describe('model-file-scan.service', () => {
       expect(result).toEqual({ sent: 1, failed: 0 });
     });
 
+    it('sends no scan for a Training Studio placeholder, which has no zip yet', async () => {
+      mockDbRead.modelFile.findMany.mockResolvedValue([
+        {
+          id: 3,
+          url: 'https://orch.example/v2/consumer/blobs/E.safetensors',
+          type: 'Training Data',
+          sizeKB: 0,
+          modelVersion: { id: 30, baseModel: 'SDXL', model: { id: 300, type: 'LORA' } },
+        },
+      ]);
+      mockSubmitTrainingDataScanSafe.mockReset();
+
+      await rescanModel({ id: 300 });
+
+      expect(mockSubmitTrainingDataScanSafe).not.toHaveBeenCalled();
+      expect(mockCreateModelFileScanRequest).not.toHaveBeenCalled();
+    });
+
     it('counts a Training Data zip whose scan could not be submitted as failed', async () => {
       mockDbRead.modelFile.findMany.mockResolvedValue([
         {
           id: 3,
           url: 's3://data.zip',
           type: 'Training Data',
+          sizeKB: 2048,
           modelVersion: { id: 30, baseModel: 'SDXL', model: { id: 300, type: 'LORA' } },
         },
       ]);

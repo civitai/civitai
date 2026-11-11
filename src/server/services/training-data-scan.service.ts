@@ -24,7 +24,8 @@ import { ScanResultCode } from '~/shared/utils/prisma/enums';
 /** `metadata.scan` on the workflow: tells the webhook a clean result must have read files. */
 export const TRAINING_DATA_BLOB_SCAN = 'training-data-blob';
 
-const SOURCE_TIMEOUT_MS = 60_000;
+/** For the zip's storage to answer; the copy itself is bounded by the upload deadline. */
+const SOURCE_RESPONSE_TIMEOUT_MS = 60_000;
 const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const SUBMIT_TIMEOUT_MS = 60_000;
 
@@ -56,7 +57,11 @@ export async function submitTrainingDataScan({
     caller: 'training-data',
     actor: 'internal',
   });
-  const source = await fetch(sourceUrl, { signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS) });
+  const answered = new AbortController();
+  const noAnswer = setTimeout(() => answered.abort(), SOURCE_RESPONSE_TIMEOUT_MS);
+  const source = await fetch(sourceUrl, {
+    signal: AbortSignal.any([answered.signal, AbortSignal.timeout(UPLOAD_TIMEOUT_MS)]),
+  }).finally(() => clearTimeout(noAnswer));
   const size = Number(source.headers.get('content-length'));
   if (!source.ok || !source.body || !(size > 0))
     throw new Error(`Training data source unreadable: ${source.status}`);
@@ -64,7 +69,8 @@ export async function submitTrainingDataScan({
   const air = blobAir(
     await uploadConsumerBlob({ body: source.body, size, timeoutMs: UPLOAD_TIMEOUT_MS })
   );
-  const metadata = { fileId, modelVersionId, scan: TRAINING_DATA_BLOB_SCAN };
+  // The url ties the verdict to these bytes: the webhook drops it once the file holds another zip.
+  const metadata = { fileId, modelVersionId, url, scan: TRAINING_DATA_BLOB_SCAN };
   const { data } = await submitWorkflow({
     client: internalOrchestratorClient,
     signal: AbortSignal.timeout(SUBMIT_TIMEOUT_MS),
@@ -121,10 +127,12 @@ const pendingTrainingDataWhere: Prisma.ModelFileWhereInput = {
 };
 
 const REQUEUE_CONCURRENCY = 3;
+/** A zip submitted this recently may still be copying or scanning. */
+const REQUEUE_IN_FLIGHT_MS = 60 * 60_000;
 
 /**
- * Submits one page of the Pending Training Data zips, oldest first, to the scan. With `dryRun` it
- * submits nothing and only counts them.
+ * Submits one page of the Pending Training Data zips, oldest first, to the scan, skipping any
+ * submitted within the last hour. With `dryRun` it submits nothing. `total` counts every Pending zip.
  */
 export async function requeuePendingTrainingDataScans({
   limit,
@@ -137,6 +145,14 @@ export async function requeuePendingTrainingDataScans({
 }) {
   const where: Prisma.ModelFileWhereInput = {
     ...pendingTrainingDataWhere,
+    AND: [
+      {
+        OR: [
+          { scanRequestedAt: null },
+          { scanRequestedAt: { lt: new Date(Date.now() - REQUEUE_IN_FLIGHT_MS) } },
+        ],
+      },
+    ],
     ...(afterId !== undefined && { id: { gt: afterId } }),
   };
   const [total, files] = await Promise.all([
