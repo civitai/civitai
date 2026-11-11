@@ -14,10 +14,7 @@ function toPositiveInt(value: QueryValue) {
   return num > 0 ? num : undefined;
 }
 
-/**
- * The canonical URL of a model's reviews listing. The version is the only query param that
- * changes what the page lists, so it is the only one kept.
- */
+/** The canonical URL of a model's reviews listing: the version only. Filter and page are not canonical. */
 export function getModelReviewsCanonical(modelId: number, modelVersionId?: number | null) {
   const base = `/models/${modelId}/reviews`;
   return modelVersionId ? `${base}?modelVersionId=${modelVersionId}` : base;
@@ -64,7 +61,15 @@ export function getModelReviewsRedirect(modelId: number, query: Query): string |
     (dialogs.length === 0 && normalized.reviewId !== undefined);
 
   if (!isDuplicate) return null;
-  return getModelReviewsCanonical(modelId, modelVersionId);
+  return withFilter(
+    getModelReviewsCanonical(modelId, modelVersionId),
+    parseReviewsFilter(normalized.filter)
+  );
+}
+
+function withFilter(url: string, filter: ReviewsFilter | undefined) {
+  if (!filter) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}filter=${filter}`;
 }
 
 /**
@@ -77,9 +82,32 @@ export function getModelReviewsVersionRedirect(
   query: Query,
   versionId: number
 ): string {
-  const filter = parseReviewsFilter(query.filter);
-  const base = getModelReviewsCanonical(modelId, versionId);
-  return filter ? `${base}&filter=${filter}` : base;
+  return withFilter(getModelReviewsCanonical(modelId, versionId), parseReviewsFilter(query.filter));
+}
+
+type ReviewsVersionDecision =
+  | { type: 'ok' }
+  | { type: 'redirect'; versionId: number }
+  | { type: 'notFound' };
+
+/**
+ * What the reviews page does about the requested version. The list is always one version's, so a
+ * missing, unknown or foreign one goes to the fallback (the model page's default version), and a
+ * model with no published version has no reviews page. `loadFallback` runs only when needed.
+ */
+export async function resolveReviewsVersion({
+  modelVersionId,
+  requested,
+  loadFallback,
+}: {
+  modelVersionId: number | undefined;
+  /** What the lookup of `modelVersionId` on this model returned. */
+  requested: { id: number } | null;
+  loadFallback: () => Promise<{ id: number } | null>;
+}): Promise<ReviewsVersionDecision> {
+  if (modelVersionId && requested?.id === modelVersionId) return { type: 'ok' };
+  const fallback = await loadFallback();
+  return fallback ? { type: 'redirect', versionId: fallback.id } : { type: 'notFound' };
 }
 
 export type ReviewsFilter = 'images' | 'up' | 'down';
