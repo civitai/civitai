@@ -2,8 +2,8 @@ import { Prisma } from '@prisma/client';
 
 /**
  * A user's `profilePicture`, read through Prisma's nested select (`simpleUserSelect` and every copy
- * of it), comes back as `null` unless the picture is Scanned, as `servableProfilePicture` does for
- * the reads that know their viewer. `User.profilePicture` is the only relation of that name, so the
+ * of it), comes back as `null` unless the picture is Scanned and not flagged `csam`, as
+ * `servableProfilePictureSql` requires. `User.profilePicture` is the only relation of that name, so the
  * match is by key: a spread or hand-built copy of the select is caught too.
  *
  * Only find queries are touched; writes return what they wrote. A query whose select tree has no
@@ -21,20 +21,27 @@ const READ_OPERATIONS = [
 const PICTURE_KEY = 'profilePicture';
 
 type Args = Record<string, unknown>;
-/** Per key of a select/include tree: a nested plan, or a picture leaf (`added`: we added `ingestion`). */
-type Plan = Map<string, Plan | { added: boolean }>;
+/** The picture fields the check reads; any the query did not ask for are added, then removed. */
+const CHECKED_FIELDS = ['ingestion', 'needsReview'] as const;
+type CheckedField = (typeof CHECKED_FIELDS)[number];
+type Leaf = { added: CheckedField[] };
+/** Per key of a select/include tree: a nested plan, or a picture leaf. */
+type Plan = Map<string, Plan | Leaf>;
 
 const isObject = (value: unknown): value is Args =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** What a relation's args select: `true` is the whole row, else its `select` (or the whole row). */
-function pictureLeaf(value: unknown): { added: boolean } | undefined {
-  if (value === true) return { added: false };
+function pictureLeaf(value: unknown): Leaf | undefined {
+  if (value === true) return { added: [] };
   if (!isObject(value)) return undefined;
   const select = value.select;
-  if (!isObject(select)) return { added: false };
-  if (!select.url) return undefined;
-  return { added: !select.ingestion };
+  if (isObject(select)) {
+    if (!select.url) return undefined;
+    return { added: CHECKED_FIELDS.filter((field) => !select[field]) };
+  }
+  const omit = value.omit;
+  return { added: isObject(omit) ? CHECKED_FIELDS.filter((field) => omit[field]) : [] };
 }
 
 /** The paths in `args` that select a servable profile picture, or undefined when there are none. */
@@ -51,7 +58,7 @@ export function planProfilePictures(args: unknown): Plan | undefined {
   return plan;
 }
 
-/** `args` with `ingestion` added to each picture select the plan marks `added`, copied along those paths only. */
+/** `args` with each leaf's `added` fields selected (or un-omitted), copied along those paths only. */
 function withIngestion(args: Args, plan: Plan): Args {
   const copy: Args = { ...args };
   for (const treeKey of ['select', 'include'] as const) {
@@ -63,9 +70,18 @@ function withIngestion(args: Args, plan: Plan): Args {
       const value = tree[key];
       let next: unknown = value;
       if (node instanceof Map) next = withIngestion(value as Args, node);
-      else if (node.added) {
+      else if (node.added.length) {
         const relation = value as Args;
-        next = { ...relation, select: { ...(relation.select as Args), ingestion: true } };
+        const fields = Object.fromEntries(node.added.map((field) => [field, true]));
+        next = isObject(relation.select)
+          ? { ...relation, select: { ...relation.select, ...fields } }
+          : {
+              ...relation,
+              omit: {
+                ...(relation.omit as Args),
+                ...Object.fromEntries(node.added.map((f) => [f, false])),
+              },
+            };
       }
       if (next !== value) (treeCopy ??= { ...tree })[key] = next;
     }
@@ -76,7 +92,7 @@ function withIngestion(args: Args, plan: Plan): Args {
 
 function needsIngestion(plan: Plan): boolean {
   for (const node of plan.values())
-    if (node instanceof Map ? needsIngestion(node) : node.added) return true;
+    if (node instanceof Map ? needsIngestion(node) : node.added.length) return true;
   return false;
 }
 
@@ -94,8 +110,8 @@ export function applyProfilePicturePlan(result: unknown, plan: Plan): void {
     }
     const picture = result[key];
     if (!isObject(picture)) continue;
-    if (picture.ingestion !== 'Scanned') result[key] = null;
-    else if (node.added) delete picture.ingestion;
+    if (picture.ingestion !== 'Scanned' || picture.needsReview === 'csam') result[key] = null;
+    else for (const field of node.added) delete picture[field];
   }
 }
 

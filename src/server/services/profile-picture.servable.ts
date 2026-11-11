@@ -2,7 +2,7 @@
 
 /**
  * `servableProfilePictureSql` (profile-picture.sql.ts) for a picture already fetched without the lock fields: only a
- * Scanned one is served.
+ * Scanned one is served, and not one flagged `csam` when the read carries `needsReview`.
  */
 export function servableProfilePicture<T extends { ingestion: string | null }>(
   picture: T | null
@@ -14,5 +14,6 @@ export function servableProfilePicture<T extends { ingestion: string | null }>(
   picture: T | null | undefined
 ) {
   if (!picture) return picture;
-  return picture.ingestion === 'Scanned' ? picture : null;
+  if (picture.ingestion !== 'Scanned') return null;
+  return (picture as { needsReview?: string | null }).needsReview === 'csam' ? null : picture;
 }

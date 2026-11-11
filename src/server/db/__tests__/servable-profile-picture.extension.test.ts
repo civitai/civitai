@@ -73,9 +73,47 @@ describe('the servable profile picture gate', () => {
     const result = await gateProfilePictures({ select }, query, vi.fn());
 
     expect(result[0].profilePicture).toEqual({ id: 1, url: 'avatar-Scanned' });
+    // needsReview, added the same way, is stripped too.
     expect(result[1].profilePicture).toBeNull();
     // The caller's select, often a shared module constant, is not changed.
     expect(select.profilePicture.select).toEqual({ id: true, url: true });
+  });
+
+  it('nulls a Scanned picture flagged csam, reading needsReview even when the select omits it', async () => {
+    const query = vi.fn(async (args: unknown) => {
+      const sent = (args as { select: { profilePicture: { select: Record<string, boolean> } } })
+        .select.profilePicture.select;
+      expect(sent.needsReview).toBe(true);
+      return [
+        { profilePicture: { ...picture('Scanned'), needsReview: 'csam' } },
+        { profilePicture: { ...picture('Scanned'), needsReview: null } },
+      ];
+    });
+
+    const result = await gateProfilePictures({ select: simpleUserSelect }, query, vi.fn());
+
+    expect(result[0].profilePicture).toBeNull();
+    expect(result[1].profilePicture).toEqual(picture('Scanned'));
+  });
+
+  it('un-omits the fields it checks on a whole-row picture, and removes them again', async () => {
+    const query = vi.fn(async (args: unknown) => {
+      expect(
+        (args as { include: { profilePicture: { omit: unknown } } }).include.profilePicture.omit
+      ).toEqual({
+        ingestion: false,
+        url: true,
+      });
+      return { profilePicture: { id: 1, ingestion: 'Scanned', needsReview: null } };
+    });
+
+    const result = await gateProfilePictures(
+      { include: { profilePicture: { omit: { ingestion: true, url: true } } } },
+      query,
+      vi.fn()
+    );
+
+    expect(result.profilePicture).toEqual({ id: 1, needsReview: null });
   });
 
   it('passes a query without a servable picture through untouched: same args, same result', async () => {

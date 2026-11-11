@@ -26,3 +26,18 @@ export async function getServableProfilePictures(db: RawQueryClient, imageIds: n
     WHERE i.id IN (${Prisma.join(imageIds)}) AND ${servableProfilePictureSql}
   `;
 }
+
+/**
+ * A user's own profile picture whatever its state, for the reads that serve it to its owner or a
+ * moderator. Raw SQL: the Prisma find queries null an unscanned picture for every viewer.
+ */
+export async function getProfilePictureOfUser(db: RawQueryClient, userId: number) {
+  const [picture] = await db.$queryRaw<ProfileImage[]>`
+    SELECT i.id, i.name, i.url, i."nsfwLevel", i.hash, i."userId", i.ingestion, i.type,
+      i.width, i.height, i.metadata
+    FROM "User" u
+    JOIN "Image" i ON i.id = u."profilePictureId"
+    WHERE u.id = ${userId}
+  `;
+  return picture ?? null;
+}

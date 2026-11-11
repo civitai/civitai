@@ -115,8 +115,8 @@ export const reviewCollectionImageSql = (viewer: ReviewViewer) =>
  * - a post in a collection they MANAGE shows its rated, reviewed images above `browsingLevel`
  *   (never unrated or Blocked ones);
  * - with the server-set `reviewCollectionId`, that collection's REVIEW and REJECTED submissions by
- *   their uploader show unrated, and `acceptableMinor` ones show too, so a judge can reject them.
- *   That exception does not reach above `browsingLevel`.
+ *   their uploader show unrated once reviewed (`imageReviewedSql`), and `acceptableMinor` ones
+ *   show too, so a judge can reject them. That exception does not reach above `browsingLevel`.
  */
 export const pendingViewerImageSql = ({
   userId,

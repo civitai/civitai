@@ -26,6 +26,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { servableProfilePicture } from '~/server/services/profile-picture.servable';
+import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
@@ -176,7 +177,11 @@ export const getUserWithProfile = async ({
 
     return {
       ...user,
-      profilePicture: canEdit ? user.profilePicture : servableProfilePicture(user.profilePicture),
+      profilePicture: canEdit
+        ? // The Prisma read has already nulled an unscanned picture; its owner and moderators get it.
+          user.profilePicture ??
+          (viaKysely ? null : await getProfilePictureOfUser(dbWrite, user.id))
+        : servableProfilePicture(user.profilePicture),
       // Claim keys are owner-only; withheld from every other viewer, moderators included.
       cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
         ...c,

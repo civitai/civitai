@@ -46,7 +46,7 @@ const picture = (ingestion: string) => ({
   metadata: null,
 });
 
-function setUser(ingestion: string) {
+function setUser(ingestion: string, { pictureNulled = false } = {}) {
   dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({
     id: OWNER,
     username: 'creator',
@@ -54,7 +54,7 @@ function setUser(ingestion: string) {
     settings: {},
     publicSettings: {},
     cosmetics: [],
-    profilePicture: picture(ingestion),
+    profilePicture: pictureNulled ? null : picture(ingestion),
     profile: {
       userId: OWNER,
       privacySettings: {},
@@ -102,5 +102,19 @@ describe('getUserWithProfile — unscanned cover and avatar', () => {
 
     expect(user.profile.coverImage?.url).toBe('cover-Pending');
     expect(user.profilePicture?.url).toBe('avatar-Pending');
+  });
+
+  it('reads back an unscanned avatar the Prisma read nulled, for its owner and moderators only', async () => {
+    // The find query nulls an unscanned picture for everyone; the owner's view re-reads it raw.
+    setUser('Pending', { pictureNulled: true });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([picture('Pending')] as never);
+
+    const owner = await getUserWithProfile({ id: OWNER, sessionUserId: OWNER });
+    expect(owner.profilePicture?.url).toBe('avatar-Pending');
+
+    dbMock.dbWrite.$queryRaw.mockClear();
+    const visitor = await getUserWithProfile({ id: OWNER, sessionUserId: VISITOR });
+    expect(visitor.profilePicture).toBeNull();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 });
