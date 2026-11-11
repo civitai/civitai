@@ -198,7 +198,7 @@ review of every `CommentsV2` mount (2026-10-27); "Read flip as built" below reco
 | Comic chapter          | inline on the comics page, `ownerId` only                                  | top-level comments write through `commentv3.create` since write flip release 2; links open the chapter |
 | Model discussion       | masonry of cards and thread dialog (`comments-v3-model-flip.md`)           | built 2026-11-06 with its write flip; `model` surface gates, page budget 8                |
 
-Questions and answers have no surface to flip: their code was removed in #7543, and their threads stay as data until Phase 6 archives them to `qa_archive`.
+Questions and answers have no surface to flip: their code was removed in #7543, and their threads stay as data until Phase 6 drops them with the old tables.
 
 ### Read flip as built (2026-11-02; comic chapters 2026-11-03; not yet deployed)
 

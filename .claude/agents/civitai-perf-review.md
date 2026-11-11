@@ -60,7 +60,7 @@ once instead of serially — worse, not better.
 
 ### Query cost
 
-- **Missing index / seq scan.** EXPLAIN it. Large tables here (`Image`, `CommentV2`, `Post`,
+- **Missing index / seq scan.** EXPLAIN it. Large tables here (`Image`, `CommentV3`, `Post`,
   `ModelVersion`, metric tables) will happily scan hundreds of MB per query on a predicate with no
   supporting index, and a filter on a *timestamp* column that only exists in the ORDER BY is a common
   way to get one.

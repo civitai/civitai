@@ -20,7 +20,7 @@ vi.mock('~/server/middleware.trpc', async (importOriginal) => {
 });
 
 import '../commentv3.router';
-import { COMMENT_V3_RATE_LIMIT_KEY, commentRateLimits } from '~/server/schema/comment.schema';
+import { COMMENT_V3_RATE_LIMIT_KEY, commentRateLimits } from '~/server/schema/commentv3.schema';
 
 describe('comment limits share one bucket', () => {
   it('commentv3 create and update count into the bucket the Comments rows read', () => {

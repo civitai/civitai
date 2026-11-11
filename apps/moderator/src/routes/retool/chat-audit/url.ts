@@ -1,5 +1,6 @@
 import { page } from '$app/state';
 import type { Tab } from './tabs';
+import { TRANSCRIPT_AFTER, TRANSCRIPT_BEFORE } from '$lib/chat-transcript-cursor';
 
 const BASE = '/retool/chat-audit';
 
@@ -26,5 +27,6 @@ export function urlWith(params: Record<string, string | number | null>, tab?: Ta
 export const tabUrl = (tab: Tab) => urlWith({}, tab);
 
 // Opening a transcript has to move to the tab that renders transcripts, or the link sets `chat` and
-// appears to do nothing.
-export const chatUrl = (chatId: number) => urlWith({ chat: chatId }, 'chats');
+// appears to do nothing. The open chat's page cursor belongs to that chat, so it does not carry over.
+export const chatUrl = (chatId: number) =>
+  urlWith({ chat: chatId, [TRANSCRIPT_BEFORE]: null, [TRANSCRIPT_AFTER]: null }, 'chats');

@@ -42,9 +42,9 @@
   });
 </script>
 
-<!-- The root layout floats the sidebar trigger over this header (headerInline): pl-14 clears it and
-     pt-2.5 centres the title's line on the trigger's 48px row. -->
-<header class="flex flex-nowrap items-start justify-between gap-6 pt-2.5 pr-6 pb-3 pl-14">
+<!-- On phones the root layout floats the sidebar trigger over this header (headerInline): pl-14 clears
+     it and pt-2.5 centres the title's line on the trigger's 48px row. -->
+<header class="flex flex-nowrap items-start justify-between gap-6 pt-2.5 pr-6 pb-3 pl-14 md:pl-6">
   <div class="min-w-0 flex-1">
     <h1 class="m-0 text-xl font-semibold text-white">{title}</h1>
     {#if subtitle}<p class="m-0 mt-0.5 text-[13px] text-dark-2">{subtitle}</p>{/if}

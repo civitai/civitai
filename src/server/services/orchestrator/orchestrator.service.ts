@@ -13,6 +13,7 @@ import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
+import type { SCAN_ONLY_RESCAN_OP } from '~/server/services/orchestrator/model-scan-ops';
 import { isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
@@ -743,6 +744,7 @@ export async function createModelFileScanRequest({
   url,
   preflight = true,
   priority = 'normal',
+  op,
 }: {
   fileId: number;
   modelVersionId: number;
@@ -758,6 +760,8 @@ export async function createModelFileScanRequest({
    * is missing the 5-min `scanFilesFallbackJob` will catch and tombstone it. */
   preflight?: boolean;
   priority?: Priority;
+  /** Read back from the workflow, never from the callback, so only a submitter can set it. */
+  op?: typeof SCAN_ONLY_RESCAN_OP;
 }) {
   // Dev skip: only when BOTH (a) we're in non-prod AND (b) no token is
   // configured. In prod a missing token MUST surface as a real submitWorkflow
@@ -864,7 +868,7 @@ export async function createModelFileScanRequest({
 
   const air = modelFileScanAir({ fileId, modelVersionId, modelId, modelType, baseModel });
 
-  const metadata = { fileId, modelVersionId };
+  const metadata = { fileId, modelVersionId, ...(op && { op }) };
   const callbackUrl = `${env.NEXTAUTH_URL}/api/webhooks/model-file-scan-result?token=${env.WEBHOOK_TOKEN}`;
 
   const { data, error, response } = await submitWorkflow({
