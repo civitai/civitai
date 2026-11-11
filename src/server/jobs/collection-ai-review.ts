@@ -60,6 +60,7 @@ type PendingItem = {
 };
 
 export const HELD_MINOR_ESCALATION = 'scanner-flagged minor';
+export const ACCEPTABLE_MINOR_ESCALATION = 'marked acceptable minor';
 
 // An entry marked acceptableMinor goes to a human too, like a flagged one.
 const isHeldMinor = (item: Pick<PendingItem, 'minor' | 'acceptableMinor'>) =>
@@ -222,7 +223,10 @@ async function classifyItem({
     decision = {
       decision: 'escalate',
       violations: decision.violations,
-      escalations: [...decision.escalations, HELD_MINOR_ESCALATION],
+      escalations: [
+        ...decision.escalations,
+        item.minor ? HELD_MINOR_ESCALATION : ACCEPTABLE_MINOR_ESCALATION,
+      ],
       neverReject: true,
     };
 

@@ -195,11 +195,13 @@ describe('reviewCollection: an image flagged as a minor before its outcome is wr
       { id: 1, nsfwLevel: PG },
       { id: 2, nsfwLevel: PG },
       { id: 3, nsfwLevel: PG },
+      { id: 4, nsfwLevel: PG },
     ]);
     reviewImage.mockImplementation(async () => {
       if (reviewImage.mock.calls.length === 1) {
         await db.query(`UPDATE "Image" SET minor = true WHERE id = 1`);
         await db.query(`UPDATE "Image" SET minor = true, "acceptableMinor" = true WHERE id = 3`);
+        await db.query(`UPDATE "Image" SET "acceptableMinor" = true WHERE id = 4`);
       }
       return { observations: clean, usage: { promptTokens: 1, completionTokens: 1 } };
     });
