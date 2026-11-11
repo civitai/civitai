@@ -13,9 +13,8 @@ vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
-const { checkMatureSafeBitDrift, MATURE_SAFE_BIT_DRIFT_CAP } = await import(
-  '~/server/jobs/check-mature-safe-bit-drift'
-);
+const { checkMatureSafeBitDrift } = await import('~/server/jobs/check-mature-safe-bit-drift');
+const { MATURE_SAFE_BIT_DRIFT_CAP } = await import('~/server/services/nsfw-rollup-drift.service');
 const { imageDerivedVersionLevels, updateModelVersionNsfwLevels } = await import(
   '~/server/services/nsfwLevels.service'
 );
@@ -40,6 +39,9 @@ async function start() {
   const run = (async (sql: Prisma.Sql) => (await db.query(sql.text, sql.values)).rows) as never;
   vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(run);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(run);
+  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(
+    (async (sql: Prisma.Sql) => (await db.query(sql.text, sql.values)).affectedRows ?? 0) as never
+  );
 }
 
 const model = (id: number, nsfw: boolean, nsfwLevel: number, sfwName: string | null = null) =>
@@ -79,6 +81,8 @@ describe('check-mature-safe-bit-drift', () => {
     await version(30, 3, 1);
     await model(4, true, 60); // mature version drifted, model level fine
     await version(40, 4, 2);
+    await model(5, true, 61); // no Published version: the model rollup never reaches it
+    await version(50, 5, 1, 'Draft');
 
     const result = await checkMatureSafeBitDrift.run({}).result;
 
@@ -87,7 +91,13 @@ describe('check-mature-safe-bit-drift', () => {
       { entityId: 10, entityType: 'ModelVersion' },
       { entityId: 40, entityType: 'ModelVersion' },
     ]);
-    expect(result).toEqual({ versionCount: 2, modelCount: 1, enqueued: 3 });
+    expect(result).toEqual({
+      versionCount: 2,
+      modelCount: 1,
+      overCap: false,
+      enqueuedVersions: 2,
+      enqueuedModels: 1,
+    });
   });
 
   it('alerts and queues nothing above the cap', async () => {
@@ -97,7 +107,11 @@ describe('check-mature-safe-bit-drift', () => {
     const result = await checkMatureSafeBitDrift.run({}).result;
 
     expect(await queued()).toEqual([]);
-    expect(result).toMatchObject({ versionCount: MATURE_SAFE_BIT_DRIFT_CAP + 1, enqueued: 0 });
+    expect(result).toMatchObject({
+      versionCount: MATURE_SAFE_BIT_DRIFT_CAP + 1,
+      overCap: true,
+      enqueuedVersions: 0,
+    });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error', name: 'mature-safe-bit-drift' })
     );
@@ -117,17 +131,26 @@ describe('imageDerivedVersionLevels', () => {
   it('reads the level the version rollup stores for a non-mature model', async () => {
     await model(1, false, 0);
     await version(10, 1, 0);
-    await db.query(`INSERT INTO "Post" VALUES (1, 10, 7, now()), (2, 10, 8, now())`);
-    // The owner's first 20 rated images count: Blocked (32), unrated (0), the 21st and another
-    // user's post do not.
-    for (let index = 0; index < 20; index++)
-      await db.query(`INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (1, $1, $2)`, [
-        index === 0 ? 2 : 1,
+    // Posts are read in id order, so each excluded post comes before the owner's published one
+    // and would fall inside the first 20 images if its filter were lost. Each carries a bit no
+    // counted image has.
+    await db.query(
+      `INSERT INTO "Post" VALUES (1, 10, 8, now()), (2, 10, 7, NULL), (3, 10, 7, now())`
+    );
+    await db.query(
+      `INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (1, 4, 0), (2, 16, 0)`
+    );
+    // On the owner's published post: Blocked and unrated are left out, then 20 rated images
+    // count and the 21st (X) does not.
+    await db.query(
+      `INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (3, 32, 0), (3, 0, 0)`
+    );
+    for (let index = 1; index <= 20; index++)
+      await db.query(`INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (3, $1, $2)`, [
+        index === 1 ? 2 : 1,
         index,
       ]);
-    await db.query(
-      `INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (1, 32, 0), (1, 0, 0), (1, 8, 99), (2, 4, 0)`
-    );
+    await db.query(`INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (3, 8, 21)`);
 
     const derived = await imageDerivedVersionLevels([10]);
     await updateModelVersionNsfwLevels([10]);

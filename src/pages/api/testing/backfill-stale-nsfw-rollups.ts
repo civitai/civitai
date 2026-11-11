@@ -33,7 +33,8 @@
  *
  * `predicate=mature-safe-bit` switches count and enqueue to the opposite drift: a mature model
  * (nsfw = true) whose Published versions, or whose own level without a civitai.com face, still carry
- * a safe bit. The nightly check-mature-safe-bit-drift job runs the same predicate.
+ * a safe bit. The nightly check-mature-safe-bit-drift job runs the same predicate, and enqueue has
+ * its cap: over 500 rows it queues nothing (scope it with modelId).
  *
  * Every write is gated by WEBHOOK_TOKEN. The enqueue action only writes into
  * JobQueue (an ON CONFLICT DO NOTHING insert) — same path the trigger uses —
@@ -92,23 +93,18 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   if (input.predicate === 'mature-safe-bit') {
     if (input.action === 'count' || input.dryRun) {
       const counts = await countMatureSafeBitDrift(input.modelId);
-      return res
-        .status(200)
-        .json({
-          action: input.action,
-          predicate: input.predicate,
-          dryRun: !!input.dryRun,
-          ...counts,
-        });
+      return res.status(200).json({
+        action: input.action,
+        predicate: input.predicate,
+        dryRun: !!input.dryRun,
+        ...counts,
+      });
     }
-    const { versionIds, modelIds } = await enqueueMatureSafeBitDrift(input.modelId);
-    return res.status(200).json({
-      action: 'enqueue',
-      predicate: input.predicate,
-      dryRun: false,
-      enqueuedVersions: versionIds.length,
-      enqueuedModels: modelIds.length,
-    });
+    // Capped like the nightly job: over the cap it queues nothing and says so.
+    const result = await enqueueMatureSafeBitDrift(input.modelId);
+    return res
+      .status(200)
+      .json({ action: 'enqueue', predicate: input.predicate, dryRun: false, ...result });
   }
 
   switch (input.action) {
