@@ -56,4 +56,22 @@ describe('articles search index', () => {
     });
     expect(records).toHaveLength(0);
   });
+
+  it.each(['Pending', 'Error'])(
+    'does not index a %s cover; the banner stands in when servable',
+    async (state) => {
+      const cover = { ...image(10, 1), ingestion: state };
+      const withBanner = await transformData({
+        articles: [article({ coverImage: cover, bannerImage: image(11, 1) })],
+        cosmetics: {},
+      });
+      expect(withBanner[0]?.coverImage).toMatchObject({ id: 11 });
+
+      const coverOnly = await transformData({
+        articles: [article({ coverImage: cover, bannerImage: null })],
+        cosmetics: {},
+      });
+      expect(coverOnly).toHaveLength(0);
+    }
+  );
 });

@@ -78,8 +78,8 @@ export const transformData = async ({
 }) => {
   const records = articles
     .map(({ tags, stats, bannerImage, ...articleRecord }) => {
-      // A banner stands in for a missing cover on the card, once it is servable.
-      const coverImage = articleRecord.coverImage ?? servableBanner(bannerImage);
+      // The cover, else the banner, once servable: the article can read Scanned before its cover.
+      const coverImage = servableBanner(articleRecord.coverImage) ?? servableBanner(bannerImage);
       if (!coverImage) return null;
       return {
         ...articleRecord,

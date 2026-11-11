@@ -312,7 +312,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         title: true,
         content: true,
         user: { select: { username: true } },
-        coverImage: { select: ogImageSelect },
+        coverImage: { select: { ...ogImageSelect, ingestion: true, needsReview: true } },
         bannerImage: { select: { ...ogImageSelect, ingestion: true, needsReview: true } },
       },
     }),
@@ -346,7 +346,9 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
     title: article.title,
     description: cleanDescription(removeSpoilers(article.content ?? '')),
     creator: article.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(article.coverImage ?? servableBanner(article.bannerImage))),
+    ...buildEntityImage(
+      getSafeImage(servableBanner(article.coverImage) ?? servableBanner(article.bannerImage))
+    ),
     stats,
   };
 }
