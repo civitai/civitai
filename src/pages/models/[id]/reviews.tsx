@@ -17,7 +17,6 @@ import {
   Title,
 } from '@mantine/core';
 import {
-  IconFilter,
   IconLock,
   IconMessageCircleOff,
   IconStack2,
@@ -384,7 +383,7 @@ export default function ModelReviews() {
           </div>
 
           <div className="order-2 min-w-0 lg:col-start-1 lg:row-span-3 lg:row-start-2">
-            <div className="mb-4 flex items-center justify-between gap-2">
+            <div className="mb-4 flex items-center gap-2">
               <Chip.Group multiple={false} value={filter ?? 'all'} onChange={handleFilterChange}>
                 <div className="flex items-center gap-2" role="group" aria-label="Filter reviews">
                   <FilterChip value="all">All</FilterChip>
@@ -397,16 +396,6 @@ export default function ModelReviews() {
                   </FilterChip>
                 </div>
               </Chip.Group>
-              <Select
-                aria-label="Sort reviews"
-                className="hidden w-[130px] shrink-0 sm:block"
-                size="xs"
-                allowDeselect={false}
-                leftSection={<IconFilter size={16} />}
-                data={[{ label: 'Newest', value: 'newest' }]}
-                value="newest"
-                onChange={() => undefined}
-              />
             </div>
             {loadingResourceReviews ? (
               <Center p="xl">
