@@ -92,6 +92,8 @@ import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-sc
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
+  CollectionItemStatus,
+  CollectionMode,
   EntityType,
   ReportReason,
   ReportStatus,
@@ -1318,6 +1320,21 @@ export async function updateImageAcceptableMinorHandler({
       isModerator,
     });
     if (!permissions.manage) throw throwAuthorizationError();
+
+    if (!isModerator) {
+      // A contest entry its own image's owner submitted, judged by someone else.
+      const item = await dbRead.collectionItem.findFirst({
+        where: {
+          collectionId,
+          imageId: input.id,
+          status: { not: CollectionItemStatus.REJECTED },
+          collection: { mode: CollectionMode.Contest },
+        },
+        select: { addedById: true, image: { select: { userId: true } } },
+      });
+      if (!item?.addedById || item.addedById !== item.image?.userId || item.addedById === userId)
+        throw throwAuthorizationError();
+    }
 
     const image = await updateImageAcceptableMinor(input);
     return image;
