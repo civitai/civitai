@@ -17,7 +17,9 @@
  *   --limit=N       Submit at most N files this run (default: all selected).
  *   --concurrency=N Parallel submissions (default 5).
  *   --rate=N        Submit at most N files a minute (default 2).
- *   --file-ids=a,b  Only these files (still subject to the selection).
+ *   --file-ids=a,b     Only these files (still subject to the selection).
+ *   --version-ids=a,b  Only these versions' files of the rescanned types (still subject to the
+ *                      selection). Not with --file-ids. The dry run lists versions with no such file.
  */
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
@@ -30,6 +32,7 @@ import {
 import { SCAN_ONLY_RESCAN_OP } from '~/server/services/orchestrator/model-scan-ops';
 import { PICKLE_LOADED_FILE_TYPES } from '~/server/services/model-file-scan.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { expandVersions, idFilter } from './rescan-unread-pickle-files.lib';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 
 const args = process.argv.slice(2);
@@ -52,7 +55,8 @@ function awaitStartSlot() {
   nextStart = Math.max(now, nextStart) + 60_000 / perMinute;
   return new Promise((resolve) => setTimeout(resolve, wait));
 }
-const fileIds = flag('file-ids')?.split(',').map(Number);
+const ids = idFilter(flag('file-ids'), flag('version-ids'));
+let fileIds = ids.fileIds;
 
 // A submission inside this window is still in flight; submitting again would only double the work.
 const IN_FLIGHT_MS = 24 * 60 * 60 * 1000;
@@ -126,6 +130,25 @@ async function main() {
     if (refusals.length) throw new Error(`Refusing to submit:\n- ${refusals.join('\n- ')}`);
   }
 
+  let versionReport: Record<string, unknown> | undefined;
+  if (ids.versionIds) {
+    const files = await dbRead.modelFile.findMany({
+      where: {
+        modelVersionId: { in: ids.versionIds },
+        type: { in: PICKLE_LOADED_FILE_TYPES },
+      },
+      select: { id: true, modelVersionId: true },
+    });
+    const expanded = expandVersions(ids.versionIds, files);
+    fileIds = expanded.fileIds;
+    versionReport = {
+      versions: ids.versionIds.length,
+      files: expanded.fileIds.length,
+      versionsWithoutFiles: expanded.versionsWithoutFiles,
+    };
+    if (!fileIds.length) fileIds = [-1];
+  }
+
   const byType = new Map<string, { files: number; kb: number }>();
   const submitted: number[] = [];
   const failed: { id: number; reason: string }[] = [];
@@ -180,6 +203,7 @@ async function main() {
     JSON.stringify(
       {
         mode: execute ? 'execute' : 'dry-run',
+        ...(versionReport && { versionIds: versionReport }),
         selected,
         totalBytes: Math.round(totalKB * 1024),
         byType: Object.fromEntries(byType),
