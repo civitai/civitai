@@ -4,6 +4,7 @@ import type { Context } from '~/server/createContext';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 
@@ -32,6 +33,12 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
     state.sharedCalls.push(block.id);
     return { ...block, metadata, collection: { items: ['shared'] } };
   }),
+}));
+
+// The system-block metadata map, read through a shared cache: read straight through here.
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof CacheHelpers>()),
+  fetchThroughCache: async (_key: string, fetcher: () => Promise<unknown>) => fetcher(),
 }));
 
 const { getCollectionItems } = vi.hoisted(() => ({ getCollectionItems: vi.fn() }));
@@ -125,7 +132,6 @@ const errorOf = (p: Promise<unknown>) =>
   );
 const itemsOf = (block: unknown) => (block as { collection: { items: string[] } }).collection.items;
 const missing = async () => {
-  getHomeBlockRow.mockResolvedValueOnce(undefined);
   return errorOf(getHomeBlocksByIdHandler({ ctx: ctxFor(), input: { id: 999 } }));
 };
 
@@ -257,16 +263,74 @@ describe("the block editor's list (withCoreData)", () => {
         ctx: ctxFor(user),
         input: { withCoreData: true, ownedOnly: true },
       })
-    ).map((b) => b.id);
+    ).map((b) => ({ id: b.id, collection: 'collection' in b ? b.collection : undefined }));
   };
 
-  it("leaves out the viewer's own block of a collection they may no longer read", async () => {
+  // Saving the editor removes any of the viewer's blocks it did not list, so every one is listed.
+  it("lists the viewer's block of a collection they may no longer read, without the collection", async () => {
     seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Image' }, BLOCK_OWNER);
-    expect(await listFor({ id: BLOCK_OWNER })).toEqual([]);
+    expect(await listFor({ id: BLOCK_OWNER })).toEqual([{ id: BLOCK_ID, collection: undefined }]);
   });
 
-  it("keeps the viewer's own block of their own Private collection (control)", async () => {
+  it("lists the viewer's block of their own Private collection with it (control)", async () => {
     seed({ read: 'Private', userId: BLOCK_OWNER, type: 'Image' }, BLOCK_OWNER);
-    expect(await listFor({ id: BLOCK_OWNER })).toEqual([BLOCK_ID]);
+    expect(await listFor({ id: BLOCK_OWNER })).toEqual([
+      { id: BLOCK_ID, collection: expect.objectContaining({ id: COLLECTION_ID }) },
+    ]);
+  });
+});
+
+describe('a clone of a system block', () => {
+  const SYSTEM_BLOCK_ID = 3;
+  const cloneRow = (metadata: object) => ({
+    id: BLOCK_ID,
+    type: HomeBlockType.Collection,
+    userId: BLOCK_OWNER,
+    sourceId: SYSTEM_BLOCK_ID,
+    metadata,
+  });
+
+  it('shows the collection its system block chose, as the system block does', async () => {
+    seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Model' }, BLOCK_OWNER);
+    getHomeBlockRow.mockImplementation(async (_db: unknown, id: number) =>
+      id === BLOCK_ID ? cloneRow({}) : undefined
+    );
+    dbMock.dbRead.homeBlock.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.homeBlock.findFirst.mockResolvedValue({
+      metadata: { collection: { id: COLLECTION_ID } },
+    } as never);
+    expect(await errorOf(loadAs(STRANGER))).toBeNull();
+    expect(state.sharedCalls).toEqual([BLOCK_ID]);
+  });
+
+  it("is judged as its owner's block when its system block is gone", async () => {
+    seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Model' }, BLOCK_OWNER);
+    getHomeBlockRow.mockImplementation(async (_db: unknown, id: number) =>
+      id === BLOCK_ID ? cloneRow({ collection: { id: COLLECTION_ID } }) : undefined
+    );
+    dbMock.dbRead.homeBlock.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.homeBlock.findFirst.mockResolvedValue(null as never);
+    expect(await errorOf(loadAs(STRANGER))).toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('other audiences', () => {
+  it('serves a system block of a Private collection from the shared entry', async () => {
+    seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Image' }, -1);
+    expect(await errorOf(loadAs())).toBeNull();
+    expect(state.sharedCalls).toEqual([BLOCK_ID]);
+  });
+
+  it('answers a block whose collection is gone, or that names none, as a missing block', async () => {
+    const notFound = await missing();
+    seed(null);
+    expect(await errorOf(loadAs({ id: BLOCK_OWNER }))).toEqual(notFound);
+    seed({ read: 'Public', userId: COLLECTION_OWNER, type: 'Image' });
+    getHomeBlockRow.mockImplementation(async (_db: unknown, id: number) =>
+      id === BLOCK_ID
+        ? { id, type: HomeBlockType.Collection, userId: BLOCK_OWNER, sourceId: null, metadata: {} }
+        : undefined
+    );
+    expect(await errorOf(loadAs({ id: BLOCK_OWNER }))).toEqual(notFound);
   });
 });

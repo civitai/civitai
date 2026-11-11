@@ -12,6 +12,7 @@ import {
   deleteHomeBlockById,
   getFeaturedCollectionsPool,
   getHomeBlockById,
+  resolveHomeBlockSource,
   getHomeBlockData,
   getHomeBlocks,
   getSystemHomeBlocks,
@@ -91,12 +92,15 @@ export const getHomeBlocksHandler = async ({
       const homeBlocksWithData = await Promise.all(
         homeBlocks.map(async (homeBlock) => {
           if (homeBlock.type === HomeBlockType.Collection) {
+            const { fromSystem } = await resolveHomeBlockSource(homeBlock);
             const audience = await getCollectionBlockAudience({
-              blockUserId: homeBlock.userId,
+              blockUserId: fromSystem ? -1 : homeBlock.userId,
               collectionId: (homeBlock.metadata as HomeBlockMetaSchema).collection?.id,
               viewer: ctx.user,
             });
-            if (audience === 'none') return null;
+            // Still listed, so saving the editor keeps it, but without its collection.
+            if (audience === 'none')
+              return { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
           }
           return getHomeBlockData({ homeBlock, user: ctx.user, input, coverage });
         })

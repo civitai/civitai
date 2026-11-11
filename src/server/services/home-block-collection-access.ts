@@ -1,4 +1,4 @@
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import type { EventViewer } from '~/server/events/event-access';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -28,10 +28,11 @@ export async function getCollectionBlockAudience({
   if (!collectionId) return 'none';
   if (blockUserId === -1) return 'shared';
 
-  const collection = await dbRead.collection.findUnique({
-    where: { id: collectionId },
-    select: { read: true, userId: true },
-  });
+  const findArgs = { where: { id: collectionId }, select: { read: true, userId: true } } as const;
+  // The primary when the replica has not caught up with a collection created moments ago.
+  const collection =
+    (await dbRead.collection.findUnique(findArgs)) ??
+    (await dbWrite.collection.findUnique(findArgs));
   if (!collection) return 'none';
 
   const unlisted = collection.read === CollectionReadConfiguration.Unlisted;

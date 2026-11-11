@@ -265,12 +265,13 @@ export const getHomeBlockById = async ({
   }
 
   const row = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
-  const metadata = await resolveHomeBlockMetadata(row);
+  const { metadata, fromSystem } = await resolveHomeBlockSource(row);
   if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) return null;
 
   if (row.type === HomeBlockType.Collection) {
     const audience = await getCollectionBlockAudience({
-      blockUserId: row.userId,
+      // A clone of a system block shows the collection the system block chose.
+      blockUserId: fromSystem ? -1 : row.userId,
       collectionId: metadata.collection?.id,
       viewer,
     });
@@ -506,13 +507,22 @@ const getSystemBlockMetadata = async () =>
 export const resolveHomeBlockMetadata = async (homeBlock: {
   metadata?: HomeBlockMetaSchema | Prisma.JsonValue;
   sourceId?: number | null;
-}): Promise<HomeBlockMetaSchema> => {
+}): Promise<HomeBlockMetaSchema> => (await resolveHomeBlockSource(homeBlock)).metadata;
+
+/**
+ * The block's effective metadata, and whether it came from a system block (a clone's source),
+ * rather than from the row's own column.
+ */
+export const resolveHomeBlockSource = async (homeBlock: {
+  metadata?: HomeBlockMetaSchema | Prisma.JsonValue;
+  sourceId?: number | null;
+}): Promise<{ metadata: HomeBlockMetaSchema; fromSystem: boolean }> => {
   const own = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
-  if (!homeBlock.sourceId) return own;
+  if (!homeBlock.sourceId) return { metadata: own, fromSystem: false };
 
   const systemMetadata = await getSystemBlockMetadata();
   const source = systemMetadata[homeBlock.sourceId];
-  if (source) return source;
+  if (source) return { metadata: source, fromSystem: true };
 
   // `userId: -1` is the point of this query, not decoration. Without it a row sourced off another
   // USER's block would resolve that stranger's content and presentation onto this homepage — and
@@ -521,7 +531,9 @@ export const resolveHomeBlockMetadata = async (homeBlock: {
     where: { id: homeBlock.sourceId, userId: -1 },
     select: { metadata: true },
   });
-  return (row?.metadata as HomeBlockMetaSchema) || own;
+  return row?.metadata
+    ? { metadata: row.metadata as HomeBlockMetaSchema, fromSystem: true }
+    : { metadata: own, fromSystem: false };
 };
 
 export const getHomeBlockData = async ({
