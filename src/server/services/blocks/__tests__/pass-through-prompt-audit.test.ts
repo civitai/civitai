@@ -213,3 +213,43 @@ describe('auditTrainingSamplePrompts', () => {
     expect(long.loadIsModerator).not.toHaveBeenCalled();
   });
 });
+
+describe('collectPassThroughAuditText on a training step', () => {
+  it('reads the sample prompts and nothing else the trainer is not generating from', () => {
+    const got = collectPassThroughAuditText([
+      {
+        $type: 'training',
+        input: {
+          engine: 'ai-toolkit',
+          ecosystem: 'sdxl',
+          triggerWord: 'mychar',
+          trainingData: { type: 'blobs', items: [{ air: 'K1.jpeg', caption: 'a caption' }] },
+          samples: { prompts: ['mychar on a beach', 'mychar badword'], cfgScale: 4 },
+          params: { optimizerType: 'adamw8bit' },
+        },
+      },
+    ]);
+    expect(got.auditedTypes).toEqual(['training']);
+    expect(got.prompt.split('\n')).toEqual(['mychar on a beach', 'mychar badword']);
+    expect(got.negativePrompt).toBe('');
+  });
+
+  it('reads samplePrompts and negativePrompt, however the type and keys are cased', () => {
+    const got = collectPassThroughAuditText([
+      {
+        $type: 'ImageResourceTraining',
+        input: { SamplePrompts: ['a lake'], NegativePrompt: 'blurry', loraName: 'x' },
+      },
+    ]);
+    expect(got.auditedTypes).toEqual(['imageresourcetraining']);
+    expect(got.prompt).toBe('a lake');
+    expect(got.negativePrompt).toBe('blurry');
+  });
+
+  it('records a reference in the sample prompts as an unreadable prompt', () => {
+    const got = collectPassThroughAuditText([
+      { $type: 'training', input: { samples: { prompts: { $ref: '$arguments', path: 'p' } } } },
+    ]);
+    expect(got.promptRefs).toEqual(['argument']);
+  });
+});

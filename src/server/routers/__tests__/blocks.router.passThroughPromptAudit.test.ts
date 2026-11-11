@@ -512,6 +512,15 @@ describe('a training run’s sample prompts', () => {
     );
   });
 
+  it('enforce: a pass-through training step’s sample prompts are audited too', async () => {
+    const body = stepBody(
+      { engine: 'ai-toolkit', samples: { prompts: ['mychar badword'] } },
+      'training'
+    );
+    await expect(submit(body)).rejects.toThrow(REFUSED);
+    expect(whatIfCalls()).toHaveLength(0);
+  });
+
   it('a mature block’s prompts get the mature audit', async () => {
     h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
     await submit(trainingBody(['mychar on a beach'])).catch(() => undefined);
