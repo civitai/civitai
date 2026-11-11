@@ -63,15 +63,27 @@ export function assertFileTypeChangeAllowed(
   )
     throw throwBadRequestError("A file can't be changed to or from training data.");
   if (file.type === 'Training Data' && file.virusScanResult !== ScanResultCode.Success)
-    throw throwBadRequestError(
-      "Training data can't be changed to another type until its security scan completes."
-    );
+    throw throwBadRequestError(TRAINING_DATA_SCAN_PENDING_MESSAGE);
 }
+
+export const TRAINING_DATA_SCAN_PENDING_MESSAGE =
+  "Training data can't be changed to another type until its security scan completes.";
 
 /**
  * The scan fields to write with a type change. Training Data has only had a virus scan, so a file
  * relabelled away from it goes back to unscanned, and the model-file scan picks it up as its new type.
  */
 export function scanResetForTypeChange(file: { type: string }, nextType: string | undefined) {
-  return file.type === 'Training Data' && nextType && nextType !== file.type ? unscannedFile : {};
+  return resetsScan(file, nextType) ? unscannedFile : {};
 }
+
+/**
+ * The condition a type change's write must add: the reset may only replace the Success it was
+ * judged on, never a verdict that landed since.
+ */
+export function scanResetWriteGuard(file: { type: string }, nextType: string | undefined) {
+  return resetsScan(file, nextType) ? { virusScanResult: ScanResultCode.Success } : {};
+}
+
+const resetsScan = (file: { type: string }, nextType: string | undefined) =>
+  file.type === 'Training Data' && !!nextType && nextType !== file.type;

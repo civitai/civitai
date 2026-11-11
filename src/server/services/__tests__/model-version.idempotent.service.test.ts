@@ -344,7 +344,7 @@ describe('mergeVersions file remaps', () => {
     await expect(merge([{ fileId: FILE, type: 'Other' }])).rejects.toThrow(PAST_REMAP);
 
     expect(fileUpdateMany).toHaveBeenCalledWith({
-      where: { id: FILE, ...inMerge },
+      where: { id: FILE, ...inMerge, virusScanResult: 'Success' },
       data: expect.objectContaining({
         type: 'Other',
         virusScanResult: 'Pending',
@@ -352,6 +352,21 @@ describe('mergeVersions file remaps', () => {
         scanRequestedAt: null,
       }),
     });
+  });
+
+  it('leaves a Danger that landed after the merge read the training data as clean', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({ type: 'Training Data', virusScanResult: 'Success' }),
+    ]);
+    fileUpdateMany.mockImplementation(
+      async ({ where }: { where: { virusScanResult?: string } }) => ({
+        count: where.virusScanResult === 'Success' ? 0 : 1,
+      })
+    );
+
+    await expect(merge([{ fileId: FILE, type: 'Other' }])).rejects.toThrow(
+      "Training data can't be changed to another type until its security scan completes."
+    );
   });
 
   // The lookup above returns nothing for a file outside the merge: another owner's file, or a

@@ -632,6 +632,20 @@ describe('a file type change to or from training data on a trained version', () 
     });
   });
 
+  it('leaves a Danger that landed after the relabel read it as clean', async () => {
+    withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
+    // The stored row turned Danger after the lookup: only a write that names Success misses it.
+    dbMock.dbWrite.modelFile.updateMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { virusScanResult?: string };
+    }) => ({ count: where.virusScanResult === 'Success' ? 0 : 1 })) as never);
+
+    await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).rejects.toThrow(
+      "Training data can't be changed to another type until its security scan completes."
+    );
+  });
+
   it('keeps the scan of training data edited with its own type sent again', async () => {
     withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
 
