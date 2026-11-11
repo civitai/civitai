@@ -96,6 +96,7 @@ describe('shapeModelHit', () => {
       { id: 10, nsfwLevel: NsfwLevel.X },
       { id: 11, nsfwLevel: NsfwLevel.PG },
       { id: 12, nsfwLevel: 0 },
+      { id: 13, nsfwLevel: NsfwLevel.PG | NsfwLevel.XXX },
     ];
     const shaped = shapeModelHit({ id: 3, name: 'M', images, _formatted: { images } }, comViewer);
     expect(shaped.images).toEqual([{ id: 11, nsfwLevel: NsfwLevel.PG }]);
@@ -184,7 +185,12 @@ describe('bounty images', () => {
   const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
   const uncapped = { showSfwFace: false };
   const pg = { id: 11, nsfwLevel: NsfwLevel.PG };
-  const images = [{ id: 10, nsfwLevel: NsfwLevel.X }, pg, { id: 12, nsfwLevel: 0 }];
+  const images = [
+    { id: 10, nsfwLevel: NsfwLevel.X },
+    pg,
+    { id: 12, nsfwLevel: 0 },
+    { id: 13, nsfwLevel: NsfwLevel.PG | NsfwLevel.XXX },
+  ];
   const respond = (body: unknown) =>
     vi.stubGlobal(
       'fetch',

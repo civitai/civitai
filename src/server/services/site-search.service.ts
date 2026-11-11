@@ -18,7 +18,7 @@ import type {
   SiteSearchParams,
 } from '~/server/schema/site-search.schema';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
-import { Flags } from '~/shared/utils/flags';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const SITE_SEARCH_TIMEOUT_MS = 5_000;
@@ -113,11 +113,11 @@ type ModelHit = Record<string, unknown> & {
   _formatted?: Record<string, unknown>;
 };
 
-/** Drops the images the site may not serve; the model-level cap does not reach them. */
+/** Drops the images the site may not serve; the hit-level cap does not reach them. */
 function capImages(images: unknown, browsingLevelCap: number | undefined) {
   if (browsingLevelCap === undefined || !Array.isArray(images)) return images;
   return images.filter((image: { nsfwLevel?: unknown }) =>
-    Flags.intersects(Number(image?.nsfwLevel) || 0, browsingLevelCap)
+    isRatingWithinCap(image?.nsfwLevel, browsingLevelCap)
   );
 }
 
