@@ -136,6 +136,26 @@ export type TrainingSettingsType = BaseTrainingSettingsType &
     | StringTrainingSettingsType
   );
 
+type WithOverrides = { overrides?: TrainingSettingsType['overrides'] };
+type TrainingSettingOverride<T extends WithOverrides> = NonNullable<
+  NonNullable<NonNullable<T['overrides']>[TypeTrainingBaseModel]>['all']
+>;
+
+/**
+ * Merges a setting's `all` and per-engine overrides for a base field by field, the engine entry
+ * winning, so a base with an `all` entry still honours its engine-specific ones.
+ */
+export const getTrainingSettingOverride = <T extends WithOverrides>(
+  setting: T | undefined,
+  base: TypeTrainingBaseModel,
+  engine: EngineTypes
+): TrainingSettingOverride<T> => {
+  const baseOverrides = setting?.overrides?.[base] as
+    | { [key in EngineTypes | 'all']?: TrainingSettingOverride<T> }
+    | undefined;
+  return { ...baseOverrides?.all, ...baseOverrides?.[engine] } as TrainingSettingOverride<T>;
+};
+
 export const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'engine',

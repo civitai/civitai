@@ -20,6 +20,7 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { getPrecision } from '~/components/Training/Form/TrainingCommon';
 import {
+  getTrainingSettingOverride,
   optimizerArgMap,
   optimizerArgMapFlux,
   optimizerArgMapVideo,
@@ -246,10 +247,9 @@ export const AdvancedSettings = ({
 
     // Check if textEncoderLR is disabled for this base model (non-SD1/SDXL models)
     const textEncoderSetting = trainingSettings.find((ts) => ts.name === 'textEncoderLR');
-    const textEncoderOverride =
-      textEncoderSetting?.overrides?.[runBase]?.all ??
-      textEncoderSetting?.overrides?.[runBase]?.[selectedRun.params.engine];
-    const isTextEncoderDisabled = textEncoderOverride?.disabled === true;
+    const isTextEncoderDisabled =
+      getTrainingSettingOverride(textEncoderSetting, runBase, selectedRun.params.engine)
+        .disabled === true;
 
     // Prodigy optimizer requires LR values set to 1
     if (selectedRun.params.optimizerType === 'Prodigy') {
@@ -421,11 +421,10 @@ export const AdvancedSettings = ({
   const buildRow = (ts: (typeof trainingSettings)[number]) => {
     let inp: React.ReactNode;
 
-    const baseOverride = ts.overrides?.[runBase];
-    const override = baseOverride?.all ?? baseOverride?.[selectedRun.params.engine];
+    const override = getTrainingSettingOverride(ts, runBase, selectedRun.params.engine);
 
-    const disabledOverride = override?.disabled;
-    const baseHint = override?.hint ?? ts.hint;
+    const disabledOverride = override.disabled;
+    const baseHint = override.hint ?? ts.hint;
     const sizeHint =
       ts.name === 'networkDim'
         ? networkDimSizeHint(selectedRun.baseType, selectedRun.params.networkDim)
@@ -449,14 +448,13 @@ export const AdvancedSettings = ({
         : disabledOverride ?? ts.disabled === true;
 
     if (ts.type === 'int' || ts.type === 'number') {
-      // repeating for dumb ts
-      const tOverride =
-        ts.overrides?.[runBase]?.all ?? ts.overrides?.[runBase]?.[selectedRun.params.engine];
+      // re-read on the narrowed `ts` so min/max are typed
+      const tOverride = getTrainingSettingOverride(ts, runBase, selectedRun.params.engine);
 
       // AI Toolkit steps-based pricing bounds: epochs = saved checkpoints (1–20),
       // batchSize capped per ecosystem.
-      let inpMin = tOverride?.min ?? ts.min;
-      let inpMax = tOverride?.max ?? ts.max;
+      let inpMin = tOverride.min ?? ts.min;
+      let inpMax = tOverride.max ?? ts.max;
       if (isAiToolkit && ts.name === 'maxTrainEpochs') {
         inpMin = AI_TOOLKIT_EPOCHS.min;
         inpMax = AI_TOOLKIT_EPOCHS.max;

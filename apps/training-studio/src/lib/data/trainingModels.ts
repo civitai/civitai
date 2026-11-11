@@ -1045,8 +1045,9 @@ export const cardByAirEcosystem = (air: string): ModelCard | undefined => {
 // ---- Advanced training parameters (AI-Toolkit) ----
 // VENDORED from the main app's `trainingSettings` (src/components/Training/Form/TrainingParams.tsx),
 // resolved for engine `ai-toolkit` the way the trainer does in getDefaultTrainingParams
-// (src/store/training.store.ts:287): `overrides[key].all.default ?? overrides[key]['ai-toolkit'].default ??
-// base.default`, keyed by ModelVersionInfo.key (== the main app's TrainingDetailsBaseModel override key).
+// (src/store/training.store.ts, via getTrainingSettingOverride): `overrides[key]['ai-toolkit'].default ??
+// overrides[key].all.default ?? base.default`, keyed by ModelVersionInfo.key (== the main app's
+// TrainingDetailsBaseModel override key).
 // Re-mirror by hand when the trainer's numbers change. Flux.2 (imageResourceTraining) takes NO
 // hyperparameters, so its version key is intentionally absent (the Review step hides the panel for it).
 
