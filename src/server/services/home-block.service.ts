@@ -1409,7 +1409,11 @@ export const setHomeBlocksOrder = async ({
   if (ownedHomeBlocks.length) {
     transactions.push(
       ...ownedHomeBlocks.map((homeBlock) =>
-        dbWrite.homeBlock.update({ where: { id: homeBlock.id }, data: { index: homeBlock.index } })
+        // The submitted userId is the client's word; the row's owner is checked here.
+        dbWrite.homeBlock.updateMany({
+          where: { id: homeBlock.id, userId },
+          data: { index: homeBlock.index },
+        })
       )
     );
   }
