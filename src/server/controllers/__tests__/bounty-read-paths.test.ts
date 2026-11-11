@@ -391,6 +391,13 @@ describe('bounty images on a capped site', () => {
     expect(ids(entry.images)).toEqual([30]);
   });
 
+  it('entry detail keeps every image for the entry owner, whose edit saves back what it is shown', async () => {
+    mockImagesByEntity.mockResolvedValue([image(30, NsfwLevel.PG, 3), image(31, NsfwLevel.X, 3)]);
+    const ctx = { user: { id: OWNER }, features: { canViewNsfw: false } };
+    const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: ctx as never });
+    expect(ids(entry.images)).toEqual([30, 31]);
+  });
+
   it('an uncapped viewer keeps every image', async () => {
     dbMock.dbRead.bounty.findMany.mockResolvedValue([feedBounty(1)]);
     mockImagesForBounties.mockResolvedValue({

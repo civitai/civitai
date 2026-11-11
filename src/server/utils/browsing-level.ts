@@ -1,6 +1,6 @@
 import type { NextApiRequest } from 'next';
 import type { Context } from '~/server/createContext';
-import { Flags } from '~/shared/utils/flags';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
@@ -138,11 +138,7 @@ export function capNestedImages<T extends { nsfwLevel?: number | null }>(
   const cap = requestDomainBrowsingLevelCap(ctx);
   if (cap === undefined || ctx.user?.isModerator) return images;
   if (ownerId != null && ctx.user?.id === ownerId) return images;
-  // Every bit of the rating must be inside the cap, as for a single image (`canViewImageMedia`).
-  return images.filter((image) => {
-    const level = Number(image.nsfwLevel) || 0;
-    return level !== 0 && Flags.hasFlag(cap, level);
-  });
+  return images.filter((image) => isRatingWithinCap(image.nsfwLevel, cap));
 }
 
 /** Every level a request may be served: its cap from `requestDomainBrowsingLevelCap`, or all. */
