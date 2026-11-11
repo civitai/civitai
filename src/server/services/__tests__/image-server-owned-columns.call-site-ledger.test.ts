@@ -526,6 +526,11 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['coverId', 'bannerId', 'coverId', 'bannerId'],
     decision: 'resolver',
   },
+  // The song `addPostImage` just created for the caller.
+  'src/server/services/audio-scan/track-lyrics.ts#saveGeneratedTrackLyrics': {
+    writes: ['imageId'],
+    decision: 'server-derived',
+  },
   'src/server/services/auto-feature-images.service.ts#runAutoFeatureImages': {
     writes: ['imageId: p.imageId'],
     decision: 'server-derived',

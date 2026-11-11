@@ -200,6 +200,8 @@ export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AppealCategory = "Account" | "Article" | "Model" | "Other";
 
+export type TrackLyricsSource = "generator" | "user" | "aligned" | "transcribed";
+
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
@@ -1787,6 +1789,7 @@ export interface Image {
   storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
+  trackLyrics?: TrackLyrics | null;
 }
 
 export interface ImageTagForReview {
@@ -5051,6 +5054,17 @@ export interface ImageAudioScan {
   error: string | null;
   createdAt: Date;
   completedAt: Date | null;
+}
+
+export interface TrackLyrics {
+  imageId: number;
+  image?: Image;
+  text: string;
+  lines: JsonValue;
+  source: TrackLyricsSource;
+  language: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ScanLabelVote {

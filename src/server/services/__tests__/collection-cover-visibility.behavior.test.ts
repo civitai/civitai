@@ -109,10 +109,13 @@ const OWNER_REMOVED = 215; // the collection owner's own removed upload
 const REMOVED_LEVEL = 213; // stranger's image, Scanned with no reason but rated at the removed level
 const TAKEN_DOWN_MODEL = 216; // stranger's image on a published post on a taken-down model
 const LIVE_MODEL = 217; // stranger's image on a published post on a model that is not taken down
+const HELD_SONG = 218; // stranger's song on a published post, its lyrics held for csam
+const CLEAR_SONG = 219; // stranger's song on a published post, no lyrics hold
 
 beforeAll(async () => {
   const schema = `
     CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
       "id"              integer PRIMARY KEY,
@@ -185,6 +188,8 @@ beforeAll(async () => {
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${REMOVED_LEVEL}, ${STRANGER}, 1, 32);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion") VALUES (${PENDING_SCAN}, ${STRANGER}, 1, 'Pending');
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion", "blockedFor") VALUES (${OWNER_REMOVED}, ${OWNER}, NULL, 'Blocked', 'Moderated');
+    INSERT INTO "Image" ("id", "userId", "postId", "type") VALUES (${HELD_SONG}, ${STRANGER}, 1, 'audio'), (${CLEAR_SONG}, ${STRANGER}, 1, 'audio');
+    INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('TrackLyrics', ${HELD_SONG}, 'csam', 'Pending');
     INSERT INTO "CollectionContributor" ("collectionId", "userId", "permissions") VALUES
       (${COLLECTION}, ${MANAGER}, ARRAY['VIEW', 'MANAGE']::"CollectionContributorPermission"[]),
       (${COLLECTION}, ${VIEW_ONLY}, ARRAY['VIEW', 'ADD']::"CollectionContributorPermission"[]),
@@ -210,6 +215,7 @@ describe('which covers a stranger is shown', () => {
     ["the collection owner's own upload", OWNER_UPLOAD],
     ["a collection manager's upload", MANAGER_UPLOAD],
     ['an image on a model that is not taken down', LIVE_MODEL],
+    ['a song whose lyrics are not held', CLEAR_SONG],
   ])('shows %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(true);
   });
@@ -227,6 +233,7 @@ describe('which covers a stranger is shown', () => {
     ['an image rated at the removed level', REMOVED_LEVEL],
     ['an image still being scanned', PENDING_SCAN],
     ['an image on a taken-down model', TAKEN_DOWN_MODEL],
+    ['a song whose lyrics are held for csam', HELD_SONG],
   ])('hides %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(false);
   });

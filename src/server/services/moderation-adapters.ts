@@ -18,6 +18,7 @@ import {
   storylineTextScanAdapter,
 } from '~/server/services/text-scan/adapters';
 import { scamModerationAdapters } from '~/server/services/text-scan/scam.adapter';
+import { trackLyricsModerationAdapter } from '~/server/services/track-lyrics-moderation.adapter';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
 
 // Central registry of `ModerationAdapter`s keyed by entityType. Adding a new
@@ -40,6 +41,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Post: postTextScanAdapter,
   Storyline: storylineTextScanAdapter,
   ImageCaption: imageCaptionTextScanAdapter,
+  TrackLyrics: trackLyricsModerationAdapter,
   ...textScanShadowAdapters(),
   ...textScanWebSearchAdapters(),
   ...scamModerationAdapters,

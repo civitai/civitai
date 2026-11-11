@@ -130,7 +130,10 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
   taken out of the search index; a republish restores it), the chat soft delete (row and content
   retained, audited) for `ChatMessage`, and `UnpublishedViolation` for `Article` (through the
   moderator unpublish when it is Published; set directly when it is a draft, scheduled, processing or
-  owner-unpublished, under the article's ingestion lock, so it cannot go live later). Nothing is destroyed, so content stays available for an
+  owner-unpublished, under the article's ingestion lock, so it cannot go live later), and for
+  `TrackLyrics` a moderator unpublish of the song's post. While its lyrics hold is Pending or
+  Confirmed a song does not count as reviewed (`imageReviewedSql`), so reads that apply that rule hide
+  it; it leaves search when the hold is written, and dismissing the hold puts it back. Nothing is destroyed, so content stays available for an
   NCMEC report. A type outside this list is refused (400) and only "Do nothing" applies.
 - The ban skips an author who is already banned, because the ban service toggles. No decision files
   an NCMEC report or creates a `Report` row; the fourth action opens the CSAM report form

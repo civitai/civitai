@@ -142,9 +142,12 @@ import {
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { audioMetadataSchema } from '~/server/schema/media.schema';
 import {
+  saveGeneratedTrackLyrics,
+  submitTrackLyricsScan,
+} from '~/server/services/audio-scan/track-lyrics';
+import {
   SONGS_UNAVAILABLE_MESSAGE,
   buildSongDetails,
-  parseLyricLines,
   readSongConcept,
   readWorkflowLyrics,
 } from '~/shared/form-graph/generation/audio/song-metadata';
@@ -1599,23 +1602,21 @@ export function assertCanStoreSongs(user: SessionUser) {
 const SONG_WORKFLOW_READ_TIMEOUT_MS = 5_000;
 
 /**
- * The song's metadata as stored: only the audio fields, whatever else the client sent. The lyrics
- * are shown on the song page, so they come only from the caller's own workflow, read here; the
- * client's are dropped, and a workflow that could not be read leaves the song without lyrics. A
- * simple-mode song's bpm and key exist only in its drafting chat step, so they come from the
- * workflow too; what the client sent wins for those, and for the title.
+ * The song's metadata as stored, only its audio fields, and its lyrics. The lyrics come only from
+ * the caller's own workflow, never the client; a workflow that could not be read leaves the song
+ * without lyrics. A simple-mode song's bpm and key exist only in its drafting chat step; what the
+ * client sent wins for those, and for the title.
  */
 function resolveAudioMetadata(metadata: unknown, workflow: UserWorkflow | null) {
   const parsed = audioMetadataSchema.safeParse(metadata);
   if (!parsed.success) throw throwBadRequestError('Invalid audio metadata');
   const { lyrics: _clientLyrics, ...audio } = parsed.data;
-  if (!workflow) return audio;
+  if (!workflow) return { metadata: audio, lyrics: undefined };
   const { lyrics: _draftedLyrics, ...concept } = buildSongDetails(
     {},
     readSongConcept(workflow.steps)
   );
-  const lyrics = parseLyricLines(readWorkflowLyrics(workflow.steps));
-  return { ...concept, ...audio, ...(lyrics ? { lyrics } : {}) };
+  return { metadata: { ...concept, ...audio }, lyrics: readWorkflowLyrics(workflow.steps) };
 }
 
 export const addPostImage = async ({
@@ -1736,9 +1737,7 @@ export const addPostImage = async ({
           timeoutMs: SONG_WORKFLOW_READ_TIMEOUT_MS,
         })
       : undefined;
-  const audioMetadata = allowAudio
-    ? resolveAudioMetadata(props.metadata, songWorkflow ?? null)
-    : undefined;
+  const song = allowAudio ? resolveAudioMetadata(props.metadata, songWorkflow ?? null) : undefined;
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
     provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
@@ -1748,7 +1747,7 @@ export const addPostImage = async ({
 
   const partialResult = await createImage({
     ...imageProps,
-    metadata: audioMetadata ?? imageProps.metadata,
+    metadata: song?.metadata ?? imageProps.metadata,
     allowAudio,
     meta,
     verifiedSourceImageIds,
@@ -1760,6 +1759,14 @@ export const addPostImage = async ({
     clientUrl: serverMintedUrl ? undefined : true,
   });
 
+  // A song whose lyrics failed to save is kept without them and waits on its audio verdict alone.
+  if (song?.lyrics) {
+    const saved = await saveGeneratedTrackLyrics({
+      imageId: partialResult.id,
+      text: song.lyrics,
+    }).catch(handleLogError);
+    if (saved) submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
+  }
   await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
 
   const result = await dbWrite.image.findUnique({

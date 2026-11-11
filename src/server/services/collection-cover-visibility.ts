@@ -1,13 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { songReviewedSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 
-/** Scanned, not awaiting review, not removed: as SQL over `"Image" i`. */
+/** Scanned, not awaiting review, not removed, not a held song: as SQL over `"Image" i`. */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+  AND ${songReviewedSql()}
 )`;
 
 /** The post `"Post" p` is on no taken-down model; true for no post or a post on no model. */

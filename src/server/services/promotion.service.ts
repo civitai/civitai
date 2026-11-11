@@ -4,7 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { isImageReviewed } from '~/server/common/image-visibility';
+import { isImageReviewed, lyricsHeldSql } from '~/server/common/image-visibility';
 import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
 import {
   holdPlacementEscrow,
@@ -27,7 +27,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Flags } from '~/shared/utils/flags';
 import { declineFeeAmount, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
-import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import type {
   GalleryHostSettings,
   GalleryPromotionData,
@@ -153,6 +153,8 @@ const GALLERY_REFUSAL_MESSAGE: Record<GalleryPromotionRefusal, string> = {
 
 type PromotedPostImage = {
   id: number;
+  type: MediaType;
+  lyricsHeld: boolean;
   nsfwLevel: number;
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
@@ -173,7 +175,7 @@ async function loadPromotedPost(postId: number) {
   if (!post) throw throwNotFoundError('promotion: that post no longer exists');
 
   const images = await dbWrite.$queryRaw<PromotedPostImage[]>`
-    SELECT i.id, i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
+    SELECT i.id, i.type::text AS type, ${lyricsHeldSql()} AS "lyricsHeld", i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
            i.metadata->>'nsfwLevelReason' AS "nsfwLevelReason",
            i."scanJobs"->'error'->>'failureClass' AS "scanFailureClass",
            i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation"

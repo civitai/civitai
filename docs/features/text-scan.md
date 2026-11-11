@@ -48,8 +48,13 @@ Storyline's (title → a rating and a takedown or restriction on the storyline) 
 ImageCaption's (an author's caption on one image of a storyline chapter, keyed by `imageId` → a
 rating, and a refusal that hides the caption) is applied by `text-scan/actions/image-caption.ts`. It
 has no Clavata counterpart.
+TrackLyrics's (a song's lyrics, keyed by the song's `imageId` → `nsfw`, `csam`) has no XGuard
+fallback: only an active verdict reaches the song, which waits on it before going public
+(`audio-scan/apply-song-scan.ts`). The `nsfw` verdict is recorded and never rates or blocks the song.
+Off or in shadow, the lyrics get no verdict, and the song ends in Error, hidden, once the image scan's
+capped retry is spent.
 
-ChatMessage, CommentV3, UserProfile, Post, Model and Article also list `csam`, asked only while its
+ChatMessage, CommentV3, UserProfile, Post, Model, Article and TrackLyrics also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
 in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one
 workflow per window.

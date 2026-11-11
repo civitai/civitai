@@ -11,8 +11,7 @@ import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { audioMetadataSchema } from '~/server/schema/media.schema';
-import { buildSongScanSteps } from '~/server/services/audio-scan/song-scan';
+import { buildAudioModerationStep } from '~/server/services/audio-scan/song-scan';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 
@@ -97,15 +96,7 @@ export async function submitVideoAudioScan({
     const { data, response } = await submitAudioScanWorkflow({
       imageId,
       metadata,
-      steps: [
-        {
-          $type: 'audioModeration',
-          name: 'audio',
-          metadata,
-          priority,
-          input: { mediaUrl, transcriber: 'auto' },
-        } as unknown as WorkflowStepTemplate,
-      ],
+      steps: [buildAudioModerationStep({ mediaUrl, metadata, priority })],
     });
     if (!data?.id)
       throw new Error(`audio scan submit failed (${response?.status ?? 'no response'})`);
@@ -125,6 +116,13 @@ export async function submitVideoAudioScan({
  * and does not swallow failure: the caller owns what an unsubmitted song becomes, so it gets the
  * submit result as it would from the image scan.
  */
+type StandingAudioScan = {
+  data: { id: string };
+  attempts: number;
+  body?: undefined;
+  response?: undefined;
+};
+
 export async function submitSongScan({
   imageId,
   mediaUrl,
@@ -134,23 +132,29 @@ export async function submitSongScan({
   mediaUrl: string;
   priority?: Priority;
 }) {
-  const image = await dbWrite.image.findUnique({
-    where: { id: imageId },
-    select: { metadata: true },
+  const audio = await dbWrite.imageAudioScan.findUnique({
+    where: { imageId },
+    select: { status: true, workflowId: true },
   });
-  const lyrics = audioMetadataSchema.shape.lyrics.safeParse(
-    (image?.metadata as { lyrics?: unknown } | null)?.lyrics
-  );
+  if (audio?.status === 'Succeeded') {
+    // At the call site: track-lyrics reaches back here through the orchestrator service.
+    const { readLyricsVerdict, sendTrackLyricsScan } = await import(
+      '~/server/services/audio-scan/track-lyrics'
+    );
+    const lyrics = await readLyricsVerdict(imageId);
+    if (lyrics.state === 'pending') {
+      // A send with no verdict coming throws, so the caller counts it toward the retry cap.
+      if (!lyrics.inFlight) await sendTrackLyricsScan(imageId);
+      // The stored audio workflow stands in for a submit, so the caller stamps the attempt.
+      return { data: { id: audio.workflowId }, attempts: 0 } satisfies StandingAudioScan;
+    }
+  }
+
   const metadata = { imageId, scan: 'song' };
   return submitAudioScanWorkflow({
     imageId,
     metadata,
-    steps: buildSongScanSteps({
-      mediaUrl,
-      lyrics: lyrics.success ? lyrics.data : undefined,
-      metadata,
-      priority,
-    }),
+    steps: [buildAudioModerationStep({ mediaUrl, metadata, priority })],
   });
 }
 
@@ -271,14 +275,7 @@ export async function processAudioScanCallback(
         ? 'canceled'
         : 'workflow-failed',
   };
-  let parsed: AudioScanParse;
-  if (data.status === 'succeeded') parsed = parseAudioScanSteps(steps);
-  else if (isSong) {
-    // A song's workflow also runs the transcription, whose failure fails the whole workflow. The
-    // verdict is read from its own step: a succeeded verdict stands, anything else is the failure.
-    const verdict = parseAudioScanSteps(steps);
-    parsed = verdict.ok ? verdict : workflowFailure;
-  } else parsed = workflowFailure;
+  const parsed = data.status === 'succeeded' ? parseAudioScanSteps(steps) : workflowFailure;
   const result = await finish(workflowId, parsed);
 
   if (!result.stored || !isSong) return result;

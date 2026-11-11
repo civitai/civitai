@@ -78,6 +78,10 @@ vi.mock('~/env/server', () => ({
 }));
 
 import { ingestImages } from '~/server/jobs/image-ingestion';
+import {
+  classifyImageScanFailure,
+  getImageScanRetryLimit,
+} from '~/server/services/image-scan-failure';
 
 const ctx = {} as Parameters<typeof ingestImages.run>[0];
 
@@ -112,5 +116,47 @@ describe('ingest-images per-run cap', () => {
     // All pulled images were eligible+submitted, so we hit the cap exactly.
     expect(mockIngestImage.mock.calls.length).toBe(MOCK_CAP);
     expect(result.sent).toBe(MOCK_CAP);
+  });
+});
+
+describe('ingest-images retry cap for a song waiting on its lyrics', () => {
+  // How a song lands in Error when its lyrics scan ends without a verdict (apply-song-scan's failSong).
+  const lyricsFailureClass = classifyImageScanFailure({
+    failureType: 'lyrics-scan-failed',
+    reason: 'lyrics scan ended without a verdict',
+  });
+  const songInError = (retryCount: number) => ({
+    id: 1,
+    url: 'song-1',
+    type: 'audio',
+    width: null,
+    height: null,
+    prompt: null,
+    scanRequestedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    ingestion: 'Error',
+    retryCount,
+    failureClass: lyricsFailureClass,
+    isBackfill: false,
+  });
+
+  it('re-sends a song in Error under the cap', async () => {
+    mockDbWrite.$queryRaw.mockImplementationOnce(async () => [
+      songInError(getImageScanRetryLimit(lyricsFailureClass) - 1),
+    ]);
+
+    await runJob(ingestImages);
+
+    expect(mockIngestImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('never re-sends a song whose lyrics failures spent the cap, so it stays hidden in Error', async () => {
+    mockDbWrite.$queryRaw.mockImplementationOnce(async () => [
+      songInError(getImageScanRetryLimit(lyricsFailureClass)),
+    ]);
+
+    await runJob(ingestImages);
+
+    expect(mockIngestImage).not.toHaveBeenCalled();
   });
 });
