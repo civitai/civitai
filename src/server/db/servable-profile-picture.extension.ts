@@ -165,3 +165,21 @@ export const servableProfilePictureExtension = (onError: ProfilePictureGateError
       ),
     },
   });
+
+type ExtendableClient = { $extends: (extension: never) => unknown };
+
+/**
+ * `clients` with the extension applied to each. A single client serving both reads and writes
+ * stays a single client.
+ */
+export function withServableProfilePictures<C extends ExtendableClient>(
+  clients: { dbRead: C; dbWrite: C },
+  onError: ProfilePictureGateError
+): { dbRead: C; dbWrite: C } {
+  const extension = servableProfilePictureExtension(onError);
+  // The extended client's type is not the base client's; every call site uses the same API.
+  const extend = (client: C) => client.$extends(extension as never) as C;
+  const dbWrite = extend(clients.dbWrite);
+  const dbRead = clients.dbRead === clients.dbWrite ? dbWrite : extend(clients.dbRead);
+  return { dbRead, dbWrite };
+}

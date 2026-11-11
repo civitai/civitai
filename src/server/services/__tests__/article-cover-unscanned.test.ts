@@ -99,6 +99,13 @@ describe('article card covers', () => {
     expect(await feedCovers(viewer)).toEqual(['cover-Scanned', 'cover-Pending', 'cover-Error']);
   });
 
+  it('the feed carries no cover awaiting review to a visitor', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue(
+      STATES.map((_, i) => ({ ...coverOf(i), needsReview: 'minor' })) as never
+    );
+    expect(await feedCovers({ id: 6 })).toEqual([null, null, null]);
+  });
+
   it('Civitai News carries only a Scanned cover', async () => {
     const { articles } = await getCivitaiNews();
     expect(articles.map((a) => a.coverImage?.url ?? null)).toEqual(['cover-Scanned', null, null]);

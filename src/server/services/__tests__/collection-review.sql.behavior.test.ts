@@ -172,7 +172,9 @@ describe('the review queue count', () => {
       )
     ).map((r) => r.id);
 
-  it('counts the submissions the queue shows, rated or not', async () => {
+  // Unrated submissions are counted before their scan finishes (2), though the queue's image read
+  // shows them only once reviewed: the count is the badge, the read decides what is shown.
+  it('counts rated submissions the queue shows and every unrated one', async () => {
     expect(await counted('imageId')).toEqual([1, 2, 13, 15, 16, 19]);
   });
 

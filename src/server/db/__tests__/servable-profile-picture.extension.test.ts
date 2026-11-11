@@ -3,6 +3,7 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import {
   gateProfilePictures,
   servableProfilePictureExtension,
+  withServableProfilePictures,
 } from '~/server/db/servable-profile-picture.extension';
 
 const picture = (ingestion: string) => ({ id: 1, url: `avatar-${ingestion}`, ingestion });
@@ -123,17 +124,76 @@ describe('the servable profile picture gate', () => {
     expect(result[0].user.profilePicture).toBeNull();
   });
 
-  it('registers on find queries only, so writes return what they wrote', () => {
-    const config = servableProfilePictureExtension(vi.fn())({
-      $extends: (extension: unknown) => extension,
-    } as never) as unknown as { query: { $allModels: Record<string, unknown> } };
+  it('nulls every picture when it fails after the query returned', async () => {
+    const onError = vi.fn();
+    // A result the plan cannot read; the fallback can still overwrite it.
+    let stored: unknown = picture('Pending');
+    const row = Object.defineProperty({ id: 1 }, 'profilePicture', {
+      enumerable: true,
+      get() {
+        if (stored === null) return null;
+        throw new Error('unreadable result');
+      },
+      set(value) {
+        stored = value;
+      },
+    });
 
-    expect(Object.keys(config.query.$allModels).sort()).toEqual([
+    const result = await gateProfilePictures(
+      { select: simpleUserSelect },
+      queryReturning(row),
+      onError
+    );
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(stored).toBeNull();
+    expect(result).toBe(row);
+  });
+
+  type Handler = (p: {
+    args: unknown;
+    query: (a: unknown) => Promise<unknown>;
+  }) => Promise<unknown>;
+  const registered = () =>
+    (
+      servableProfilePictureExtension(vi.fn())({
+        $extends: (extension: unknown) => extension,
+      } as never) as unknown as { query: { $allModels: Record<string, Handler> } }
+    ).query.$allModels;
+
+  it('registers on find queries only, so writes return what they wrote', () => {
+    expect(Object.keys(registered()).sort()).toEqual([
       'findFirst',
       'findFirstOrThrow',
       'findMany',
       'findUnique',
       'findUniqueOrThrow',
     ]);
+  });
+
+  it('gates through every registered find handler', async () => {
+    for (const [operation, handler] of Object.entries(registered())) {
+      const result = (await handler({
+        args: { select: simpleUserSelect },
+        query: async () => user('Pending'),
+      })) as { profilePicture: unknown };
+      expect(result.profilePicture, operation).toBeNull();
+    }
+  });
+
+  it('extends the read and write clients, and keeps a shared client shared', () => {
+    const client = (name: string) => ({ name, $extends: vi.fn(() => ({ name, extended: true })) });
+
+    const split = withServableProfilePictures(
+      { dbRead: client('read'), dbWrite: client('write') },
+      vi.fn()
+    );
+    expect(split.dbRead).toEqual({ name: 'read', extended: true });
+    expect(split.dbWrite).toEqual({ name: 'write', extended: true });
+
+    const one = client('one');
+    const shared = withServableProfilePictures({ dbRead: one, dbWrite: one }, vi.fn());
+    expect(shared.dbRead).toBe(shared.dbWrite);
+    expect(one.$extends).toHaveBeenCalledTimes(1);
   });
 });
