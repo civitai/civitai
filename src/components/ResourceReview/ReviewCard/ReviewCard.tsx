@@ -1,5 +1,5 @@
 import { Badge, Card } from '@mantine/core';
-import { IconLibraryPhoto, IconMessageCircle } from '@tabler/icons-react';
+import { IconLibraryPhoto, IconMessageCircle, IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -211,6 +211,14 @@ export function ReviewCard({
         ) : null}
         {/* Keeps the empty space between the footer's two ends part of the card's link. */}
         <span className="flex-1" />
+        {!full && review.imageCount > 0 && (
+          <span className="flex shrink-0 items-center gap-1.5" aria-label="Images">
+            <IconPhoto size={13} />
+            {review.imageCount > REVIEW_IMAGE_COUNT_CAP
+              ? `${REVIEW_IMAGE_COUNT_CAP}+`
+              : review.imageCount}
+          </span>
+        )}
         <span className="flex shrink-0 items-center gap-1.5" aria-label="Comments">
           <IconMessageCircle size={full ? 14 : 13} />
           {full

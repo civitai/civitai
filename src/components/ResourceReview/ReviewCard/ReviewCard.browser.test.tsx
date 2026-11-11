@@ -129,7 +129,7 @@ describe('ReviewCard, full variant', () => {
 });
 
 describe('ReviewCard, compact variant', () => {
-  test('shows no images and no image count, even when the review has images', async () => {
+  test('shows the image count but no images', async () => {
     await renderWithProviders(
       <ReviewCard
         review={makeReview({ details: '<p>Great.</p>', imageCount: 9 })}
@@ -138,8 +138,21 @@ describe('ReviewCard, compact variant', () => {
       />
     );
     expect(document.querySelector('[data-testid="review-images"]')).toBeNull();
-    expect(card().querySelector('[aria-label$="images"]')).toBeNull();
-    expect(card().textContent).not.toMatch(/images/);
+    expect(card().querySelector('[aria-label="Images"]')?.textContent).toBe('9');
+  });
+
+  test('caps the image count label at 100+', async () => {
+    await renderWithProviders(
+      <ReviewCard review={makeReview({ details: '<p>a</p>', imageCount: 101 })} variant="compact" />
+    );
+    expect(card().querySelector('[aria-label="Images"]')?.textContent).toBe('100+');
+  });
+
+  test('has no image count when the review has no images', async () => {
+    await renderWithProviders(
+      <ReviewCard review={makeReview({ details: '<p>a</p>', imageCount: 0 })} variant="compact" />
+    );
+    expect(card().querySelector('[aria-label="Images"]')).toBeNull();
   });
 });
 
