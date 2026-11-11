@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ReviewSchema from '~/server/schema/resourceReview.schema';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 import type * as UserService from '~/server/services/user.service';
 
@@ -28,6 +29,12 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
     Object.fromEntries(ids.map((id) => [id, { username: `u${id}`, image: null, deletedAt: null }])),
   getCosmeticsForUsers: async () => ({}),
   getProfilePicturesForUsers: async () => ({}),
+}));
+
+// A cap of 2 lets the over-cap path run on a handful of rows.
+vi.mock('~/server/schema/resourceReview.schema', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReviewSchema>()),
+  REVIEW_HAS_IMAGES_COUNT_CAP: 2,
 }));
 
 const { getPagedResourceReviews } = await import('~/server/services/resourceReview.service');
@@ -147,8 +154,7 @@ const page = (
     recommended?: boolean;
   },
   userId?: number
-) =>
-  getPagedResourceReviews({ input: { modelId: MODEL, limit: 10, page: 1, ...input }, userId });
+) => getPagedResourceReviews({ input: { modelId: MODEL, limit: 10, page: 1, ...input }, userId });
 
 describe('getPagedResourceReviews', () => {
   it("lists every version's reviews of the model when no version is selected", async () => {
@@ -358,7 +364,9 @@ describe('getPagedResourceReviews', () => {
   });
 
   it("returns each review's postId", async () => {
-    await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (900, 1, now() - interval '1 day')`);
+    await pg.exec(
+      `INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (900, 1, now() - interval '1 day')`
+    );
     await insertReviews([
       { id: 1, postId: 900, daysAgo: 1 },
       { id: 2, postId: null, daysAgo: 2 },
@@ -374,17 +382,20 @@ describe('getPagedResourceReviews', () => {
   it.each([
     [true, [1, 3]],
     [false, [2]],
-  ])('recommended: %s keeps only matching thumbs, with a matching total', async (recommended, ids) => {
-    await insertReviews([
-      { id: 1, recommended: true, daysAgo: 3 },
-      { id: 2, recommended: false, daysAgo: 2 },
-      { id: 3, recommended: true, daysAgo: 1 },
-    ]);
+  ])(
+    'recommended: %s keeps only matching thumbs, with a matching total',
+    async (recommended, ids) => {
+      await insertReviews([
+        { id: 1, recommended: true, daysAgo: 3 },
+        { id: 2, recommended: false, daysAgo: 2 },
+        { id: 3, recommended: true, daysAgo: 1 },
+      ]);
 
-    const result = await page({ recommended });
-    expect(result.items.map((r) => r.id)).toEqual(ids.slice().reverse());
-    expect(result.totalItems).toBe(ids.length);
-  });
+      const result = await page({ recommended });
+      expect(result.items.map((r) => r.id)).toEqual(ids.slice().reverse());
+      expect(result.totalItems).toBe(ids.length);
+    }
+  );
 
   describe('hasImages', () => {
     const AUTHOR = 20;
@@ -416,6 +427,28 @@ describe('getPagedResourceReviews', () => {
       expect(result.items.map((r) => r.id)).toEqual([1, 5]);
       expect(result.items.every((r) => r.imageCount > 0)).toBe(true);
       expect(result.totalItems).toBe(2);
+    });
+
+    it('stops counting one past the cap, so the pages still run to the last match', async () => {
+      await pg.exec(`
+        INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+          (1010, 30, now() - interval '1 day'),
+          (1011, 31, now() - interval '1 day');
+        INSERT INTO "Image" (id, "userId", "postId") VALUES (10, 30, 1010), (11, 31, 1011);
+        INSERT INTO "ImageResourceNew" VALUES (10, ${V1}), (11, ${V1});
+      `);
+      await insertReviews([
+        { id: 6, userId: 30, postId: 1010, daysAgo: 6 },
+        { id: 7, userId: 31, postId: 1011, daysAgo: 7 },
+      ]);
+
+      const first = await page({ modelVersionId: V1, hasImages: true, limit: 2, page: 1 });
+      const second = await page({ modelVersionId: V1, hasImages: true, limit: 2, page: 2 });
+
+      // Four reviews match; the count stops at cap + 1 = 3.
+      expect(first.totalItems).toBe(3);
+      expect(first.totalPages).toBe(2);
+      expect([...first.items, ...second.items].map((r) => r.id)).toEqual([1, 5, 6, 7]);
     });
 
     it('combines with writtenOnly', async () => {

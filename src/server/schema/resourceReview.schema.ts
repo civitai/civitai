@@ -114,3 +114,6 @@ export const getResourceReviewPagedSchema = paginationSchema
 
 /** A review's image count stops at this; the list returns one more to mean "more than this". */
 export const REVIEW_IMAGE_COUNT_CAP = 100;
+
+/** With `hasImages`, the total stops counting at one more than this, so "1000+" is all a deep list can claim. */
+export const REVIEW_HAS_IMAGES_COUNT_CAP = 1000;

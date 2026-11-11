@@ -49,7 +49,10 @@ import {
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import type { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
-import { REVIEW_IMAGE_COUNT_CAP } from '~/server/schema/resourceReview.schema';
+import {
+  REVIEW_HAS_IMAGES_COUNT_CAP,
+  REVIEW_IMAGE_COUNT_CAP,
+} from '~/server/schema/resourceReview.schema';
 import type {
   CreateResourceReviewInput,
   GetRatingTotalsInput,
@@ -676,9 +679,20 @@ export const getPagedResourceReviews = async ({
   }
 
   // writtenOnly's regex would run on every review of the version in an exact COUNT, so that
-  // path pages by hasMore (one extra row) instead.
+  // path pages by hasMore (one extra row) instead. hasImages probes the image tables per review,
+  // so its COUNT stops at one past the cap rather than probing every review of the model.
   const countQuery = writtenOnly
     ? undefined
+    : hasImages
+    ? dbRead.$queryRaw<{ count: number }[]>`
+        SELECT COUNT(*)::int as count
+        FROM (
+          SELECT rr.id
+          FROM "ResourceReview" rr
+          WHERE ${Prisma.join(AND, ' AND ')}
+          LIMIT ${REVIEW_HAS_IMAGES_COUNT_CAP + 1}
+        ) matching
+      `
     : dbRead.$queryRaw<{ count: number }[]>`
         SELECT COUNT(rr.id)::int as count
         FROM "ResourceReview" rr
