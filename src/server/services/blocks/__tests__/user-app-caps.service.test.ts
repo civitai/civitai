@@ -71,10 +71,10 @@ describe('code defaults: the per-tier table', () => {
     expect(await resolveUserAppCaps(7, deps({ tier }))).toEqual(FREE);
   });
 
-  // INVARIANT GUARD: Free is exactly what every user was held to before tiers existed: 50,000
-  // Buzz/day (the deleted pre-tier constant's value) and the doc store's own per-user defaults.
-  it('Free is unchanged from before tiers', () => {
-    expect(FREE.buzzPerDay).toBe(50_000);
+  // INVARIANT GUARD: Free storage is the doc store's own per-user defaults, the ceiling every
+  // user had before tiers. (Free's 50,000 Buzz/day is pinned against the router's refusal in
+  // `blocks.router.scopeEnforcement.test.ts`.)
+  it('Free storage is the doc store defaults', () => {
     expect(FREE.docBytes).toBe(DEFAULT_DOC_STORE_LIMITS.userBytes);
     expect(FREE.docCount).toBe(DEFAULT_DOC_STORE_LIMITS.userDocs);
   });
