@@ -186,6 +186,18 @@ describe('useRememberCollectionFilters', () => {
     expect(router.state.query).toEqual({ collectionId: '2', sort: 'Oldest' });
   });
 
+  it('brings the image modifiers the collection filter menu offers', () => {
+    const modifiers = {
+      nonRemixesOnly: 'true',
+      remixesOnly: 'false',
+      hideChallenges: 'true',
+    };
+    open(1, { sort: 'Oldest', ...modifiers }, { type: 'images' });
+    open(2, {}, { type: 'images' });
+
+    expect(router.state.query).toEqual({ collectionId: '2', sort: 'Oldest', ...modifiers });
+  });
+
   it('keeps each content type to its own remembered value', () => {
     open(1, { sort: 'Oldest' });
     open(2, {}, { type: 'posts' });
