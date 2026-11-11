@@ -33,7 +33,7 @@ vi.mock('~/server/events/load-events', () => ({
 vi.mock('~/server/events/points/sync', () => ({ syncEventHats: leaves.sync }));
 vi.mock('~/server/events/points/referee', () => ({
   runEventPointsReferee: leaves.referee,
-  REFEREE_FULL_CLICKHOUSE_BUDGET_S: 2100,
+  REFEREE_CLICKHOUSE_BUDGET_S: 2100,
   SETTLE_LOCK_S: 45 * 60,
 }));
 // The real lock, watched: what the production heal asks it for.

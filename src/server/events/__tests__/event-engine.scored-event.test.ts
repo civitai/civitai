@@ -29,7 +29,7 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
       hasStandingsSnapshot: vi.fn<(event: unknown) => Promise<boolean>>(async () => false),
       refreshStandings: vi.fn(),
     },
-    mockReferee: { runEventPointsReferee: vi.fn(), REFEREE_FULL_CLICKHOUSE_BUDGET_S: 2100 },
+    mockReferee: { runEventPointsReferee: vi.fn(), REFEREE_CLICKHOUSE_BUDGET_S: 2100 },
     mockSync: { syncEventHats: vi.fn() },
   })
 );

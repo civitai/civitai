@@ -9,13 +9,8 @@ const query = vi.hoisted(() =>
 );
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query } }));
 
-const {
-  queryReferee,
-  REFEREE_CLICKHOUSE_BUDGET_S,
-  REFEREE_FULL_CLICKHOUSE_BUDGET_S,
-  refereeWindow,
-  runEventPointsReferee,
-} = await import('~/server/events/points/referee');
+const { queryReferee, REFEREE_CLICKHOUSE_BUDGET_S, refereeWindow, runEventPointsReferee } =
+  await import('~/server/events/points/referee');
 const { LIVE_BUCKET_MS } = await import('~/server/events/points/keys');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
@@ -120,73 +115,84 @@ function ledgerScans(sql: string) {
   );
 }
 
-// The ledger is ordered by (event, toDate(time), ...), so only a scan whose time range is its own
-// AND-ed bound is pruned by it. Daily rows (views) are nearly all of the ledger and only the
-// recomputed days of them are read; an OR between the two ranges reads the whole season. CI has no
-// ClickHouse, so this pins the shape: per scan, one range, and the daily scan's starts at recomputeFrom.
+// The ledger is ordered by (event, toDate(time), ...), so a scan is pruned only by a time range that
+// is its own AND-ed bound; an OR between the daily and non-daily ranges reads the whole season. CI
+// has no ClickHouse, so this pins the query's shape.
 describe('referee ledger scans', () => {
   const DAILY = /^\s*AND has\(\{dailyTypes:Array\(String\)\}, type\)\s*$/m;
   const NOT_DAILY = /^\s*AND NOT has\(\{dailyTypes:Array\(String\)\}, type\)\s*$/m;
 
   it.each([
-    ['referee', eventPointsRefereeSql],
-    ['users', eventPointsRefereeUsersSql],
-  ])('%s query reads daily rows only from the recomputed days, on the key column', (_, sql) => {
-    const scans = ledgerScans(sql);
-    for (const scan of scans) expect(scan).not.toMatch(/\bOR\b/);
-    const daily = scans.filter((scan) => DAILY.test(scan));
-    const rest = scans.filter((scan) => NOT_DAILY.test(scan));
-    expect(daily).toHaveLength(1);
-    expect(rest).toHaveLength(1);
-    expect(scans).toHaveLength(2);
-    expect(daily[0]).toMatch(/^\s*AND time >= \{recomputeFrom:DateTime64\(3\)\} AND time < \{/m);
-    expect(rest[0]).toMatch(/^\s*AND time >= \{seasonStart:DateTime64\(3\)\} AND time < \{/m);
-  });
+    ['referee', eventPointsRefereeSql, 'removeCut'],
+    ['users', eventPointsRefereeUsersSql, 'cut'],
+  ])(
+    '%s query reads daily rows only from the recomputed days, on the key column',
+    (_, sql, end) => {
+      // Every reference to the table is a scan the pattern below sees.
+      expect(sql.match(/FROM event_point_events\b/g)).toHaveLength(2);
+      const scans = ledgerScans(sql);
+      expect(scans).toHaveLength(2);
+      for (const scan of scans) {
+        expect(scan).not.toMatch(/\bOR\b/i);
+        expect(scan).toMatch(/^\s*WHERE event = \{event:String\}\s*$/m);
+      }
+      const daily = scans.filter((scan) => DAILY.test(scan));
+      const rest = scans.filter((scan) => NOT_DAILY.test(scan));
+      expect(daily).toHaveLength(1);
+      expect(rest).toHaveLength(1);
+      const range = (from: string) =>
+        new RegExp(
+          String.raw`^\s*AND time >= \{${from}:DateTime64\(3\)\} AND time < \{${end}:DateTime64\(3\)\}\s*$`,
+          'm'
+        );
+      expect(daily[0]).toMatch(range('recomputeFrom'));
+      expect(rest[0]).toMatch(range('seasonStart'));
+    }
+  );
 });
 
-// A whole-season settle (the nightly run, and every run once the season has ended) reads the whole
-// ledger and needs far longer than an hourly one; an hourly one must not get that long.
-describe('referee budget per window', () => {
+// The hourly window grows with the season too, so every settle gets the budget a whole-season one
+// needs, bounded by the deadline of the run holding the lock.
+describe('referee budget', () => {
   // deadline: ms from now.
-  const firstQueryCap = async (now: Date, deadline?: number) => {
+  const firstQuery = async (now: Date, deadline?: number) => {
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     redisMock.sysRedis.get.mockResolvedValue(null);
     query.mockClear();
     query.mockRejectedValueOnce(new Error('stop'));
     // Frozen, so the whole seconds left are exact.
     vi.useFakeTimers({ toFake: ['Date'] });
+    let error: unknown;
     try {
-      await expect(
-        runEventPointsReferee(EVENT, 'live', now, deadline && Date.now() + deadline)
-      ).rejects.toThrow('stop');
+      await runEventPointsReferee(EVENT, 'live', now, deadline && Date.now() + deadline).catch(
+        (e: unknown) => (error = e)
+      );
     } finally {
       vi.useRealTimers();
     }
-    return (query.mock.calls[0]?.[0] as { clickhouse_settings?: { max_execution_time?: number } })
-      .clickhouse_settings?.max_execution_time;
+    const arg = query.mock.calls[0]?.[0] as {
+      query_id?: string;
+      clickhouse_settings?: { max_execution_time?: number };
+    };
+    return { error, cap: arg.clickhouse_settings?.max_execution_time, queryId: arg.query_id };
   };
 
-  it('gives the nightly whole-season run the full budget', async () => {
-    const now = new Date('2026-11-05T03:07:00.000Z');
-    expect(refereeWindow(EVENT, 'live', now).full).toBe(true);
-    expect(await firstQueryCap(now)).toBe(REFEREE_FULL_CLICKHOUSE_BUDGET_S);
+  it.each([
+    ['the nightly whole-season run', '2026-11-05T03:07:00.000Z'],
+    ['a run after the season has ended', '2026-12-01T12:07:00.000Z'],
+    ['an hourly run', '2026-11-05T12:07:00.000Z'],
+  ])('gives %s the whole budget', async (_, at) => {
+    expect((await firstQuery(new Date(at))).cap).toBe(REFEREE_CLICKHOUSE_BUDGET_S);
   });
 
-  it('gives a run after the season has ended the full budget', async () => {
-    const now = new Date('2026-12-01T12:07:00.000Z');
-    expect(refereeWindow(EVENT, 'live', now).full).toBe(true);
-    expect(await firstQueryCap(now)).toBe(REFEREE_FULL_CLICKHOUSE_BUDGET_S);
+  it('never runs past the deadline of the run holding the lock', async () => {
+    expect((await firstQuery(new Date('2026-11-05T03:07:00.000Z'), 100_500)).cap).toBe(100);
   });
 
-  it('gives an hourly run the hourly budget', async () => {
-    const now = new Date('2026-11-05T12:07:00.000Z');
-    expect(refereeWindow(EVENT, 'live', now).full).toBe(false);
-    expect(await firstQueryCap(now)).toBe(REFEREE_CLICKHOUSE_BUDGET_S);
-  });
-
-  it("never runs past the job's own deadline", async () => {
-    const now = new Date('2026-11-05T03:07:00.000Z');
-    expect(await firstQueryCap(now, 100_500)).toBe(100);
+  it('names the failed query, so the log can be joined to the node that ran it', async () => {
+    const { error, queryId } = await firstQuery(new Date('2026-11-05T12:07:00.000Z'));
+    expect(queryId).toMatch(/^event-points-referee:e:users:/);
+    expect((error as Error).message).toBe(`stop (query_id ${queryId})`);
   });
 });
 

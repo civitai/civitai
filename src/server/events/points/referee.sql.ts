@@ -30,9 +30,8 @@
 // aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), newAccountMinId.
 export const eventPointsRefereeSql = /* sql */ `
 WITH
-  -- Two scans, each with its own time range, so the primary key (event, toDate(time), ...) prunes
-  -- the daily rows (almost all of the ledger) to the recomputed days. One OR across both ranges
-  -- leaves the key only the season's range, and the whole season is read.
+  -- Two scans, each with its own time range: the primary key (event, toDate(time), ...) can prune
+  -- daily rows to the recomputed days only this way. One OR across both ranges reads the whole season.
   seasonRows AS (
     SELECT * FROM event_point_events
     WHERE event = {event:String}

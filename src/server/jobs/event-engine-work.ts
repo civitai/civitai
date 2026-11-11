@@ -42,7 +42,7 @@ export const eventEngineLeaderboardUpdate = createJob(
   async () => {
     await eventEngine.updateLeaderboard();
   },
-  // Outlasts a whole-season settle (REFEREE_FULL_CLICKHOUSE_BUDGET_S), and stays held when the
+  // Outlasts a settle (REFEREE_CLICKHOUSE_BUDGET_S), and stays held when the
   // scheduler hangs up, so its retry cannot start a second run beside a long one.
   { lockExpiration: SETTLE_LOCK_S, keepLockOnDisconnect: true }
 );

@@ -4,7 +4,7 @@ vi.mock('~/server/events', () => ({ eventEngine: {} }));
 vi.mock('~/server/events/points/sync', () => ({ syncEventHats: vi.fn() }));
 
 const { eventEngineLeaderboardUpdate } = await import('~/server/jobs/event-engine-work');
-const { REFEREE_FULL_CLICKHOUSE_BUDGET_S, SETTLE_LOCK_S } = await import(
+const { REFEREE_CLICKHOUSE_BUDGET_S, SETTLE_LOCK_S } = await import(
   '~/server/events/points/referee'
 );
 
@@ -21,9 +21,10 @@ describe('event-engine-leaderboard-update job', () => {
       lockExpiration: SETTLE_LOCK_S,
       keepLockOnDisconnect: true,
     });
-    // Room after a whole-season settle's ClickHouse time for the sync and the writes, and released
-    // before the next hour's run.
-    expect(SETTLE_LOCK_S - REFEREE_FULL_CLICKHOUSE_BUDGET_S).toBeGreaterThanOrEqual(5 * 60);
+    // A whole-season settle read ~1.6 s per million ledger rows in November 2026, projecting to
+    // about 22 minutes by the end of a month-long event.
+    expect(REFEREE_CLICKHOUSE_BUDGET_S).toBeGreaterThanOrEqual(30 * 60);
+    expect(SETTLE_LOCK_S - REFEREE_CLICKHOUSE_BUDGET_S).toBeGreaterThanOrEqual(5 * 60);
     expect(SETTLE_LOCK_S).toBeLessThan(60 * 60);
   });
 });

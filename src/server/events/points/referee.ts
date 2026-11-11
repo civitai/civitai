@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { chunk } from 'lodash-es';
 import { TURF_CLAIM_KEY } from '~/server/events/turf/turf-map';
 import type { EventScoring } from '~/server/events/base.event';
@@ -39,12 +40,12 @@ const SETTLE_LAG_MS = 10 * 60 * 1000;
 // The hour (UTC) whose run recomputes the whole season, picking up late removals and bans on days
 // the hourly runs treat as final.
 const FULL_RECOMPUTE_HOUR = 3;
-// Both ClickHouse queries of one settle together: an hourly window, and a whole-season one (the
-// nightly run, and every run once the season has ended). The full budget, plus the hat sync and the
-// Postgres and Redis writes, must stay under SETTLE_LOCK_S.
-export const REFEREE_CLICKHOUSE_BUDGET_S = 12 * 60;
-export const REFEREE_FULL_CLICKHOUSE_BUDGET_S = 35 * 60;
-// The lock the hourly settle job holds, and that the self-heal takes to settle beside it.
+// Both ClickHouse queries of one settle together, sized for a whole-season window (the nightly run,
+// and every run once the season has ended). It, the hat sync and the Postgres and Redis writes must
+// stay under SETTLE_LOCK_S.
+export const REFEREE_CLICKHOUSE_BUDGET_S = 35 * 60;
+// The settle job's lock, shared with the self-heal so the two never settle at once. Keep it under the
+// hourly cron, or a run is skipped while the last still holds it.
 export const SETTLE_LOCK_S = 45 * 60;
 // The client's 300 s request_timeout is a socket idle timer; progress headers keep bytes flowing so
 // a query the budget still allows is not dropped by the client while the server runs on.
@@ -58,6 +59,18 @@ export const STALE_CUT_ALERT_MS = 2 * 60 * 60 * 1000;
 // Past the server's cap the client gives up too: max_execution_time is checked between blocks, so a
 // query can overrun it, and progress headers keep the idle timer from ever firing.
 const CLIENT_GRACE_S = 30;
+
+// Named in a failure's message, so the job's log can be joined to system.query_log on the node that ran it.
+const refereeQueryId = (event: RefereeEvent, step: 'users' | 'settle') =>
+  `event-points-referee:${event.name}:${step}:${randomUUID()}`;
+async function withQueryId<T>(queryId: string, run: () => Promise<T>) {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof Error) error.message = `${error.message} (query_id ${queryId})`;
+    throw error;
+  }
+}
 
 // The cap for the next referee query, on the server and on the client.
 function queryLimit(deadline: number) {
@@ -120,7 +133,6 @@ export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now
     removeCut,
     recomputeFrom,
     final,
-    full: recomputeFrom.getTime() === start.getTime(),
   };
 }
 
@@ -222,17 +234,23 @@ async function restrictedUsers(event: RefereeEvent, window: Window, deadline: nu
     newAccountMinId: MAX_INT32,
   });
   const limit = queryLimit(deadline);
-  const result = await clickhouse.query({
-    query: eventPointsRefereeUsersSql,
-    format: 'JSONEachRow',
-    abort_signal: limit.signal,
-    clickhouse_settings: {
-      max_execution_time: limit.seconds,
-      ...REFEREE_PROGRESS_SETTINGS,
-    },
-    query_params: params,
-  });
-  const [users] = await result.json<{ actors: number[]; owners: number[] }>();
+  const queryId = refereeQueryId(event, 'users');
+  const result = await withQueryId(queryId, () =>
+    clickhouse!.query({
+      query: eventPointsRefereeUsersSql,
+      format: 'JSONEachRow',
+      query_id: queryId,
+      abort_signal: limit.signal,
+      clickhouse_settings: {
+        max_execution_time: limit.seconds,
+        ...REFEREE_PROGRESS_SETTINGS,
+      },
+      query_params: params,
+    })
+  );
+  const [users] = await withQueryId(queryId, () =>
+    result.json<{ actors: number[]; owners: number[] }>()
+  );
   const ids = [...new Set([...(users?.actors ?? []), ...(users?.owners ?? [])].map(Number))];
 
   const hidden: number[] = [];
@@ -270,21 +288,25 @@ export async function queryReferee(
     restrictedUsers(event, window, deadline),
   ]);
   const limit = queryLimit(deadline);
-  const result = await clickhouse.query({
-    query: eventPointsRefereeSql,
-    format: 'JSONEachRow',
-    abort_signal: limit.signal,
-    // A whole-season run on the nightly pass groups every first of the season; spill to disk rather
-    // than fail on memory, and allow it the time.
-    clickhouse_settings: {
-      max_execution_time: limit.seconds,
-      ...REFEREE_PROGRESS_SETTINGS,
-      max_bytes_before_external_group_by: '8000000000',
-      max_bytes_before_external_sort: '8000000000',
-    },
-    query_params: refereeQueryParams(event, window, weights, restricted),
-  });
-  return (await result.json<RefereeRow>()).map((r) => ({
+  const queryId = refereeQueryId(event, 'settle');
+  const result = await withQueryId(queryId, () =>
+    clickhouse!.query({
+      query: eventPointsRefereeSql,
+      format: 'JSONEachRow',
+      query_id: queryId,
+      abort_signal: limit.signal,
+      // A whole-season run on the nightly pass groups every first of the season; spill to disk rather
+      // than fail on memory, and allow it the time.
+      clickhouse_settings: {
+        max_execution_time: limit.seconds,
+        ...REFEREE_PROGRESS_SETTINGS,
+        max_bytes_before_external_group_by: '8000000000',
+        max_bytes_before_external_sort: '8000000000',
+      },
+      query_params: refereeQueryParams(event, window, weights, restricted),
+    })
+  );
+  return (await withQueryId(queryId, () => result.json<RefereeRow>())).map((r) => ({
     day: String(r.day),
     userId: Number(r.userId),
     cosmeticId: Number(r.cosmeticId),
@@ -484,14 +506,12 @@ export async function runEventPointsReferee(
   season: EventPointSeason,
   now = new Date(),
   // Shared by every settle under one hold of the lock, so a run settling several events stays in it.
-  deadline = Date.now() + REFEREE_FULL_CLICKHOUSE_BUDGET_S * 1000
+  deadline = Date.now() + REFEREE_CLICKHOUSE_BUDGET_S * 1000
 ) {
   const window = refereeWindow(event, season, now);
-  const budgetS = window.full ? REFEREE_FULL_CLICKHOUSE_BUDGET_S : REFEREE_CLICKHOUSE_BUDGET_S;
-  const runDeadline = Math.min(deadline, Date.now() + budgetS * 1000);
   if (window.cut <= window.start) return { season, rows: 0, changed: 0, final: false };
   await alertOnStaleCut(sysRedis, event, season, window.cut);
-  const rows = await queryReferee(event, window, runDeadline);
+  const rows = await queryReferee(event, window, deadline);
   await writeDailySnapshot(event, window, rows);
   const final = await finalDayTotals(event, window);
   const totals = refereeTotals([...final, ...rows]);
