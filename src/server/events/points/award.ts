@@ -21,6 +21,7 @@ import {
   eventSeasonKeys,
   hatField,
   liveBucket,
+  LIVE_BUCKET_TTL_S,
   seasonHatTopicId,
   type EventPointSeason,
   utcDay,
@@ -63,8 +64,6 @@ export const HATS_FOLLOW_MS = 2 * 1000;
 // After a failed refresh, wait this long before trying again, so a persistent failure is not retried
 // by every request on the hot path.
 const REFRESH_RETRY_MS = 10 * 1000;
-// Live buckets outlive the referee's hourly cut by a wide margin.
-const LIVE_TTL_S = 3 * 60 * 60;
 
 export const EVENT_POINTS_LEDGER_TABLE = 'event_point_events';
 
@@ -531,7 +530,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       if (bucketTtlSet.has(key)) continue;
       if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
       bucketTtlSet.add(key);
-      await deps.redis.expire(key, LIVE_TTL_S);
+      await deps.redis.expire(key, LIVE_BUCKET_TTL_S);
     }
     return { event: def.name, team: teamHat.team, points: sum };
   }
@@ -599,7 +598,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
           if (bucketTtlSet.has(key)) continue;
           if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
           bucketTtlSet.add(key);
-          await deps.redis.expire(key, LIVE_TTL_S);
+          await deps.redis.expire(key, LIVE_BUCKET_TTL_S);
         }
         return { event: def.name, team: hat.team, points: grant };
       }

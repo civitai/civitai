@@ -41,7 +41,7 @@ export const eventEngineLeaderboardUpdate = createJob(
   async () => {
     await eventEngine.updateLeaderboard();
   },
-  // Outlasts both referee queries (REFEREE_QUERY_MAX_SECONDS each), and stays held when the
+  // Outlasts both referee queries (REFEREE_CLICKHOUSE_BUDGET_S together), and stays held when the
   // scheduler hangs up, so its retry cannot start a second run beside a long one.
   { lockExpiration: 15 * 60, keepLockOnDisconnect: true }
 );

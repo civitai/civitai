@@ -3,7 +3,7 @@ import { getEventScoringPhase } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { eventPointSeason } from '~/server/events/points/keys';
-import { runEventPointsReferee } from '~/server/events/points/referee';
+import { REFEREE_CLICKHOUSE_BUDGET_S, runEventPointsReferee } from '~/server/events/points/referee';
 import { reconcileEventRosters, rosterEvents } from '~/server/events/points/roster-sync';
 import { syncEventHats } from '~/server/events/points/sync';
 import { acquireJobLock, type JobLock } from '~/server/jobs/job-lock';
@@ -102,10 +102,18 @@ export function createEventPointsSelfHeal(deps: SelfHealDeps) {
       }
       try {
         const now = deps.now();
+        // The roster step after the settle runs under the same lock.
+        const refereeDeadline =
+          Date.now() + REFEREE_CLICKHOUSE_BUDGET_S * 1000 - ROSTER_STEP_MAX_MS;
         const hats = (await deps.syncEventHats(now)).find((r) => r.event === name);
         const scored = { ...eventDef, scoring: eventDef.scoring };
         const settled = (await deps.getScoringPhase(eventDef, now))
-          ? await deps.runReferee(scored, eventPointSeason(eventDef.startDate, now), now)
+          ? await deps.runReferee(
+              scored,
+              eventPointSeason(eventDef.startDate, now),
+              now,
+              refereeDeadline
+            )
           : undefined;
         deps.log({
           ...entry,

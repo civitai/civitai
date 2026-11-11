@@ -20,6 +20,7 @@ const {
   hatField,
   hatTopicId,
   liveBucket,
+  LIVE_BUCKET_TTL_S,
   previewTopicId,
 } = await import('~/server/events/points/keys');
 const { encodeTurfEntry, turfKeys } = await import('~/server/events/turf/turf-map');
@@ -289,7 +290,7 @@ describe('awardEventPoints', () => {
     expect(granted).toHaveLength(1);
     const keys = eventSeasonKeys(EVENT.name, 'live');
     const bucket = liveBucket(now);
-    const ttl = Math.floor(now.getTime() / 1000) + 3 * 60 * 60;
+    const ttl = Math.floor(now.getTime() / 1000) + LIVE_BUCKET_TTL_S;
     for (const scope of ['hat', 'team', 'owner'] as const)
       expect(fake.ttls.get(keys.live(bucket, scope))).toBe(ttl);
     expect(fake.ttls.has(keys.live(bucket, 'count'))).toBe(false);
@@ -431,7 +432,7 @@ describe('awardEventPoints', () => {
     expect(ledger).toHaveLength(1);
     const keys = eventSeasonKeys(EVENT.name, 'live');
     const bucket = liveBucket(now);
-    const ttl = Math.floor(now.getTime() / 1000) + 3 * 60 * 60;
+    const ttl = Math.floor(now.getTime() / 1000) + LIVE_BUCKET_TTL_S;
     for (const scope of ['hat', 'team', 'owner', 'count'] as const)
       expect(fake.ttls.get(keys.live(bucket, scope))).toBe(ttl);
   });
