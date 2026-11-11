@@ -27,7 +27,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Flags } from '~/shared/utils/flags';
 import { declineFeeAmount, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
-import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import type {
   GalleryHostSettings,
   GalleryPromotionData,
@@ -153,6 +153,7 @@ const GALLERY_REFUSAL_MESSAGE: Record<GalleryPromotionRefusal, string> = {
 
 type PromotedPostImage = {
   id: number;
+  type: MediaType;
   nsfwLevel: number;
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
@@ -173,7 +174,7 @@ async function loadPromotedPost(postId: number) {
   if (!post) throw throwNotFoundError('promotion: that post no longer exists');
 
   const images = await dbWrite.$queryRaw<PromotedPostImage[]>`
-    SELECT i.id, i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
+    SELECT i.id, i.type::text AS type, i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
            i.metadata->>'nsfwLevelReason' AS "nsfwLevelReason",
            i."scanJobs"->'error'->>'failureClass' AS "scanFailureClass",
            i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation"

@@ -1234,6 +1234,7 @@ export async function getHiddenImagesForUser({
       const canViewMedia =
         isOwner ||
         (isImageReviewed({
+          type: rest.type,
           ingestion,
           nsfwLevelLocked,
           nsfwLevelReason: (metadata as { nsfwLevelReason?: string | null } | null)

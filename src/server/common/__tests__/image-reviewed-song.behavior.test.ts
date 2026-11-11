@@ -72,7 +72,6 @@ describe('isImageReviewed, the twin of that rule', () => {
     ['a locked song in Error', { type: 'audio', ingestion: 'Error' }, false],
     ['a scanned song', { type: 'audio', ingestion: 'Scanned', nsfwLevelLocked: false }, true],
     ['a locked image that is Pending', { type: 'image', ingestion: 'Pending' }, true],
-    ['a locked row of unknown type that is Pending', { ingestion: 'Pending' }, true],
   ] as const)('%s → %s', (_label, input, expected) => {
     expect(isImageReviewed({ ...base, ...input } as never)).toBe(expected);
   });

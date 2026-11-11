@@ -98,8 +98,7 @@ export const isImageReviewed = ({
   nsfwLevelReason,
   scanFailureClass,
 }: {
-  /** Omitted by a caller that has not selected it, which then reads the row as an image. */
-  type?: MediaType | string;
+  type: MediaType | string;
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
   nsfwLevelReason: string | null | undefined;

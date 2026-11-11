@@ -71,8 +71,8 @@ describe('isImageReviewed', () => {
     ['a mod lock on a ToS removal', { ingestion: 'Blocked', ...locked }, false],
     ['a mod lock on missing media', { ingestion: 'NotFound', ...locked }, false],
   ] as const)('%s → %s', (_label, input, expected) => {
-    expect(isImageReviewed({ nsfwLevelReason: null, scanFailureClass: null, ...input })).toBe(
-      expected
-    );
+    expect(
+      isImageReviewed({ type: 'image', nsfwLevelReason: null, scanFailureClass: null, ...input })
+    ).toBe(expected);
   });
 });
