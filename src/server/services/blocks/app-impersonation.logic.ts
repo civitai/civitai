@@ -1,3 +1,5 @@
+import type * as Crypto from 'crypto';
+
 /**
  * The IMPERSONATION check of an App Block agent review — the pure half.
  *
@@ -363,7 +365,7 @@ export type ImpersonationFingerprintInput = {
  */
 export function impersonationFingerprint(input: ImpersonationFingerprintInput): string {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { createHash } = require('crypto') as typeof import('crypto');
+  const { createHash } = require('crypto') as typeof Crypto;
   const canonical = JSON.stringify([
     input.name,
     input.slug,

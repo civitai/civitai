@@ -8,8 +8,6 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as OpenRouterModule from '~/server/services/ai/openrouter';
 import { impersonationFingerprint } from '~/server/services/blocks/app-impersonation.logic';
 
-type ModelArgs = Parameters<ModelCall>[0];
-
 /**
  * The impersonation check end to end: the three checks combined (with the model call
  * injected), and the run against a stored agent report — what it reads and what it writes
@@ -18,12 +16,10 @@ type ModelArgs = Parameters<ModelCall>[0];
 
 const m = vi.hoisted(() => ({
   terms: ['Zorblex'] as string[],
-  completion: vi.fn(
-    async (_params: unknown): Promise<unknown> => ({
-      content: { findings: [] },
-      usage: { promptTokens: 0, completionTokens: 0 },
-    })
-  ),
+  completion: vi.fn<(params: unknown) => Promise<unknown>>(async () => ({
+    content: { findings: [] },
+    usage: { promptTokens: 0, completionTokens: 0 },
+  })),
 }));
 vi.mock('~/server/services/ai/openrouter', async (importOriginal) => ({
   ...(await importOriginal<typeof OpenRouterModule>()),
@@ -56,9 +52,9 @@ const inputs = (over: Partial<Parameters<typeof runImpersonationChecks>[0]> = {}
   protectedTerms: ['Zorblex'],
   ...over,
 });
-const clearModel = vi.fn(async (_args: ModelArgs) => ({
+const clearModel = vi.fn<ModelCall>(async () => ({
   judgement: { findings: [] as unknown[] },
-  costUsd: 0.002 as number | null,
+  costUsd: 0.002,
 }));
 const NOW = new Date('2026-11-10T12:00:00Z');
 
@@ -89,7 +85,7 @@ describe('runImpersonationChecks', () => {
   });
 
   it('each check records whether IT fired', async () => {
-    const model = vi.fn(async (_args: ModelArgs) => ({
+    const model = vi.fn<ModelCall>(async () => ({
       judgement: { findings: [{ severity: 'high', title: 'Icon copies the Zorblex logo' }] },
       costUsd: null,
     }));

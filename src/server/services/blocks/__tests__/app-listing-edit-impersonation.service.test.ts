@@ -14,7 +14,7 @@ import type * as ReviewAutodeploy from '~/server/services/blocks/review-autodepl
 
 const m = vi.hoisted(() => ({
   terms: ['Zorblex'] as string[],
-  recordSpend: vi.fn(async (_usd: number) => undefined),
+  recordSpend: vi.fn<(usd: number) => Promise<undefined>>(async () => undefined),
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
@@ -34,10 +34,9 @@ const {
   summariseListingEditCheck,
 } = await import('~/server/services/blocks/app-listing-edit-impersonation.service');
 
-type ModelArgs = Parameters<ModelCall>[0];
-const model = vi.fn(async (_args: ModelArgs) => ({
+const model = vi.fn<ModelCall>(async () => ({
   judgement: { findings: [] as unknown[] },
-  costUsd: 0.003 as number | null,
+  costUsd: 0.003,
 }));
 
 const ALPR = 'alpr_01';
@@ -190,7 +189,7 @@ describe('🔴 startListingEditImpersonationCheck — gated, budgeted, and never
     dailyBudgetUsd: () => 40,
     ...over,
   });
-  const run = vi.fn(async (_id: string) => 'checked' as const);
+  const run = vi.fn<(id: string) => Promise<'checked'>>(async () => 'checked');
   beforeEach(() => run.mockClear());
   const upserted = () =>
     dbMock.dbWrite.keyValue.upsert.mock.calls.map(
