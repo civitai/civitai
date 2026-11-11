@@ -538,7 +538,6 @@ export const writtenReviewSql = Prisma.sql`(
   AND btrim(regexp_replace(coalesce(rr.details, ''), '<[^>]*>|&nbsp;', '', 'g')) <> ''
 )`;
 
-// Unlike `servableCollectionCoverSql`: `imageReviewedSql`, not Scanned only; no taken-down check.
 // A post can keep an `unpublishedAt` stamp with `publishedAt` still set; the stamp hides it.
 const servablePostImageSql = Prisma.sql`
   i."needsReview" IS NULL
