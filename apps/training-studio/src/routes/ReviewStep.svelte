@@ -39,6 +39,7 @@
     type LabelType,
     type ParamBound,
   } from '$lib/data/trainingModels';
+  import { isFlux2 } from '$lib/orchestrator-core';
   import {
     addSamplePrompt,
     defaultRunParams,
@@ -269,7 +270,7 @@
 
   // Per-model input bounds and Flux.2 gating (imageResourceTraining takes no hyperparameters).
   const boundsFor = (i: number) => paramBounds(runCard(selection.runs[i]!));
-  const noAdvancedParams = (run: Run) => runVersion(run).engine === 'flux2-dev';
+  const noAdvancedParams = (run: Run) => isFlux2(runVersion(run).engine);
 
   type ParamField = keyof RunParams;
   interface FieldDef {
