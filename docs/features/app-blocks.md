@@ -772,6 +772,17 @@ scan and may be used as a source, the viewer's own uploads included.
   generation inputs; upload the image instead. Free text in a chat step's messages and tool
   schemas is not an image input.
 
+### Inline ComfyUI graphs (`kind: 'customComfy'`, `mode: 'inline'`)
+
+Some nodes are refused in an inline graph, by the estimate and the submit alike, with a
+failed snapshot whose `errorCode` is `'inline-node-refused'`, before anything is reserved:
+
+- a node that reads or writes a file path or directory, whatever the path's value;
+- a loader that takes an input from another node instead of a literal value. The model,
+  CLIP and strength inputs of the core LoRA loaders may still be linked;
+- a loader input that names a local file or an upload key, or a URL that is not a public
+  `https` address. Upload the media and pass its URL.
+
 ### Training runs (`kind: 'training'`)
 
 A page app can train a LoRA (ai-toolkit engine) on images the viewer uploads, through

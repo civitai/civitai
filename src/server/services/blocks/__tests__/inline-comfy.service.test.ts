@@ -13,6 +13,7 @@ vi.mock('~/server/services/subscriptions.service', () => ({
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
+  checkInlineComfyGraph,
   collectInlineAuditText,
   collectInlineGraphStrings,
   INLINE_ALLOWED_AIR_SOURCES,
@@ -729,5 +730,134 @@ describe('inlineAirTypeRefusal — the refusal must not shadow a future allowlis
     const stranger = inlineAirTypeRefusal('image', 'urn:air:oci:image:ghcr:evil/comfy@v1');
     expect(stranger).toContain("resource AIR type 'image' is not permitted in an inline workflow");
     expect(stranger).not.toContain('nodepack resources are not permitted');
+  });
+});
+
+describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
+  const AIR = 'urn:air:sdxl:lora:civitai:101@202';
+  const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+  const verdictFor = (class_type: string, inputs: Record<string, unknown>) =>
+    checkInlineComfyGraph({
+      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: AIR } },
+      '2': { class_type: 'StringConcatenate', inputs: { string_a: 'a', string_b: 'b' } },
+      '3': { class_type, inputs },
+    });
+  const reasonFor = (class_type: string, inputs: Record<string, unknown>) => {
+    const verdict = verdictFor(class_type, inputs);
+    if (verdict.runnable) return null;
+    expect(verdict.snapshot.errorCode).toBe('inline-node-refused');
+    return verdict.snapshot.error;
+  };
+
+  const PATH = 'reads or writes a file path';
+  const LINKED = 'from another node instead of a literal value';
+  const LOCAL = 'names a local file';
+  const URL_REFUSED = 'a URL the host does not fetch';
+
+  const REFUSED: [string, Record<string, unknown>, string][] = [
+    ['VHS_LoadImagePath', { image: 'x' }, PATH],
+    ['LoadImagesFromDir', { limit: 1 }, PATH],
+    ['LoadImagesFromFolderKJ', { limit: 1 }, PATH],
+    ...[
+      'VHS_LoadAudio',
+      'LoadImageOutput',
+      'WebcamCapture',
+      'RecordAudio',
+      'ImageReceiver',
+      'LatentReceiver',
+      'Get Batch From History (mtb)',
+      'LoadText|pysssss',
+      'SaveText|pysssss',
+    ].map((name): [string, Record<string, unknown>, string] => [name, {}, PATH]),
+    ...['output_path', 'directory', 'folder', 'output_dir', 'outputDir', 'root', 'subdirs'].map(
+      (input): [string, Record<string, unknown>, string] => ['TextNode', { [input]: 'x' }, PATH]
+    ),
+    ['LoadImage', { image: ['2', 0] }, LINKED],
+    ['ImageFromUrl', { url: ['2', 0] }, LINKED],
+    ['FetchImage', { src: ['2', 0] }, LINKED],
+    ['DownloadMedia', { src: ['2', 0] }, LINKED],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: ['2', 0] }, LINKED],
+    ['CreateHookLora', { lora_name: ['2', 0], strength_model: 1 }, LINKED],
+    ['LoadImage', { image: 'x.png' }, LOCAL],
+    ['LoadImage', { image: '../x.png' }, LOCAL],
+    ['VHS_LoadVideo', { video: 'clip.mp4' }, LOCAL],
+    ['LoadLatent', { latent: 'a.latent' }, LOCAL],
+    ['LoadImage', { image: 'http://cdn.example.com/x.png' }, URL_REFUSED],
+    ['LoadImage', { image: 'https://127.0.0.1/x.png' }, URL_REFUSED],
+    ['LoadImage', { image: 'https://localhost/x.png' }, URL_REFUSED],
+    ['LoadImage', { image: 'https://cdn.example.com:8443/x.png' }, URL_REFUSED],
+    ['LoadImage', { image: 'file:///x.png' }, URL_REFUSED],
+    ...[
+      'https://localhost./x.png',
+      'https://cdn.internal./x.png',
+      'https://cdn.local/x.png',
+      'https://kubernetes.default.svc/x.png',
+      'https://u:p@cdn.example.com/x.png',
+      'https://cdn/x.png',
+      'https://cdn.example.com/%E0%A4%A',
+      'https://cdn.example.com/..%2fx.png',
+      'https://2130706433/x.png',
+      'https://0x7f.1/x.png',
+      'https://cdn.example.com\\x.png',
+    ].map((image): [string, Record<string, unknown>, string] => [
+      'LoadImage',
+      { image },
+      URL_REFUSED,
+    ]),
+    ['LoadImage', { image: 'abc [output]' }, LOCAL],
+    ['LoadImage', { image: 'abc' }, LOCAL],
+    ['LoadImage', { image: KEY }, LOCAL],
+    ['LoadImage', { image: `0001_${KEY.replace(/-/g, '')}` }, LOCAL],
+    ['VHS_LoadAudioUpload', { audio: 'clip' }, LOCAL],
+    ['CustomLoader', { source: `0001_${KEY.replace(/-/g, '')}` }, LOCAL],
+    ['CustomLoader', { source: KEY }, LOCAL],
+    ['PreviewBridge', { images: ['2', 0], image: 'x' }, PATH],
+    ['PreviewBridgeLatent', {}, PATH],
+    ['LoraLoader', { model: ['1', 0], lora_name: AIR, my_strength: ['2', 0] }, LINKED],
+    ['LoraLoader', { model: ['1', 0], lora_name: AIR, prev_hooks: ['2', 0] }, LINKED],
+    ...['CreateHookLoraModelOnly', 'CreateHookModelAsLora', 'CreateHookModelAsLoraModelOnly'].map(
+      (name): [string, Record<string, unknown>, string] => [name, { ckpt_name: ['2', 0] }, LINKED]
+    ),
+    [
+      'Load3D',
+      { model_file: 'https://cdn.example.com/a.glb', image: { image: 'a' } },
+      'as an object',
+    ],
+  ];
+  it.each(REFUSED)('refuses %s %j', (classType, inputs, reason) => {
+    expect(reasonFor(classType, inputs)).toContain(reason);
+  });
+
+  it.each([
+    ['LoadImage', { image: `https://image.civitai.com/x/${KEY}/original=true`, upload: 'image' }],
+    ['LoadImageMask', { image: AIR, channel: 'alpha' }],
+    ['UNETLoader', { unet_name: AIR, weight_dtype: 'fp8_e4m3fn' }],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_model: ['2', 0] }],
+    ['LoraLoaderModelOnly', { model: ['1', 0], lora_name: AIR, strength_model: 1 }],
+    ['LoraLoaderBypass', { model: ['1', 0], clip: ['1', 1], lora_name: AIR }],
+    ['LoraLoaderBypassModelOnly', { model: ['1', 0], lora_name: AIR }],
+    ['LoraModelLoader', { model: ['1', 0], lora: ['1', 0], strength_model: 1 }],
+    ['HypernetworkLoader', { model: ['1', 0], hypernetwork_name: AIR, strength: 1 }],
+    ['DiffControlNetLoader', { model: ['1', 0], control_net_name: AIR }],
+    ['CreateHookLora', { lora_name: AIR, prev_hooks: ['2', 0], strength_clip: 1 }],
+    ['CLIPTextEncode', { text: 'a cat at x.png', clip: ['1', 1] }],
+    ['ImageStitch', { image1: ['2', 0], direction: 'right', match_image_size: true }],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength: ['2', 0] }],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_clip: ['2', 0] }],
+    ['LoadImage', { image: `https://image.civitai.com/x/${KEY}/a.png`, upload: null, keep: true }],
+  ])('runs %s %j', (classType, inputs) => {
+    expect(verdictFor(classType, inputs).runnable).toBe(true);
+  });
+
+  it('names every refused node up to five, then counts the rest', () => {
+    const graph: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {};
+    for (let i = 1; i <= 7; i++) {
+      graph[String(i)] = { class_type: 'LoadImage', inputs: { image: `${i}.png` } };
+    }
+    const verdict = checkInlineComfyGraph(graph);
+    const error = verdict.runnable ? '' : verdict.snapshot.error;
+    expect(error).toContain('node 5 (LoadImage)');
+    expect(error).not.toContain('node 6 (LoadImage)');
+    expect(error).toContain(' and 2 more');
   });
 });
