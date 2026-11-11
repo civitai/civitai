@@ -215,13 +215,13 @@ export function isPlatformInternalStepType(stepType: string): boolean {
  * `isTrainingStepTypeIgnoringCase` (every training check on a caller-supplied `$type`,
  * listed there), so two lists cannot disagree about what "the same step type" means.
  */
-// Every orchestrator `$type` is ASCII letters and digits. Anything else could fold to a
-// denied type under a matcher other than `toLowerCase`, so it is refused outright.
-export const STEP_TYPE_RE = /^[A-Za-z0-9]+$/;
-
 export function foldStepTypeCase(stepType: string): string {
   return stepType.toLowerCase();
 }
+
+// Every orchestrator `$type` is ASCII letters and digits. Anything else could fold to a
+// denied type under a matcher other than `toLowerCase`, so it is refused outright.
+export const STEP_TYPE_RE = /^[A-Za-z0-9]+$/;
 
 const TRAINING_STEP_TYPE_LOOKUP: ReadonlySet<string> = new Set(
   TRAINING_STEP_TYPES.map(foldStepTypeCase)
