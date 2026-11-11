@@ -63,7 +63,11 @@ import {
   REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { buzzCapRedisKey, buzzCapWindowKey } from '~/server/services/blocks/block-buzz-cap';
+import {
+  buzzCapRedisKey,
+  buzzCapWindowKey,
+  markDailyCapRefused,
+} from '~/server/services/blocks/block-buzz-cap';
 import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
@@ -1696,6 +1700,11 @@ async function reserveBlockBuzzSpendForClaims(
   const { buzzPerDay } = await resolveUserAppCaps(userId);
   const { total, key } = await reserveBlockBuzzSpend(userId, cost);
   const platform = { total, key, cap: buzzPerDay };
+  // Every spend caller refuses exactly when `total > cap` on this leg (and refunds), so this is
+  // the one place that sees every daily-cap refusal: record it for the paused notice. The
+  // post-paid overage correction has no deny path, but a total over the cap there means the
+  // NEXT spend is refused, so marking is right for it too.
+  if (total > buzzPerDay) await markDailyCapRefused(userId, buzzPerDay);
   if (claims.dev === true) return { ...platform, consent: null };
 
   // From here any throw must undo the platform reservation just taken — otherwise a

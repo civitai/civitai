@@ -7,6 +7,7 @@ import {
 import {
   BUZZ_OPT_IN_TTL_SECONDS,
   buzzCapRedisKey,
+  buzzCapRefusedRedisKey,
   buzzOptInRedisKey,
 } from '~/server/services/blocks/block-buzz-cap';
 import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
@@ -20,6 +21,13 @@ export const APP_BUZZ_DAILY_ID = 'apps.buzz-daily';
 async function readUsedToday(userId: number): Promise<number> {
   // A refund racing the key's first write can leave it below zero.
   return Math.max(0, Number((await sysRedis.get(buzzCapRedisKey(userId))) ?? 0) || 0);
+}
+
+/** The cap today's daily-cap refusal was at (`markDailyCapRefused`), or null for none. */
+async function readRefusedCap(userId: number): Promise<number | null> {
+  const raw = await sysRedis.get(buzzCapRefusedRedisKey(userId));
+  const cap = raw === null || raw === undefined ? NaN : Number(raw);
+  return Number.isFinite(cap) ? cap : null;
 }
 
 const resetAtIso = () => calendarWindow('utc-day', Date.now()).end.toISOString();
@@ -62,7 +70,11 @@ export type MyAppBuzzCap = {
   planLimit: number;
   optInLimit: number;
   optedIn: boolean;
-  /** At the plan's cap: the running app is paused until the reset, an upgrade, or an opt-in. */
+  /**
+   * A spend was refused today at the cap enforced now: the running app is paused until the
+   * reset, an upgrade, or an opt-in. From the refusal record, not the counter (a refused spend
+   * is refunded, so the counter stays below the cap).
+   */
   paused: boolean;
   /** Not opted in yet today: the opt-in is offered. */
   canOptIn: boolean;
@@ -77,14 +89,20 @@ export type MyAppBuzzCap = {
 export async function getMyAppBuzzCap(user: SessionUser): Promise<MyAppBuzzCap | null> {
   if (!(await isAppBlocksEnabled({ user }))) return null;
   if (!(await isAppLimitsUpgradePromptEnabled({ user }))) return null;
-  const [caps, used] = await Promise.all([resolveUserAppCaps(user.id), readUsedToday(user.id)]);
+  const [caps, used, refusedAt] = await Promise.all([
+    resolveUserAppCaps(user.id),
+    readUsedToday(user.id),
+    readRefusedCap(user.id),
+  ]);
   return {
     used,
     limit: caps.buzzPerDay,
     planLimit: caps.planBuzzPerDay,
     optInLimit: caps.optInBuzzPerDay,
     optedIn: caps.optedIn,
-    paused: used >= caps.buzzPerDay,
+    // Paused only while the cap that refused is still the one enforced: an upgrade or an opt-in
+    // changes it, and unpauses at once.
+    paused: refusedAt === caps.buzzPerDay,
     canOptIn: !caps.optedIn,
     resetAt: resetAtIso(),
   };
@@ -104,6 +122,8 @@ export async function optInAppBuzzToday(user: SessionUser): Promise<MyAppBuzzCap
     throw new TRPCError({ code: 'FORBIDDEN', message: 'not available' });
   }
   await sysRedis.set(buzzOptInRedisKey(user.id), '1', { EX: BUZZ_OPT_IN_TTL_SECONDS });
+  // The refusal that paused the app was at the plan cap; the raised cap has not refused anything.
+  await sysRedis.del(buzzCapRefusedRedisKey(user.id));
   const status = await getMyAppBuzzCap(user);
   if (!status) throw new TRPCError({ code: 'FORBIDDEN', message: 'not available' });
   return status;

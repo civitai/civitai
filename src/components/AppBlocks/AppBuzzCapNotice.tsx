@@ -1,4 +1,5 @@
 import { Box, Button, Group, Stack, Text } from '@mantine/core';
+import { useEffect } from 'react';
 import { IconPlayerPause } from '@tabler/icons-react';
 import NextLink from 'next/link';
 import { formatWhen } from '~/components/Account/usage/usage-limit-view';
@@ -9,13 +10,15 @@ import { trpc } from '~/utils/trpc';
 /**
  * The running app's "paused at your plan's daily Buzz limit" notice, drawn by the page host
  * OUTSIDE the iframe (an app cannot hide it or click it), between the chrome and the app. It
- * offers the upgrade, and — where the viewer's plan has a higher ceiling to continue to — the
- * opt-in to continue on their own Buzz for the rest of the UTC day.
+ * offers the upgrade and, until the viewer has done it today, raising their limit to twice their
+ * plan's for the rest of the UTC day. Raising it changes no payer: apps spend the viewer's own
+ * Buzz before and after, so the copy says "raise my limit", never "pay".
  *
  * Mounted only behind the `appLimitsUpgradePrompt` flag; the server answers `null` with the
- * flag off too. Read once when the app opens and again after any generation the server refuses,
- * never per call. Opting in is the viewer's own session (`user.optInAppBuzzToday`), which an app
- * holding only its block token cannot make.
+ * flag off too. Read when the app opens, again after each generation submit the host relays,
+ * and once the UTC reset passes; never per storage or read call. Raising the limit is the
+ * viewer's own session (`user.optInAppBuzzToday`), which an app holding only its block token
+ * cannot make.
  */
 export function AppBuzzCapNoticeView({
   data,
@@ -57,9 +60,9 @@ export function AppBuzzCapNoticeView({
             <Text size="xs" c="dimmed">
               Apps are paused until {resumes}.
               {data.canOptIn &&
-                ` You can keep going on your own Buzz today, up to ${numberWithCommas(
+                ` You can raise your limit to ${numberWithCommas(
                   data.optInLimit
-                )}. Each app's own limit still applies.`}
+                )} for the rest of today. Apps keep spending your Buzz, as they do now, and each app's own limit still applies.`}
             </Text>
           </Stack>
         </Group>
@@ -83,7 +86,7 @@ export function AppBuzzCapNoticeView({
               data-testid="app-buzz-cap-opt-in"
               onClick={onOptIn}
             >
-              Continue on my own Buzz today
+              Raise my limit to {numberWithCommas(data.optInLimit)} for today
             </Button>
           )}
         </Group>
@@ -102,6 +105,15 @@ export function AppBuzzCapNotice() {
   const optIn = trpc.user.optInAppBuzzToday.useMutation({
     onSuccess: (status) => utils.user.getAppBuzzCap.setData(undefined, status),
   });
+  // Paused until the UTC reset: re-read once it passes, so the notice clears without a reload.
+  const resetAt = query.data?.paused ? query.data.resetAt : null;
+  const { refetch } = query;
+  useEffect(() => {
+    if (!resetAt) return;
+    const ms = Math.max(0, Date.parse(resetAt) - Date.now()) + 1_000;
+    const timer = setTimeout(() => void refetch(), ms);
+    return () => clearTimeout(timer);
+  }, [resetAt, refetch]);
   return (
     <AppBuzzCapNoticeView
       data={query.data}

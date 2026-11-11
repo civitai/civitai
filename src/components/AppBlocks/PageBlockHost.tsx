@@ -2442,10 +2442,13 @@ export function PageBlockHost({
   // path surfaces no_token/error terminal states above). A missing requestId is
   // likewise dropped without replying — mirrors IframeHost.
   const submitWorkflowMutation = trpc.blocks.submitWorkflow.useMutation();
-  // The paused-at-the-daily-cap notice re-reads after a refused submit (`AppBuzzCapNotice`).
+  // The paused-at-the-daily-cap notice re-reads after every submit (`AppBuzzCapNotice`).
   const buzzCapUtils = trpc.useUtils();
   // Non-throwing: the host also renders outside a flags provider, where this is off.
   const showBuzzCapNotice = useOptionalFeatureFlags()?.appLimitsUpgradePrompt === true;
+  const refreshBuzzCapNotice = useCallback(() => {
+    if (showBuzzCapNotice) buzzCapUtils.user.getAppBuzzCap.invalidate().catch(() => undefined);
+  }, [showBuzzCapNotice, buzzCapUtils]);
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
@@ -2558,13 +2561,13 @@ export function PageBlockHost({
         });
         if (!reviewMode) reportAppSubmitResult(appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
-        // A refused generation may be the daily cap: re-read the paused notice's state.
-        if (showBuzzCapNotice && snapshot.status === 'failed') {
-          buzzCapUtils.user.getAppBuzzCap.invalidate().catch(() => undefined);
-        }
       } catch (err) {
         if (!reviewMode) reportAppSubmitError(appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
+      } finally {
+        // Any submit can move the daily cap state — a refusal pauses, a charge brings the cap
+        // closer: re-read the paused notice whatever the result.
+        refreshBuzzCapNotice();
       }
     });
     return off;
@@ -2578,8 +2581,7 @@ export function PageBlockHost({
     reviewMode,
     appBlockId,
     countAppSubmit,
-    buzzCapUtils,
-    showBuzzCapNotice,
+    refreshBuzzCapNotice,
   ]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
@@ -5379,6 +5381,7 @@ export function PageBlockHost({
                 }
                 if (!reviewMode) reportAppSubmitResult(appBlockId, 'training_submit', result);
                 settlement.reply(trainingSubmitReplyFromResult(result));
+                refreshBuzzCapNotice();
               } catch (err) {
                 settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
               }
@@ -5402,6 +5405,7 @@ export function PageBlockHost({
     reportNoToken,
     reviewMode,
     appBlockId,
+    refreshBuzzCapNotice,
   ]);
 
   // ── RUN_CONFIRMED_STEP → CONFIRMED_STEP_RESULT ────────────────────────────
@@ -5545,6 +5549,7 @@ export function PageBlockHost({
                 }
                 const reply = confirmedStepReplyFromResult(result);
                 settlement.reply(reply);
+                refreshBuzzCapNotice();
                 // The outcome is unknown and a retry would be a new, separately charged
                 // job: say so in host chrome, not only to the block.
                 if ('error' in reply && reply.error === 'submission-unconfirmed') {
@@ -5578,6 +5583,7 @@ export function PageBlockHost({
     reportNoToken,
     reviewMode,
     appBlockId,
+    refreshBuzzCapNotice,
   ]);
 
   // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
