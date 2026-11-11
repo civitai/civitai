@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type * as ImageUtils from '~/components/Image/image.utils';
 import type * as TrpcModule from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
-const state = vi.hoisted(() => ({ review: {} as Record<string, unknown> }));
+const state = vi.hoisted(() => ({
+  review: {} as Record<string, unknown>,
+  images: [] as unknown[],
+  hasMore: false,
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
@@ -25,14 +30,38 @@ vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/components/ResourceReview/ResourceReviewMenu', () => ({
   ResourceReviewMenu: () => null,
 }));
-vi.mock('~/components/ResourceReview/ResourceReviewCarousel', () => ({
-  ResourceReviewCarousel: ({ postId }: { postId: number | null }) => (
-    <div data-testid="carousel" data-post-id={postId ?? ''} />
-  ),
-}));
 vi.mock('~/components/ResourceReview/ResourceReviewComments', () => ({
   ResourceReviewComments: () => <div data-testid="comments" />,
 }));
+
+vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUtils>()),
+  useQueryImages: () => ({
+    images: state.images,
+    data: { pages: [{ nextCursor: state.hasMore ? 1 : undefined }] },
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+  }),
+}));
+// Their own behaviour is not under test; they read sessions, flags and image metrics.
+vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
+  ImageContextMenu: () => null,
+}));
+vi.mock('~/components/Image/Meta/ImageMetaPopover', () => ({ ImageMetaPopover2: () => null }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
+vi.mock('~/components/Reaction/Reactions', () => ({ Reactions: () => null }));
+vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => <span /> }));
+vi.mock('~/components/ImageGuard/ImageGuard2', () => {
+  function ImageGuard2({ children }: { children: (safe: boolean) => React.ReactNode }) {
+    return <>{children(true)}</>;
+  }
+
+  ImageGuard2.BlurToggle = function BlurToggle() {
+    return null;
+  };
+  return { ImageGuard2 };
+});
 
 import { ResourceReviewDetail } from './ResourceReviewDetail';
 
@@ -50,6 +79,17 @@ const makeReview = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const makeImage = (id: number) => ({
+  id,
+  url: `img-${id}`,
+  name: `img${id}`,
+  type: 'image',
+  nsfwLevel: 1,
+  postTitle: 'Night market set',
+  user: { id: 101 },
+  stats: {},
+});
+
 const viewPost = () => document.querySelector<HTMLAnchorElement>('a[href="/posts/55"]');
 const follows = (a: Element, b: Element) =>
   !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -57,15 +97,29 @@ const follows = (a: Element, b: Element) =>
 describe('ResourceReviewDetail', () => {
   beforeEach(() => {
     state.review = makeReview({ postId: 55 });
+    state.images = [1, 2, 3, 4].map(makeImage);
+    state.hasMore = false;
   });
 
-  test('a review with a post links to it, between the images and the text', async () => {
+  test('a review with a post names it in a strip with a link, between the images and the text', async () => {
     await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
-    const carousel = document.querySelector('[data-testid="carousel"]')!;
-    expect(carousel.getAttribute('data-post-id')).toBe('55');
+    const gallery = document.querySelector('[data-testid="review-gallery"]')!;
     expect(viewPost()?.textContent).toMatch(/View post/);
-    expect(follows(carousel, viewPost()!)).toBe(true);
+    expect(document.body.textContent).toContain(
+      'From the post “Night market set” · 4 images made with this version'
+    );
+    expect(follows(gallery, viewPost()!)).toBe(true);
     expect(follows(viewPost()!, document.querySelector('[data-testid="review-text"]')!)).toBe(true);
+  });
+
+  test('clicking a thumbnail swaps it into the large slot', async () => {
+    const screen = await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+    const gallery = document.querySelector('[data-testid="review-gallery"]')!;
+    const large = () => gallery.querySelector('a[href^="/images/"]')!.getAttribute('href');
+    expect(large()).toBe('/images/1');
+    expect(gallery.querySelectorAll('button[aria-label="Show this image"]')).toHaveLength(3);
+    await screen.getByRole('button', { name: 'Show this image' }).first().click();
+    expect(large()).toBe('/images/2');
   });
 
   test('the text comes before the comments', async () => {
@@ -74,11 +128,21 @@ describe('ResourceReviewDetail', () => {
     expect(follows(text, document.querySelector('[data-testid="comments"]')!)).toBe(true);
   });
 
-  test('a review without a post has no View post link', async () => {
+  test('a review without images shows a compact empty state and no strip or link', async () => {
+    state.images = [];
+    const screen = await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+    await expect.element(screen.getByText('No images in this review')).toBeVisible();
+    expect(document.querySelector('[data-testid="review-gallery"]')).toBeNull();
+    expect(viewPost()).toBeNull();
+    expect(document.body.textContent).not.toMatch(/made with this version/);
+  });
+
+  test('a review without a post links to the reviewer’s images of the version instead', async () => {
     state.review = makeReview();
     await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
     expect(viewPost()).toBeNull();
-    expect(document.querySelector('a[href^="/posts/"]')).toBeNull();
+    expect(document.body.textContent).toContain('Images made with this version');
+    expect(document.querySelector('a[href^="/images?view=feed"]')).not.toBeNull();
   });
 
   test('a post-backed review shows its images even when the reviewer has no username', async () => {
@@ -87,6 +151,14 @@ describe('ResourceReviewDetail', () => {
       user: { id: 101, username: null, deletedAt: new Date(), cosmetics: [], profilePicture: null },
     });
     await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
-    expect(document.querySelector('[data-testid="carousel"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="review-gallery"]')).not.toBeNull();
+  });
+
+  test('a post-less review from a user with no username has nothing to look up', async () => {
+    state.review = makeReview({
+      user: { id: 101, username: null, deletedAt: new Date(), cosmetics: [], profilePicture: null },
+    });
+    await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+    expect(document.querySelector('[data-testid="review-no-images"]')).not.toBeNull();
   });
 });
