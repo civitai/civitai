@@ -46,7 +46,13 @@ export function ReviewCardWithImages({
 
   return (
     <div ref={ref} className="w-full">
-      <ReviewCard {...props} review={review} variant="full" images={images} />
+      <ReviewCard
+        postTitle={images[0]?.postTitle}
+        {...props}
+        review={review}
+        variant="full"
+        images={images}
+      />
     </div>
   );
 }

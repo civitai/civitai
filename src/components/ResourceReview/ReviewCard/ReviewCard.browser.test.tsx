@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { ResourceReviewPagedModel } from '~/types/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -11,6 +12,17 @@ vi.mock('~/components/RenderHtml/RenderHtml', () => ({
 }));
 
 // The menu reads the session; its own behaviour is not under test here.
+vi.mock('~/components/ImageGuard/ImageGuard2', () => {
+  function ImageGuard2({ children }: { children: (safe: boolean) => React.ReactNode }) {
+    return <>{children(true)}</>;
+  }
+
+  ImageGuard2.BlurToggle = function BlurToggle() {
+    return null;
+  };
+  return { ImageGuard2 };
+});
+vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => <span /> }));
 vi.mock('~/components/ResourceReview/ResourceReviewMenu', () => ({
   ResourceReviewMenu: () => null,
 }));
@@ -34,21 +46,19 @@ const makeReview = (overrides: Partial<ResourceReviewPagedModel> = {}) =>
     ...overrides,
   } as ResourceReviewPagedModel);
 
+const makeImage = (id: number) =>
+  ({ id, url: `img-${id}`, name: `img${id}`, type: 'image', nsfwLevel: 1 } as ImagesInfiniteModel);
+
 const card = () => document.querySelector('[data-testid="model-written-review"]') as HTMLElement;
 
-describe('ReviewCard, full variant', () => {
-  test('a review with no text, images or post is a short row with no comments badge', async () => {
-    await renderWithProviders(<ReviewCard review={makeReview()} variant="full" />);
-    expect(card().textContent).not.toMatch(/From the post/);
-    expect(card().querySelector('[aria-label="Comments"]')).toBeNull();
-  });
+const link = () => card().querySelector<HTMLAnchorElement>('a[rel="nofollow"]')!;
 
-  test('a text-less review with images stays a full card, with its image badge and comments', async () => {
+describe('ReviewCard, full variant', () => {
+  test('a text-less review with images stays a card with its comments count', async () => {
     await renderWithProviders(
       <ReviewCard review={makeReview({ imageCount: 2, commentCount: 1 })} variant="full" />
     );
-    expect(card().querySelector('[aria-label="2 images"]')?.textContent).toBe('2');
-    expect(card().querySelector('[aria-label="Comments"]')?.textContent).toBe('1');
+    expect(card().querySelector('[aria-label="Comments"]')?.textContent).toBe('1 comment');
   });
 
   test('a review with text is the tall card, with a comments badge', async () => {
@@ -59,14 +69,35 @@ describe('ReviewCard, full variant', () => {
       />
     );
     expect(card().textContent).toContain('Great.');
-    expect(card().querySelector('[aria-label="Comments"]')?.textContent).toBe('3');
+    expect(card().querySelector('[aria-label="Comments"]')?.textContent).toBe('3 comments');
   });
 
-  test('an image count over the cap reads 100+', async () => {
+  test('an image count over the cap reads 100+ in the "more" tile', async () => {
     await renderWithProviders(
-      <ReviewCard review={makeReview({ imageCount: 101 })} variant="full" />
+      <ReviewCard review={makeReview({ imageCount: 101 })} variant="full" images={[makeImage(1)]} />
     );
-    expect(card().querySelector('[aria-label="100+ images"]')?.textContent).toBe('100+');
+    const tiles = Array.from(document.querySelectorAll('[data-testid="review-more-images"]'));
+    expect(tiles.map((tile) => tile.textContent)).toEqual(['100+images', '100+images']);
+  });
+
+  test('images past the shown ones are counted in a "+N images" tile', async () => {
+    await renderWithProviders(
+      <ReviewCard
+        review={makeReview({ imageCount: 12 })}
+        variant="full"
+        images={[1, 2, 3, 4].map(makeImage)}
+      />
+    );
+    const tiles = Array.from(document.querySelectorAll('[data-testid="review-more-images"]'));
+    // Phone strip shows two images, the wider one four.
+    expect(tiles.map((tile) => tile.textContent)).toEqual(['+10images', '+8images']);
+  });
+
+  test('a verdict badge names the recommendation', async () => {
+    const screen = await renderWithProviders(
+      <ReviewCard review={makeReview({ recommended: false })} variant="full" />
+    );
+    await expect.element(screen.getByText('Doesn’t recommend')).toBeInTheDocument();
   });
 
   test('a review with a post links to it, named by the post title when given', async () => {
@@ -92,9 +123,23 @@ describe('ReviewCard, full variant', () => {
 
   test('the whole card is wrapped by the link that opens the review dialog', async () => {
     await renderWithProviders(<ReviewCard review={makeReview({ id: 42 })} variant="full" />);
-    const link = card().querySelector<HTMLAnchorElement>('a[rel="nofollow"]');
-    expect(link?.getAttribute('href')).toContain('dialog=resourceReview');
-    expect(link?.getAttribute('href')).toContain('reviewId=42');
+    expect(link().getAttribute('href')).toContain('dialog=resourceReview');
+    expect(link().getAttribute('href')).toContain('reviewId=42');
+  });
+});
+
+describe('ReviewCard, compact variant', () => {
+  test('shows no images and no image count, even when the review has images', async () => {
+    await renderWithProviders(
+      <ReviewCard
+        review={makeReview({ details: '<p>Great.</p>', imageCount: 9 })}
+        variant="compact"
+        images={[makeImage(1)]}
+      />
+    );
+    expect(document.querySelector('[data-testid="review-images"]')).toBeNull();
+    expect(card().querySelector('[aria-label$="images"]')).toBeNull();
+    expect(card().textContent).not.toMatch(/images/);
   });
 });
 
