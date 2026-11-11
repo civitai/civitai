@@ -4,8 +4,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
 /**
- * `GET /api/v1/model-versions/mini/[id]` for an account listed in ORCHESTRATOR_MINI_USER_IDS:
- * answered as for any signed-in non-moderator, while its own models stay its own.
+ * `GET /api/v1/model-versions/mini/[id]` for an account listed in ORCHESTRATOR_LOOKUP_USER_IDS:
+ * answered as an anonymous caller, so no moderator view and no model counts as its own.
  */
 
 const h = vi.hoisted(() => ({
@@ -99,7 +99,7 @@ async function request(
 }
 
 beforeEach(() => {
-  setEnv({ ORCHESTRATOR_MINI_USER_IDS: [SERVICE_ID] });
+  setEnv({ ORCHESTRATOR_LOOKUP_USER_IDS: [SERVICE_ID] });
   h.resolveCanGenerate.mockReset();
   h.resolveCanGenerate.mockImplementation(
     async (versions: { id: number }[], { user }: { user: { isModerator?: boolean } }) =>
@@ -123,8 +123,8 @@ describe('mini/[id] for a service account', () => {
     expect(body.air).toEqual(expect.any(String));
   });
 
-  it('control: unlisted in ORCHESTRATOR_MINI_USER_IDS, the same account is served it', async () => {
-    setEnv({ ORCHESTRATOR_MINI_USER_IDS: [] });
+  it('control: unlisted in ORCHESTRATOR_LOOKUP_USER_IDS, the same account is served it', async () => {
+    setEnv({ ORCHESTRATOR_LOOKUP_USER_IDS: [] });
     expect((await request(service, draft)).status).toBe(200);
   });
 
@@ -143,13 +143,17 @@ describe('mini/[id] for a service account', () => {
     expect((await request(humanModerator, publicRow, privateFile)).status).toBe(200);
   });
 
-  it('asks canGenerate as a non-moderator', async () => {
+  it('asks canGenerate (and so the tester gate) with no moderator and no id', async () => {
     const { body } = await request(service);
     expect(body.canGenerate).toBe(false);
     expect(h.resolveCanGenerate).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ user: { id: SERVICE_ID, isModerator: false } })
+      expect.objectContaining({ user: { id: undefined, isModerator: undefined } })
     );
+  });
+
+  it('control: a moderator session is asked canGenerate as a moderator', async () => {
+    expect((await request(humanModerator)).body.canGenerate).toBe(true);
   });
 
   it("does not get a deleted model's epoch url; a moderator does", async () => {
@@ -166,12 +170,25 @@ describe('mini/[id] for a service account', () => {
     expect(body.downloadUrls).toEqual(expect.arrayContaining([expect.any(String)]));
   });
 
-  it('is still served a Draft of its own', async () => {
-    expect((await request(service, { ...draft, modelUserId: SERVICE_ID })).status).toBe(200);
+  it.each([
+    ['a Draft', { status: 'Draft' }],
+    ['an UnpublishedViolation version', { status: 'UnpublishedViolation' }],
+    ['a poi model', { poi: true }],
+  ])('answers %s it owns as an unknown id', async (_label, fields) => {
+    expect(await request(service, { ...publicRow, ...fields, modelUserId: SERVICE_ID })).toEqual({
+      status: 404,
+      body: { error: 'Model not found' },
+    });
   });
 });
 
 describe('mini/[id] for an owner', () => {
+  it('control: is served their own UnpublishedViolation version', async () => {
+    expect((await request(owner, { ...publicRow, status: 'UnpublishedViolation' })).status).toBe(
+      200
+    );
+  });
+
   it('is served their own Draft', async () => {
     const { status, body } = await request(owner, { ...publicRow, status: 'Draft' });
     expect(status).toBe(200);

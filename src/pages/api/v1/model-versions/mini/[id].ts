@@ -38,7 +38,7 @@ import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-g
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
-import { env } from '~/env/server';
+import { lookupViewer } from '~/server/utils/service-lookup-viewer';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
@@ -119,11 +119,7 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   sessionUser: Session['user'] | undefined
 ) {
-  // A service lookup is answered as for any signed-in non-moderator; its own models stay its own.
-  const user =
-    sessionUser && env.ORCHESTRATOR_MINI_USER_IDS.includes(sessionUser.id)
-      ? { ...sessionUser, isModerator: false }
-      : sessionUser;
+  const user = lookupViewer(sessionUser);
   const results = schema.safeParse(req.query);
   if (!results.success)
     return res.status(400).json({ error: z.prettifyError(results.error) ?? 'Invalid id' });

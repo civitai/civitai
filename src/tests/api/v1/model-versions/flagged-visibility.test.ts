@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
@@ -249,5 +250,67 @@ describe('POST /api/v1/model-versions/by-hash/ids', () => {
   it.each(SHOWN_TO)('%s gets both', async (viewer) => {
     session.user = VIEWERS[viewer] as never;
     expect(((await lookup()) as unknown[]).length).toBe(2);
+  });
+});
+
+describe('GET /api/v1/model-versions/[id] for an account in ORCHESTRATOR_LOOKUP_USER_IDS', () => {
+  const SERVICE_ID = -1;
+  const service = { id: SERVICE_ID, isModerator: true };
+  const moderator = VIEWERS.moderator;
+
+  type SqlFragment = { sql: string; values: unknown[] };
+  const isSql = (v: unknown): v is SqlFragment =>
+    !!v && typeof (v as SqlFragment).sql === 'string' && Array.isArray((v as SqlFragment).values);
+
+  /** The version query, with its status filter applied to the row as Postgres would. */
+  const lookup = (row: { id: number; status: string }) => {
+    dbMock.dbRead.$queryRaw.mockImplementationOnce((async (
+      _strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const filter = values.find((v) => isSql(v) && v.sql.includes('mv.status'));
+      if (!isSql(filter) || filter.sql === '') return [structuredClone(row)];
+      if (!/^AND mv\.status = (\?|\$\d+)::"ModelStatus"$/.test(filter.sql.trim()))
+        throw new Error(`unexpected status filter: ${filter.sql}`);
+      return filter.values[0] === row.status ? [structuredClone(row)] : [];
+    }) as never);
+    return invoke(versionHandler, { method: 'GET', query: { id: String(row.id) } });
+  };
+  const notFound = { status: 404, body: { error: 'Model not found' } };
+
+  beforeEach(() => setEnv({ ORCHESTRATOR_LOOKUP_USER_IDS: [SERVICE_ID] }));
+
+  it('answers an Unpublished version as an unknown id; a moderator is served', async () => {
+    const unpublished = { ...CONTROL, status: 'Unpublished' };
+    session.user = service as never;
+    expect(await lookup(unpublished)).toEqual(notFound);
+    session.user = moderator as never;
+    expect((await lookup(unpublished)).status).toBe(200);
+  });
+
+  it('answers a poi model as an unknown id; a moderator is served', async () => {
+    session.user = service as never;
+    expect(await lookup(FLAGGED)).toEqual(notFound);
+    session.user = moderator as never;
+    expect((await lookup(FLAGGED)).status).toBe(200);
+  });
+
+  it('answers a poi model it owns as an unknown id', async () => {
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: FLAGGED_MODEL, userId: SERVICE_ID }]);
+    session.user = service as never;
+    expect(await lookup({ ...FLAGGED, model: { ...FLAGGED.model, userId: SERVICE_ID } })).toEqual(
+      notFound
+    );
+  });
+
+  it('control: unlisted, the same account is served an Unpublished version', async () => {
+    setEnv({ ORCHESTRATOR_LOOKUP_USER_IDS: [] });
+    session.user = service as never;
+    expect((await lookup({ ...CONTROL, status: 'Unpublished' })).status).toBe(200);
+  });
+
+  it('is served a Published public version as before', async () => {
+    session.user = service as never;
+    expect((await lookup(CONTROL)).status).toBe(200);
   });
 });

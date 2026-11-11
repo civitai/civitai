@@ -449,9 +449,9 @@ export const serverSchema = z
       .catch([])
       .transform((ids) => ids.filter((id) => id !== 0)),
     PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
-    // Service accounts that look versions up on /api/v1/model-versions/mini. Their lookups are answered
-    // as for any signed-in non-moderator. An entry that is not an integer is dropped on its own.
-    ORCHESTRATOR_MINI_USER_IDS: z
+    // Service accounts that look model versions up on behalf of others (/api/v1/model-versions/[id]
+    // and /mini/[id]); answered as an anonymous caller. A non-integer entry is dropped on its own.
+    ORCHESTRATOR_LOOKUP_USER_IDS: z
       .string()
       .optional()
       .transform((value) =>

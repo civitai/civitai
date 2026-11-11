@@ -33,6 +33,7 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import type { Session } from '~/types/session';
+import { lookupViewer } from '~/server/utils/service-lookup-viewer';
 import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -53,8 +54,9 @@ const schema = z.object({ id: z.preprocess((val) => Number(val), z.number()) });
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
-  user: Session['user'] | undefined
+  sessionUser: Session['user'] | undefined
 ) {
+  const user = lookupViewer(sessionUser);
   const results = schema.safeParse(req.query);
   if (!results.success)
     return res.status(400).json({ error: z.prettifyError(results.error) ?? 'Invalid id' });
