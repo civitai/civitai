@@ -537,9 +537,11 @@ type ResourceReviewRow = {
   postId: number | null;
   commentCount: number;
 };
-// `details` is editor HTML, so an emptied review can be `<p></p>` rather than NULL.
+// `details` is editor HTML, so an emptied review can be `<p></p>` rather than NULL. The plain
+// NULL/empty term matches the partial index on `details`, so the regex runs only on written rows.
 export const writtenReviewSql = Prisma.sql`(
   NOT rr.exclude AND NOT rr."tosViolation" AND NOT rr.nsfw
+  AND rr.details IS NOT NULL AND rr.details <> ''
   AND btrim(regexp_replace(coalesce(rr.details, ''), '<[^>]*>|&nbsp;', '', 'g')) <> ''
 )`;
 
