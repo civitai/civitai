@@ -9,7 +9,6 @@ import type {
 } from '@civitai/orchestration-client';
 import type { WorkflowStatus } from '@civitai/orchestration-client';
 import {
-  getConsumerBlobUploadUrl,
   getWorkflow as clientGetWorkflow,
   handleError,
   submitWorkflow as clientSubmitWorkflow,
@@ -32,7 +31,9 @@ import type {
   TrainingServiceStatus,
 } from '~/server/schema/training.schema';
 import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import {
   deriveTrainingWorkflowState,
@@ -784,8 +785,8 @@ export function toOrchestratorError(error: unknown): never {
       // is exactly what surfaced ~11×/2h on training.submitAutoLabelWorkflow: a
       // transient orchestrator brownout mis-counted against our 500 SLO AND
       // non-retryable to the client. `toOrchestratorError` is only reached on a
-      // `!data` result from an orchestrator round-trip (getConsumerBlobUploadUrl /
-      // clientSubmitWorkflow / clientGetWorkflow), so a local/logic bug thrown
+      // `!data` result from an orchestrator round-trip (clientSubmitWorkflow /
+      // clientGetWorkflow), so a local/logic bug thrown
       // BEFORE the call never reaches here — only real upstream failures do.
       if (status === undefined || status >= 500)
         throw throwServiceUnavailableError(messages ?? null, error);
@@ -795,16 +796,19 @@ export function toOrchestratorError(error: unknown): never {
   }
 }
 
+/** The upload is the user's own media, so the URL is minted with their orchestrator token. */
 export async function getAutoLabelUploadUrl({
   userId,
   modelId,
-}: GetAutoLabelUploadUrlInput & { userId: number }) {
+  ctx,
+}: GetAutoLabelUploadUrlInput & {
+  userId: number;
+  ctx: NonNullable<Parameters<typeof getOrchestratorToken>[1]>;
+}) {
   await assertModelOwnership(modelId, userId);
-  const { data, error } = await getConsumerBlobUploadUrl({
-    client: internalOrchestratorClient,
-  });
-  if (!data) toOrchestratorError(error);
-  return { uploadUrl: data.uploadUrl, expiresAt: data.expiresAt };
+  const token = await getOrchestratorToken(userId, ctx);
+  const { uploadUrl, expiresAt } = await getConsumerBlobUploadUrlService({ token });
+  return { uploadUrl, expiresAt };
 }
 
 export async function submitAutoLabelWorkflow({

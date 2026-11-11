@@ -162,7 +162,7 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
     .use(rateLimit(usageLimits('auto-label.upload')))
-    .mutation(({ input, ctx }) => getAutoLabelUploadUrl({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) => getAutoLabelUploadUrl({ ...input, userId: ctx.user.id, ctx })),
   submitAutoLabelWorkflow: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(submitAutoLabelWorkflowSchema)
