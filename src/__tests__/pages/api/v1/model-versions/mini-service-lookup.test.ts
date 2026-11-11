@@ -11,6 +11,14 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 const h = vi.hoisted(() => ({
   user: { value: undefined as undefined | Record<string, unknown> },
   resolveCanGenerate: vi.fn(),
+  variant: { value: null as string | null },
+}));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getFliptVariant: vi.fn(async (flag: string) =>
+    flag === 'mini-epoch-caller-gate' ? h.variant.value : null
+  ),
 }));
 
 vi.mock('~/server/services/generation/generation.service', () => ({
@@ -30,7 +38,8 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { EPOCH_URL, OWNER_ID, TRAINING_FILE, VERSION_ID, versionRow } from './mini-epoch-fixtures';
 
-const SERVICE_ID = -1;
+// Positive, so the owner checks that only accept ids above 0 can see it as owner.
+const SERVICE_ID = 9001;
 const service = { id: SERVICE_ID, isModerator: true };
 const humanModerator = { id: 1, isModerator: true };
 const owner = { id: OWNER_ID };
@@ -99,6 +108,7 @@ async function request(
 }
 
 beforeEach(() => {
+  h.variant.value = null;
   setEnv({ ORCHESTRATOR_LOOKUP_USER_IDS: [SERVICE_ID] });
   h.resolveCanGenerate.mockReset();
   h.resolveCanGenerate.mockImplementation(
@@ -154,6 +164,17 @@ describe('mini/[id] for a service account', () => {
 
   it('control: a moderator session is asked canGenerate as a moderator', async () => {
     expect((await request(humanModerator)).body.canGenerate).toBe(true);
+  });
+
+  it('is refused a Private epoch under the enforce gate; a moderator is served', async () => {
+    h.variant.value = 'enforce';
+    expect(await request(service, versionRow, TRAINING_FILE)).toEqual({
+      status: 404,
+      body: { error: 'Model not found' },
+    });
+    const forModerator = await request(humanModerator, versionRow, TRAINING_FILE);
+    expect(forModerator.status).toBe(200);
+    expect(forModerator.body.downloadUrls).toEqual([EPOCH_URL]);
   });
 
   it("does not get a deleted model's epoch url; a moderator does", async () => {

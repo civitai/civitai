@@ -4,8 +4,8 @@ import { serverSchema } from '~/env/server-schema';
 const field = serverSchema.shape.ORCHESTRATOR_LOOKUP_USER_IDS;
 
 describe('ORCHESTRATOR_LOOKUP_USER_IDS', () => {
-  it('reads a list of integer ids, negatives included', () => {
-    expect(field.parse('-1, 42')).toEqual([-1, 42]);
+  it('reads a list of integer ids', () => {
+    expect(field.parse('-7, 42')).toEqual([-7, 42]);
   });
 
   it('is empty when unset or blank', () => {
@@ -14,6 +14,6 @@ describe('ORCHESTRATOR_LOOKUP_USER_IDS', () => {
   });
 
   it('drops a malformed entry on its own and keeps the rest', () => {
-    expect(field.parse('-1,12x, ,0,1.5,7')).toEqual([-1, 7]);
+    expect(field.parse('-7,12x, ,0,1.5,0x10,1e3,7')).toEqual([-7, 7]);
   });
 });

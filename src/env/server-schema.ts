@@ -457,8 +457,10 @@ export const serverSchema = z
       .transform((value) =>
         (value ?? '')
           .split(',')
-          .map((entry) => Number(entry.trim()))
-          .filter((id) => Number.isInteger(id) && id !== 0)
+          .map((entry) => entry.trim())
+          .filter((entry) => /^-?\d+$/.test(entry))
+          .map(Number)
+          .filter((id) => id !== 0)
       ),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),

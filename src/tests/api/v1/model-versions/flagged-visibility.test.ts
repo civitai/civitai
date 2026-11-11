@@ -254,7 +254,8 @@ describe('POST /api/v1/model-versions/by-hash/ids', () => {
 });
 
 describe('GET /api/v1/model-versions/[id] for an account in ORCHESTRATOR_LOOKUP_USER_IDS', () => {
-  const SERVICE_ID = -1;
+  // Positive, so the owner check (ids above 0 only) can see it as owner.
+  const SERVICE_ID = 9001;
   const service = { id: SERVICE_ID, isModerator: true };
   const moderator = VIEWERS.moderator;
 
