@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import type * as ImageUtils from '~/components/Image/image.utils';
 import type * as TrpcModule from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -8,7 +7,6 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 const state = vi.hoisted(() => ({
   review: {} as Record<string, unknown>,
   images: [] as unknown[],
-  hasMore: false,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -34,15 +32,17 @@ vi.mock('~/components/ResourceReview/ResourceReviewComments', () => ({
   ResourceReviewComments: () => <div data-testid="comments" />,
 }));
 
-vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageUtils>()),
-  useQueryImages: () => ({
-    images: state.images,
-    data: { pages: [{ nextCursor: state.hasMore ? 1 : undefined }] },
-    isLoading: false,
-    isError: false,
-    refetch: vi.fn(),
-  }),
+const asked = vi.hoisted(() => ({ calls: [] as unknown[][] }));
+vi.mock('~/components/ResourceReview/useReviewImages', () => ({
+  useReviewImages: (...args: unknown[]) => {
+    asked.calls.push(args);
+    return {
+      images: state.images,
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    };
+  },
 }));
 // Their own behaviour is not under test; they read sessions, flags and image metrics.
 vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
@@ -98,7 +98,7 @@ describe('ResourceReviewDetail', () => {
   beforeEach(() => {
     state.review = makeReview({ postId: 55 });
     state.images = [1, 2, 3, 4].map(makeImage);
-    state.hasMore = false;
+    asked.calls = [];
   });
 
   test('a review with a post names it in a strip with a link, between the images and the text', async () => {
@@ -120,6 +120,15 @@ describe('ResourceReviewDetail', () => {
     expect(gallery.querySelectorAll('button[aria-label="Show this image"]')).toHaveLength(3);
     await screen.getByRole('button', { name: 'Show this image' }).first().click();
     expect(large()).toBe('/images/2');
+  });
+
+  test('asks for the review’s images by id, one over what it shows, and says when there are more', async () => {
+    state.review = makeReview({ postId: 55 });
+    state.images = Array.from({ length: 11 }, (_, i) => makeImage(i + 1));
+    await renderWithProviders(<ResourceReviewDetail reviewId={7} />);
+
+    expect(asked.calls.at(-1)![0]).toEqual({ reviewId: 7, limit: 11 });
+    expect(document.body.textContent).toContain('10+ images made with this version');
   });
 
   test('the text comes before the comments', async () => {

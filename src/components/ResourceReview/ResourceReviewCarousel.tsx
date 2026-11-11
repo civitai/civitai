@@ -4,18 +4,15 @@ import { useState } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useReviewImages } from '~/components/ResourceReview/useReviewImages';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ImageSort } from '~/server/common/enums';
-import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import classes from './ResourceReviewCarousel.module.css';
 
 const GALLERY_LIMIT = 10;
@@ -23,8 +20,7 @@ const GALLERY_LIMIT = 10;
 const MAX_THUMBNAILS = 3;
 
 /**
- * The review dialog's gallery: the review's post images when it has a post, else the reviewer's
- * most reacted images of the reviewed version, with a strip linking to the rest.
+ * The review dialog's gallery: the images its `imageCount` counts, with a strip linking to the rest.
  */
 export function ResourceReviewCarousel({
   userId,
@@ -43,21 +39,14 @@ export function ResourceReviewCarousel({
   // Without a post or a username there is nothing to look the images up by.
   const canLoad = !!postId || !!username;
 
-  // today, typescript was not cool.
-  // functions will only check extra parameters if it's fresh
-  const filters: GetInfiniteImagesInput = postId
-    ? { postId, modelVersionId, period: MetricTimeframe.AllTime, limit: GALLERY_LIMIT }
-    : {
-        userId,
-        modelVersionId,
-        sort: ImageSort.MostReactions,
-        period: MetricTimeframe.AllTime,
-        limit: GALLERY_LIMIT,
-      };
-
-  const { data, images, isLoading, isError, refetch } = useQueryImages(filters, {
-    enabled: canLoad,
-  });
+  // One more than shown, to know whether there are more.
+  const {
+    images: fetched,
+    isLoading,
+    isError,
+    refetch,
+  } = useReviewImages({ reviewId, limit: GALLERY_LIMIT + 1 }, { enabled: canLoad });
+  const images = fetched.slice(0, GALLERY_LIMIT);
 
   if (!canLoad) return <NoReviewImages />;
   if (isLoading)
@@ -77,7 +66,7 @@ export function ResourceReviewCarousel({
     );
   if (!images.length) return <NoReviewImages />;
 
-  const hasMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
+  const hasMore = fetched.length > GALLERY_LIMIT;
   const large = images.find((image) => image.id === activeId) ?? images[0];
   const thumbnails = images.filter((image) => image.id !== large.id).slice(0, MAX_THUMBNAILS);
   const countLabel = `${images.length}${hasMore ? '+' : ''}`;

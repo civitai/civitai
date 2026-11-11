@@ -564,23 +564,32 @@ const SMALL_SIDE = 1000;
 
 const COUNT_LIMIT = REVIEW_IMAGE_COUNT_CAP + 1;
 
+type ReviewImageSet = 'count' | 'ids';
+
 /**
  * Per review row `rr`, the published images that used its version, up to `limit`: from the
  * review's own post, or, for a review written outside a post, from any of the reviewer's posts.
  * That fallback walks whichever of the version's images or the reviewer's images is smaller.
+ * `count` is how many, `ids` which ones (a post's in its own order, the rest newest first).
  */
-const reviewImageCountSql = (limit: number, browsingLevel: number) => Prisma.sql`
+const reviewImagesSql = (set: ReviewImageSet, limit: number, browsingLevel: number) => {
+  const pick = (id: Prisma.Sql) => (set === 'count' ? Prisma.sql`1` : id);
+  const order = (by: Prisma.Sql) => (set === 'count' ? Prisma.empty : Prisma.sql`ORDER BY ${by}`);
+  const wrap = (rows: Prisma.Sql) =>
+    set === 'count'
+      ? Prisma.sql`(SELECT COUNT(*)::int FROM (${rows}) c)`
+      : Prisma.sql`ARRAY(${rows})`;
+  return Prisma.sql`
   CASE
-    WHEN rr."postId" IS NOT NULL THEN (
-      SELECT COUNT(*)::int FROM (
-        SELECT 1 FROM "Image" i
+    WHEN rr."postId" IS NOT NULL THEN ${wrap(Prisma.sql`
+        SELECT ${pick(Prisma.sql`i.id`)} FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         WHERE i."postId" = rr."postId" AND ${servablePostImageSql(
           browsingLevel
         )} AND ${usedReviewedVersionSql}
+        ${order(Prisma.sql`i."index" NULLS LAST, i.id`)}
         LIMIT ${limit}
-      ) c
-    )
+    `)}
     WHEN (
       SELECT COUNT(*) FROM (
         SELECT 1 FROM "ImageResourceNew" ir
@@ -590,9 +599,8 @@ const reviewImageCountSql = (limit: number, browsingLevel: number) => Prisma.sql
       SELECT COUNT(*) FROM (
         SELECT 1 FROM "Image" i WHERE i."userId" = rr."userId" LIMIT ${SMALL_SIDE}
       ) u
-    ) THEN (
-      SELECT COUNT(*)::int FROM (
-        SELECT 1 FROM "ImageResourceNew" vir
+    ) THEN ${wrap(Prisma.sql`
+        SELECT ${pick(Prisma.sql`vir."imageId"`)} FROM "ImageResourceNew" vir
         WHERE vir."modelVersionId" = rr."modelVersionId"
           AND (
             -- scalar probe, not EXISTS (see usedReviewedVersionSql)
@@ -602,21 +610,24 @@ const reviewImageCountSql = (limit: number, browsingLevel: number) => Prisma.sql
               browsingLevel
             )}
           )
+        ${order(Prisma.sql`vir."imageId" DESC`)}
         LIMIT ${limit}
-      ) c
-    )
-    ELSE (
-      SELECT COUNT(*)::int FROM (
-        SELECT 1 FROM "Image" i
+    `)}
+    ELSE ${wrap(Prisma.sql`
+        SELECT ${pick(Prisma.sql`i.id`)} FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         WHERE i."userId" = rr."userId" AND ${servablePostImageSql(
           browsingLevel
         )} AND ${usedReviewedVersionSql}
+        ${order(Prisma.sql`i.id DESC`)}
         LIMIT ${limit}
-      ) c
-    )
+    `)}
   END
 `;
+};
+
+const reviewImageCountSql = (limit: number, browsingLevel: number) =>
+  reviewImagesSql('count', limit, browsingLevel);
 
 /**
  * Whether review `rr` has a servable image from its version, for a list scoped to one version —
@@ -648,6 +659,52 @@ const reviewersWithImagesCte = (modelVersionId: number, browsingLevel: number) =
   )
 `;
 
+/**
+ * The reviewers whose reviews the viewer does not see: hidden, blocked, or blocking them.
+ */
+const getExcludedReviewerIds = async ({
+  userId,
+  modelId,
+  modelVersionId,
+}: {
+  userId?: number;
+  modelId: number;
+  modelVersionId?: number;
+}) => {
+  const excludedUsers = await Promise.all([
+    HiddenUsers.getCached({ userId }),
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  // [hidden, blockedBy, blocked] — bound + dedup so a heavily-blocked viewer's
+  // (unbounded) blockedBy list can't blow past Postgres's 32767 bind-param cap on
+  // the raw NOT IN below (P2029). Same fix + safety-priority order as the comment
+  // surfaces; see boundExcludedUserIds.
+  const [hiddenUsers, blockedByUsers, blockedUsers] = excludedUsers;
+  // If the viewer owns the model these reviews are on, don't hide a blocker's review/thumb
+  // from them (the owner must still see + report engagement on their own content) — drop
+  // blockedByUsers only then; keep the anti-harassment exclusion for every non-owner viewer.
+  // Skip the lookup unless the viewer has a blocked-by list, the only case it changes anything.
+  let isContentOwner = false;
+  if (userId && blockedByUsers.length) {
+    const model = modelVersionId
+      ? (
+          await dbRead.modelVersion.findUnique({
+            where: { id: modelVersionId },
+            select: { model: { select: { userId: true } } },
+          })
+        )?.model
+      : await dbRead.model.findUnique({ where: { id: modelId }, select: { userId: true } });
+    isContentOwner = model?.userId === userId;
+  }
+  return boundExcludedUserIds(
+    hiddenUsers.map((u) => u.id),
+    blockedByUsers.map((u) => u.id),
+    blockedUsers.map((u) => u.id),
+    { isContentOwner }
+  );
+};
+
 const getReviewImageCounts = async (reviewIds: number[], browsingLevel: number) => {
   if (!reviewIds.length) return new Map<number, number>();
   const rows = await dbRead.$queryRaw<{ id: number; imageCount: number }[]>`
@@ -656,6 +713,44 @@ const getReviewImageCounts = async (reviewIds: number[], browsingLevel: number) 
     WHERE rr.id = ANY(${reviewIds}::int[])
   `;
   return new Map(rows.map((r) => [r.id, r.imageCount]));
+};
+
+/**
+ * The ids of the images a review card shows: the ones `imageCount` counts, up to `limit`. Empty
+ * for a review the viewer cannot see (a pending post's, or a hidden or blocking reviewer's).
+ */
+export const getReviewImageIds = async ({
+  reviewId,
+  limit,
+  browsingLevel,
+  userId,
+}: {
+  reviewId: number;
+  limit: number;
+  browsingLevel: number;
+  userId?: number;
+}) => {
+  const [review] = await dbRead.$queryRaw<
+    { userId: number; modelId: number; modelVersionId: number }[]
+  >`
+    SELECT rr."userId", rr."modelId", rr."modelVersionId"
+    FROM "ResourceReview" rr
+    WHERE rr.id = ${reviewId} AND ${visibleReviewForViewerSql('rr', userId)}
+  `;
+  if (!review) return [];
+  const excluded = await getExcludedReviewerIds({
+    userId,
+    modelId: review.modelId,
+    modelVersionId: review.modelVersionId,
+  });
+  if (excluded.includes(review.userId)) return [];
+
+  const [row] = await dbRead.$queryRaw<{ ids: number[] }[]>`
+    SELECT ${reviewImagesSql('ids', limit, browsingLevel)} AS ids
+    FROM "ResourceReview" rr
+    WHERE rr.id = ${reviewId}
+  `;
+  return row?.ids ?? [];
 };
 
 export const getPagedResourceReviews = async ({
@@ -694,38 +789,7 @@ export const getPagedResourceReviews = async ({
     if (user) AND.push(Prisma.sql`rr."userId" = ${user.id}`);
   }
 
-  const excludedUsers = await Promise.all([
-    HiddenUsers.getCached({ userId }),
-    BlockedByUsers.getCached({ userId }),
-    BlockedUsers.getCached({ userId }),
-  ]);
-  // [hidden, blockedBy, blocked] — bound + dedup so a heavily-blocked viewer's
-  // (unbounded) blockedBy list can't blow past Postgres's 32767 bind-param cap on
-  // the raw NOT IN below (P2029). Same fix + safety-priority order as the comment
-  // surfaces; see boundExcludedUserIds.
-  const [hiddenUsers, blockedByUsers, blockedUsers] = excludedUsers;
-  // If the viewer owns the model these reviews are on, don't hide a blocker's review/thumb
-  // from them (the owner must still see + report engagement on their own content) — drop
-  // blockedByUsers only then; keep the anti-harassment exclusion for every non-owner viewer.
-  // Skip the lookup unless the viewer has a blocked-by list, the only case it changes anything.
-  let isContentOwner = false;
-  if (userId && blockedByUsers.length) {
-    const model = modelVersionId
-      ? (
-          await dbRead.modelVersion.findUnique({
-            where: { id: modelVersionId },
-            select: { model: { select: { userId: true } } },
-          })
-        )?.model
-      : await dbRead.model.findUnique({ where: { id: modelId }, select: { userId: true } });
-    isContentOwner = model?.userId === userId;
-  }
-  const excludedUserIds = boundExcludedUserIds(
-    hiddenUsers.map((u) => u.id),
-    blockedByUsers.map((u) => u.id),
-    blockedUsers.map((u) => u.id),
-    { isContentOwner }
-  );
+  const excludedUserIds = await getExcludedReviewerIds({ userId, modelId, modelVersionId });
   if (excludedUserIds.length) {
     AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
   }

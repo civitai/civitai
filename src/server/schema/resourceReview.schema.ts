@@ -127,3 +127,17 @@ export const getResourceReviewPagedSchema = paginationSchema
 
 /** A review's image count stops at this; the list returns one more to mean "more than this". */
 export const REVIEW_IMAGE_COUNT_CAP = 100;
+
+export const REVIEW_IMAGES_LIMIT_MAX = 12;
+
+export type GetResourceReviewImagesInput = z.infer<typeof getResourceReviewImagesSchema>;
+export const getResourceReviewImagesSchema = z.object({
+  reviewId: z.number().int().positive(),
+  limit: z.number().int().min(1).max(REVIEW_IMAGES_LIMIT_MAX).default(4),
+  // Narrowed to the viewer's own level on the server.
+  browsingLevel: z.number().int().min(0).max(allBrowsingLevelsFlag).default(allBrowsingLevelsFlag),
+  // The viewer's browsing-settings addons, as every image listing sends them.
+  excludedTagIds: z.number().int().array().max(200).optional(),
+  disablePoi: z.boolean().optional(),
+  disableMinor: z.boolean().optional(),
+});
