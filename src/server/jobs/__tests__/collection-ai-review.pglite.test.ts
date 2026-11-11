@@ -227,4 +227,26 @@ describe('reviewCollection: an image flagged as a minor before its outcome is wr
     );
     expect(image.rows[0].needsReview).toBe('minor');
   });
+
+  // Alongside an accept, so the accept-only re-check is in the claim and has to leave this one be.
+  it('still claims and rejects it for a real violation', async () => {
+    await seed([
+      { id: 1, nsfwLevel: PG },
+      { id: 2, nsfwLevel: PG },
+    ]);
+    await db.query(`UPDATE "Image" SET minor = true WHERE id = 1`);
+    reviewImage.mockImplementation(async () => ({
+      observations:
+        reviewImage.mock.calls.length === 1 ? { ...clean, depictsRealPerson: true } : clean,
+      usage: { promptTokens: 1, completionTokens: 1 },
+    }));
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(await claimedIds()).toEqual([1, 2]);
+    expect(statusWrites()).toEqual([
+      { status: 'ACCEPTED', ids: [2] },
+      { status: 'REJECTED', ids: [1] },
+    ]);
+  });
 });

@@ -626,15 +626,17 @@ describe('reviewCollection: a rating label the rules do not recognise', () => {
 describe('reviewCollection: an image the scanner flagged as a minor', () => {
   const held = { minor: true, acceptableMinor: false };
 
+  // Escalations configured to reject are the case that would otherwise reject the held item.
   it('is never accepted on an approve: it goes to the minor queue for a human', async () => {
     queuePending([pendingItem(held)]);
     modelSees({});
 
-    await reviewCollection(COLLECTION_ID, config);
+    await reviewCollection(COLLECTION_ID, { ...config, escalationAction: 'reject' });
 
     expect(statusWrites()).toEqual([]);
     expect(claimCalls()).toHaveLength(1);
     expect(minorFlagCalls()).toHaveLength(1);
+    expect(trackReview).toHaveBeenCalledTimes(1);
     expect(trackReview).toHaveBeenCalledWith(
       expect.objectContaining({
         decision: 'escalate',
@@ -643,16 +645,6 @@ describe('reviewCollection: an image the scanner flagged as a minor', () => {
         applied: true,
       })
     );
-  });
-
-  it('is held for a human even when escalations are configured to stamp', async () => {
-    queuePending([pendingItem(held)]);
-    modelSees({});
-
-    await reviewCollection(COLLECTION_ID, { ...config, escalationAction: 'stamp' });
-
-    expect(statusWrites()).toEqual([]);
-    expect(minorFlagCalls()).toHaveLength(1);
   });
 
   it('is logged as an escalation and touches nothing in a dry run', async () => {
