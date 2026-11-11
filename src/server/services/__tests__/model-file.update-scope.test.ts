@@ -705,6 +705,93 @@ describe('a file type change to or from training data on a trained version', () 
 });
 
 // The domain stamp gates which domain a paid training submit may run under; it is the server's.
+describe('a file whose loader or format changes', () => {
+  const RESET = { virusScanResult: 'Pending', pickleScanResult: 'Pending', scannedAt: null };
+  const scanned = (overrides: Record<string, unknown> = {}) => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...FILE,
+      virusScanResult: 'Success',
+      pickleScanResult: 'Success',
+      ...overrides,
+    });
+  };
+  const write = () => dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0];
+
+  it('goes back to unscanned when it becomes a type a loader opens', async () => {
+    scanned({ type: 'Config', name: 'a.ckpt' });
+
+    await updateFile({ id: 1, type: 'Model', userId: 7 });
+
+    expect(write().data).toMatchObject(RESET);
+    expect(write().where).toMatchObject({
+      virusScanResult: 'Success',
+      pickleScanResult: 'Success',
+    });
+  });
+
+  it('goes back to unscanned when a rename changes its format', async () => {
+    scanned();
+
+    await updateFile({ id: 1, name: 'a.ckpt', userId: 7 });
+
+    expect(write().data).toMatchObject(RESET);
+  });
+
+  it("goes back to unscanned when a moderator changes a loadable file's format", async () => {
+    scanned();
+
+    await updateFile({ id: 1, metadata: { format: 'PickleTensor' }, userId: 7, isModerator: true });
+
+    expect(write().data).toMatchObject(RESET);
+  });
+
+  it("refuses an owner a format the file's name does not have", async () => {
+    scanned();
+
+    await expect(
+      updateFile({ id: 1, metadata: { format: 'PickleTensor' }, userId: 7 })
+    ).rejects.toThrow("A file's format must match its file name.");
+    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the format its name already has', { metadata: { format: 'SafeTensor' } }],
+    ['a rename within the same format', { name: 'b.safetensors' }],
+    ['a change to a type no loader opens', { type: 'Config' }],
+  ])('keeps the scan of an edit to %s', async (_, edit) => {
+    scanned();
+
+    await updateFile({ id: 1, userId: 7, ...edit });
+
+    expect(write().data).not.toHaveProperty('pickleScanResult');
+  });
+
+  it("lets an owner declare a zip's format, which sends it back to the scan", async () => {
+    scanned({ name: 'a.zip', metadata: { format: 'Other' } });
+
+    await updateFile({ id: 1, metadata: { format: 'Diffusers' }, userId: 7 });
+
+    expect(write().data).toMatchObject(RESET);
+  });
+
+  it('keeps a Danger verdict through a change that would reset the scan', async () => {
+    scanned({ type: 'Config', name: 'a.ckpt', pickleScanResult: 'Danger' });
+
+    await updateFile({ id: 1, type: 'Model', userId: 7 });
+
+    expect(write().data).not.toHaveProperty('pickleScanResult');
+  });
+
+  it('writes nothing over a verdict that landed after the edit read the file', async () => {
+    scanned({ type: 'Config', name: 'a.ckpt' });
+    dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(updateFile({ id: 1, type: 'Model', userId: 7 })).rejects.toThrow(
+      'This file was scanned while you were editing it.'
+    );
+  });
+});
+
 describe('the upload domain on a new dataset', () => {
   it("stamps the request's domain on training data even when the request omits the type", async () => {
     withFile({ type: 'Training Data', metadata: { uploadDomain: 'red', numImages: 3 } });

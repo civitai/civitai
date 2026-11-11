@@ -46,9 +46,10 @@ import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import {
   assertFileTypeChangeAllowed,
-  scanResetForTypeChange,
+  assertFormatChangeAllowed,
+  scanResetConflictMessage,
+  scanResetForFileChange,
   scanResetWriteGuard,
-  TRAINING_DATA_SCAN_PENDING_MESSAGE,
   assertVersionAcceptsNewUpload,
 } from '~/server/utils/model-file-replace';
 import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
@@ -260,6 +261,8 @@ export async function updateFile({
     await throwOnBlockedUserContent(changedNames, { isModerator, surface: 'model-file' });
 
   assertFileTypeChangeAllowed(modelFile, inputData.type);
+  const change = { type: inputData.type, name: inputData.name, format: metadata?.format };
+  assertFormatChangeAllowed(modelFile, change, isModerator);
 
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
 
@@ -321,15 +324,15 @@ export async function updateFile({
     where: {
       id,
       ...(inputData.type !== undefined && { type: modelFile.type }),
-      ...scanResetWriteGuard(modelFile, inputData.type),
+      ...scanResetWriteGuard(modelFile, change),
     },
-    data: { ...inputData, metadata, ...scanResetForTypeChange(modelFile, inputData.type) },
+    data: { ...inputData, metadata, ...scanResetForFileChange(modelFile, change) },
   });
   // Replaced, deleted or retyped since the lookup above, or a new verdict on a relabel: nothing was
   // written.
   if (count === 0) {
-    if (Object.keys(scanResetWriteGuard(modelFile, inputData.type)).length)
-      throw throwBadRequestError(TRAINING_DATA_SCAN_PENDING_MESSAGE);
+    if (Object.keys(scanResetWriteGuard(modelFile, change)).length)
+      throw throwBadRequestError(scanResetConflictMessage(modelFile));
     throw throwNotFoundError();
   }
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
@@ -370,6 +373,7 @@ const replaceableFileSelect = {
   modelVersionId: true,
   sizeKB: true,
   virusScanResult: true,
+  pickleScanResult: true,
   modelVersion: {
     select: {
       modelId: true,
