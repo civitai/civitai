@@ -155,3 +155,26 @@ describe('mini/[id] epoch arm through the real session layer, enforce', () => {
     ]);
   });
 });
+
+describe('mini/[id] epoch arm through the real session layer, enforce-anon', () => {
+  beforeEach(() => {
+    h.variant.value = 'enforce-anon';
+  });
+
+  it('serves a token the session layer does not know', async () => {
+    const { status, body, log } = await call('Bearer not-a-key');
+    expect(status).toBe(200);
+    expect(body?.downloadUrls).toEqual([EPOCH_URL]);
+    expect(log).toEqual([
+      expect.objectContaining({ resolvedAs: 'unrecognized', callerClass: 'anonymous' }),
+    ]);
+  });
+
+  it('answers a request with no credential as an unknown id', async () => {
+    const { status, body, headers, log } = await call();
+    expect(status).toBe(404);
+    expect(body).toEqual({ error: 'Model not found' });
+    expect(headers['cache-control']).toBe('private, no-store');
+    expect(log).toEqual([expect.objectContaining({ resolvedAs: 'none', enforced: true })]);
+  });
+});

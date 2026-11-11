@@ -5,7 +5,7 @@ import { getRequestCredential } from '~/server/auth/request-credential';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 
-export type MiniEpochGateMode = 'off' | 'log' | 'enforce';
+export type MiniEpochGateMode = 'off' | 'log' | 'enforce' | 'enforce-anon';
 
 export type MiniEpochCallerClass =
   | 'owner'
@@ -26,7 +26,7 @@ export type MiniEpochCredential =
 
 export async function getMiniEpochGateMode(): Promise<MiniEpochGateMode> {
   const variant = await getFliptVariant(FLIPT_FEATURE_FLAGS.MINI_EPOCH_CALLER_GATE);
-  return variant === 'log' || variant === 'enforce' ? variant : 'off';
+  return variant === 'log' || variant === 'enforce' || variant === 'enforce-anon' ? variant : 'off';
 }
 
 function credentialKind(
@@ -44,7 +44,8 @@ function credentialKind(
 
 /**
  * Classifies the caller of the epoch arm for a Private version, logs it, and answers whether they
- * are refused. Only `enforce` ever refuses.
+ * are refused. `enforce` refuses `anonymous` and `other`; `enforce-anon` refuses only a request
+ * that carries no credential at all.
  */
 export async function evaluateMiniEpochCaller({
   req,
@@ -79,15 +80,19 @@ export async function evaluateMiniEpochCaller({
     callerClass = access[0]?.hasAccess ? 'grantee' : 'other';
   }
 
+  const resolvedAs = credentialKind(req, user, orchestrator);
   const wouldRefuse = callerClass === 'anonymous' || callerClass === 'other';
-  const withhold = mode === 'enforce' && wouldRefuse;
+  // Keyed on the credential, not on `callerClass`: a bearer that does not resolve is classed
+  // `anonymous`, and `enforce-anon` must still serve it.
+  const withhold =
+    (mode === 'enforce' && wouldRefuse) || (mode === 'enforce-anon' && resolvedAs === 'none');
 
   logToAxiom({
     type: 'info',
     name: 'mini-epoch-caller',
     modelVersionId,
     authHeader: !!req.headers?.authorization,
-    resolvedAs: credentialKind(req, user, orchestrator),
+    resolvedAs,
     callerClass,
     wouldRefuse,
     enforced: withhold,

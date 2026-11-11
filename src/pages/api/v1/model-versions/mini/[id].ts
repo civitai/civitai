@@ -323,7 +323,8 @@ export default MixedAuthEndpoint(async function handler(
         mode,
       });
       // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
-      // 404 to a caller who would be served.
+      // 404 to a caller who would be served. Under `enforce-anon` its Cache-Control still differs
+      // from this handler's other 404s until those set no-store as well.
       if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
     }
   }

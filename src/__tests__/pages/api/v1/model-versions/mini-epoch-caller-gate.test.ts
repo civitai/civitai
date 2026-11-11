@@ -260,6 +260,38 @@ describe('mini/[id] epoch arm, enforce', () => {
   });
 });
 
+describe('mini/[id] epoch arm, enforce-anon', () => {
+  beforeEach(() => {
+    h.variant.value = 'enforce-anon';
+  });
+
+  it('answers a request with no credential as an unknown id, kept out of shared caches', async () => {
+    const refused = await request(anonymous);
+    expectRefused(refused);
+    expect(refused.cacheControl).toBe('private, no-store');
+    expect(callerLogs()).toEqual([
+      expect.objectContaining({ resolvedAs: 'none', callerClass: 'anonymous', enforced: true }),
+    ]);
+  });
+
+  it.each([
+    ['a bearer that does not resolve', { authorization: 'Bearer not-a-key' }, 'unrecognized'],
+    [
+      'the owner by API key',
+      { user: { id: OWNER_ID }, authorization: 'Bearer k', subject: 'apiKey' as const },
+      'api-key',
+    ],
+    ['a signed-in caller with no grant', stranger, 'oauth'],
+    ['a signed-in session with no grant', { user: { id: STRANGER_ID } }, 'session'],
+    ['the orchestrator service token', service, 'orchestrator'],
+  ])('serves the epoch url to %s', async (_label, caller, resolvedAs) => {
+    const { status, body } = await request(caller);
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+    expect(callerLogs()).toEqual([expect.objectContaining({ resolvedAs, enforced: false })]);
+  });
+});
+
 describe('mini/[id] epoch arm, log', () => {
   beforeEach(() => {
     h.variant.value = 'log';
@@ -313,13 +345,16 @@ describe('mini/[id] epoch arm, log', () => {
 });
 
 describe('mini/[id] epoch arm, cache', () => {
-  it.each(['log', 'enforce'])('%s: no shared cache may store the response', async (variant) => {
-    h.variant.value = variant;
-    for (const caller of [anonymous, owner, service]) {
-      const { cacheControl } = await request(caller);
-      expect(cacheControl).toBe('private, no-store');
+  it.each(['log', 'enforce', 'enforce-anon'])(
+    '%s: no shared cache may store the response',
+    async (variant) => {
+      h.variant.value = variant;
+      for (const caller of [anonymous, owner, service]) {
+        const { cacheControl } = await request(caller);
+        expect(cacheControl).toBe('private, no-store');
+      }
     }
-  });
+  );
 
   it('off: the cache header is left as it was', async () => {
     const { cacheControl } = await request(anonymous);
@@ -331,6 +366,7 @@ describe('mini/[id] epoch arm, off', () => {
   it.each([
     ['flag unset', null],
     ['an unknown variant', 'on'],
+    ['a near miss of enforce-anon', 'Enforce-Anon'],
   ])('%s: serves everyone and logs nothing', async (_label, variant) => {
     h.variant.value = variant;
     for (const caller of [anonymous, stranger, service]) {
