@@ -515,10 +515,11 @@ export function ArticleUpsertForm({ article }: Props) {
               label="Cover Image"
               description={
                 features.articleTypography
-                  ? `Shown on cards, cropped to a 7:9 portrait from the top, and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight} when there is no banner. Optional if you add a banner: without a cover, cards crop the banner instead.`
-                  : `Shown on cards, cropped to a 7:9 portrait from the top, and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}. Keep the subject near the top center.`
+                  ? `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight} when there is no banner. Optional if you add a banner: without a cover, cards crop the banner once it has been reviewed.`
+                  : `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}. Keep the subject near the top center.`
               }
               cardCrop={aspectRatioMap.portrait}
+              previewWidth={constants.article.coverImageWidth}
               withAsterisk={!features.articleTypography}
             />
             {features.articleTypography && (
