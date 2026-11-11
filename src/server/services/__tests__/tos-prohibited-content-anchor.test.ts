@@ -25,9 +25,8 @@ const tosFiles = readdirSync(CONTENT_ROOT).filter((f) => /^tos(\.[\w-]+)?\.md$/.
  * re-accept.
  */
 const ACCEPTED_IDENTITY: Record<string, string> = {
-  // 2026-11-11 §8.9 MiniMax-H3-Image flow-through terms: a deliberate re-prompt on blue/red.
-  blue: '64769ab650cab19bfe86ccfa1df4afdb492dc4b31ba8e97ccade8e7c5936ce7f',
-  red: '64769ab650cab19bfe86ccfa1df4afdb492dc4b31ba8e97ccade8e7c5936ce7f', // no tos.red.md — falls back to tos.md
+  blue: '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0',
+  red: '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0', // no tos.red.md — falls back to tos.md
   green: 'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
 };
 
