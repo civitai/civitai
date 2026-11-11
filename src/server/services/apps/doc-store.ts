@@ -1550,12 +1550,13 @@ function buildDocStore(deps: DocStoreDeps) {
    * usage-row lock that `SQL_CHARGE_APP` takes: the viewer's for a put or an increment, every
    * owner on the page for a migration. Keyed on the call's context; set at the start of each call.
    */
-  /** How many users' ceilings `resolveCeilings` looks up at once. */
-  const CEILING_LOOKUP_CONCURRENCY = 10;
   const preResolvedCeilings = new WeakMap<
     DocStoreContext,
     Map<number, { userBytes: number; userDocs: number }>
   >();
+
+  /** How many users' ceilings `resolveCeilings` looks up at once. */
+  const CEILING_LOOKUP_CONCURRENCY = 10;
 
   async function resolveCeilings(ctx: DocStoreContext, uids: Iterable<number>): Promise<void> {
     if (!deps.userLimits) return;
