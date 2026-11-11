@@ -39,9 +39,13 @@ const SETTLE_LAG_MS = 10 * 60 * 1000;
 // The hour (UTC) whose run recomputes the whole season, picking up late removals and bans on days
 // the hourly runs treat as final.
 const FULL_RECOMPUTE_HOUR = 3;
-// Both ClickHouse queries together. Must stay under the hourly job's 15 min lock (SETTLE_LOCK_S in
-// self-heal.ts), which also covers the hat sync and the Postgres and Redis writes.
+// Both ClickHouse queries of one settle together: an hourly window, and a whole-season one (the
+// nightly run, and every run once the season has ended). The full budget, plus the hat sync and the
+// Postgres and Redis writes, must stay under SETTLE_LOCK_S.
 export const REFEREE_CLICKHOUSE_BUDGET_S = 12 * 60;
+export const REFEREE_FULL_CLICKHOUSE_BUDGET_S = 35 * 60;
+// The lock the hourly settle job holds, and that the self-heal takes to settle beside it.
+export const SETTLE_LOCK_S = 45 * 60;
 // The client's 300 s request_timeout is a socket idle timer; progress headers keep bytes flowing so
 // a query the budget still allows is not dropped by the client while the server runs on.
 export const REFEREE_PROGRESS_SETTINGS = {
@@ -110,7 +114,14 @@ export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now
   const full = now.getUTCHours() === FULL_RECOMPUTE_HOUR || settled >= end.getTime();
   const dayBefore = new Date(startOfUtcDay(cut).getTime() - DAY_MS);
   const recomputeFrom = full || dayBefore < start ? start : dayBefore;
-  return { start, cut, removeCut, recomputeFrom, final };
+  return {
+    start,
+    cut,
+    removeCut,
+    recomputeFrom,
+    final,
+    full: recomputeFrom.getTime() === start.getTime(),
+  };
 }
 
 // Totals per hat, team and owner: the final days from the snapshot plus the recomputed rows.
@@ -473,12 +484,14 @@ export async function runEventPointsReferee(
   season: EventPointSeason,
   now = new Date(),
   // Shared by every settle under one hold of the lock, so a run settling several events stays in it.
-  deadline = Date.now() + REFEREE_CLICKHOUSE_BUDGET_S * 1000
+  deadline = Date.now() + REFEREE_FULL_CLICKHOUSE_BUDGET_S * 1000
 ) {
   const window = refereeWindow(event, season, now);
+  const budgetS = window.full ? REFEREE_FULL_CLICKHOUSE_BUDGET_S : REFEREE_CLICKHOUSE_BUDGET_S;
+  const runDeadline = Math.min(deadline, Date.now() + budgetS * 1000);
   if (window.cut <= window.start) return { season, rows: 0, changed: 0, final: false };
   await alertOnStaleCut(sysRedis, event, season, window.cut);
-  const rows = await queryReferee(event, window, deadline);
+  const rows = await queryReferee(event, window, runDeadline);
   await writeDailySnapshot(event, window, rows);
   const final = await finalDayTotals(event, window);
   const totals = refereeTotals([...final, ...rows]);

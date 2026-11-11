@@ -21,7 +21,7 @@ const {
   ROSTER_STEP_MAX_MS,
 } = await import('~/server/events/points/self-heal');
 const { acquireJobLock, jobLockKey } = await import('~/server/jobs/job-lock');
-const { REFEREE_CLICKHOUSE_BUDGET_S } = await import('~/server/events/points/referee');
+const { REFEREE_FULL_CLICKHOUSE_BUDGET_S } = await import('~/server/events/points/referee');
 const { COUNT_BASE_MARK, encodeHat, eventPointKeys, eventSeasonKeys } = await import(
   '~/server/events/points/keys'
 );
@@ -431,8 +431,7 @@ describe('the self-heal', () => {
     );
     const job = source.slice(source.indexOf('export const eventEngineLeaderboardUpdate'));
     expect(job).toMatch(new RegExp(String.raw`^[^;]*createJob\(\s*'${SETTLE_JOB}'`));
-    expect(job.slice(0, job.indexOf('\n);'))).toContain('lockExpiration: 15 * 60');
-    expect(SETTLE_LOCK_S).toBe(15 * 60);
+    expect(job.slice(0, job.indexOf('\n);'))).toContain('lockExpiration: SETTLE_LOCK_S');
   });
 
   it('asks for that lock with that expiration', async () => {
@@ -608,7 +607,7 @@ describe('the self-heal, roster step', () => {
       expect(await heal(EVENT.name, 'switch-on')).toBe('ran');
       const deadline = referee.mock.calls[0]?.[3];
       expect(deadline).toBe(
-        NOW.getTime() + REFEREE_CLICKHOUSE_BUDGET_S * 1000 - ROSTER_STEP_MAX_MS
+        NOW.getTime() + REFEREE_FULL_CLICKHOUSE_BUDGET_S * 1000 - ROSTER_STEP_MAX_MS
       );
       expect(deadline! + ROSTER_STEP_MAX_MS).toBeLessThanOrEqual(
         NOW.getTime() + SETTLE_LOCK_S * 1000
