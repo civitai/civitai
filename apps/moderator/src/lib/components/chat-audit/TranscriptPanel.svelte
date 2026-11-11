@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { page } from '$app/state';
+  import { TRANSCRIPT_AFTER, TRANSCRIPT_BEFORE } from '$lib/chat-transcript-cursor';
+  import { urlWith } from '$lib/url';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
@@ -25,8 +28,16 @@
   const reported = $derived(new Set(reportedIds));
   const reporters = $derived(new Set(reporterIds));
 
+  const pageHref = (before: number | null, after: number | null) =>
+    urlWith(page.url, { [TRANSCRIPT_BEFORE]: before, [TRANSCRIPT_AFTER]: after });
+  const first = $derived(transcript.rows[0]);
+  const last = $derived(transcript.rows.at(-1));
+  const paged = $derived(
+    page.url.searchParams.has(TRANSCRIPT_BEFORE) || page.url.searchParams.has(TRANSCRIPT_AFTER)
+  );
+
   // Retool's select2 (participant) and textInput1 (content), both client-side over the loaded
-  // transcript. In a 300-message chat, "what did THIS person say" and "find the message containing X"
+  // page. In a 300-message chat, "what did THIS person say" and "find the message containing X"
   // are the two questions a moderator opens a transcript to answer.
   const senders = $derived(
     [...new Set(transcript.rows.map((m) => m.username).filter((u): u is string => !!u))].sort()
@@ -44,21 +55,45 @@
 <section class="mb-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
   <div class="min-w-0 rounded-xl border border-dark-4 bg-dark-6 p-5">
     <h3 class="mb-1 text-sm font-semibold text-white">
-      Transcript — chat {chatId} ({num(transcript.rows.length)}{transcript.truncated ? '+' : ''})
+      Transcript — chat {chatId} ({num(transcript.rows.length)}{transcript.hasOlder ||
+      transcript.hasNewer
+        ? ' on this page'
+        : ''})
     </h3>
     <p class="mb-3 text-xs text-dark-2">
       Private messages, oldest first. System join lines are excluded. Deleted messages are shown —
       they are hidden from both participants, which is usually why a report was filed about one.
     </p>
 
-    {#if transcript.truncated}
-      <p class="mb-2 text-xs text-amber-300">
-        Capped — this chat has more messages than are shown, and the oldest were dropped.
-      </p>
-    {/if}
+    {#snippet pager(top: boolean)}
+      {#if transcript.hasOlder || transcript.hasNewer || paged}
+        <nav
+          aria-label={top ? 'Transcript pages' : 'Transcript pages, bottom'}
+          class="my-2 flex flex-wrap items-center gap-3 text-xs"
+          data-sveltekit-noscroll
+        >
+          {#if transcript.hasOlder && first}
+            <a href={pageHref(first.id, null)} class={LINK_CLASS}>← Older messages</a>
+          {/if}
+          {#if transcript.hasNewer && last}
+            <a href={pageHref(null, last.id)} class={LINK_CLASS}>Newer messages →</a>
+          {/if}
+          {#if paged}
+            <a href={pageHref(null, null)} class={LINK_CLASS}>Latest</a>
+          {/if}
+          {#if top && transcript.rows.length}
+            <span class="text-dark-2">The filters below search this page only.</span>
+          {/if}
+        </nav>
+      {/if}
+    {/snippet}
+
+    {@render pager(true)}
 
     {#if transcript.rows.length === 0}
-      <p class="text-sm text-dark-2">No messages in this chat.</p>
+      <p class="text-sm text-dark-2">
+        {paged ? 'No messages on this page.' : 'No messages in this chat.'}
+      </p>
     {:else}
       <ListFilterBar
         fields={[
@@ -134,6 +169,7 @@
         {/each}
       </ul>
     {/if}
+    {@render pager(false)}
   </div>
 
   <div class="min-w-0 rounded-xl border border-dark-4 bg-dark-6 p-5">
