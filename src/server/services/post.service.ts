@@ -1760,16 +1760,13 @@ export const addPostImage = async ({
   });
 
   // A song whose lyrics failed to save is kept without them and waits on its audio verdict alone.
-  // Its lyrics verdict is awaited before it goes public; a lost submit is re-sent from the scan.
   if (song?.lyrics) {
     const saved = await saveGeneratedTrackLyrics({
       imageId: partialResult.id,
       text: song.lyrics,
     }).catch(handleLogError);
     if (saved)
-      submitTrackLyricsScan({ imageId: partialResult.id, content: song.lyrics }).catch(
-        handleLogError
-      );
+      submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
   }
   await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
 

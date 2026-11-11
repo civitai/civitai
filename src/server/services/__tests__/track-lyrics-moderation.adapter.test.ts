@@ -87,26 +87,18 @@ describe('the TrackLyrics moderation adapter', () => {
     expect(mocks.decide).toHaveBeenCalledWith(7);
   });
 
-  it('lets an XGuard lyrics verdict decide the song too', async () => {
-    await getModerationAdapter('TrackLyrics')!.applyResult!({
-      entityId: 7,
-      workflowId: 'wf',
-      blocked: false,
-      triggeredLabels: [],
-      output: {} as never,
-    });
-
-    expect(mocks.decide).toHaveBeenCalledWith(7);
+  it('takes no XGuard verdict: lyrics are scanned by the text scan alone', () => {
+    expect(getModerationAdapter('TrackLyrics')!.applyResult).toBeUndefined();
   });
 
-  it('re-sends lyrics from the retry cron with their stored text', async () => {
+  it('re-sends lyrics from the retry cron through the text scan', async () => {
     dbMock.dbRead.trackLyrics.findMany.mockResolvedValue([{ imageId: 7, text: 'la la' }] as never);
     const adapter = getModerationAdapter('TrackLyrics')!;
 
     const content = (await adapter.resolveContent([7])).get(7)!;
     await adapter.submit({ entityId: 7, content });
 
-    expect(mocks.submit).toHaveBeenCalledWith({ imageId: 7, content: 'la la', fromRetry: true });
+    expect(mocks.submit).toHaveBeenCalledWith({ imageId: 7, fromRetry: true });
   });
 
   it('leaves search alone when no hold is pending, as for text a moderator already cleared', async () => {

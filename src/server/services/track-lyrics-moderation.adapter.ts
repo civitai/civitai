@@ -47,12 +47,7 @@ export const trackLyricsModerationAdapter: ModerationAdapter = {
   },
 
   // Only the retry cron calls submit.
-  submit: ({ entityId, content }) =>
-    submitTrackLyricsScan({ imageId: entityId, content, fromRetry: true }),
-
-  applyResult: async ({ entityId }) => {
-    await decideSong(entityId);
-  },
+  submit: ({ entityId }) => submitTrackLyricsScan({ imageId: entityId, fromRetry: true }),
 
   // The song counts the failed scan toward its retry cap.
   applyFailure: async ({ entityId }) => {

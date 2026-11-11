@@ -16,7 +16,7 @@ vi.mock('~/server/services/job-queue.service', () => ({ removeImageScanJobQueue:
 const lyricsScan = vi.hoisted(() => ({ submit: vi.fn() }));
 vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  submitTrackLyricsScan: lyricsScan.submit,
+  sendTrackLyricsScan: lyricsScan.submit,
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -50,7 +50,7 @@ const run = (parsed: AudioScanParse, image = song()) => {
   return applySongScanResult({ imageId: 7, workflowId: 'wf', parsed, steps: [] });
 };
 const withLyrics = (verdict?: { status: string; blocked?: boolean | null }) => {
-  dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ imageId: 7, text: 'la' } as never);
+  dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ imageId: 7 } as never);
   dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(
     (verdict ? { blocked: null, ...verdict } : null) as never
   );
@@ -122,7 +122,7 @@ describe('a song with lyrics', () => {
 
     expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
     expect(removeImageScanJobQueue).not.toHaveBeenCalled();
-    expect(lyricsScan.submit).toHaveBeenCalledWith({ imageId: 7, content: 'la' });
+    expect(lyricsScan.submit).toHaveBeenCalledWith(7);
   });
 
   it.each(['Failed', 'Expired', 'Canceled'])(
@@ -140,9 +140,12 @@ describe('a song with lyrics', () => {
     }
   );
 
-  it('counts a lyrics submit that throws as a lyrics failure, not an audio processing error', async () => {
+  it.each([
+    ['throws', new Error('orchestrator down')],
+    ['is not sent because the text scan is off or skipped it', new Error('lyrics scan not sent')],
+  ])('counts a lyrics send that %s as a lyrics failure, not an audio error', async (_label, error) => {
     withLyrics();
-    lyricsScan.submit.mockRejectedValueOnce(new Error('orchestrator down'));
+    lyricsScan.submit.mockRejectedValueOnce(error);
 
     await run(scanned(false));
 
@@ -172,15 +175,13 @@ describe('a song with lyrics', () => {
     );
   });
 
-  it('is blocked when the lyrics verdict blocked it, though the audio is clean', async () => {
+  it('is Scanned at PG whatever the lyrics verdict flagged: it is recorded, never a block', async () => {
     withLyrics({ status: 'Succeeded', blocked: true });
 
     await run(scanned(false));
 
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fixed: { nsfwLevel: NsfwLevel.Blocked, blockedFor: 'tos' },
-      })
+      expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })
     );
   });
 });
@@ -228,19 +229,31 @@ describe('a lyrics verdict landing', () => {
     expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
   });
 
-  it('does not decide a song already decided, unless the lyrics block it', async () => {
-    withLyrics({ status: 'Succeeded', blocked: false });
+  it('does not decide a song already decided', async () => {
+    withLyrics({ status: 'Succeeded', blocked: true });
     audioRow('Succeeded');
     pipeline.loadImageForScan.mockResolvedValue(song({ ingestion: 'Scanned' }));
 
     await applySongLyricsVerdict(7);
-    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
 
-    withLyrics({ status: 'Succeeded', blocked: true });
+    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+  });
+
+  it('leaves a stored audio verdict that found no audio to the audio lane, rather than counting it again', async () => {
+    withLyrics({ status: 'Succeeded' });
+    dbMock.dbWrite.imageAudioScan.findUnique.mockResolvedValue({
+      status: 'Succeeded',
+      workflowId: 'wf-audio',
+      flagged: null,
+      hasAudio: null,
+      result: {},
+    } as never);
+    pipeline.loadImageForScan.mockResolvedValue(song({ ingestion: 'Error' }));
+
     await applySongLyricsVerdict(7);
-    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.Blocked, blockedFor: 'tos' } })
-    );
+
+    expect(pipeline.markImageScanError).not.toHaveBeenCalled();
+    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
   });
 });
 

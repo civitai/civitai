@@ -3,7 +3,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { songVerdict } from '~/server/services/audio-scan/song-scan';
 import {
   readLyricsVerdict,
-  submitTrackLyricsScan,
+  sendTrackLyricsScan,
   type LyricsVerdict,
 } from '~/server/services/audio-scan/track-lyrics';
 import { dbWrite } from '~/server/db/client';
@@ -67,9 +67,8 @@ async function failSong({
 }
 
 /**
- * A clean song still waiting on its lyrics verdict. A scan that ended without one counts as a
- * retry, as does a send that throws: the song goes to Error, whose capped lane re-sends only the
- * lyrics (`submitSongScan`), so it stays hidden once the cap is spent. A scan never sent is sent.
+ * Waits on the lyrics verdict. A scan that ended without one, or a send that throws, goes through
+ * failSong, so the retry cap bounds it.
  */
 async function awaitLyrics({
   imageId,
@@ -92,7 +91,7 @@ async function awaitLyrics({
     return;
   }
   try {
-    await submitTrackLyricsScan({ imageId, content: lyrics.text });
+    await sendTrackLyricsScan(imageId);
   } catch (error) {
     await failSong({
       imageId,
@@ -117,16 +116,13 @@ const UNDECIDED: string[] = [ImageIngestionStatus.Pending, ImageIngestionStatus.
 
 /**
  * A song goes public only once its audio and, when it has lyrics, its lyrics have a verdict;
- * whichever lands last decides. A clean song waiting on its lyrics stays Pending and in the ingest
- * queue, so the cron re-drives it and a lyrics scan that never went out is sent again. Flagged audio
- * or blocked lyrics Block it; otherwise it is Scanned at PG until the lyric rating lands. Both go
- * through the image writer, so an appeal, a CSAM flag, a banned or held owner, a moderation rule and
- * a locked level overrule the scan as they do an image.
+ * whichever lands last decides. A clean song waiting on its lyrics stays Pending so the ingest cron
+ * re-drives it.
  */
 async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: SongDecision) {
   const image = await loadImageForScan(imageId);
   const lyrics = await readLyricsVerdict(imageId);
-  if (fromLyrics && !UNDECIDED.includes(image.ingestion) && lyrics.state !== 'blocked') return;
+  if (fromLyrics && !UNDECIDED.includes(image.ingestion)) return;
   const verdict = songVerdict(audio, lyrics.state !== 'none');
 
   if (verdict.action === 'retry') {
@@ -151,8 +147,6 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
     fixed:
       verdict.action === 'block'
         ? { nsfwLevel: NsfwLevel.Blocked, blockedFor: BlockedReason.TOS, minor: true }
-        : lyrics.state === 'blocked'
-        ? { nsfwLevel: NsfwLevel.Blocked, blockedFor: BlockedReason.TOS }
         : { nsfwLevel: NsfwLevel.PG },
     log: SONG_SCAN_LOG,
   });
@@ -185,7 +179,6 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
   }
 }
 
-/** The audio scan callback for a song. A scan that produced no verdict puts it in Error, which the ingest cron retries. */
 export async function applySongScanResult({ imageId, workflowId, steps, parsed }: SongScanResult) {
   try {
     await decideSong({ imageId, workflowId, steps, audio: parsed });

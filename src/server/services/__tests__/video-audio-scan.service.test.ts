@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockLyricsSubmit } = vi.hoisted(() => ({ mockLyricsSubmit: vi.fn() }));
 vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  submitTrackLyricsScan: mockLyricsSubmit,
+  sendTrackLyricsScan: mockLyricsSubmit,
 }));
 
 const { mockGetWorkflow, mockSubmit, mockIsFlipt } = vi.hoisted(() => ({
@@ -289,7 +289,7 @@ describe('submitSongScan', () => {
     dbMock.dbWrite.imageAudioScan.findUnique.mockReset().mockResolvedValue(null);
     dbMock.dbWrite.trackLyrics.findUnique.mockReset().mockResolvedValue(null);
     dbMock.dbWrite.entityModeration.findUnique.mockReset().mockResolvedValue(null);
-    mockLyricsSubmit.mockReset().mockResolvedValue({ id: 'wf-lyrics' });
+    mockLyricsSubmit.mockReset().mockResolvedValue(undefined);
   });
 
   describe('for a song whose audio verdict is stored and whose lyrics verdict is missing', () => {
@@ -298,7 +298,7 @@ describe('submitSongScan', () => {
         status: 'Succeeded',
         workflowId: 'wf-audio-done',
       } as never);
-      dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ text: 'la' } as never);
+      dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ imageId: 9 } as never);
     });
 
     it('re-sends only the lyrics scan, never the audio scan again', async () => {
@@ -306,8 +306,16 @@ describe('submitSongScan', () => {
 
       expect(mockSubmit).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.imageAudioScan.upsert).not.toHaveBeenCalled();
-      expect(mockLyricsSubmit).toHaveBeenCalledWith({ imageId: 9, content: 'la' });
-      expect(result.data).toEqual({ id: 'wf-audio-done' });
+      expect(mockLyricsSubmit).toHaveBeenCalledWith(9);
+      // No attempt spent: the caller stamps the re-send, and a scan with no verdict is counted.
+      expect(result).toEqual({ data: { id: 'wf-audio-done' }, attempts: 0 });
+    });
+
+    it('throws when no lyrics verdict will come, so the caller counts the attempt', async () => {
+      mockLyricsSubmit.mockRejectedValue(new Error('lyrics scan not sent'));
+
+      await expect(submitSongScan(input)).rejects.toThrow('lyrics scan not sent');
+      expect(mockSubmit).not.toHaveBeenCalled();
     });
 
     it('sends nothing while the lyrics scan is in flight', async () => {

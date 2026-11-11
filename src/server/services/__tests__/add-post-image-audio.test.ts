@@ -239,7 +239,18 @@ describe('addPostImage — audio', () => {
     createThenStop();
     mocks.getWorkflow.mockResolvedValue({ steps: [{ $type: 'yuE2', input: { lyrics: 'sun' } }] });
     await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('An unexpected error');
-    expect(mocks.submitTrackLyricsScan).toHaveBeenCalledWith({ imageId: 11, content: 'sun' });
+    expect(mocks.submitTrackLyricsScan).toHaveBeenCalledWith({ imageId: 11 });
+  });
+
+  it('reaches the read after the create when the lyrics send rejects', async () => {
+    mocks.music = true;
+    createThenStop();
+    mocks.getWorkflow.mockResolvedValue({ steps: [{ $type: 'yuE2', input: { lyrics: 'sun' } }] });
+    mocks.submitTrackLyricsScan.mockRejectedValueOnce(new Error('orchestrator down'));
+
+    await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('An unexpected error');
+    expect(mocks.submitTrackLyricsScan).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
   });
 
   it('keeps the song when its lyrics fail to save, and sends nothing to scan', async () => {
@@ -251,6 +262,7 @@ describe('addPostImage — audio', () => {
     // Past the failed save: the read after the create is where the test stops.
     await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('An unexpected error');
     expect(mocks.createImage).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.trackLyrics.upsert).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
     expect(mocks.submitTrackLyricsScan).not.toHaveBeenCalled();
   });
