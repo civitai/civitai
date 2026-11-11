@@ -25,6 +25,7 @@ import {
   needsMinorReview,
   resolveRejectionMessage,
   reviewImage,
+  toObservationColumns,
 } from '~/server/services/ai/collection-review.service';
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
 import { describeProviderError } from '~/server/services/ai/provider-error';
@@ -155,6 +156,7 @@ async function classifyItem({
   let rejectionMessage: string | undefined;
   let levelReject = false;
   let usage = { promptTokens: 0, completionTokens: 0 };
+  let observed = toObservationColumns(undefined);
 
   if (isUnavailableImage(item)) {
     decision = { decision: 'reject', violations: [], escalations: [] };
@@ -194,6 +196,7 @@ async function classifyItem({
 
       ({ usage } = result);
       decision = decideFromObservations(result.observations, { isVideo: item.type === 'video' });
+      observed = toObservationColumns(result.observations);
       reason = (result.observations as { reason?: string } | null)?.reason?.slice(0, 500) ?? '';
     } catch (error) {
       const attempts = await recordFailedAttempt(item.collectionItemId);
@@ -260,6 +263,8 @@ async function classifyItem({
     applied,
     promptTokens: usage.promptTokens,
     completionTokens: usage.completionTokens,
+    nsfwLevel: item.nsfwLevel,
+    ...observed,
   });
 
   return {
