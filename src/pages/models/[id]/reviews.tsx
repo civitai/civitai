@@ -1,7 +1,6 @@
 import { keepPreviousData } from '@tanstack/react-query';
 import {
   Alert,
-  Button,
   Card,
   Center,
   Container,
@@ -18,12 +17,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import {
-  IconChevronLeft,
-  IconChevronRight,
-  IconLock,
-  IconMessageCircleOff,
-} from '@tabler/icons-react';
+import { IconLock, IconMessageCircleOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -42,10 +36,12 @@ import {
   getModelReviewsVersionRedirect,
   getReviewsFilterInput,
   parseReviewsFilter,
+  resolveReviewsVersion,
 } from '~/components/ResourceReview/model-reviews-url';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { getAverageRating, getRatingCount } from '~/components/ResourceReview/resourceReview.utils';
 import { ReviewCardWithImages } from '~/components/ResourceReview/ReviewCard/ReviewCardWithImages';
+import { ReviewsPager } from '~/components/ResourceReview/ReviewCard/ReviewsPager';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
@@ -54,7 +50,7 @@ import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { TRPCError } from '@trpc/server';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { getRatingLabel } from '~/utils/rating-label';
+import { getRatingSummary } from '~/utils/rating-label';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -98,15 +94,18 @@ export const getServerSideProps = createServerSideProps({
 
     // The list is always one version's: send a request without a usable version to the model
     // page's default (first published) one.
-    const requested = modelVersionId
-      ? await getDefaultModelVersion({ modelId, modelVersionId }).catch(nullIfNotFound)
-      : null;
-    if (!modelVersionId || requested?.id !== modelVersionId) {
-      const fallback = await getDefaultModelVersion({ modelId }).catch(nullIfNotFound);
-      if (!fallback) return { notFound: true };
+    const decision = await resolveReviewsVersion({
+      modelVersionId,
+      requested: modelVersionId
+        ? await getDefaultModelVersion({ modelId, modelVersionId }).catch(nullIfNotFound)
+        : null,
+      loadFallback: () => getDefaultModelVersion({ modelId }).catch(nullIfNotFound),
+    });
+    if (decision.type === 'notFound') return { notFound: true };
+    if (decision.type === 'redirect') {
       return {
         redirect: {
-          destination: getModelReviewsVersionRedirect(modelId, ctx.query, fallback.id),
+          destination: getModelReviewsVersionRedirect(modelId, ctx.query, decision.versionId),
           permanent: false,
         },
       };
@@ -115,8 +114,7 @@ export const getServerSideProps = createServerSideProps({
     await Promise.all([
       ssg?.resourceReview.getPaged.prefetch(result.data),
       ssg?.model.getSimple.prefetch({ id: modelId }),
-      ssg?.model.getById.prefetch({ id: modelId }),
-      ssg?.model.getVersions.prefetch({ id: modelId }),
+      ssg?.model.getVersions.prefetch({ id: modelId, excludeUnpublished: true }),
       ssg?.resourceReview.getRatingTotals.prefetch({ modelId, modelVersionId }),
       ssg?.hiddenPreferences.getHidden.prefetch(),
     ]);
@@ -151,8 +149,6 @@ export default function ModelReviews() {
     isLoading: loadingResourceReviews,
     isRefetching: refetchingResourceReviews,
   } = trpc.resourceReview.getPaged.useQuery(queryParams, { placeholderData: keepPreviousData });
-  // The model page's source for thumbs: all-time counts on the model, or on the selected version.
-  const { data: modelDetails } = trpc.model.getById.useQuery({ id: modelId });
   const { data: ratingTotals } = trpc.resourceReview.getRatingTotals.useQuery({
     modelId,
     modelVersionId,
@@ -263,14 +259,9 @@ export default function ModelReviews() {
     </UserResourceReviewComposite>
   );
 
-  const rank = modelDetails?.modelVersions.find((v) => v.id === modelVersionId)?.rank;
-  const thumbsUp = rank?.thumbsUpCountAllTime ?? 0;
-  const thumbsDown = rank?.thumbsDownCountAllTime ?? 0;
-  const reviewTotal = thumbsUp + thumbsDown;
-  const positiveShare = reviewTotal ? thumbsUp / reviewTotal : 0;
-  const ratingLabel = reviewTotal
-    ? getRatingLabel({ positiveRating: positiveShare, totalCount: reviewTotal })
-    : null;
+  const thumbsUp = version?.rank.thumbsUpCountAllTime ?? 0;
+  const thumbsDown = version?.rank.thumbsDownCountAllTime ?? 0;
+  const summary = getRatingSummary({ thumbsUp, thumbsDown });
 
   const ratingCount = getRatingCount(ratingTotals);
   const ratingAverage = getAverageRating(ratingTotals, ratingCount);
@@ -313,21 +304,24 @@ export default function ModelReviews() {
             )}
           </ContainerGrid2.Col>
           <ContainerGrid2.Col span={{ base: 12, md: 7 }} offset={{ md: 2 }} order={{ md: 2 }}>
-            {ratingLabel && (
+            {summary && (
               <div className="mb-4 flex flex-col gap-2" data-testid="reviews-summary">
-                <Text size="xl" fw={700} c={ratingLabel.color} tt="capitalize">
-                  {ratingLabel.label}
+                <Text size="xl" fw={700} c={summary.color} tt="capitalize">
+                  {summary.label}
                 </Text>
                 <Text size="sm" c="dimmed">
-                  {Math.floor(positiveShare * 100)}% of {reviewTotal.toLocaleString()}{' '}
-                  {reviewTotal === 1 ? 'review' : 'reviews'}
+                  {summary.percent}% of {summary.total.toLocaleString()}{' '}
+                  {summary.total === 1 ? 'review' : 'reviews'}
                 </Text>
                 <div
                   className="flex h-2 overflow-hidden rounded-full bg-red-6"
                   role="img"
                   aria-label={`${thumbsUp.toLocaleString()} thumbs up, ${thumbsDown.toLocaleString()} thumbs down`}
                 >
-                  <div className="bg-green-6" style={{ width: `${positiveShare * 100}%` }} />
+                  <div
+                    className="bg-green-6"
+                    style={{ width: `${(thumbsUp / summary.total) * 100}%` }}
+                  />
                 </div>
               </div>
             )}
@@ -365,37 +359,24 @@ export default function ModelReviews() {
                 )}
                 {resourceReviews &&
                 'hasMore' in resourceReviews &&
-                resourceReviews.hasMore !== undefined
-                  ? (page > 1 || resourceReviews.hasMore) && (
-                      <Group justify="center" mt="md">
-                        <Button
-                          variant="default"
-                          leftSection={<IconChevronLeft size={16} />}
-                          disabled={page <= 1}
-                          onClick={() => handlePaginationChange(page - 1)}
-                        >
-                          Previous
-                        </Button>
-                        <Button
-                          variant="default"
-                          rightSection={<IconChevronRight size={16} />}
-                          disabled={!resourceReviews.hasMore}
-                          onClick={() => handlePaginationChange(page + 1)}
-                        >
-                          Next
-                        </Button>
-                      </Group>
-                    )
-                  : resourceReviews &&
-                    resourceReviews.totalPages > 1 && (
-                      <Center mt="md">
-                        <Pagination
-                          value={page}
-                          onChange={handlePaginationChange}
-                          total={resourceReviews.totalPages}
-                        />
-                      </Center>
-                    )}
+                resourceReviews.hasMore !== undefined ? (
+                  <ReviewsPager
+                    page={page}
+                    hasMore={resourceReviews.hasMore}
+                    onChange={handlePaginationChange}
+                  />
+                ) : (
+                  resourceReviews &&
+                  resourceReviews.totalPages > 1 && (
+                    <Center mt="md">
+                      <Pagination
+                        value={page}
+                        onChange={handlePaginationChange}
+                        total={resourceReviews.totalPages}
+                      />
+                    </Center>
+                  )
+                )}
               </Stack>
             )}
           </ContainerGrid2.Col>

@@ -5,7 +5,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { getModelReviewsCanonical } from '~/components/ResourceReview/model-reviews-url';
 import { ReviewCard } from '~/components/ResourceReview/ReviewCard/ReviewCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getRatingLabel } from '~/utils/rating-label';
+import { getRatingSummary } from '~/utils/rating-label';
 import { trpc } from '~/utils/trpc';
 
 const REVIEW_COUNT = 4;
@@ -32,11 +32,7 @@ export function ModelVersionWrittenReviews({
   const reviews = data?.items ?? [];
   if (!modelPageReviews || !reviews.length) return null;
 
-  const reviewCount = thumbsUpCount + thumbsDownCount;
-  const rating = reviewCount
-    ? getRatingLabel({ positiveRating: thumbsUpCount / reviewCount, totalCount: reviewCount })
-    : null;
-  const recommendedPct = reviewCount ? Math.floor((thumbsUpCount / reviewCount) * 100) : 0;
+  const rating = getRatingSummary({ thumbsUp: thumbsUpCount, thumbsDown: thumbsDownCount });
 
   return (
     <Container size="xl" mt="xl">
@@ -59,8 +55,8 @@ export function ModelVersionWrittenReviews({
               <Text component="span" fw={600} c={rating.color} tt="capitalize">
                 {rating.label}
               </Text>{' '}
-              · {recommendedPct}% of {reviewCount.toLocaleString()}{' '}
-              {reviewCount === 1 ? 'review' : 'reviews'}
+              · {rating.percent}% of {rating.total.toLocaleString()}{' '}
+              {rating.total === 1 ? 'review' : 'reviews'}
             </Text>
           )}
         </div>
