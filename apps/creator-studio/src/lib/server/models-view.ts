@@ -63,7 +63,7 @@ export type ModelsView = CreatorModelsResult & {
  * The slice of /models a search, filter, sort or page change replaces — and nothing else.
  *
  * Shared by the page load and `models/search/+server.ts` so filter-as-you-type re-runs exactly this.
- * The caps, scores and `canSetGenerationOnlyFresh` call beside it in the load are per-creator, not
+ * The caps, scores and `canSetGenerationOnly` check beside it in the load are per-creator, not
  * per-query: no term the creator types can change them, so a debounced keystroke must not pay for
  * them (CU 868kv6ejd).
  */

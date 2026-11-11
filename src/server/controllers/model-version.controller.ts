@@ -485,11 +485,10 @@ export const upsertModelVersionHandler = async ({
 
     if (grantsGenerationOnly) {
       const requestedUsageControl = input.usageControl;
-      // `ctx.features` resolves off the SESSION tier, which lags a membership change, so a creator who
-      // just upgraded is denied something they now pay for. Re-evaluate the SAME flag with the fresh
-      // subscription tier rather than comparing the tier ourselves: env overrides (the deploy-free kill
-      // switch), region rules and domain gating all still apply, and the availability list stays the one
-      // source of truth for which tiers qualify.
+      // `ctx.features` resolves off the SESSION tier, which lags a membership change. The registry default
+      // (['user']) doesn't depend on tier, but an env override can restrict the flag to tiers again, so
+      // re-evaluate the SAME flag with the fresh subscription tier rather than comparing the tier
+      // ourselves: env overrides, region rules and domain gating all still apply.
       const hasFeature =
         !!ctx.features.generationOnlyModels ||
         !!getFeatureFlagsLazy({
@@ -505,9 +504,8 @@ export const upsertModelVersionHandler = async ({
       input.usageControl = gate.usageControl;
 
       // The gate coerces instead of rejecting, so a write that passes on the wrong branch produces no
-      // record anywhere. Emit the deciding branch, and on the membership branch the fresh subscription
-      // tier next to the session one — ctx.features resolves off the session tier, which lags a
-      // membership change (CU 868kmy9f3).
+      // record anywhere. Emit the deciding branch, and on a denial the fresh subscription tier next to
+      // the session one — ctx.features resolves off the session tier, which lags a membership change.
       logToAxiom({
         name: 'model-version-usage-control-gate',
         type: 'info',
@@ -519,8 +517,7 @@ export const upsertModelVersionHandler = async ({
         storedUsageControl: storedUsageControl ?? null,
         appliedUsageControl: input.usageControl ?? null,
         sessionTier: ctx.user.tier ?? null,
-        subscriptionTier:
-          gate.outcome === 'tier' || gate.outcome === 'denied' ? await actorTier() : null,
+        subscriptionTier: gate.outcome === 'denied' ? await actorTier() : null,
       }).catch(() => null);
     }
 

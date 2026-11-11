@@ -11,6 +11,7 @@ import {
   cappedTier,
   displayTier,
   TEST_MEMBERSHIP_COOKIE,
+  canSetGenerationOnly,
 } from '$lib/server/membership';
 import {
   setLicensingFee,
@@ -41,7 +42,6 @@ import {
 import { getCreatorSales, getSalesByVersion } from '$lib/server/monetization/sales';
 import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
-import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
   assertGatePricingAllowed,
   countPricingSlotsThisMonth,
@@ -127,7 +127,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
       earlyAccessUsed,
       earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
-      canSetGenerationOnly: await canSetGenerationOnlyFresh(locals.user),
+      canSetGenerationOnly: canSetGenerationOnly(locals.user),
     },
     giftLinksEnabled: await darkFlagEnabled(MODEL_GIFT_LINKS_FLAG, locals.user),
   };
@@ -396,7 +396,7 @@ export const actions: Actions = {
       versionIds.data,
       usageControl,
       cookie,
-      await canSetGenerationOnlyFresh(locals.user)
+      canSetGenerationOnly(locals.user)
     );
     if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
     await bustVersionCache(cookie, versionIds.data);
@@ -428,7 +428,7 @@ export const actions: Actions = {
       [versionId.data],
       usageControl,
       request.headers.get('cookie') ?? '',
-      await canSetGenerationOnlyFresh(locals.user)
+      canSetGenerationOnly(locals.user)
     );
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
     if (result.updated === 0)
@@ -464,7 +464,7 @@ export const actions: Actions = {
           locals.user.id,
           versionId.data,
           usageOnly,
-          await canSetGenerationOnlyFresh(locals.user)
+          canSetGenerationOnly(locals.user)
         );
         if (!usageResult.ok)
           return fail(usageResult.status, { versionId: versionId.data, error: usageResult.error });
@@ -506,7 +506,7 @@ export const actions: Actions = {
         locals.user.id,
         versionId.data,
         usageControl,
-        await canSetGenerationOnlyFresh(locals.user)
+        canSetGenerationOnly(locals.user)
       );
       if (!usageResult.ok)
         return fail(usageResult.status, { versionId: versionId.data, error: usageResult.error });
