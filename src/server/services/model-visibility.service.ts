@@ -37,10 +37,11 @@ export async function getModelVisibleToViewer(
  * owner has blocked the viewer (`getModelHandler`'s owner-block check). Moderators always may.
  */
 export async function canViewerOpenModel(modelId: number, viewer?: Viewer): Promise<boolean> {
+  if (viewer?.isModerator) return true;
   const model = await getModelVisibleToViewer(modelId, viewer);
   if (!model) return false;
   if (!viewer?.id || !model.userId || model.userId === viewer.id) return true;
-  // Imported here: user.service sits in the tag.service import cycle.
+  // Dynamic import: avoids an import cycle (user.service → image.service → post.service → tag.service).
   const { amIBlockedByUser } = await import('~/server/services/user.service');
   return !(await amIBlockedByUser({ userId: viewer.id, targetUserId: model.userId }));
 }

@@ -80,6 +80,13 @@ describe('getAllTagsHandler with a modelId', () => {
     expect(getTags).not.toHaveBeenCalled();
   });
 
+  it('serves a model to a moderator its owner blocked, without a block lookup', async () => {
+    modelIs({ status: 'Draft' });
+    amIBlocked.mockResolvedValue(true);
+    expect((await call(MOD)).items).toEqual(TAGS);
+    expect(amIBlocked).not.toHaveBeenCalled();
+  });
+
   it('serves a draft model to its owner and to a moderator', async () => {
     for (const user of [{ id: OWNER }, MOD]) {
       modelIs({ status: 'Draft' });

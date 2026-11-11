@@ -9004,8 +9004,7 @@ export const getImageContestCollectionDetails = async ({
   });
   const permissionsFor = (item: { collection: { id: number } }) =>
     allPermissions.find((p) => p.collectionId === item.collection.id);
-  // The items are cached per image for every viewer, so the collection read rule
-  // (canReadCollectionItems) is applied here, per viewer. Submitters always see their own entry.
+  // Cached per image for every viewer, so the read rule is applied per viewer here.
   const items = cachedItems.filter((item) => {
     if (!!userId && userId === item.addedById) return true;
     return canReadCollectionItems(permissionsFor(item));
