@@ -63,6 +63,9 @@ describe('pickFooterTakeover', () => {
   it('an unavailable generator or a self-hosted block wins over both terms panels', () => {
     const unreviewed = { ...open, termsReviewed: false, licenseBlocked: true };
     expect(pickFooterTakeover({ ...unreviewed, available: false })).toBe('unavailable');
+    expect(pickFooterTakeover({ ...unreviewed, available: false, selfHostedBlocked: true })).toBe(
+      'unavailable'
+    );
     expect(pickFooterTakeover({ ...unreviewed, selfHostedBlocked: true })).toBe(
       'selfHostedBlocked'
     );
@@ -137,6 +140,22 @@ describe('useGenerationLicenseFor', () => {
     await render('MiniMaxH3Image');
     expect(latest.blocked).toBe(false);
     expect(mocks.getSettings).not.toHaveBeenCalled();
+  });
+
+  it('does not flash the panel at a user who accepted while their settings load', async () => {
+    let resolve!: (v: unknown) => void;
+    mocks.getSettings.mockImplementation(() => new Promise((r) => (resolve = r)));
+    await render('MiniMaxH3Image');
+    expect(latest.blocked).toBe(false);
+
+    await act(async () => {
+      resolve({
+        generationLicenseAcceptances: {
+          [h3Terms.key]: { version: h3Terms.version, acceptedAt: '2026-11-11' },
+        },
+      });
+    });
+    expect(latest.blocked).toBe(false);
   });
 
   it('costs nothing for an ecosystem without terms', async () => {
