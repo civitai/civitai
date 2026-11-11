@@ -44,6 +44,7 @@ The CSV comes from the question producer (an offline pipeline that proposes the 
 | `question` | The prompt shown to the voter |
 | `yes_effect`, `no_effect` | Optional short labels for what each answer does |
 | `case_id`, `source_purpose`, `source_batch_id`, `promotion_status`, `policy_sha256` | Optional; stored in the item's `meta` |
+| `reword_of` | Optional; the producer id a cleaned-up row rewords. Stored as `meta.rewordOf`, as a moderator reword is; left out when empty |
 
 A sample, with placeholder ids (use ids of images that exist in your local database):
 

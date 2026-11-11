@@ -4,6 +4,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { REWORD_OF_META_KEY } from '@civitai/db/knights';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
@@ -82,6 +83,17 @@ describe('toYesNoRows', () => {
       'bad-kind': 1,
       'bad-question': 1,
     });
+  });
+
+  it('records the original question of a reworded row, and nothing for a row without one', () => {
+    const csv = [
+      `${HEADER},reword_of`,
+      `${line({ id: 'q1:r1', question: 'Is a hat clearly worn?' })},q1`,
+      `${line({ id: 'q2' })},`,
+    ].join('\n');
+    const [reworded, plain] = toYesNoRows(parseCsv(csv)).rows;
+    expect(reworded.meta).toMatchObject({ [REWORD_OF_META_KEY]: 'q1' });
+    expect(plain.meta).not.toHaveProperty(REWORD_OF_META_KEY);
   });
 
   it('rejects an id over 200 characters instead of cutting it, so two long ids never collide', () => {
