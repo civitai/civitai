@@ -16,16 +16,13 @@ import {
 
 export type SeedreamVersion = 'v3' | 'v4' | 'v4.5' | 'v5.0-lite' | 'v5.0-pro' | 'v5.5';
 
-// @ai: placeholder until the Seedream 5.5 model version exists; the PR stays draft until this is the real id.
-const SEEDREAM_55_VERSION_ID = 99_999_955;
-
 export const seedreamVersionIds = {
   v3: 2208174,
   v4: 2208278,
   'v4.5': 2470991,
   'v5.0-lite': 2720141,
   'v5.0-pro': 3110984,
-  'v5.5': SEEDREAM_55_VERSION_ID,
+  'v5.5': 3464384,
 } as const;
 
 const seedreamVersionOptions = [
