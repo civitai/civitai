@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDocStore, type DocStoreDb } from '~/server/services/apps/doc-store';
+import {
+  createDocStore,
+  createDocStoreMaintenance,
+  type DocStoreDb,
+} from '~/server/services/apps/doc-store';
 import { createPgliteHarness, type Harness } from './doc-store.harness';
 import {
   BOARD,
@@ -111,6 +115,41 @@ describe('per-user ceilings from userLimits', () => {
     expect(events.indexOf('ceiling')).toBeLessThan(events.indexOf('connect'));
     // Resolved once, outside; the charge to the same viewer did not resolve it again inside.
     expect(events.filter((e) => e === 'ceiling')).toEqual(['ceiling']);
+  });
+
+  // A migration charges its documents' owners. Every owner's ceiling on the page is resolved
+  // once, before the first document's transaction, never under the usage-row lock.
+  it("a migration resolves every owner's ceiling before any document's transaction", async () => {
+    const app = freshApp('tiermigrate');
+    const { store } = storeWithCeilings();
+    await store.put(ctx(app, NS_PROD, VIEWER_1), PREFS, 'a', { v: 1 });
+    await store.put(ctx(app, NS_PROD, VIEWER_2), PREFS, 'a', { v: 1 });
+    await store.put(ctx(app, NS_PROD, VIEWER_2), PREFS, 'b', { v: 1 });
+    const events: string[] = [];
+    const maintenance = createDocStoreMaintenance({
+      db: h.db,
+      limits: LOOSE,
+      userLimits: async (uid) => {
+        events.push(`ceiling:${uid}`);
+        return CEILINGS[uid];
+      },
+      hooks: {
+        beforeUsageCharge: async () => {
+          events.push('charge');
+        },
+      },
+    });
+    // Grows every document, so each charge adds bytes to its owner.
+    const result = await maintenance.migrateDocuments(app, PREFS, (d) => ({ ...d, pad: 'xxxx' }));
+    expect(result).toMatchObject({ scanned: 3, migrated: 3, failed: 0 });
+    const firstCharge = events.indexOf('charge');
+    expect(firstCharge).toBeGreaterThan(0);
+    // Two distinct owners, each resolved once, both before the first charge; none after.
+    expect(events.slice(0, firstCharge).sort()).toEqual([
+      `ceiling:${VIEWER_1}`,
+      `ceiling:${VIEWER_2}`,
+    ]);
+    expect(events.slice(firstCharge).filter((e) => e.startsWith('ceiling'))).toEqual([]);
   });
 
   it('a write that only frees reads no ceiling, and is allowed', async () => {

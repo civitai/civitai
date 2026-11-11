@@ -47,11 +47,18 @@ describe('AppBuzzCapNoticeView', () => {
     expect(q(await renderBeside(null), 'app-buzz-cap-paused')).toBeNull();
   });
 
-  test('paused at the plan cap: the plan limit, the upgrade and the opt-in up to the ceiling', async () => {
+  test('paused at the plan cap: the plan limit, the upgrade and raising the limit', async () => {
     const container = await renderBeside(status());
     const notice = q(container, 'app-buzz-cap-paused');
     expect(notice?.textContent).toContain("You've reached your plan's daily limit of 40,000 Buzz");
-    expect(notice?.textContent).toContain('up to 65,000');
+    // The copy says the limit rises; it never suggests a different payer.
+    expect(notice?.textContent).toContain(
+      'You can raise your limit to 65,000 for the rest of today. Apps keep spending your Buzz, as they do now'
+    );
+    expect(q(container, 'app-buzz-cap-opt-in')?.textContent).toBe(
+      'Raise my limit to 65,000 for today'
+    );
+    expect(notice?.textContent).not.toContain('own Buzz');
     expect(q(container, 'app-buzz-cap-upgrade')?.getAttribute('href')).toBe('/pricing');
     expect(q(container, 'app-buzz-cap-opt-in')).not.toBeNull();
   });

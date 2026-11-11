@@ -54,13 +54,12 @@ describe('one resolver for the per-user app caps', () => {
     expect(users).toContain('server/routers/blocks.router.ts');
   });
 
+  // An identifier scan, not the import ledger: a dynamic `import()` counts as every binding in
+  // the ledger, so a file reading this through one could hide behind an unrelated destructure.
   it('only the store module reads the default doc-store limits (its app ceilings and its no-resolver fallback)', () => {
-    expect(importersOf('server/services/apps/doc-store.types', 'DEFAULT_DOC_STORE_LIMITS')).toEqual(
-      [
-        'server/services/apps/doc-store.ts',
-        'server/services/blocks/publish-request.service.ts',
-        'server/services/user.service.ts',
-      ]
-    );
+    expect(identifierUsers('DEFAULT_DOC_STORE_LIMITS')).toEqual([
+      'server/services/apps/doc-store.ts',
+      'server/services/apps/doc-store.types.ts',
+    ]);
   });
 });

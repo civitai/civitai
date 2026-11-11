@@ -24,6 +24,15 @@ import {
 const USER = { id: 42 } as never;
 const counterReads = (value: string | null) =>
   redisMock.sysRedis.get.mockImplementation(async () => value);
+/** Today's counter and refusal record, by key; every other key reads null. */
+const reads = (v: { counter?: string; refused?: string }) =>
+  redisMock.sysRedis.get.mockImplementation(async (key: string) =>
+    key.startsWith('system:blocks:buzz-cap:42:')
+      ? v.counter ?? null
+      : key.startsWith('system:blocks:buzz-refused:42:')
+      ? v.refused ?? null
+      : null
+  );
 
 const TODAY: UserAppCaps = {
   buzzPerDay: 50_000,
@@ -48,6 +57,7 @@ beforeEach(() => {
   resolveCaps.mockReset().mockResolvedValue(TODAY);
   redisMock.sysRedis.get.mockReset();
   redisMock.sysRedis.set.mockReset();
+  redisMock.sysRedis.del.mockReset();
 });
 
 describe('getMyAppBuzzToday', () => {
@@ -91,17 +101,19 @@ describe('getMyAppBuzzCap (the paused notice)', () => {
     expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
   });
 
-  it('below the plan cap: not paused', async () => {
+  it('no refusal recorded: not paused, even one Buzz under the cap', async () => {
     resolveCaps.mockResolvedValue(CAN_OPT_IN);
-    counterReads('39999');
+    reads({ counter: '39999' });
     expect(await getMyAppBuzzCap(USER)).toMatchObject({ paused: false, used: 39_999 });
   });
 
-  it('at the plan cap: paused, with the opt-in offered and the reset at UTC midnight', async () => {
+  // A refused spend is refunded, so the counter stays below the cap; the refusal record is what
+  // says "paused". This is the state a real refusal leaves: one under the cap, refused.
+  it('a refusal recorded at the cap enforced now: paused, with the opt-in offered', async () => {
     resolveCaps.mockResolvedValue(CAN_OPT_IN);
-    counterReads('40000');
+    reads({ counter: '39999', refused: '40000' });
     expect(await getMyAppBuzzCap(USER)).toEqual({
-      used: 40_000,
+      used: 39_999,
       limit: 40_000,
       planLimit: 40_000,
       optInLimit: 65_000,
@@ -112,18 +124,15 @@ describe('getMyAppBuzzCap (the paused notice)', () => {
     });
   });
 
-  it('at the Free cap: paused, with the opt-in to 100,000 offered', async () => {
-    counterReads('50000');
-    expect(await getMyAppBuzzCap(USER)).toMatchObject({
-      paused: true,
-      canOptIn: true,
-      optInLimit: 100_000,
-    });
+  it('a refusal at a cap no longer enforced (an upgrade since): not paused', async () => {
+    resolveCaps.mockResolvedValue({ ...TODAY, buzzPerDay: 75_000, planBuzzPerDay: 75_000 });
+    reads({ counter: '49999', refused: '50000' });
+    expect(await getMyAppBuzzCap(USER)).toMatchObject({ paused: false });
   });
 
   it('opted in: the cap shown is the raised one, and the opt-in is not offered again', async () => {
     resolveCaps.mockResolvedValue({ ...CAN_OPT_IN, optedIn: true, buzzPerDay: 65_000 });
-    counterReads('40000');
+    reads({ counter: '40000', refused: '40000' });
     expect(await getMyAppBuzzCap(USER)).toMatchObject({
       limit: 65_000,
       paused: false,
@@ -148,6 +157,15 @@ describe('optInAppBuzzToday', () => {
     await optInAppBuzzToday(USER);
     expect(redisMock.sysRedis.set.mock.calls).toEqual([
       ['system:blocks:buzz-opt-in:42:2026-11-09', '1', { EX: 90_000 }],
+    ]);
+  });
+
+  it("clears today's refusal record, so the notice unpauses", async () => {
+    resolveCaps.mockResolvedValue(CAN_OPT_IN);
+    reads({ counter: '39999', refused: '40000' });
+    await optInAppBuzzToday(USER);
+    expect(redisMock.sysRedis.del.mock.calls).toEqual([
+      ['system:blocks:buzz-refused:42:2026-11-09'],
     ]);
   });
 });

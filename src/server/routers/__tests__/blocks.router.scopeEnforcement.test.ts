@@ -1015,4 +1015,57 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
       expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(122_468);
     });
   });
+
+  // The paused notice follows a REAL refusal. A refused spend is refunded, so the counter stays
+  // one under the cap here; the refusal record the reservation writes is what pauses the app.
+  describe('the paused notice follows a refused spend', () => {
+    const kv = new Map<string, string>();
+    beforeEach(() => {
+      kv.clear();
+      mockIsUpgradePromptEnabled.mockImplementation(async () => true);
+      mockSysRedis.set.mockImplementation((async (key: string, value: string) => {
+        kv.set(key, String(value));
+        return 'OK';
+      }) as never);
+      mockSysRedis.get.mockImplementation((async (key: string) => kv.get(key) ?? null) as never);
+      mockSysRedis.del.mockImplementation((async (key: string) =>
+        kv.delete(key) ? 1 : 0) as never);
+    });
+
+    it('one under the cap, a refused spend pauses; raising the limit unpauses', async () => {
+      asTier('free');
+      const { getMyAppBuzzCap, optInAppBuzzToday } = await import(
+        '~/server/services/blocks/app-buzz-usage.service'
+      );
+      const viewer = { id: 42, tier: 'free' } as never;
+      const result = await submitWith(49_999);
+      expect(result.snapshot.error).toContain('daily cap is 50000');
+      // `used` reads the counter, which this harness keeps in `counters`: mirror it into kv.
+      kv.set(keyUnder(DAILY_PREFIX), String(counters.get(keyUnder(DAILY_PREFIX))));
+
+      expect(await getMyAppBuzzCap(viewer)).toMatchObject({
+        used: 49_999,
+        paused: true,
+        canOptIn: true,
+        optInLimit: 100_000,
+      });
+      expect(
+        [...kv.keys()].filter((k) => k.startsWith('system:blocks:buzz-refused:42:'))
+      ).toHaveLength(1);
+
+      await optInAppBuzzToday(viewer);
+      expect(await getMyAppBuzzCap(viewer)).toMatchObject({
+        paused: false,
+        optedIn: true,
+        limit: 100_000,
+      });
+    });
+
+    it('a spend within the cap records no refusal', async () => {
+      asTier('free');
+      const result = await submitWith(49_975);
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect([...kv.keys()].filter((k) => k.startsWith('system:blocks:buzz-refused:'))).toEqual([]);
+    });
+  });
 });
