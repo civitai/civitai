@@ -352,6 +352,8 @@ describe('mergeVersions file remaps', () => {
         scanRequestedAt: null,
       }),
     });
+    // Prisma refuses a bare null for a Json column.
+    expect(fileUpdateMany.mock.calls[0][0].data.rawScanResult).toBe(Prisma.JsonNull);
   });
 
   it('leaves a Danger that landed after the merge read the training data as clean', async () => {

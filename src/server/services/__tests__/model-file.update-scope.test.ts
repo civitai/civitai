@@ -630,6 +630,10 @@ describe('a file type change to or from training data on a trained version', () 
       scanRequestedAt: null,
       scannedAt: null,
     });
+    // Prisma refuses a bare null for a Json column.
+    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data.rawScanResult).toBe(
+      Prisma.JsonNull
+    );
   });
 
   it('leaves a Danger that landed after the relabel read it as clean', async () => {

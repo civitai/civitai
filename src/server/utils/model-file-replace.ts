@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDatasetEditable } from '~/shared/constants/training.constants';
 import type { TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -74,7 +75,8 @@ export const TRAINING_DATA_SCAN_PENDING_MESSAGE =
  * relabelled away from it goes back to unscanned, and the model-file scan picks it up as its new type.
  */
 export function scanResetForTypeChange(file: { type: string }, nextType: string | undefined) {
-  return resetsScan(file, nextType) ? unscannedFile : {};
+  // A Json column takes Prisma.JsonNull, never a bare null.
+  return resetsScan(file, nextType) ? { ...unscannedFile, rawScanResult: Prisma.JsonNull } : {};
 }
 
 /**
