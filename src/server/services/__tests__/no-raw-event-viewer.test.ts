@@ -45,7 +45,11 @@ const GATE_CALL = new RegExp(
   'g'
 );
 /** Gates taking the moderator flag rather than a viewer. */
-const MODERATOR_FLAG_GATES = ['equipCosmeticToEntity', 'getShopSectionsWithItems'];
+const MODERATOR_FLAG_GATES = [
+  'equipCosmeticToEntity',
+  'getShopSectionsWithItems',
+  'purchaseCosmeticShopItem',
+];
 const MODERATOR_FLAG_CALL = new RegExp(
   `\\b(${MODERATOR_FLAG_GATES.join('|')})${TYPE_ARGS}\\(`,
   'g'

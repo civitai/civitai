@@ -157,7 +157,7 @@ export const cosmeticShopRouter = router({
         mysteryBoxEnabled: ctx.features.mysteryBox,
         countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
         userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
+        isModerator: eventViewerOf(ctx).isModerator,
         buzzType,
       });
     }),
