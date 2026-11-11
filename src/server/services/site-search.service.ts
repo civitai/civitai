@@ -167,12 +167,25 @@ function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
   return rest;
 }
 
+type ImageHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+
+/** A bounty's level is its images' combined level, so it does not cap each one. */
+function shapeImageHit(hit: ImageHit, browsingLevelCap: number | undefined): ImageHit {
+  if (browsingLevelCap === undefined) return hit;
+  const shaped: ImageHit = { ...hit };
+  if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
+  if (shaped._formatted) shaped._formatted = shapeImageHit(shaped._formatted, browsingLevelCap);
+  return shaped;
+}
+
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
   if (!Array.isArray(hits)) return hits;
   if (indexUid === MODELS_SEARCH_INDEX)
     return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
   if (indexUid === COMICS_SEARCH_INDEX)
     return hits.map((hit: ComicHit) => shapeComicHit(hit, viewer.browsingLevelCap));
+  if (indexUid === BOUNTIES_SEARCH_INDEX)
+    return hits.map((hit: ImageHit) => shapeImageHit(hit, viewer.browsingLevelCap));
   return hits;
 }
 

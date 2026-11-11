@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  BOUNTIES_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
@@ -176,5 +177,49 @@ describe('comic covers', () => {
     respond({ hits });
     const { body } = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: 'x' }, uncapped);
     expect(covers((body as { hits: unknown }).hits)).toEqual([cover, cover, cover, cover, cover]);
+  });
+});
+
+describe('bounty images', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const uncapped = { showSfwFace: false };
+  const pg = { id: 11, nsfwLevel: NsfwLevel.PG };
+  const images = [{ id: 10, nsfwLevel: NsfwLevel.X }, pg, { id: 12, nsfwLevel: 0 }];
+  const respond = (body: unknown) =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }))
+    );
+  const firstHit = (body: unknown) => (body as { hits: Record<string, any>[] }).hits[0];
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a capped viewer gets no bounty image above the cap or unrated, highlight included', async () => {
+    respond({ hits: [{ id: 1, images, _formatted: { images } }] });
+    const hit = firstHit((await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, capped)).body);
+    expect(hit.images).toEqual([pg]);
+    expect(hit._formatted.images).toEqual([pg]);
+  });
+
+  it('a bounty with no image inside the cap is sent none', async () => {
+    respond({ hits: [{ id: 2, images: [images[0]] }] });
+    const hit = firstHit((await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, capped)).body);
+    expect(hit.images).toEqual([]);
+  });
+
+  it('a multi-search shapes bounty hits too', async () => {
+    respond({ results: [{ indexUid: BOUNTIES_SEARCH_INDEX, hits: [{ id: 1, images }] }] });
+    const { body } = await siteMultiSearch(
+      { queries: [{ indexUid: BOUNTIES_SEARCH_INDEX, q: 'x' }] },
+      capped
+    );
+    const [result] = (body as { results: { hits: Record<string, any>[] }[] }).results;
+    expect(result.hits[0].images).toEqual([pg]);
+  });
+
+  it('an uncapped viewer keeps every image', async () => {
+    respond({ hits: [{ id: 1, images }] });
+    const hit = firstHit((await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, uncapped)).body);
+    expect(hit.images).toEqual(images);
   });
 });
