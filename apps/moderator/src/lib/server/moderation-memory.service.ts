@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { getModeratorDb } from './moderator-db';
 import { dbRead } from './db';
 import { IMPORT_MARKER_PREFIXES, importedLegacyStrikeId } from '$lib/legacy-strike-import';
@@ -139,6 +143,8 @@ export async function sendModNotification(input: {
   url?: string;
   moderatorId: number;
 }): Promise<ActionResult> {
+  if (isFeedbackCaptureOwner(input.userId))
+    return { ok: false, error: FEEDBACK_CAPTURE_OWNER_REFUSAL };
   const url = input.url ?? MOD_NOTIFICATION_URL;
   try {
     await getNotifications().createNotification({

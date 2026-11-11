@@ -7,6 +7,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
+  import { GIFT_LINK_DEFAULT_REDEMPTIONS, GIFT_LINK_MAX_REDEMPTIONS } from '$lib/gift-links';
   import { civitaiUrl } from '$lib/model-url';
   import ClaimsList from './ClaimsList.svelte';
   import CreatedCodes from './CreatedCodes.svelte';
@@ -86,8 +87,16 @@
         </p>
       </div>
       <div>
-        <Label for="maxRedemptions">Max claims (blank = no limit)</Label>
-        <Input id="maxRedemptions" name="maxRedemptions" type="number" min="1" />
+        <Label for="maxRedemptions">Max claims (up to {GIFT_LINK_MAX_REDEMPTIONS})</Label>
+        <Input
+          id="maxRedemptions"
+          name="maxRedemptions"
+          type="number"
+          min="1"
+          max={GIFT_LINK_MAX_REDEMPTIONS}
+          value={GIFT_LINK_DEFAULT_REDEMPTIONS}
+          required
+        />
       </div>
       <div>
         <Label for="link-expires">Expires (optional)</Label>

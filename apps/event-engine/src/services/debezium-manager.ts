@@ -1,6 +1,6 @@
 import { Kafka } from 'kafkajs';
 import { logger } from '@/utils/logger';
-import { config } from '@/config';
+import { CONTENT_EXCLUDED_COLUMNS, config } from '@/config';
 
 interface ConnectorConfig {
   name: string;
@@ -396,16 +396,24 @@ export class DebeziumManager {
   /**
    * Model text and JSON columns are unbounded, and a record over the producer's size limit fails
    * the task, which stops every table. Model sync re-reads rows from Postgres and needs only the
-   * keys. Keyed on the flag so a deploy without it leaves the connector config as it was.
+   * keys. Keyed on the flags so a deploy without them leaves the connector config as it was.
    */
   public static getColumnExclusions(): Record<string, string> {
-    if (!config.kafka.cdcOnlyTables.includes('public.Model')) return {};
+    const tables = config.kafka.cdcOnlyTables;
     const columns = [
-      ...['description', 'sfwDescription', 'meta', 'gallerySettings'].map(c => `public.Model.${c}`),
-      ...['description', 'trainedWords', 'trainingDetails', 'meta', 'settings'].map(
-        c => `public.ModelVersion.${c}`
+      ...(tables.includes('public.Model')
+        ? [
+            ...['description', 'sfwDescription', 'meta', 'gallerySettings'].map(c => `public.Model.${c}`),
+            ...['description', 'trainedWords', 'trainingDetails', 'meta', 'settings'].map(
+              c => `public.ModelVersion.${c}`
+            ),
+          ]
+        : []),
+      ...Object.entries(CONTENT_EXCLUDED_COLUMNS).flatMap(([table, cols]) =>
+        tables.includes(`public.${table}`) ? cols.map(c => `public.${table}.${c}`) : []
       ),
     ];
+    if (!columns.length) return {};
     return { 'column.exclude.list': columns.join(',') };
   }
 

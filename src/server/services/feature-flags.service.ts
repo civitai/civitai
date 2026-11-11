@@ -436,32 +436,14 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served. Static
-  // availability is empty so image search is off for everyone.
-  // MEASURED 2026-10-03: the index holds 0 documents and `[]` filterable attributes. That is an
-  // observation with a date on it, NOT a consequence of `retired` — 🔴 nothing holds it that way.
-  // `retired` only stops the processor writing and syncing, so no `reset` runs to configure
-  // settings ("the index is stale for as long as it is retired",
-  // `src/server/search-index/base.search-index.ts`); an index that was set up before retirement
-  // keeps the settings and documents it had. And this one is still writable from outside the
-  // processor: `src/pages/api/mod/search/images-update.ts` writes to it without consulting
-  // `retired`, as the entry note in `src/server/meilisearch/util.ts` records. So re-measure before
-  // acting on the figures above; do not infer them from the flag.
-  // 🔴 This is NO LONGER a safe no-deploy toggle, and it fails quietly rather than loudly.
-  // Re-adding an `image-search` Flipt key here and turning that flag on would point image search
-  // at that index: filtered or sorted queries error, and the rest return zero hits.
-  // Re-enabling requires REBUILDING the index first — a full reindex of ~64M documents
-  // via `imagesSearchIndex` (`/api/mod/update-index`), which saturates the search backend for
-  // several days and badly degrades search for every other index while it runs. Measured on the
-  // last full ingestion: p95 search latency ~4.6s and p99 above 10s, sustained over six days.
-  // So: treat re-enabling as a planned project, not a flag flip.
-  imageSearch: { availability: [] },
-  // Whether the Images entry appears in the search pickers/tabs at all. Split from `imageSearch`
-  // (which gates whether image search actually RUNS) so the entry could stay visible with a
-  // "temporarily disabled for maintenance" notice while the index is retired — see 868m8yafw.
-  // Now [] : the entry is hidden from the header search, the quick-search pickers and the /search
-  // tabs, and /search/images redirects to /search/models. Set to ['public'] to show the notice again.
-  imageSearchEntry: [],
+  // All of image search: the Images entry in the pickers and tabs, /search/images (redirects to
+  // models without it), /search/semantic, "more like this", and the semanticImageSearch procedures.
+  // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
+  // does, Flipt decides both ways, so keep mods in its rule.
+  imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Article search (/search/articles, the header and the quick-search dropdown) answers from the
+  // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
+  semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -500,8 +482,6 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
-  // The /search/semantic page and its procedures. Moderators only: no Flipt flag exists for it.
-  semanticImageSearch: { availability: ['mod'] },
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
@@ -750,6 +730,10 @@ const featureFlags = createFeatureFlags({
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the
   // default (see `image/krea3.graph.ts`).
   krea3Ultra: { availability: ['mod'], fliptKey: 'krea3-ultra' },
+  // Gates the whole MiniMaxH3Image ecosystem: off ⇒ it is hidden from the picker and a
+  // submission naming it is refused (see `generation/ecosystem-gates.ts`). No Flipt key, so
+  // opening it past moderators is a code change.
+  minimaxH3ImageGenerator: { availability: ['mod'] },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
@@ -872,6 +856,11 @@ const featureFlags = createFeatureFlags({
   // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
   // dark.
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
+  // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
+  // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for
+  // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
+  // fail-closed `isAppLimitsUpgradePromptEnabled`, so the two agree while the flag is absent.
+  appLimitsUpgradePrompt: { availability: [], fliptKey: 'app-limits-upgrade-prompt' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
@@ -982,12 +971,6 @@ const featureFlags = createFeatureFlags({
   resourceIntentV1: { availability: [], fliptKey: 'resource-intent-v1' },
   resourceIntentV1Shadow: { availability: [], fliptKey: 'resource-intent-v1-shadow' },
   resourceIntentJudgeCapture: { availability: [], fliptKey: 'resource-intent-judge-capture' },
-  // The model page discussion's comment counts in ONE call (`comment.getVisibleCountsByModel`,
-  // the plain and the hidden view's counts together) instead of two `getVisibleCountByModel` calls,
-  // and no visible count at all when the first `comment.getAll` page holds every comment (the
-  // count then equals the loaded comments). Off = the two calls, as before. Dark like the above:
-  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF.
-  commentCountsSingleCall: { availability: [], fliptKey: 'comment-counts-single-call' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

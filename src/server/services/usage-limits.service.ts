@@ -23,7 +23,7 @@ export const USAGE_LIMITS_SCOPES = [TokenScope.UserRead, TokenScope.MediaWrite] 
 
 /**
  * The bucket each area's rows read: a procedure is counted here only if it passes this as its
- * `sharedKey`. A product area missing here has no rows.
+ * `sharedKey`. A calendar-window limit is listed through `usageLimitCounters` instead.
  */
 const SHARED_KEY_BY_AREA: Record<string, string> = {
   posts: POST_CREATE_RATE_LIMIT_KEY,
@@ -41,7 +41,8 @@ const USAGE_LIMIT_AREAS = Object.entries(SHARED_KEY_BY_AREA).map(([area, sharedK
 
 const labelOf = (id: string) => getUsageLimitDef(id).label;
 
-export type UsageLimitWindow = UsageLimitDef['window']['type'];
+/** A row's window. A `standing` allowance (app storage) is never listed through here. */
+export type UsageLimitWindow = Exclude<UsageLimitDef['window']['type'], 'standing'>;
 
 export type UsageLimit = {
   id: string;
@@ -59,6 +60,9 @@ export type UsageLimit = {
   /** When every attempt in the window has aged out; a calendar window's next boundary. */
   resetAt: string | null;
 };
+
+const rowWindow = (type: UsageLimitDef['window']['type']): UsageLimitWindow | null =>
+  type === 'standing' ? null : type;
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
@@ -106,14 +110,14 @@ export async function getUsageLimits({
           used,
           remaining,
           windowSeconds: rule.period,
-          window: getUsageLimitDef(id).window.type,
+          window: rowWindow(getUsageLimitDef(id).window.type),
           nextAt: remaining > 0 ? null : iso(nextAt),
           resetAt: iso(resetAt),
         };
       });
     })
   );
-  const counted = await countedLimits(user, wanted);
+  const counted = await countedLimits(user, req, wanted);
   const order = (row: UsageLimit) => usageLimitDefs.findIndex((def) => def.id === row.id);
   const limits = [...byArea.flat(), ...counted].sort((a, b) => order(a) - order(b));
   return { limits };
@@ -125,6 +129,7 @@ export async function getUsageLimits({
  */
 async function countedLimits(
   user: SessionUser,
+  req: NextApiRequest,
   wanted: Set<string> | undefined
 ): Promise<UsageLimit[]> {
   const now = Date.now();
@@ -132,12 +137,14 @@ async function countedLimits(
     usageLimitDefs.map(async (def): Promise<UsageLimit | null> => {
       const counter = usageLimitCounters[def.id];
       const window = def.window;
-      if (!counter || def.kind !== 'product' || window.type === 'rolling') return null;
+      if (!counter || def.kind !== 'product') return null;
+      if (window.type === 'rolling' || window.type === 'standing') return null;
       if (wanted && !wanted.has(def.id)) return null;
       const { limit, applies } = await resolveUsageLimit(def.id, user);
       if (!applies) return null;
       const { start, end } = calendarWindow(window.type, now);
-      const used = await counter({ userId: user.id, start, end });
+      const used = await counter({ user, req, start, end });
+      if (used === null) return null;
       const remaining = Math.max(0, limit - used);
       return {
         id: def.id,

@@ -371,6 +371,12 @@ describe('deleteUser under a legal hold', () => {
     }
   );
 
+  it('refuses the feedback capture account before anything is read or written', async () => {
+    await expect(run(-2)).rejects.toThrow(/feedback page captures/);
+    expect(dbMock.dbWrite.user.findFirst).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
   it('refuses an account held by the marker', async () => {
     await createMarkerView();
     await expect(run(HOLD_MARKER)).rejects.toBeInstanceOf(LegalHoldError);

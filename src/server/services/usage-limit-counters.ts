@@ -1,20 +1,32 @@
+import type { NextApiRequest } from 'next';
+import { dbRead } from '~/server/db/client';
+import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
+import { countGiftClaims } from '~/server/services/gift-claim-count';
 import type { UsageLimitId } from '~/shared/constants/usage-limits';
+import type { SessionUser } from '~/types/session';
 
 /**
  * How many times the user used a limit in `[start, end)`. For a calendar-window product limit that
  * its own service enforces: `rateLimit()` buckets keep a rolling day, so they cannot count it.
+ * `null` gives no row: the user cannot reach the feature.
  */
 export type UsageLimitCounter = (args: {
-  userId: number;
+  user: SessionUser;
+  req: NextApiRequest;
   start: Date;
   end: Date;
-}) => Promise<number>;
+}) => Promise<number | null>;
 
 /**
  * The counters `/me/limits` uses for calendar-window product limits. A `utc-day` or `utc-month`
  * product entry gets a row only once its enforcing service registers its counter here.
  */
-export const usageLimitCounters: Partial<Record<UsageLimitId, UsageLimitCounter>> = {};
+export const usageLimitCounters: Partial<Record<UsageLimitId, UsageLimitCounter>> = {
+  'gifts.monthly': async ({ user, req, start, end }) =>
+    (await getFeatureFlagsAsync({ user, req })).modelGiftLinks
+      ? countGiftClaims(dbRead, user.id, start, end)
+      : null,
+};
 
 /** The UTC day or month containing `now`. */
 export function calendarWindow(type: 'utc-day' | 'utc-month', now: number) {

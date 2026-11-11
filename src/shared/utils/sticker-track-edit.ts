@@ -5,6 +5,8 @@ import {
   STICKER_TRACK_KEYS_VERSION,
   STICKER_TRACK_MAX_DURATION_MS,
   STICKER_TRACK_MAX_FADE_MS,
+  stickerTrackFaintestShown,
+  stickerTrackRefusal,
 } from '~/shared/utils/sticker-track';
 
 /** The pose a key holds, in the draft's own field names. */
@@ -117,6 +119,22 @@ export function capFades(keys: StickerTrackKey[]): StickerTrackKey[] {
 
 export const stickerKeysTrack = (keys: StickerTrackKey[]): StickerTrackV2 =>
   trackOf(capFades(keys));
+
+export const STICKER_KEYS_TOO_FAINT = 'too faint for the sticker opacity';
+
+/**
+ * Why the server's track rules or its opacity floor (key opacity times `stickerOpacity`) would
+ * refuse these keys, or null. Null is not a promise of acceptance: the server also checks the
+ * creator's size limit and the media type. Run on every render, not when a key is set: changing
+ * the sticker's own opacity sets no key.
+ */
+export function stickerKeysRefusal(keys: StickerTrackKey[], stickerOpacity: number) {
+  const track = stickerKeysTrack(keys);
+  const faintest = stickerTrackFaintestShown(track);
+  if (faintest != null && faintest * stickerOpacity < STICKER_PLACEMENT_MIN_OPACITY - 1e-9)
+    return STICKER_KEYS_TOO_FAINT;
+  return stickerTrackRefusal(track);
+}
 
 const trackOf = (keys: StickerTrackKey[]): StickerTrackV2 => ({
   v: STICKER_TRACK_KEYS_VERSION,

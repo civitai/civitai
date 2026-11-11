@@ -3,7 +3,8 @@ import { env as clientEnv } from '~/env/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
-import { recordExternalHost } from '~/server/services/generation-input-hosts';
+import { externalHostBucket, recordExternalHost } from '~/server/services/generation-input-hosts';
+import { logToAxiom } from '~/server/logging/client';
 import {
   CIVITAI_IMAGE_HOSTS,
   hasUrlAmbiguousBytes,
@@ -29,6 +30,17 @@ export const GENERATION_IMAGE_UNAVAILABLE_MESSAGE =
 export const generationImageUnavailableError = () =>
   imageUrlUnavailableError(GENERATION_IMAGE_UNAVAILABLE_MESSAGE);
 
+/** Shown when a generation input links to a host outside Civitai, which the gate refuses. */
+export const GENERATION_EXTERNAL_IMAGE_MESSAGE =
+  'This request includes a link to an image hosted outside Civitai. Please upload the image instead.';
+
+export const generationExternalImageError = () =>
+  imageUrlUnavailableError(GENERATION_EXTERNAL_IMAGE_MESSAGE);
+
+/** Shown when an orchestrator-native input carries a plain link to a Civitai page, refused there. */
+export const GENERATION_PAGE_LINK_MESSAGE =
+  'This request includes a link to a Civitai page, not an image. Please upload the image instead.';
+
 /** An upload key as minted: the whole value, nothing around it. */
 const BARE_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -46,7 +58,38 @@ export async function assertStoredImageUrlsUnblocked(urls: string[]) {
   if (blocked.length) throw generationImageUnavailableError();
 }
 
-type InputImageRow = { url: string; userId: number; visible: boolean; blocked: boolean };
+type AppSourceRefusal = 'held' | 'unscannable' | 'pending' | 'unrowed' | 'store-unreadable';
+
+type InputImageRow = {
+  url: string;
+  userId: number;
+  visible: boolean;
+  blocked: boolean;
+  scanComplete: boolean;
+  /** Not scanned yet, in a state the scan still moves on from. */
+  scanPending: boolean;
+  /** Held for review, or flagged minor or poi. */
+  held: boolean;
+};
+
+/** Shown to an app whose generation input names an image the scan has not finished. */
+export const APP_SOURCE_PENDING_MESSAGE =
+  'that image is still being scanned — wait for it to finish before using it';
+/** Shown to an app whose generation input names an image it may not generate from. */
+export const APP_SOURCE_UNUSABLE_MESSAGE =
+  'that image can’t be used as a generation source — choose a different image';
+/** Shown to an app whose generation input is not an image stored on Civitai. */
+export const APP_SOURCE_NOT_ON_CIVITAI_MESSAGE =
+  'generation inputs from apps must be images uploaded or published on Civitai';
+
+const appSourcePendingError = () => imageUrlUnavailableError(APP_SOURCE_PENDING_MESSAGE);
+
+/** True for the refusal of an app's own upload whose scan has not finished. */
+export const isAppSourcePendingError = (error: unknown) =>
+  error instanceof TRPCError && error.message === APP_SOURCE_PENDING_MESSAGE;
+const appSourceUnusableError = () => imageUrlUnavailableError(APP_SOURCE_UNUSABLE_MESSAGE);
+const appSourceNotOnCivitaiError = () =>
+  imageUrlUnavailableError(APP_SOURCE_NOT_ON_CIVITAI_MESSAGE);
 
 /**
  * Each key must name the caller's own image, another user's publicly visible image, or, with no
@@ -62,11 +105,17 @@ async function assertKeysUsable({
   now,
   imagesOnly = false,
   maxKeys = MAX_KEYS,
+  appBlock,
 }: {
   keys: string[];
   urls: string[];
   userId: number;
   now?: Date;
+  /**
+   * Every image, the caller's own included, must be scanned and unflagged; see
+   * `APP_BLOCK_ENTRIES`. Told the reason before each such refusal.
+   */
+  appBlock?: { refusing: (reason: AppSourceRefusal) => void };
   imagesOnly?: boolean;
   /** Most keys one check reads; the image lookup still goes `MAX_KEYS` at a time. */
   maxKeys?: number;
@@ -83,7 +132,10 @@ async function assertKeysUsable({
           (i."blockedFor" IS NOT NULL OR i."tosViolation" OR p."tosViolation" IS TRUE) AS blocked,
           (i.ingestion = 'Scanned' AND i."blockedFor" IS NULL AND i."needsReview" IS NULL
             AND NOT i."tosViolation" AND p."publishedAt" <= now()
-            AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible
+            AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible,
+          (i.ingestion = 'Scanned') AS "scanComplete",
+          (i.ingestion IN ('Pending', 'Rescan', 'PendingManualAssignment')) AS "scanPending",
+          (i."needsReview" IS NOT NULL OR i.minor IS TRUE OR i.poi IS TRUE) AS held
         FROM "Image" i
         LEFT JOIN "Post" p ON p.id = i."postId"
         WHERE i.url = ANY(${lookup.slice(i, i + MAX_KEYS)}::text[])
@@ -96,7 +148,22 @@ async function assertKeysUsable({
   for (const row of rows)
     for (const key of new Set([row.url, ...keysIn(row.url)])) rowsByKey.get(key)?.push(row);
   for (const keyRows of rowsByKey.values()) {
-    if (!keyRows.length || keyRows.some((r) => r.userId === userId)) continue;
+    const own = keyRows.some((r) => r.userId === userId);
+    if (appBlock && keyRows.some((r) => r.held || !r.scanComplete)) {
+      // Only the owner learns why: to anyone else the image is just unavailable.
+      if (!own) throw generationImageUnavailableError();
+      if (keyRows.some((r) => r.held)) {
+        appBlock.refusing('held');
+        throw appSourceUnusableError();
+      }
+      if (keyRows.some((r) => !r.scanComplete && !r.scanPending)) {
+        appBlock.refusing('unscannable');
+        throw appSourceUnusableError();
+      }
+      appBlock.refusing('pending');
+      throw appSourcePendingError();
+    }
+    if (!keyRows.length || own) continue;
     if (!keyRows.every((r) => r.visible)) throw generationImageUnavailableError();
   }
 
@@ -106,9 +173,20 @@ async function assertKeysUsable({
     // Only an issue record to someone else marks it as ours; an unrecorded uuid may be anyone's id.
     // One issue-record and request-log read over every unrowed key.
     const issuers = await keyIssuers({ urls: unrowed, userId, maxKeys });
-    const unreadable = issuers.recordReadFailed && issuers.requestLogReadFailed;
-    if (issuers.tooMany || issuers.issuedToOthers.length || unreadable)
+    if (issuers.tooMany || issuers.issuedToOthers.length) throw generationImageUnavailableError();
+    // With either store unreadable, an app's unscanned upload could pass as an opaque key.
+    if (appBlock && (issuers.recordReadFailed || issuers.requestLogReadFailed)) {
+      appBlock.refusing('store-unreadable');
+      throw appSourceUnusableError();
+    }
+    if (issuers.recordReadFailed && issuers.requestLogReadFailed)
       throw generationImageUnavailableError();
+    // A key issued to the caller with no row is an upload that never reached the scan.
+    const unrecorded = new Set(issuers.unrecorded);
+    if (appBlock && unrowed.flatMap(keysIn).some((key) => !unrecorded.has(key))) {
+      appBlock.refusing('unrowed');
+      throw appSourceUnusableError();
+    }
     return;
   }
   try {
@@ -117,6 +195,10 @@ async function assertKeysUsable({
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
       throw generationImageUnavailableError();
     throw error;
+  }
+  if (appBlock) {
+    appBlock.refusing('unrowed');
+    throw appSourceUnusableError();
   }
 }
 
@@ -158,12 +240,22 @@ export type GenerationInputEntryPoint =
   | 'appBlocksStep'
   | 'appBlocksPassThrough'
   | 'appBlocksWorkflow'
+  | 'appBlocksInlineComfy'
   | 'enhancePrompt'
   | 'comicsCostEstimate'
   | 'comicPanelJob'
   | 'remixAppRun'
   | 'remixAppQuote'
   | 'articleReframe';
+
+/** App Blocks entries: their sources must be scanned, unflagged images stored on Civitai. */
+const APP_BLOCK_ENTRIES = new Set<GenerationInputEntryPoint>([
+  'appBlocks',
+  'appBlocksStep',
+  'appBlocksPassThrough',
+  'appBlocksWorkflow',
+  'appBlocksInlineComfy',
+]);
 
 /** Entry points where an external host is only counted while the external-host flag is off. */
 const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
@@ -172,6 +264,7 @@ const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
   'appBlocksStep',
   'appBlocksPassThrough',
   'appBlocksWorkflow',
+  'appBlocksInlineComfy',
   'enhancePrompt',
 ]);
 
@@ -203,6 +296,9 @@ const carriesUrl = (value: string) => {
   return true;
 };
 
+/** A url's host, lower-cased; a fully-qualified host (`image.civitai.com.`) is the same server. */
+const normalisedHost = (parsed: URL) => parsed.host.toLowerCase().replace(/\.(?=(:\d+)?$)/, '');
+
 export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass {
   if (BARE_KEY.test(raw)) return 'key';
   if (hasUrlAmbiguousBytes(raw)) return 'invalid';
@@ -212,8 +308,7 @@ export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass
   } catch {
     return 'invalid';
   }
-  // A fully-qualified host (`image.civitai.com.`) resolves to the same server.
-  const host = parsed.host.toLowerCase().replace(/\.(?=(:\d+)?$)/, '');
+  const host = normalisedHost(parsed);
   const isCdn = imageCdnHosts().includes(host);
   const configuredOrigin = (() => {
     try {
@@ -246,6 +341,80 @@ const refusalCounter = registerCounterWithLabels({
     'url class and caller type.',
   labelNames: ['entry', 'class', 'caller', 'mode'] as const,
 });
+
+/**
+ * Orchestrator sources on App Blocks entries, counted only: nothing is refused on this count.
+ * `host-orchestrator-source` is a consumer-blob path; `host-unparsable` is any other orchestrator
+ * path, such as a job output.
+ */
+const appBlockHostSourceCounter = registerCounterWithLabels({
+  name: 'app_block_host_source_total',
+  help: 'Orchestrator-hosted generation sources on App Blocks entries, by entry point and reason.',
+  labelNames: ['entry', 'reason'] as const,
+});
+
+/** An App Blocks source check runs on the estimate and again on the submit of the same run. */
+export type GenerationInputPhase = 'estimate' | 'submit';
+
+type AppBlockHostSourceReason = 'host-orchestrator-source' | 'host-unparsable';
+
+const CONSUMER_BLOB_PATH = /\/v\d+\/consumer\/blobs\/[^/]+$/i;
+
+function appBlockHostSourceReason(url: string): AppBlockHostSourceReason {
+  try {
+    return CONSUMER_BLOB_PATH.test(new URL(url).pathname)
+      ? 'host-orchestrator-source'
+      : 'host-unparsable';
+  } catch {
+    return 'host-unparsable';
+  }
+}
+
+type AppBlockLog = { appBlockId?: string; stepTypes?: string; phase?: GenerationInputPhase };
+
+/** One Axiom row per reason with its count, so a many-image step is one row, not one per url. */
+function recordAppBlockHostSources(
+  entry: GenerationInputEntryPoint,
+  reasons: AppBlockHostSourceReason[],
+  appBlockLog: AppBlockLog | undefined
+) {
+  const counts = new Map<AppBlockHostSourceReason, number>();
+  for (const reason of reasons) {
+    appBlockHostSourceCounter.inc({ entry, reason });
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  for (const [reason, count] of counts)
+    void logToAxiom({
+      name: 'app-block-host-source',
+      type: 'info',
+      entry,
+      reason,
+      count,
+      appBlockId: appBlockLog?.appBlockId,
+      stepTypes: appBlockLog?.stepTypes,
+      phase: appBlockLog?.phase,
+    }).catch(() => undefined);
+}
+
+/**
+ * Counts the orchestrator-hosted sources of an App Blocks text-to-image body, whose own gate runs
+ * inside the step builder, after the token and once per built step. Call it once per estimate
+ * and once per submit, before the token. A source the scanned-rows flag refuses is not counted.
+ */
+export async function countAppBlockHostSources({
+  urls,
+  appBlockLog,
+}: {
+  urls: (string | null | undefined)[];
+  appBlockLog: AppBlockLog;
+}) {
+  const reasons = [...new Set(urls.filter((url): url is string => !!url))]
+    .filter((url) => classifyGenerationInputUrl(url) === 'orchestrator')
+    .map(appBlockHostSourceReason);
+  if (!reasons.length) return;
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS)) return;
+  recordAppBlockHostSources('appBlocks', reasons, appBlockLog);
+}
 
 /** Schemes a fetcher may resolve. `urn:` (AIR ids) is not one of them. */
 const FETCH_SCHEMES = new Set([
@@ -508,14 +677,57 @@ function isWholeFetchableValue(value: string, budget: DecodeBudget, protocol: st
 }
 
 /**
+ * Free text a registry step declares in its params (`freeTextParamPaths`), each `list[].field`:
+ * the string `field` of every item of the array `list` at the top of the params. Or
+ * `list[].field.**`: everything under `field` of every item is text, whatever its shape (every
+ * string in it, object keys included).
+ */
+export type FreeTextPaths = readonly string[];
+
+/** `'string'`: a string at the field is text. `'subtree'`: everything under the field is. */
+type FreeTextKind = 'string' | 'subtree';
+
+/** `paths` as list name -> the item fields that are free text, and how. */
+function freeTextFieldsByList(paths: FreeTextPaths = []) {
+  const byList = new Map<string, Map<string, FreeTextKind>>();
+  for (const path of paths) {
+    const [list, spec] = path.split('[].');
+    const subtree = spec.endsWith('.**');
+    const fields = byList.get(list) ?? new Map<string, FreeTextKind>();
+    fields.set(subtree ? spec.slice(0, -3) : spec, subtree ? 'subtree' : 'string');
+    byList.set(list, fields);
+  }
+  return byList;
+}
+
+/** Whether a url names one of our images: on our image CDN or a civitai host, carrying a key. */
+function namesOurImage(url: string, budget: DecodeBudget) {
+  try {
+    const parsed = new URL(url);
+    if (!imageCdnHosts().includes(normalisedHost(parsed)) && !isCivitaiHostname(parsed.hostname))
+      return false;
+  } catch {
+    return false;
+  }
+  return keysInWithin(url, budget).length > 0;
+}
+
+/**
  * What an orchestrator-native input may fetch, under any field name (a field name says nothing
  * there: any step can `$ref` any field). A string that is a url is collected whole (trimmed). Any
  * other string is text, which a consumer may still split into urls, so every upload key in it is
  * collected bare, in any spelling `keysIn` reads: the gate's `opaqueInput` mode refuses those
  * only when they name an image that fails. `tooDeep` when the input nests past the walk's bound,
  * so a caller can refuse rather than pass what it did not read.
+ *
+ * `freeTextPaths`: strings at these paths are free text, never a url to fetch, so a url in one is
+ * not collected whole unless it names one of our images; its keys are collected as in any text.
+ * Only a value that IS a string there is text (and a list only when it is an array): anything
+ * else at the path is walked as usual. Under a `.**` path every string is text, whatever the shape.
+ * Default none: every string is read as above.
  */
-export function opaqueInputUrlsIn(value: unknown) {
+export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths) {
+  const textFieldsByList = freeTextFieldsByList(freeTextPaths);
   // Not `walkJsonValues`: this walk splits strings into lines and budgets depth and characters too.
   const urls: string[] = [];
   let tooDeep = false;
@@ -541,8 +753,19 @@ export function opaqueInputUrlsIn(value: unknown) {
     for (const key of keysInTextWithin(text, decoded)) collect(key);
     if (decoded.left < 0) tooLarge = true;
   };
-  /** `counted`: a line of a string whose characters were already counted whole. */
-  const walk = (item: unknown, depth: number, counted = false) => {
+  /**
+   * `counted`: a line of a string whose characters were already counted whole. `text`: the string
+   * is declared free text, or the array/object is under a declared `.**` field (so every string
+   * in it, keys included, is text). `scope.list`: the item is a declared list, and these fields
+   * of each of its items are text; `scope.item`: the item is one of those items.
+   */
+  const walk = (
+    item: unknown,
+    depth: number,
+    counted = false,
+    text = false,
+    scope?: { list: Map<string, FreeTextKind> } | { item: Map<string, FreeTextKind> }
+  ) => {
     if (item == null || tooDeep || tooLarge) return;
     if (depth > OPAQUE_INPUT_MAX_DEPTH) {
       tooDeep = true;
@@ -567,7 +790,7 @@ export function opaqueInputUrlsIn(value: unknown) {
         return;
       }
       if (splitsIntoUrlLines(item)) {
-        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true);
+        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true, text);
         pushKeysInText(item);
         return;
       }
@@ -589,8 +812,19 @@ export function opaqueInputUrlsIn(value: unknown) {
         return;
       }
       const protocol = parsedProtocol(parsed);
+      if (text) {
+        // Free text: only a url naming one of our images is collected whole; every key is still
+        // collected so a private image is refused.
+        if (
+          !controlInside &&
+          isWholeFetchableValue(parsed, decoded, protocol) &&
+          (!protocol || namesOurImage(parsed, decoded))
+        )
+          collect(parsed);
+        pushKeysInText(item);
+      }
       // A url with a control byte left inside: hand it whole to the classifier, which refuses it.
-      if (controlInside && (protocol === 'https:' || protocol === 'http:')) collect(parsed);
+      else if (controlInside && (protocol === 'https:' || protocol === 'http:')) collect(parsed);
       else if (isWholeFetchableValue(parsed, decoded, protocol)) {
         collect(parsed);
         // A url rejoined across a break or space: a consumer splitting on it reads the keys.
@@ -598,13 +832,27 @@ export function opaqueInputUrlsIn(value: unknown) {
       } else pushKeysInText(item);
       if (decoded.left < 0) tooLarge = true;
     } else if (Array.isArray(item)) {
-      for (const child of item) walk(child, depth + 1);
+      const fields = scope && 'list' in scope ? scope.list : undefined;
+      for (const child of item)
+        walk(child, depth + 1, false, text, fields ? { item: fields } : undefined);
     } else if (typeof item === 'object') {
       const record = item as Record<string, unknown>;
+      const itemFields = scope && 'item' in scope ? scope.item : undefined;
       for (const field of Object.keys(record)) {
         if (tooDeep || tooLarge) return;
-        walk(field, depth + 1);
-        walk(record[field], depth + 1);
+        walk(field, depth + 1, false, text);
+        const value = record[field];
+        const listFields = depth === 0 ? textFieldsByList.get(field) : undefined;
+        const kind = itemFields?.get(field);
+        if (listFields && Array.isArray(value))
+          walk(value, depth + 1, false, false, { list: listFields });
+        else
+          walk(
+            value,
+            depth + 1,
+            false,
+            text || kind === 'subtree' || (kind === 'string' && typeof value === 'string')
+          );
       }
     }
   };
@@ -616,8 +864,8 @@ export function opaqueInputUrlsIn(value: unknown) {
  * The one gate on a url a generation reads. Orchestrator blobs pass. A bare key or an image CDN
  * url passes only if every key it carries passes `assertKeysUsable`; a CDN url with no key is
  * refused. Other civitai hosts, non-https and unparseable values are refused. External hosts are
- * refused, except on `EXTERNAL_COUNTED_ENTRIES` while the external-host flag is off, where they
- * are only counted.
+ * refused (with `GENERATION_EXTERNAL_IMAGE_MESSAGE`), except on `EXTERNAL_COUNTED_ENTRIES` while
+ * the external-host flag is off, where they are only counted.
  */
 export async function assertGenerationInputsUsable({
   urls,
@@ -625,6 +873,7 @@ export async function assertGenerationInputsUsable({
   entry,
   isApiCaller,
   opaqueInput = false,
+  appBlockLog,
   now,
 }: {
   urls: (string | null | undefined)[];
@@ -637,14 +886,18 @@ export async function assertGenerationInputsUsable({
    * that fails, and http to an external host counts as external.
    */
   opaqueInput?: boolean;
+  /** Who and what an App Blocks entry's source log lines are about. Never a url or image id. */
+  appBlockLog?: AppBlockLog;
   now?: Date;
 }) {
   const given = [...new Set(urls.filter((url): url is string => !!url))];
   if (!given.length) return;
   const caller = isApiCaller ? 'api' : 'session';
-  const refuse = (cls: GenerationInputUrlClass) => {
+  /** `pageLink`: a plain link to one of our pages, counted as `external` (`isPlainPageLink`). */
+  const refuse = (cls: GenerationInputUrlClass, pageLink = false) => {
     refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
-    return generationImageUnavailableError();
+    if (pageLink) return imageUrlUnavailableError(GENERATION_PAGE_LINK_MESSAGE);
+    return cls === 'external' ? generationExternalImageError() : generationImageUnavailableError();
   };
 
   const keys = new Set<string>();
@@ -653,21 +906,57 @@ export async function assertGenerationInputsUsable({
   const externalKeys = new Set<string>();
   // Read once per call, only when an external url is seen.
   let refuseExternal: boolean | undefined;
+  const appBlock = APP_BLOCK_ENTRIES.has(entry);
+  const logAppSource = (
+    reason: AppSourceRefusal | 'external',
+    extra: Record<string, unknown> = {}
+  ) =>
+    void logToAxiom({
+      name: 'app-block-source-refusal',
+      type: 'info',
+      entry,
+      reason,
+      appBlockId: appBlockLog?.appBlockId,
+      stepTypes: appBlockLog?.stepTypes,
+      phase: appBlockLog?.phase,
+      ...extra,
+    }).catch(() => undefined);
+  const appBlockKeys = appBlock
+    ? { refusing: (reason: AppSourceRefusal) => logAppSource(reason) }
+    : undefined;
+  let refuseExternalAppSource: boolean | undefined;
+  const loggedHosts = new Set<string>();
+  let refuseOrchestrator: boolean | undefined;
+  // Recorded only once the whole call passes, so a refused call counts nothing.
+  const hostSources: AppBlockHostSourceReason[] = [];
   for (const url of given) {
     if (opaqueInput && KEY_LIKE.test(url.trim())) {
       externalKeys.add(canonicalKey(url.trim()));
       continue;
     }
     let cls = classifyGenerationInputUrl(url);
+    let pageLink = false;
     if (opaqueInput) {
       const asHttps =
         cls === 'invalid' && /^http:/i.test(url)
           ? classifyGenerationInputUrl(url.replace(/^http:/i, 'https:'))
           : cls;
-      if (asHttps === 'external' || (asHttps === 'civitai_other' && isPlainPageLink(url)))
-        cls = 'external';
+      pageLink = asHttps === 'civitai_other' && isPlainPageLink(url);
+      if (asHttps === 'external' || pageLink) cls = 'external';
     }
-    if (cls === 'orchestrator') continue;
+    if (cls === 'orchestrator') {
+      if (appBlock) {
+        // Turns on with scanned source rows: until then an app's uploaded source is a blob.
+        refuseOrchestrator ??= await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS);
+        if (refuseOrchestrator) {
+          refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
+          throw appSourceNotOnCivitaiError();
+        }
+        // `appBlocks` gates inside its step builder; its router counts with countAppBlockHostSources.
+        if (entry !== 'appBlocks') hostSources.push(appBlockHostSourceReason(url));
+      }
+      continue;
+    }
     if (cls === 'key') {
       keys.add(url);
       continue;
@@ -681,24 +970,42 @@ export async function assertGenerationInputsUsable({
     }
     if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
       refuseExternal ??= await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS);
+      if (appBlock && !refuseExternal)
+        refuseExternalAppSource ??= await isFlipt(
+          FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
+        );
+      const refuseHere = refuseExternal || refuseExternalAppSource === true;
       recordExternalHost({
         url,
         entry,
         caller,
-        mode: refuseExternal ? 'refuse' : 'log',
+        mode: refuseHere ? 'refuse' : 'log',
         userId,
       });
-      if (refuseExternal) throw refuse(cls);
+      if (appBlock) {
+        const host = externalHostBucket(url);
+        if (!loggedHosts.has(host)) {
+          loggedHosts.add(host);
+          logAppSource('external', { host, mode: refuseHere ? 'refuse' : 'log' });
+        }
+      }
+      if (refuseHere) throw refuse(cls, pageLink);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
       // A proxy or wrapper url may carry one of our image keys.
       keysIn(url).forEach((key) => externalKeys.add(key));
       continue;
     }
-    throw refuse(cls);
+    throw refuse(cls, pageLink);
   }
 
   try {
-    await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now });
+    await assertKeysUsable({
+      keys: [...keys],
+      urls: keyedUrls,
+      userId,
+      now,
+      appBlock: appBlockKeys,
+    });
     const imageOnlyKeys = [...externalKeys].filter((key) => !keys.has(key));
     if (imageOnlyKeys.length > IMAGE_ONLY_KEY_SIZE_REPORTED)
       largeKeySetCounter.inc({ entry, size: keySetSizeBucket(imageOnlyKeys.length) });
@@ -713,7 +1020,9 @@ export async function assertGenerationInputsUsable({
       now,
       imagesOnly: true,
       maxKeys: IMAGE_ONLY_MAX_KEYS,
+      appBlock: appBlockKeys,
     });
+    if (hostSources.length) recordAppBlockHostSources(entry, hostSources, appBlockLog);
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
       refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });

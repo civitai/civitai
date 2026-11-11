@@ -2,12 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 // Shared with user-lookup.service.ts's counts — two copies meant adding an entity type to the counts
 // and not the rows, so the section states a count it cannot show rows for.
-import {
-  OWNED_REPORT_ENTITIES,
-  REPORT_ENTITIES,
-  chatReportSubject,
-  reportLinkFilter,
-} from './report-entities';
+import { OWNED_REPORT_ENTITIES, REPORT_ENTITIES, chatReportSubject } from './report-entities';
 import type { ReportEntity } from '$lib/reports';
 
 // Everything behind `/api/user-reports` — the ROWS behind the Reports section, where the page load
@@ -113,7 +108,6 @@ export async function getReportsReceived(
         .innerJoin(`${table} as e` as 'Image as e', 'e.id', `rr.${fk}` as 'rr.imageId')
         .select([...REPORT_COLUMNS, sql<number>`rr.${sql.ref(fk)}`.as('entityId')])
         .where(`e.${ownerColumn}` as 'e.userId', '=', userId)
-        .where(reportLinkFilter(meta, 'rr.reportId'))
         .orderBy('r.createdAt', 'desc')
         .limit(limit)
         .execute();
@@ -156,7 +150,6 @@ export async function getReportsSubmitted(
         .innerJoin(`${reportTable} as rr` as 'ImageReport as rr', 'rr.reportId', 'r.id')
         .select([...REPORT_COLUMNS, sql<number>`rr.${sql.ref(fk)}`.as('entityId')])
         .where('r.userId', '=', userId)
-        .where(reportLinkFilter(meta, 'rr.reportId'))
         .orderBy('r.createdAt', 'desc')
         .limit(limit)
         .execute();

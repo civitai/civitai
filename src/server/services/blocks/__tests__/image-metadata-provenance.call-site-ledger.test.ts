@@ -288,11 +288,11 @@ function checkDecision(decision: Decision, site: Site): string | null {
       if (
         // The row's only spread is the client-column helper; `metadata` follows it (after any
         // plain `column: value` entries), so the stripped copy plus the stamp is what lands.
-        !/\.\.\.pickClientImageColumns\(image\),(?:\s*\w+:\s*[\w.]+,)*\s*metadata:\s*blockProvenance\s*\?\s*\{\s*\.\.\.metadata,\s*\[blockProvenance\.key\]:\s*blockProvenance\.appId\s*\}\s*:\s*metadata,/.test(
+        !/\.\.\.pickClientImageColumns\(image\),(?:\s*\w+:\s*[\w.]+,)*\s*metadata:\s*blockProvenance\s*\?\s*\{\s*\.\.\.metadata,\s*\[blockProvenance\.key\]:\s*blockProvenance\.appId\s*\}\s*:\s*(?:feedbackCapture\s*\?\s*\{\s*\.\.\.metadata,\s*\[FEEDBACK_CAPTURE_METADATA_KEY\]:\s*feedbackCapture\s*\}\s*:\s*)?metadata,/.test(
           region
         )
       )
-        return 'createImage no longer writes the stripped metadata plus blockProvenance';
+        return 'createImage no longer writes the stripped metadata plus a server stamp';
       return null;
     case 'in-function-strip':
       if (
@@ -606,11 +606,6 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
   },
   'src/server/services/image-scan-pipeline.ts#resolveScanOutcome': {
     decision: 'raw-mod-rule-metadata',
-    sites: 1,
-  },
-  // In the population only because their `data` is not a plain literal this file can read.
-  'src/server/services/report.service.ts#settleResolvedAppeals': {
-    decision: 'literal-branches',
     sites: 1,
   },
   'src/server/services/image.service.ts#toggleImageFlag': {

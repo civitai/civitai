@@ -146,6 +146,7 @@ describe('resolveResourceFileForUser: served', () => {
       fileId: 10,
       user: { ...sfwViewer, isModerator: false },
       attribution: { caller: 'other', actor: 'user' },
+      redCapable: false,
     });
   });
 

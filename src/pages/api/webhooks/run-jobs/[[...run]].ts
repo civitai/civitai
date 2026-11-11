@@ -126,6 +126,7 @@ import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publ
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
+import { providerFetchSpikeMonitorJob } from '~/server/jobs/provider-fetch-spike-monitor';
 import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
 import { userPopulationSnapshotJob } from '~/server/jobs/user-population-snapshot';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
@@ -135,7 +136,6 @@ import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
 import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-check';
-import { commentV3ParityJob } from '~/server/jobs/comment-v3-parity';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
 import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nudge';
@@ -146,6 +146,7 @@ import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
+import { trainingDataScanHealJob } from '~/server/jobs/training-data-scan-heal';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
@@ -169,6 +170,7 @@ import { userScoreHealthCheckJob } from '~/server/jobs/user-score-health-check';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
+import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
 import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
 import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
@@ -186,6 +188,7 @@ import { booleanString } from '~/utils/zod-helpers';
 export const jobs: Job[] = [
   gdprStripeScrubJob,
   scanFilesFallbackJob,
+  trainingDataScanHealJob,
   processHuggingFaceImportsJob,
   archiveStudioTrainingDatasetsJob,
   storageUsageNightlyJob,
@@ -214,6 +217,7 @@ export const jobs: Job[] = [
   cdnAccessSync,
   cdnAccessReconcile,
   removeReplacedImages,
+  purgeFeedbackCaptures,
   retryImageStorageDeletes,
   retryUploadPromptScansJob,
   processScheduledPublishing,
@@ -226,7 +230,6 @@ export const jobs: Job[] = [
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,
   autoFeatureHealthCheckJob,
-  commentV3ParityJob,
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
@@ -258,6 +261,7 @@ export const jobs: Job[] = [
   auditWildcardSetCategoriesJob,
   ...metricReconciliationJobs,
   ...clickhouseRefreshJobs,
+  providerFetchSpikeMonitorJob,
   userActivityRollupJob,
   userPopulationSnapshotJob,
   ...jobQueueJobs,

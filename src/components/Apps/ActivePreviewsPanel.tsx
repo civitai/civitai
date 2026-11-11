@@ -76,7 +76,24 @@ export function ActivePreviewsPanel() {
       />
     );
   }
-  if (active.length === 0) return null;
+  /*
+    🔴 "0 active previews", NOT NOTHING. A panel that vanished at zero left a moderator about to
+    start a preview with no way to tell "no slots in use" from "this panel failed to load" —
+    the tour that motivated this looked for it and found nothing. Still one quiet line, so it
+    costs the queue almost no height. (An AUTHZ error — the sandbox flag off — still renders
+    nothing above: there is no preview feature to report on.)
+  */
+  if (active.length === 0) {
+    if (!query.data) return null;
+    return (
+      <Group gap={6} mb="sm" data-testid="apps-active-previews-empty">
+        <IconWindow size={14} color="var(--mantine-color-dimmed)" />
+        <Text size="xs" c="dimmed">
+          0 active previews{cap > 0 ? ` · ${building} / ${cap} building` : ''}
+        </Text>
+      </Group>
+    );
+  }
 
   // The cap bounds concurrent BUILDS, not live previews: past it automatic starts queue.
   const atCap = cap > 0 && building >= cap;
@@ -171,7 +188,7 @@ export function ActivePreviewsPanel() {
                       rel="noopener"
                       rightSection={<IconExternalLink size={12} />}
                     >
-                      Open full-page preview ↗
+                      Open full-page preview
                     </Button>
                   )}
                   <Button

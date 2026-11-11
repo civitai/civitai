@@ -8,6 +8,8 @@ import type * as HeldMediaModule from '../held-media';
  */
 
 const KEY = '0b9f5a4e-1d2c-4e3f-8a7b-6c5d4e3f2a1b';
+/** A sheet cookie on a request the hook did not authenticate with it. */
+const STRAY = 'S'.repeat(43);
 
 const getHeldMedia = vi.hoisted(() =>
   vi.fn(
@@ -29,6 +31,7 @@ const getGetUrl = vi.hoisted(() =>
 const recordModActivity = vi.hoisted(() =>
   vi.fn(async (_row: { entityType: string | null; entityId: number | null }) => {})
 );
+const insertModActivity = vi.hoisted(() => vi.fn(async (_row: Record<string, unknown>) => {}));
 const logToAxiom = vi.hoisted(() => vi.fn(async (_line: Record<string, unknown>) => {}));
 const grants = vi.hoisted(() => ({ paths: new Set<string>(['/images/csam']) }));
 
@@ -51,7 +54,7 @@ vi.mock('$lib/server/held-media', async (importOriginal) => ({
   getHeldMedia,
 }));
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
-vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
+vi.mock('$lib/server/mod-activity', () => ({ recordModActivity, insertModActivity }));
 vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
 
 const { GET } = await import('../../../routes/api/held-media/[imageId]/+server');
@@ -67,7 +70,8 @@ async function call(
   path = '/api/held-media/7',
   headers: Record<string, string> = {},
   imageId = '7',
-  method = 'GET'
+  method = 'GET',
+  sheet?: { token: string }
 ): Promise<{ status: number; res?: Response }> {
   const url = new URL(`http://mod.test${path}`);
   try {
@@ -75,7 +79,14 @@ async function call(
       params: { imageId },
       url,
       request: new Request(url, { headers, method }),
-      locals: { user: { id: 42, roles: ['moderator:staff'] }, grants: {} },
+      cookies: {
+        get: (name: string) => (name === '__Secure-held_sheet' ? sheet?.token ?? STRAY : undefined),
+      },
+      locals: {
+        user: { id: 42, roles: ['moderator:staff'] },
+        grants: {},
+        ...(sheet ? { heldCredential: 'sheet' } : {}),
+      },
     } as never);
     return { status: res.status, res };
   } catch (e) {
@@ -323,8 +334,16 @@ describe('audit', () => {
       })
     );
     await call('/api/held-media/7', range ? { range } : {});
-    expect(recordModActivity.mock.calls).toEqual([
-      [{ userId: 42, entityType: 'image', entityId: 7, activity: 'heldMedia:view' }],
+    expect(insertModActivity.mock.calls).toEqual([
+      [
+        {
+          userId: 42,
+          entityType: 'image',
+          entityId: 7,
+          activity: 'heldMedia:view',
+          credential: 'web',
+        },
+      ],
     ]);
   });
 
@@ -333,22 +352,22 @@ describe('audit', () => {
       upstream(206, { 'content-type': 'image/jpeg', 'content-range': 'bytes 5000-5099/9000' })
     );
     await call('/api/held-media/7', { range: 'bytes=5000-' });
-    expect(recordModActivity).not.toHaveBeenCalled();
+    expect(insertModActivity).not.toHaveBeenCalled();
     expect(serves()).toHaveLength(1);
   });
 
   it('records no view for a HEAD, which carries no bytes', async () => {
     await call('/api/held-media/7', {}, '7', 'HEAD');
-    expect(recordModActivity).not.toHaveBeenCalled();
+    expect(insertModActivity).not.toHaveBeenCalled();
   });
 
   it('answers only once the view row is written', async () => {
     let land!: () => void;
-    recordModActivity.mockImplementationOnce(() => new Promise<void>((r) => (land = r)));
+    insertModActivity.mockImplementationOnce(() => new Promise<void>((r) => (land = r)));
     let answered = false;
     const answering = call().then(() => (answered = true));
 
-    await vi.waitFor(() => expect(recordModActivity).toHaveBeenCalled());
+    await vi.waitFor(() => expect(insertModActivity).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(answered).toBe(false);
     land();
@@ -358,7 +377,18 @@ describe('audit', () => {
   it('records no view of an image it refused', async () => {
     getHeldMedia.mockResolvedValue(null);
     await call();
-    expect(recordModActivity).not.toHaveBeenCalled();
+    expect(insertModActivity).not.toHaveBeenCalled();
+  });
+
+  it('sends no bytes when the view row is not written', async () => {
+    const body = new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode('x')) });
+    const cancel = vi.spyOn(body, 'cancel');
+    fetchMock.mockResolvedValue(
+      new Response(body, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+    );
+    insertModActivity.mockRejectedValueOnce(new Error('db down'));
+    expect((await call()).status).toBe(503);
+    expect(cancel).toHaveBeenCalled();
   });
 
   const gridView = async (body: unknown) => {
@@ -397,5 +427,106 @@ describe('audit', () => {
     expect(recordModActivity.mock.calls.map(([row]) => row.entityId)).toEqual([
       5_000, 2_147_483_647,
     ]);
+  });
+});
+
+describe('the held-media sheet', () => {
+  const TOKEN = 'T'.repeat(43);
+  const sheetCall = () => call('/api/held-media/7', {}, '7', 'GET', { token: TOKEN });
+
+  it('records the sheet credential on the view row and slides its cookie', async () => {
+    const { status, res } = await sheetCall();
+    expect(status).toBe(200);
+    expect(insertModActivity.mock.calls).toEqual([
+      [
+        {
+          userId: 42,
+          entityType: 'image',
+          entityId: 7,
+          activity: 'heldMedia:view',
+          credential: 'sheet',
+        },
+      ],
+    ]);
+    expect(res!.headers.get('set-cookie')).toBe(
+      `__Secure-held_sheet=${TOKEN}; Path=/api/held-media/; Max-Age=900; Secure; HttpOnly; SameSite=Strict`
+    );
+    expect(res!.headers.get('cache-control')).toBe('private, no-store');
+    expect(res!.headers.get('content-disposition')).toBe('inline');
+  });
+
+  it('sets no sheet cookie on a web-session fetch, even one carrying a sheet cookie', async () => {
+    const { res } = await call();
+    expect(res!.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('treats a web-session fetch carrying a sheet cookie as web: video served, Range honoured', async () => {
+    getHeldMedia.mockResolvedValue({ url: KEY, type: 'video', mimeType: 'video/mp4' });
+    fetchMock.mockResolvedValue(
+      upstream(206, { 'content-type': 'video/mp4', 'content-range': 'bytes 0-4/100' })
+    );
+    const { status } = await call('/api/held-media/7', { range: 'bytes=0-4' });
+    expect(status).toBe(206);
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get('range')).toBe('bytes=0-4');
+    expect(insertModActivity.mock.calls[0][0]).toMatchObject({ credential: 'web' });
+  });
+
+  it('ignores a Range from the sheet, so every fetch is whole and audited', async () => {
+    await call('/api/held-media/7', { range: 'bytes=1-' }, '7', 'GET', { token: TOKEN });
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get('range')).toBeNull();
+    expect(insertModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs no sheet cookie when the view row fails', async () => {
+    const { inspect } = await import('node:util');
+    const spies = (['log', 'info', 'debug', 'warn', 'error'] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => {})
+    );
+    insertModActivity.mockRejectedValueOnce(new Error('db down'));
+    expect((await sheetCall()).status).toBe(503);
+    const logged = [...spies.flatMap((s) => s.mock.calls), ...logToAxiom.mock.calls]
+      .flat()
+      .map((a) => inspect(a, { depth: 8 }))
+      .join('\n');
+    expect(spies[4]).toHaveBeenCalled();
+    expect(logged).not.toContain(TOKEN);
+    spies.forEach((s) => s.mockRestore());
+  });
+
+  it.each(['image/png', 'image/webp', 'image/gif', 'image/avif'])(
+    'serves %s to the sheet',
+    async (type) => {
+      fetchMock.mockResolvedValue(upstream(200, { 'content-type': type }));
+      expect((await sheetCall()).status).toBe(200);
+    }
+  );
+
+  it('refuses SVG to the sheet with 415 and no row', async () => {
+    fetchMock.mockResolvedValue(upstream(200, { 'content-type': 'image/svg+xml' }));
+    getHeldMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: 'image/svg+xml' });
+    expect((await sheetCall()).status).toBe(415);
+    expect(insertModActivity).not.toHaveBeenCalled();
+  });
+
+  it.each(['image/heic', 'video/mp4'])(
+    'refuses %s to the sheet with 415 and no row',
+    async (type) => {
+      fetchMock.mockResolvedValue(upstream(200, { 'content-type': type }));
+      getHeldMedia.mockResolvedValue({
+        url: KEY,
+        type: type.startsWith('video') ? 'video' : 'image',
+        mimeType: type,
+      });
+      expect((await sheetCall()).status).toBe(415);
+      expect(insertModActivity).not.toHaveBeenCalled();
+    }
+  );
+
+  it('writes no row for a refused id', async () => {
+    getHeldMedia.mockResolvedValue(null);
+    expect((await sheetCall()).status).toBe(404);
+    grants.paths = new Set();
+    expect((await sheetCall()).status).toBe(403);
+    expect(insertModActivity).not.toHaveBeenCalled();
   });
 });

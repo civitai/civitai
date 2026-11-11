@@ -54,6 +54,8 @@ export const getResourceReviewsInfiniteSchema = z.object({
 export type UpsertResourceReviewInput = z.infer<typeof upsertResourceReviewSchema>;
 export const upsertResourceReviewSchema = z.object({
   id: z.number().optional(),
+  /** The post the review is written from. Read on create only. */
+  postId: z.number().optional(),
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),
@@ -87,10 +89,26 @@ export const updateResourceReviewSchema = z.object({
   }),
 });
 
+const REVIEW_PAGE_SIZE_MAX = 50;
+
 export type GetResourceReviewPagedInput = z.infer<typeof getResourceReviewPagedSchema>;
-export const getResourceReviewPagedSchema = paginationSchema.extend({
-  modelId: numericString(),
-  modelVersionId: numericString().optional(),
-  username: z.string().optional(),
-  writtenOnly: z.boolean().optional(),
-});
+export const getResourceReviewPagedSchema = paginationSchema
+  .extend({
+    limit: z.coerce
+      .number()
+      .min(1)
+      .default(20)
+      .transform((limit) => Math.min(limit, REVIEW_PAGE_SIZE_MAX)),
+    modelId: numericString(),
+    modelVersionId: numericString().optional(),
+    username: z.string().optional(),
+    writtenOnly: z.boolean().optional(),
+  })
+  // Without a version, writtenOnly regex-filters every review of the model before the first match.
+  .refine((input) => !input.writtenOnly || input.modelVersionId, {
+    message: 'writtenOnly requires modelVersionId',
+    path: ['writtenOnly'],
+  });
+
+/** A review's image count stops at this; the list returns one more to mean "more than this". */
+export const REVIEW_IMAGE_COUNT_CAP = 100;

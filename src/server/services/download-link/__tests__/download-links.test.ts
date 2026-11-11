@@ -623,6 +623,10 @@ describe('positive: generation-only file for an allowed user', () => {
       'a non-public file of the version',
       () => addFile(PUBLIC_VERSION, { id: 10_002, visibility: 'Private' }),
     ],
+    [
+      'a public training dataset of the version',
+      () => addFile(PUBLIC_VERSION, { id: 10_003, type: 'Training Data' }),
+    ],
   ])('refuses an explicit fileId naming %s', async (_name, fileId) => {
     expect(await mintOne(userItem(PUBLIC_VERSION, USER, { fileId: fileId() }))).toMatchObject({
       ok: false,

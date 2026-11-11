@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { DEFAULT_GENERATION_TRIAL_LIMIT } from '@civitai/buzz';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -7,7 +8,8 @@ import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/constants';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import {
   getShouldChargeForResources,
   resolveCanGenerateForVersions,
@@ -19,20 +21,28 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type {
   LicensingFeeSettlementCurrency,
   LicensingFeeType,
   ModelType,
   ModelHashType,
-  ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  ModelFileVisibility,
+  type ModelUsageControl,
+  type ScanResultCode,
+} from '~/shared/utils/prisma/enums';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { hashRouteServesEveryone } from '~/server/services/download-by-hash.servable';
+import { evaluateMiniEpochCaller, getMiniEpochGateMode } from '~/server/utils/mini-epoch-caller';
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -71,6 +81,9 @@ type VersionRow = {
   sfwOnly: boolean;
   usageControl: ModelUsageControl;
   modelUserId: number;
+  modelStatus: string;
+  modelMode: string | null;
+  modelAvailability: Availability;
   poi: boolean;
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
@@ -96,6 +109,8 @@ type FileRow = {
   name: string;
   hashes: Record<ModelHashType, string>;
   replacedAt: Date | null;
+  pickleScanResult: ScanResultCode | null;
+  virusScanResult: ScanResultCode | null;
 };
 
 export default MixedAuthEndpoint(async function handler(
@@ -132,6 +147,9 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       m."sfwOnly",
       m."userId" as "modelUserId",
+      m.status as "modelStatus",
+      m.mode as "modelMode",
+      m.availability as "modelAvailability",
       m.poi,
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
@@ -219,6 +237,8 @@ export default MixedAuthEndpoint(async function handler(
       mf."sizeKB", 
       mf.name,
       mf."replacedAt",
+      mf."pickleScanResult",
+      mf."virusScanResult",
       COALESCE(
         JSON_OBJECT_AGG(mfh.type, mfh.hash) FILTER (WHERE mfh.hash IS NOT NULL),
         '{}'::json
@@ -226,7 +246,8 @@ export default MixedAuthEndpoint(async function handler(
     FROM "ModelFile" mf
     LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
     WHERE mf."modelVersionId" = ${id}
-    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt"
+    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt",
+      mf."pickleScanResult", mf."virusScanResult"
     -- requestedFile below calls the bare getPrimaryFile, which settles a full tie by input order,
     -- and that choice decides the epoch branch. (getGenerationFile does its own id sort.)
     ORDER BY mf.id
@@ -253,8 +274,13 @@ export default MixedAuthEndpoint(async function handler(
   // url shape applies, and only then apply the gate to the download-route path.
   const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
   const isMod = !!user?.isModerator;
-  const visibleFiles =
-    isOwner || isMod ? files : files.filter((f) => f.visibility === ModelFileVisibility.Public);
+  const listed = await trainingDataListing(dbRead, [{ id, files }], {
+    redCapable: isRedCapableHost(req.headers.host),
+    viewerManages: isOwner || isMod,
+  });
+  const visibleFiles = files.filter(
+    (f) => (isOwner || isMod || f.visibility === ModelFileVisibility.Public) && listed(f)
+  );
 
   // The download route merges the requesting user's `filePreferences` into
   // `getPrimaryFile` (see `getFileForModelVersion` in file.service.ts). Pinning
@@ -281,6 +307,26 @@ export default MixedAuthEndpoint(async function handler(
     : getPrimaryFile(files);
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
+
+  // Decided before the epoch is read, so a refused caller gets the same answer whatever the
+  // version's training results hold.
+  if (useEpochUrl) {
+    const mode = await getMiniEpochGateMode();
+    if (mode !== 'off') {
+      // The body now depends on the caller, so no shared cache may hold it.
+      res.setHeader('Cache-Control', 'private, no-store');
+      const caller = await evaluateMiniEpochCaller({
+        req,
+        user,
+        modelVersionId: modelVersion.id,
+        ownerId: modelVersion.modelUserId,
+        mode,
+      });
+      // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
+      // 404 to a caller who would be served.
+      if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
+    }
+  }
 
   const targetFile = useEpochUrl
     ? requestedFile
@@ -368,9 +414,35 @@ export default MixedAuthEndpoint(async function handler(
     })}`;
   }
 
+  const downloadUrls = [downloadUrl];
+  const sha256 = targetFile.hashes.SHA256;
+  // Anything else would lead with a url that refuses where the id url serves.
+  const hashRouteServes = hashRouteServesEveryone({
+    fileVisibility: targetFile.visibility,
+    pickleScanResult: targetFile.pickleScanResult,
+    virusScanResult: targetFile.virusScanResult,
+    versionStatus: modelVersion.status,
+    versionAvailability: modelVersion.availability,
+    usageControl: modelVersion.usageControl,
+    modelStatus: modelVersion.modelStatus,
+    modelMode: modelVersion.modelMode,
+    modelAvailability: modelVersion.modelAvailability,
+    poi: modelVersion.poi,
+  });
+  if (
+    !trainingResults &&
+    hashRouteServes &&
+    sha256 &&
+    // A scan that never ran writes 64 zeros, which every such file would share.
+    !/^0+$/.test(sha256) &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.DOWNLOAD_HASH_URLS, String(targetFile.id)))
+  )
+    downloadUrls.unshift(`${baseUrl}/api/download/sha256/${sha256.toLowerCase()}`);
+
   // if req url domain contains `api.`, strip /api/ from the download url
   if (req.headers.host?.includes('api.')) {
-    downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
+    for (const [i, url] of downloadUrls.entries())
+      downloadUrls[i] = url.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
   }
   const { format } = targetFile.metadata;
 
@@ -509,6 +581,15 @@ export default MixedAuthEndpoint(async function handler(
       ownerFlags: modelVersion.userFlags,
     });
 
+  // An epoch url is the orchestrator's own link to the weights, outside the download route's
+  // gates: a deleted or taken-down model's is moderators-only, as its files are.
+  const gated = {
+    status: modelVersion.status,
+    model: { status: modelVersion.modelStatus, mode: modelVersion.modelMode },
+  };
+  const withholdEpochUrl =
+    !!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated));
+
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
@@ -523,7 +604,7 @@ export default MixedAuthEndpoint(async function handler(
     fileName: targetFile.name,
     // nullable - hashes (all available hash types)
     hashes: targetFile.hashes,
-    downloadUrls: [downloadUrl], // nullable
+    downloadUrls: withholdEpochUrl ? [] : downloadUrls, // nullable
     format, // nullable
     canGenerate,
     isFeatured,

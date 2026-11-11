@@ -33,7 +33,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 const fetchMock = vi.fn();
 
-async function post(path: string[], body: unknown) {
+async function post(path: string[], body: unknown, headers: Record<string, string> = {}) {
   const res = {
     status: vi.fn().mockReturnThis(),
     end: vi.fn().mockReturnThis(),
@@ -44,7 +44,8 @@ async function post(path: string[], body: unknown) {
   } as unknown as NextApiResponse;
   const req = {
     method: 'POST',
-    headers: { host: 'example.test' },
+    headers: { host: 'example.test', ...headers },
+    url: `/api/search/${path.join('/')}`,
     cookies: {},
     query: { path },
     body,
@@ -128,6 +129,15 @@ describe('POST /api/search/multi-search', () => {
     mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: false });
     await post(['multi-search'], { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] });
     expect(sentQueries()[0].filter).toEqual(['nsfwLevel=1 OR nsfwLevel=2']);
+  });
+
+  it('a client-sent verified-bot header does not lift the signed-out cap', async () => {
+    await post(
+      ['multi-search'],
+      { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] },
+      { 'x-civitai-verified-bot': 'googlebot' }
+    );
+    expect(sentQueries()[0].filter).toContain('nsfwLevel=1');
   });
 
   it('refuses an index the site does not search, without calling the backend', async () => {

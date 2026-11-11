@@ -16,6 +16,7 @@
   import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { isAbort, uploadFile } from '$lib/upload';
@@ -33,7 +34,6 @@
     paramBounds,
     seenFor,
     TARGET_STEPS,
-    TE_TRAINING_UNSUPPORTED_REASON,
     typesForMedia,
     type ExtraParamField,
     type LabelType,
@@ -44,6 +44,7 @@
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
+    numberInputValue,
     PARAM_LABELS,
     optimizerLrParams,
     paramDeviations,
@@ -61,6 +62,7 @@
     blockedSelectionMessage,
     filledPrompts,
     teLocked,
+    teLockReason,
     withTrigger,
     type LaunchedRun,
     type NumericInput,
@@ -70,7 +72,8 @@
     type Selection,
   } from './trainingFlow';
 
-  // name / prompts / params / presetType are owned and seeded by the flow so they survive Back.
+  // name / prompts / params / presetType and the Advanced panel state are owned by the flow so they
+  // survive Back.
   let {
     selection,
     trigger,
@@ -79,6 +82,8 @@
     prompts = $bindable(),
     params = $bindable(),
     presetType = $bindable(),
+    openAdvanced = $bindable(),
+    acknowledgedAdvanced = $bindable(),
     imageCount,
     trainsPairs = false,
     matureCount: scannedMature,
@@ -96,6 +101,10 @@
     /** Keyed by `runParamsKey`; the flow guarantees an entry for every run in `selection`. */
     params: Record<string, RunParams>;
     presetType: string;
+    /** `runParamsKey` of the run whose Advanced panel is open, or '' when none is. */
+    openAdvanced: string;
+    /** Refund-forfeit acknowledgements, keyed by `runParamsKey`. */
+    acknowledgedAdvanced: Record<string, boolean>;
     imageCount: number;
     /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
     trainsPairs?: boolean;
@@ -154,11 +163,10 @@
   const typeName = $derived(loraTypeById(selection.loraType).name);
 
   const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
-  let openAdv = $state(-1);
+  const advancedOpen = (i: number) => openAdvanced === runParamsKey(selection.runs[i]!);
 
   // Support refuses refunds on a poor result once advanced params were edited, so editing them needs
   // the same acknowledgement as the in-app trainer — per run, and again when its model changes.
-  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
   const advancedAcknowledged = (i: number) =>
     acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
   const fieldLocked = (i: number, field: ParamField) =>
@@ -302,10 +310,13 @@
   const isExtra = (field: ParamField): field is ExtraParamField =>
     EXTRA_PARAM_FIELDS.includes(field as ExtraParamField);
 
-  const defaultsAt = (i: number) => defaultRunParams(selection.runs[i]!, trigger);
+  const defaultsAt = (i: number) =>
+    defaultRunParams(selection.runs[i]!, trigger, selection.loraType);
   const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode);
   const deviationsByRun = $derived(
-    selection.runs.map((run, i) => paramDeviations(run, paramsAt(i), labelMode, trigger))
+    selection.runs.map((run, i) =>
+      paramDeviations(run, paramsAt(i), labelMode, trigger, selection.loraType)
+    )
   );
   const deviationsAt = (i: number) => deviationsByRun[i] ?? [];
   // The Advanced panel's own count — Steps lives in the header, Checkpoints in the panel.
@@ -331,8 +342,8 @@
     isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;
-    if (field === 'textEncoderLr' && teLocked(run))
-      return `Not available for ${runCard(run).name} — ${TE_TRAINING_UNSUPPORTED_REASON}`;
+    const teReason = field === 'textEncoderLr' ? teLockReason(run) : undefined;
+    if (teReason) return teReason;
     return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
@@ -361,6 +372,9 @@
   // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
   function clampField(i: number, field: ParamField, bound: ParamBound) {
     const p = paramsAt(i) as unknown as Record<string, NumericInput | boolean>;
+    // Leave a cleared field blank — Number('') is 0, which would clamp up to `min`; the Start payload
+    // fills a blank with the model's default instead.
+    if (typeof p[field] === 'string' && !p[field].trim()) return;
     const n = Number(p[field]);
     if (!Number.isFinite(n)) return;
     const clamped = Math.min(bound.max, Math.max(bound.min, n));
@@ -605,7 +619,8 @@
         max={bound?.max}
         step={bound?.step}
         aria-label={PARAM_LABELS[f.field]}
-        bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
+        bind:value={() => numberInputValue(paramsAt(i)[f.field] as NumericInput),
+          (v) => setField(i, f.field, v ?? '')}
         onblur={() => bound && clampField(i, f.field, bound)}
         disabled={locked || unacknowledged}
         class="h-7 font-mono"
@@ -679,9 +694,9 @@
               {:else}
                 <button
                   type="button"
-                  onclick={() => (openAdv = openAdv === i ? -1 : i)}
+                  onclick={() => (openAdvanced = advancedOpen(i) ? '' : runParamsKey(run))}
                   class="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition
-                  {openAdv === i
+                  {advancedOpen(i)
                     ? 'border-primary/50 bg-primary/10 text-primary'
                     : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
                 >
@@ -691,7 +706,7 @@
                       {advancedDeviationsAt(i).length} changed
                     </span>
                   {/if}
-                  {#if openAdv === i}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
+                  {#if advancedOpen(i)}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
                       size={12}
                       stroke={2}
                     />{/if}
@@ -737,7 +752,7 @@
           </div>
           {/if}
 
-          {#if openAdv === i && !noAdvancedParams(run)}
+          {#if advancedOpen(i) && !noAdvancedParams(run)}
             {@const extras = supportedExtras(i)}
             {@const hidden = unsupportedExtras(i)}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
@@ -863,7 +878,7 @@
     </div>
   </div>
 
-  <aside class="h-fit rounded-xl lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto border border-dark-4 bg-dark-6 p-5">
+  <StickySummary>
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">What you're starting</h3>
     <dl class="m-0 flex flex-col gap-1 text-sm">
       <div class="flex justify-between gap-2.5">
@@ -1067,7 +1082,7 @@
     <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails
     </p>
-  </aside>
+  </StickySummary>
 </div>
 
 <div class="mt-6 flex items-center justify-between gap-3 border-t border-dark-4 pt-5">

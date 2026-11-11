@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { matches, type Where } from './prisma-where.fixture';
 import type * as AgentReviewService from '~/server/services/blocks/agent-review.service';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as ModAlert from '~/server/common/mod-alert';
@@ -21,6 +22,7 @@ const m = vi.hoisted(() => ({
   autodeployOn: vi.fn(async () => true),
   agentAutostartOn: vi.fn(async () => true),
   agentBaseOn: vi.fn(async () => true),
+  automationOn: vi.fn(async (): Promise<boolean> => true),
   startClaimedReviewBuild: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   startAgentReview: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   notifyModAlert: vi.fn(async (..._a: unknown[]): Promise<string> => 'delivered'),
@@ -31,6 +33,7 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   isAppBlocksReviewAutodeployEnabled: () => m.autodeployOn(),
   isAppBlocksAgenticReviewAutostartEnabled: () => m.agentAutostartOn(),
   isAppBlocksAgenticReviewEnabled: () => m.agentBaseOn(),
+  isAgentReviewAutomationEnabled: () => m.automationOn(),
 }));
 vi.mock('~/server/services/blocks/publish-request.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PublishRequestService>()),
@@ -74,20 +77,6 @@ type Row = {
 let rows: Row[] = [];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-type Where = Record<string, unknown>;
-function matches(row: Row, where: Where): boolean {
-  return Object.entries(where).every(([key, cond]) => {
-    const value = (row as unknown as Record<string, unknown>)[key];
-    if (cond && typeof cond === 'object' && !(cond instanceof Date)) {
-      const c = cond as { in?: unknown[]; gt?: Date; gte?: Date; not?: unknown };
-      if (c.in) return c.in.includes(value);
-      if (c.gt) return value instanceof Date && value.getTime() > c.gt.getTime();
-      if (c.gte) return value instanceof Date && value.getTime() >= c.gte.getTime();
-      if ('not' in c) return value !== c.not;
-    }
-    return value === cond;
-  });
-}
 const table = {
   // The read a statement sees is taken when it STARTS; the delay is how long it then takes.
   // That is what lets an unlocked second claim count the slots before the first claim's
@@ -165,16 +154,38 @@ const queued = () => row({ deployState: 'preview-queued' });
 const states = () => rows.map((r) => r.deployState);
 
 /** sysRedis MULTI whose INCR answers `count` (or throws). */
+/**
+ * Today's agent-review auto-start reservation, in cents: a real counter shared by the MULTI's
+ * INCRBY and the plain INCRBY that releases it, so concurrent starts see each other.
+ */
+const reservation = { cents: 0, fail: false };
+
 function budgetCounter(count: number | Error) {
+  let incrByCents: number | null = null;
   const chain = {
     set: vi.fn((..._a: unknown[]) => chain),
     incr: vi.fn(() => chain),
+    incrBy: vi.fn((_k: string, cents: number) => {
+      incrByCents = cents;
+      return chain;
+    }),
     exec: vi.fn(async () => {
+      if (incrByCents !== null) {
+        const cents = incrByCents;
+        incrByCents = null;
+        if (reservation.fail) throw new Error('redis down');
+        reservation.cents += cents;
+        return ['OK', reservation.cents];
+      }
       if (count instanceof Error) throw count;
       return ['OK', count];
     }),
   };
   redisMock.sysRedis.multi.mockImplementation(() => chain);
+  redisMock.sysRedis.incrBy.mockImplementation(async (_k: string, cents: number) => {
+    reservation.cents += cents;
+    return reservation.cents;
+  });
   return chain;
 }
 
@@ -187,12 +198,18 @@ beforeEach(() => {
   m.autodeployOn.mockResolvedValue(true);
   m.agentAutostartOn.mockResolvedValue(true);
   m.agentBaseOn.mockResolvedValue(true);
+  // The shared pair, as the real helper composes it, so tests that flip one flag still work.
+  m.automationOn.mockImplementation(
+    async () => (await m.agentAutostartOn()) && (await m.agentBaseOn())
+  );
   m.startClaimedReviewBuild.mockReset();
   m.startClaimedReviewBuild.mockResolvedValue({});
   m.startAgentReview.mockReset();
   m.startAgentReview.mockResolvedValue({});
   m.notifyModAlert.mockReset();
   m.notifyModAlert.mockResolvedValue('delivered');
+  reservation.cents = 0;
+  reservation.fail = false;
   budgetCounter(1);
   envMock.set({
     NEXTAUTH_URL: 'https://civitai.example',
@@ -230,7 +247,12 @@ describe('autoStartReviewPreview', () => {
     expect(startedIds()).toEqual([r.id]);
     expect(m.startClaimedReviewBuild.mock.calls[0][1]).toEqual({ kind: 'system' });
     expect(r.deployState).toBe('preview-building');
-    expect(JSON.parse(r.deployDetail!)).toEqual({ actor: 'system' });
+    // The claim stamps the build start, so a teardown before the build's first write still
+    // leaves the row holding its slot.
+    expect(JSON.parse(r.deployDetail!)).toEqual({
+      actor: 'system',
+      buildStartedAt: expect.any(String),
+    });
   });
 
   it('never queues over a preview a moderator already started', async () => {
@@ -378,11 +400,75 @@ describe('the platform build cap', () => {
     expect(lockCalls.n).toBe(2);
   });
 
-  it('flag OFF: queued previews are left queued (the flag is the kill switch)', async () => {
-    rows = [queued()];
+  // The flag is the kill switch for automatic builds, so nothing queued is built with it off. But
+  // a queued row never expires and nothing else starts it: left queued it would be stranded.
+  it('flag OFF: queued previews are not built, and are handed back to "waiting for a moderator"', async () => {
+    const q = queued();
+    rows = [q];
     m.autodeployOn.mockResolvedValue(false);
     expect(await drainReviewPreviewQueue()).toEqual({ started: 0, waiting: false });
     expect(m.startClaimedReviewBuild).not.toHaveBeenCalled();
+    expect(q.deployState).toBeNull();
+    expect(q.deployDetail).toBeNull();
+  });
+
+  it('a superseded or decided request whose build is still running keeps its slot', async () => {
+    rows = [row({ status: 'withdrawn', deployState: 'preview-building' }), building(), building()];
+    const q = queued();
+    rows.push(q);
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 0, waiting: true });
+    expect(q.deployState).toBe('preview-queued');
+  });
+
+  // Torn down mid-build: no preview (deploy_state null), its started-build detail kept.
+  const tornDownMidBuild = () =>
+    row({
+      deployState: null,
+      deployDetail: JSON.stringify({ actor: 'system', buildStartedAt: new Date().toISOString() }),
+    });
+
+  it('a preview torn down mid-build (no preview, build detail kept) keeps its slot', async () => {
+    rows = [tornDownMidBuild(), building(), building()];
+    const q = queued();
+    rows.push(q);
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 0, waiting: true });
+    expect(q.deployState).toBe('preview-queued');
+  });
+
+  it('CONTROL: a torn-down row whose build settled (detail cleared) holds no slot', async () => {
+    const torn = tornDownMidBuild();
+    rows = [torn, building(), building()];
+    const q = queued();
+    rows.push(q);
+    torn.deployDetail = null;
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 1, waiting: false });
+    expect(startedIds()).toEqual([q.id]);
+  });
+
+  it('a torn-down row past the stale window holds no slot', async () => {
+    const torn = tornDownMidBuild();
+    torn.deployUpdatedAt = new Date(Date.now() - 46 * 60_000);
+    rows = [torn, building(), building()];
+    const q = queued();
+    rows.push(q);
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 1, waiting: false });
+  });
+
+  it('a pending row that never started a review build holds no slot', async () => {
+    rows = [row({ deployState: null, deployDetail: null }), building(), building()];
+    const q = queued();
+    rows.push(q);
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 1, waiting: false });
+  });
+
+  it('CONTROL: once that build settles (row cleared), the queued preview starts', async () => {
+    const settled = row({ status: 'withdrawn', deployState: 'preview-building' });
+    rows = [settled, building(), building()];
+    const q = queued();
+    rows.push(q);
+    settled.deployState = null;
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 1, waiting: false });
+    expect(startedIds()).toEqual([q.id]);
   });
 });
 
@@ -499,6 +585,19 @@ describe('agent review auto-start', () => {
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
   });
 
+  it("🔴 listing-edit impersonation checks' spend counts against the same daily budget", async () => {
+    // $37 of reviews + $2 cap = $39 fits; add $1.50 of listing-edit checks and it no longer does.
+    spend(37);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
+    redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+      key.includes('listing-check-spend') ? '150' : null) as never);
+    try {
+      expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('budget-refused');
+    } finally {
+      redisMock.sysRedis.get.mockImplementation((async () => null) as never);
+    }
+  });
+
   it('the budget is env-configurable', async () => {
     envMock.set({ AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: 100 });
     spend(90);
@@ -512,6 +611,13 @@ describe('agent review auto-start', () => {
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
+  it('🔴 reads the ONE shared switch pair (isAgentReviewAutomationEnabled), not its own copy', async () => {
+    spend(0);
+    m.automationOn.mockResolvedValue(false);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('disabled');
+    expect(m.startAgentReview).not.toHaveBeenCalled();
+  });
+
   it('flag OFF: no auto-start', async () => {
     spend(0);
     m.agentAutostartOn.mockResolvedValue(false);
@@ -519,12 +625,16 @@ describe('agent review auto-start', () => {
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
-  it('a live preview triggers it; a failed one does not', async () => {
+  it('🔴 every settled review build triggers it — a failed preview too (the agent reads the bundle)', async () => {
     spend(0);
     await onReviewBuildSettled({ publishRequestId: PUBREQ, live: false });
-    expect(m.startAgentReview).not.toHaveBeenCalled();
-    await onReviewBuildSettled({ publishRequestId: PUBREQ, live: true });
     expect(m.startAgentReview).toHaveBeenCalledTimes(1);
+    await onReviewBuildSettled({ publishRequestId: 'pubreq_other', live: true });
+    expect(m.startAgentReview).toHaveBeenCalledTimes(2);
+    expect(m.startAgentReview).toHaveBeenLastCalledWith({
+      publishRequestId: 'pubreq_other',
+      modUserId: null,
+    });
   });
 
   it('a start failure is reported, never thrown', async () => {
@@ -685,5 +795,69 @@ describe('agent review auto-start needs the agent-review feature on', () => {
     m.agentBaseOn.mockResolvedValue(false);
     expect(await maybeAutoStartAgentReview('pubreq_live')).toBe('disabled');
     expect(m.startAgentReview).not.toHaveBeenCalled();
+  });
+});
+
+describe('agent review auto-start: concurrent go-lives share the budget', () => {
+  /** Runs started today with no cost yet; each start adds one after its I/O. */
+  let running = 0;
+  // Flags and the start are INJECTED here, and the two calls do not import modules at the same
+  // instant: under the suite's module sharing, one of two CONCURRENT first-time dynamic imports
+  // of a mocked module was measured resolving the real module (its env failed to validate).
+  const deps = {
+    automationOn: async () => true,
+    startAgentReview: (...a: unknown[]) => m.startAgentReview(...a),
+  };
+  beforeEach(() => {
+    running = 0;
+    dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue(null);
+    // $38 already reported today: room for exactly one more $2 review under the $40 budget.
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 38 } });
+    dbMock.dbWrite.appReviewAgentReport.count.mockImplementation(async () => running);
+    m.startAgentReview.mockImplementation(async () => {
+      await sleep(20); // stage the bundle, provision the Job...
+      running++; // ...then its running report row exists
+      return {};
+    });
+  });
+
+  // The race the reservation closes: B decides while A is INSIDE its start — A has passed the
+  // budget check, but its running row does not exist yet, so a spend read alone sees room.
+  it('a second go-live while the first is mid-start (no row yet): exactly one starts', async () => {
+    let releaseA: () => void = () => undefined;
+    const aGate = new Promise<void>((r) => (releaseA = r));
+    m.startAgentReview.mockImplementationOnce(async () => {
+      await aGate; // A is mid-start until B has decided
+      running++;
+      return {};
+    });
+    const a = maybeAutoStartAgentReview('pubreq_a', deps);
+    await vi.waitFor(() => expect(m.startAgentReview).toHaveBeenCalledTimes(1));
+    expect(running).toBe(0);
+    const b = await maybeAutoStartAgentReview('pubreq_b', deps);
+    releaseA();
+    expect([await a, b]).toEqual(['started', 'budget-refused']);
+    expect(m.startAgentReview).toHaveBeenCalledTimes(1);
+    // Every reservation is released once its start is over.
+    expect(reservation.cents).toBe(0);
+  });
+
+  it('CONTROL: one at a time, the second sees the first one running and is refused', async () => {
+    expect(await maybeAutoStartAgentReview('pubreq_a', deps)).toBe('started');
+    expect(await maybeAutoStartAgentReview('pubreq_b', deps)).toBe('budget-refused');
+  });
+
+  it('an unreadable reservation refuses rather than starting uncounted', async () => {
+    reservation.fail = true;
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
+    expect(await maybeAutoStartAgentReview('pubreq_a', deps)).toBe('budget-refused');
+    expect(m.startAgentReview).not.toHaveBeenCalled();
+  });
+
+  it('a start that throws still releases its reservation', async () => {
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
+    m.startAgentReview.mockRejectedValue(new Error('k8s down'));
+    expect(await maybeAutoStartAgentReview('pubreq_a', deps)).toBe('error');
+    expect(reservation.cents).toBe(0);
   });
 });

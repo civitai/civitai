@@ -10,6 +10,7 @@ const {
   mockRunImageSearch,
   mockAcquire,
   mockHeldLevel,
+  mockWithheld,
 } = vi.hoisted(() => ({
   mockGetPostDetail: vi.fn(),
   mockRateLimit: vi.fn(),
@@ -17,6 +18,7 @@ const {
   mockRunImageSearch: vi.fn(),
   mockAcquire: vi.fn(),
   mockHeldLevel: vi.fn(),
+  mockWithheld: vi.fn(async () => false),
 }));
 
 vi.mock('~/server/services/post.service', () => ({ getPostDetail: mockGetPostDetail }));
@@ -33,7 +35,10 @@ vi.mock('@civitai/next-axiom', () => ({
 }));
 vi.mock('~/server/services/image-search.service', () => ({ runImageSearch: mockRunImageSearch }));
 // Hand-listed: the endpoint takes only this from model.service, whose import graph is large.
-vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: mockHeldLevel }));
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: mockHeldLevel,
+  isModelGalleryWithheld: mockWithheld,
+}));
 vi.mock('~/server/utils/request-bulkhead', async (importOriginal) => ({
   ...(await importOriginal<typeof RequestBulkhead>()),
   acquireBulkheadSlot: mockAcquire,
@@ -180,6 +185,18 @@ describe('GET /api/v1/posts/[id]', () => {
     await call({ id: '55288' });
 
     expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(NsfwLevel.PG);
+  });
+
+  it('serves the post of a taken-down model with no images', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockWithheld.mockResolvedValueOnce(true);
+
+    const { statusCode, body } = await call({ id: '55288' });
+
+    expect(statusCode).toBe(200);
+    expect(body).toMatchObject({ id: 55288, images: [] });
+    expect(mockWithheld).toHaveBeenCalledWith({ postId: 55288 });
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
 
   it('serves the post with no images when its held level allows none', async () => {

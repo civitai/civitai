@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
 import { parseServiceStatus } from '$lib/service-status-core';
 import {
   LORA_TYPES,
   MODEL_CARDS,
+  PARAM_DEFAULTS,
+  TE_LOCKED_ECOSYSTEMS,
   cardByType,
   catalogFlagKeys,
   cardsForMedia,
@@ -21,7 +24,9 @@ import {
   networkDimSizeHint,
   newRun,
   nextImgId,
+  numberInputValue,
   optimizerLrParams,
+  teLocked,
   paramDeviations,
   paramHelpText,
   promptHasTrigger,
@@ -149,6 +154,19 @@ describe('extra parameter capabilities', () => {
     });
     expect(defaultRunParams(run('sdxl'), '  ')).toMatchObject({ shuffleTokens: false });
   });
+
+  it('sizes an Anima network by LoRA type — 8 for characters, 16 otherwise, custom base too', () => {
+    const size = (r: Run, loraType: string) => {
+      const { networkDim, networkAlpha } = defaultRunParams(r, '', loraType);
+      return [networkDim, networkAlpha];
+    };
+    for (const r of [run('anima'), run('anima', CUSTOM_VERSION_KEY)]) {
+      expect(size(r, 'character')).toEqual(['8', '8']);
+      expect(size(r, 'style')).toEqual(['16', '16']);
+      expect(size(r, 'concept')).toEqual(['16', '16']);
+    }
+    expect(size(run('zimage'), 'character')).toEqual(['32', '32']);
+  });
 });
 
 describe('paramDeviations', () => {
@@ -166,6 +184,18 @@ describe('paramDeviations', () => {
     expect(paramDeviations(r, defaultRunParams(r), 'tag', 'mychar').map((d) => d.field)).toEqual([
       'shuffleTokens',
       'keepTokens',
+    ]);
+  });
+
+  it("measures network size against the LoRA type's recommendation", () => {
+    const r = run('anima');
+    expect(
+      paramDeviations(r, defaultRunParams(r, '', 'character'), 'tag', '', 'character')
+    ).toEqual([]);
+    const devs = paramDeviations(r, defaultRunParams(r, '', 'style'), 'tag', '', 'character');
+    expect(devs.map((d) => [d.field, d.recommended])).toEqual([
+      ['networkDim', '8'],
+      ['networkAlpha', '8'],
     ]);
   });
 
@@ -241,6 +271,28 @@ describe('buildTrainingRuns extra fields', () => {
     });
     expect(video.noiseOffset).toBe(0);
     expect(video.flipAugmentation).toBe(false);
+  });
+
+  it('sends the fallback, not 0, for a cleared numeric field', () => {
+    const out = build(run('sdxl'), 'tag', { unetLr: '', networkDim: '  ' });
+    const d = defaultRunParams(run('sdxl'));
+    expect(out.unetLr).toBe(Number(d.unetLr));
+    expect(out.networkDim).toBe(Number(d.networkDim));
+    expect(out.unetLr).toBeGreaterThan(0);
+  });
+
+  it('falls back to the Prodigy rate for a cleared LR under Prodigy', () => {
+    const out = build(run('sdxl'), 'tag', { optimizer: 'Prodigy', unetLr: '' });
+    expect(out.unetLr).toBe(1);
+  });
+});
+
+describe('numberInputValue', () => {
+  // A blank field must read back as null, or Svelte clears a half-typed `1e` on the way to `1e-4`.
+  it('reads a blank field as null and passes values through', () => {
+    expect(numberInputValue('')).toBeNull();
+    expect(numberInputValue(0.0001)).toBe(0.0001);
+    expect(numberInputValue(0)).toBe(0);
   });
 });
 
@@ -446,17 +498,75 @@ describe('sample input images', () => {
 });
 
 describe('optimizer learning-rate coupling', () => {
-  it('puts both rates at 1 when Prodigy is picked', () => {
-    const r = run('sdxl');
+  it.each(['sdxl', 'sd15', 'ernie'])('puts both rates at 1 when Prodigy is picked (%s)', (type) => {
+    const r = run(type);
     const params = { ...defaultRunParams(r), optimizer: 'Prodigy' };
     expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '1' });
+    expect(teLocked(r)).toBe(false);
   });
 
-  it('leaves a locked text-encoder rate at 0 under Prodigy', () => {
-    const krea = run('krea2');
-    const params = { ...defaultRunParams(krea), optimizer: 'Prodigy' };
-    expect(optimizerLrParams(krea, params)).toMatchObject({ unetLr: '1' });
-    expect(Number(optimizerLrParams(krea, params).textEncoderLr)).toBe(0);
+  // One per class the in-app trainer locks, the Klein edit cards included through their ecosystem.
+  it.each([
+    'flux',
+    'flux2klein',
+    'flux2klein-edit',
+    'chroma',
+    'qwen',
+    'zimage',
+    'hidream-o1',
+    'anima',
+    'boogu',
+    'krea2',
+    'mageflow',
+    'ideogram4',
+    'wan',
+    'hunyuan',
+    'ltx',
+    'minimaxh3',
+    'ming',
+    'qwen21',
+    'yue2',
+    'acestep',
+  ])('locks the text-encoder rate at 0, Prodigy included (%s)', (type) => {
+    const r = run(type);
+    // A stale nonzero rate (a saved run, a model switch) must not become 1.
+    const params = { ...defaultRunParams(r), optimizer: 'Prodigy', textEncoderLr: '0.0001' };
+    expect(teLocked(r)).toBe(true);
+    expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '0' });
+  });
+
+  it.each(['mossimage', 'flux3klein'])(
+    'keeps a default-off text encoder off under Prodigy, but editable (%s)',
+    (type) => {
+      const r = run(type);
+      const params = { ...defaultRunParams(r), optimizer: 'Prodigy' };
+      expect(teLocked(r)).toBe(false);
+      expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '0' });
+      expect(optimizerLrParams(r, { ...params, textEncoderLr: '0.0001' }).textEncoderLr).toBe('1');
+    }
+  );
+
+  it('locks every version the in-app trainer locks', () => {
+    const locked = MODEL_CARDS.flatMap((card) =>
+      card.versions.filter((v) => isTextEncoderLockedBase(v.key)).map((v) => run(card.type, v.key))
+    );
+    expect(locked.length).toBeGreaterThan(20);
+    for (const r of locked) expect(teLocked(r)).toBe(true);
+  });
+
+  // The server locks by ecosystem; one that mixed a locked version with a trainable one would lock both.
+  it('locks no ecosystem that holds a version recommending a text encoder rate', () => {
+    const trainable = MODEL_CARDS.flatMap((c) => c.versions).filter(
+      (v) =>
+        TE_LOCKED_ECOSYSTEMS.has(v.ecosystem) && (PARAM_DEFAULTS[v.key]?.textEncoderLr ?? 0) > 0
+    );
+    expect(trainable.map((v) => v.key)).toEqual([]);
+  });
+
+  it('leaves a text encoder the user turned off at 0 under Prodigy', () => {
+    const r = run('sdxl');
+    const params = { ...defaultRunParams(r), optimizer: 'Prodigy', textEncoderLr: '0' };
+    expect(optimizerLrParams(r, params).textEncoderLr).toBe('0');
   });
 
   it('resets Prodigy-level rates to the model defaults when switching away', () => {

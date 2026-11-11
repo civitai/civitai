@@ -63,6 +63,7 @@
         isPaidMember: h.config.isPaidMember,
         pricingUrl: h.config.pricingUrl,
         supportUrl: h.config.supportUrl,
+        dataPolicyUrl: h.config.dataPolicyUrl,
       },
       hrefFor: (loc) => h.hrefFor(loc),
       navigate: (loc, opts) => h.navigate(loc, opts),

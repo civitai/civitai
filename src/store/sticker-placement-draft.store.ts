@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react';
 import { create } from 'zustand';
 import { mintPurchaseKey } from '~/utils/purchase-key';
 import type { StickerTrackKey } from '~/shared/utils/sticker-track';
+import type { CreateStickerPlacementInput } from '~/server/schema/placement.schema';
 import { keyMinShown, poseAt, upsertKey } from '~/shared/utils/sticker-track-edit';
 import {
   STICKER_PLACEMENT_DEFAULT_OPACITY,
@@ -239,6 +240,9 @@ interface StickerPlacementDraftStore {
   playheadMs: number;
   /** Moves the playhead and draws every sticker in Movement there. Sets no key. */
   setPlayhead: (ms: number) => void;
+  /** Whether the video is playing, kept in step by the sticker timeline while it is open. */
+  videoPlaying: boolean;
+  setVideoPlaying: (playing: boolean) => void;
   /** Static or Movement. Movement with no keys starts one at the playhead, at the current pose. */
   setMotion: (id: string, on: boolean) => void;
   /** Replaces a draft's keys (the timeline's edits) and redraws it at the playhead. */
@@ -246,7 +250,18 @@ interface StickerPlacementDraftStore {
   /** Each draft's own pay button, by its label, for the floating Place that presses it. */
   primaryLabels: Record<string, string>;
   setPrimaryLabel: (id: string, label: string | null) => void;
+  /** Drafts whose own button would place them now (no purchase first), with what it would send. */
+  readyPlacements: Record<string, ReadyPlacement>;
+  setReadyPlacement: (id: string, ready: ReadyPlacement | null) => void;
+  /** Place all is running; each draft's own Place waits so nothing is placed twice. */
+  placingAll: boolean;
+  setPlacingAll: (placingAll: boolean) => void;
 }
+
+export type ReadyPlacement = {
+  free: boolean;
+  input: () => CreateStickerPlacementInput;
+};
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -302,6 +317,7 @@ const ENDED = {
   // purchases made against THESE drafts.
   paidDraftIds: [] as string[],
   playheadMs: 0,
+  videoPlaying: false,
 };
 
 const createDraftStore = () =>
@@ -318,7 +334,10 @@ const createDraftStore = () =>
     interaction: null,
     interactionPointerId: null,
     playheadMs: 0,
+    videoPlaying: false,
     primaryLabels: {},
+    readyPlacements: {},
+    placingAll: false,
 
     // Reopening on the image you are already placing on keeps the drafts — that is
     // the way back to the panel after putting it away, so taking them would punish
@@ -539,6 +558,8 @@ const createDraftStore = () =>
         drafts: state.drafts.map((draft) => (moving(draft) ? drawnAt(draft, ms) : draft)),
       })),
 
+    setVideoPlaying: (videoPlaying) => set({ videoPlaying }),
+
     setMotion: (id, on) =>
       set((state) => ({
         drafts: state.drafts.map((draft) => {
@@ -560,6 +581,18 @@ const createDraftStore = () =>
         else primaryLabels[id] = label;
         return { primaryLabels };
       }),
+
+    setReadyPlacement: (id, ready) =>
+      set((state) => {
+        const current = state.readyPlacements[id] ?? null;
+        if (current === ready) return state;
+        const readyPlacements = { ...state.readyPlacements };
+        if (ready == null) delete readyPlacements[id];
+        else readyPlacements[id] = ready;
+        return { readyPlacements };
+      }),
+
+    setPlacingAll: (placingAll) => set({ placingAll }),
 
     setKeys: (id, keys) =>
       set((state) => ({

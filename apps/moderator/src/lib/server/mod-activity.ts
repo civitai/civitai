@@ -10,26 +10,38 @@ import { usersByIds } from './users.service';
 // clause is valid whether or not a unique index exists, so this works both before and after the migration
 // that drops ModActivity's (activity, entityType, entityId) unique index. Naming the target would fail with
 // 42P10 once that index goes; omitting the clause fails with 23505 until it does. Do not add a target.
-export async function recordModActivity(input: {
+export async function recordModActivity(input: ModActivityInsert): Promise<void> {
+  try {
+    await insertModActivity(input);
+  } catch (e) {
+    console.error('[mod-activity] failed to record', { ...input, error: e });
+  }
+}
+
+type ModActivityInsert = {
   userId: number;
   entityType: string | null;
   entityId: number | null;
   activity: string;
-}): Promise<void> {
-  try {
-    await dbWrite
-      .insertInto('ModActivity')
-      .values({
-        userId: input.userId,
-        entityType: input.entityType,
-        entityId: input.entityId,
-        activity: input.activity,
-      })
-      .onConflict((oc) => oc.doNothing())
-      .execute();
-  } catch (e) {
-    console.error('[mod-activity] failed to record', { ...input, error: e });
-  }
+  credential?: 'sheet' | 'web';
+};
+
+/** The same row, throwing when it is not written: for a caller that must not go on without it. */
+export async function insertModActivity(input: ModActivityInsert): Promise<void> {
+  const row = await dbWrite
+    .insertInto('ModActivity')
+    .values({
+      userId: input.userId,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      activity: input.activity,
+      // Named only when set, so no other writer depends on the column.
+      ...(input.credential ? { credential: input.credential } : {}),
+    })
+    .onConflict((oc) => oc.doNothing())
+    .returning('id')
+    .executeTakeFirst();
+  if (!row) throw new Error(`ModActivity ${input.activity} row was not written`);
 }
 
 /**

@@ -14,6 +14,8 @@ export const useCsamContext = () => {
   if (!context) throw new Error('missing Csam Provider');
   return context;
 };
+/** The report's subject, where a report is being filed. */
+export const useCsamSubjectId = () => useContext(CsamContext)?.userId;
 
 export function CsamProvider({
   children,

@@ -42,8 +42,7 @@ beforeEach(() => vi.clearAllMocks());
 describe('applyScamVerdict', () => {
   it.each([
     ['ChatMessage', 'chatMessages', false],
-    ['Comment', 'comments', false],
-    ['CommentV2', 'commentsV2', false],
+    ['CommentV3', 'comments', false],
     ['ResourceReview', 'none', false],
     ['User', 'none', true],
     ['UserProfile', 'none', false],
@@ -76,7 +75,7 @@ describe('applyScamVerdict', () => {
 
   it('caps the text it puts on the ledger', async () => {
     await applyScamVerdict(
-      'Comment',
+      'CommentV3',
       args({ subject: subject(5, {}, 'z'.repeat(SCAM_TRIGGER_TEXT_CHARS + 10)) })
     );
     expect(vi.mocked(autoMuteScamAccount).mock.calls[0][0].evidence.text).toHaveLength(
@@ -85,12 +84,12 @@ describe('applyScamVerdict', () => {
   });
 
   it('does nothing on a clean verdict', async () => {
-    await applyScamVerdict('Comment', args({ outcome: clean }));
+    await applyScamVerdict('CommentV3', args({ outcome: clean }));
     expect(autoMuteScamAccount).not.toHaveBeenCalled();
   });
 
   it.each([undefined, 0, -1])('does nothing without a real subject user (%s)', async (userId) => {
-    await applyScamVerdict('Comment', args({ subject: subject(userId) }));
+    await applyScamVerdict('CommentV3', args({ subject: subject(userId) }));
     expect(autoMuteScamAccount).not.toHaveBeenCalled();
   });
 
@@ -115,7 +114,7 @@ describe('registration', () => {
   });
 
   it('routes a verdict through the registered adapter', async () => {
-    await getModerationAdapter('Comment')!.applyTextScan!(args() as never);
+    await getModerationAdapter('CommentV3')!.applyTextScan!(args() as never);
     expect(autoMuteScamAccount).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 5, cleanup: 'comments' })
     );

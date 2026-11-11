@@ -59,7 +59,7 @@ const submit = () =>
     modelVersionId: 55,
     token: 'tok',
     user: { id: 7, isModerator: false } as never,
-    features: { trainingStepsPricing: true } as never,
+    features: { krea2Training: true, trainingStepsPricing: true } as never,
     domain: 'red',
   } as never);
 

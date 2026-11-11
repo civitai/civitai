@@ -161,6 +161,7 @@ function HatDraftSticker({
       onGesture={onGesture}
       opaque
       liftOverTray
+      knobFlips
       commit={
         <Button
           size="sm"
@@ -465,7 +466,11 @@ function HatTurfLayerContent({
             (onMore ? (
               <button
                 type="button"
-                className={clsx(classes.more, classes.moreButton)}
+                className={clsx(
+                  classes.more,
+                  source === 'feed' && classes.moreFeed,
+                  classes.moreButton
+                )}
                 data-testid="hat-turf-more"
                 disabled={moreLoading}
                 onClick={(event) => {
@@ -477,7 +482,7 @@ function HatTurfLayerContent({
               </button>
             ) : (
               <div
-                className={classes.more}
+                className={clsx(classes.more, source === 'feed' && classes.moreFeed)}
                 data-testid="hat-turf-more"
                 title={`${overflow} more hats`}
               >

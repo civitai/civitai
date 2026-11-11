@@ -12,7 +12,9 @@ import { clickhouse } from '~/server/clickhouse/client';
 import {
   getImageUploadIpEvents,
   UPLOAD_REQUEST_IP_NOTE,
+  FEEDBACK_CAPTURE_UPLOAD_IP_NOTE,
 } from '~/server/services/image-upload-action.service';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob } from '~/utils/file-utils';
@@ -40,7 +42,6 @@ import type { Report } from '@civitai/cybertipline-tools';
 import {
   Client,
   Environment,
-  FileDetailType,
   FileRelevance,
   IncidentType,
   IPEventName,
@@ -72,7 +73,6 @@ import { supplementalReportText } from '~/server/services/csam-supplemental-text
 import type { CsamContextText } from '~/server/services/csam-context-text';
 import { contextWebPageIncidents } from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
-import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
@@ -86,6 +86,7 @@ import {
   evidenceFilesToSend,
   evidenceReportInfo,
   evidenceSizeProblem,
+  promptFileDetails,
   readVerifiedEvidence,
   verifyStoredEvidence,
 } from '~/server/services/generator-evidence/evidence-payload';
@@ -165,7 +166,7 @@ type CsamReportUserActivity = {
   ip: string;
   time: string;
   details?: {
-    type: 'post' | 'model-version' | 'image-upload-request';
+    type: 'post' | 'model-version' | 'image-upload-request' | 'feedback-capture-upload';
     id: number;
   };
 };
@@ -435,6 +436,7 @@ async function getImages(imageIds?: number[]) {
     where: { id: { in: imageIds } },
     select: {
       id: true,
+      userId: true,
       url: true,
       createdAt: true,
       name: true,
@@ -611,6 +613,10 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
+/** Filed with each feedback page capture in an image report, whoever the report's subject is. */
+export const FEEDBACK_CAPTURE_FILE_NOTE =
+  'Page capture submitted by a reporter: this file is a screenshot of a Civitai page that a user attached to a feedback report sent to Civitai. It may show content posted by an account other than the one who submitted it.';
+
 export function getReportedUserAdditionalInfo(
   email: string | null,
   userActivity: CsamReportUserActivity[]
@@ -620,6 +626,9 @@ export function getReportedUserAdditionalInfo(
       email ? `Email: ${email}` : null,
       userActivity.some((a) => a.details?.type === 'image-upload-request')
         ? UPLOAD_REQUEST_IP_NOTE
+        : null,
+      userActivity.some((a) => a.details?.type === 'feedback-capture-upload')
+        ? FEEDBACK_CAPTURE_UPLOAD_IP_NOTE
         : null,
     ]
       .filter(Boolean)
@@ -1380,12 +1389,19 @@ async function reportImages(claim: SendClaim) {
       fileAnnotations.physicalHarm = true;
     }
     const originalFileName = image.name?.split('?')[0];
+    const prompts = promptFileDetails((image.meta ?? {}) as Record<string, unknown>, {
+      storedOnImage: true,
+    });
+    if (isFeedbackCaptureOwner(image.userId))
+      prompts.additionalInfo.unshift(xmlText(FEEDBACK_CAPTURE_FILE_NOTE));
     fileDetailsOf.set(image.id, {
       fileDetails: {
         originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
         locationOfFile: xmlText(getEdgeUrl(image.url, { type: image.type })),
         fileViewedByEsp: viewed.has(image.id),
         fileAnnotations,
+        ...(prompts.details && { details: prompts.details }),
+        ...(prompts.additionalInfo.length && { additionalInfo: prompts.additionalInfo }),
       },
       fileAnnotations,
     });
@@ -1652,6 +1668,14 @@ async function sendGenerationData(
       'archive-data'
     );
 
+  const detailsOf = ({ job }: (typeof fetched)[number]) => {
+    const { details, additionalInfo } = promptFileDetails(job);
+    return {
+      ...GENERATED_FILE_DETAILS,
+      ...(details && { details }),
+      ...(additionalInfo.length && { additionalInfo }),
+    } satisfies FileDetailsXml;
+  };
   let sending: ReturnType<typeof sendEach> | undefined;
   const sent = await sendCyberTip(
     claim,
@@ -1662,32 +1686,16 @@ async function sendGenerationData(
       }),
     },
     {
-      fileDetails: [GENERATED_FILE_DETAILS],
+      fileDetails: fetched.map(detailsOf),
       sendFiles: async (reportId) => {
         sending = sendEach(
           fetched,
-          async ({ job: { prompt, negativePrompt, resources }, url, file }) => {
+          async (item) => {
             const {
               data: { fileId, hash },
-            } = await uploadToCyberTip(claim, await spooledFile(file));
-
-            const valuePair: Array<{ name: string; value: string }> = [];
-            if (prompt)
-              valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
-            if (negativePrompt)
-              valuePair.push({
-                name: 'negativePrompt',
-                value: trimNonAlphanumeric(negativePrompt) ?? '',
-              });
-            if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
-
-            await cybertipClient.submitFileDetails({
-              fileId,
-              reportId,
-              ...GENERATED_FILE_DETAILS,
-              // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
-            });
-            return { url, fileId, hash } satisfies CsamReportGeneratedImageData;
+            } = await uploadToCyberTip(claim, await spooledFile(item.file));
+            await cybertipClient.submitFileDetails({ fileId, reportId, ...detailsOf(item) });
+            return { url: item.url, fileId, hash } satisfies CsamReportGeneratedImageData;
           },
           // The upload reads each file whole: one at a time.
           1
@@ -2169,6 +2177,7 @@ async function getTrainingDataZipStream({
     user: reportingUser ?? undefined,
     // Fetched server-side to build a report, not on a user's behalf.
     attribution: { caller: 'other', actor: 'internal' },
+    redCapable: true,
   });
   if (modelFile.status !== 'success') throw new Error('training data not found');
 

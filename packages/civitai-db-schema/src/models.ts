@@ -260,7 +260,7 @@ export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
 export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
-export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
+export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion" | "Comic";
 
 export type StorylineStatus = "Ongoing" | "Complete";
 
@@ -1379,6 +1379,7 @@ export interface ModActivity {
   entityId: number | null;
   createdAt: Date;
   host: string | null;
+  credential: string | null;
 }
 
 export interface ModThreadClaim {
@@ -1557,6 +1558,9 @@ export interface ResourceReview {
   reactions?: ResourceReviewReaction[];
   helper?: ResourceReviewHelper | null;
   reports?: ResourceReviewReport[];
+  postId: number | null;
+  post?: Post | null;
+  releasedAt: Date | null;
 }
 
 export interface ResourceReviewReaction {
@@ -1672,6 +1676,7 @@ export interface Post {
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
   storylinePendingChapter?: StorylinePendingChapter | null;
+  resourceReviews?: ResourceReview[];
 }
 
 export interface PostMetric {
@@ -3972,6 +3977,7 @@ export interface Collection {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Date | null;
+  archivedAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
   invites?: CollectionInvite[];
@@ -4248,6 +4254,16 @@ export interface CsamQueueSetAside {
   outcome: CsamQueueSetAsideOutcome;
   csamReportId: number | null;
   moderatorId: number;
+  createdAt: Date;
+}
+
+export interface ImageDeferredBlockEffect {
+  imageId: number;
+  violationType: string | null;
+  notifyOwner: boolean;
+  reportReason: string | null;
+  reportIds: number[];
+  blockedBy: number | null;
   createdAt: Date;
 }
 

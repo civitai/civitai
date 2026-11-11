@@ -15,10 +15,20 @@
 //   [c]                              GET    list            POST create
 //   ['_get', c]                      POST   get many  { keys }
 //   [c, key]                         GET    get     PUT put     DELETE delete
-//   [c, key, 'counters', name]       POST   increment
-//   [c, key, 'marks', name]          PUT    mark    DELETE unmark
+//                                    PATCH  one update operator: $inc, $mark or $unmark
+//   [c, key, 'counters', name]       POST   increment         (deprecated: PATCH $inc)
+//   [c, key, 'marks', name]          PUT    mark    DELETE unmark  (deprecated: PATCH $mark/$unmark)
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
+//
+// TALLIES AS UPDATE OPERATORS. A counter or a mark is an update operator on the document:
+// `PATCH /:c/:key` with exactly one of `{"$inc":{"<counter>":<by>}}`, `{"$mark":"<name>"}` or
+// `{"$unmark":"<name>"}` (`parseTallyPatch`). The PATCH is TRANSLATED into the per-tally route
+// the deprecated paths match and runs through the very same operation below, so every gate,
+// budget, moderation scan, import rule and reply is one code path for both. A tally never
+// touches a document's `data` or `version`. A PATCH carrying plain fields is refused: a
+// merge-patch of `data` is reserved for later. The deprecated routes answer exactly as before,
+// with `Deprecation` and `Link` headers (`LEGACY_TALLY_HEADERS`); no `Sunset` is set yet.
 //
 // IMPORTS. Every collection route takes an optional `?from=<source blockId>`: the call then runs
 // in that SOURCE app, as the same viewer, through an import the caller's manifest declares
@@ -39,7 +49,9 @@ import type {
 import {
   markBlockRequestReadMiss,
   recordDocStoreError,
+  recordStorageTallyOp,
   type DocStoreEndpoint,
+  type StorageTallyOp,
 } from '~/server/metrics/app-block-runtime.metrics';
 import {
   hasLinkedOAuthAccount,
@@ -127,7 +139,13 @@ export type StorageRoute =
   | { op: 'getMany'; collection: string }
   | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
   | { op: 'increment'; collection: string; key: string; name: string }
-  | { op: 'mark' | 'unmark'; collection: string; key: string; name: string };
+  | { op: 'mark' | 'unmark'; collection: string; key: string; name: string }
+  // An update operator on one document; translated by `parseTallyPatch` before it runs.
+  | { op: 'patch'; collection: string; key: string };
+
+/** A route `run` executes: every route but `patch`, which is translated into one of these first. */
+type OperationRoute = Exclude<StorageRoute, { op: 'patch' }>;
+type TallyRoute = Extract<StorageRoute, { op: 'increment' | 'mark' | 'unmark' }>;
 
 type Match = { route: StorageRoute } | { methods: string[] } | null;
 
@@ -152,6 +170,7 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
         GET: { op: 'get', collection: a, key: b },
         PUT: { op: 'put', collection: a, key: b },
         DELETE: { op: 'delete', collection: a, key: b },
+        PATCH: { op: 'patch', collection: a, key: b },
       });
     case 4:
       if (a.startsWith('_')) return null;
@@ -177,6 +196,7 @@ export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   if (op === 'info') return 'storage_info';
   if (op === 'list' || op === 'get' || op === 'getMany') return 'storage_read';
   if (op === 'create' || op === 'put' || op === 'delete') return 'storage_write';
+  // increment, mark, unmark, and `patch` (whose only operators are tallies).
   return 'storage_tally';
 }
 
@@ -351,9 +371,9 @@ export const STORAGE_BODY_LIMIT_BYTES = DOC_STORE_BOUNDS.docBytes + 16 * 1024;
 /** The request body stopped arriving (the client disconnected). Answered quietly. */
 class BodyAbortedError extends Error {}
 
-/** Read and parse a JSON request body; `undefined` when there is none. Only POST and PUT. */
+/** Read and parse a JSON request body; `undefined` when there is none. Only POST, PUT and PATCH. */
 async function readJsonBody(req: NextApiRequest): Promise<unknown> {
-  if (req.method !== 'POST' && req.method !== 'PUT') return undefined;
+  if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') return undefined;
   const tooLarge = () =>
     new DocStoreError('too_large', `request body exceeds ${STORAGE_BODY_LIMIT_BYTES} bytes`, {
       limit: STORAGE_BODY_LIMIT_BYTES,
@@ -391,6 +411,140 @@ function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
     });
   }
   return parsed.data;
+}
+
+// ---------------------------------------------------------------------------
+// Update operators (PATCH)
+// ---------------------------------------------------------------------------
+
+/** The update operators a PATCH may carry, and the tally route each one runs as. */
+const TALLY_OPERATORS = {
+  $inc: 'increment',
+  $mark: 'mark',
+  $unmark: 'unmark',
+} as const satisfies Record<string, TallyRoute['op']>;
+type TallyOperator = keyof typeof TALLY_OPERATORS;
+
+/**
+ * Why a PATCH body was refused, in `details.reason` of an `invalid_request`: one stable value per
+ * refusal, so a client can tell them apart without parsing the message.
+ */
+export type TallyPatchRefusal =
+  | 'empty_patch'
+  | 'unknown_operator'
+  | 'multiple_operators'
+  | 'merge_patch_unsupported'
+  | 'malformed_operator';
+
+const isOperator = (field: string): field is TallyOperator =>
+  Object.prototype.hasOwnProperty.call(TALLY_OPERATORS, field);
+
+const patchRefusal = (
+  reason: TallyPatchRefusal,
+  message: string,
+  extra?: Record<string, unknown>
+) => invalid(message, { reason, ...extra });
+
+/**
+ * A PATCH body → the tally route it runs as, and the body that route's own parser reads. Only the
+ * operator's SHAPE is checked here; every value (`by`, the counter or mark name, a report
+ * withdrawal) is left to the operation, so it is validated by exactly the parser and the store
+ * checks the deprecated routes use, in the same order.
+ *
+ * Refused (`invalid_request`, `details.reason`): no body or `{}` (`empty_patch`); a `$` key that
+ * is not an operator (`unknown_operator`); two operators (`multiple_operators`); plain fields only
+ * (`merge_patch_unsupported`, reserved for a merge-patch of `data`); and every other shape error
+ * (`malformed_operator`): a JSON body that is not an object, an operator beside any other field (a
+ * mark carries no payload, `report` included), `$inc` naming other than exactly one counter, and a
+ * `$mark`/`$unmark` name that is not a string.
+ */
+export function parseTallyPatch(
+  route: { collection: string; key: string },
+  body: unknown
+): { route: TallyRoute; body: unknown } {
+  if (body === undefined) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw patchRefusal(
+      'malformed_operator',
+      'PATCH body must be an object holding one update operator'
+    );
+  }
+  const fields = Object.keys(body);
+  if (fields.length === 0) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
+  const unknown = fields.find((f) => f.startsWith('$') && !isOperator(f));
+  if (unknown !== undefined) {
+    throw patchRefusal('unknown_operator', `unknown update operator ${unknown}`, {
+      operator: unknown,
+    });
+  }
+  const operators = fields.filter(isOperator);
+  if (operators.length > 1) {
+    throw patchRefusal('multiple_operators', 'PATCH takes exactly one update operator', {
+      operators,
+    });
+  }
+  if (operators.length === 0) {
+    throw patchRefusal(
+      'merge_patch_unsupported',
+      'PATCH takes an update operator ($inc, $mark or $unmark); to change data, PUT the document'
+    );
+  }
+  const [operator] = operators;
+  if (fields.length > 1) {
+    throw patchRefusal('malformed_operator', `${operator} cannot be combined with other fields`, {
+      operator,
+    });
+  }
+  const value = (body as Record<string, unknown>)[operator];
+  const at = { collection: route.collection, key: route.key };
+  if (operator === '$inc') {
+    const counters =
+      value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? Object.entries(value)
+        : [];
+    if (counters.length !== 1) {
+      throw patchRefusal('malformed_operator', '$inc names exactly one counter: {"<counter>": by}');
+    }
+    const [[name, by]] = counters;
+    // The deprecated route's own body, `{ by }`, read by its own parser in the operation.
+    return { route: { op: 'increment', ...at, name }, body: { by } };
+  }
+  if (typeof value !== 'string') {
+    throw patchRefusal('malformed_operator', `${operator} takes a mark name`, { operator });
+  }
+  // A mark's body is empty on the deprecated route too.
+  return { route: { op: TALLY_OPERATORS[operator], ...at, name: value }, body: undefined };
+}
+
+// The per-tally routes are deprecated as of 2026-11-09T00:00:00Z (RFC 9745 `@<unix-seconds>`).
+export const LEGACY_TALLY_DEPRECATED_AT = '@1794182400';
+
+/**
+ * Sent on every response this handler gives for a deprecated per-tally PATH, whatever the method
+ * (a 405 included). Not on the token middleware's own refusals (401/403/429), which are sent
+ * before the handler runs. No `Sunset`: removal waits for the usage
+ * `civitai_app_block_doc_store_tally_ops_total{route="legacy"}` shows.
+ */
+export const LEGACY_TALLY_HEADERS = {
+  Deprecation: LEGACY_TALLY_DEPRECATED_AT,
+  Link: '<https://developer.civitai.com/apps/guide/storage>; rel="deprecation"',
+} as const;
+
+const TALLY_METRIC_OP: Record<TallyRoute['op'], StorageTallyOp> = {
+  increment: 'inc',
+  mark: 'mark',
+  unmark: 'unmark',
+};
+
+/** A path the deprecated per-tally routes own: `[c, key, 'counters' | 'marks', name]`. */
+function isLegacyTallyPath(segments: readonly string[]): boolean {
+  return (
+    segments.length === 4 && (segments[2] === COUNTERS_SEGMENT || segments[2] === MARKS_SEGMENT)
+  );
+}
+
+function isTallyRoute(route: StorageRoute): route is TallyRoute {
+  return route.op === 'increment' || route.op === 'mark' || route.op === 'unmark';
 }
 
 const LIST_PARAMS = new Set(['sort', 'author', 'markedBy', 'mark', 'keyPrefix', 'limit', 'cursor']);
@@ -794,7 +948,7 @@ type Reply = { status: number; body: unknown };
 async function run(
   req: NextApiRequest,
   body: unknown,
-  route: StorageRoute,
+  route: OperationRoute,
   access: StorageAccess,
   store: DocStore
 ): Promise<Reply> {
@@ -811,7 +965,12 @@ async function run(
   }
 
   if (route.op === 'info') {
-    const usage = await store.usage(ctx);
+    // The per-viewer figures are the ceiling the store charges this viewer's writes against
+    // (`store.viewerLimits`: in production their membership tier's); the app ceilings are fixed.
+    const [usage, viewerLimits] = await Promise.all([
+      store.usage(ctx),
+      store.viewerLimits(requireViewer(access)),
+    ]);
     const L = store.limits;
     return ok({
       collections: Object.fromEntries(
@@ -821,8 +980,8 @@ async function run(
         docBytes: DOC_STORE_BOUNDS.docBytes,
         appBytes: L.appBytes,
         appDocs: L.appDocs,
-        viewerBytes: L.userBytes,
-        viewerDocs: L.userDocs,
+        viewerBytes: viewerLimits.userBytes,
+        viewerDocs: viewerLimits.userDocs,
         listLimitMax: DOC_STORE_BOUNDS.listLimitMax,
         getManyMax: DOC_STORE_BOUNDS.getManyMax,
         rate: {
@@ -993,6 +1152,7 @@ function importSourceOf(req: NextApiRequest): string | null {
  */
 function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
   if (route.op === 'list' || route.op === 'get' || route.op === 'getMany') return 'read';
+  // `patch` carries only tally operators, each an authoring write like the routes it replaces.
   return route.op === 'delete' ? 'delete' : 'author';
 }
 
@@ -1016,6 +1176,13 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
     try {
       const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
       if (!match) throw new DocStoreError('not_found', 'no such storage route');
+      // A deprecated per-tally path says so on every response the handler gives, a refusal and a
+      // wrong method's 405 included.
+      if (isLegacyTallyPath(pathSegments(req))) {
+        for (const [name, value] of Object.entries(LEGACY_TALLY_HEADERS)) {
+          res.setHeader(name, value);
+        }
+      }
       if ('methods' in match) {
         res.setHeader('Allow', match.methods.join(', '));
         sendEnvelope(
@@ -1043,8 +1210,14 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
               collection: route.collection,
               op: importOpOf(route),
             });
-      const body = await readJsonBody(req);
-      const reply = await run(req, body, match.route, access, deps.store());
+      const raw = await readJsonBody(req);
+      // A PATCH runs as the tally route its operator names, with that route's own body.
+      const { route: op, body }: { route: OperationRoute; body: unknown } =
+        route.op === 'patch' ? parseTallyPatch(route, raw) : { route, body: raw };
+      if (isTallyRoute(op)) {
+        recordStorageTallyOp(TALLY_METRIC_OP[op.op], route.op === 'patch' ? 'v2' : 'legacy');
+      }
+      const reply = await run(req, body, op, access, deps.store());
       res.status(reply.status).json(reply.body);
     } catch (err) {
       if (err instanceof BodyAbortedError) {

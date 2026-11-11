@@ -153,6 +153,16 @@ export function takedownSuccessMessage(action: DetailTakedownAction): string {
  * pass, because both render the same shell. Menu item = `<stem>-menu-item`; the confirm's
  * fields = `<stem>-reason` / `<stem>-submit` / `<stem>-consequences`.
  */
+/**
+ * A takedown's success message plus the server's `liveNote`, when it sent one: the store
+ * takedown went through but the app keeps serving (the shared static server's readiness app).
+ */
+export function withLiveNote(message: string, result?: unknown): string {
+  const note =
+    result && typeof result === 'object' ? (result as { liveNote?: unknown }).liveNote : undefined;
+  return typeof note === 'string' && note ? `${message} ${note}.` : message;
+}
+
 export const TAKEDOWN_TESTID_STEM: Record<DetailTakedownAction, string> = {
   'reset-to-pending': 'apps-listing-unpublish',
   hide: 'apps-listing-hide',

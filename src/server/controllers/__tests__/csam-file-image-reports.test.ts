@@ -63,7 +63,15 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
   bulkSetReportStatus,
 }));
 
-const { fileCsamReport } = await import('~/server/controllers/csam.controller');
+const createExternalCsamReport = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined));
+vi.mock('~/server/services/csam.service-new', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  createExternalCsamReport,
+}));
+
+const { createExternalCsamReportHandler, fileCsamReport } = await import(
+  '~/server/controllers/csam.controller'
+);
 
 const OWNER = 20;
 const OTHER_OWNER = 21;
@@ -94,6 +102,27 @@ const file = (userId: number, imageIds: number[]) =>
   fileCsamReport({ userId, imageIds, type: 'Image', reportedById: MOD } as never);
 
 describe('fileCsamReport', () => {
+  it('closes the filed images’ Pending image appeals silently, before the flag comes off', async () => {
+    const { releaseReviewFlagsToReportHold } = await import('~/server/services/image-appeal-flag');
+    const order: string[] = [];
+    dbMock.dbWrite.appeal.updateMany.mockImplementationOnce((async () => {
+      order.push('close');
+      return { count: 1 };
+    }) as never);
+    vi.mocked(releaseReviewFlagsToReportHold).mockImplementationOnce(async () => {
+      order.push('release');
+      return 0;
+    });
+
+    await file(OWNER, [IMAGE, OTHER_IMAGE]);
+
+    expect(dbMock.dbWrite.appeal.updateMany).toHaveBeenCalledWith({
+      where: { entityType: 'Image', entityId: { in: [IMAGE, OTHER_IMAGE] }, status: 'Pending' },
+      data: expect.objectContaining({ status: 'Rejected', resolvedBy: MOD }),
+    });
+    expect(order).toEqual(['close', 'release']);
+  });
+
   it('actions the reports made about the filed images, never a report whose id is an image id', async () => {
     await file(OWNER, [IMAGE]);
 
@@ -164,6 +193,40 @@ describe('fileCsamReport with attached text', () => {
     ).rejects.toThrow(/image report only/);
     expect(createCsamReport).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['the subject', { userId: -2 }],
+    ['the secondary user', { userId: OWNER, details: { secondaryUserId: -2 } }],
+  ])('refuses the feedback capture account as %s, filing nothing', async (_label, named) => {
+    await expect(
+      fileCsamReport({ imageIds: [], type: 'Image', reportedById: MOD, ...named } as never)
+    ).rejects.toThrow(/feedback page captures/);
+    expect(createCsamReport).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the subject', { userId: -2 }],
+    ['the secondary user', { userId: OWNER, secondaryUserId: -2 }],
+  ])(
+    'refuses the feedback capture account as %s of an external report, filing nothing',
+    async (_label, named) => {
+      const ctx = { user: { id: MOD } } as never;
+      await expect(
+        createExternalCsamReportHandler({
+          input: { email: 'x@example.com', ...named } as never,
+          ctx,
+        })
+      ).rejects.toThrow(/feedback page captures/);
+      expect(createExternalCsamReport).not.toHaveBeenCalled();
+      // Control: an ordinary subject is filed.
+      await createExternalCsamReportHandler({
+        input: { email: 'x@example.com', userId: OWNER } as never,
+        ctx,
+      });
+      expect(createExternalCsamReport).toHaveBeenCalledTimes(1);
+      createExternalCsamReport.mockClear();
+    }
+  );
 
   it('files a supplemental report with the copied text', async () => {
     const copied = [{ source: 'comment', id: 11, text: 'copied' }];

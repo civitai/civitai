@@ -37,7 +37,8 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
+import { getHotkeyHandler, useDebouncedValue } from '@mantine/hooks';
+import { useSearchFocusHotkeys } from '~/hooks/useSearchFocusHotkeys';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
@@ -46,7 +47,10 @@ import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
+import {
+  BROWSING_LEVEL_ATTRIBUTE,
+  BROWSING_LEVEL_MATCH,
+} from '~/components/Search/search-index-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -294,10 +298,11 @@ export const BrowsingLevelFilter = ({
 } & Omit<ConfigureProps, 'filters'>) => {
   const { browsingLevel } = useBrowsingSettingsAddons();
   const attribute = BROWSING_LEVEL_ATTRIBUTE[indexKey];
+  const match = BROWSING_LEVEL_MATCH[indexKey];
 
   const filters = useMemo(
-    () => buildBrowsingLevelFilters({ attribute, browsingLevel, filters: _filters }),
-    [browsingLevel, attribute, _filters]
+    () => buildBrowsingLevelFilters({ attribute, browsingLevel, match, filters: _filters }),
+    [browsingLevel, attribute, match, _filters]
   );
 
   return <ApplyCustomFilter filters={filters} {...props} />;
@@ -345,10 +350,7 @@ export const CustomSearchBox = forwardRef<
     }
   }, [query]);
 
-  useHotkeys([
-    ['/', focusInput],
-    ['mod+k', focusInput],
-  ]);
+  useSearchFocusHotkeys(focusInput);
 
   return (
     <TextInput

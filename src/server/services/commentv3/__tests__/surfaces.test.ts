@@ -255,3 +255,101 @@ describe('a new comic chapter comment', () => {
     expect(m.notify).not.toHaveBeenCalled();
   });
 });
+
+describe('a model', () => {
+  const model = (over: Record<string, unknown> = {}) => ({
+    status: 'Published',
+    userId: 5,
+    locked: false,
+    modelVersions: [{ id: 70 }, { id: 71 }],
+    ...over,
+  });
+  const visible = (ctx: unknown) => commentSurface('model').assertVisible!(3, ctx as never);
+  const writable = (ctx: unknown) => commentSurface('model').assertOpen!(3, ctx as never);
+  const owner = { user: { id: 5, isModerator: false } };
+
+  it('shows a published model to anyone, and an unpublished one to its owner and moderators', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model() as never);
+    await expect(visible({ user: undefined })).resolves.toBeUndefined();
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model({ status: 'Draft' }) as never);
+    await expect(visible(member)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(visible(owner)).resolves.toBeUndefined();
+    await expect(visible(moderator)).resolves.toBeUndefined();
+  });
+
+  it('hides a poi model from everyone but its owner and moderators', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model({ poi: true }) as never);
+    await expect(visible(member)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(visible({ user: undefined })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(visible(owner)).resolves.toBeUndefined();
+    await expect(visible(moderator)).resolves.toBeUndefined();
+  });
+
+  it('keeps a locked model readable', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model({ locked: true }) as never);
+    await expect(visible(member)).resolves.toBeUndefined();
+  });
+
+  it('takes comments on an unlocked model with a published version (control)', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model() as never);
+    await expect(writable(member)).resolves.toBeUndefined();
+    // Two published versions: the older one is open, so access is not checked.
+    expect(m.access).not.toHaveBeenCalled();
+    // The mock answers whatever is asked, so the question itself is the rule: published versions,
+    // the first two in order, which is how a second one is known to exist.
+    expect(dbMock.dbRead.model.findUnique).toHaveBeenCalledWith({
+      where: { id: 3 },
+      select: {
+        locked: true,
+        meta: true,
+        modelVersions: {
+          take: 2,
+          select: { id: true },
+          where: { status: 'Published' },
+          orderBy: { index: 'asc' },
+        },
+      },
+    });
+  });
+
+  it.each([
+    ['a locked model', { locked: true }],
+    ['a model with its comments locked', { meta: { commentsLocked: true } }],
+  ])('refuses a member on %s; a moderator may', async (_, over) => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model(over) as never);
+    await expect(writable(member)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(writable(moderator)).resolves.toBeUndefined();
+  });
+
+  it('refuses a model with no published version', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(model({ modelVersions: [] }) as never);
+    await expect(writable(moderator)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('lets a writer with access to a lone published version through, a moderator included', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(
+      model({ modelVersions: [{ id: 70 }] }) as never
+    );
+    await expect(writable(member)).resolves.toBeUndefined();
+    await expect(writable(moderator)).resolves.toBeUndefined();
+    expect(m.access).toHaveBeenLastCalledWith(
+      expect.objectContaining({ entityIds: [70], userId: 9, isModerator: true })
+    );
+  });
+
+  it('checks access to a lone published version, for early access', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(
+      model({ modelVersions: [{ id: 70 }] }) as never
+    );
+    m.access.mockResolvedValueOnce([{ hasAccess: false }]);
+    await expect(writable(member)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(m.access).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'ModelVersion',
+        entityIds: [70],
+        userId: 2,
+        isModerator: false,
+      })
+    );
+  });
+});

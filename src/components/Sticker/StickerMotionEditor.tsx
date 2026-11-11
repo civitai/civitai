@@ -1,4 +1,12 @@
-import { ActionIcon, Button, SegmentedControl, Slider, Text, UnstyledButton } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Portal,
+  SegmentedControl,
+  Slider,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import {
   IconChevronDown,
   IconChevronLeft,
@@ -9,15 +17,12 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { PAGE_MODAL_Z_INDEX } from '~/components/Dialog/Templates/PageModal';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import { Menu } from '~/components/MantineOverlays';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StickerTrackEase, StickerTrackKey } from '~/shared/utils/sticker-track';
-import { STICKER_PLACEMENT_MIN_OPACITY } from '~/shared/utils/sticker-placement';
-import {
-  STICKER_TRACK_EASES,
-  stickerTrackFaintestShown,
-  stickerTrackRefusal,
-} from '~/shared/utils/sticker-track';
+import { STICKER_TRACK_EASES } from '~/shared/utils/sticker-track';
 import {
   editKey,
   keyIndexAt,
@@ -25,7 +30,8 @@ import {
   removeKey,
   snapKeyOpacity,
   STICKER_KEY_STEP_MS,
-  stickerKeysTrack,
+  STICKER_KEYS_TOO_FAINT,
+  stickerKeysRefusal,
   upsertKey,
 } from '~/shared/utils/sticker-track-edit';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
@@ -104,13 +110,14 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
   const open = !!selected && !trayOpen;
   const moving = open && !!selected.motion?.on;
 
-  const [playing, setPlaying] = useState(!video.paused);
+  const playing = useStore((state) => state.videoPlaying);
   const [durationMs, setDurationMs] = useState(() => videoDurationMs(video));
 
   useEffect(() => {
     if (!open) return;
     let frame = 0;
-    const sync = () => useStore.getState().setPlayhead(Math.round(video.currentTime * 1000));
+    const { setPlayhead, setVideoPlaying: setPlaying } = useStore.getState();
+    const sync = () => setPlayhead(Math.round(video.currentTime * 1000));
     const tick = () => {
       sync();
       frame = requestAnimationFrame(tick);
@@ -129,12 +136,14 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
     sync();
     onMeta();
     if (!video.paused) onPlay();
+    else setPlaying(false);
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
     video.addEventListener('seeked', sync);
     video.addEventListener('loadedmetadata', onMeta);
     return () => {
       cancelAnimationFrame(frame);
+      setPlaying(false);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', sync);
@@ -165,9 +174,7 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
 
   const keys = selected?.motion?.keys ?? [];
   const at = keyIndexAt(keys, playheadMs);
-  // Changing the sticker's own opacity sets no key, so the floor on key times sticker opacity is
-  // rechecked here rather than when the key was set.
-  const refusal = moving && keys.length ? motionRefusal(keys, selected.opacity) : null;
+  const refusal = moving && keys.length ? stickerKeysRefusal(keys, selected.opacity) : null;
   const setKeys = (next: StickerTrackKey[]) =>
     selected && useStore.getState().setKeys(selected.id, next);
 
@@ -223,6 +230,9 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [moving, seek, toggle]);
 
+  // The tray covers where the editor sits, so with it open only the mode choice shows, above it.
+  if (trayOpen && selected && !previewing)
+    return <TrayModeToggle video={video} draftId={selected.id} moving={!!selected.motion?.on} />;
   if (!open || !selected) return null;
 
   return (
@@ -287,7 +297,7 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
             <Text size="xs" c="red.4" mt={4} role="alert">
               {refusal === 'keys: too much fading'
                 ? 'Too much fading to place: shorten or remove a fade.'
-                : refusal === TOO_FAINT
+                : refusal === STICKER_KEYS_TOO_FAINT
                 ? 'A key is too faint for this sticker’s opacity: raise the key or the sticker.'
                 : `This movement can't be placed (${refusal}).`}
             </Text>
@@ -295,20 +305,13 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
         </div>
       )}
       <div className="flex items-center gap-2">
-        <SegmentedControl
-          size="xs"
-          radius="xl"
-          aria-label="Sticker mode"
-          value={moving ? 'movement' : 'static'}
-          onChange={(value) => {
+        <ModeControl
+          moving={moving}
+          onChange={(movement) => {
             // Paused on a frame, so the first move sets a key where the placer is looking.
-            if (value === 'movement') video.pause();
-            useStore.getState().setMotion(selected.id, value === 'movement');
+            if (movement) video.pause();
+            useStore.getState().setMotion(selected.id, movement);
           }}
-          data={[
-            { label: 'Static', value: 'static' },
-            { label: 'Movement', value: 'movement' },
-          ]}
         />
         {primaryLabel && !previewing && !refusal && (
           // Presses the selected draft's own pay button: one way to pay, and any choice it
@@ -320,6 +323,86 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
         )}
       </div>
     </div>
+  );
+}
+
+function ModeControl({
+  moving,
+  onChange,
+}: {
+  moving: boolean;
+  onChange: (movement: boolean) => void;
+}) {
+  return (
+    <SegmentedControl
+      size="xs"
+      radius="xl"
+      aria-label="Sticker mode"
+      value={moving ? 'movement' : 'static'}
+      onChange={(value) => onChange(value === 'movement')}
+      data={[
+        { label: 'Static', value: 'static' },
+        { label: 'Movement', value: 'movement' },
+      ]}
+    />
+  );
+}
+
+/** Movement closes the tray because the timeline it opens sits where the tray is. */
+function TrayModeToggle({
+  video,
+  draftId,
+  moving,
+}: {
+  video: HTMLVideoElement;
+  draftId: string;
+  moving: boolean;
+}) {
+  const tray = useStore((state) => state.tray);
+  const [trayHeight, setTrayHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!tray) return;
+    const measure = () => setTrayHeight(tray.getBoundingClientRect().height);
+    const observer = new ResizeObserver(measure);
+    observer.observe(tray);
+    measure();
+    return () => observer.disconnect();
+  }, [tray]);
+
+  if (trayHeight == null) return null;
+
+  return (
+    <Portal>
+      <div
+        {...{ [STICKER_EDITOR_ATTR]: '' }}
+        className="pointer-events-none flex justify-center"
+        // Inline, not Tailwind: browser tests load no stylesheet, and the placement is what they check.
+        style={{
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: trayHeight,
+          zIndex: PAGE_MODAL_Z_INDEX + 1,
+        }}
+      >
+        <div className="pointer-events-auto" onPointerDown={(event) => event.stopPropagation()}>
+          <ModeControl
+            moving={moving}
+            onChange={(movement) => {
+              const store = useStore.getState();
+              if (movement) {
+                video.pause();
+                // The editor's clock is off while the tray is open; the first key goes at this frame.
+                store.setPlayhead(Math.round(video.currentTime * 1000));
+              }
+              store.setMotion(draftId, movement);
+              if (movement) store.closeTray();
+            }}
+          />
+        </div>
+      </div>
+    </Portal>
   );
 }
 
@@ -532,16 +615,6 @@ function KeyInspector({
       </ActionIcon>
     </div>
   );
-}
-
-const TOO_FAINT = 'too faint for the sticker opacity';
-
-function motionRefusal(keys: StickerTrackKey[], stickerOpacity: number) {
-  const track = stickerKeysTrack(keys);
-  const faintest = stickerTrackFaintestShown(track);
-  if (faintest != null && faintest * stickerOpacity < STICKER_PLACEMENT_MIN_OPACITY - 1e-9)
-    return TOO_FAINT;
-  return stickerTrackRefusal(track);
 }
 
 function pressPrimary(draftId: string) {

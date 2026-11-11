@@ -237,11 +237,12 @@ export const APP_CAP_OVERRIDE_MAX_VELOCITY_GENS = 100_000;
  * overrode moderator intent would be a footgun; a knob that only bites when an
  * operator reaches for it is an incident control.
  *
- * Sizing context for the tier table below, relative to the per-user cap: the
- * per-user ceiling is `BLOCK_BUZZ_CAP_PER_DAY = 50_000` Buzz/day ≈ $50/day
- * (yellow Buzz at 1000 = $1). One app serves many users, so the per-app
- * aggregate must be a generous multiple — the 5,000,000 `standard` tier is ≈
- * the aggregate spend of ~100 fully-maxed legitimate users through one app.
+ * Sizing context for the tier table below, relative to the per-user cap: one user
+ * spends at most their membership tier's daily cap (`resolveUserAppCaps`) across
+ * all apps (yellow Buzz at 1000 = $1). One app serves many users, so each per-app
+ * aggregate here must be a generous multiple of the per-user caps: re-derive how
+ * many fully-maxed users a tier admits from the current tier table before
+ * changing either side.
  *
  * Override at deploy time with `BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY`
  * (legacy name `BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY` still honoured — see

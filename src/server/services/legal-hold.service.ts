@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import {
   PLACEHOLDER_OWNER_ID,
   reportHolds,
@@ -73,16 +74,21 @@ export type AccountHoldLeg =
 const markerView = Prisma.raw(`"${HOLD_MARKER_VIEW}"`);
 const abortCode = Prisma.raw(`'${HOLD_ABORT_CODE}'`);
 
+const captureOwner = Prisma.raw(String(FEEDBACK_CAPTURE_OWNER_ID));
+
+/** The image legs read feedback page captures one by one (`captureImageKeptSql`), not as an account. */
+const notCaptureOwner = (id: Prisma.Sql) => Prisma.sql`(${id}) IS DISTINCT FROM ${captureOwner}`;
+
 /** Every hold except the marker, as SQL over `id`, an int expression. */
 function holdLegsSql(id: Prisma.Sql) {
   return {
     report: userNamedOnHoldingReportSql(id),
     // Aliased, so `id` may be a column of an outer unaliased "Image" without being captured here.
-    'image-review': Prisma.sql`EXISTS (
+    'image-review': Prisma.sql`${notCaptureOwner(id)} AND EXISTS (
       SELECT 1 FROM "Image" hr WHERE hr."userId" = ${id} AND hr."needsReview" = 'csam'
     )`,
     // A blocked image counts as reported only when a sent report naming them lists it.
-    'image-blocked': Prisma.sql`EXISTS (
+    'image-blocked': Prisma.sql`${notCaptureOwner(id)} AND EXISTS (
       SELECT 1 FROM "Image" bi
       WHERE bi."userId" = ${id} AND bi."blockedFor" = 'CSAM'
         AND NOT EXISTS (
@@ -96,7 +102,7 @@ function holdLegsSql(id: Prisma.Sql) {
     // reports' image lists rather than the user's images: the lists are short, an account's images
     // are not. Compared as bigint so an id past int range still matches rather than being skipped.
     // Uncorrelated, so Postgres builds the set once per statement rather than once per row.
-    'reported-image': Prisma.sql`((${id}) IN (
+    'reported-image': Prisma.sql`${notCaptureOwner(id)} AND ((${id}) IN (
       SELECT ri."userId"
       FROM "CsamReport" rr
       CROSS JOIN LATERAL jsonb_array_elements(
@@ -107,6 +113,52 @@ function holdLegsSql(id: Prisma.Sql) {
       WHERE ${reportHolds('rr')}
     ))`,
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
+}
+
+/** Every image id listed on any CsamReport, whatever its state, as text. */
+export const csamReportListedImageIdsSql = Prisma.sql`
+  SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL`;
+
+/**
+ * Each state that keeps the capture row aliased `image`. `evidenceHold` is the record a kept delete
+ * leaves; the others are the capture's own state, which alone decides how long that record lasts
+ * (evidence_hold_capture_state_held).
+ */
+export function captureHoldLegsSql(image: string) {
+  const i = Prisma.raw(image);
+  return {
+    review: Prisma.sql`${i}."needsReview" IS NOT DISTINCT FROM 'csam'`,
+    blocked: Prisma.sql`${i}."blockedFor" IS NOT DISTINCT FROM 'CSAM'`,
+    minor: Prisma.sql`${i}.minor IS TRUE`,
+    reported: Prisma.sql`(${i}.id)::text IN (${csamReportListedImageIdsSql})`,
+    evidenceHold: Prisma.sql`EXISTS (SELECT 1 FROM "EvidenceHoldImage" ehi WHERE ehi."imageId" = ${i}.id)`,
+  };
+}
+
+export type CaptureHoldLeg = keyof ReturnType<typeof captureHoldLegsSql>;
+
+/** Whether the image row aliased `image` is kept by its own review, block, minor or report state. */
+export function captureImageStateHeldSql(image: string): Prisma.Sql {
+  const l = captureHoldLegsSql(image);
+  return Prisma.sql`(${Prisma.join([l.review, l.blocked, l.minor, l.reported], ' OR ')})`;
+}
+
+/** Whether the image row aliased `image` is kept by its own state or by an evidence-hold record. */
+export function captureImageHeldSql(image: string): Prisma.Sql {
+  return Prisma.sql`(${Prisma.join(Object.values(captureHoldLegsSql(image)), ' OR ')})`;
+}
+
+/** Whether the image row aliased `image` is a feedback page capture kept by its own state. */
+export function captureImageKeptSql(image: string): Prisma.Sql {
+  const i = Prisma.raw(image);
+  return Prisma.sql`(${i}."userId" = ${captureOwner} AND ${captureImageHeldSql(image)})`;
 }
 
 const markerSql = (id: Prisma.Sql) =>

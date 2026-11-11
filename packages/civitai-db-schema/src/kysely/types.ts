@@ -2443,6 +2443,7 @@ export type Collection = {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Timestamp | null;
+  archivedAt: Timestamp | null;
 };
 export type CollectionContributor = {
   createdAt: Generated<Timestamp | null>;
@@ -3606,6 +3607,27 @@ export type ImageConnection = {
   entityId: number;
   entityType: string;
 };
+export type ImageDeferredBlockEffect = {
+  imageId: number;
+  /**
+   * The violation the moderator chose, if any; the notice states it.
+   */
+  violationType: string | null;
+  /**
+   * False for a re-block of an image already removed: only its reports are deferred.
+   */
+  notifyOwner: Generated<boolean>;
+  /**
+   * Open reports of this reason on the image are actioned at the close.
+   */
+  reportReason: string | null;
+  /**
+   * These reports are actioned at the close, if still open.
+   */
+  reportIds: Generated<number[]>;
+  blockedBy: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ImageEngagement = {
   userId: number;
   imageId: number;
@@ -3901,6 +3923,10 @@ export type ModActivity = {
   entityId: number | null;
   createdAt: Generated<Timestamp>;
   host: string | null;
+  /**
+   * Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
+   */
+  credential: string | null;
 };
 export type Model = {
   id: Generated<number>;
@@ -5211,6 +5237,15 @@ export type ResourceReview = {
   nsfw: Generated<boolean>;
   tosViolation: Generated<boolean>;
   metadata: unknown | null;
+  /**
+   * The unpublished post the review was written from. The review stays hidden until that post is live.
+   */
+  postId: number | null;
+  /**
+   * When a review linked to a post was announced: notified and recounted. Cleared when the post is
+   * unpublished, so the next go-live announces it again.
+   */
+  releasedAt: Timestamp | null;
 };
 export type ResourceReviewHelper = {
   resourceReviewId: number;
@@ -6762,6 +6797,7 @@ export type DB = {
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;
   ImageCdnShopTakedown: ImageCdnShopTakedown;
   ImageConnection: ImageConnection;
+  ImageDeferredBlockEffect: ImageDeferredBlockEffect;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
   ImageMetaFlags: ImageMetaFlags;

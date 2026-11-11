@@ -16,7 +16,6 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.url().optional(),
   NEXT_PUBLIC_PICFINDER_API_KEY: z.string().optional(),
   NEXT_PUBLIC_SEARCH_HOST: z.url().optional(),
-  NEXT_PUBLIC_SEARCH_CLIENT_KEY: z.string().optional(),
   NEXT_PUBLIC_SIGNALS_ENDPOINT: z.string().optional(),
   // VAPID public key for web push (`applicationServerKey`). Must be the pair of the private key the
   // notifications worker signs with, or every subscription minted here is undeliverable. Unset =
@@ -111,7 +110,6 @@ export const clientEnv = {
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: process.env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT,
   NEXT_PUBLIC_PICFINDER_API_KEY: process.env.NEXT_PUBLIC_PICFINDER_API_KEY,
   NEXT_PUBLIC_SEARCH_HOST: process.env.NEXT_PUBLIC_SEARCH_HOST,
-  NEXT_PUBLIC_SEARCH_CLIENT_KEY: process.env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
   NEXT_PUBLIC_SIGNALS_ENDPOINT: process.env.NEXT_PUBLIC_SIGNALS_ENDPOINT,
   NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
   NEXT_PUBLIC_ENABLE_SW_DEV: process.env.NEXT_PUBLIC_ENABLE_SW_DEV,

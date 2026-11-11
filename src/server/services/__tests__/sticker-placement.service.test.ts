@@ -2491,8 +2491,18 @@ describe('the tracks for a video', () => {
       surface: 'sticker',
       targetType: 'image',
       targetId: IMAGE,
+      viewerId: undefined,
     });
     expect(tracks.map(({ id }) => id)).toEqual([2]);
+  });
+
+  it('asks for the viewer, so their own pending stickers move as the listing shows them', async () => {
+    await getStickerPlacementTracks({ imageId: IMAGE, viewerId: 73 });
+
+    expect(trackRows).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ targetId: IMAGE, viewerId: 73 })
+    );
   });
 
   it('gives a moderator what the listing would show them', async () => {

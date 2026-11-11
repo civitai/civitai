@@ -19,7 +19,7 @@
     "@civitai/redis": "workspace:*",
     "dayjs": "^1.11.13",
     "fastify": "^5.12.6",
-    "lodash-es": "^4.17.21",
+    "lodash-es": "^4.18.1",
     "pg-format": "^1.0.4",
     "prom-client": "^14.2.0",
     "web-push": "^3.6.7",
