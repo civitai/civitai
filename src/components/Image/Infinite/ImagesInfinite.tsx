@@ -25,6 +25,8 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { toSemanticImageSearchInput } from '~/components/Image/Infinite/image-feed-search';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
+import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import {
   useImageFeedSearchQuery,
@@ -97,7 +99,10 @@ export function ImagesInfiniteContent({
     withTags,
   });
   const featureSearchQuery = useImageFeedSearchQuery();
-  const searchQuery = searchable && rawSearchQuery ? featureSearchQuery : undefined;
+  const requestedSearch = searchable && rawSearchQuery ? featureSearchQuery : undefined;
+  // A ?query= can arrive by link or redirect, past the search bar's own checks.
+  const { refusal, profanityMatches } = useSearchRefusal(requestedSearch, 'images_semantic');
+  const searchQuery = refusal ? undefined : requestedSearch;
   // Stabilize identity so effects/query keys only fire on real content change.
   const filtersRef = useRef(computedFilters);
   if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
@@ -131,7 +136,7 @@ export function ImagesInfiniteContent({
   const searching = !!searchInput && !searchFailed;
   const feed = useQueryImages(
     { ...filters, browsingLevel, include: ['cosmetics'] },
-    { keepPreviousData: true, enabled: !searching }
+    { keepPreviousData: true, enabled: !searching && !refusal }
   );
   const { debugRetryActive, debugDelayMs } = feed;
   const { images, fetchNextPage, refetch, hasNextPage, isRefetching, isFetching, isError } =
@@ -245,6 +250,8 @@ export function ImagesInfiniteContent({
       slow={isSlow}
     />
   );
+
+  if (refusal) return <SearchRefusalNotice refusal={refusal} profanityMatches={profanityMatches} />;
 
   return (
     <>

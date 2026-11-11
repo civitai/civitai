@@ -86,3 +86,37 @@ describe('useFeedSearchSync', () => {
     expect(router.replace).not.toHaveBeenCalled();
   });
 });
+
+describe('useFeedSearchSync when the router lags its own writes', () => {
+  beforeEach(() => {
+    router.query = {};
+    router.replace.mockReset();
+    setSearch.mockReset();
+  });
+
+  it('does not put an earlier write back in the bar when a later one is still on its way', () => {
+    const render = mount();
+    hook.markTyped();
+    render({ debouncedSearch: 'red' });
+    render({ debouncedSearch: 'red dragon' });
+    // The router shows the first write only now, after the second has gone out.
+    router.query = { query: 'red' };
+    render({ debouncedSearch: 'red dragon' });
+    router.query = { query: 'red dragon' };
+    render({ debouncedSearch: 'red dragon' });
+    expect(setSearch).not.toHaveBeenCalled();
+  });
+
+  it('re-seeds from Back even when it lands where the search started', () => {
+    router.query = { query: 'cat' };
+    const render = mount();
+    setSearch.mockReset();
+    hook.markTyped();
+    render({ debouncedSearch: 'red dragon' });
+    router.query = { query: 'red dragon' };
+    render({ debouncedSearch: 'red dragon' });
+    router.query = { query: 'cat' };
+    render({ debouncedSearch: 'red dragon' });
+    expect(setSearch).toHaveBeenCalledWith('cat');
+  });
+});

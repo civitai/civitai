@@ -4,8 +4,13 @@ import { nextFeedSearchQuery } from '~/components/AutocompleteSearch/autocomplet
 
 /**
  * Search v3: keeps the header bar and the feed's `?query=` in step, on a feed that answers it. Only
- * typing writes the URL; a URL change from elsewhere (first load, the feed's Clear search) re-seeds
- * the bar instead, and `appliedQuery` is what tells the two apart, so neither overwrites the other.
+ * typing writes the URL; a URL change from elsewhere (first load, Back, the feed's Clear search)
+ * re-seeds the bar instead.
+ *
+ * Our own writes are told apart by VALUE, against every write still in flight, not just the last:
+ * a second write can go out before the router shows the first, and a last-write-only check would
+ * then re-seed the bar with that stale first value. A URL value we did not write is external, even
+ * one equal to where we started (Back), so it re-seeds and drops whatever was in flight.
  */
 export function useFeedSearchSync({
   enabled,
@@ -21,20 +26,27 @@ export function useFeedSearchSync({
 }) {
   const router = useRouter();
   const feedQuery = typeof router.query.query === 'string' ? router.query.query : undefined;
-  const appliedQuery = useRef<string | undefined>(undefined);
+  const inFlight = useRef<(string | undefined)[]>([]);
   const typedSinceSeed = useRef(false);
+  const lastSeen = useRef<string | undefined>(undefined);
 
   const apply = (text: string) => {
     if (!enabled || blocked) return;
     const next = nextFeedSearchQuery(router.query, text);
     if (!next) return;
-    appliedQuery.current = typeof next.query === 'string' ? next.query : undefined;
+    inFlight.current.push(typeof next.query === 'string' ? next.query : undefined);
     void router.replace({ pathname: router.pathname, query: next }, undefined, { shallow: true });
   };
 
   useEffect(() => {
-    if (!enabled || feedQuery === appliedQuery.current) return;
-    appliedQuery.current = feedQuery;
+    if (!enabled || feedQuery === lastSeen.current) return;
+    lastSeen.current = feedQuery;
+    const ours = inFlight.current.indexOf(feedQuery);
+    if (ours >= 0) {
+      inFlight.current.splice(0, ours + 1);
+      return;
+    }
+    inFlight.current = [];
     typedSinceSeed.current = false;
     setSearch(feedQuery ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps

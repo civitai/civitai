@@ -17,6 +17,8 @@ import { renderWithProviders } from '../../../../test/component-setup';
 // the feed renders and enables is what is under test.
 const state = vi.hoisted(() => ({
   searchFails: false,
+  refusal: undefined as string | undefined,
+  searchInputs: [] as unknown[],
   feedEnabled: [] as (boolean | undefined)[],
 }));
 
@@ -34,8 +36,10 @@ const result = (ids: number[], extra: Record<string, unknown> = {}) => ({
 vi.mock('~/components/Image/Infinite/useImageFeedSearch', async (importOriginal) => ({
   ...(await importOriginal<typeof FeedSearch>()),
   useImageFeedSearchQuery: () => 'red dragon',
-  useSemanticImageFeed: () =>
-    state.searchFails ? result([], { isError: true }) : result([101, 102]),
+  useSemanticImageFeed: (input: unknown) => {
+    state.searchInputs.push(input);
+    return state.searchFails ? result([], { isError: true }) : result([101, 102]);
+  },
 }));
 vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageUtils>()),
@@ -53,6 +57,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 vi.mock('@trpc/react-query', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcReactQuery>()),
   getQueryKey: () => ['stub'],
+}));
+vi.mock('~/components/Search/useSearchRefusal', () => ({
+  useSearchRefusal: () => ({ refusal: state.refusal, profanityMatches: [] }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -81,6 +88,8 @@ vi.mock('~/components/MasonryColumns/MasonryColumnsVirtual', async (importOrigin
 describe('ImagesInfinite with a search', () => {
   beforeEach(() => {
     state.searchFails = false;
+    state.refusal = undefined;
+    state.searchInputs = [];
     state.feedEnabled = [];
     useRouter().query = { query: 'red dragon' };
   });
@@ -100,5 +109,14 @@ describe('ImagesInfinite with a search', () => {
     await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
     await expect.element(page.getByRole('button', { name: 'Retry search' })).toBeVisible();
     expect(state.feedEnabled.at(-1)).toBe(true);
+  });
+
+  test('a refused query from the URL shows the warning and searches nothing', async () => {
+    state.refusal = 'illegal';
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('Warning')).toBeVisible();
+    expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
+    expect(state.feedEnabled.at(-1)).toBe(false);
   });
 });

@@ -71,8 +71,8 @@ import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tool
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
-import { includesInappropriate, includesPoi } from '~/utils/metadata/audit';
+import { getSearchRefusal } from '~/components/Search/search-refusal';
+import { includesInappropriate } from '~/utils/metadata/audit';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
@@ -346,17 +346,13 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isProfaneSearch = profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {
-    const isIllegalQuery = debouncedSearch
-      ? includesInappropriate({ prompt: auditedSearch }) === 'minor'
-      : false;
-    const canPerformQuery = debouncedSearch
-      ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(auditedSearch)
-      : true;
-    // Raw text on purpose: this reads a different list (blocked NSFW words) which the benign
-    // phrases do not carve out, and it blocks rather than flags.
-    const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
+    const refusal = getSearchRefusal({
+      text: debouncedSearch,
+      auditedText: auditedSearch,
+      disablePoi: !!browsingSettingsAddons.settings.disablePoi,
+    });
 
-    if (isIllegalQuery) {
+    if (refusal === 'illegal') {
       return [
         {
           key: 'blocked',
@@ -379,7 +375,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       ];
     }
 
-    if (!canPerformQuery) {
+    if (refusal === 'poi') {
       return [
         {
           key: 'disabled',
@@ -389,7 +385,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         },
       ];
     }
-    if (hasBlockedWords) {
+    if (refusal === 'blocked-words') {
       return [
         {
           key: 'blocked-words',
@@ -436,10 +432,28 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
 
     return items;
-  }, [status, searchErrorState, filtered, results?.nbHits, query, showSfwFace, filtersFeedInPlace]);
+    // The refusal inputs are listed because in feed mode nothing else here changes as you type.
+  }, [
+    status,
+    searchErrorState,
+    filtered,
+    results?.nbHits,
+    query,
+    showSfwFace,
+    filtersFeedInPlace,
+    debouncedSearch,
+    auditedSearch,
+    isProfaneSearch,
+    domainColor,
+    browsingSettingsAddons.settings.disablePoi,
+  ]);
   const blockedQuery =
-    items.length === 1 &&
-    ['blocked', 'profanity', 'disabled', 'blocked-words'].includes(items[0].key);
+    !!getSearchRefusal({
+      text: debouncedSearch,
+      auditedText: auditedSearch,
+      disablePoi: !!browsingSettingsAddons.settings.disablePoi,
+    }) ||
+    (isProfaneSearch && domainColor === 'green');
   const feedSearch = useFeedSearchSync({
     enabled: filtersFeedInPlace,
     debouncedSearch,
@@ -506,7 +520,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const handleSubmit = () => {
     if (filtersFeedInPlace) {
-      feedSearch.applyNow(search);
+      // Only once the debounce has caught up: the refusal checks have read the debounced text.
+      if (search === debouncedSearch) feedSearch.applyNow(search);
       blurAndDiscardCarriedText();
       onSubmit?.();
       return;
