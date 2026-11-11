@@ -12,7 +12,6 @@ import {
   deleteRecurringBid,
   getAllAuctions,
   getAuctionBases,
-  capAuctionBidImages,
   getAuctionBySlug,
   getMyBids,
   getMyRecurringBids,
@@ -20,7 +19,6 @@ import {
   togglePauseRecurringBid,
   updateAuctionBase,
 } from '~/server/services/auction.service';
-import { canViewImageMedia } from '~/server/utils/image-media-visibility';
 import {
   isFlagProtected,
   moderatorProcedure,
@@ -40,11 +38,7 @@ export const auctionRouter = router({
   getBySlug: publicProcedure
     .meta({ requiredScope: TokenScope.BountiesRead })
     .input(getAuctionBySlugInput)
-    .query(async ({ input, ctx }) =>
-      capAuctionBidImages(await getAuctionBySlug(input), (image) =>
-        canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } })
-      )
-    ),
+    .query(({ input }) => getAuctionBySlug(input)),
   getMyBids: auctionProcedure
     .meta({ requiredScope: TokenScope.BountiesRead })
     .query(({ ctx }) => getMyBids({ userId: ctx.user.id })),
