@@ -48,6 +48,7 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
@@ -135,7 +136,7 @@ export const cosmeticShopRouter = router({
     .query(({ input, ctx }) => {
       return getShopSectionsWithItems({
         ...input,
-        isModerator: ctx?.user?.isModerator,
+        isModerator: eventViewerOf(ctx).isModerator,
         creatorShopEnabled: ctx?.features?.creatorShop,
         stickersEnabled: ctx?.features?.stickers,
         userId: ctx?.user?.id,
