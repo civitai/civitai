@@ -65,10 +65,10 @@ const keySession = (userId: number, subject: 'apiKey' | 'oauth') => ({
   buzzLimit: null,
 });
 
-async function call(authorization?: string) {
+async function call(authorization?: string, versionRows: object[] = [versionRow]) {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw
-    .mockResolvedValueOnce([versionRow])
+    .mockResolvedValueOnce(versionRows)
     .mockResolvedValueOnce([structuredClone(TRAINING_FILE)]);
   const headers: Record<string, string> = {};
   const req = {
@@ -153,5 +153,18 @@ describe('mini/[id] epoch arm through the real session layer, enforce', () => {
     expect(log).toEqual([
       expect.objectContaining({ callerClass: 'anonymous', resolvedAs: 'unrecognized' }),
     ]);
+  });
+
+  it.each([
+    ['an anonymous caller', undefined],
+    ['a caller with a bearer token', 'Bearer not-a-key'],
+  ])('answers %s refused with the same headers as an unknown id', async (_label, authorization) => {
+    const refused = await call(authorization);
+    const unknown = await call(authorization, []);
+    expect(refused.status).toBe(404);
+    expect(refused.log).toHaveLength(1);
+    expect(unknown.status).toBe(404);
+    expect(refused.headers).toEqual(unknown.headers);
+    expect(refused.body).toEqual(unknown.body);
   });
 });

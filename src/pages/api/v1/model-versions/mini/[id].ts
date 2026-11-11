@@ -113,6 +113,13 @@ type FileRow = {
   virusScanResult: ScanResultCode | null;
 };
 
+// Every 404 carries the same Cache-Control, so the headers do not tell a refused caller from an
+// unknown id; the refused one must stay out of shared caches, so they all do.
+function notFound(res: NextApiResponse, body: { error: string }) {
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(404).json(body);
+}
+
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
@@ -225,7 +232,7 @@ export default MixedAuthEndpoint(async function handler(
   `;
   // Same answer as an unknown id, so the response does not reveal that the version exists.
   if (!modelVersion || !canViewPoiModel(modelVersion.poi, modelVersion.modelUserId, user))
-    return res.status(404).json({ error: 'Model not found' });
+    return notFound(res, { error: 'Model not found' });
 
   const files = await dbWrite.$queryRaw<FileRow[]>`
     SELECT 
@@ -322,9 +329,8 @@ export default MixedAuthEndpoint(async function handler(
         ownerId: modelVersion.modelUserId,
         mode,
       });
-      // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
-      // 404 to a caller who would be served.
-      if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
+      // Answered as an unknown id.
+      if (caller.withhold) return notFound(res, { error: 'Model not found' });
     }
   }
 
@@ -334,7 +340,7 @@ export default MixedAuthEndpoint(async function handler(
     ? visibleFiles.find((f) => f.id === modelFileId)
     : getGenerationFile(visibleFiles, filePreferences);
   if (!targetFile) {
-    return res.status(404).json({
+    return notFound(res, {
       error: modelFileId
         ? `Model file ${modelFileId} not found in version ${id}`
         : 'Missing model file',
@@ -367,14 +373,14 @@ export default MixedAuthEndpoint(async function handler(
       trainingResults.epochs?.[trainingResults.epochs.length - 1];
 
     if (!epoch) {
-      return res.status(404).json({ error: 'Missing epoch' });
+      return notFound(res, { error: 'Missing epoch' });
     }
 
     downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;
     const { jobId, fileName } = getEpochJobAndFileName(downloadUrl)!;
 
     if (!jobId || !fileName) {
-      return res.status(404).json({ error: 'Could not get jobId or fileName' });
+      return notFound(res, { error: 'Could not get jobId or fileName' });
     }
 
     air = stringifyAIR({
