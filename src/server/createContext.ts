@@ -7,6 +7,7 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { getRequestCredential } from '~/server/auth/request-credential';
+import { trpcViewer } from '~/server/auth/api-auth-session';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -46,11 +47,17 @@ export const createContext = async ({
   // getServerAuthSession call. Matters for ANONYMOUS requests: a null session
   // isn't memoized by req.context.session, so the lazy path re-decrypted the
   // JWE on every track() call (authenticated requests already cache-hit).
+  // The full session, banned or not: a banned account's activity is still attributed to it.
   const track = new Tracker(req, res, session);
+  // Keyed on the full session: a banned session still reaches its own appeal state, which a shared
+  // cache must never keep.
+  // A streamed batch's headers are written before any procedure runs, so a resolver cannot
+  // take its answer back out of the edge cache. Browsers batch only when signed in.
+  const cacheable = !session?.user && !req.query?.batch;
   const cache: CacheSettings | null = {
-    browserTTL: session?.user ? 0 : 60,
-    edgeTTL: session?.user ? 0 : 60,
-    staleWhileRevalidate: session?.user ? 0 : 30,
+    browserTTL: cacheable ? 60 : 0,
+    edgeTTL: cacheable ? 60 : 0,
+    staleWhileRevalidate: cacheable ? 30 : 0,
     canCache: true,
     skip: false,
   };
@@ -84,8 +91,10 @@ export const createContext = async ({
   track.setProvenance({ subject, apiKeyId });
 
   return {
-    user: session?.user,
+    ...trpcViewer(session?.user),
     acceptableOrigin,
+    // The full session's flags: the site appeal form's procedures are flag-gated, and a banned
+    // account must still reach them.
     features: getFeatureFlagsLazy({ user: session?.user, req }),
     track,
     ip,
@@ -131,6 +140,6 @@ export type Context = AsyncReturnType<typeof createContext>;
  */
 export type ProtectedContext = Omit<
   DeepNonNullable<Context>,
-  'apiKeyId' | 'apiKeyType' | 'subject'
+  'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'
 > &
-  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject'>;
+  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'>;

@@ -1,4 +1,9 @@
 import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
+import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
+import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
   reviewsOnModelsSql,
@@ -14,10 +19,10 @@ import {
   deleteCommentsV3,
   setUserCommentsV3Tos,
 } from '~/server/services/commentv3/moderation.service';
-import { hasV3SurfaceTwinSql, v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
 
 import {
   accountHoldSql,
+  captureImageKeptSql,
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
   holdMarkerViewExists,
@@ -69,10 +74,7 @@ import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readModelVersionEngagementsViaKysely,
-  readModelVersionEngagementsViaPrisma,
-} from '~/server/services/hot-reads-6.reads';
+import { readModelVersionEngagementsViaKysely } from '~/server/services/hot-reads-6.reads';
 import {
   readUserCosmeticsViaKysely,
   readUserCosmeticsViaPrisma,
@@ -149,6 +151,7 @@ import {
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { deleteImages } from '~/server/services/image.service';
 import {
+  refreshHasReceivedReviews,
   refreshOwnedStickerCache,
   userContentOverviewCache,
   userModelCountCache,
@@ -156,6 +159,7 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { chunkIds } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -172,6 +176,7 @@ import {
 import { clearUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import {
   handleLogError,
   isPrismaUniqueViolation,
@@ -380,7 +385,7 @@ export const getUsers = async ({
   if (include?.includes('avatar'))
     select.push(
       'COALESCE(i.url, u.image) AS "avatarUrl"',
-      `COALESCE(i.nsfwLevel, 'None') AS "avatarNsfwLevel"`
+      'COALESCE(i."nsfwLevel", 0) AS "avatarNsfwLevel"'
     );
 
   if (contestBanned) {
@@ -405,9 +410,11 @@ export const getUsers = async ({
   const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
-      ${Prisma.raw(
-        include?.includes('avatar') ? 'LEFT JOIN "Image" i ON i.id = u."profilePictureId"' : ''
-      )}
+      ${
+        include?.includes('avatar')
+          ? Prisma.sql`LEFT JOIN "Image" i ON i.id = u."profilePictureId" AND ${servableProfilePictureSql}`
+          : Prisma.empty
+      }
     WHERE ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
@@ -452,7 +459,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
- * Mod-driven: clear public profile fields (location/bio/message) on UserProfile.
+ * Mod-driven: clear public profile fields (location/bio/message/showcaseSections) on UserProfile.
  * No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
@@ -460,10 +467,10 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
  */
 export async function clearUserProfileFields({
   userId,
-  fields = ['location', 'bio', 'message'],
+  fields = ['location', 'bio', 'message', 'showcaseSections'],
 }: {
   userId: number;
-  fields?: Array<'location' | 'bio' | 'message'>;
+  fields?: Array<'location' | 'bio' | 'message' | 'showcaseSections'>;
 }) {
   if (fields.length === 0) return { updated: false };
   const data: Prisma.UserProfileUpdateInput = {};
@@ -477,6 +484,7 @@ export async function clearUserProfileFields({
     data.sfwMessage = null;
     data.sfwMessageAddedAt = null;
   }
+  if (fields.includes('showcaseSections')) data.showcaseSections = [];
   const result = await dbWrite.userProfile.updateMany({ where: { userId }, data });
   return { updated: result.count > 0 };
 }
@@ -506,6 +514,8 @@ export async function setUserMuted(
     if (!result.released) throw new Error(`No user with id ${args.userId}`);
     return { ...result.user, sessionInvalidated: true };
   }
+  if (isFeedbackCaptureOwner(args.userId))
+    throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
 
   // A repeated mute (the REST route's retry) keeps the moderator's original `mutedAt`.
   const current = await dbWrite.user.findUnique({
@@ -753,12 +763,10 @@ export async function getUserEngagedModelVersions({
 }) {
   const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
 
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-    return readModelVersionEngagementsViaKysely(kyselyRead, {
-      userId,
-      modelVersionIds: versionIds,
-    });
-  return readModelVersionEngagementsViaPrisma(dbRead, { userId, modelVersionIds: versionIds });
+  return readModelVersionEngagementsViaKysely(kyselyRead, {
+    userId,
+    modelVersionIds: versionIds,
+  });
 }
 
 export async function getUserDownloadedModelVersions({
@@ -1153,6 +1161,8 @@ export const deleteUser = async ({
   removeImages,
   removeAppData,
 }: DeleteUserInput) => {
+  // Refused by name; the account scrub below also rejects a non-positive id, but only as a 500.
+  if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const user = await dbWrite.user.findFirst({
     where: { username, id },
     select: { id: true, meta: true },
@@ -1281,6 +1291,17 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
     WHERE id = ${id}
   `);
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
+}
+
+// Sets or clears the one bit in place, so a concurrent write to another flag is never lost.
+export async function setEventPointsExclusion({ id, setTo }: { id: number; setTo: boolean }) {
+  const bit = UserFlag.ExcludeFromEventPoints;
+  await dbWrite.$executeRaw`
+    UPDATE "User"
+    SET flags = CASE WHEN ${setTo} THEN flags | ${bit}::int ELSE flags & ~${bit}::int END
+    WHERE id = ${id}
+  `;
+  userUpdateCounter?.inc({ location: 'user.service:setEventPointsExclusion' });
   void syncOwnerEventHats(id);
   void syncEventRosterMember(id);
 }
@@ -1737,6 +1758,7 @@ export const removeAllContent = async ({
   /** The webhook caller's unverified say-so; named on alerts only, never written as an actor. */
   claimedModeratorId?: number | null;
 }) => {
+  if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
   // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
   // held to it. The deletes that destroy evidence check again in their own statements.
@@ -1761,9 +1783,6 @@ export const removeAllContent = async ({
   // sort deletes by least impactful to most impactful
   await dbWrite.imageReaction.deleteMany({ where: { userId: id } });
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
-  await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
-  await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  // A reaction on a comment written to CommentV3 directly has no CommentV2Reaction row to mirror.
   await dbWrite.$executeRaw`DELETE FROM "CommentV3Reaction" WHERE "userId" = ${id}`;
   // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from, so an
   // unsettled payout is settled first and an open bounty's supporters are refunded.
@@ -1865,23 +1884,12 @@ export const removeAllContent = async ({
     const v3Ids = (
       await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "CommentV3"
-        WHERE "userId" = ${id} AND "deletedAt" IS NULL
-          AND ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}`
+        WHERE "userId" = ${id} AND "deletedAt" IS NULL`
     ).map((r) => r.id);
     for (let i = 0; i < v3Ids.length; i += REMOVE_V3_COMMENTS_BATCH) {
       const batch = v3Ids.slice(i, i + REMOVE_V3_COMMENTS_BATCH);
       afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, batch)));
     }
-    // Not the rows the CommentV3 pass handled: the mirror's delete would blank a placeholder it left.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CommentV2" c2
-      WHERE c2."userId" = ${id} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
-    await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id}`;
-    // CommentV3 first, as every write on these comments locks it, before the cascade reaches CommentV2.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" IN (${owned(
-        'Article'
-      )})`;
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
     await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
     const formerOwnerHeld = heldModelIdsSql(
@@ -1925,9 +1933,11 @@ export const removeAllContent = async ({
     await deleteImages(
       images.map((i) => i.id),
       true,
-      { onlyWhere: unlessHeld }
+      { onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}` }
     );
-    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (${owned('Image')})`;
+    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (
+      ${owned('Image')} AND NOT ${captureImageKeptSql('o')}
+    )`;
     await refreshProfilePicturesForUsers([id]);
 
     // A hold that landed mid-wipe stopped the deletes above without an error.
@@ -2567,6 +2577,7 @@ async function bulkUnpublishModelsForBannedUser({
   const modelIds = modelsToUnpublish.map((m) => m.id);
   const versionIds = modelsToUnpublish.flatMap((m) => m.modelVersions.map((v) => v.id));
 
+  let unpublishedPostIds: number[] = [];
   // Bulk update models and versions in a transaction
   await dbWrite.$transaction(
     async (tx) => {
@@ -2592,7 +2603,7 @@ async function bulkUnpublishModelsForBannedUser({
         `;
 
         // Update posts to unpublish them
-        await tx.$executeRaw`
+        const unpublishedPosts = await tx.$queryRaw<{ id: number }[]>`
           UPDATE "Post"
           SET
             metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
@@ -2605,11 +2616,18 @@ async function bulkUnpublishModelsForBannedUser({
             "publishedAt" IS NOT NULL
             AND "userId" = ${odRef}
             AND "modelVersionId" IN (${Prisma.join(versionIds)})
+          RETURNING id
         `;
+        unpublishedPostIds = unpublishedPosts.map((post) => post.id);
       }
     },
     { timeout: 60000 }
   );
+  syncReviewsOfMovedPosts({
+    change: 'unpublish',
+    postIds: unpublishedPostIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   // Bust user model count cache
   await userModelCountCache.refresh(odRef);
@@ -2775,6 +2793,9 @@ export const toggleBan = async ({
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
+  // Never banned; an unban stays open so a ban from before this guard can still be lifted.
+  if (!bannedAt && isFeedbackCaptureOwner(id))
+    throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
 
   const updatedMeta = bannedAt
     ? {
@@ -2989,30 +3010,8 @@ export const toggleBan = async ({
     }
 
     // Flagged, not deleted, and the ToS flag rather than `hidden` — `hidden` is a fold any viewer can
-    // reopen. See `bulkSetCommentV2TosViolation`.
+    // reopen.
     if (removeComments) {
-      try {
-        await Promise.all([
-          dbWrite.comment.updateMany({
-            where: { userId: id, tosViolation: false },
-            data: { tosViolation: true },
-          }),
-          // Not a comment on a CommentV3-write surface: `setUserCommentsV3Tos` flags those, locking
-          // CommentV3 first as every write there does, so the two cannot deadlock.
-          dbWrite.$executeRaw`
-            UPDATE "CommentV2" c2 SET "tosViolation" = true, "updatedAt" = now()
-            WHERE c2."userId" = ${id} AND NOT c2."tosViolation"
-              AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`,
-        ]);
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-remove-comments',
-          message: (error as Error).message,
-          error,
-        });
-      }
-      // Its own try, so a failure above still leaves these flagged.
       await setUserCommentsV3Tos(id).catch((error: Error) =>
         logToAxiom({
           type: 'error',

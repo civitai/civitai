@@ -2180,10 +2180,27 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
+  DOWNLOAD_LINK: {
+    // `dl:link:<sha256(id)>` — hash of one download link (credential, user, version, file, expiresAt,
+    // fetches). The raw id is never stored.
+    LINK: 'dl:link',
+    // `dl:linkid:<linkId>` → the link's hash key, for revoking one link by its public linkId.
+    LINK_ID: 'dl:linkid',
+    // `dl:reuse:<credential>:<fileId>:<userId|public>` → the hash key of the link a repeat mint returns.
+    REUSE: 'dl:reuse',
+    // `dl:links:cred:<credential>` — set of the hash keys a credential minted, for revoking them all.
+    CRED_LINKS: 'dl:links:cred',
+    // `dl:mint-rate:<cred|user>:<id>:<minute>` — fixed-window mint counters.
+    MINT_RATE: 'dl:mint-rate',
+  },
   APP: {
     // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
     // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
     PAGE_ACCESS: 'app:page-access',
+    // `app:held-sheet:code:<sha256(code)>` — one sign-in code for the held-media sheet, 60 s, single use.
+    HELD_SHEET_CODE: 'app:held-sheet:code',
+    // `app:held-sheet:session:<sha256(token)>` — one held-media sheet session, sliding idle expiry.
+    HELD_SHEET_SESSION: 'app:held-sheet:session',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
@@ -2201,6 +2218,8 @@ export const REDIS_SYS_KEYS = {
   FEEDBACK: {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
+    // Fixed-window count of HQ filing attempts per reporter — `system:feedback:hq-filing:${userId}`.
+    HQ_FILING: 'system:feedback:hq-filing',
   },
   PRICING: {
     // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
@@ -2210,12 +2229,30 @@ export const REDIS_SYS_KEYS = {
     // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
     ATTEMPTS: 'system:collection-ai-review:attempts',
   },
+  TRAINING_DATA_SCAN: {
+    // Self-heal resubmits per zip — `system:training-data-scan:heal-attempts:${fileId}:${urlHash}`.
+    HEAL_ATTEMPTS: 'system:training-data-scan:heal-attempts',
+    // Definite "can't read the zip" answers per zip — same key shape.
+    HEAL_UNREADABLE: 'system:training-data-scan:heal-unreadable',
+    // Self-heal workflows already taken back — `system:training-data-scan:heal-taken-back:${workflowId}`.
+    HEAL_TAKEN_BACK: 'system:training-data-scan:heal-taken-back',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).
     EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
     // Cumulative Buzz-spend cap counter, keyed `system:blocks:buzz-cap:${userId}:${appBlockId}:${day}`.
     BUZZ_CAP: 'system:blocks:buzz-cap',
+    // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
+    // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
+    // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT
+    // prefixed `buzz-cap`, so a prefix match on the counters never takes it in.
+    BUZZ_CAP_OPT_IN: 'system:blocks:buzz-opt-in',
+    // The viewer's LAST daily app Buzz cap check refused: `system:blocks:buzz-refused:
+    // ${userId}:${UTC-day}` = the cap it was refused at, expiring at the next UTC midnight. What
+    // the running app's paused notice reads; a passing check or opting in deletes it. Not
+    // prefixed `buzz-cap`.
+    BUZZ_CAP_REFUSED: 'system:blocks:buzz-refused',
     // Cumulative TIP-spend cap counter for the block tip endpoint, keyed
     // `system:blocks:tip-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP: that
     // bounds a user's daily generation SPEND; this bounds a user's daily Buzz
@@ -2297,6 +2334,33 @@ export const REDIS_SYS_KEYS = {
     // Per-API-key (fallback per-IP) rate-limit counter for the token-authed bundle-submit
     // endpoint (`/api/v1/blocks/submit-version`). On sysRedis like the retool limiter + BUZZ_CAP.
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
+    // Per-slug counter for git pushes recorded for review, and per-user for the web manifest
+    // editor's commits. Same `SET NX EX` + `INCR` shape as SUBMIT_RATE_LIMIT, on sysRedis.
+    PUSH_REVIEW_RATE_LIMIT: 'system:blocks:push-review-rate-limit',
+    // Review previews started automatically at submit, per submitter per UTC day
+    // (`system:blocks:review-auto-builds:${userId}:${YYYY-MM-DD}`). Past the budget the submit
+    // still succeeds and the preview waits for a moderator to start it.
+    REVIEW_AUTO_BUILDS: 'system:blocks:review-auto-builds',
+    // New-submission moderator alerts per submitter per UTC hour
+    // (`system:blocks:review-submission-alerts:${userId}:${YYYY-MM-DDTHH}`).
+    REVIEW_SUBMISSION_ALERTS: 'system:blocks:review-submission-alerts',
+    // Agent-review auto-start budget reserved by starts in flight, in US cents, per UTC day
+    // (`system:blocks:agent-review-autostart-reserved:${YYYY-MM-DD}`): the per-review cap is
+    // reserved before the start and released once its report row exists (or the start failed).
+    AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
+    // Model spend of the impersonation check on approved apps' listing edits, in US cents, per
+    // UTC day (`system:blocks:listing-check-spend:${YYYY-MM-DD}`): added to the day's agent-review
+    // spend, so it counts against the same automatic-start budget.
+    LISTING_CHECK_SPEND: 'system:blocks:listing-check-spend',
+    // Live app pointer on the shared static server, per app slug. TAKEDOWN
+    // (`...:${slug}`, no TTL) is set to 'attempted' when this platform starts a live unpublish or
+    // restore for the app (the evidence a relist restores on), upgraded to 'confirmed' when an
+    // unpublish succeeded, and cleared when its pointer is written back (a restore or a deploy). LOCK
+    // (`...:${slug}`, SET NX EX) serialises the pointer Jobs of one app; DIRTY (`...:${slug}`)
+    // asks the lock holder to look at the app again before it lets go.
+    LIVE_POINTER_TAKEDOWN: 'system:blocks:live-pointer-takedown',
+    LIVE_POINTER_LOCK: 'system:blocks:live-pointer-lock',
+    LIVE_POINTER_DIRTY: 'system:blocks:live-pointer-dirty',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the dev/preview
      * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`
@@ -2458,6 +2522,8 @@ export const REDIS_SYS_KEYS = {
     COUNT: 'download:count',
     /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
     REPEATS: 'download:repeats',
+    /** `<prefix>:<provider>:<hour>`: a provider's downloads this hour. See provider-download.limiter.ts. */
+    PROVIDER: 'download:provider',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
@@ -2581,6 +2647,10 @@ export const REDIS_SYS_KEYS = {
     // process per TTL for all of them; `:<version>:lock` elects that process. See
     // src/server/prom/ingestion-gauge-store.ts.
     IMAGE_INGESTION_GAUGES: 'system:image-ingestion-gauges',
+    // Sorted set of imageIds whose upload prompt scan had no verdict, scored by when to scan them
+    // again; `:attempts` is a hash of imageId -> the attempt that entry is. See
+    // src/server/services/upload-prompt-retry.service.ts.
+    UPLOAD_PROMPT_SCAN_RETRY: 'system:upload-prompt-scan-retry',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2684,9 +2754,9 @@ export const REDIS_SYS_KEYS = {
     // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
     // (`readMinimum`).
     COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
-    // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
-    // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
-    // and only new volume after that is filed again. No TTL.
+    // Hash: field = creator userId, value = JSON { filedAt, counterparties: { [userId]: two-way
+    // amount when last filed } }, so only new volume is filed again. Older entries have `warnedAt`
+    // and `chatId` in place of `filedAt` (`parseFiledRecord`). No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
     // String. How many other users the review follows Buzz through before it reaches the creator
     // again; the review clamps it to what it supports (`runCounterpartyReview`).
@@ -2892,6 +2962,15 @@ export const REDIS_SYS_KEYS = {
     // Per-member lock around a moderator's Stripe membership extension (guards + write + checks).
     LOCK: 'membership-extend:lock',
   },
+  HEADLESS_POST: {
+    IDEMPOTENCY: 'headless-post:idempotency',
+  },
+  REMIX_APP: {
+    // A choice ask's per-option prices, per run, segment and step, while that ask is open.
+    OPTION_PRICES: 'remix-app:option-prices',
+    // Bumped after every mod write; the registry cache key carries it.
+    REGISTRY_GENERATION: 'remix-app:registry-generation',
+  },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
     SEND_LOCK: 'message-as-civitai:send-lock',
@@ -2908,6 +2987,16 @@ export const REDIS_SYS_KEYS = {
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',
     JUDGING_SESSION: 'crucible:judging-session',
+  },
+  REGISTRY_ADAPTER: {
+    // The content-addressed served state a registry cursor names —
+    // `system:registry-adapter:snapshot:${digest}`. TTL refreshed on every resume; evicting one
+    // only expires that cursor (the consumer re-snapshots).
+    SNAPSHOT: 'system:registry-adapter:snapshot',
+    // The newest snapshot digests of one stream, newest first — list
+    // `system:registry-adapter:stream-states:${truncated sha256 of the stream schema}`. Digests
+    // that fall off it are deleted, which bounds what one stream keeps; same TTL as the snapshots.
+    STREAM_STATES: 'system:registry-adapter:stream-states',
   },
 } as const;
 
@@ -3034,9 +3123,15 @@ const REDIS_KEYS_UNPREFIXED = {
     // suggestions — omitting it let one prompt's entry be reused across limits.
     JEV_RESOURCE_INTENT: 'packed:caches:jev-resource-intent:v1',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
+    // `<prefix>:<userId>:<type|all>` — the ranked ids behind /api/v1/creator/engagement?sort=engagement.
+    CREATOR_ENGAGEMENT_RANKING: 'packed:caches:creator-engagement-ranking:v1',
+    // `<prefix>:<userId>` — the 30-day reacted-image candidates, shared by every ranking type.
+    CREATOR_ENGAGEMENT_CANDIDATES: 'packed:caches:creator-engagement-candidates:v1',
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
+    // The live per-provider download tokens. See provider-download/provider-token.store.ts.
+    PROVIDER_DOWNLOAD_TOKENS: 'packed:caches:provider-download-tokens',
     // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
     ACCOUNT_STANDING: 'packed:caches:account-standing',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
@@ -3044,11 +3139,15 @@ const REDIS_KEYS_UNPREFIXED = {
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
+    // `<prefix>:row:<surface>:<entityType>:<entityId>` (a cached space row) and
+    // `<prefix>:written:<surface>:<entityType>:<entityId>` (when that row was last written) —
+    // the display read of a placement space. See placement-space.service.ts.
+    PLACEMENT_SPACE: 'packed:caches:placement-space',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
     USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
-    PROFILE_PICTURES: 'packed:caches:profile-pictures',
+    PROFILE_PICTURES: 'packed:caches:profile-pictures:v2',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
@@ -3117,6 +3216,8 @@ const REDIS_KEYS_UNPREFIXED = {
     CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
     // Remix app whatIf price per (app, tier, aspect, user tier, mod, currencies): `quoteRemixApps`.
     REMIX_APP_QUOTE: 'packed:caches:remix-app-quote',
+    // The remix app rows (`app_blocks` with a remix status): `getRemixAppRegistry`, busted on every mod edit.
+    REMIX_APP_REGISTRY: 'packed:caches:remix-app-registry',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
     // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
@@ -3159,6 +3260,12 @@ const REDIS_KEYS_UNPREFIXED = {
     // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
     USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
     CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
+    // Contest entries per image; see src/server/services/contest-collection-items.cache.ts.
+    CONTEST_COLLECTION_ITEMS: 'packed:caches:contest-collection-items',
+    // Which host images have any remix-gallery placement, so the card and gallery reads skip
+    // the database for the hosts that have none; see
+    // src/server/services/remix-gallery-hosts.cache.ts.
+    REMIX_GALLERY_HOSTS: 'packed:caches:remix-gallery-hosts',
     // Async contest-scoring runs: per-run state, the per-collection pointer to the
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.
@@ -3172,6 +3279,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // only delays a brand-new epoch becoming generatable. See
     // `validateRawAirResources` in orchestration-new.service.
     TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
+    // `<ownerId>:<blobId>` -> a freshly signed url for a published training epoch, re-signed with
+    // the owner's orchestrator token. Short TTL, well under the signed lifetime; see mini/[id].ts.
+    EPOCH_BLOB_RESIGNED_URL: 'packed:caches:epoch-blob-resigned-url',
     // Per-user creator card (`user.getCreator` by id): the user row slice, links, stats, rank,
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.
@@ -3211,6 +3321,9 @@ const REDIS_KEYS_UNPREFIXED = {
     LIMIT: {
       BASE: 'packed:trpc:limit',
       KEYS: 'packed:trpc:limit:keys',
+      // `<userId>` hashes of abuse limits the user is refused by now: field = limiter key,
+      // value = retry time (epoch ms), each field expiring at that time.
+      ACTIVE: 'trpc:limit:active',
     },
     // `<bucket>:<userId>` sorted sets of in-flight request slots (`inFlightLimit`).
     IN_FLIGHT: 'trpc:in-flight',
@@ -3310,6 +3423,14 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
+  },
+  BOT_CACHE: {
+    /*
+      Use: a verified crawler's page HTML, so a repeat request for the URL is not rendered again.
+      Structure: packed { pattern, headers, body (brotli HTML) }, key =
+      `botcache:v1:${buildId}:${host}:${path}?${sortedQuery}`, TTL 300s.
+     */
+    HTML: 'botcache:v1',
   },
   SEMANTIC_SEARCH: {
     /*

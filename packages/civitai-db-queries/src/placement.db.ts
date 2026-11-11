@@ -275,6 +275,37 @@ export async function listStickerPlacementRows(
     .execute();
 }
 
+/**
+ * Tracks of the placements on one image that `listStickerPlacementRows` lists for this viewer:
+ * approved ones, plus pending ones the viewer placed or owns. Never joined to the listing: a
+ * track dwarfs its row.
+ */
+export async function listPlacementTrackRows(
+  db: Kysely<DB>,
+  input: { surface: string; targetType: string; targetId: number; viewerId?: number }
+) {
+  const { viewerId } = input;
+  return db
+    .selectFrom('Placement')
+    .select(['id', 'targetId', 'data', 'track'])
+    .where('surface', '=', input.surface)
+    .where('targetType', '=', input.targetType)
+    .where('targetId', '=', input.targetId)
+    .where((eb) =>
+      eb.or([
+        eb('status', '=', 'approved'),
+        ...(viewerId
+          ? [
+              eb.and([eb('status', '=', 'pending'), eb('placerId', '=', viewerId)]),
+              eb.and([eb('status', '=', 'pending'), eb('ownerId', '=', viewerId)]),
+            ]
+          : []),
+      ])
+    )
+    .where('track', 'is not', null)
+    .execute();
+}
+
 /** Approved placements on these targets, for the per-image counts. Unordered, as the source was. */
 export async function listApprovedPlacementRows(
   db: Kysely<DB>,

@@ -29,10 +29,16 @@ const EVENT = {
     renderLimit: 12,
     mapMaxEntries: 10,
   },
-  getUserTeam: async () => 'Blue',
+  getUserTeam: vi.fn(async (_userId: number, _opts?: { strict?: boolean }) => 'Blue'),
   getTeamCosmetic: async () => 11,
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// getTurfStock and getTurfSummaries read through Kysely, not Prisma's `$queryRaw`: both Kysely
+// clients' statements go to the same PGlite (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 const pushTurfCounts = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('~/server/events/turf/turf-watch', async (importOriginal) => ({
   ...(await importOriginal<typeof TurfWatch>()),
@@ -46,6 +52,7 @@ vi.mock('~/server/services/placement-moderation.service', async (importOriginal)
 const {
   getTurfEvent,
   getTurfSummaries,
+  getMyStickerHats,
   getTurfStickers,
   getTurfStickersForImages,
   placeTurfSticker,
@@ -58,6 +65,7 @@ const PLACER = 5;
 const CONTEST_ENTRY = 900;
 const BOOKMARKED = 901;
 const OTHER = 902;
+const LOWERCASE_PLAYER = 903;
 const counts = JSON.stringify({ shown: { Blue: 1 }, counted: { Blue: 1 }, leader: 'Blue' });
 
 let db: PGlite;
@@ -68,7 +76,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz,
       "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb,
-      "excludeFromLeaderboards" boolean DEFAULT false
+      "excludeFromLeaderboards" boolean DEFAULT false, flags int NOT NULL DEFAULT 0
     );
     CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
@@ -97,8 +105,14 @@ beforeAll(async () => {
     INSERT INTO "Collection" VALUES (1, 'Contest'), (2, 'Bookmark');
     INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES
       (1, ${CONTEST_ENTRY}), (2, ${BOOKMARKED});
-    INSERT INTO "Cosmetic" VALUES (11, 'ContentDecoration', '{"event": "e", "team": "Blue"}');
-    INSERT INTO "UserCosmetic" VALUES (${PLACER}, 11);
+    INSERT INTO "Cosmetic" VALUES
+      (11, 'ContentDecoration',
+        '{"event": "e", "team": "Blue", "url": "blue-cap-art",
+          "fit": {"canvas": [128, 160], "bounds": [20, 40, 108, 150], "outline": [[1, 2]]}}'),
+      (12, 'ContentDecoration', '{"event": "e", "team": "Pink", "url": "pink-cap-art"}'),
+      (13, 'ContentDecoration', '{"event": "e", "team": "blue"}');
+    INSERT INTO "UserCosmetic" VALUES
+      (${PLACER}, 11), (${PLACER}, 12), (${LOWERCASE_PLAYER}, 13);
     INSERT INTO "EventTurfSticker" (event, "imageId", "userId", team, "cosmeticId", data) VALUES
       ('e', ${CONTEST_ENTRY}, ${PLACER}, 'Blue', 11, '{}'),
       ('e', ${BOOKMARKED}, ${PLACER}, 'Blue', 11, '{}');
@@ -108,6 +122,8 @@ afterAll(async () => db.close());
 
 beforeEach(() => {
   const raw = pgliteRaw(db);
+  kysely.read.mockReset().mockImplementation(raw.queryRaw);
+  kysely.write.mockReset().mockImplementation(raw.queryRaw);
   for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
     client.$executeRaw.mockImplementation(raw.executeRaw as never);
@@ -138,6 +154,46 @@ describe('Hat Turf on contest entries', () => {
   it('no stickers are drawn on a contest entry on image detail', async () => {
     expect((await getTurfStickers('e', CONTEST_ENTRY, PLACER)).stickers).toEqual([]);
     expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers).toHaveLength(1);
+  });
+
+  // The hat's own art is the sticker: every read that draws one carries it.
+  it('a sticker carries its hat art on image detail, feed cards and pushes', async () => {
+    const art = { url: 'blue-cap-art', canvas: [128, 160], bounds: [20, 40, 108, 150] };
+    // The fit's outline is not needed to draw, so it does not ride along.
+    expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers[0]?.art).toEqual(art);
+    const feed = await getTurfStickersForImages('e', [BOOKMARKED], 5);
+    expect(feed[BOOKMARKED]?.[0]?.art).toEqual(art);
+    redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
+    redisMock.sysRedis.incr.mockResolvedValue(1 as never);
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    pushTurfCounts.mockClear();
+    await syncTurfImages((await getTurfEvent('e'))!, [BOOKMARKED]);
+    const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
+    const push = pushed.find((p: { imageId: number }) => p.imageId === BOOKMARKED) as
+      | { stickers: { art: unknown }[] }
+      | undefined;
+    expect(push?.stickers[0]?.art).toEqual(art);
+  });
+
+  // Placing refuses another team's hat, so the picker offers only the player's own team's.
+  it("a player's hats to place are their current team's only", async () => {
+    const hats = await getMyStickerHats('e', PLACER);
+    expect(hats.map((hat) => hat.cosmeticId)).toEqual([11]);
+    expect(hats[0].art?.url).toBe('blue-cap-art');
+  });
+
+  it("a hat whose team is spelled in another case is still the player's, and art-less hats carry no art", async () => {
+    const hats = await getMyStickerHats('e', LOWERCASE_PLAYER);
+    expect(hats.map((hat) => [hat.cosmeticId, hat.art])).toEqual([[13, null]]);
+  });
+
+  // Deliberate: strict like placing. A non-strict lookup turns a failed team read into a guessed
+  // team, offering hats placing would then refuse.
+  it("the picker reads the player's team strictly, and a failed read errors rather than guessing", async () => {
+    await getMyStickerHats('e', PLACER);
+    expect(EVENT.getUserTeam).toHaveBeenLastCalledWith(PLACER, { strict: true });
+    EVENT.getUserTeam.mockRejectedValueOnce(new Error('team read failed'));
+    await expect(getMyStickerHats('e', PLACER)).rejects.toThrow('team read failed');
   });
 
   it('feed cards get no stickers for a contest entry', async () => {

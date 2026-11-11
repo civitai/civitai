@@ -138,6 +138,7 @@ import type {
   OutboxEntity,
   StorylineStatus,
   StorylineWhoCanContinue,
+  StorylineFollowScope,
   ServiceOfferingStatus,
   ServicePreviewKind,
   ServiceBuzzType,
@@ -155,6 +156,16 @@ import type {
   PrizeSourceType,
 } from './enums';
 
+export type AccessToken = {
+  id: Generated<number>;
+  resourceType: string;
+  resourceId: number;
+  tokenHash: string;
+  createdById: number;
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp;
+  revokedAt: Timestamp | null;
+};
 export type Account = {
   id: Generated<number>;
   userId: number;
@@ -427,6 +438,11 @@ export type AppCollaborator = {
   last_notified_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   responded_at: Timestamp | null;
+};
+export type AppDeveloperTermsAcceptance = {
+  user_id: number;
+  version: string;
+  accepted_at: Generated<Timestamp>;
 };
 export type AppDevForgejoIdentity = {
   user_id: number;
@@ -801,6 +817,7 @@ export type Article = {
   content: string;
   cover: string | null;
   coverId: number | null;
+  bannerId: number | null;
   publishedAt: Timestamp | null;
   scheduledAt: Timestamp | null;
   contentScannedAt: Timestamp | null;
@@ -951,6 +968,13 @@ export type ArticleReaction = {
 export type ArticleReport = {
   articleId: number;
   reportId: number;
+};
+export type ArticleShareCheck = {
+  articleId: number;
+  generation: Generated<number>;
+  workflowId: string | null;
+  textHash: string | null;
+  updatedAt: Timestamp;
 };
 export type ArticleStat = {
   articleId: number;
@@ -1924,6 +1948,10 @@ export type BoxOpening = {
    * granted | refunded (text + CHECK)
    */
   rewardStatus: string;
+  /**
+   * Drawn from a pack's guaranteed tiers only.
+   */
+  guaranteed: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
 export type BoxRevision = {
@@ -2415,6 +2443,7 @@ export type Collection = {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Timestamp | null;
+  archivedAt: Timestamp | null;
 };
 export type CollectionContributor = {
   createdAt: Generated<Timestamp | null>;
@@ -3382,22 +3411,6 @@ export type GenerationSizePreset = {
   height: number;
   createdAt: Generated<Timestamp>;
 };
-export type HeldAnswer = {
-  /**
-   * The original Answer id.
-   */
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-  heldAt: Generated<Timestamp>;
-  /**
-   * The holds on the author when it was copied.
-   */
-  holdReasons: string[];
-};
 export type HeldResourceReview = {
   /**
    * The original ResourceReview id.
@@ -3593,6 +3606,27 @@ export type ImageConnection = {
   imageId: number;
   entityId: number;
   entityType: string;
+};
+export type ImageDeferredBlockEffect = {
+  imageId: number;
+  /**
+   * The violation the moderator chose, if any; the notice states it.
+   */
+  violationType: string | null;
+  /**
+   * False for a re-block of an image already removed: only its reports are deferred.
+   */
+  notifyOwner: Generated<boolean>;
+  /**
+   * Open reports of this reason on the image are actioned at the close.
+   */
+  reportReason: string | null;
+  /**
+   * These reports are actioned at the close, if still open.
+   */
+  reportIds: Generated<number[]>;
+  blockedBy: number | null;
+  createdAt: Generated<Timestamp>;
 };
 export type ImageEngagement = {
   userId: number;
@@ -3889,6 +3923,10 @@ export type ModActivity = {
   entityId: number | null;
   createdAt: Generated<Timestamp>;
   host: string | null;
+  /**
+   * Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
+   */
+  credential: string | null;
 };
 export type Model = {
   id: Generated<number>;
@@ -4300,6 +4338,34 @@ export type ModelVersionExploration = {
   prompt: string;
   modelVersionId: number;
 };
+export type ModelVersionGiftLink = {
+  id: Generated<number>;
+  modelVersionId: number;
+  createdById: number;
+  codeHash: string;
+  codeHint: string;
+  label: string | null;
+  batchId: string | null;
+  /**
+   * null = uncapped. CHECKs (> 0, redemptionCount <= maxRedemptions) live only in the migration.
+   */
+  maxRedemptions: number | null;
+  redemptionCount: Generated<number>;
+  expiresAt: Timestamp | null;
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ModelVersionGiftRedemption = {
+  giftLinkId: number;
+  userId: number;
+  claimedAt: Generated<Timestamp>;
+  /**
+   * Set when the link's owner or a moderator removed this claimer's gifted access.
+   */
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+};
 export type ModelVersionMetric = {
   modelVersionId: number;
   downloadCount: Generated<number>;
@@ -4481,6 +4547,49 @@ export type Partner = {
   logo: string | null;
   disabled: Generated<boolean>;
 };
+export type PersonalDataExport = {
+  id: Generated<number>;
+  userId: number;
+  requestedById: number;
+  /**
+   * queued | building | built | held | failed | released
+   */
+  status: Generated<string>;
+  /**
+   * Always text-redacted-separate-file: the notes file beside the archive.
+   */
+  modNotesMode: Generated<string>;
+  /**
+   * Neutral codes for the holds found when the archive was built; re-checked at release.
+   */
+  holdReasons: Generated<string[]>;
+  archiveKey: string | null;
+  modNotesKey: string | null;
+  /**
+   * Per-source row counts and notes: what the archive's manifest.json holds, without data.
+   */
+  manifest: unknown | null;
+  error: string | null;
+  attempts: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  startedAt: Timestamp | null;
+  builtAt: Timestamp | null;
+  /**
+   * When the requester was emailed the link.
+   */
+  sentAt: Timestamp | null;
+  linkExpiresAt: Timestamp | null;
+  releasedAt: Timestamp | null;
+  releasedById: number | null;
+  /**
+   * The help-desk ticket the request came in on, when it did.
+   */
+  ticketId: number | null;
+  /**
+   * The date the user asked (the ticket's own date, or as entered): starts the response deadline.
+   */
+  requestedAt: Timestamp | null;
+};
 export type Placement = {
   id: Generated<number>;
   surface: string;
@@ -4489,6 +4598,11 @@ export type Placement = {
   ownerId: number;
   placerId: number;
   data: Generated<unknown>;
+  /**
+   * A sticker's movement over a video, in the shape of `StickerTrack`. Null for a still sticker;
+   * `data` holds the pose at time zero either way. Its own column because the feed reads `data`.
+   */
+  track: unknown | null;
   status: string;
   /**
    * 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
@@ -5123,6 +5237,15 @@ export type ResourceReview = {
   nsfw: Generated<boolean>;
   tosViolation: Generated<boolean>;
   metadata: unknown | null;
+  /**
+   * The unpublished post the review was written from. The review stays hidden until that post is live.
+   */
+  postId: number | null;
+  /**
+   * When a review linked to a post was announced: notified and recounted. Cleared when the post is
+   * unpublished, so the next go-live announces it again.
+   */
+  releasedAt: Timestamp | null;
 };
 export type ResourceReviewHelper = {
   resourceReviewId: number;
@@ -5354,7 +5477,7 @@ export type ServiceDealFile = {
   mimeType: string;
   size: number;
   /**
-   * Uploading until the seller confirms the object is in the bucket.
+   * Uploading until the uploader confirms the object is in the bucket.
    */
   status: Generated<ServiceDealFileStatus>;
   failReason: string | null;
@@ -5390,6 +5513,15 @@ export type ServiceDealFile = {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Timestamp | null;
+  /**
+   * An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
+   */
+  attestedAt: Timestamp | null;
+  /**
+   * Set when the uploader removed the file but its row and objects must stay; only moderators
+   * see it after that. Null is a live file.
+   */
+  removedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
 };
 export type ServiceDealFileEntry = {
@@ -5696,6 +5828,12 @@ export type StorylineEarlyAccessSignup = {
    * Where they signed up from, for context only.
    */
   storylineId: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineFollow = {
+  storylineId: number;
+  userId: number;
+  scope: Generated<StorylineFollowScope>;
   createdAt: Generated<Timestamp>;
 };
 export type StorylinePendingChapter = {
@@ -6202,6 +6340,7 @@ export type UserProfile = {
   privacySettings: Generated<unknown>;
   profileSectionsSettings: Generated<unknown>;
   showcaseItems: Generated<unknown>;
+  showcaseSections: Generated<unknown>;
 };
 export type UserPurchasedRewards = {
   buzzTransactionId: string;
@@ -6441,6 +6580,7 @@ export type WorkerDevice = {
 };
 export type DB = {
   _LicenseToModel: LicenseToModel;
+  AccessToken: AccessToken;
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
@@ -6459,6 +6599,7 @@ export type DB = {
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
+  app_developer_terms_acceptances: AppDeveloperTermsAcceptance;
   app_listing_metrics: AppListingMetric;
   app_listing_moderation_events: AppListingModerationEvent;
   app_listing_publish_requests: AppListingPublishRequest;
@@ -6486,6 +6627,7 @@ export type DB = {
   ArticleRatingReview: ArticleRatingReview;
   ArticleReaction: ArticleReaction;
   ArticleReport: ArticleReport;
+  ArticleShareCheck: ArticleShareCheck;
   ArticleStat: ArticleStat;
   Auction: Auction;
   AuctionBase: AuctionBase;
@@ -6644,7 +6786,6 @@ export type DB = {
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   GenerationSizePreset: GenerationSizePreset;
-  HeldAnswer: HeldAnswer;
   HeldResourceReview: HeldResourceReview;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
@@ -6656,6 +6797,7 @@ export type DB = {
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;
   ImageCdnShopTakedown: ImageCdnShopTakedown;
   ImageConnection: ImageConnection;
+  ImageDeferredBlockEffect: ImageDeferredBlockEffect;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
   ImageMetaFlags: ImageMetaFlags;
@@ -6711,6 +6853,8 @@ export type DB = {
   ModelVersion: ModelVersion;
   ModelVersionEngagement: ModelVersionEngagement;
   ModelVersionExploration: ModelVersionExploration;
+  ModelVersionGiftLink: ModelVersionGiftLink;
+  ModelVersionGiftRedemption: ModelVersionGiftRedemption;
   ModelVersionMetric: ModelVersionMetric;
   ModelVersionMonetization: ModelVersionMonetization;
   ModelVersionSale: ModelVersionSale;
@@ -6727,6 +6871,7 @@ export type DB = {
   Outbox: Outbox;
   PaidAccess: PaidAccess;
   Partner: Partner;
+  PersonalDataExport: PersonalDataExport;
   Placement: Placement;
   PlacementSpace: PlacementSpace;
   PlacementSuspension: PlacementSuspension;
@@ -6810,6 +6955,7 @@ export type DB = {
   StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
+  StorylineFollow: StorylineFollow;
   StorylinePendingChapter: StorylinePendingChapter;
   StorylineReport: StorylineReport;
   Tag: Tag;

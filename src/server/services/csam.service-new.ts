@@ -12,7 +12,9 @@ import { clickhouse } from '~/server/clickhouse/client';
 import {
   getImageUploadIpEvents,
   UPLOAD_REQUEST_IP_NOTE,
+  FEEDBACK_CAPTURE_UPLOAD_IP_NOTE,
 } from '~/server/services/image-upload-action.service';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob } from '~/utils/file-utils';
@@ -40,7 +42,6 @@ import type { Report } from '@civitai/cybertipline-tools';
 import {
   Client,
   Environment,
-  FileDetailType,
   FileRelevance,
   IncidentType,
   IPEventName,
@@ -51,6 +52,7 @@ import type { BoundedArchive } from '~/server/utils/archive-helpers';
 import {
   createBoundedArchive,
   createByteBudget,
+  FAILED_ARCHIVE_SETTLE_MS,
   deriveUploadPartGeometry,
   ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -59,14 +61,18 @@ import {
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
-import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import {
+  FlaggedConsumerFetchError,
+  getConsumerStrikes,
+} from '~/server/http/orchestrator/flagged-consumers';
 import type { ShownRendition } from '@civitai/shared/held-media';
 import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { contextWebPageIncidents } from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
-import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
@@ -80,6 +86,7 @@ import {
   evidenceFilesToSend,
   evidenceReportInfo,
   evidenceSizeProblem,
+  promptFileDetails,
   readVerifiedEvidence,
   verifyStoredEvidence,
 } from '~/server/services/generator-evidence/evidence-payload';
@@ -111,11 +118,16 @@ import {
 import type { FileDetailsXml } from '~/server/services/ncmec-xml';
 import { cyberTipXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
-import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
+import type {
+  OriginalImageRead,
+  OriginalImageSource,
+  SpooledImage,
+} from '~/server/services/csam-original-image';
 import {
   extensionForContentType,
   probeOriginalImage,
   readOriginalImage,
+  spoolOriginalImage,
 } from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
@@ -154,7 +166,7 @@ type CsamReportUserActivity = {
   ip: string;
   time: string;
   details?: {
-    type: 'post' | 'model-version' | 'image-upload-request';
+    type: 'post' | 'model-version' | 'image-upload-request' | 'feedback-capture-upload';
     id: number;
   };
 };
@@ -189,12 +201,22 @@ type CsamReportDetails = CsamReportFormOutput & {
   /** CyberTips opened for this report and cancelled before it was sent. */
   cancelledReportIds?: number[];
   supplemental?: CsamSupplementalDetails;
+  contextText?: CsamContextText[];
   /** CyberTips opened for this report that could not be cancelled, so may have reached NCMEC. */
   possibleDuplicateReportIds?: number[];
   /** Opens whose answer could not be read: nothing more is sent until a moderator clears them. */
   unconfirmedOpens?: UnconfirmedOpen[];
   clearedUnconfirmedOpens?: ClearedUnconfirmedOpen[];
+  /**
+   * The case and reason a send run last held this report unsent for a moderator, written when the
+   * case changes and removed when the report is sent.
+   */
+  sendHold?: SendHold;
 };
+
+/** `no-files`: nothing the report names can be sent. `missing-user`: no reporting or reported user. */
+type SendHoldCase = 'no-files' | 'missing-user';
+type SendHold = { case: SendHoldCase; reason: string; at: string };
 
 type StoredObject = { key: string; etag: string | null };
 
@@ -335,8 +357,42 @@ export async function getCsamsToArchive() {
   });
   // A skipped archive is not retried. One skipped for missing training data keeps `archivedAt` null:
   // the image retention holds release a user's images once all their reports are archived.
-  return (data as unknown as CsamReportProps[]).filter((report) => !report.details?.archiveSkipped);
+  const reports = (data as unknown as CsamReportProps[]).filter(
+    (report) => !report.details?.archiveSkipped
+  );
+  // A stamp over an archive holding none of the report's files would be false, so these are left
+  // unstamped, and held. A generator-evidence report's files are preserved copies keyed in the CSAM
+  // bucket, which this archive cannot read; a generated-image report naming no URL has nothing it
+  // can read, since the strikes list is gone.
+  const unsupported = (report: CsamReportProps) =>
+    isGeneratorEvidenceDetails(report.details)
+      ? 'generator evidence archive not supported'
+      : report.type === 'GeneratedImage' && !namedGeneratedImageUrls(report).size
+      ? 'no generated image URL to archive'
+      : undefined;
+  const skipped = new Map<string, number>();
+  for (const report of reports) {
+    const reason = unsupported(report);
+    if (reason) skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
+  }
+  for (const [reason, count] of skipped)
+    logToAxiom({
+      name: 'csam-report',
+      type: 'info',
+      subType: 'archive-skipped-unsupported',
+      message: `${count} report(s) not archived: ${reason}`,
+      reason,
+      count,
+    });
+  return reports.filter((report) => !unsupported(report));
 }
+
+const namedGeneratedImageUrls = (report: Pick<CsamReportProps, 'details'>) =>
+  new Set(
+    (report.details?.generatedImages ?? []).flatMap(({ blobs }) =>
+      (blobs ?? []).flatMap(({ url }) => (url ? [url] : []))
+    )
+  );
 
 // Excludes reports whose archive was skipped for missing training data: they never get archivedAt.
 // Decide how to treat them before scheduling content removal.
@@ -380,6 +436,7 @@ async function getImages(imageIds?: number[]) {
     where: { id: { in: imageIds } },
     select: {
       id: true,
+      userId: true,
       url: true,
       createdAt: true,
       name: true,
@@ -509,6 +566,29 @@ export async function sweepStaleSendDirs(root = baseDir) {
   return stale.map(({ path }) => path);
 }
 
+const ARCHIVE_SCRATCH_ROOTS = ['base', 'images', 'generated-images', 'training-data'];
+
+/**
+ * Removes the archive scratch directories, named by report id alone, that a pass which died left
+ * behind. Run only at the start of the archive job, whose run lock keeps other archive passes out
+ * while it holds; a pass that outlives the lock can lose its directory here and fail. Send directories in the same roots are named `<id>-<claim>` and are left.
+ */
+export async function sweepArchiveScratchDirs(root = baseDir) {
+  const removed: string[] = [];
+  for (const scratch of ARCHIVE_SCRATCH_ROOTS) {
+    const rootDir = `${root}/${scratch}`;
+    const names = await fsAsync.readdir(rootDir).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return [];
+      throw e;
+    });
+    for (const name of names.filter((name) => /^\d+$/.test(name))) {
+      await fsAsync.rm(`${rootDir}/${name}`, { recursive: true, force: true });
+      removed.push(`${rootDir}/${name}`);
+    }
+  }
+  return removed;
+}
+
 /** `runStart` is the job's copy of the report; the send works from the row re-read under its claim. */
 export async function processCsamReport(runStart: CsamReportProps) {
   const status = await cybertipClient.getStatus();
@@ -533,6 +613,10 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
+/** Filed with each feedback page capture in an image report, whoever the report's subject is. */
+export const FEEDBACK_CAPTURE_FILE_NOTE =
+  'Page capture submitted by a reporter: this file is a screenshot of a Civitai page that a user attached to a feedback report sent to Civitai. It may show content posted by an account other than the one who submitted it.';
+
 export function getReportedUserAdditionalInfo(
   email: string | null,
   userActivity: CsamReportUserActivity[]
@@ -542,6 +626,9 @@ export function getReportedUserAdditionalInfo(
       email ? `Email: ${email}` : null,
       userActivity.some((a) => a.details?.type === 'image-upload-request')
         ? UPLOAD_REQUEST_IP_NOTE
+        : null,
+      userActivity.some((a) => a.details?.type === 'feedback-capture-upload')
+        ? FEEDBACK_CAPTURE_UPLOAD_IP_NOTE
         : null,
     ]
       .filter(Boolean)
@@ -581,7 +668,7 @@ async function getInitialReportData(claim: SendClaim) {
   const reportingUser = await getReportingUser(report.reportedById);
   const reportedUser = report.userId ? await getReportedUser(report.userId) : undefined;
   if (!reportingUser || !reportedUser)
-    return await deleteUnderClaim(claim, 'no reporting or reported user');
+    return await holdForDecision(claim, 'missing-user', 'no reporting or reported user');
 
   const userActivity = await snapshotUserActivity(claim);
   if (!userActivity) return;
@@ -851,35 +938,31 @@ const appendId =
   (key: 'cancelledReportIds' | 'possibleDuplicateReportIds', id: number) =>
   (details: CsamReportDetails) => ({ ...details, [key]: [...(details[key] ?? []), id] });
 
-async function deleteUnderClaim(claim: SendClaim, reason: string) {
-  // A CyberTip left open for it is cancelled first. One that may be with NCMEC keeps the row, its
-  // only record here, for a human to decide on.
-  const stored = await cancelStoredCyberTip(claim);
-  if (stored === 'lost') return;
-  const possibleDuplicates = claim.report.details?.possibleDuplicateReportIds ?? [];
-  const unconfirmed = claim.report.details?.unconfirmedOpens ?? [];
-  if (stored === 'held' || possibleDuplicates.length > 0 || unconfirmed.length > 0)
-    return logSendLine(
-      claim,
-      'send-delete-held',
-      {
-        message: `report ${claim.report.id} not deleted (${reason}): it may have a CyberTip at NCMEC`,
-        ncmecReportId: claim.report.reportId ?? undefined,
-        possibleDuplicateReportIds: possibleDuplicates,
-        unconfirmedOpens: unconfirmed.length,
-      },
-      'error'
-    );
-  const { count } = await dbWrite.csamReport.deleteMany({ where: underClaim(claim) });
-  claim.settled = true;
-  if (count === 0)
-    return logSendLine(
-      claim,
-      'send-delete-refused',
-      { message: `report ${claim.report.id} not deleted (${reason}): claim lost` },
-      'error'
-    );
-  logSendLine(claim, 'send-deleted', { message: reason });
+/**
+ * Keeps a report the send cannot file unsent, marked with why, for a moderator to decide. Any
+ * CyberTip an earlier run left for it stays as it is and is named on the line.
+ */
+async function holdForDecision(claim: SendClaim, holdCase: SendHoldCase, reason: string) {
+  const { report } = claim;
+  const possibleDuplicates = report.details?.possibleDuplicateReportIds ?? [];
+  const unconfirmed = report.details?.unconfirmedOpens ?? [];
+  const fields = {
+    message: `report ${report.id} held (${holdCase}): ${reason}`,
+    case: holdCase,
+    hoursPending: hoursSinceFiled(report),
+    ncmecReportId: report.reportId ?? undefined,
+    possibleDuplicateReportIds: possibleDuplicates,
+    unconfirmedOpens: unconfirmed.length,
+  };
+  logSendLine(claim, 'send-held', fields, 'error');
+  logSendLine(claim, 'send-decision-needed', fields, 'error');
+  await recordSendHold(claim, holdCase, reason);
+}
+
+async function recordSendHold(claim: SendClaim, holdCase: SendHoldCase, reason: string) {
+  if (!isProd || claim.report.details?.sendHold?.case === holdCase) return;
+  const sendHold: SendHold = { case: holdCase, reason, at: new Date().toISOString() };
+  await updateUnderClaim(claim, 'send-hold', {}, (details) => ({ ...details, sendHold }));
 }
 
 async function releaseClaim(claim: SendClaim) {
@@ -958,11 +1041,14 @@ async function cancelStoredCyberTip(
   return delivered ? 'held' : 'cancelled';
 }
 
-/** A report naming no file that can be sent opens no CyberTip: it waits, alerted, for a decision. */
-function logNoFiles(claim: SendClaim, message: string) {
+/** A report naming no file that can be sent opens no CyberTip: it waits, alerted and held, for a decision. */
+async function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
   // A CyberTip an earlier run left open is named, so whoever decides sees it.
-  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  const stored = {
+    case: 'no-files' satisfies SendHoldCase,
+    ncmecReportId: claim.report.reportId ?? undefined,
+  };
   logSendLine(claim, 'send-no-files', { message, hoursPending, ...stored }, 'error');
   if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
     logSendLine(
@@ -975,6 +1061,7 @@ function logNoFiles(claim: SendClaim, message: string) {
       },
       'error'
     );
+  await recordSendHold(claim, 'no-files', message);
 }
 
 /**
@@ -1158,7 +1245,8 @@ async function sendCyberTip(
           sendClaimId: null,
           sendClaimedAt: null,
         },
-        (stored) => ({ ...stored, ...details }),
+        // A hold no longer applies to a report that is sent.
+        ({ sendHold: _cleared, ...stored }) => ({ ...stored, ...details }),
         'send-stamp-lost'
       )
     )
@@ -1179,7 +1267,7 @@ async function reportImages(claim: SendClaim) {
 
   const images = await getImages(report.images.map((x) => x.id));
   if (!images.length)
-    return logNoFiles(claim, `report ${report.id} names no image that still exists`);
+    return await logNoFiles(claim, `report ${report.id} names no image that still exists`);
 
   initialReport.incidentSummary.incidentDateTime = images[0].createdAt;
 
@@ -1301,12 +1389,19 @@ async function reportImages(claim: SendClaim) {
       fileAnnotations.physicalHarm = true;
     }
     const originalFileName = image.name?.split('?')[0];
+    const prompts = promptFileDetails((image.meta ?? {}) as Record<string, unknown>, {
+      storedOnImage: true,
+    });
+    if (isFeedbackCaptureOwner(image.userId))
+      prompts.additionalInfo.unshift(xmlText(FEEDBACK_CAPTURE_FILE_NOTE));
     fileDetailsOf.set(image.id, {
       fileDetails: {
         originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
         locationOfFile: xmlText(getEdgeUrl(image.url, { type: image.type })),
         fileViewedByEsp: viewed.has(image.id),
         fileAnnotations,
+        ...(prompts.details && { details: prompts.details }),
+        ...(prompts.additionalInfo.length && { additionalInfo: prompts.additionalInfo }),
       },
       fileAnnotations,
     });
@@ -1398,10 +1493,18 @@ async function reportImages(claim: SendClaim) {
     };
   };
 
+  const webPageIncidents = contextWebPageIncidents(report.details?.contextText).map(
+    ({ url, additionalInfo }) => ({
+      url: [xmlText(url)],
+      additionalInfo: xmlText(additionalInfo),
+      thirdPartyHostedContent: false,
+    })
+  );
   const sent = await sendCyberTip(
     claim,
     {
       ...initialReport,
+      ...(webPageIncidents.length && { incidentDetails: { webPageIncidents } }),
       ...(supplemental && {
         personOrUserReported: {
           ...initialReport.personOrUserReported,
@@ -1493,7 +1596,7 @@ async function reportGenerationData(claim: SendClaim) {
   const generatedImages = report.details.generatedImages?.filter((x) => x.blobs.length > 0);
   // A moderator's filing is the record that it was reported, so a report with nothing to send is kept.
   if (!generatedImages?.length)
-    return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
+    return await logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
   // Named by claim, so two runs never share a scratch directory.
   const dir = `${baseDir}/generated-send/${report.id}-${claim.claimId}`;
@@ -1551,7 +1654,10 @@ async function sendGenerationData(
   for (const { url } of failed) readFailures[url] = (readFailures[url] ?? 0) + 1;
   if (failed.length > 0) await recordReadFailures(claim, readFailures);
   if (!fetched.length)
-    return logNoFiles(claim, `report ${report.id} has no generated image that can be fetched`);
+    return await logNoFiles(
+      claim,
+      `report ${report.id} has no generated image that can be fetched`
+    );
   const sendShort =
     hoursSinceFiled(report) >= CSAM_SEND_SHORT_AFTER_HOURS &&
     failed.every(({ url }) => readFailures[url] >= CSAM_SEND_SHORT_MIN_READ_FAILURES);
@@ -1562,6 +1668,14 @@ async function sendGenerationData(
       'archive-data'
     );
 
+  const detailsOf = ({ job }: (typeof fetched)[number]) => {
+    const { details, additionalInfo } = promptFileDetails(job);
+    return {
+      ...GENERATED_FILE_DETAILS,
+      ...(details && { details }),
+      ...(additionalInfo.length && { additionalInfo }),
+    } satisfies FileDetailsXml;
+  };
   let sending: ReturnType<typeof sendEach> | undefined;
   const sent = await sendCyberTip(
     claim,
@@ -1572,32 +1686,16 @@ async function sendGenerationData(
       }),
     },
     {
-      fileDetails: [GENERATED_FILE_DETAILS],
+      fileDetails: fetched.map(detailsOf),
       sendFiles: async (reportId) => {
         sending = sendEach(
           fetched,
-          async ({ job: { prompt, negativePrompt, resources }, url, file }) => {
+          async (item) => {
             const {
               data: { fileId, hash },
-            } = await uploadToCyberTip(claim, await spooledFile(file));
-
-            const valuePair: Array<{ name: string; value: string }> = [];
-            if (prompt)
-              valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
-            if (negativePrompt)
-              valuePair.push({
-                name: 'negativePrompt',
-                value: trimNonAlphanumeric(negativePrompt) ?? '',
-              });
-            if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
-
-            await cybertipClient.submitFileDetails({
-              fileId,
-              reportId,
-              ...GENERATED_FILE_DETAILS,
-              // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
-            });
-            return { url, fileId, hash } satisfies CsamReportGeneratedImageData;
+            } = await uploadToCyberTip(claim, await spooledFile(item.file));
+            await cybertipClient.submitFileDetails({ fileId, reportId, ...detailsOf(item) });
+            return { url: item.url, fileId, hash } satisfies CsamReportGeneratedImageData;
           },
           // The upload reads each file whole: one at a time.
           1
@@ -1639,7 +1737,7 @@ async function reportPreservedEvidence(claim: SendClaim) {
 
   const files = evidenceFilesToSend(details);
   if (!files.length)
-    return logNoFiles(claim, `report ${report.id} has no preserved generator file`);
+    return await logNoFiles(claim, `report ${report.id} has no preserved generator file`);
   if (evidenceSizeProblem(details))
     return logSendFailure(
       report,
@@ -1734,7 +1832,7 @@ async function reportTrainingData(claim: SendClaim) {
 
   const version = modelVersions[0];
   if (!version)
-    return logNoFiles(claim, `report ${report.id} names no model version that still exists`);
+    return await logNoFiles(claim, `report ${report.id} names no model version that still exists`);
 
   const dir = `${baseDir}/training-data/${report.id}-${claim.claimId}`;
   const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
@@ -1767,7 +1865,8 @@ async function reportTrainingData(claim: SendClaim) {
       return logSendFailure(report, e, 'archive-data');
     }
     await recordSkippedEntries(claim, inflated);
-    if (!files.length) return logNoFiles(claim, `report ${report.id} training data holds no image`);
+    if (!files.length)
+      return await logNoFiles(claim, `report ${report.id} training data holds no image`);
 
     const fileDetailsOf = (filename: string) =>
       ({ originalFileName: xmlText(filename), fileViewedByEsp: false } satisfies FileDetailsXml);
@@ -1804,7 +1903,7 @@ async function reportExternalLink(claim: SendClaim) {
   const { report } = claim;
   const reportingUser = await getReportingUser(report.reportedById);
   if (!reportingUser?.email || !report.userId)
-    return await deleteUnderClaim(claim, 'no reporting user email or reported user');
+    return await holdForDecision(claim, 'missing-user', 'no reporting user email or reported user');
 
   const details = report.details as unknown as ExternalCsamReportDetails;
   const userActivity = await getUserIpInfo(report);
@@ -2078,6 +2177,7 @@ async function getTrainingDataZipStream({
     user: reportingUser ?? undefined,
     // Fetched server-side to build a report, not on a user's behalf.
     attribution: { caller: 'other', actor: 'internal' },
+    redCapable: true,
   });
   if (modelFile.status !== 'success') throw new Error('training data not found');
 
@@ -2232,28 +2332,75 @@ async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, vo
   for await (const page of pages) for (const row of page) yield row;
 }
 
+/** Every CommentV3 row `userId` wrote, keyset-paged. */
+const userCommentRows = (userId: number) =>
+  flattenPages(
+    scanPagesById(({ afterId, take }) => {
+      let query = kyselyV3Read
+        .selectFrom('CommentV3')
+        .selectAll()
+        .where('userId', '=', userId)
+        .orderBy('id', 'asc')
+        .limit(take);
+      if (afterId !== undefined) query = query.where('id', '>', afterId);
+      return query.execute();
+    })
+  );
+
 /** The reported user's own content, written to `data.json` under `name` after `images`. Comments are not held, so this archive may be their only copy. */
 export const userContentSections: {
   name: string;
   rows: (userId: number) => AsyncIterable<unknown>;
-}[] = [
-  {
-    name: 'comments',
-    rows: (userId) =>
-      flattenPages(
-        scanPagesById(({ afterId, take }) => {
-          let query = kyselyV3Read
+}[] = [{ name: 'comments', rows: userCommentRows }];
+
+/**
+ * Writes every comment `userId` wrote to `comments.json` in the CSAM bucket, beside their reports'
+ * archives: the CommentV3 rows, then any CommentV2 row the mirror never copied. For accounts whose
+ * reports were archived before `data.json` carried comments.
+ */
+export async function archiveUserComments(userId: number) {
+  const v2 = await dbRead.commentV2.findMany({ where: { userId }, orderBy: { id: 'asc' } });
+  const mirrored = v2.length
+    ? new Set(
+        (
+          await kyselyV3Read
             .selectFrom('CommentV3')
-            .selectAll()
-            .where('userId', '=', userId)
-            .orderBy('id', 'asc')
-            .limit(take);
-          if (afterId !== undefined) query = query.where('id', '>', afterId);
-          return query.execute();
-        })
-      ),
-  },
-];
+            .select('id')
+            .where(
+              'id',
+              'in',
+              v2.map((c) => c.id)
+            )
+            .execute()
+        ).map((c) => c.id)
+      )
+    : new Set<number>();
+  const unmirrored = v2.filter((c) => !mirrored.has(c.id));
+
+  let comments = 0;
+  async function* counted<T>(rows: AsyncIterable<T>) {
+    for await (const row of rows) {
+      comments++;
+      yield row;
+    }
+  }
+
+  const sink = new stream.PassThrough();
+  const [, stored] = await Promise.all([
+    writeJsonObject({
+      sink,
+      replacer: bigintReplacer,
+      entries: [
+        ['userId', { value: userId }],
+        ['archivedAt', { value: new Date().toISOString() }],
+        ['comments', { items: counted(userCommentRows(userId)) }],
+        ['commentsV2NotInV3', { value: unmirrored }],
+      ],
+    }),
+    uploadStream({ stream: sink, userId, filename: 'comments.json' }),
+  ]);
+  return { userId, ...stored, comments: comments + unmirrored.length };
+}
 
 /**
  * Releases an archive and its sink after a failure that skipped `finalize()`.
@@ -2778,6 +2925,19 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       entries: [
         ['user', { value: user }],
         ['reportId', { value: reportId }],
+        ...(report.details?.contextText?.length
+          ? ([
+              [
+                'reportContext',
+                {
+                  value: {
+                    webPageIncidents: contextWebPageIncidents(report.details.contextText),
+                    contextText: report.details.contextText,
+                  },
+                },
+              ],
+            ] as const)
+          : []),
         ['models', { items: streamModels() }],
         ['modelVersions', { items: streamModelVersions() }],
         ['images', { items: flattenPages(scanUserImages()) }],
@@ -2832,6 +2992,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const limit = plimit(10);
         // Bounded in bytes, not count: original sizes vary too much for an entry count to bound memory.
         const budget = createByteBudget();
+        // A failed archive stops its running reads and waits for them before its caller removes
+        // the scratch dirs they write into.
+        const readers = new AbortController();
+        const running = new Set<Promise<void>>();
         const hoursSinceSent = report.reportSentAt
           ? (Date.now() - report.reportSentAt.getTime()) / 3_600_000
           : 0;
@@ -2843,10 +3007,20 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const archiveImage = async (
           image: Parameters<typeof readOriginalImage>[0] & { id: number }
         ) => {
-          let original: OriginalImageRead;
+          let original: OriginalImageRead | SpooledImage;
+          let attempts = 1;
           try {
-            original = await readOriginalImage(image, { reserve: budget.reserve });
+            original = await spoolOriginalImage(image, {
+              reserve: budget.reserve,
+              cancel: readers.signal,
+              spoolDir: `${reportDirs.images}/spool`,
+              onRetry: (failedAttempt) => {
+                attempts = Math.max(attempts, failedAttempt + 1);
+              },
+            });
           } catch (e) {
+            // Stopped because another image failed: not this image's failure.
+            if (readers.signal.aborted) throw e;
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
             const retried =
@@ -2861,9 +3035,21 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
               ...errorClass(e),
               fullUrl: isEdgeUrlPassthrough(image.url),
               retried,
+              attempts,
             });
             if (retried) throw e;
             original = { source: 'missing', reason: 'full url unreadable' };
+          }
+          if (attempts > 1) {
+            logToAxiom({
+              name: 'csam-report',
+              type: 'info',
+              subType: 'archive-image-read-retried',
+              message: `report ${report.id}: image ${image.id} read on attempt ${attempts}`,
+              reportId: report.id,
+              imageId: image.id,
+              attempts,
+            });
           }
           if (original.source === 'missing') {
             record({ imageId: image.id, source: 'missing', reason: original.reason });
@@ -2871,9 +3057,17 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           }
           // Named by id: Image.name is user input.
           const name = `${image.id}.${extensionForContentType(original.contentType)}`;
+          let source: Buffer | Readable | undefined;
           try {
-            await boundedArchive.append(original.data, { name }, original.release);
+            // Opened here, so a failed open throws to this catch rather than from an unwatched stream.
+            source =
+              'path' in original
+                ? (await fsAsync.open(original.path, 'r')).createReadStream()
+                : original.data;
+            await boundedArchive.append(source, { name }, original.release);
           } catch (e) {
+            // An unread stream holds the deleted file's space until it is closed.
+            if (source instanceof Readable) source.destroy();
             original.release();
             throw e;
           }
@@ -2885,7 +3079,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             imageId: image.id,
             source: original.source,
             sha256: original.sha256,
-            bytes: original.data.length,
+            bytes: 'path' in original ? original.bytes : original.data.length,
             contentType: original.contentType,
           });
         };
@@ -2894,18 +3088,30 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           for await (const page of scanUserImages()) {
             await Promise.all(
               page.map((image) =>
-                limit(() =>
-                  archiveImage(image).catch((e) => {
+                limit(() => {
+                  const task = archiveImage(image).catch((e) => {
                     // Before this slot frees: queued reads would otherwise still open.
                     limit.clearQueue();
                     throw e;
-                  })
-                )
+                  });
+                  running.add(task);
+                  const done = () => running.delete(task);
+                  task.then(done, done);
+                  return task;
+                })
               )
             );
           }
         } catch (e) {
+          readers.abort(e);
           budget.abort(e);
+          // Only reads that started: `clearQueue` leaves a queued task's promise unsettled.
+          let settleTimer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            Promise.allSettled(running),
+            new Promise((resolve) => (settleTimer = setTimeout(resolve, FAILED_ARCHIVE_SETTLE_MS))),
+          ]);
+          clearTimeout(settleTimer);
           throw e;
         }
 
@@ -2945,23 +3151,45 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   async function archiveGeneratedImages() {
     const { userId } = report;
 
-    const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` });
-    const namedUrls = new Set(
-      (report.details?.generatedImages ?? []).flatMap(({ blobs }) =>
-        blobs.flatMap(({ url }) => (url ? [url] : []))
-      )
+    // The orchestrator no longer serves this list (404 for every consumer). That must not block the
+    // report's own blobs; any other failure may be transient, so it fails the pass for the next run.
+    let strikesNotFound = false;
+    const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` }).catch(
+      (e: unknown) => {
+        if (!(e instanceof FlaggedConsumerFetchError) || e.status !== 404) throw e;
+        strikesNotFound = true;
+        return [];
+      }
     );
-    const imageUrls = [
-      ...new Set([
-        ...flaggedData
-          .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
-          .filter(isDefined)
-          .map((x) => x.previewUrl),
-        ...namedUrls,
-      ]),
-    ];
+    const namedUrls = namedGeneratedImageUrls(report);
+    const strikeUrls = new Set(
+      flaggedData
+        .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
+        .filter(isDefined)
+        .map((x) => x.previewUrl)
+    );
+    const imageUrls = [...new Set([...strikeUrls, ...namedUrls])];
     const appendedUrls = new Set<string>();
     let entries = 0;
+    let unreadable = 0;
+    const hoursSinceSent = report.reportSentAt
+      ? (Date.now() - report.reportSentAt.getTime()) / 3_600_000
+      : 0;
+    const givenUp = hoursSinceSent >= CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS;
+
+    // Orchestrator URLs are a host we do not control, and a stamp ends archiving for good: any URL
+    // that gives no media (an error status, a cut-off body, an error page) fails the hourly pass until
+    // CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS, then is recorded unreadable, as `archiveImages` does a full URL.
+    const readBlob = async (url: string) => {
+      // Never log the error: a fetch error can quote the presigned URL.
+      const blob = await fetchBlob(url, undefined, { requireOk: true }).catch((e: unknown) => {
+        if (!givenUp) throw e;
+        return null;
+      });
+      const isMedia = !!blob && isArchivedMedia(blob);
+      if (!isMedia && !givenUp) throw new Error('a generated image gave no media');
+      return blob && { buffer: Buffer.from(await blob.arrayBuffer()), isMedia };
+    };
 
     const stored = await archiveAndUpload({
       userId,
@@ -2975,26 +3203,42 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         // concurrency limiter
         const limit = plimit(10);
         await Promise.all(
-          imageUrls.map((url, index) => {
-            return limit(async () => {
-              const blob = await fetchBlob(url, undefined, { requireOk: true });
-              if (!blob) return;
+          imageUrls.map((url, index) =>
+            limit(async () => {
               try {
-                const arrayBuffer = await blob.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
-
-                const imageName = zipEntryNameForUrl(url, index);
-
-                await boundedArchive.append(buffer, { name: imageName });
+                const read = await readBlob(url);
+                if (!read) {
+                  unreadable += 1;
+                  return;
+                }
+                // An append failure is the archive's own, so it fails the pass.
+                await boundedArchive.append(read.buffer, { name: zipEntryNameForUrl(url, index) });
                 entries += 1;
-                if (isArchivedMedia(blob)) appendedUrls.add(url);
+                if (read.isMedia) appendedUrls.add(url);
+                else unreadable += 1;
               } catch (e) {
-                //
+                // Before this slot frees: queued downloads would otherwise still run.
+                limit.clearQueue();
+                throw e;
               }
-            });
-          })
+            })
+          )
         );
       },
+    });
+
+    logToAxiom({
+      name: 'csam-report',
+      type: unreadable ? 'error' : 'info',
+      subType: 'archive-generated-images',
+      message: `report ${report.id}: archived ${entries} of ${imageUrls.length} generated images`,
+      reportId: report.id,
+      expected: imageUrls.length,
+      strikeUrls: strikeUrls.size,
+      namedUrls: namedUrls.size,
+      entries,
+      unreadable,
+      strikesNotFound,
     });
 
     archived.push({

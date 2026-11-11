@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, inject, onTestFinished, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
 import type { ReactNode } from 'react';
@@ -16,15 +16,6 @@ import type * as RemoteRunnerMod from '~/components/Apps/AppAssistant/remoteRunn
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
-
-declare module 'vitest' {
-  interface ProvidedContext {
-    quarantineRun?: boolean;
-  }
-}
-
-/** True only in the non-blocking `component-quarantine` project (vitest.config.mts). */
-const quarantineRun = inject('quarantineRun') === true;
 
 const BASE = 'https://sandbox.example';
 const sandbox = (name: string, overrides: Partial<Sandbox> = {}): Sandbox => ({
@@ -1273,9 +1264,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
 
   // 0.14.0 asks again for a reply that lost its connection (Retry, or by itself as the page wakes) with
   // no before-send, so the page's hold above never sees it.
-  // Skipped outside the `component-quarantine` run: tests in this group time out at 15s on CI runs;
-  // the cause is not found, so the whole group waits. See scripts/ci/component-quarantine.mjs.
-  describe.skipIf(!quarantineRun)('a failed reply the chat asks for again', () => {
+  describe('a failed reply the chat asks for again', () => {
     /** The paused app's failed reply, and the page waking: the chat asks for it again by itself. */
     async function wakesPaused() {
       const screen = await openPaused();
@@ -1710,8 +1699,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
       expect(m.retried).toEqual(['retry']);
     });
 
-    // Skipped for CI browser-starvation timeouts, until it waits on state instead of time.
-    test.skipIf(!quarantineRun)('🟡 an app paused again once it had started ends it', async () => {
+    test('🟡 an app paused again once it had started ends it', async () => {
       const screen = await wakesPaused();
       m.list = [m.list[0], { ...m.list[1], state: 'starting' }];
       screen.rerender(<Workspace />);
@@ -1724,22 +1712,18 @@ describe('AppAssistantWorkspace auto-resume', () => {
       expect(m.retryReply).not.toHaveBeenCalled();
     });
 
-    // Skipped for CI browser-starvation timeouts, until it waits on state instead of time.
-    test.skipIf(!quarantineRun)(
-      '🟡 an app paused while the reply waits on the chat ends it',
-      async () => {
-        const screen = await wakesPaused();
-        setListing(true);
-        runsB(screen);
-        await settle(100);
-        m.list = [m.list[0], { ...m.list[1], state: 'suspended' }];
-        screen.rerender(<Workspace />);
-        await settle(50);
-        setListing(false);
-        await settle(100);
-        expect(m.retryReply).not.toHaveBeenCalled();
-      }
-    );
+    test('🟡 an app paused while the reply waits on the chat ends it', async () => {
+      const screen = await wakesPaused();
+      setListing(true);
+      runsB(screen);
+      await settle(100);
+      m.list = [m.list[0], { ...m.list[1], state: 'suspended' }];
+      screen.rerender(<Workspace />);
+      await settle(50);
+      setListing(false);
+      await settle(100);
+      expect(m.retryReply).not.toHaveBeenCalled();
+    });
 
     test('🟡 a running app whose tools cannot be handed to the chat ends it rather than asking without them', async () => {
       m.list = [
@@ -3305,6 +3289,8 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card()).toBeVisible();
     return screen;
   }
+  /** Delete → askAgain is several async hops: the 1s default fails on a loaded CI runner. */
+  const CARRIES_ON = { timeout: 5_000 };
   /** The user picks the app themselves (nothing is chosen for them), then confirms. */
   async function confirmDelete(app: string) {
     await card().getByRole('radio', { name: app }).click();
@@ -3451,7 +3437,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
   test('confirmed, deletes the app picked, then the request carries on: one copy of the message and a fresh reply', async () => {
     await atLimit();
     await confirmDelete('app-cccc');
-    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']), CARRIES_ON);
     expect(m.remove.mock.calls).toEqual([['sbx-cccccccccccc']]);
     expect(m.remove.mock.invocationCallOrder[0]).toBeLessThan(
       m.askAgain.mock.invocationCallOrder[0]
@@ -3468,7 +3454,10 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await atLimit();
     m.running = true;
     await confirmDelete('app-bbbb');
-    await vi.waitFor(() => expect(m.giveBack).toHaveBeenCalledWith('Make a quiz night app'));
+    await vi.waitFor(
+      () => expect(m.giveBack).toHaveBeenCalledWith('Make a quiz night app'),
+      CARRIES_ON
+    );
     expect(m.reasked).toEqual([]);
     expect(m.delivered).toEqual(['Make a quiz night app']);
   });
@@ -3541,7 +3530,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
     await confirmDelete('app-bbbb');
     // The request carries on in place: asked again, never sent as a second message.
-    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']), CARRIES_ON);
     expect(m.send).not.toHaveBeenCalled();
   });
 
@@ -3571,7 +3560,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
     await confirmDelete('app-bbbb');
     // The request carries on in place: asked again, never sent as a second message.
-    await vi.waitFor(() => expect(m.reasked).toEqual(['A tiny click counter app.']));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['A tiny click counter app.']), CARRIES_ON);
     expect(m.send).not.toHaveBeenCalled();
   });
 });

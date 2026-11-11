@@ -63,6 +63,7 @@ import {
   upsertUserChallenge,
   upsertChallengeEvent,
   rescanChallenge,
+  rejudgeChallenge,
   voidChallenge,
   getActiveJudges,
   getChallengeSystemConfig,
@@ -84,7 +85,7 @@ import {
   toggleChallengeNotify,
   getTrackedChallengeIds,
 } from '~/server/services/challenge-engagement.service';
-import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
+import { getJudgeCommentForImage } from '~/server/services/challenge-judge-review.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -301,6 +302,11 @@ export const challengeRouter = router({
     .input(challengeQuickActionSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input, ctx }) => rescanChallenge({ id: input.id, moderatorId: ctx.user.id })),
+
+  rejudge: moderatorProcedure
+    .input(challengeQuickActionSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => rejudgeChallenge({ id: input.id, moderatorId: ctx.user.id })),
 
   // Active judges for the challenge form dropdowns. Any authenticated user may call it; the service
   // returns the full list (with sensitive fields) to moderators and the public, SFW-selectable subset

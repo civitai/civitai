@@ -19,10 +19,12 @@ import { buildAiToolkitTrainingStep } from '~/server/services/orchestrator/train
 import {
   getTrainingFields,
   isAiToolkitEnabled,
+  trainingRolloutRefusal,
   isInvalidAiToolkit,
   trainingBaseModelTypesImage,
   trainingModelInfo,
 } from '~/utils/training';
+import { modelUnavailability, unavailableModelMessage } from '~/utils/training-blocked-models';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks `kind:'training'` — run resolution and the QUOTE record.
@@ -125,6 +127,7 @@ export type TrainingServiceStatus = {
   available: boolean;
   message?: string | null;
   blockedModels?: string[] | null;
+  blockedModelReasons?: Record<string, string> | null;
 };
 
 export type ResolvedBlockTrainingRun = {
@@ -187,15 +190,19 @@ export function resolveBlockTrainingRun(input: {
   ) {
     refuse('params.ecosystem / params.modelVariant do not match the base model');
   }
-  if ((status.blockedModels ?? []).includes(modelKey)) {
-    refuse('This model has been blocked from training - please try another one.');
-  }
+  const unavailable = modelUnavailability(status, modelKey);
+  if (unavailable) refuse(unavailableModelMessage(info.pretty, unavailable.reason));
   if (isInvalidAiToolkit(info.type, 'ai-toolkit')) {
     refuse('AI Toolkit training is not supported for this model.');
   }
   if (!isAiToolkitEnabled(info.type, features)) {
     refuse('AI Toolkit training is not currently enabled for this base model.');
   }
+  const rolloutRefusal = trainingRolloutRefusal(
+    { types: [info.type], ecosystem: params.ecosystem },
+    features
+  );
+  if (rolloutRefusal) refuse(rolloutRefusal);
   if (params.continueFrom !== undefined) {
     refuse('continuing from a checkpoint is not supported for app training');
   }

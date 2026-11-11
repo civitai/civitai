@@ -37,6 +37,7 @@ import {
   getUserSettingsHandler,
   getUserTagsHandler,
   setLeaderboardEligibilityHandler,
+  setEventPointsExclusionHandler,
   setUserSettingHandler,
   toggleArticleEngagementHandler,
   toggleBanHandler,
@@ -61,6 +62,7 @@ import {
   getAllUsersInput,
   getEngagedModelsByIdsSchema,
   getByUsernameSchema,
+  getUsageLimitsSchema,
   getUserByUsernameSchema,
   getUserCosmeticsSchema,
   getUserListSchema,
@@ -126,6 +128,8 @@ import type { UserOnboardingSchema } from '~/server/schema/user.schema';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getUsageLimits, USAGE_LIMITS_SCOPES } from '~/server/services/usage-limits.service';
+import { getActiveLimits } from '~/server/utils/active-rate-limits';
 import { userCreatorEdgeTag } from '~/server/services/user-creator.service';
 
 export const userRouter = router({
@@ -155,6 +159,35 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
     .query(getUserByIdHandler),
+  getUsageLimits: protectedProcedure
+    .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
+    .input(getUsageLimitsSchema)
+    .query(({ ctx, input }) =>
+      getUsageLimits({
+        user: ctx.user,
+        req: ctx.req,
+        tokenScope: ctx.tokenScope,
+        ids: input?.ids,
+      })
+    ),
+  getActiveLimits: protectedProcedure
+    .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
+    .query(({ ctx }) => getActiveLimits(ctx.user.id)),
+  /** Buzz spent through apps today against the per-user cap; `null` where apps are off. */
+  getAppBuzzUsage: protectedProcedure.meta({ blockApiKeys: true }).query(async ({ ctx }) => {
+    const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
+    return getMyAppBuzzToday(ctx.user);
+  }),
+  /** The running app's paused-at-the-cap state; `null` where apps or the upgrade prompt are off. */
+  getAppBuzzCap: protectedProcedure.meta({ blockApiKeys: true }).query(async ({ ctx }) => {
+    const { getMyAppBuzzCap } = await import('~/server/services/blocks/app-buzz-usage.service');
+    return getMyAppBuzzCap(ctx.user);
+  }),
+  /** Continue on your own Buzz past your plan's daily app cap, for the rest of the UTC day. */
+  optInAppBuzzToday: protectedProcedure.meta({ blockApiKeys: true }).mutation(async ({ ctx }) => {
+    const { optInAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
+    return optInAppBuzzToday(ctx.user);
+  }),
   getSearchHydration: publicProcedure
     .input(getUserSearchHydrationSchema)
     .query(getUserSearchHydrationHandler),
@@ -412,6 +445,9 @@ export const userRouter = router({
   setLeaderboardEligibility: moderatorProcedure
     .input(setLeaderboardEligbilitySchema)
     .mutation(setLeaderboardEligibilityHandler),
+  setEventPointsExclusion: moderatorProcedure
+    .input(setLeaderboardEligbilitySchema)
+    .mutation(setEventPointsExclusionHandler),
   requestAdToken: verifiedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .mutation(({ ctx }) => requestAdToken({ userId: ctx.user.id })),

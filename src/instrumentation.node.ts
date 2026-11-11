@@ -17,6 +17,7 @@ import {
   registerOtelShutdown,
 } from '@civitai/telemetry/otel-logs';
 import { setStructuredLogSink } from '~/server/logging/structured-log-sink';
+import { CredentialRedactingSpanProcessor } from '~/server/otel-redact-span-processor';
 import { trace } from '@opentelemetry/api';
 import {
   buildOtelInstrumentations,
@@ -27,6 +28,7 @@ import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
+import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
 // Build this app's Kysely clients (over the existing pgDb pools) eagerly at server start, so the first
@@ -50,6 +52,12 @@ if (pgDbWrite) {
     );
   }
 }
+
+// Hand the proxy's API policy to the standalone server (scripts/trpc-server/server.cjs), which
+// applies it before `/api/v1/` routes under its `api` profile because it never runs the proxy.
+// Sets one global and nothing else, so it is a no-op under Next. That server awaits register()
+// before its first request, so this is in place by then. See ~/server/middleware/standalone-api-policy.
+registerStandaloneApiPolicy();
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
@@ -106,6 +114,24 @@ registerLivenessHeartbeat();
 // installed) unless EVENTLOOP_WATCHDOG_ENABLED='true'.
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
+
+// Arm the redis command metrics behind the `redis-command-metrics-batched` Flipt flag (dark until
+// it is on). Independent of OTEL: both metrics are prom-client. Dynamic, to keep the Flipt client out
+// of this module's static graph; a failure here must never affect boot — both metrics then keep
+// their per-command prom-client calls. See @civitai/telemetry/redis-command-metrics.
+//  - The duration histogram's gate is re-read (cached, 5s) on every command, so it follows the flag.
+//  - The in-flight gauge's mode is LATCHED at the process's first Redis command inc/dec and never
+//    changes (a command inc'd on one path and dec'd on the other would skew it for good), so a flag
+//    flip reaches it only on restart. AWAITED, and placed before the warmer kick, so Flipt is
+//    initialized and the resolver installed before the server takes traffic and the first command
+//    latches the mode. Bounded by Flipt's own init timeout; fail-open (latches per-command).
+try {
+  const m = await import('~/server/prom/redis-command-metrics-gate');
+  m.registerRedisCommandMetricsBatchGate();
+  await m.armRedisInflightGaugeMode();
+} catch (err) {
+  console.error('[instrumentation.node] redis command metrics gate failed (fail-open):', err);
+}
 
 // Kick the in-process route warmer (fire-and-forget). Next standalone
 // lazy-require()s each route on first hit; the dependency-only readiness probe
@@ -239,7 +265,7 @@ if (!OTEL_ENABLED) {
     const sdk = new NodeSDK({
       resource,
       sampler,
-      spanProcessor: new BatchSpanProcessor(traceExporter),
+      spanProcessor: new CredentialRedactingSpanProcessor(new BatchSpanProcessor(traceExporter)),
       // RedisInstrumentation intentionally omitted: at ~5,400 redis ops/s it was
       // the highest-frequency span source (~4 spans/request) and the dominant
       // async_hooks context-propagation cost a CPU pin profile attributed to OTEL

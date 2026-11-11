@@ -1010,7 +1010,7 @@ export function ModelVersionUpsertForm({
                   <InputSelect
                     name="usageControl"
                     label="Usage Control"
-                    description="Determines what other users can do with your model. You can change this setting at any time."
+                    description="Determines what other users can do with your model. Choose On-Site Generation Only to keep your files private: people can generate with this version on Civitai but can't download it. You can change this setting at any time."
                     placeholder="Select how this resource can be used"
                     withAsterisk
                     style={{ flex: 1 }}

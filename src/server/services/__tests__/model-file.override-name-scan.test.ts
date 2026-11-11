@@ -70,8 +70,8 @@ describe('updateFile — the display name', () => {
   });
 
   it('saves a changed name the blocklist accepts', async () => {
-    await expect(save('clean name')).resolves.toBeDefined();
-    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(['clean name'], expect.anything());
+    await expect(save('clean name.safetensors')).resolves.toBeDefined();
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(['clean name.safetensors'], expect.anything());
   });
 });
 

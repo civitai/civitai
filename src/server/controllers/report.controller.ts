@@ -10,7 +10,7 @@ import type {
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
-import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
+import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import {
   assertLockReviewAllowed,
@@ -57,12 +57,8 @@ export async function createReportHandler({
   ctx: ProtectedContext;
 }) {
   try {
-    if (
-      input.type === ReportEntity.CommentV2 &&
-      !ctx.user.isModerator &&
-      (await isCommentGoneForMembers(input.id))
-    )
-      throw throwNotFoundError('The content you are trying to report no longer exists');
+    // Gated like reacting.
+    if (input.type === ReportEntity.CommentV3) await assertCommentActionable(input.id, ctx);
     const result = await createReport({
       ...input,
       userId: ctx.user.id,

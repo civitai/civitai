@@ -22,6 +22,7 @@ import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 import { isWebClient } from '~/server/utils/client-version-saturation';
 import {
+  callsRemovedProcedure,
   clientNeedsUpdate,
   peekFreshClientConfig,
   peekSiteAlertsVersion,
@@ -38,6 +39,8 @@ import { redactBlockTokens } from '~/server/logging/redact-block-token';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
 import { setTrpcProcedureRegistry } from '~/server/prom/trpc-fast-superjson.metrics';
+import { rateLimitHeaders } from '~/server/trpc/rate-limit-headers';
+import { retryAfterHeader } from '~/server/trpc/retry-after-header';
 
 /**
  * The longest input an error log line carries: in JSON characters, and in values (so the measure
@@ -110,15 +113,25 @@ const trpcHandler = createNextApiHandler({
     }
 
     // Set here rather than in a middleware: on a streamed batch the head is written before any
-    // procedure finishes. Both read the CLIENT hash value needsUpdate already fetched; no Redis call.
+    // procedure finishes. Nothing here may await Redis; the CLIENT hash is read from this pod's cache.
     if (isWebClient(ctx?.req?.headers)) {
       // Never on a response the edge keeps: it would reach current bundles too.
       const client = peekFreshClientConfig();
-      if (!edgeCached && client && clientNeedsUpdate(ctx?.req?.headers, client))
+      const reqHeaders = ctx?.req?.headers;
+      if (
+        !edgeCached &&
+        ((client && clientNeedsUpdate(reqHeaders, client)) ||
+          callsRemovedProcedure(reqHeaders, info?.calls))
+      )
         headers['x-update-required'] = 'true';
       const alertsVersion = peekSiteAlertsVersion();
       if (alertsVersion) headers[SITE_ALERTS_VERSION_HEADER] = String(alertsVersion);
     }
+
+    const retryAfter = retryAfterHeader({ errors, info, paths });
+    if (retryAfter) headers['Retry-After'] = retryAfter;
+    // Per-caller counts must never reach a CDN-shared response.
+    if (!edgeCached) Object.assign(headers, rateLimitHeaders({ ctx, info, paths }));
 
     return Object.keys(headers).length > 0 ? { headers } : {};
   },
@@ -219,13 +232,14 @@ const trpcHandler = createNextApiHandler({
           if (measureJsonLength([input], LOGGED_INPUT_MAX_CHARS, { meter }) === 'over') {
             axInput = LOGGED_INPUT_OVER_LIMIT;
           } else {
-            // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
+            // Bearer fields (`blockToken`, `shareToken`) are replaced, key kept — see redactBlockTokens.
             // Stringify first and redact only when the key appears, so only an input that carries
             // one is serialized twice.
             const raw = JSON.stringify(input);
-            axInput = raw?.includes('"blockToken"')
-              ? JSON.stringify(redactBlockTokens(input))
-              : raw;
+            axInput =
+              raw?.includes('"blockToken"') || raw?.includes('"shareToken"')
+                ? JSON.stringify(redactBlockTokens(input))
+                : raw;
           }
         } catch {
           axInput = undefined;

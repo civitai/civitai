@@ -2,12 +2,16 @@ import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { PAGE_SIZE_OPTIONS } from '$lib/server/models';
+import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
+import { darkFlagEnabled } from '$lib/server/main-app-flags';
+import { firstError } from '$lib/server/form-errors';
 import { getModelsView } from '$lib/server/models-view';
 import {
   resolveMembership,
   cappedTier,
   displayTier,
   TEST_MEMBERSHIP_COOKIE,
+  canSetGenerationOnly,
 } from '$lib/server/membership';
 import {
   setLicensingFee,
@@ -38,7 +42,6 @@ import {
 import { getCreatorSales, getSalesByVersion } from '$lib/server/monetization/sales';
 import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
-import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
   assertGatePricingAllowed,
   countPricingSlotsThisMonth,
@@ -68,7 +71,6 @@ const versionIdsSchema = z
   )
   .refine((ids) => ids.length > 0, 'Select at least one version.');
 
-const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
 
@@ -125,8 +127,9 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
       earlyAccessUsed,
       earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
-      canSetGenerationOnly: await canSetGenerationOnlyFresh(locals.user),
+      canSetGenerationOnly: canSetGenerationOnly(locals.user),
     },
+    giftLinksEnabled: await darkFlagEnabled(MODEL_GIFT_LINKS_FLAG, locals.user),
   };
 };
 
@@ -393,7 +396,7 @@ export const actions: Actions = {
       versionIds.data,
       usageControl,
       cookie,
-      await canSetGenerationOnlyFresh(locals.user)
+      canSetGenerationOnly(locals.user)
     );
     if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
     await bustVersionCache(cookie, versionIds.data);
@@ -425,7 +428,7 @@ export const actions: Actions = {
       [versionId.data],
       usageControl,
       request.headers.get('cookie') ?? '',
-      await canSetGenerationOnlyFresh(locals.user)
+      canSetGenerationOnly(locals.user)
     );
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
     if (result.updated === 0)
@@ -461,7 +464,7 @@ export const actions: Actions = {
           locals.user.id,
           versionId.data,
           usageOnly,
-          await canSetGenerationOnlyFresh(locals.user)
+          canSetGenerationOnly(locals.user)
         );
         if (!usageResult.ok)
           return fail(usageResult.status, { versionId: versionId.data, error: usageResult.error });
@@ -503,7 +506,7 @@ export const actions: Actions = {
         locals.user.id,
         versionId.data,
         usageControl,
-        await canSetGenerationOnlyFresh(locals.user)
+        canSetGenerationOnly(locals.user)
       );
       if (!usageResult.ok)
         return fail(usageResult.status, { versionId: versionId.data, error: usageResult.error });

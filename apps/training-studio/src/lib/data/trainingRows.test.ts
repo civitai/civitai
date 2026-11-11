@@ -4,12 +4,16 @@ import {
   ARCHIVE_TOKEN_BUDGET,
   MAX_ARCHIVE_ENTRIES,
   UNKNOWN_BASE,
+  canDeleteRun,
   epochArchiveParts,
   estimateArchiveTokenLength,
   namedDownloadUrl,
   runFileStem,
   workflowToDetail,
+  workflowToRow,
 } from './trainingRows';
+import { sampleReviewWorkflows } from './sampleReviewRuns';
+import { canRaiseTrainingReview } from '@civitai/shared/training-review';
 
 const workflow = (over: Record<string, unknown> = {}): Workflow =>
   ({
@@ -34,6 +38,8 @@ const workflow = (over: Record<string, unknown> = {}): Workflow =>
           triggerWord: 'ohwx',
           trace: 'events',
           defaultSteps: 2000,
+          storageBuzzPerEpoch: 5,
+          usesStepPricing: true,
           trainingData: {
             type: 'blobs',
             items: [{ air: 'https://x/blobs/A.png?sig=1', caption: 'ohwx, 1girl' }],
@@ -224,12 +230,13 @@ describe('namedDownloadUrl', () => {
 });
 
 describe('workflowToDetail settings export', () => {
-  it('carries the run-describing input fields and nothing else', () => {
+  it('carries every training input field except the dataset, trace and pricing readouts', () => {
     const detail = workflowToDetail(workflow());
     expect(detail?.settings).toEqual({
       workflowId: 'wf-1',
       name: 'My Char!',
       createdAt: '2026-09-01T00:00:00.000Z',
+      base: 'SDXL',
       media: 'image',
       loraType: 'character',
       cardType: 'sdxl',
@@ -246,12 +253,119 @@ describe('workflowToDetail settings export', () => {
         keepTokens: 1,
         minSnrGamma: 5,
         triggerWord: 'ohwx',
+        defaultSteps: 2000,
       },
     });
     const text = JSON.stringify(detail?.settings);
     expect(text).not.toContain('sig=1');
-    expect(text).not.toContain('defaultSteps');
     expect(text).not.toContain('trace');
+  });
+
+  it("keeps a legacy kohya run's engine-specific params", () => {
+    const detail = workflowToDetail(
+      workflow({
+        metadata: {},
+        steps: [
+          {
+            $type: 'imageResourceTraining',
+            input: {
+              engine: 'kohya',
+              model: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
+              loraName: 'ohwx',
+              trainingData: 'https://x/data.zip?sig=1',
+              trainingDataImagesCount: 12,
+              unetLR: 5e-4,
+              maxTrainEpochs: 10,
+              numRepeats: 8,
+              clipSkip: 2,
+              enableBucket: true,
+              optimizerArgs: 'weight_decay=0.1',
+            },
+            output: { epochs: [], sampleImagesPrompts: ['ohwx'] },
+          },
+        ],
+      })
+    )!;
+    expect(detail.settings.training).toMatchObject({
+      engine: 'kohya',
+      unetLR: 5e-4,
+      maxTrainEpochs: 10,
+      numRepeats: 8,
+      clipSkip: 2,
+      enableBucket: true,
+      optimizerArgs: 'weight_decay=0.1',
+    });
+    expect(detail.settings.imageCount).toBe(12);
+    expect(JSON.stringify(detail.settings)).not.toContain('sig=1');
+  });
+
+  it("reads a legacy run's prompts off its input when the output carries none", () => {
+    const detail = workflowToDetail(
+      workflow({
+        metadata: {},
+        steps: [
+          {
+            $type: 'imageResourceTraining',
+            input: { engine: 'kohya', samplePrompts: ['ohwx, a photo', 'ohwx, a sketch'] },
+            output: { epochs: [] },
+          },
+        ],
+      })
+    )!;
+    expect(detail.prompts).toEqual(['ohwx, a photo', 'ohwx, a sketch']);
+    expect(detail.settings.samplePrompts).toEqual(['ohwx, a photo', 'ohwx, a sketch']);
+    expect(detail.settings.training).not.toHaveProperty('samplePrompts');
+  });
+
+  it("skips an empty output prompt list for a legacy run's input prompts", () => {
+    const detail = workflowToDetail(
+      workflow({
+        metadata: {},
+        steps: [
+          {
+            $type: 'imageResourceTraining',
+            input: { engine: 'kohya', samplePrompts: ['ohwx, a photo'] },
+            output: { epochs: [], sampleImagesPrompts: [] },
+          },
+        ],
+      })
+    )!;
+    expect(detail.prompts).toEqual(['ohwx, a photo']);
+  });
+
+  it('keeps the sample generation settings but not the sample media, and records lineage', () => {
+    const w = workflow({
+      metadata: { name: 'Again', sourceWorkflowId: 'wf-0', sourceEpoch: 4 },
+    });
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.samples = {
+      prompts: ['ohwx'],
+      sourceImages: ['https://x/in.png?sig=1'],
+      cfgScale: 4,
+      strength: 0.8,
+    };
+    const { settings } = workflowToDetail(w)!;
+    expect(settings.training.samples).toEqual({ cfgScale: 4, strength: 0.8 });
+    expect(settings).toMatchObject({ sourceWorkflowId: 'wf-0', sourceEpoch: 4 });
+    expect(JSON.stringify(settings)).not.toContain('sig=1');
+  });
+
+  it('leaves out a field it does not know that carries a signed URL', () => {
+    const w = workflow();
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.referenceImages = ['https://x/blobs/R.png?sig=2'];
+    input.loraName = 'see https://civitai.com';
+    const { training } = workflowToDetail(w)!.settings;
+    expect(training).not.toHaveProperty('referenceImages');
+    expect(training.loraName).toBe('see https://civitai.com');
+  });
+
+  it('leaves out a sample setting it does not know that carries a signed URL', () => {
+    const w = workflow();
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.samples = { prompts: ['ohwx'], cfgScale: 4, referenceImage: 'https://x/r.png?sig=3' };
+    const { training } = workflowToDetail(w)!.settings;
+    expect(training.samples).toEqual({ cfgScale: 4 });
   });
 });
 
@@ -305,5 +419,83 @@ describe('workflowToDetail dataset', () => {
     expect(workflowToDetail(workflow())!.dataset).toEqual([
       { air: 'https://x/blobs/A.png?sig=1', caption: 'ohwx, 1girl' },
     ]);
+  });
+});
+
+describe('a run held for review', () => {
+  // The orchestrator keeps the workflow `processing` while the gate holds it; only the training
+  // step's output says why it isn't moving.
+  const held = (moderationStatus: string, status = 'processing') =>
+    workflow({
+      status,
+      steps: [
+        {
+          $type: 'training',
+          input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10 },
+          output: { moderationStatus, epochs: [] },
+        },
+      ],
+    });
+
+  it('reads as pending review, not training, on the list and the detail', () => {
+    expect(workflowToRow(held('underReview'))?.state).toBe('review');
+    expect(workflowToDetail(held('underReview'))?.state).toBe('review');
+  });
+
+  it('reads the manager API spelling too', () => {
+    expect(workflowToRow(held('UnderReview'))?.state).toBe('review');
+  });
+
+  it('keeps an approved run that is training as training', () => {
+    expect(workflowToRow(held('approved'))?.state).toBe('training');
+  });
+
+  it('reads a rejected run as not approved, not as a crash', () => {
+    expect(workflowToRow(held('rejected'))?.state).toBe('rejected');
+    expect(workflowToDetail(held('rejected'))?.state).toBe('rejected');
+    expect(workflowToRow(held('rejected', 'failed'))?.state).toBe('rejected');
+    expect(workflowToRow(held('rejected', 'canceled'))?.state).toBe('rejected');
+  });
+
+  it('reads a run that expired at the gate as not reviewed in time, not as a crash', () => {
+    expect(workflowToRow(held('rejected', 'expired'))?.state).toBe('unreviewed');
+    expect(workflowToRow(held('underReview', 'expired'))?.state).toBe('unreviewed');
+  });
+
+  it('only reads as pending review while the workflow is still running', () => {
+    expect(workflowToRow(held('underReview', 'failed'))?.state).toBe('failed');
+    expect(workflowToRow(held('underReview', 'succeeded'))?.state).toBe('ready');
+  });
+
+  it('still drops a workflow with no status, held or not', () => {
+    const w = held('underReview');
+    delete (w as { status?: unknown }).status;
+    expect(workflowToRow(w)).toBeNull();
+  });
+
+  it('keeps a published run published', () => {
+    const w = held('underReview');
+    (w as { metadata: Record<string, unknown> }).metadata = { name: 'x', published: true };
+    expect(workflowToRow(w)?.state).toBe('published');
+  });
+
+  it('offers a support ticket only once the preview run has been held long enough', () => {
+    const now = Date.parse('2026-11-09T12:00:00Z');
+    const byId = new Map(sampleReviewWorkflows(now).map((w) => [w.id, workflowToDetail(w)]));
+    const raisable = (id: string) => canRaiseTrainingReview(byId.get(id)?.heldSince, new Date(now));
+    expect(raisable('preview-held')).toBe(false);
+    expect(raisable('preview-held-long')).toBe(true);
+    expect(byId.get('preview-not-approved')?.heldSince).toBeUndefined();
+  });
+
+  it('leaves a run that failed after it was approved as failed', () => {
+    expect(workflowToRow(held('approved', 'failed'))?.state).toBe('failed');
+    expect(workflowToRow(held('approved', 'expired'))?.state).toBe('failed');
+  });
+
+  it('cannot be deleted while held, and can once it ended at the gate', () => {
+    expect(canDeleteRun({ state: 'review', hasModel: false })).toBe(false);
+    expect(canDeleteRun({ state: 'rejected', hasModel: false })).toBe(true);
+    expect(canDeleteRun({ state: 'unreviewed', hasModel: false })).toBe(true);
   });
 });

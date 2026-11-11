@@ -20,6 +20,7 @@
  *    - Routes to appropriate step type based on ecosystem
  */
 
+import { assertGenerationLicenseAccepted } from '~/server/services/generation-license.service';
 import type {
   PreprocessImageInput,
   PreprocessImageStepTemplate,
@@ -35,6 +36,7 @@ import type {
 import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
 import {
   attachEstimatedPreparation,
+  BOOST_REQUIRED_MESSAGE,
   normalizePreparation,
 } from '~/shared/orchestrator/download-preparation';
 import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
@@ -118,6 +120,7 @@ import { getHighestTierSubscription } from '~/server/services/subscriptions.serv
 import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { REMIX_APP_TAG } from '~/shared/remix-apps/tags';
 import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -204,6 +207,8 @@ export type GenerationContext = {
   externalId?: string;
   /** User saw a soft-block prompt warning and chose to proceed. See `auditPromptServer`. */
   acknowledgedSoftBlock?: boolean;
+  /** Stored as `metadata.remixRun`; user-writable afterwards, like the rest of the metadata. */
+  remixRun?: Record<string, unknown>;
 };
 
 /** Options for submitting a generation */
@@ -211,6 +216,8 @@ export type GenerateOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
   downloadPriority?: DownloadPriority;
+  /** The generator's opt-in to boost-to-load. See `coverageAudience`. */
+  acceptBoostRequired?: boolean;
   inputGate: GenerationInputGate;
 } & GenerationContext;
 
@@ -221,6 +228,8 @@ export type GenerateOptions = {
 export type GenerationInputGate =
   | { entry: GenerationInputEntryPoint; isApiCaller: boolean }
   | 'checked-by-caller';
+
+const ecosystemOf = (data: unknown) => (data as { ecosystem?: string }).ecosystem;
 
 /** Every url the validated graph input carries must pass the generation input gate. */
 async function assertGraphInputsUsable(
@@ -247,6 +256,8 @@ export type WhatIfOptions = {
   token: string;
   currencies?: BuzzSpendType[];
   downloadPriority?: DownloadPriority;
+  /** The generator's opt-in to boost-to-load. See `coverageAudience`. */
+  acceptBoostRequired?: boolean;
 };
 
 /**
@@ -413,8 +424,7 @@ export async function buildGenerationContext(
         isModerator: user?.isModerator,
       }),
       selfHostedMode: status.selfHostedMode,
-      // Server-side enforcement of gate rules: the same applicable rules the
-      // client got, so the graph nodes reject hidden/disabled targets on submit.
+      // Server-side enforcement of gate rules: graph nodes reject hidden/disabled targets on submit.
       gateRules: applicableRulesFor(gateRules, {
         isModerator: !!user?.isModerator,
         isMember: userTier !== 'free',
@@ -641,6 +651,8 @@ type ResourceValidationResult = {
   isPrivateGeneration: boolean;
   hasPoiResource: boolean;
   hasTipEligibleResource: boolean;
+  /** A resource was admitted only because the submit will pay for a Download Boost. */
+  boostRequired: boolean;
 };
 
 /**
@@ -660,7 +672,8 @@ async function validateAndEnrichResources(
     resources: RawAirResource[];
     orchestratorToken?: string;
     requestEcosystem?: string;
-  }
+  },
+  acceptBoostRequired = false
 ): Promise<ResourceValidationResult> {
   const rawAirResources = rawAir?.resources ?? [];
   if (resourceRefs.length === 0 && rawAirResources.length === 0) {
@@ -670,6 +683,7 @@ async function validateAndEnrichResources(
       isPrivateGeneration: false,
       hasPoiResource: false,
       hasTipEligibleResource: false,
+      boostRequired: false,
     };
   }
 
@@ -680,7 +694,7 @@ async function validateAndEnrichResources(
   const [resources] = await Promise.all([
     resourceRefs.length > 0
       ? withSpan('gen:validateResources:getResourceData', () =>
-          getResourceData(resourceRefs, { user })
+          getResourceData(resourceRefs, { user, acceptBoostRequired })
         )
       : Promise.resolve([] as Awaited<ReturnType<typeof getResourceData>>),
     rawAirResources.length > 0
@@ -738,6 +752,7 @@ async function validateAndEnrichResources(
     hasPoiResource: resources.some((r) => r.model.poi),
     // Raw-AIR epochs are not ModelVersions, so the orchestrator has no creator to tip for them.
     hasTipEligibleResource: anyTipEligible(resources),
+    boostRequired: resources.some((r) => r.boostRequired),
   };
 }
 
@@ -1295,6 +1310,7 @@ export async function createWorkflowStepsFromGraph({
   sourceImageIds,
   isGreen,
   orchestratorToken,
+  acceptBoostRequired = false,
 }: {
   data: GenerationData;
   /**
@@ -1328,6 +1344,8 @@ export async function createWorkflowStepsFromGraph({
    * bridge) reject raw-AIR resources.
    */
   orchestratorToken?: string;
+  /** The generator's opt-in to boost-to-load. See `coverageAudience`. */
+  acceptBoostRequired?: boolean;
 }): Promise<{
   steps: WorkflowStepTemplate[];
   workflowMetadata?: Record<string, unknown>;
@@ -1339,6 +1357,7 @@ export async function createWorkflowStepsFromGraph({
    */
   tags: string[];
   hasTipEligibleResource: boolean;
+  boostRequired: boolean;
 }> {
   data = expandAvatarData(data);
 
@@ -1351,12 +1370,18 @@ export async function createWorkflowStepsFromGraph({
     isPrivateGeneration,
     hasPoiResource,
     hasTipEligibleResource,
+    boostRequired,
   } = await withSpan('gen:createSteps:validateResources', () =>
-    validateAndEnrichResources(resourceIds, user, {
-      resources: collectRawAirResources(data),
-      orchestratorToken,
-      requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
-    })
+    validateAndEnrichResources(
+      resourceIds,
+      user,
+      {
+        resources: collectRawAirResources(data),
+        orchestratorToken,
+        requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+      },
+      acceptBoostRequired
+    )
   );
 
   // Check for POI in prompt
@@ -1580,6 +1605,7 @@ export async function createWorkflowStepsFromGraph({
       workflowMetadata,
       tags: extraTags,
       hasTipEligibleResource,
+      boostRequired,
     };
   });
 }
@@ -1619,6 +1645,8 @@ export async function createWorkflowStepsFromGraphInput({
 }): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, user?.id, inputGate);
+  if (!isWhatIf)
+    await assertGenerationLicenseAccepted({ ecosystem: ecosystemOf(data), userId: user?.id });
   const sourceImageIds = isWhatIf
     ? undefined
     : await resolveSourceImageIds(
@@ -1840,6 +1868,14 @@ async function hasQueuedDownloads(data: unknown) {
 }
 
 /**
+ * What a boost-to-load submit adds. The orchestrator forces a free-tier workflow into the free lane,
+ * which a boost cannot leave, so a non-member's boosted load is pinned to the paid tier it pays for.
+ */
+const BOOST_TO_LOAD_BODY = { tier: 'paid', downloadPriority: 'high' } as const;
+const BOOST_UNAVAILABLE =
+  "The download boost couldn't be confirmed, so nothing was charged. Try again.";
+
+/**
  * Submits a generation workflow using generation-graph input.
  *
  * Validates:
@@ -1870,10 +1906,13 @@ export async function generateFromGraph({
   externalId,
   acknowledgedSoftBlock,
   downloadPriority,
+  acceptBoostRequired,
   inputGate,
+  remixRun,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, userId, inputGate);
+  await assertGenerationLicenseAccepted({ ecosystem: ecosystemOf(data), userId });
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
   // One read for both consumers below, so the provenance check and the prompt
@@ -1983,6 +2022,7 @@ export async function generateFromGraph({
     workflowMetadata,
     tags: assemblyTags,
     hasTipEligibleResource,
+    boostRequired,
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
@@ -1993,7 +2033,10 @@ export async function generateFromGraph({
     sourceImageIds,
     isGreen,
     orchestratorToken: token,
+    acceptBoostRequired,
   });
+  if (boostRequired && downloadPriority !== 'high')
+    throw throwBadRequestError(BOOST_REQUIRED_MESSAGE);
 
   // Determine workflow tags
   const ecosystem = 'ecosystem' in data ? data.ecosystem : undefined;
@@ -2040,6 +2083,9 @@ export async function generateFromGraph({
           [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions,
         }
       : workflowMetadata;
+  const metadata = remixRun
+    ? { ...(metadataWithSubstitutions as Record<string, unknown> | undefined), remixRun }
+    : metadataWithSubstitutions;
 
   const priceDownloads = () =>
     submitWorkflow({
@@ -2049,6 +2095,7 @@ export async function generateFromGraph({
         experimental,
         // @ts-ignore - BuzzSpendType is properly supported
         currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+        ...(boostRequired ? BOOST_TO_LOAD_BODY : {}),
       },
       query: { whatif: true },
     }).catch(() => undefined);
@@ -2057,6 +2104,17 @@ export async function generateFromGraph({
   // download. If that check fails the generation still goes out, unboosted and unbilled for it.
   const boostWhatIf = downloadPriority ? await priceDownloads() : undefined;
   const boostDownloads = !!boostWhatIf?.steps?.some((step) => readPreparation(step));
+  const boostFee = boostWhatIf?.cost?.fixed?.downloadPriority;
+  // Fails CLOSED: with no download shown the submit carries no boost, and a model evicted in
+  // between would load free for a non-member.
+  if (
+    boostRequired &&
+    (!boostWhatIf ||
+      !boostDownloads ||
+      readDownloadPriority(boostWhatIf) !== 'high' ||
+      !(typeof boostFee === 'number' && boostFee > 0))
+  )
+    throw throwBadRequestError(BOOST_UNAVAILABLE);
   // The submit reply predates the orchestrator queueing any download, so the queue card's first
   // render has nothing to show. A whatIf of the same steps does, and runs alongside the submit.
   //
@@ -2093,8 +2151,8 @@ export async function generateFromGraph({
       steps,
       tips,
       experimental,
-      metadata: metadataWithSubstitutions,
-      callbacks: getOrchestratorCallbacks(userId),
+      metadata,
+      callbacks: getOrchestratorCallbacks(userId, { remixApp: tags.includes(REMIX_APP_TAG) }),
       ...workflowOutputRestrictions({
         workflow: data.workflow,
         isPrivateGeneration,
@@ -2104,13 +2162,14 @@ export async function generateFromGraph({
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       externalId,
       ...(boostDownloads ? { downloadPriority } : {}),
+      ...(boostRequired ? { tier: BOOST_TO_LOAD_BODY.tier } : {}),
     },
   })) as TextToImageResponse;
 
   await assertWorkflowOwner(workflow, userId, token);
 
   // Format and return response
-  const [formatted] = await formatGenerationResponse2([workflow], user);
+  const [formatted] = await formatGenerationResponse2([workflow], user, { acceptBoostRequired });
   const priced = await downloadWhatIf;
   attachEstimatedPreparation(
     formatted.steps,
@@ -2159,6 +2218,7 @@ export async function whatIfFromGraph({
   token,
   currencies,
   downloadPriority,
+  acceptBoostRequired,
   inputGate,
 }: WhatIfOptions) {
   // Provide fallback for fields that don't affect cost estimation.
@@ -2174,12 +2234,13 @@ export async function whatIfFromGraph({
   };
   const { data, computedKeys } = validateInput(whatIfInput, externalCtx);
   await assertGraphInputsUsable(data, userId, inputGate);
-  const { steps } = await createWorkflowStepsFromGraph({
+  const { steps, boostRequired } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
     isWhatIf: true,
     user: userId ? { id: userId, isModerator, tier: externalCtx.user.tier } : undefined,
     orchestratorToken: token,
+    acceptBoostRequired,
   });
 
   // Submit what-if request to orchestrator
@@ -2191,6 +2252,8 @@ export async function whatIfFromGraph({
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       ...(downloadPriority ? { downloadPriority } : {}),
+      // Priced as the submit will send it, or a free account reads the free lane's price.
+      ...(boostRequired && downloadPriority === 'high' ? { tier: BOOST_TO_LOAD_BODY.tier } : {}),
     },
     query: {
       whatif: true,
@@ -2224,6 +2287,8 @@ export async function whatIfFromGraph({
     cost: workflow.cost,
     ready,
     preparation,
+    // Omitted unless set: the submit is refused without `downloadPriority: 'high'`.
+    ...(boostRequired ? { boostRequired: true as const } : {}),
     // Both additive and OMITTED when empty, matching the App Blocks snapshot contract.
     // 🔴 Consequence a client must know: an absent `modelSubstitutions` means "no
     // substitution" OR "a server that predates this field" — the two are
@@ -3232,7 +3297,8 @@ export async function updateWorkflow({
 
 export async function formatGenerationResponse2(
   workflows: Workflow[],
-  user?: { id?: number; isModerator?: boolean; tier?: string }
+  user?: { id?: number; isModerator?: boolean; tier?: string },
+  { acceptBoostRequired = false }: { acceptBoostRequired?: boolean } = {}
 ): Promise<NormalizedWorkflow[]> {
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
@@ -3261,7 +3327,7 @@ export async function formatGenerationResponse2(
     new Map(allResourceRefs.map((r) => [`${r.id}_${r.epoch ?? ''}`, r])).values()
   );
   const enrichedResources =
-    uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, { user }) : [];
+    uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, { user, acceptBoostRequired }) : [];
 
   // Format each workflow
   return workflows.map((workflow) => {
@@ -3426,6 +3492,7 @@ function getQueriedWorkflowsCacheKey({
   toDate,
   excludeFailed,
   hideMatureContent,
+  excludeTags,
 }: {
   userId: number;
   take: number;
@@ -3436,6 +3503,7 @@ function getQueriedWorkflowsCacheKey({
   toDate?: Date;
   excludeFailed?: boolean;
   hideMatureContent: boolean;
+  excludeTags?: string[];
 }) {
   const variant = JSON.stringify({
     t: take,
@@ -3447,6 +3515,7 @@ function getQueriedWorkflowsCacheKey({
     to: toDate?.toISOString() ?? null,
     ef: excludeFailed ?? null,
     hmc: hideMatureContent,
+    ...(excludeTags?.length ? { xt: [...excludeTags].sort() } : {}),
   });
   return `${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:${userId}:${variant}` as RedisKeyTemplateCache;
 }
@@ -3505,6 +3574,31 @@ export async function bustQueriedWorkflowsCache(userId?: number) {
   }
 }
 
+// Pages read per call while every workflow on a page is excluded. A heavy app user can fill whole
+// pages with app runs; an empty first page renders "queue empty" with no loader to page on.
+const EXCLUDED_REFILL_MAX_PAGES = 5;
+
+/**
+ * `queryWorkflows` minus workflows carrying an `excludeTags` tag. The tags are also sent to the
+ * orchestrator, but it is filtered again here so the result does not depend on the orchestrator
+ * honouring them.
+ */
+async function queryWorkflowsExcluding(props: Parameters<typeof queryWorkflows>[0]) {
+  const excludeTags = props.excludeTags;
+  if (!excludeTags?.length) return queryWorkflows(props);
+  const isExcluded = (workflow: { tags?: string[] | null }) =>
+    workflow.tags?.some((tag) => excludeTags.includes(tag)) ?? false;
+
+  let cursor = props.cursor;
+  for (let page = 1; ; page++) {
+    const result = await queryWorkflows({ ...props, cursor });
+    const items = result.items.filter((workflow) => !isExcluded(workflow));
+    if (items.length || !result.nextCursor || page >= EXCLUDED_REFILL_MAX_PAGES)
+      return { nextCursor: result.nextCursor, items };
+    cursor = result.nextCursor;
+  }
+}
+
 export async function queryGeneratedImageWorkflows2({
   user,
   cache,
@@ -3513,6 +3607,7 @@ export async function queryGeneratedImageWorkflows2({
   token: string;
   user?: SessionUser;
   hideMatureContent: boolean;
+  excludeTags?: string[];
   // Opt-in short-TTL cache. ONLY safe when `token` belongs to `user` — i.e. the
   // self-serve feed. The moderator path (queryUserGeneratedImages) passes the
   // *target* user's token but the *moderator's* `user`, so the data identity is
@@ -3529,7 +3624,7 @@ export async function queryGeneratedImageWorkflows2({
     // pattern as the `gen:createSteps:*` spans above) to localize the tail for a
     // follow-up optimization. Both the cached and uncached paths run through here.
     const { nextCursor, items } = await withSpan('gen:queryGI:queryWorkflows', () =>
-      queryWorkflows(props)
+      queryWorkflowsExcluding(props)
     );
     return {
       items: await withSpan('gen:queryGI:format', () =>
@@ -3561,6 +3656,7 @@ export async function queryGeneratedImageWorkflows2({
     toDate: props.toDate,
     excludeFailed: props.excludeFailed,
     hideMatureContent: props.hideMatureContent,
+    excludeTags: props.excludeTags,
   });
 
   // Index the key from INSIDE the fetcher so it runs only on a real miss (the

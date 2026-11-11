@@ -10,8 +10,8 @@
  * Two halves, split by where they run:
  *   - `applicableRulesFor(rules, user)` — SERVER side. Filters the stored rules
  *     down to the ones whose audience includes this user (the only per-user
- *     evaluation). The result rides to the client + into `GenerationCtx`, so the
- *     audience logic never leaves the server.
+ *     evaluation). The client receives them reduced by `toGateRuleViews`; the
+ *     server's `GenerationCtx` keeps them whole.
  *   - `rulesToStates(rules)` — runs in the GRAPH (client + server), on the
  *     already-applicable rules. No user needed: it just folds each rule's
  *     presentation/audience into one effective `GateState` per target.
@@ -86,6 +86,24 @@ export function applicableRulesFor(rules: GateRule[], user: GateUserCtx): GateRu
   return rules.filter((r) => r.presentation === 'experimental' || isGatedFor[r.availableTo](user));
 }
 
+/** The fields of a rule the generator client reads. */
+export type GateRuleView = Pick<
+  GateRule,
+  'availableTo' | 'presentation' | 'message' | 'ecosystems' | 'workflows' | 'modelVersionIds'
+>;
+
+/** SERVER: the client-rendered form of applicable rules. Hidden items render no message, so none is sent. */
+export function toGateRuleViews(rules: GateRule[]): GateRuleView[] {
+  return rules.map((r) => ({
+    availableTo: r.availableTo,
+    presentation: r.presentation,
+    message: r.presentation === 'hidden' ? undefined : r.message,
+    ecosystems: r.ecosystems,
+    workflows: r.workflows,
+    modelVersionIds: r.modelVersionIds,
+  }));
+}
+
 /**
  * The effective gate on one item — one of THREE states the client renders.
  * `memberOnly` is its own state, not a flavor of `disabled`: it's only off for
@@ -93,7 +111,8 @@ export function applicableRulesFor(rules: GateRule[], user: GateUserCtx): GateRu
  * audience.
  *   - `hidden`     → removed from the picker.
  *   - `disabled`   → still selectable, badged; generation is refused with the
- *                    standard "currently unavailable" copy.
+ *                    standard "currently unavailable" copy plus the rule's
+ *                    `message`, if any (`gateRefusalText`).
  *   - `memberOnly` → shown greyed and unselectable, the standard members-only UI
  *                    **including the upsell alert + Become-a-member CTA** (same
  *                    as the existing self-hosted memberOnly experience).
@@ -155,7 +174,7 @@ export function mergeGateStates(
 
 // `memberOnly` (upsell) only applies to member-restricted rules — you can become
 // a member, but you can't buy your way into testing/mod, so those just disable.
-const ruleState = (rule: GateRule): GateState =>
+const ruleState = (rule: GateRuleView): GateState =>
   rule.presentation === 'hidden'
     ? 'hidden'
     : rule.availableTo === 'members'
@@ -171,16 +190,18 @@ const ruleState = (rule: GateRule): GateState =>
  * very thing they're meant to keep selectable. Read them with
  * `experimentalTargets` instead.
  */
-export function rulesToStates(rules: GateRule[]): ResolvedGates {
+export function rulesToStates(rules: GateRuleView[]): ResolvedGates {
   const ecosystems = new Map<string, GateResolution>();
   const workflows = new Map<string, GateResolution>();
   const modelVersionIds = new Map<number, GateResolution>();
 
   for (const rule of rules) {
     if (rule.presentation === 'experimental') continue;
+    const state = ruleState(rule);
+    // A hidden item is never shown, not even in a refusal, so it carries no copy.
     const resolution: GateResolution = {
-      state: ruleState(rule),
-      message: rule.message ?? undefined,
+      state,
+      message: state === 'hidden' ? undefined : rule.message ?? undefined,
     };
     for (const e of rule.ecosystems)
       ecosystems.set(e, pickStrongerGate(ecosystems.get(e), resolution));
@@ -203,7 +224,7 @@ const hiddenKeys = <K>(states: Map<K, GateResolution>) =>
  * `hidden` only. A disabled or members-only target stays selectable; its
  * generation requests are refused instead.
  */
-export function canGenerateBlockedTargets(rules: GateRule[]): CanGenerateBlockedTargets {
+export function canGenerateBlockedTargets(rules: GateRuleView[]): CanGenerateBlockedTargets {
   const states = rulesToStates(rules);
   return {
     ecosystems: hiddenKeys(states.ecosystems),
@@ -216,7 +237,7 @@ export function canGenerateBlockedTargets(rules: GateRule[]): CanGenerateBlocked
  * selectable so the form can say why generation is blocked, which is the whole
  * point of the state.
  */
-export function unselectableVersionIds(rules: GateRule[]): number[] {
+export function unselectableVersionIds(rules: GateRuleView[]): number[] {
   return [...rulesToStates(rules).modelVersionIds]
     .filter(([, r]) => r.state !== 'disabled')
     .map(([id]) => id);
@@ -227,7 +248,7 @@ export type GateSelection = { ecosystem?: string; workflow?: string; versionIds?
 export type SelectionGate = { subject: GateSubject; state: GateState; message?: string };
 
 /** Every gate the current selection hits, most-restrictive target first. */
-export function selectionGates(rules: GateRule[], selection: GateSelection): SelectionGate[] {
+export function selectionGates(rules: GateRuleView[], selection: GateSelection): SelectionGate[] {
   const states = rulesToStates(rules);
   const gates: SelectionGate[] = [];
   const add = (subject: GateSubject, gate?: GateResolution) => {
@@ -255,12 +276,34 @@ export function gateMessage({ subject, state, message }: SelectionGate): string 
 }
 
 /**
+ * The graph nodes' stable refusal text for a gated ecosystem / workflow. API
+ * callers (App Blocks apps included) match on these, so a rule's copy is only
+ * ever APPENDED to them — see `gateRefusalText`.
+ */
+export const ECOSYSTEM_UNAVAILABLE = 'Ecosystem is currently unavailable';
+export const WORKFLOW_UNAVAILABLE = 'Workflow is currently unavailable';
+
+/**
+ * A node refusal: the stable `base` text, then the gating rule's own copy when
+ * it has any. Callers pass the `message` of a `GateResolution`, which
+ * `rulesToStates` leaves unset for `hidden` — so a hidden rule's message can
+ * never reach a refusal, and a shown one only says what this viewer's
+ * generator config (`toGateRuleViews`) already carries.
+ * Deliberately separate from `gateMessage`, the generator UI's copy, which has a
+ * different base text and separator.
+ */
+export function gateRefusalText(base: string, message?: string): string {
+  const extra = message?.trim();
+  return extra ? `${base}. ${extra}` : base;
+}
+
+/**
  * SERVER: why this selection can't generate, or `undefined`. In practice only a
  * `disabled` model version reaches here — gated ecosystems and workflows are
  * already rejected by their nodes' output refines.
  */
 export function gatedSelectionRefusal(
-  rules: GateRule[],
+  rules: GateRuleView[],
   selection: GateSelection
 ): string | undefined {
   const [gate] = selectionGates(rules, selection);
@@ -273,7 +316,7 @@ export function gatedSelectionRefusal(
  * state is already kept out of the pickers or refused by the graph.
  */
 export function disabledSelectionGates(
-  rules: GateRule[],
+  rules: GateRuleView[],
   selection: GateSelection
 ): SelectionGate[] {
   return selectionGates(rules, selection).filter((gate) => gate.state === 'disabled');
@@ -292,7 +335,7 @@ export type ExperimentalTargets = {
  * alert when the current selection hits one, for every user who can see the
  * item (`availableTo` is not consulted; see `applicableRulesFor`).
  */
-export function experimentalTargets(rules: GateRule[]): ExperimentalTargets {
+export function experimentalTargets(rules: GateRuleView[]): ExperimentalTargets {
   const targets: ExperimentalTargets = {
     ecosystems: new Map(),
     workflows: new Map(),

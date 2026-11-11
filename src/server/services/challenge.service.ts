@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -16,9 +17,16 @@ import {
   getExistingWinnersForRetry,
   resolveEventContext,
 } from '~/server/games/daily-challenge/challenge-helpers';
+import { REVIEW_JOB_NAME } from '~/server/games/daily-challenge/challenge-ladder';
+import { acquireJobLock } from '~/server/jobs/job-lock';
+import { sysRedis } from '~/server/redis/client';
 import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challenge/challenge-collection-owner';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
+import {
+  distributeParticipationPrizes,
+  refundBannedEntrantReviews,
+} from '~/server/games/daily-challenge/challenge-rewards';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import {
@@ -168,6 +176,7 @@ import {
   getJudgedEntries,
   getShowcaseImagesOfModel,
 } from '~/server/jobs/daily-challenge-processing';
+import { rejudgeEntries } from '~/server/services/challenge-judge-review.service';
 import {
   buildJudgingEngineContext,
   resolveJudgingEngine,
@@ -1520,18 +1529,20 @@ export async function upsertChallenge({
           // KNOWN, MEASURED, AND DELIBERATELY NOT FIXED: this is a stale full-column replace.
           // `existingMetadata` comes from the REPLICA read above, so a SAME-status write committing
           // between that read and this one is dropped. The status predicate on this updateMany does
-          // not cover that; only a jsonb `||` merge (as backfill-theme-elements.ts uses) would.
+          // not cover that; only a jsonb `||` merge would.
           //
           // It is not worth the second raw-SQL write inside this transaction, because both the
           // probability and the consequence are near zero:
-          //   - The only concurrent writer of this column is the `reviewedAt` watermark in
-          //     daily-challenge-processing.ts (`*/10 * * * *`, and only for the ONE current
-          //     challenge). To lose it, a save of that specific challenge must straddle a
-          //     600-second-cadence instantaneous UPDATE. On the common path (the edit form
+          //   - The concurrent writers of this column are the review job (`reviewedAt` and
+          //     `pendingReview`, every 10 minutes) and a moderator re-judge (`pendingReview`). To
+          //     lose a write, a save of that specific challenge must straddle one of those
+          //     instantaneous UPDATEs. On the common path (the edit form
           //     pre-fills themeElements, so no LLM call runs) the window is replica lag plus the
           //     request — sub-second. The auto-generate branch's multi-second LLM window is wider
           //     but only fires when a theme is set and no elements are stored.
-          //   - Losing it costs a WIDER SCAN, not re-judging. 🔴 An earlier version of this note
+          //   - Losing `reviewedAt` costs a WIDER SCAN, not re-judging. Losing a `pendingReview`
+          //     key a re-judge wrote is worse: that entry's tag and comment are already gone, so
+          //     it is left unscored. 🔴 An earlier version of this note
           //     claimed it "re-judges the whole backlog at LLM cost" — that is WRONG. The same
           //     WHERE clause carries `notYetReviewedByJudge` (a NOT EXISTS on the judge's comment
           //     for that image), which excludes every already-scored entry regardless of the
@@ -2206,6 +2217,68 @@ export async function rescanChallenge({
     });
 }
 
+/**
+ * Moderator re-judge: undoes the judge's work on every judged entry and owes each a new review.
+ * Only while the challenge is Active and open: a completed one has paid out.
+ */
+export async function rejudgeChallenge({
+  id,
+  moderatorId,
+}: {
+  id: number;
+  moderatorId: number;
+}): Promise<{ entries: number }> {
+  const challenge = await dbWrite.challenge.findUnique({
+    where: { id },
+    select: { status: true, endsAt: true, collectionId: true, judgeId: true },
+  });
+  if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  if (challenge.status !== ChallengeStatus.Active || challenge.endsAt <= new Date())
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Only an active challenge can be re-judged',
+    });
+  if (!challenge.collectionId)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no entries collection' });
+
+  const config = await getChallengeConfig();
+  const judgeId = challenge.judgeId ?? config.defaultJudgeId;
+  if (!judgeId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no judge' });
+  const { userId: judgeUserId } = await getJudgingConfigForChallenge(judgeId, config.defaultJudge);
+
+  // The review job's lock, so no tick reads the list or writes a review in the middle of the reset.
+  const lock = await acquireJobLock(REVIEW_JOB_NAME, REJUDGE_LOCK_SECONDS, sysRedis, {
+    failOpen: false,
+  });
+  if (!lock)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'The review job is running. Try again in a few minutes.',
+    });
+  let reset: Awaited<ReturnType<typeof rejudgeEntries>>;
+  try {
+    reset = await rejudgeEntries({
+      challengeId: id,
+      collectionId: challenge.collectionId,
+      judgeUserId,
+      judgedTagId: config.judgedTagId,
+    });
+  } finally {
+    await lock.release();
+  }
+
+  await logToAxiom({
+    type: 'info',
+    name: 'challenge-rejudge',
+    challengeId: id,
+    moderatorId,
+    ...reset,
+  }).catch(() => undefined);
+  return { entries: reset.entries };
+}
+
+const REJUDGE_LOCK_SECONDS = 2 * 60;
+
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
   const challenge = await dbWrite.challenge.update({
     where: { id },
@@ -2516,6 +2589,7 @@ export async function requestReview(
       WHERE "collectionId" = ${challenge.collectionId}
         AND "imageId" = ANY(ARRAY[${Prisma.join(eligibleImageIds)}])
     `;
+    await bustContestCollectionItemsCache(eligibleImageIds);
   }
 
   recordChallengeReviewRequested({ source: challenge.source });
@@ -2694,6 +2768,16 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     }>;
     let process: string | undefined;
     let outcome: string | undefined;
+
+    // Before any early return: a challenge left with no judged entries still owes these.
+    if (challenge.collectionId) {
+      const refundedReviews = await refundBannedEntrantReviews({
+        challengeId,
+        collectionId: challenge.collectionId,
+        reviewMeTagId: config.reviewMeTagId,
+      });
+      log('Paid reviews refunded to banned entrants:', refundedReviews.length);
+    }
 
     if (existingWinners.length > 0) {
       log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
@@ -2912,56 +2996,18 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
     // even though it's only populated inside the conditional (participation prizes are optional).
     const participationUserIds: number[] = [];
-    if (challenge.entryPrize && challenge.entryPrize.buzz > 0 && challenge.collectionId) {
-      const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
-        SELECT DISTINCT i."userId"
-        FROM "CollectionItem" ci
-        JOIN "Image" i ON i.id = ci."imageId"
-        WHERE ci."collectionId" = ${challenge.collectionId}
-          AND ci.status = 'ACCEPTED'
-        GROUP BY i."userId"
-        HAVING COUNT(*) >= ${challenge.entryPrizeRequirement}
-      `;
-
-      if (earnedEntryPrizes.length > 0) {
-        const winnerUserIds = winningEntries.map((e) => e.userId);
-        // Exclude winners from entry prizes (they get winner prizes instead)
-        const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
-        participationUserIds.push(...entryPrizeUsers.map((e) => e.userId));
-
-        if (entryPrizeUsers.length > 0) {
-          // Note: externalTransactionId uses challengeId-userId pattern for idempotency
-          // This ensures retries don't create duplicate payments
-          await withRetries(() =>
-            createBuzzTransactionMany(
-              entryPrizeUsers.map(({ userId }) => ({
-                type: TransactionType.Reward,
-                toAccountId: userId,
-                fromAccountId: 0, // central bank
-                amount: challenge.entryPrize!.buzz,
-                description: `Challenge Entry Prize: ${challenge.title}`,
-                externalTransactionId: `challenge-entry-prize-${challengeId}-${userId}`,
-                toAccountType: 'blue',
-              }))
-            )
-          );
-          log('Entry participation prizes sent:', entryPrizeUsers.length);
-
-          // Notify entry prize recipients
-          await createNotification({
-            type: 'challenge-participation',
-            category: NotificationCategory.System,
-            key: `challenge-participation:${challengeId}:final`,
-            userIds: entryPrizeUsers.map((e) => e.userId),
-            details: {
-              challengeId,
-              challengeName: challenge.title,
-              prize: challenge.entryPrize!.buzz,
-            },
-          });
-          log('Entry prize users notified');
-        }
-      }
+    if (challenge.entryPrize && challenge.collectionId) {
+      const paid = await distributeParticipationPrizes({
+        challengeId,
+        collectionId: challenge.collectionId,
+        title: challenge.title,
+        entryPrize: challenge.entryPrize,
+        entryPrizeRequirement: challenge.entryPrizeRequirement,
+        excludeUserIds: winningEntries.map((e) => e.userId),
+        notificationKey: `challenge-participation:${challengeId}:final`,
+      });
+      participationUserIds.push(...paid);
+      log('Entry participation prizes sent:', paid.length);
     }
 
     // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).

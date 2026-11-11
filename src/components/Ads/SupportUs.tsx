@@ -18,14 +18,16 @@ export function SupportUs({
   if (!image) return null;
 
   return (
-    <NextLink href="/pricing" className={className}>
-      <Image
-        src={image.src}
-        alt="Support Civitai creators"
-        width={image.width}
-        height={image.height}
-        className="h-auto max-w-full"
-      />
-    </NextLink>
+    <div className={className}>
+      <NextLink href="/pricing" className="block max-w-full">
+        <Image
+          src={image.src}
+          alt="Support Civitai creators"
+          width={image.width}
+          height={image.height}
+          className="h-auto max-w-full"
+        />
+      </NextLink>
+    </div>
   );
 }

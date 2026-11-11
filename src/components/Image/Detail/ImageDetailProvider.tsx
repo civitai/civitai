@@ -12,6 +12,7 @@ import {
   useQueryImages,
 } from '~/components/Image/image.utils';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
+import { useMarkImageMilestonesReadOnView } from '~/components/Notifications/notifications.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useCloseOnEscape } from '~/components/Image/Detail/useCloseOnEscape';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -84,7 +85,12 @@ export function ImageDetailProvider({
   // on every load of the very links this page was fixed to serve. Parse it the same
   // way the filters are parsed; `active` is a genuine boolean read and stays a cast.
   const { postId: queryPostId } = parseImageQueryParams(browserRouter.query);
-  const { active = false } = browserRouter.query as { active?: boolean };
+  const { active: queryActive = false } = browserRouter.query as { active?: boolean };
+  // A comment link (`?highlight=`) opens with the phone sheet up. Held here rather than pushed as
+  // `active`, so closing it is one tap and leaves no history entry for Back to step through.
+  // Without it the highlight scroll drags the collapsed sheet into view and the toggle reads closed.
+  const [deepLinkOpen, setDeepLinkOpen] = useState(() => !!browserRouter.query.highlight);
+  const active = queryActive || deepLinkOpen;
   const { modelId, modelVersionId, username, userId, reactions, postId: filterPostId } = filters;
   const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
@@ -193,6 +199,8 @@ export function ImageDetailProvider({
 
   // #region [info toggle]
   const toggleInfo = () => {
+    if (deepLinkOpen) setDeepLinkOpen(false);
+    if (deepLinkOpen && !queryActive) return;
     if (!active)
       browserRouter.push({ query: { ...browserRouter.query, active: true } }, browserRouter.asPath);
     else if (active) browserRouter.back();
@@ -208,6 +216,7 @@ export function ImageDetailProvider({
   const [externalMoves, setExternalMoves] = useState(0);
   if (!Object.is(seenImageId, imageId)) {
     setSeenImageId(imageId);
+    setDeepLinkOpen(false);
     if (!Object.is(lastNavigatedIdRef.current, imageId)) setExternalMoves(externalMoves + 1);
     lastNavigatedIdRef.current = imageId;
   }
@@ -235,6 +244,8 @@ export function ImageDetailProvider({
 
   const isMod = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === images[index]?.user.id;
+  // `index` falls back to 0 while the routed image loads; only mark the image actually shown.
+  useMarkImageMilestonesReadOnView(isOwner && images[index]?.id === imageId ? imageId : undefined);
 
   const connect: ConnectProps = modelId
     ? { connectType: 'model', connectId: modelId }

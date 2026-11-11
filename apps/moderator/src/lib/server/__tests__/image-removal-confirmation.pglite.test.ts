@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ThumbnailCache from '../thumbnail-cache';
@@ -85,6 +89,8 @@ CREATE TABLE "Image" (
   "updatedAt" TIMESTAMP(3),
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0
 );
+${SET_ASIDE_TABLE_SQL}
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -443,6 +449,19 @@ describe('deciding a held removal', () => {
     expect(applyBlockSideEffects).not.toHaveBeenCalled();
     // The image is down, so the reports the removal answered are done with.
     expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7, 8]);
+  });
+
+  it('leaves the reports open when the image was removed with its block reason kept meanwhile', async () => {
+    const id = await hold();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = $1`,
+      [IMAGE]
+    );
+
+    expect(await confirmRemoval({ id, userId: CONFIRMER })).toMatchObject({ ok: true });
+
+    expect((await image()).ingestion).toBe('Blocked');
+    expect(setReportStatus).not.toHaveBeenCalled();
   });
 
   it('voids the request, leaving the image up, when a later appeal was approved', async () => {

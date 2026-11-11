@@ -116,6 +116,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   // useEffect(() => console.log('items'), [items]);
 
+  // A block this viewer may not see answers not-found: render nothing rather than an empty frame.
+  if (!isLoading && !homeBlock) return null;
+
   const link = metadata.link || `/collections/${collection?.id ?? metadata.collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
   const Icon = icons[itemType];

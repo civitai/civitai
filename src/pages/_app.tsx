@@ -20,6 +20,8 @@ import {
   SHELL_REQ_KEY,
 } from '~/shared/constants/shell.constants';
 import type { ShellRender } from '~/server/shell/shell-render';
+import { BOT_CACHE_REQ_KEY } from '~/shared/constants/bot-cache.constants';
+import type { BotCacheRouteName } from '~/server/bot-cache/bot-cache';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -77,6 +79,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import type { EventSeed } from '~/server/services/event-seeds.service';
 import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants';
 import {
   NAV_BANNERS_DISMISSED_COOKIE,
@@ -150,6 +153,7 @@ type CustomAppProps = {
   navBanners?: NavBanner[];
   navBannersDismissed?: string[];
   siteAlerts?: SiteAlertsPayload;
+  eventSeeds?: EventSeed[];
   following?: number[];
   seed: number;
   settings: UserContentSettings;
@@ -192,6 +196,7 @@ function MyApp(props: CustomAppProps) {
       navBanners,
       navBannersDismissed,
       siteAlerts,
+      eventSeeds,
       following,
       seed = Date.now(),
       canIndex,
@@ -283,6 +288,7 @@ function MyApp(props: CustomAppProps) {
       navBanners={navBanners}
       navBannersDismissed={navBannersDismissed}
       siteAlerts={siteAlerts}
+      eventSeeds={eventSeeds}
       following={following}
       liveNow={liveNow}
       chatSettings={chatSettings}
@@ -374,7 +380,11 @@ function MyApp(props: CustomAppProps) {
                     />
                     <GoogleAnalytics />
                     <AccountProvider>
-                      <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                      <CivitaiSessionProvider
+                        disableHidden={cookies.disableHidden}
+                        showEventCosmetics={cookies.showEventCosmetics}
+                        eventPointPops={cookies.eventPointPops}
+                      >
                         <ErrorBoundary>
                           <BrowserSettingsProvider>
                             <BrowsingLevelProvider>
@@ -547,11 +557,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     [SHELL_REQ_KEY]?: string;
     [SHELL_RENDERED_REQ_KEY]?: string;
     [SESSION_UNRESOLVED_REQ_KEY]?: boolean;
+    [BOT_CACHE_REQ_KEY]?: BotCacheRouteName;
   };
   // Assigned on every run: a page that throws runs this again for `/_error`, on the same response,
   // which must then carry no edge-cache header a shell attempt may have left.
   renderRequest[SHELL_REQ_KEY] = shellRender?.route;
   renderRequest[SHELL_RENDERED_REQ_KEY] = undefined;
+  renderRequest[BOT_CACHE_REQ_KEY] = undefined;
   if (!shellRender) {
     const { res } = appContext.ctx;
     for (const name of SHELL_EDGE_HEADERS) {
@@ -624,6 +636,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     liveNow?: boolean;
     navBanners?: NavBanner[];
     siteAlerts?: SiteAlertsPayload;
+    eventSeeds?: EventSeed[];
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
@@ -682,6 +695,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       liveNow: undefined,
       navBanners: undefined,
       siteAlerts: undefined,
+      eventSeeds: undefined,
       session: null,
     };
   }
@@ -699,13 +713,28 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     liveNow = false,
     navBanners,
     siteAlerts,
+    eventSeeds,
   } = settingsBootstrap;
+
+  // Bot HTML cache (`~/server/bot-cache/bot-cache`): a verified crawler's render that the cache
+  // may store and serve to other crawlers, so nothing below may vary it per request.
+  let botCache: { route: BotCacheRouteName; seed: number } | undefined;
+  if (typeof window === 'undefined') {
+    const { resolveBotCacheRoute, botCacheSeed } = await import('~/server/bot-cache/bot-cache');
+    const route = resolveBotCacheRoute(request, appContext.ctx.pathname, {
+      degraded: settingsDegraded,
+    });
+    if (route) botCache = { route, seed: botCacheSeed(request.url) };
+  }
+  renderRequest[BOT_CACHE_REQ_KEY] = botCache?.route;
+
   const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
     await import('~/server/services/feature-flags.service');
   const flags = await getFeatureFlagsAsync({
     user: session?.user,
     host: request?.headers.host,
-    req: request,
+    // Without the request, region cannot reach a cacheable render's flags.
+    req: botCache ? undefined : request,
   });
 
   const domain = getRequestDomainColor(request);
@@ -834,16 +863,19 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       navBanners,
       navBannersDismissed,
       siteAlerts,
+      eventSeeds,
       following,
-      seed: Date.now(),
+      seed: botCache ? botCache.seed : Date.now(),
       hasAuthCookie,
       sessionCookie,
-      region,
+      // No region: it is the requester's, and it decides the consent banner.
+      region: botCache ? undefined : region,
       domain,
       serverDomains,
       availableOAuthProviders,
       host: appContext.ctx.req?.headers.host ?? '',
-      verifiedBot,
+      // Which crawler asked is not part of the cache key.
+      verifiedBot: botCache ? null : verifiedBot,
     },
     ...appProps,
   };

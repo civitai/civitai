@@ -14,6 +14,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { getFileExtension } from '~/utils/string-helpers';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 /** Training Studio catalog gate (`ModelCard.flagKey`) -> the feature flag that answers it in this
@@ -25,8 +26,19 @@ export const studioModelFlagFeatures = {
   'yue2-training': 'yue2Training',
   'flux3-klein-training': 'flux3KleinTraining',
   'moss-image-training': 'mossImageTraining',
+  'flux2-klein-training': 'fluxTwoKleinTraining',
   'flux2-klein-edit-training': 'flux2KleinEditTraining',
   'training-studio-audio-training': 'trainingStudioAudioTraining',
+  'krea2-training': 'krea2Training',
+  'boogu-training': 'booguTraining',
+  'mageflow-training': 'mageflowTraining',
+  'ernie-training': 'ernieTraining',
+  'hidream-o1-training': 'hidreamO1Training',
+  'anima-training': 'animaTraining',
+  'minimaxh3-training': 'minimaxh3Training',
+  'zimage-turbo-training': 'zimageturboTraining',
+  'ltx25-training': 'ltx25Training',
+  'ltx23-training': 'ltx23Training',
 } as const satisfies Record<string, FeatureFlagKey>;
 
 export function enabledStudioModelFlags(
@@ -835,8 +847,8 @@ export function getAiToolkitModelVariant(
 
 /**
  * Map from TrainingBaseModelType to the per-model AI Toolkit feature flag key.
- * Only includes models where AI Toolkit is optional — mandatory models (qwen, zimage,
- * flux2klein, ltx2) are already gated by their own training feature flags.
+ * Only includes models where AI Toolkit is optional — mandatory models are gated by their own
+ * rollout flags (trainingRolloutFlagByType).
  */
 const aiToolkitFlagByBaseType: Partial<Record<TrainingBaseModelType, string>> = {
   sd15: 'aiToolkitSd15',
@@ -957,6 +969,68 @@ export const isRetiredTrainingTarget = ({
 export const isAudioTrainingBaseType = (baseType: TrainingBaseModelType): boolean => {
   return (trainingBaseModelTypesAudio as readonly string[]).includes(baseType);
 };
+
+/**
+ * The rollout flag of each AI Toolkit-mandatory base type. isAiToolkitEnabled passes those types
+ * whatever the flags say, so every submit path enforces these through trainingRolloutRefusal. The
+ * ACE-Step types have no flag of their own; audioTraining gates them with every audio type.
+ */
+export const trainingRolloutFlagByType = {
+  qwen: 'qwenTraining',
+  ernie: 'ernieTraining',
+  flux2klein: 'fluxTwoKleinTraining',
+  ltx2: 'ltx2Training',
+  ltx23: 'ltx23Training',
+  ltx25: 'ltx25Training',
+  minimaxh3: 'minimaxh3Training',
+  'hidream-o1': 'hidreamO1Training',
+  anima: 'animaTraining',
+  boogu: 'booguTraining',
+  krea2: 'krea2Training',
+  mageflow: 'mageflowTraining',
+  ideogram4: 'ideogram4Training',
+  ming: 'mingTraining',
+  qwen21: 'qwen21Training',
+  yue2: 'yue2Training',
+} as const satisfies Partial<Record<TrainingBaseModelType, FeatureFlagKey>>;
+
+// ZImage is one base type with two catalog entries under two flags, told apart by ecosystem.
+const trainingRolloutFlagByEcosystem: Record<string, FeatureFlagKey> = {
+  zimageturbo: 'zimageturboTraining',
+  zimagebase: 'zimagebaseTraining',
+};
+
+/**
+ * Why a run may not be submitted under the user's rollout flags, or null when it may. `types` is
+ * every base type the run trains: the caller-written baseModelType alone can be anything, so pass
+ * the catalog entry's type and the type of the params' AI Toolkit ecosystem with it.
+ */
+export function trainingRolloutRefusal(
+  { types, ecosystem }: { types: readonly TrainingBaseModelType[]; ecosystem?: string },
+  features: Partial<Record<string, boolean>>
+): string | null {
+  const notEnabled = (name: string | undefined) =>
+    `${name ?? 'This base model'} training is not currently enabled.`;
+  const prettyOf = (
+    match: (info: (typeof trainingModelInfo)[keyof typeof trainingModelInfo]) => boolean
+  ) => Object.values(trainingModelInfo).find(match)?.pretty;
+
+  if (types.some(isAudioTrainingBaseType) && !features.audioTraining)
+    return 'Audio training is not currently enabled.';
+  for (const type of types) {
+    if (type === 'zimage') {
+      if (!features.zimageturboTraining && !features.zimagebaseTraining)
+        return notEnabled(prettyOf((info) => info.type === type));
+      continue;
+    }
+    const flag = (trainingRolloutFlagByType as Partial<Record<string, FeatureFlagKey>>)[type];
+    if (flag && !features[flag]) return notEnabled(prettyOf((info) => info.type === type));
+  }
+  const ecosystemFlag = ecosystem ? trainingRolloutFlagByEcosystem[ecosystem] : undefined;
+  if (ecosystemFlag && !features[ecosystemFlag])
+    return notEnabled(prettyOf((info) => info.aiToolkit?.ecosystem === ecosystem));
+  return null;
+}
 
 // Get default engine for base type
 // Pass features to enable feature-flag-driven defaults (e.g. aiToolkitDefaultSd)
@@ -1162,3 +1236,13 @@ export const formatTrainingValidationError = (
     .filter((line, i, arr) => arr.findIndex((l) => l.message === line.message) === i);
   return lines.length > 0 ? lines : null;
 };
+
+export function isHeldForTrainingReview(
+  status: TrainingStatus | null | undefined,
+  trainingResults: unknown
+): boolean {
+  return (
+    status === TrainingStatus.Paused &&
+    (trainingResults as { heldForReview?: unknown } | null | undefined)?.heldForReview === true
+  );
+}

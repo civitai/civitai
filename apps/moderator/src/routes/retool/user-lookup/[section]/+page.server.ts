@@ -769,7 +769,6 @@ export const actions: Actions = {
       if (input.op !== 'delete' && input.op !== 'tos' && input.op !== 'untos')
         return contentFail('Unsupported action for comments.');
       const commentIds = ids('commentIds');
-      const commentV2Ids = ids('commentV2Ids');
       const result = await bulkCommentAction({
         action:
           input.op === 'delete'
@@ -778,7 +777,6 @@ export const actions: Actions = {
             ? 'removeAsTos'
             : 'restoreFromTos',
         commentIds,
-        commentV2Ids,
         userId: input.userId,
         moderatorId: locals.user.id,
       });
@@ -787,7 +785,7 @@ export const actions: Actions = {
         success: true,
         op: input.op,
         affected: result.affected ?? 0,
-        requested: commentIds.length + commentV2Ids.length,
+        requested: commentIds.length,
       };
     }
 

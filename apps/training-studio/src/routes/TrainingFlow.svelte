@@ -31,6 +31,7 @@
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
   import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
+  import { JUNK_TAGS } from '$lib/autolabel-exclude';
 
   let {
     prices,
@@ -59,7 +60,9 @@
   // 'auto' labels each upload batch as it settles (the historical behavior); 'manual' waits for the
   // explicit Auto-label button. `excludeTags` are never applied by auto-label results (tag mode).
   let autoLabel = $state<'auto' | 'manual'>('auto');
-  let excludeTags = $state<string[]>([]);
+  let excludeTags = $state<string[]>([...JUNK_TAGS]);
+  let excludeCharacter = $state(true);
+  let excludeSource = $state(true);
   // Review-step fields, owned here for the same reason. Name and prompts remember what they were seeded
   // from: while unedited they follow a changed trigger / dataset, once edited they're kept. Empty
   // `samplePrompts` means unseeded — Review never lets the list reach zero.
@@ -68,9 +71,12 @@
   let samplePrompts = $state<SamplePrompt[]>([]);
   let promptsSeed: { labels: string; prompts: string } | null = null;
   let runParams = $state<Record<string, RunParams>>({});
-  // The trigger the current Review params were seeded with.
+  // The trigger and LoRA type the current Review params were seeded with.
   let paramsSeedTrigger = '';
+  let paramsSeedLoraType = '';
   let presetType = $state('');
+  let openAdvanced = $state('');
+  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
@@ -160,18 +166,22 @@
       samplePrompts = seeded.length ? seeded : seedPrompts(datasetLabels, t);
       promptsSeed = { labels, prompts: JSON.stringify(samplePrompts) };
     }
+    const { loraType } = selection;
     runParams = Object.fromEntries(
       selection.runs.map((run) => {
         const key = runParamsKey(run);
         const existing = runParams[key];
-        // Params still at the previous trigger's defaults follow a trigger change (shuffle/keep).
+        // Params still at the previous seed's defaults follow a trigger change (shuffle/keep) or a
+        // LoRA type change (network size).
         const untouched =
           existing &&
-          JSON.stringify(existing) === JSON.stringify(defaultRunParams(run, paramsSeedTrigger));
-        return [key, existing && !untouched ? existing : defaultRunParams(run, t)];
+          JSON.stringify(existing) ===
+            JSON.stringify(defaultRunParams(run, paramsSeedTrigger, paramsSeedLoraType));
+        return [key, existing && !untouched ? existing : defaultRunParams(run, t, loraType)];
       })
     );
     paramsSeedTrigger = t;
+    paramsSeedLoraType = loraType;
     leaveData();
     step = 3;
   }
@@ -300,6 +310,8 @@
       bind:autoLabel
       bind:filter={dataFilter}
       bind:excludeTags
+      bind:excludeCharacter
+      bind:excludeSource
       onContinue={enterReview}
       onBack={() => {
         leaveData();
@@ -315,6 +327,8 @@
       bind:prompts={samplePrompts}
       bind:params={runParams}
       bind:presetType
+      bind:openAdvanced
+      bind:acknowledgedAdvanced
       imageCount={trainableCount}
       {trainsPairs}
       {matureCount}

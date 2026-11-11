@@ -485,6 +485,7 @@
         }
       },
       "excludeFromLeaderboards": true,
+      "excludeFromEventPoints": true,
       "links": [
         {
           "url": "https://example.com/a",
@@ -579,6 +580,7 @@
         }
       },
       "excludeFromLeaderboards": true,
+      "excludeFromEventPoints": true,
       "links": [
         {
           "url": "https://example.com/a",
@@ -673,6 +675,7 @@
         }
       },
       "excludeFromLeaderboards": true,
+      "excludeFromEventPoints": true,
       "links": [
         {
           "url": "https://example.com/a",
@@ -760,6 +763,7 @@
       "publicSettings": null,
       "settings": null,
       "excludeFromLeaderboards": false,
+      "excludeFromEventPoints": false,
       "links": [
         {
           "url": "https://example.com/bare",
@@ -792,6 +796,7 @@
       "publicSettings": null,
       "settings": null,
       "excludeFromLeaderboards": false,
+      "excludeFromEventPoints": false,
       "links": [
         {
           "url": "https://example.com/bare",
@@ -872,14 +877,5 @@
     }
   ],
   "tags:an untagged image": [],
-  "tags:no images": [],
-  "thread:a locked thread": {
-    "id": 9301,
-    "locked": true
-  },
-  "thread:an open thread": {
-    "id": 9302,
-    "locked": false
-  },
-  "thread:no thread": null
+  "tags:no images": []
 }

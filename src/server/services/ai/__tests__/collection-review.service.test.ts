@@ -5,6 +5,7 @@ import {
   isUnratedNsfwLevel,
   needsMinorReview,
   resolveRejectionMessage,
+  toObservationColumns,
 } from '~/server/services/ai/collection-review.service';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -46,14 +47,10 @@ describe('decideFromObservations', () => {
     expect(result.escalations).toContain('unreadable model response');
   });
 
-  // These collections are mostly stylized art, which is exactly what the prompt tells the model it
-  // may be unsure about. Escalating on the hedge alone would sweep up ordinary submissions.
   it('approves an age-ambiguous subject when nothing else is flagged', () => {
     expect(decideFromObservations({ ...clean, minorUncertain: true }).decision).toBe('approve');
   });
 
-  // rules/minors.md makes photorealism the bright line for minors in ANY context, so an ambiguous
-  // age matters there even when the image is otherwise wholesome.
   it.each([
     ['a suggestive context', { suggestiveStyling: true }],
     ['a photorealistic image', { isPhotorealistic: true }],
@@ -306,5 +303,34 @@ describe('needsMinorReview', () => {
     ['an unreadable response', { hasBuzzReference: undefined }],
   ])('leaves %s out of it', (_label, overrides) => {
     expect(needsMinorReview(decideFromObservations({ ...clean, ...overrides }))).toBe(false);
+  });
+});
+
+describe('toObservationColumns', () => {
+  const COLUMNS = [
+    'minorUncertain',
+    'depictsMinor',
+    'isPhotorealistic',
+    'suggestiveStyling',
+    'sexualContent',
+  ] as const;
+  const allFalse = { ...clean, minorUncertain: false };
+
+  it.each(COLUMNS)('records %s in its own column', (key) => {
+    const columns = toObservationColumns({ ...allFalse, [key]: true });
+    expect(columns).toEqual(
+      Object.fromEntries(COLUMNS.map((column) => [column, column === key ? 1 : 0]))
+    );
+  });
+
+  it('records -1 for a field the model left out', () => {
+    expect(toObservationColumns(clean)).toMatchObject({ minorUncertain: -1, depictsMinor: 0 });
+  });
+
+  it.each([
+    ['no response', undefined],
+    ['an unreadable response', { reason: 'missing the required fields' }],
+  ])('records -1 everywhere for %s', (_label, raw) => {
+    expect(toObservationColumns(raw)).toEqual(Object.fromEntries(COLUMNS.map((c) => [c, -1])));
   });
 });

@@ -62,6 +62,7 @@ import {
 import { generateToken } from '~/utils/string-helpers';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
+import { isBaseModelKey, mergeBlockedModels } from '~/utils/training-blocked-models';
 
 export type TrainingRequest = {
   trainingDetails: TrainingDetailsObj;
@@ -252,10 +253,13 @@ export async function getTrainingServiceStatus() {
 export async function setTrainingServiceStatus(input: {
   available: boolean;
   message?: string | null;
+  /** The blocked base-model keys (`trainingModelInfo`); omitted leaves the list as it is. */
+  blockedModels?: string[];
+  blockedModelReasons?: Record<string, string> | null;
 }) {
   // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
   // getTrainingServiceStatus() here: if its read failed open and the
-  // hSet succeeded, ops-configured blockedModels / blockedCustomModels
+  // hSet succeeded, ops-configured blockedModels
   // would be wiped back to schema defaults. Fail-loud is the right
   // behavior for admin writes.
   const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS);
@@ -265,6 +269,13 @@ export async function setTrainingServiceStatus(input: {
     ...current,
     available: input.available,
     message: input.message ?? null,
+    ...(input.blockedModels
+      ? mergeBlockedModels(
+          current.blockedModels,
+          { blockedModels: input.blockedModels, blockedModelReasons: input.blockedModelReasons },
+          isBaseModelKey
+        )
+      : {}),
   };
   await sysRedis.hSet(
     REDIS_SYS_KEYS.SYSTEM.FEATURES,
@@ -442,6 +453,14 @@ export type TrainingWorkflowUpdateResult = {
   fileMetadata: FileMetadata;
 };
 
+/** Debits minus credits (refunds) across a workflow's transactions. */
+const netTransactionCharge = (transactions: TrainingResultsV2['transactionData'] | null) =>
+  (transactions ?? []).reduce(
+    (sum, { type, amount }) =>
+      type === 'debit' ? sum + amount : type === 'credit' ? sum - amount : sum,
+    0
+  );
+
 /**
  * Updates the model file metadata and model version training status based on workflow data.
  * Returns data needed for notifications (signals, emails, webhooks) which should be handled by the caller.
@@ -530,6 +549,34 @@ export async function updateTrainingWorkflowRecords(
     ).catch();
   }
 
+  // The run was priced and debited at submit, so its net charge should never grow afterwards. The
+  // orchestrator can re-price a re-created job (gate release, retry) and debit again; nothing else
+  // here would notice, so flag it. Only within one workflow: a resubmit legitimately starts over.
+  const storedCharge = netTransactionCharge(trainingResults.transactionData);
+  const currentCharge = netTransactionCharge(derived.transactionData);
+  if (
+    storedCharge > 0 &&
+    currentCharge > storedCharge &&
+    trainingResults.workflowId === derived.workflowId
+  ) {
+    logToAxiom(
+      {
+        name: 'training-charge-increased',
+        type: 'error',
+        message: 'Training charge grew after submit',
+        data: {
+          workflowId: derived.workflowId,
+          modelFileId,
+          userId: model.user.id,
+          status: trainingStatus,
+          storedCharge,
+          currentCharge,
+        },
+      },
+      'webhooks'
+    ).catch();
+  }
+
   const newTrainingResults: TrainingResultsV2 = {
     ...trainingResults,
     version: 2,
@@ -544,6 +591,8 @@ export async function updateTrainingWorkflowRecords(
     history,
     sampleImagesPrompts: derived.sampleImagesPrompts,
     transactionData: derived.transactionData ?? trainingResults.transactionData ?? [],
+    // Rewritten on every sync, so it clears once the hold ends.
+    heldForReview: derived.underReview || undefined,
   };
 
   const newMetadata: FileMetadata = {

@@ -16,6 +16,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 }));
 
 const { pullData } = await import('~/server/search-index/collections.search-index');
+const { tagIdsForImagesCache } = await import('~/server/redis/caches');
 
 let pg: PGlite;
 const db = {
@@ -109,7 +110,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, cover text, "coverId" int, status text, "publishedAt" timestamp,
-      availability text, ingestion text DEFAULT 'Scanned'
+      availability text, ingestion text DEFAULT 'Scanned', "bannerId" int
     );
     CREATE TABLE "Model3D" (
       id int PRIMARY KEY, "thumbnailImageId" int, status text, "deletedAt" timestamp,
@@ -305,6 +306,18 @@ describe('collections search index covers', () => {
     expect(itemCovers).toEqual([]);
   });
 
+  // The document keeps these tag ids until the next reindex, so they must not come from an L1 entry
+  // this process may hold from before a tag edit.
+  it("reads the cover images' tag ids past this process's L1", async () => {
+    const fetch = vi.mocked(tagIdsForImagesCache.fetch);
+    fetch.mockClear();
+    await pull(OWN_PUBLISHED);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [ids, options] = fetch.mock.calls[0];
+    expect(ids).toContain(100);
+    expect(options).toEqual({ bypassLocal: true });
+  });
+
   it('uses an Image item a stranger could see as the fallback cover (control)', async () => {
     expect((await pull(ITEM_PUBLISHED)).itemCovers).toEqual([100]);
   });
@@ -391,5 +404,54 @@ describe('collections search index covers', () => {
     ['a Post item whose only image carries a removal reason', POST_ITEM_REMOVAL_REASON],
   ])('skips %s in the fallback', async (_, id) => {
     expect((await pull(id)).itemCovers).toEqual([]);
+  });
+});
+
+describe('collections search index covers from a banner-only Article item', () => {
+  // collection id → its only item, an Article
+  const BANNER_ONLY = 60;
+  const PENDING_BANNER_ONLY = 61;
+  const FLAGGED_BANNER_ONLY = 62;
+  const COVER_AND_BANNER = 63;
+
+  beforeAll(async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
+        (130, ${STRANGER}, 'Scanned', NULL),
+        (131, ${STRANGER}, 'Pending', NULL),
+        (132, ${STRANGER}, 'Scanned', 'minor'),
+        (133, ${STRANGER}, 'Scanned', NULL),
+        (134, ${STRANGER}, 'Scanned', NULL);
+      INSERT INTO "Article" (id, "coverId", "bannerId", status, "publishedAt", availability) VALUES
+        (40, NULL, 130, 'Published', now(), 'Public'),
+        (41, NULL, 131, 'Published', now(), 'Public'),
+        (42, NULL, 132, 'Published', now(), 'Public'),
+        (43, 133, 134, 'Published', now(), 'Public');
+      INSERT INTO "Collection" (id, "userId", "imageId") VALUES
+        (${BANNER_ONLY}, ${OWNER}, NULL),
+        (${PENDING_BANNER_ONLY}, ${OWNER}, NULL),
+        (${FLAGGED_BANNER_ONLY}, ${OWNER}, NULL),
+        (${COVER_AND_BANNER}, ${OWNER}, NULL);
+      INSERT INTO "CollectionItem" (id, "collectionId", "articleId") VALUES
+        (50, ${BANNER_ONLY}, 40),
+        (51, ${PENDING_BANNER_ONLY}, 41),
+        (52, ${FLAGGED_BANNER_ONLY}, 42),
+        (53, ${COVER_AND_BANNER}, 43);
+    `);
+  });
+
+  it('uses the banner of an Article item with no cover', async () => {
+    expect((await pull(BANNER_ONLY)).itemCovers).toEqual([130]);
+  });
+
+  it.each([
+    ['has not finished scanning', PENDING_BANNER_ONLY],
+    ['awaits review', FLAGGED_BANNER_ONLY],
+  ])('skips the banner when it %s', async (_, id) => {
+    expect((await pull(id)).itemCovers).toEqual([]);
+  });
+
+  it("uses the Article item's cover over its banner", async () => {
+    expect((await pull(COVER_AND_BANNER)).itemCovers).toEqual([133]);
   });
 });

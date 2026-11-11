@@ -127,8 +127,8 @@ export type Model3dPanel = { models: Model3dSummary[]; tracking: boolean };
 
 // The article equivalent of ImageViewDetail, minus the comment series — which is unbuilt, not impossible.
 // ClickHouse cannot answer it (the `comments` type enum has no Article arm), but ClickHouse is not where the
-// image drilldown reads comments from either: `fetchImageViewDetail` counts `CommentV2` through `Thread`, and
-// `Thread.articleId` exists, so the same query shape works here whenever someone wants the series.
+// image drilldown reads comments from either: `fetchImageViewDetail` counts `CommentV3` rows, and
+// `entityType = 'article'` exists there, so the same query shape works here whenever someone wants the series.
 export type ArticleViewDetail = {
   articleId: number;
   title: string;
@@ -271,46 +271,36 @@ export const getReactionAudienceSplit = createCache({
 
 // Comments come from Postgres, not ClickHouse, because no ClickHouse table can answer this correctly:
 //
-//   - `image_metrics_user` (what this read until now) is a dead one-off backfill. Nothing writes it, and its max
-//     userId is 9.66M against current ids past 12.5M — frozen for everyone it covers, **0** for everyone newer.
-//   - `comments` looks like the replacement and is a trap. Its `entityId` is the **CommentV2 id**, not the entity
-//     commented on, for every `type` except `Model`. The tell: 970,679 rows of `type = 'Image'` over 970,422
-//     distinct entityIds, and Image/Post/Comment/Review/Bounty all share one id range (45,825–2,309,025) that
-//     overlaps between them, while real image ids are past 139M. Joining it to `images_created.id` does not error —
-//     ids that low exist — it silently credits each comment to whatever ancient image shares its number.
-//   - `entityMetricTotal_v3` carries two per-image comment metrics — `Comment` (2023-02-15 to 2025-11-06) and
-//     `commentCount` (2025-11-06 on, from the event-engine CDC handler). They are two eras of one measurement,
-//     not a live one and a dead one. Summing both still fails a ground-truth check across four creators:
-//     -11%, +18%, +27%, +30% against Postgres. Consistent with the pipeline's delete path — it resolves an
-//     image's owner by reading `Image`, which is already gone on a cascade delete, so the -1 is dropped and the
-//     total ratchets up. Three of the four errors are positive.
+//   - `image_metrics_user` (what this read until now) is a dead one-off backfill. Nothing writes it: frozen for
+//     every user it covers, **0** for every newer one.
+//   - `comments` looks like the replacement and is a trap. Its `entityId` is the **comment id** (one id
+//     sequence shared by CommentV2 and CommentV3), not the entity commented on, for every `type` except
+//     `Model`. The tell: Image/Post/Comment/Review/Bounty share one low id range that overlaps between them,
+//     while real image ids are far past it. Joining it to `images_created.id` does not error — ids that low
+//     exist — it silently credits each comment to whatever ancient image shares its number.
+//   - `entityMetricTotal_v3` carries two per-image comment metrics — `Comment` (until 2025-11-06) and
+//     `commentCount` (from 2025-11-06, from the event-engine CDC handler). They are two eras of one
+//     measurement, not a live one and a dead one. Summing both still fails a ground-truth check against
+//     Postgres, in both directions. Consistent with the pipeline's delete path — it resolves an image's owner
+//     by reading `Image`, which is already gone on a cascade delete, so the -1 is dropped and the total
+//     ratchets up.
 //
 // Do not generalise that middle point to `reactions`, which sits beside `comments` and looks like it. Its
 // `entityId` **is** the entity reacted to, and each `type` keeps to its own id space rather than sharing one:
-// over 30 days `Image_Create` runs to 139,931,065 across 19,428,878 rows / 6,203,813 distinct ids (3.13 per
-// image) while `CommentV2_Create` tops out at 2,309,122 against `max("CommentV2".id) = 2,309,121`. Sampled 6
-// `Image_Create` rows against Postgres: every `entityId` is a live `Image` whose `userId` is the CH `ownerId`.
-// Only `fetchTopMedia` keys off `reactions.entityId`; the rest of this file uses `reactions.ownerId`, which is
+// `Image_Create` entityIds are live `Image` ids, while `CommentV2_Create` entityIds are comment ids. Only
+// `fetchTopMedia` keys off `reactions.entityId`; the rest of this file uses `reactions.ownerId`, which is
 // what `reactions_owner_scores` aggregates. `comments` is the odd one out, and the reason is worth knowing —
 // `reactions` rows are emitted by the reaction handler, which knows the entity, while `comments` rows are
 // emitted by the comment handler, which knows the comment. There `type` says what was commented **on** and
 // `entityId` says which comment. Nothing in the schema shows that.
 //
-// Three things about the query that are load-bearing, all of them measured rather than reasoned:
+// Two things about the query are load-bearing:
 //
-//   - **It counts `CommentV2` rows, not `Thread.commentCount`.** The counter is exact (its trigger fires on every
-//     insert and delete) but it is a per-thread total with no author in it, and `AND cv."userId" <> uid` is the
-//     whole point: `update_thread_comment_count` increments unconditionally, so a creator who answers their own
-//     commenters inflates their own "comments received". Measured: 71.4% / 60.9% / 57.6% of the raw total was
-//     self-authored for userIds 1421581 / 2895 / 1279061. This tile renders on an **audience** page.
-//   - **The two arms must stay separate.** Collapsing them into
-//     `WHERE t.id IN (roots) OR t."rootThreadId" IN (roots)` makes both indexes unusable and seq-scans all 5.4M
-//     `Thread` rows on **every** cache miss — 683ms / ~350MB of buffers even for a creator with two images and
-//     zero comments. Split + `MATERIALIZED`, it is an index path: 46ms at that floor, 1.6s at the platform's
-//     largest creator (994880, 802,838 images). This runs on the SSR blocking path.
-//   - **`roots` joins `Image`, so a deleted image takes its comments with it.** `Thread.imageId` is
-//     `onDelete: SetNull`, orphaning ~234k root threads holding ~179k comments platform-wide. The number is
-//     therefore "all-time on images that still exist" and can fall month over month.
+//   - **It excludes the creator's own comments (`AND cv."userId" <> uid`), and that is the whole point.** A
+//     per-topic comment count has no author in it, so a creator who answers their own commenters would
+//     inflate their own "comments received". This tile renders on an **audience** page.
+//   - **It joins `Image`, so a deleted image takes its comments with it.** The number is therefore "all-time
+//     on images that still exist" and can fall month over month.
 export const getAllTimeTotals = createCache({
   name: 'analytics:alltime:v3',
   fetch: async ({ userId }: { userId: number }): Promise<AllTimeTotals> => {
@@ -840,11 +830,10 @@ async function fetchImageViewDetail(
   // granules on the `time` prefix. Unbounded, the same query scans every partition: 2.4s against 155ms for a
   // month. That's why there's no all-time reaction figure on this page.
   //
-  // Comments do NOT come from ClickHouse. `comments.entityId` is the **CommentV2 id**, not the entity id, for
-  // every type except Model — 970k image-comment rows over 970,422 distinct entityIds, max 2,309,059 against
-  // image ids past 139M. Joining it on an image id doesn't error, it silently returns whatever ancient image
-  // shares that number. Postgres via `Thread` is the only correct source; `rootThreadId` picks up replies,
-  // which count as comments on the image.
+  // Comments do NOT come from ClickHouse. `comments.entityId` is the **comment id**, not the entity id, for
+  // every type except Model. Joining it on an image id doesn't error, it silently returns whatever ancient
+  // image shares that number. `CommentV3` is the correct source; replies carry the image on their own row,
+  // so they count as comments on it.
   const [seriesRows, prevRows, lifetimeRows, reactionRows, commentRows, impressionRows] =
     await Promise.all([
       ch.$query<{ date: string; value: number | string }>(

@@ -10,8 +10,7 @@ import {
 } from '@civitai/db-queries/hot-reads-3';
 
 /**
- * The Kysely reads that replaced the Prisma ones (formerly behind a server Flipt flag), each
- * returning the shape the Prisma read returned. Each takes the client, so
+ * The Kysely reads, each returning the shape the Prisma read returned. Each takes the client, so
  * __tests__/hot-reads-3.kysely-parity.test.ts runs the very code the services run.
  */
 

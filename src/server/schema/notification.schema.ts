@@ -75,6 +75,9 @@ export const markReadNotificationInput = z.object({
 });
 export type MarkReadNotificationInput = z.infer<typeof markReadNotificationInput>;
 
+export const markImageMilestonesReadInput = z.object({ imageId: z.number().int().positive() });
+export type MarkImageMilestonesReadInput = z.infer<typeof markImageMilestonesReadInput>;
+
 export type NotificationSingleRow = z.infer<typeof notificationSingleRow>;
 export const notificationSingleRow = z.object({
   key: z.string(),

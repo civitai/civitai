@@ -21,11 +21,7 @@ import { getStaticContent, resolveTosHash } from '~/server/services/content.serv
 import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readModelVersionIdsViaKysely,
-  readModelVersionIdsViaPrisma,
-} from '~/server/services/hot-reads-5.reads';
+import { readModelVersionIdsViaKysely } from '~/server/services/hot-reads-5.reads';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
 import { getUserFollows } from '~/server/redis/caches';
@@ -96,6 +92,7 @@ import {
   claimCosmetic,
   createUserReferral,
   deleteUser,
+  deleteBasicDataForUser,
   deleteUserProfilePictureCache,
   equipCosmetic,
   getCreators,
@@ -119,6 +116,7 @@ import {
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
+  setEventPointsExclusion,
   setUserMuted,
   setUserSetting,
   setEmailVerificationRequired,
@@ -239,7 +237,11 @@ export const getUserCreatorHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
     if (!user) throw throwNotFoundError('Could not find user');
-    if (!ctx.user?.isModerator) user.excludeFromLeaderboards = false; // Mask from non-moderators
+    if (!ctx.user?.isModerator) {
+      // Mask from non-moderators
+      user.excludeFromLeaderboards = false;
+      user.excludeFromEventPoints = false;
+    }
 
     return user;
   } catch (error) {
@@ -511,8 +513,19 @@ export const completeOnboardingHandler = async ({
             ...(emailChanged ? { emailVerified: null } : {}),
           },
         });
-        if (input.username && input.username !== current?.username)
+        if (input.username && input.username !== current?.username) {
           queueScamScan({ entityType: 'User', entityId: id });
+          // The user index already holds this account from signup, and its incremental sync scans
+          // on `createdAt`, so without the enqueue search keeps the pre-onboarding username.
+          // Best-effort: the row is committed, and a cache/Redis blip must not fail the step.
+          await Promise.all([
+            deleteBasicDataForUser(id).catch(handleLogError),
+            usersSearchIndex
+              .queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
+              .catch(handleLogError),
+            bustUserCreator(id, { usernames: current?.username ? [current.username] : [] }),
+          ]);
+        }
 
         // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
         // every address change made this an unmetered way to mail an arbitrary third party from
@@ -672,10 +685,13 @@ export const updateUserHandler = async ({
     });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-    // The client sends the current picture's id when it re-saves it, and no id for a new upload,
-    // so any other picture is always created as a new row.
+    // The client sends the current picture's id when it re-saves it, and no id for a new upload.
+    // The edit form fills a missing picture with `{ url: user.image }`; re-sent unchanged, that is
+    // no new upload. A picture withheld from its owner's read must not be replaced by it.
+    const isImageFallback =
+      !!profilePicture && !profilePicture.id && !!user.image && profilePicture.url === user.image;
     const newPicture =
-      profilePicture && profilePicture.id !== user.profilePictureId
+      profilePicture && profilePicture.id !== user.profilePictureId && !isImageFallback
         ? { ...profilePicture, id: undefined }
         : undefined;
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
@@ -904,9 +920,7 @@ export const getUserEngagedModelVersionsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const userId = ctx.user.id;
-  const versions = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-    ? await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id)
-    : await readModelVersionIdsViaPrisma(dbRead, input.id);
+  const versions = await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id);
   const modelVersionIds = versions.map((x) => x.id);
 
   try {
@@ -1784,6 +1798,14 @@ export const getUserPurchasedRewardsHandler = async ({ ctx }: { ctx: ProtectedCo
     throw throwDbError(error);
   }
 };
+
+export async function setEventPointsExclusionHandler({
+  input,
+}: {
+  input: SetLeaderboardEligibilitySchema;
+}) {
+  await setEventPointsExclusion(input);
+}
 
 export async function setLeaderboardEligibilityHandler({
   ctx,

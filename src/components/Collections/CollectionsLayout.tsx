@@ -24,15 +24,23 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import classes from './CollectionsLayout.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
-const MyCollectionsDrawer = () => {
-  const [drawerOpen, { close, toggle }] = useDisclosure();
+const MyCollectionsDrawer = ({ autoOpen = false }: { autoOpen?: boolean }) => {
+  const [drawerOpen, { open, close, toggle }] = useDisclosure();
+  // Once per mount, so closing the drawer does not re-open it on the next render.
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (autoOpen && !autoOpened.current) {
+      autoOpened.current = true;
+      open();
+    }
+  }, [autoOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -84,7 +92,14 @@ const MyCollectionsDrawer = () => {
   );
 };
 
-const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
+const CollectionsLayout = ({
+  children,
+  autoOpenDrawer = false,
+}: {
+  children: React.ReactNode;
+  /** Phone only: open the collections drawer when the page loads. */
+  autoOpenDrawer?: boolean;
+}) => {
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const [showSidebar, setShowSidebar] = useState(true);
@@ -99,6 +114,9 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
           {({ FilterBox, Filters, ListMenu, Collections, InviteList, isLoading }) => (
             <Card
               className={classes.sidebar}
+              // The list scrolls inside the page scroll area; without this the subnav's
+              // hide-on-scroll counts it as the page scrolling and retracts the subnav.
+              data-ignore-hide-on-scroll=""
               w={300}
               mr="xs"
               p={0}
@@ -111,10 +129,6 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                 // ⚠️ Does NOT account for the adhesive ad, which is a later in-flow child of the
                 // 100%-height `#__next` column and so shortens the scroll area without shortening
                 // the viewport — the sidebar's last rows sit behind it for users who see ads.
-                // Sizing this off the scroll area instead fixes that but exposes a second problem:
-                // the list below carries its own independent `68vh` cap, so a shorter card just
-                // makes the list overflow it (the card is `overflow: visible` for the gutter
-                // toggle). Both caps have to become one budget before this can shrink safely.
                 maxHeight: 'calc(100dvh - var(--header-height) - var(--footer-height) - 68px)',
                 // Follows the subnav's real bottom edge rather than a fixed header offset: the
                 // subnav hides by translating, so it keeps its layout box and a static `top`
@@ -172,17 +186,21 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                   <Loader type="bars" />
                 </Center>
               )}
-              <Card.Section className="relative h-full" mx={0}>
-                <ScrollArea.Autosize mah="calc(68vh - var(--header-height,0))" pb="md">
+              <Card.Section className={classes.list} mx={0}>
+                <ScrollArea
+                  className={classes.listScroll}
+                  classNames={{ viewport: classes.listViewport }}
+                  pb="md"
+                >
                   {Collections}
-                </ScrollArea.Autosize>
+                </ScrollArea>
               </Card.Section>
             </Card>
           )}
         </MyCollections>
       )}
       <div className={classes.content}>
-        {!!currentUser && isMobile && <MyCollectionsDrawer />}
+        {!!currentUser && isMobile && <MyCollectionsDrawer autoOpen={autoOpenDrawer} />}
         {children}
       </div>
     </Container>

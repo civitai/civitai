@@ -455,7 +455,9 @@ export default function EcosystemPage({
                     </p>
                     <div className={styles.check}>Full control over the workflow</div>
                     <div className={styles.check}>Batch and automate</div>
-                    <div className={styles.caveat}>Needs a {config.localRun.vram} GPU</div>
+                    {config.localRun.vram && (
+                      <div className={styles.caveat}>Needs a {config.localRun.vram} GPU</div>
+                    )}
                     <div className={styles.caveat}>
                       Download {config.localRun.weightsSize} of weights
                     </div>

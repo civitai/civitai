@@ -124,13 +124,15 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
+import {
+  trainingDataOwnerView,
+  trainingDataPublicView,
+  withoutEpochUrls,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readModelPoiAndOwnerViaKysely,
-  readModelPoiAndOwnerViaPrisma,
-} from '~/server/services/hot-reads-6.reads';
+import { readModelPoiAndOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** 404s a lookup of a model the viewer may not see. `pick` reads the model id from the input. */
@@ -138,9 +140,7 @@ const modelVisibleToViewer = (pick: (input: any) => number | undefined) =>
   middleware(async ({ ctx, next, input }) => {
     const id = pick(input ?? {});
     if (id && !ctx.user?.isModerator) {
-      const model = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-        ? await readModelPoiAndOwnerViaKysely((await loadKyselyDb()).kyselyRead, id)
-        : await readModelPoiAndOwnerViaPrisma(dbRead, id);
+      const model = await readModelPoiAndOwnerViaKysely((await loadKyselyDb()).kyselyRead, id);
       if (model && !canViewPoiModel(model.poi, model.userId, ctx.user)) throw throwNotFoundError();
     }
     return next();
@@ -235,15 +235,30 @@ const creatorGalleryHiddenUsersRateLimit = rateLimit(
   { sharedKey: 'creator-gallery-hidden-users' }
 );
 
+// A deleted or taken-down model's epoch urls are withheld from everyone but moderators.
 const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getModelHandler>>>({
   ownerId: ({ data }) => data.user.id,
-  strip: (data) => ({
-    ...data,
-    modelVersions: data.modelVersions.map((version) => ({
-      ...version,
-      files: withoutFileUrls(version.files) as typeof version.files,
-    })),
-  }),
+  strip: async (data, { redCapable }) => {
+    const view = await trainingDataPublicView(dbRead, data.modelVersions, { redCapable });
+    const withheld = isModelDeletedOrTakenDown(data);
+    return {
+      ...data,
+      modelVersions: data.modelVersions.map((version) => {
+        const files = withoutFileUrls(view(version.files)) as typeof version.files;
+        return { ...version, files: withheld ? withoutEpochUrls(files) : files };
+      }),
+    };
+  },
+  forOwner: (data) => {
+    const withheld = isModelDeletedOrTakenDown(data);
+    return {
+      ...data,
+      modelVersions: data.modelVersions.map((version) => {
+        const files = trainingDataOwnerView(version.files);
+        return { ...version, files: withheld ? withoutEpochUrls(files) : files };
+      }),
+    };
+  },
 });
 
 export const modelRouter = router({

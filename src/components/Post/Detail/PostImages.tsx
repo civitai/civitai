@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { Badge, Button, Center, Group, Loader, Paper } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { Fragment, useMemo, useRef, useState } from 'react';
@@ -57,6 +58,7 @@ export function PostImages({
   const [showMore, setShowMore] = useState(false);
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const features = useFeatureFlags();
+  const showEventCosmetics = useShowEventCosmetics();
   const { fitPostImagesToScreen } = useCurrentUserSettings();
 
   // Every image in the post, not the `_images` slice below: the batch provider
@@ -140,7 +142,10 @@ export function PostImages({
                             <Group
                               gap={4}
                               className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
-                              style={imageMediaHatClearLeft(image.eventDecoration, true)}
+                              style={imageMediaHatClearLeft(
+                                showEventCosmetics ? image.eventDecoration : null,
+                                true
+                              )}
                             >
                               <ImageGuard2.BlurToggle />
                               {features.stickerPlacement && (

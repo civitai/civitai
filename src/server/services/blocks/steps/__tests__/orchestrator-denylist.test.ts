@@ -65,6 +65,29 @@ describe('orchestrator denylist — the predicate', () => {
     expect(isPlatformInternalStepType('chatCompletion')).toBe(false);
   });
 
+  // A raw comfy graph, under either `$type`, is denied on the app-reachable arms; the
+  // platform's own steps of both types are built without passing through this guard.
+  it('refuses a raw comfy or customComfy step, in any casing', () => {
+    for (const t of ['comfy', 'Comfy', 'COMFY', 'customComfy', 'CustomComfy', 'CUSTOMCOMFY']) {
+      expect(isPlatformInternalStepType(t)).toBe(true);
+      expect(() => assertStepTypeAllowed(t)).toThrow(PlatformInternalStepTypeError);
+    }
+  });
+
+  it('refuses a $type that is not ASCII letters and digits', () => {
+    for (const t of [
+      'cu\u017ftomComfy',
+      'custom Comfy',
+      'customComfy\u200b',
+      '\uff43omfy',
+      'x_guard_moderation',
+      'xGuard-Moderation',
+      'a.b',
+    ]) {
+      expect(() => assertStepTypeAllowed(t)).toThrow(PlatformInternalStepTypeError);
+    }
+  });
+
   it('allows an ordinary generation type', () => {
     expect(() => assertStepTypeAllowed('imageGen')).not.toThrow();
     expect(() => assertStepTypeAllowed('videoGen')).not.toThrow();
@@ -111,7 +134,9 @@ describe('orchestrator denylist — the predicate', () => {
    */
   it('denies exactly this set — every entry pinned', () => {
     expect([...PLATFORM_INTERNAL_STEP_TYPES].sort()).toEqual([
+      'comfy',
       'comfyNodepackSnapshot',
+      'customComfy',
       'imageScanning',
       'mediaHash',
       'modelClamScan',

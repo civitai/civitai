@@ -88,6 +88,11 @@
   out of the cards client-side, since the toggle owns them. A pinned picker
   (`turboOnly`) hides the chip as well. Saving the version queues the model for
   reindex like any version edit.
+- **`versions.accelerator`** (filterable) holds the version's accelerator LoRA kind,
+  ahead of `settings.accelerator` replacing the turbo block: that key where it is
+  set, even to null, otherwise `turbo` for a turbo block (`getVersionAccelerator`).
+  Nothing filters on it yet. `queue-accelerator-models-reindex` queues the models
+  whose documents predate it.
 
 ## Version editor
 

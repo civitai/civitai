@@ -8,6 +8,7 @@ import {
   getUserPlacementScore,
   listApprovedPlacementRows,
   listPlacementSpacesFor,
+  listPlacementTrackRows,
   listStickerPlacementRows,
   listUserSubscriptionRows,
 } from './placement.db';
@@ -256,6 +257,36 @@ describe('placement.db', () => {
         'and "targetType" = $2 and "targetId" in ($3, $4) and "status" = $5'
     );
     expect(parameters).toEqual(['sticker', 'image', 81, 82, 'approved']);
+  });
+
+  it('listPlacementTrackRows shows a signed-out viewer approved tracks only', async () => {
+    await listPlacementTrackRows(harness.db, {
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: 81,
+    });
+    const { sql, parameters } = only();
+    expect(sql).toBe(
+      'select "id", "targetId", "data", "track" from "Placement" where "surface" = $1 and "targetType" = $2 ' +
+        'and "targetId" = $3 and "status" = $4 and "track" is not null'
+    );
+    expect(parameters).toEqual(['sticker', 'image', 81, 'approved']);
+  });
+
+  it('listPlacementTrackRows adds the pending tracks the viewer placed or owns, as the listing does', async () => {
+    await listPlacementTrackRows(harness.db, {
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: 81,
+      viewerId: 73,
+    });
+    const { sql, parameters } = only();
+    expect(sql).toBe(
+      'select "id", "targetId", "data", "track" from "Placement" where "surface" = $1 and "targetType" = $2 ' +
+        'and "targetId" = $3 and ("status" = $4 or ("status" = $5 and "placerId" = $6) ' +
+        'or ("status" = $7 and "ownerId" = $8)) and "track" is not null'
+    );
+    expect(parameters).toEqual(['sticker', 'image', 81, 'approved', 'pending', 73, 'pending', 73]);
   });
 
   it('the listing reads short-circuit an empty id list without a statement', async () => {

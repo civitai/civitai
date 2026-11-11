@@ -1,9 +1,15 @@
-import { Button, Input, UnstyledButton } from '@mantine/core';
+import { Badge, Button, Input, UnstyledButton } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { showNotification } from '@mantine/notifications';
 import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { choiceIdleClass } from '~/libs/form/components/choice-styles';
 import { useCallback, useEffect, useMemo } from 'react';
+import type { ReactNode } from 'react';
+import { GenerationSetupModel } from '~/components/generation_v2/GenerationLayout';
+import type { ResourceSelectInputProps } from '~/components/generation_v2/inputs/ResourceSelectInput';
+import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -11,7 +17,6 @@ import type { PromptEnhanceImage } from '~/components/Generation/PromptEnhance/p
 import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
-import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import {
   getAllVersionIds,
   type VersionGroup,
@@ -125,8 +130,7 @@ function VersionLevelDropdown({
           <UnstyledButton
             className={clsx(
               'flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold',
-              'bg-gray-1 hover:bg-gray-2',
-              'dark:bg-dark-5 dark:hover:bg-dark-4'
+              choiceIdleClass
             )}
           >
             {selected?.label ?? group.label ?? 'Version'}
@@ -147,6 +151,8 @@ function VersionLevelDropdown({
     </Menu>
   );
 }
+
+const isVersionNew = (o: VersionOption) => !!o.newUntil && Date.now() < o.newUntil.getTime();
 
 /**
  * Hierarchical version selector — parent levels as compact dropdowns, leaf as
@@ -212,11 +218,24 @@ export function VersionGroupSelector({
         />
       ))}
       {leaf && (
-        <ButtonGroupInput
+        <ChoiceGroup
           className="flex-1"
+          dynamicColumns={6}
           value={leaf.selectedValue?.toString() ?? ''}
           onChange={(v) => handleChange(Number(v))}
-          data={leaf.group.options.map((o) => ({ label: o.label, value: o.value.toString() }))}
+          data={leaf.group.options.map((o) => ({
+            label: isVersionNew(o) ? (
+              <span className="inline-flex items-center gap-1">
+                {o.label}
+                <Badge size="xs" color="green" variant="filled" radius="sm">
+                  New
+                </Badge>
+              </span>
+            ) : (
+              o.label
+            ),
+            value: o.value.toString(),
+          }))}
         />
       )}
     </div>
@@ -286,4 +305,29 @@ export function useWildcardHandlers(store: GenerationStore) {
   }, [store, loadFromModelVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { removeWildcardSet, addWildcardSet, isAdding: loadFromModelVersion.isPending };
+}
+
+/**
+ * A form's model, with its version fields as `children` under it, drawn into the model card under
+ * the ecosystem.
+ */
+export function ModelCardInput({
+  children,
+  ...props
+}: ResourceSelectInputProps & { children?: ReactNode }) {
+  return (
+    <GenerationSetupModel>
+      <ResourceSelectInput {...props} flush />
+      <div className="flex flex-col gap-2 px-2 pb-2 empty:hidden">{children}</div>
+    </GenerationSetupModel>
+  );
+}
+
+/** A form's version field with no model (3D's engine version), in the model card under the ecosystem. */
+export function ModelCardSection({ children }: { children: ReactNode }) {
+  return (
+    <GenerationSetupModel>
+      <div className="flex flex-col gap-2 p-2 empty:hidden">{children}</div>
+    </GenerationSetupModel>
+  );
 }

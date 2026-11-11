@@ -125,6 +125,7 @@ export async function resolveWildcardPackForUser({
     modelVersionId,
     user,
     attribution: { caller: 'wildcard', actor: resolveActorFor(user) },
+    redCapable: false,
   });
   if (resolved.status !== 'success') {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Wildcard pack not found' });

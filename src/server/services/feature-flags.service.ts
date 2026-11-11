@@ -11,6 +11,8 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
+import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
+import { formatDate } from '~/utils/date-helpers';
 
 export type ServerAvailability = ColorDomain;
 
@@ -56,7 +58,10 @@ const featureFlags = createFeatureFlags({
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
+  creatorEngagementApi: { availability: ['mod'], fliptKey: 'creator-engagement-api' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
+  // Landscape images cover two feed columns on /images (3+ columns). Mods only while it is reviewed.
+  masonryLandscapeSpan: { availability: ['mod'], fliptKey: 'masonry-landscape-span' },
   // App mode of /intent/post (manifest links from approved apps). Off: every intent is open mode.
   appPostIntent: { availability: ['mod'], fliptKey: 'app-post-intent' },
   // Faro RUM frontend observability. Default OFF (mods only); widen the cohort via
@@ -313,6 +318,15 @@ const featureFlags = createFeatureFlags({
   siteAppealForm: { availability: ['mod'], fliptKey: 'site-appeal-form' },
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
+  // Whether the Civitai Link button shows in the top nav. Separate from `civitaiLink`, which gates
+  // who can use Link at all; this one is the user's own opt-in.
+  civitaiLinkNav: {
+    toggleable: true,
+    default: false,
+    displayName: 'Civitai Link',
+    description: 'Show the Civitai Link button in the top navigation bar.',
+    availability: ['public'],
+  },
   imageTraining: { availability: ['user'] },
   videoTraining: { availability: ['public'] },
   aiToolkitSd15: { availability: ['public'], fliptKey: 'ai-toolkit-sd15' },
@@ -368,8 +382,11 @@ const featureFlags = createFeatureFlags({
     toggleable: true,
     default: true,
     displayName: 'Training Studio',
-    badge: 'Beta',
-    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which will be phased out gradually as Training Studio matures.`,
+    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which stops starting new runs on ${formatDate(
+      CLASSIC_TRAINER_RETIRES_AT,
+      'MMMM D, YYYY',
+      true
+    )}.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
@@ -419,32 +436,14 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served. Static
-  // availability is empty so image search is off for everyone.
-  // MEASURED 2026-10-03: the index holds 0 documents and `[]` filterable attributes. That is an
-  // observation with a date on it, NOT a consequence of `retired` — 🔴 nothing holds it that way.
-  // `retired` only stops the processor writing and syncing, so no `reset` runs to configure
-  // settings ("the index is stale for as long as it is retired",
-  // `src/server/search-index/base.search-index.ts`); an index that was set up before retirement
-  // keeps the settings and documents it had. And this one is still writable from outside the
-  // processor: `src/pages/api/mod/search/images-update.ts` writes to it without consulting
-  // `retired`, as the entry note in `src/server/meilisearch/util.ts` records. So re-measure before
-  // acting on the figures above; do not infer them from the flag.
-  // 🔴 This is NO LONGER a safe no-deploy toggle, and it fails quietly rather than loudly.
-  // Re-adding an `image-search` Flipt key here and turning that flag on would point image search
-  // at that index: filtered or sorted queries error, and the rest return zero hits.
-  // Re-enabling requires REBUILDING the index first — a full reindex of ~64M documents
-  // via `imagesSearchIndex` (`/api/mod/update-index`), which saturates the search backend for
-  // several days and badly degrades search for every other index while it runs. Measured on the
-  // last full ingestion: p95 search latency ~4.6s and p99 above 10s, sustained over six days.
-  // So: treat re-enabling as a planned project, not a flag flip.
-  imageSearch: { availability: [] },
-  // Whether the Images entry appears in the search pickers/tabs at all. Split from `imageSearch`
-  // (which gates whether image search actually RUNS) so the entry could stay visible with a
-  // "temporarily disabled for maintenance" notice while the index is retired — see 868m8yafw.
-  // Now [] : the entry is hidden from the header search, the quick-search pickers and the /search
-  // tabs, and /search/images redirects to /search/models. Set to ['public'] to show the notice again.
-  imageSearchEntry: [],
+  // All of image search: the Images entry in the pickers and tabs, /search/images (redirects to
+  // models without it), /search/semantic, "more like this", and the semanticImageSearch procedures.
+  // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
+  // does, Flipt decides both ways, so keep mods in its rule.
+  imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Article search (/search/articles, the header and the quick-search dropdown) answers from the
+  // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
+  semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -473,6 +472,8 @@ const featureFlags = createFeatureFlags({
   // ramps; everyone else keeps the current chat, which still ships alongside it.
   chatRedesign: { availability: ['mod'], fliptKey: 'chat-redesign' },
   creatorsProgram: ['mod', 'granted'],
+  // Article reading typography; see ArticleBody.module.scss.
+  articleTypography: { availability: ['mod', 'granted'], fliptKey: 'article-typography' },
   // The banking-change notice alert and modal on the Buzz dashboard. Dark until the Flipt flag is on.
   bankingChangeNotice: { availability: [], fliptKey: 'banking-change-notice' },
   buzzWithdrawalTransfer: ['granted'],
@@ -481,8 +482,6 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
-  // The /search/semantic page and its procedures. Moderators only: no Flipt flag exists for it.
-  semanticImageSearch: { availability: ['mod'] },
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
@@ -493,6 +492,9 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'creator-services-finals-malware-scan',
   },
+  // Buyers attaching files to a deal. Its own switch because the rows it writes need the migration
+  // applied and every pod on a build that hides unscanned attachments from the seller.
+  creatorServicesAttachments: { availability: [], fliptKey: 'creator-services-attachments' },
   // One flag drives both halves of creator announcements: these surfaces and the
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.
@@ -521,6 +523,9 @@ const featureFlags = createFeatureFlags({
   // testers while stickers themselves open up. Required *in addition to*
   // `stickers`, so placement cannot outlive the feature it belongs to.
   stickerPlacement: { availability: ['mod'], fliptKey: 'sticker-placement' },
+  // Stickers that follow a video's time. Gates sending a track on create, reading tracks
+  // (`getStickerTracks`) and the pin control. Without it a track sticker draws at its `data` pose.
+  stickerVideoTracks: { availability: ['mod'], fliptKey: 'sticker-video-tracks' },
   // The sticker book profile tab. Its own flag rather than riding `stickers`:
   // the tab publishes what a creator owns and what their work has collected on a
   // PUBLIC profile, which is a disclosure decision separate from whether
@@ -542,6 +547,10 @@ const featureFlags = createFeatureFlags({
   // The journey page, its entry points and the tier pointer in score refusals, plus tier badge grants
   // and their notifications (see creator-journey-flag.service.ts for the off-session evaluation).
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
+  // Creator-built showcase sections on the profile page.
+  profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
+  // Recent written reviews on the model page, between Suggested Resources and Discussion.
+  modelPageReviews: { availability: ['mod'], fliptKey: 'model-page-reviews' },
   // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access
   // rule (src/server/events/event-access.ts), which adds the preview and launch windows. Do not gate
   // UI on `features.birthday2026`: it knows nothing of the dates, the preview or arming. Ask
@@ -549,6 +558,9 @@ const featureFlags = createFeatureFlags({
   birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
   // Read through useHatTurfFeed, which also checks the event is playable.
   hatTurfFeedCard: { availability: ['mod'], fliptKey: 'hat-turf-feed-card' },
+  // The Hat Turf feed sorts and Show filters; checked TOGETHER with `hatTurfFeedCard`, so testers can
+  // have them before every player does.
+  hatTurfFeedSorts: { availability: ['mod'], fliptKey: 'hat-turf-feed-sorts' },
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
@@ -636,6 +648,9 @@ const featureFlags = createFeatureFlags({
   // picker — and not the node: a blurb span already in a draft must keep parsing, or turning
   // this off would unwrap references the fan-out job still owns.
   textBlurbs: { availability: ['mod'], fliptKey: 'text-blurbs' },
+  // Inserting cards only (paste and the Embed dialog). Stored cards and
+  // content.getEmbedAvailability serve every reader, flag or not.
+  articleCivitaiCards: ['mod'],
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue', 'red'],
@@ -648,7 +663,9 @@ const featureFlags = createFeatureFlags({
   blocklists: ['granted'],
   toolSearch: ['public'],
   comicSearch: ['public'],
-  generationOnlyModels: ['mod', 'granted', 'gold'],
+  // Open to every signed-in creator; kept as a flag so an env override can switch it off in the main app
+  // (Creator Studio's canSetGenerationOnly restates the default and doesn't read it).
+  generationOnlyModels: ['user'],
   appTour: ['public'],
   privateModels: ['public'],
   auctions: ['blue', 'red', 'green', 'public'],
@@ -664,6 +681,8 @@ const featureFlags = createFeatureFlags({
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
   giftMemberships: { availability: ['public'], fliptKey: 'gift-memberships' },
+  // Dark until Flipt turns it on: docs/features/model-gift-links.md.
+  modelGiftLinks: { availability: [], fliptKey: 'model-gift-links' },
   buzzMemberships: { availability: ['mod'], fliptKey: 'buzz-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: [],
@@ -713,6 +732,14 @@ const featureFlags = createFeatureFlags({
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the
   // default (see `image/krea3.graph.ts`).
   krea3Ultra: { availability: ['mod'], fliptKey: 'krea3-ultra' },
+  // Gates the whole MiniMaxH3Image ecosystem: off ⇒ it is hidden from the picker and a
+  // submission naming it is refused (see `generation/ecosystem-gates.ts`). No Flipt key, so
+  // opening it past moderators is a code change.
+  minimaxH3ImageGenerator: { availability: ['mod'] },
+  // Gates Seedream v5.5 like krea3Ultra: off ⇒ v5.5 is not offered, v5.0-pro stays the default, and a
+  // submitted v5.5 falls back to v5.0-pro (see `image/seedream.graph.ts`). Dark until the
+  // orchestrator release that accepts v5.5 is live; Flipt alone opens it.
+  seedream55: { availability: [], fliptKey: 'seedream-5-5' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
@@ -808,6 +835,7 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  appDeveloperRateCard: { availability: [], fliptKey: 'app-developer-rate-card' },
   // App Assistant (on `/apps/build`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.
   appAssistant: { availability: [], fliptKey: 'app-assistant' },
@@ -834,6 +862,11 @@ const featureFlags = createFeatureFlags({
   // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
   // dark.
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
+  // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
+  // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for
+  // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
+  // fail-closed `isAppLimitsUpgradePromptEnabled`, so the two agree while the flag is absent.
+  appLimitsUpgradePrompt: { availability: [], fliptKey: 'app-limits-upgrade-prompt' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
@@ -944,13 +977,6 @@ const featureFlags = createFeatureFlags({
   resourceIntentV1: { availability: [], fliptKey: 'resource-intent-v1' },
   resourceIntentV1Shadow: { availability: [], fliptKey: 'resource-intent-v1-shadow' },
   resourceIntentJudgeCapture: { availability: [], fliptKey: 'resource-intent-judge-capture' },
-  // The model page discussion's comment counts in ONE call (`comment.getVisibleCountsByModel`,
-  // the plain and the hidden view's counts together) instead of two `getVisibleCountByModel` calls,
-  // and no visible count at all when the first `comment.getAll` page holds every comment (the
-  // count then equals the loaded comments). Off = the two calls, as before. Dark like the above:
-  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF. Either way the counts read
-  // through Kysely.
-  commentCountsSingleCall: { availability: [], fliptKey: 'comment-counts-single-call' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

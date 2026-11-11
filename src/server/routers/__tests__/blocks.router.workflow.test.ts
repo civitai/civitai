@@ -140,18 +140,30 @@ const {
 // divergence, so a flat "no divergence" line can be told apart from a detector
 // that never ran. Mocked so the outcome label is assertable; the real emitter is
 // fail-soft and would swallow everything silently.
-const { mockRecordStepPriceCheck } = vi.hoisted(() => ({
+const { mockRecordStepPriceCheck, mockRecordSubmitFailure } = vi.hoisted(() => ({
   mockRecordStepPriceCheck: vi.fn(() => undefined),
+  mockRecordSubmitFailure: vi.fn((_label: string, _reason: string) => undefined),
 }));
 // A bare factory, so every symbol the router imports from this module must be listed
 // here or it resolves to `undefined` and the router throws the moment it is called.
 // `recordBlockPostSubjectRefusal` is only reached on the post preamble's unreadable-
 // subject branch, which this suite does not drive — it is listed so that stays true by
 // construction rather than by luck.
-vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
-  recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
-  recordBlockPostSubjectRefusal: () => undefined,
-}));
+// `submitFailureAppBlockLabel` is the REAL one (it decides the label under test); the emitter is
+// mocked so the (label, reason) pair is assertable.
+vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('~/server/metrics/app-block-runtime.metrics')
+  >();
+  return {
+    recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
+    recordBlockPostSubjectRefusal: () => undefined,
+    recordSucceededWithoutMedia: () => undefined,
+    recordAppBlockSubmitFailure: (label: string, reason: string) =>
+      mockRecordSubmitFailure(label, reason),
+    submitFailureAppBlockLabel: actual.submitFailureAppBlockLabel,
+  };
+});
 
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => mockGetActiveDevTunnel(...(a as [])),
@@ -1347,6 +1359,26 @@ describe('blocks.submitWorkflow', () => {
     });
   });
 
+  it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+    '%s refuses a model on a base model no app may use, before the orchestrator',
+    async (procedure) => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      mockDbRead.modelVersion.findUnique.mockResolvedValue({
+        id: 99,
+        baseModel: 'Flux.2 Klein 9B',
+        modelId: 7,
+        status: 'Published',
+        model: { id: 7, type: 'Checkpoint' },
+      });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller[procedure]({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
   // ---- Item 2 (gen half): idempotency key → orchestrator externalId dedupe ----
   //
   // STEP-1 GATE TEST. Verifies the load-bearing property: a same-key RETRY collapses
@@ -1862,6 +1894,29 @@ describe('blocks.submitWorkflow', () => {
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
       expect(result.snapshot.workflowId).toBe('wf_real');
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('a dev-tunnel submit carries the tag the generator Queue leaves out', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 100, dev: true, appId: 'ephemeral-demo' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 8 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_dev',
+          status: 'unassigned',
+          cost: { total: 8 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow.mock.calls[1][0].body.tags).toEqual(
+        // The literal, not WORKFLOW_TAGS.APP_BLOCK: the Queue excludes runs by this exact wire value.
+        expect.arrayContaining(['app-block', 'app-block:ephemeral-demo'])
+      );
     });
   });
 
@@ -2935,6 +2990,43 @@ describe('blocks.submitWorkflow', () => {
     expect(String(stamped).split(':')[0]).toBe('textToImage');
   });
 
+  // 🔴 THE PLATFORM-BUILT comfy PATH STAYS OPEN. `comfy` is on the pass-through
+  // denylist (a block may not submit a RAW comfy graph), but img2img/hires on an
+  // SD-family checkpoint is BUILT as a `comfy` step by the generation graph
+  // (`createComfyInput`). That step reaches `submitWorkflow` without passing the
+  // denylist, so this native submit must still go through with `$type: 'comfy'`.
+  it("native kind:'textToImage' that the graph builds as a comfy step is still submitted", async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 1000,
+        blockInstanceId: 'page_apb_page',
+        ctx: { slotId: 'app.page', entityType: 'none' },
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_comfy_native');
+    mockCreateStepsFromGraph.mockResolvedValue({
+      steps: [{ $type: 'comfy', name: 's1', input: { comfyWorkflow: {} } }],
+      workflowMetadata: undefined,
+    });
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: validBody({
+        sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+      }),
+    });
+
+    expect(result.snapshot.workflowId).toBe('wf_comfy_native');
+    const submittedTypes = mockSubmitWorkflow.mock.calls.map(
+      (c) => (c[0] as { body: { steps: Array<{ $type: string }> } }).body.steps[0].$type
+    );
+    expect(submittedTypes.length).toBeGreaterThan(0);
+    expect(submittedTypes.every((t) => t === 'comfy')).toBe(true);
+  });
+
   it('G5: threads the body sharedContentKey (opaque) through to the spend attribution', async () => {
     // The published-content-author key is app-supplied on the BODY and passed
     // OPAQUE to the service (which resolves the author server-side). Assert it
@@ -3916,7 +4008,52 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   }
 
+  const BLOB_SOURCE = {
+    url: 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg',
+    width: 768,
+    height: 1024,
+  };
+  /** The host-source rows, each with whether it was written before the orchestrator token. */
+  const hostSourceRows = () => {
+    const tokenAt = mockGetOrchestratorToken.mock.invocationCallOrder[0] ?? Infinity;
+    return mockLogToAxiom.mock.calls
+      .map(([data], i) => ({
+        data: data as Record<string, unknown>,
+        beforeToken: mockLogToAxiom.mock.invocationCallOrder[i] < tokenAt,
+      }))
+      .filter(({ data }) => data.name === 'app-block-host-source');
+  };
+
   describe('estimateWorkflow', () => {
+    it('counts an orchestrator source image once, before the token, tagged estimate', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      mockLogToAxiom.mockClear();
+      mockGetOrchestratorToken.mockClear();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller
+        .estimateWorkflow({ blockToken: 'tok', body: validBody({ sourceImage: BLOB_SOURCE }) })
+        .catch(() => undefined);
+      expect(hostSourceRows()).toEqual([
+        {
+          data: expect.objectContaining({
+            reason: 'host-orchestrator-source',
+            count: 1,
+            stepTypes: 'textToImage',
+            phase: 'estimate',
+          }),
+          beforeToken: true,
+        },
+      ]);
+    });
+
     it('a page token skips model-binding and passes the canGenerate gate → reaches whatif', async () => {
       // ctx has NO modelId, body.modelId=7 — a MODEL token would 403 here; a
       // page token must NOT.
@@ -4060,7 +4197,120 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   });
 
+  // ── civitai_app_block_submit_failures_total ──────────────────────────────
+  // The procedure's own middleware records every failed submit, thrown OR returned as a failed
+  // snapshot. Red on origin/main: nothing recorded a submit failure at all.
+  describe('submitWorkflow — failure telemetry', () => {
+    beforeEach(() => {
+      mockRecordSubmitFailure.mockClear();
+    });
+
+    it('records nothing for a successful submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ buzzBudget: 100, appBlockId: 'apb_tele' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockRecordSubmitFailure).not.toHaveBeenCalled();
+    });
+
+    it('a THROWN ecosystem refusal is recorded as ecosystem_unavailable for the verified app', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ buzzBudget: 1000, appBlockId: 'apb_tele' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(new Map([[99, { canGenerate: true }]]));
+      // The exact message the generation graph produces for a hidden/disabled ecosystem.
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Validation failed: ecosystem: Ecosystem is currently unavailable',
+        })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['apb_tele', 'ecosystem_unavailable']]);
+    });
+
+    it('a RETURNED insufficient-budget snapshot is recorded as insufficient_buzz', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 5, appBlockId: 'apb_tele' }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // Resolved, not thrown: a counter that only watched throws would miss this one.
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/insufficient buzz budget/);
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['apb_tele', 'insufficient_buzz']]);
+    });
+
+    it('a failure before the token is verified is labelled unknown', async () => {
+      mockVerifyBlockToken.mockResolvedValue(null);
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['unknown', 'other']]);
+    });
+
+    it('a body the input schema refuses is recorded as validation', async () => {
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: { kind: 'not-a-kind' } as never })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['unknown', 'validation']]);
+    });
+  });
+
   describe('submitWorkflow', () => {
+    it('counts an orchestrator source image once, before the token, tagged submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+      mockLogToAxiom.mockClear();
+      mockGetOrchestratorToken.mockClear();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller
+        .submitWorkflow({ blockToken: 'tok', body: validBody({ sourceImages: [BLOB_SOURCE] }) })
+        .catch(() => undefined);
+      expect(hostSourceRows()).toEqual([
+        {
+          data: expect.objectContaining({ count: 1, stepTypes: 'textToImage', phase: 'submit' }),
+          beforeToken: true,
+        },
+      ]);
+    });
+
     it('a page token submits when generatable + within budget (no spend bound bypassed)', async () => {
       mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
       happyVersionLookup();
@@ -6289,6 +6539,18 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
+    it('refuses an engine whose pinned model no app may use, before any spend', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      const body = ccBody({ params: { prompt: 'a sunset over mountains', engine: 'flux2-klein' } });
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body, idempotencyKey: 'cc-key' })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
     it('IDEMPOTENCY (audit 🔴-1): a concurrent claim in-progress → 409 CONFLICT, NO reserve, NO submit', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();
@@ -6403,21 +6665,9 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       );
     });
 
-    it('flux2-klein reserves 150 and stamps a 00:02:30 timeout', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      happySubmit();
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'flux2-klein' } }),
-      });
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 150);
-      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:02:30');
-    });
-
     // ── Per-engine reserve↔refund SYMMETRY. The refund/rollback tests in the
     // budget-belt block above only exercise the DEFAULT engine (zimage 90); these
-    // prove a NON-default engine refunds ITS OWN ceiling (qwen 180 / flux2 150),
+    // prove a NON-default engine refunds ITS OWN ceiling (qwen 180),
     // not the flat 90 — so a cheaper engine can never over-refund and a pricier
     // one can never under-refund on a deny/throw.
     it('SYMMETRY: a qwen-image daily-cap breach refunds ITS ceiling (180, not 90) on the pinned key', async () => {
@@ -6439,7 +6689,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
-    it('SYMMETRY: a flux2-klein app-cap breach refunds ITS ceiling (150) on the per-user key', async () => {
+    it('SYMMETRY: a qwen-image app-cap breach refunds ITS ceiling (180) on the per-user key', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();
       mockReserveAppSpend.mockResolvedValue({
@@ -6450,13 +6700,13 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       });
       const result = await caller().submitWorkflow({
         blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'flux2-klein' } }),
+        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
       });
       expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
-      // The per-user reservation rolled back at flux2's ceiling (150), not 90.
+      // The per-user reservation rolled back at qwen's ceiling (180), not 90.
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        150
+        180
       );
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
@@ -10812,6 +11062,52 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         );
       }
     });
+
+    // 🔴 A RAW comfy GRAPH IS REFUSED, under `$type: 'comfy'` or `'customComfy'`.
+    // `workflow.service` delivers a comfy step's `output.blobs` as media and this arm
+    // runs no prompt audit. Platform-built comfy steps (`kind: 'textToImage'`,
+    // `kind: 'customComfy'`) do not pass this guard.
+    it.each(['comfy', 'Comfy', 'customComfy', 'CustomComfy'])(
+      'refuses a raw `%s` step on submit AND estimate, before the orchestrator or any reservation',
+      async (t) => {
+        // `as never`: `ptBody` is a loosely typed fixture; the cast keeps these two
+        // call sites from adding test-file type errors (typecheck-tests ratchet).
+        const calls: Array<[string, () => Promise<unknown>]> = [
+          [
+            'submitWorkflow',
+            () =>
+              caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
+          ],
+          [
+            'estimateWorkflow',
+            () =>
+              caller().estimateWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
+          ],
+        ];
+        for (const [run, call] of calls) {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          ptQuoting(5, 5);
+          const err = await call().then(
+            () => null,
+            (e: unknown) => e
+          );
+          expect(err, run).toBeInstanceOf(TRPCError);
+          expect((err as TRPCError).code, run).toBe('FORBIDDEN');
+          expect((err as TRPCError).cause, run).toBeInstanceOf(PlatformInternalStepTypeError);
+          expect(((err as TRPCError).cause as PlatformInternalStepTypeError).stepType, run).toBe(t);
+          expect(mockSubmitWorkflow, `${run}: not even the whatif quote`).not.toHaveBeenCalled();
+          expect(mockGetOrchestratorToken, run).not.toHaveBeenCalled();
+          expect(mockReserveAppSpend, run).not.toHaveBeenCalled();
+          expect(
+            mockSysRedis.incrBy.mock.calls.filter((c) =>
+              String(c[0]).startsWith('system:blocks:buzz-cap:')
+            ),
+            run
+          ).toHaveLength(0);
+        }
+      }
+    );
   });
 
   describe('🔴 criterion 3 — `input` reaches the orchestrator UNMODIFIED', () => {
@@ -11709,14 +12005,23 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(5, 5);
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ptBody({ $type: 'app-block:app_someone_else' }),
-      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'imageGen' }) });
       const tags: string[] = ptRealSubmits()[0][0].body.tags;
       expect(tags).toContain('app-block:app_test');
-      expect(tags).not.toContain('app-block:app_someone_else');
+      expect(tags).not.toContain('imageGen');
       expect(tags).toContain('passthrough');
+    });
+
+    it('refuses a $type shaped like a tag at the wire, before any submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      for (const $type of ['app-block:app_someone_else', 'a:b']) {
+        await expect(
+          caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type }) })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      }
+      expect(ptRealSubmits()).toHaveLength(0);
     });
 
     // civitai-app-starters#541 — `/models/train/from-orchestrator` admits only
@@ -11872,7 +12177,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(stamped).toBe('step:imageBackgroundRemoval');
     });
 
-    it('NAMESPACES a $type that collides with a kind key — never bare `customComfy`', async () => {
+    it('NAMESPACES a $type that collides with a kind key — never bare `training`', async () => {
       // 🔴 THE REASON THE VALUE IS PREFIXED, asserted at the call site the money
       // flows through. `textToImage` is itself a live orchestrator `$type`
       // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
@@ -11883,12 +12188,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       ptQuoting(5, 5);
       await caller().submitWorkflow({
         blockToken: 'tok',
-        body: ptBody({ $type: 'customComfy' }),
+        body: ptBody({ $type: 'training' }),
       });
       await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
-      expect(stamped).toBe('step:customComfy');
-      expect(stamped).not.toBe('customComfy');
+      expect(stamped).toBe('step:training');
+      expect(stamped).not.toBe('training');
     });
 
     // The collision this namespacing was written for is now closed at the door instead:
@@ -11903,21 +12208,6 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'textToImage' }) })
       ).rejects.toThrow(/platform-internal and cannot be submitted by an app block/);
       expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
-    });
-
-    it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {
-      // `$type` is `z.string().min(1).max(64)` with no character class, so `a:b`
-      // PARSES and reaches this submit. A second colon would break the value
-      // grammar, so the subtype is dropped — the row still records that a
-      // pass-through submit happened, which is shallower and never wrong. The
-      // write is fire-and-forget off an already-billed submit, so this must
-      // degrade rather than throw.
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
-      happyUser();
-      ptQuoting(5, 5);
-      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'a:b' }) });
-      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
-      expect(mockRecordSpendAttribution.mock.calls[0][0].generationType).toBe('step');
     });
 
     it('IDEMPOTENCY: a replayed submit does not double-charge', async () => {

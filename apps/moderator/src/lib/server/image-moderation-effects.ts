@@ -13,8 +13,9 @@ import { getClickhouse } from './clickhouse';
 import { getNotifications } from './notifications';
 import { getSysRedis } from './redis';
 import { syncSearchIndex } from './search-index';
-import { logAxiomError } from './axiom';
+import { logAxiomError, logToAxiom } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 
 /**
  * Run a post-write side effect so it cannot fail the moderation action that already happened.
@@ -120,12 +121,14 @@ type BlockableImage = {
   blockedFor: string | null;
 };
 
-export async function addImagesToBlocklist(images: BlockableImage[]): Promise<void> {
+export async function addImagesToBlocklist(
+  images: (BlockableImage & { csam?: boolean })[]
+): Promise<void> {
   const values = images
-    .filter((i): i is BlockableImage & { pHash: string } => !!i.pHash)
+    .filter((i): i is BlockableImage & { pHash: string; csam?: boolean } => !!i.pHash)
     .map((i) => ({
       hash: i.pHash,
-      reason: reviewTypeToBlockReason(i.blockedFor ?? i.needsReview),
+      reason: i.csam ? 'CSAM' : reviewTypeToBlockReason(i.blockedFor ?? i.needsReview),
     }));
   if (!values.length) return;
   await getClickhouse().insert({ table: 'blocked_images', values, format: 'JSONEachRow' });
@@ -307,7 +310,8 @@ export async function notifyImageTosViolation(image: {
    *  app's processor keeps the unreasoned message for that case, and for every notification written
    *  before this field existed. */
   reason?: string;
-}): Promise<void> {
+}): Promise<boolean> {
+  if (isFeedbackCaptureOwner(image.ownerId)) return false;
   try {
     await getNotifications().createNotification({
       userId: image.ownerId,
@@ -321,8 +325,10 @@ export async function notifyImageTosViolation(image: {
         ...(image.reason ? { reason: image.reason } : {}),
       },
     });
+    return true;
   } catch {
     // onFailure already logged; best-effort.
+    return false;
   }
 }
 
@@ -355,13 +361,30 @@ export async function applyBlockSideEffects(
     userAgent?: string;
     violationType?: string;
     violationDetails?: string;
+    /** `HELD_IMAGE` as the block wrote it. */
+    heldImage?: boolean;
+    /** Under the review flag as the block wrote it. */
+    underReview?: boolean;
   }
 ): Promise<void> {
   const { imageId, actorUserId, ip, userAgent, violationType, violationDetails } = actor;
+  const { heldImage, underReview } = actor;
+  if (!heldImage && underReview)
+    void logToAxiom({
+      type: 'warning',
+      name: 'image-notice-under-review',
+      imageId,
+      userId: img.userId,
+    }).catch(() => undefined);
   await Promise.all([
     bestEffort('blocklist', imageId, () =>
       addImagesToBlocklist([
-        { pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor },
+        {
+          pHash: img.pHash,
+          needsReview: img.needsReview,
+          blockedFor: img.blockedFor,
+          csam: heldImage || underReview,
+        },
       ])
     ),
     trackImageDeleteTos({
@@ -375,14 +398,17 @@ export async function applyBlockSideEffects(
       violationType,
       violationDetails,
     }),
-    notifyImageTosViolation({
-      imageId,
-      ownerId: img.userId,
-      postId: img.postId,
-      // The chosen violation only — not the one `trackImageDeleteTos` infers for analytics. Telling
-      // someone their image broke a rule no moderator picked is worse than telling them nothing.
-      reason: violationType ? violationUserMessage(violationType) : undefined,
-    }),
+    heldImage
+      ? undefined
+      : notifyImageTosViolation({
+          imageId,
+          ownerId: img.userId,
+          postId: img.postId,
+          // The chosen violation only — not the one `trackImageDeleteTos` infers for analytics.
+          // Telling someone their image broke a rule no moderator picked is worse than telling
+          // them nothing.
+          reason: violationType ? violationUserMessage(violationType) : undefined,
+        }),
     bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
     bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
   ]);

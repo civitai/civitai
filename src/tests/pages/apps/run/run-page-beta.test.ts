@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ServerDomain from '~/server/utils/server-domain';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 // Module scope, not a test body: from a body this transform is charged to one test's 60s
 // budget. See vitest.config.mts.
@@ -65,7 +66,10 @@ vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
  */
 const mockFindUnique = dbMock.dbRead.appListing.findUnique;
 
-vi.mock('~/server/utils/server-domain', () => ({ ratingAllowedOnHost: () => true }));
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerDomain>()),
+  ratingAllowedOnHost: () => true,
+}));
 
 vi.mock('@mantine/core', () => ({
   Alert: () => null,

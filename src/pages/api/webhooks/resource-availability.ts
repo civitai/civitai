@@ -1,4 +1,3 @@
-import { timingSafeEqual } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -9,6 +8,7 @@ import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
+import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   bustGeneratorLoadedCaches,
@@ -27,14 +27,8 @@ const eventSchema = z.object({
 const schema = z.object({ events: z.array(eventSchema) });
 
 function authorized(req: NextApiRequest) {
-  const secret = env.WEBHOOK_TOKEN;
-  if (!isConfiguredSecret(secret)) return false;
   const raw = req.headers['x-webhook-secret'];
-  const given = Array.isArray(raw) ? raw[0] : raw;
-  if (!given) return false;
-  const a = Buffer.from(given);
-  const b = Buffer.from(secret);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return webhookTokenAuthenticates(req, Array.isArray(raw) ? raw[0] : raw);
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {

@@ -74,7 +74,7 @@ export const resourceReviewRouter = router({
   getInfinite: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getResourceReviewsInfiniteSchema)
-    .query(({ input }) => getResourceReviewsInfinite(input)),
+    .query(({ input, ctx }) => getResourceReviewsInfinite({ ...input, viewerId: ctx.user?.id })),
   getPaged: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getResourceReviewPagedSchema)

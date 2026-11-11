@@ -8,6 +8,8 @@ import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
+import { AppBuzzCapNotice } from './AppBuzzCapNotice';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   APP_STORAGE_BASE_SCOPE,
   APP_STORAGE_PUBLISH_SCOPE,
@@ -71,6 +73,7 @@ import { CreatePostConsentBody } from './CreatePostConsentBody';
 import {
   classifyEntityReactionError,
   createReactionReplyLatch,
+  entityReactionRefusedScopes,
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
@@ -131,6 +134,11 @@ import {
 } from './mediaUploadLogic';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { createBlockEventRecorder } from './blockEventBeacon';
+import {
+  reportAppSubmitError,
+  reportAppSubmitResult,
+  useAppSessionTelemetry,
+} from './appInAppTelemetry';
 import { sendBlockRender } from './sendBlockRender';
 import {
   computeLaunchTimings,
@@ -157,7 +165,11 @@ import {
   withDeadline,
 } from './resourceFileParse';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
+  dismissConsentNotice,
   resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveSourcePublishConsentRequest,
@@ -172,7 +184,12 @@ import {
   downloadBytesAsBlob,
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
+  isZipSaveCandidate,
   processSaveBytes,
+  SAVE_BYTES_BUSY_ERROR,
+  SAVE_BYTES_ZIP_MAX_BYTES,
+  SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT,
+  verifySaveBytesBeforeDownload,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
@@ -997,7 +1014,10 @@ export function PageBlockHost({
    * `key`, the run page renders `<PageBlockHost` unkeyed, and
    * `IframeHost.tsx:642` links each "Recently run" item to `/apps/run/<id>`.
    */
-  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
+  //
+  // The dismissal also ends early when the app has a request refused for a permission
+  // the viewer can still grant — `reviveConsentNoticeOnRefusal` below.
+  const [consentNotice, setConsentNotice] = useState(CONSENT_NOTICE_NOT_DISMISSED);
   // Mirror of `status`, read by the Retry handler (for the prior terminal state,
   // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater —
   // which React may double-invoke under StrictMode → a double re-mint) AND by the
@@ -1376,12 +1396,21 @@ export function PageBlockHost({
     [effectiveSandbox]
   );
 
+  // App_Session: one row per host session. Off on a review mount, whose app id is a synthetic
+  // request id.
+  const { countSubmit: countAppSubmit, countMessage: countAppMessage } = useAppSessionTelemetry({
+    appBlockId,
+    host: 'page',
+    enabled: !reviewMode,
+  });
+
   const { send, onMessage, nack, reportNoToken } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
     host: 'PageBlockHost',
     appBlockId,
+    onInbound: countAppMessage,
   });
 
   // App Blocks Analytics Phase 2 — fire-and-forget block render/impression.
@@ -1984,6 +2013,30 @@ export function PageBlockHost({
   // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
   // gets its own budget, and the notification ids are mode-specific to match.
   const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
+
+  // A request the app made was refused for `refusedScopes`. Whether that brings a
+  // dismissed missing-permissions notice back is decided ONLY by
+  // `resolveConsentNoticeAfterRefusal`, shared with IframeHost; this is the wiring.
+  // A functional update, so it never reads a stale dismissal; `missingScopes` through a
+  // render-body mirror, so it reads the set current when the refusal LANDS (the server
+  // path resolves after an await, possibly across a token refresh) and the reaction
+  // listener does not re-subscribe on every refresh because of it.
+  const missingScopesRef = useRef(missingScopes);
+  missingScopesRef.current = missingScopes;
+  const reviveConsentNoticeOnRefusal = useCallback(
+    (refusedScopes: readonly string[]) => {
+      if (refusedScopes.length === 0) return;
+      setConsentNotice((current) =>
+        resolveConsentNoticeAfterRefusal(current, {
+          appBlockId,
+          refusedScopes,
+          missingScopes: missingScopesRef.current,
+        })
+      );
+    },
+    [appBlockId]
+  );
+
   /**
    * Open the host's consent UI for a set of withheld scopes.
    *
@@ -2394,6 +2447,13 @@ export function PageBlockHost({
   // path surfaces no_token/error terminal states above). A missing requestId is
   // likewise dropped without replying — mirrors IframeHost.
   const submitWorkflowMutation = trpc.blocks.submitWorkflow.useMutation();
+  // The paused-at-the-daily-cap notice re-reads after every submit (`AppBuzzCapNotice`).
+  const buzzCapUtils = trpc.useUtils();
+  // Non-throwing: the host also renders outside a flags provider, where this is off.
+  const showBuzzCapNotice = useOptionalFeatureFlags()?.appLimitsUpgradePrompt === true;
+  const refreshBuzzCapNotice = useCallback(() => {
+    if (showBuzzCapNotice) buzzCapUtils.user.getAppBuzzCap.invalidate().catch(() => undefined);
+  }, [showBuzzCapNotice, buzzCapUtils]);
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
@@ -2496,6 +2556,7 @@ export function PageBlockHost({
         typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
           ? raw.idempotencyKey
           : undefined;
+      if (!reviewMode) countAppSubmit();
       try {
         const { snapshot } = await submitWorkflowMutation.mutateAsync({
           blockToken: token,
@@ -2503,13 +2564,30 @@ export function PageBlockHost({
           body: raw.body as never,
           ...(idempotencyKey ? { idempotencyKey } : {}),
         });
+        if (!reviewMode) reportAppSubmitResult(appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
       } catch (err) {
+        if (!reviewMode) reportAppSubmitError(appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
+      } finally {
+        // Any submit can move the daily cap state — a refusal pauses, a charge brings the cap
+        // closer: re-read the paused notice whatever the result.
+        refreshBuzzCapNotice();
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation, reviewNack, nack]);
+  }, [
+    onMessage,
+    send,
+    token,
+    submitWorkflowMutation,
+    reviewNack,
+    nack,
+    reviewMode,
+    appBlockId,
+    countAppSubmit,
+    refreshBuzzCapNotice,
+  ]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
   useEffect(() => {
@@ -3885,9 +3963,16 @@ export function PageBlockHost({
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
   // `bytes` saves are limited separately, over a rolling window (processSaveBytes):
-  // they never await, so the in-flight count above would be released before the
-  // next message and bound nothing. Same ref-not-state reasoning.
+  // a non-zip save's content check resolves at once, so the in-flight count above
+  // would be released before the next message and bound nothing. Only a ZIP save
+  // holds a slot while it is checked (saveZipVerifyInFlightRef, below), and it is
+  // recorded in the window synchronously BEFORE that await too. Same ref-not-state
+  // reasoning.
   const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  // Zip content checks in flight (SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT): a zip's verify DOES await
+  // (it inflates up to 1 GiB declared), so unlike the rest of the bytes path it needs an in-flight
+  // cap. Same ref-not-state reasoning.
+  const saveZipVerifyInFlightRef = useRef<number>(0);
   // Separate from saveBytesWindowRef: uploads have their own, longer window (imageUploadBytes.ts).
   const uploadBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   // requestIds of unanswered `bytes` uploads. A reused id is dropped, not answered: the SDK settles
@@ -3915,13 +4000,26 @@ export function PageBlockHost({
   //            can NEVER be saved.
   //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
   //            is classified from the content (processSaveBytes) and only
-  //            image/JSON/text can be saved, under the classified extension.
+  //            image/JSON/text — or a validated .zip (@civitai/app-sdk/save-zip: structure,
+  //            local headers, entry names/types, declared sizes, then an inflate
+  //            check before the download) — can be saved, under the classified
+  //            extension.
   //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
-  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes per rolling window; past
+  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes (a zip:
+  //            SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW) per rolling window; past
   //            either it replies `busy`.
   // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
   // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
   // so the block never hangs.
+  // Aborted when the host UNMOUNTS (not on a dependency change — a token refresh mid-check must not
+  // drop the reply): a zip check still running stops, and nothing is downloaded for it afterwards.
+  // A fresh controller per mount, so StrictMode's mount → unmount → mount leaves a live one.
+  const saveBytesUnmountRef = useRef<AbortController>(new AbortController());
+  useEffect(() => {
+    const controller = new AbortController();
+    saveBytesUnmountRef.current = controller;
+    return () => controller.abort();
+  }, []);
   useEffect(() => {
     const off = onMessage<unknown>('SAVE_IMAGE', async (raw) => {
       const req = resolveSaveImageRequest(raw);
@@ -3932,6 +4030,19 @@ export function PageBlockHost({
         return;
       }
       if (req.kind === 'bytes') {
+        // ONE zip content check at a time per host. Checked before processSaveBytes so a busy zip is
+        // not recorded in the window; an over-cap zip falls through to its too-large refusal (an
+        // over-cap file is never `busy`, see processSaveBytes).
+        if (
+          isZipSaveCandidate(req.bytes) &&
+          req.bytes.byteLength <= SAVE_BYTES_ZIP_MAX_BYTES &&
+          saveZipVerifyInFlightRef.current >= SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT
+        ) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: SAVE_BYTES_BUSY_ERROR });
+          return;
+        }
+        const unmounted = saveBytesUnmountRef.current.signal;
+        let holdsZipSlot = false;
         try {
           // Per-file cap, then window pre-check (both on byteLength alone), then classify, then
           // record: a refused save is never decoded/parsed on this main thread, and an over-cap
@@ -3942,10 +4053,29 @@ export function PageBlockHost({
             send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: result.error });
             return;
           }
-          downloadBytesAsBlob(req.bytes, result.type, result.filename);
+          // Taken synchronously, before the first await, so two zips cannot both pass the gate.
+          if (result.type === 'application/zip') {
+            saveZipVerifyInFlightRef.current += 1;
+            holdsZipSlot = true;
+          }
+          // A zip's deflated entries must inflate to their declared sizes and CRCs BEFORE the
+          // download (a no-op for every other type), under a deadline below the SDK's request
+          // timeout. The window already counted this save. Only a verified save can be downloaded.
+          const verified = await verifySaveBytesBeforeDownload(req.bytes, result, {
+            signal: unmounted,
+          });
+          if (unmounted.aborted) return; // host gone: no download, nobody to reply to
+          if (!verified.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: verified.error });
+            return;
+          }
+          downloadBytesAsBlob(req.bytes, verified.save);
           send('SAVE_IMAGE_RESULT', { requestId, ok: true });
         } catch (err) {
+          if (unmounted.aborted) return;
           send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        } finally {
+          if (holdsZipSlot) saveZipVerifyInFlightRef.current -= 1;
         }
         return;
       }
@@ -4975,6 +5105,10 @@ export function PageBlockHost({
       });
       if (gate.kind === 'drop') return;
       if (gate.kind === 'refuse') {
+        // A reaction refused for the missing `social:react:self` grant brings a
+        // dismissed notice back. SET only: GET_ENTITY_REACTIONS is a background read an
+        // app can make on every image, and reviving on it would undo every dismissal.
+        reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(gate.error));
         send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
         return;
       }
@@ -4996,7 +5130,9 @@ export function PageBlockHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          const error = classifyEntityReactionError(err);
+          reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
+          latch.reply({ error });
         }
       })();
     });
@@ -5011,6 +5147,7 @@ export function PageBlockHost({
     grantedScopes,
     trpcUtils,
     reportNoToken,
+    reviveConsentNoticeOnRefusal,
   ]);
 
   useEffect(() => {
@@ -5294,11 +5431,14 @@ export function PageBlockHost({
                     body: body as never,
                   });
                 } catch (err) {
+                  if (!reviewMode) reportAppSubmitError(appBlockId, 'training_submit', err);
                   // Never resent: the quote is spent once. See runTrainingGate.ts.
                   settlement.reply(trainingSubmitReplyFromError(err));
                   return;
                 }
+                if (!reviewMode) reportAppSubmitResult(appBlockId, 'training_submit', result);
                 settlement.reply(trainingSubmitReplyFromResult(result));
+                refreshBuzzCapNotice();
               } catch (err) {
                 settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
               }
@@ -5320,6 +5460,9 @@ export function PageBlockHost({
     trpcUtils,
     submitWorkflowMutation,
     reportNoToken,
+    reviewMode,
+    appBlockId,
+    refreshBuzzCapNotice,
   ]);
 
   // ── RUN_CONFIRMED_STEP → CONFIRMED_STEP_RESULT ────────────────────────────
@@ -5449,6 +5592,7 @@ export function PageBlockHost({
                     body: body as never,
                   });
                 } catch (err) {
+                  if (!reviewMode) reportAppSubmitError(appBlockId, 'confirmed_step_submit', err);
                   // Never resent: the quote is spent once.
                   const failed = trainingSubmitReplyFromError(err);
                   settlement.reply(failed);
@@ -5457,8 +5601,12 @@ export function PageBlockHost({
                   }
                   return;
                 }
+                if (!reviewMode) {
+                  reportAppSubmitResult(appBlockId, 'confirmed_step_submit', result);
+                }
                 const reply = confirmedStepReplyFromResult(result);
                 settlement.reply(reply);
+                refreshBuzzCapNotice();
                 // The outcome is unknown and a retry would be a new, separately charged
                 // job: say so in host chrome, not only to the block.
                 if ('error' in reply && reply.error === 'submission-unconfirmed') {
@@ -5490,6 +5638,9 @@ export function PageBlockHost({
     trpcUtils,
     submitWorkflowMutation,
     reportNoToken,
+    reviewMode,
+    appBlockId,
+    refreshBuzzCapNotice,
   ]);
 
   // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
@@ -5702,6 +5853,17 @@ export function PageBlockHost({
     return () => clearTimeout(t);
   }, [autoRetry]);
 
+  // The missing-permissions notice's scopes for this render, or null for no notice —
+  // see the comment where it renders below.
+  const consentNoticeScopes = resolveHostConsentNotice({
+    status: toHostGateStatus(status),
+    needsConsent,
+    missingScopes,
+    dismissedFor: consentNotice.dismissedFor,
+    appBlockId,
+    suppressed: reviewMode,
+  });
+
   return (
     <Box
       style={{
@@ -5858,16 +6020,11 @@ export function PageBlockHost({
           decides how it maps. A cast here would have compiled and silently
           disagreed with every other gate. (`pnpm typecheck` caught exactly that —
           the first version of this passed `status` raw.) */}
-      {resolveHostConsentNotice({
-        status: toHostGateStatus(status),
-        needsConsent,
-        missingScopes,
-        dismissedFor: consentNoticeDismissedFor,
-        appBlockId,
-        suppressed: reviewMode,
-      }) != null && (
+      {consentNoticeScopes != null && (
         <BlockConsentNotice
           appName={appName}
+          missingScopes={consentNoticeScopes}
+          highlight={consentNotice.revived}
           onReview={() => {
             // Recomputed at CLICK time, not captured at render: a TOKEN_REFRESH
             // between the two can shrink the missing set, and granting a scope the
@@ -5875,7 +6032,8 @@ export function PageBlockHost({
             const scopes = resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []);
             if (scopes != null) openConsentModal(scopes);
           }}
-          onDismiss={() => setConsentNoticeDismissedFor(appBlockId)}
+          onDismiss={() => setConsentNotice((current) => dismissConsentNotice(current, appBlockId))}
+          onHighlightPlayed={() => setConsentNotice(consentNoticeHighlightPlayed)}
         />
       )}
       {/* The per-viewer storage allowance notice (`AppStorageNearLimitNotice`): one read when
@@ -5888,6 +6046,13 @@ export function PageBlockHost({
         declaredScopes.includes(APP_STORAGE_BASE_SCOPE) && (
           <AppStorageNearLimitNotice appBlockId={appBlockId} appName={appName} />
         )}
+      {/* Paused at the plan's daily app Buzz limit, with the upgrade and the continue-on-own-Buzz
+          opt-in (`AppBuzzCapNotice`). Live runs only, behind `appLimitsUpgradePrompt`. */}
+      {showBuzzCapNotice &&
+        !reviewMode &&
+        surface === 'page-run' &&
+        viewer !== null &&
+        status === 'ready' && <AppBuzzCapNotice />}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

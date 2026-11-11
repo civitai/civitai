@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks';
 import type { Context } from '~/server/createContext';
 import type * as TesterSegment from '~/server/flipt/tester-segment';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import {
@@ -27,6 +28,14 @@ const state = vi.hoisted(() => ({
   // getHomeBlockCached: the shared by-id entry, keyed without a user like the real one.
   rendered: new Map<string, unknown>(),
   renderedCalls: [] as { id: number; hit: boolean }[],
+}));
+
+// A row by id (`getHomeBlockById`), read through Kysely on the replica; `seed` answers it from the
+// same in-memory table.
+const { getHomeBlockRow } = vi.hoisted(() => ({ getHomeBlockRow: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getHomeBlockRow,
 }));
 
 vi.mock('~/server/flipt/tester-segment', async (importOriginal) => ({
@@ -150,11 +159,16 @@ function seed(...table: Row[]) {
   dbMock.dbRead.homeBlock.findFirst.mockImplementation(
     async (args: any) => rows.find((r) => matches(r, args?.where)) ?? null
   );
-  dbMock.dbRead.homeBlock.findUniqueOrThrow.mockImplementation(async (args: any) => {
-    const r = rows.find((x) => x.id === args.where.id);
-    if (!r) throw new Error('No HomeBlock found');
-    return r;
+  // The row's five columns, or `undefined` for none (the service then falls back to the primary).
+  getHomeBlockRow.mockImplementation(async (_db: unknown, id: number) => {
+    const r = rows.find((x) => x.id === id);
+    return (
+      r && { id: r.id, metadata: r.metadata, type: r.type, userId: r.userId, sourceId: r.sourceId }
+    );
   });
+  // Every block here points at a Public collection; who may read a collection is
+  // home-block-collection-audience.test.ts's subject.
+  dbMock.dbRead.collection.findUnique.mockResolvedValue({ read: 'Public', userId: -1 } as never);
   // userHasCustomHomeBlocks: `... WHERE hb."userId"=${userId}`
   dbMock.dbRead.$queryRaw.mockImplementation(async (_s: unknown, userId: number) => [
     { exists: rows.some((r) => r.userId === userId) },

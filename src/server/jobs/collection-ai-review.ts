@@ -25,6 +25,7 @@ import {
   needsMinorReview,
   resolveRejectionMessage,
   reviewImage,
+  toObservationColumns,
 } from '~/server/services/ai/collection-review.service';
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
 import { describeProviderError } from '~/server/services/ai/provider-error';
@@ -55,7 +56,16 @@ type PendingItem = {
   nsfwLevel: number;
   ingestion: string;
   prompt: string | null;
+  minor: boolean;
+  acceptableMinor: boolean;
 };
+
+export const HELD_MINOR_ESCALATION = 'scanner-flagged minor';
+export const ACCEPTABLE_MINOR_ESCALATION = 'marked acceptable minor';
+
+// An entry marked acceptableMinor goes to a human too, like a flagged one.
+const isHeldMinor = (item: Pick<PendingItem, 'minor' | 'acceptableMinor'>) =>
+  !!item.minor || !!item.acceptableMinor;
 
 export const collectionAiReview = createJob(
   'collection-ai-review',
@@ -90,7 +100,7 @@ export async function reviewCollection(collectionId: number, config: CollectionA
   // later run.
   const pending = await dbWrite.$queryRaw<PendingItem[]>`
     SELECT ci.id "collectionItemId", i.id "imageId", i.url, i.type::text, i."nsfwLevel",
-           i.ingestion::text, i.meta->>'prompt' prompt
+           i.ingestion::text, i.meta->>'prompt' prompt, i.minor, i."acceptableMinor"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${collectionId}
@@ -146,6 +156,7 @@ async function classifyItem({
   let rejectionMessage: string | undefined;
   let levelReject = false;
   let usage = { promptTokens: 0, completionTokens: 0 };
+  let observed = toObservationColumns(undefined);
 
   if (isUnavailableImage(item)) {
     decision = { decision: 'reject', violations: [], escalations: [] };
@@ -185,6 +196,7 @@ async function classifyItem({
 
       ({ usage } = result);
       decision = decideFromObservations(result.observations, { isVideo: item.type === 'video' });
+      observed = toObservationColumns(result.observations);
       reason = (result.observations as { reason?: string } | null)?.reason?.slice(0, 500) ?? '';
     } catch (error) {
       const attempts = await recordFailedAttempt(item.collectionItemId);
@@ -208,6 +220,18 @@ async function classifyItem({
       };
     }
   }
+
+  const heldMinor = decision.decision === 'approve' && isHeldMinor(item);
+  if (heldMinor)
+    decision = {
+      decision: 'escalate',
+      violations: decision.violations,
+      escalations: [
+        ...decision.escalations,
+        item.minor ? HELD_MINOR_ESCALATION : ACCEPTABLE_MINOR_ESCALATION,
+      ],
+      neverReject: true,
+    };
 
   const applied = !config.dryRun;
   let action: Outcome['action'] = 'stamp';
@@ -239,6 +263,8 @@ async function classifyItem({
     applied,
     promptTokens: usage.promptTokens,
     completionTokens: usage.completionTokens,
+    nsfwLevel: item.nsfwLevel,
+    ...observed,
   });
 
   return {
@@ -246,7 +272,7 @@ async function classifyItem({
     imageId: item.imageId,
     action,
     message,
-    minorReview: applied && needsMinorReview(decision),
+    minorReview: applied && (heldMinor || needsMinorReview(decision)),
     nsfwLevel: item.nsfwLevel,
     levelReject,
   };
@@ -391,6 +417,7 @@ async function applyOutcomes({
   const levelBound = outcomes.filter(
     (o) => o.action === 'accept' || (o.action === 'reject' && o.levelReject)
   );
+  const acceptIds = outcomes.filter((o) => o.action === 'accept').map((o) => o.collectionItemId);
   const claimed = await dbWrite.$queryRaw<{ id: number }[]>`
     UPDATE "CollectionItem" ci
     SET "reviewedById" = ${SYSTEM_USER_ID}, "reviewedAt" = now(), "updatedAt" = now()
@@ -407,6 +434,18 @@ async function applyOutcomes({
               )}) AS decided(id, "nsfwLevel")
               JOIN "Image" i ON i.id = ci."imageId"
               WHERE decided.id = ci.id AND i."nsfwLevel" IS DISTINCT FROM decided."nsfwLevel"
+            )`
+          : Prisma.empty
+      }
+      ${
+        // Re-checks the minor flag for accepts; an unclaimed item is held on the next run.
+        acceptIds.length
+          ? Prisma.sql`AND NOT (
+              ci.id IN (${Prisma.join(acceptIds)})
+              AND EXISTS (
+                SELECT 1 FROM "Image" i
+                WHERE i.id = ci."imageId" AND (i.minor OR i."acceptableMinor")
+              )
             )`
           : Prisma.empty
       }

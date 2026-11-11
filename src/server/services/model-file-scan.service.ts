@@ -32,13 +32,27 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
+import { ModelHashType, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import type { ModelFileType } from '~/server/common/constants';
-import { addLinkedComponent } from '~/server/services/model-version.service';
+import {
+  addLinkedComponent,
+  unpublishModelVersionById,
+} from '~/server/services/model-version.service';
+import { excludedFromCoverage, hasFailedScan } from '~/server/utils/failed-scan';
+import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { Tracker } from '~/server/clickhouse/client';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
+import { clamFilesScanned } from '~/server/services/orchestrator/consumer-blob-scan';
+import {
+  submitTrainingDataScanSafe,
+  TRAINING_DATA_BLOB_SCAN,
+  HEAL_OP,
+  trainingDataObjectUnchanged,
+  uncountUnconfirmedResubmit,
+} from '~/server/services/training-data-scan.service';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -57,6 +71,9 @@ export type ScanOutcome = {
     message: string | null;
     /** Used for hash-blocking parity once re-enabled. */
     dangerousImports?: string[];
+    /** The scanner read no pickle. Clears a file no loader opens; a zip is judged by the scan of
+     *  its contents. */
+    unread?: 'unknown-format' | 'nothing-read';
   };
   /** Map of ModelHashType -> hex digest. Only present when hashes were computed. */
   hashes?: Partial<Record<ModelHashType, string>>;
@@ -64,6 +81,9 @@ export type ScanOutcome = {
   headerData?: unknown;
   /** Full upstream payload (orchestrator step outputs or legacy ScanResult) for forensics. */
   rawScanResult?: unknown;
+  /** The stored url a Training Data blob scan copied. Only an outcome naming the file's current url
+   *  may write a Training Data file. */
+  trainingDataUrl?: string;
 };
 
 const exitCodeToScanResult = (exitCode: number | null | undefined): ScanResultCode => {
@@ -153,12 +173,16 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     where: { id: fileId },
     select: {
       id: true,
+      name: true,
       type: true,
+      url: true,
       modelVersionId: true,
       // SSHS_12 comes from the metadata-parse step, but the hash rebuild below deletes every row
       // for the file — so a hash-only rescan has to re-derive it from what is already stored.
       headerData: true,
       sizeKB: true,
+      pickleScanResult: true,
+      virusScanResult: true,
       modelVersion: {
         select: {
           modelId: true,
@@ -182,14 +206,57 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     return;
   }
 
+  // A Training Data verdict counts only from its own blob scan of the file's current url: a late
+  // result from another scan, from before the file's zip was swapped, or for a file relabelled since
+  // (which needs the model-file scan instead) is dropped.
+  const isTrainingData = file.type === 'Training Data';
+  const isBlobScan = outcome.trainingDataUrl !== undefined;
+  if ((isTrainingData || isBlobScan) && (!isTrainingData || outcome.trainingDataUrl !== file.url)) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'apply-scan-outcome',
+        message: `Dropped a stale training data scan result for file ${fileId}`,
+        fileId,
+        modelVersionId: outcome.modelVersionId,
+      },
+      'webhooks'
+    ).catch();
+    return;
+  }
+
+  // A Danger on a dataset stands: a later clean result, perhaps from an older scan, never replaces it.
+  if (
+    isTrainingData &&
+    file.virusScanResult === ScanResultCode.Danger &&
+    outcome.virusScan &&
+    outcome.virusScan.result !== ScanResultCode.Danger
+  ) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'apply-scan-outcome',
+        message: `Kept the Danger verdict of training data file ${fileId}`,
+        fileId,
+      },
+      'webhooks'
+    ).catch();
+    return;
+  }
+
+  // A Training Data write names the url checked above, so a zip swapped in meanwhile is untouched.
+  const sameBytes = file.type === 'Training Data' ? { url: file.url, type: 'Training Data' } : {};
+
   // D4: failed workflow — bump scanRequestedAt to now so the file qualifies for
   // the fallback job's 24h-stale retry path, NOT the immediate-retry path. This
   // gives natural backoff (24h) for permanently-broken AIRs and avoids tight
   // loops if the orchestrator keeps rejecting the same file. Transient outages
   // are accepted as a 24h delay; we don't have a retry-counter column.
+  // Training Data is not on that path: the fallback job skips it, and the self-heal
+  // resubmits it once this stamp is an hour old.
   if (outcome.failed) {
     await dbWrite.modelFile.update({
-      where: { id: fileId },
+      where: { id: fileId, ...sameBytes },
       data: { scanRequestedAt: new Date() },
     });
     await bustAfterFailedScan(outcome.modelVersionId ?? file.modelVersionId, file);
@@ -219,8 +286,15 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   }
 
   if (outcome.pickleScan) {
-    data.pickleScanResult = outcome.pickleScan.result;
-    data.pickleScanMessage = stripNul(outcome.pickleScan.message);
+    const { unread: reason } = outcome.pickleScan;
+    const unread =
+      LOADABLE_FILE_TYPES.includes(file.type) &&
+      (reason === 'unknown-format' ||
+        (reason === 'nothing-read' && !file.name.toLowerCase().endsWith('.zip')));
+    data.pickleScanResult = unread ? ScanResultCode.Error : outcome.pickleScan.result;
+    data.pickleScanMessage = unread
+      ? PICKLE_NOT_READ_MESSAGE
+      : stripNul(outcome.pickleScan.message);
   }
 
   // Stripped once: SSHS_12 below is derived from this header and lands in a text column too.
@@ -233,7 +307,15 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     data.rawScanResult = stripNul(outcome.rawScanResult) as Prisma.InputJsonValue;
   }
 
-  await dbWrite.modelFile.update({ where: { id: fileId }, data });
+  const written = await dbWrite.modelFile.update({
+    where: { id: fileId, ...sameBytes },
+    data,
+    select: { pickleScanResult: true, virusScanResult: true },
+  });
+  const failedScan = ranScan && hasFailedScan(written);
+  const coverageMoved =
+    ranScan &&
+    (excludedFromCoverage({ ...written, type: file.type }) || excludedFromCoverage(file));
 
   // Hash upsert (delete + createMany) — same pattern as legacy.
   if (outcome.hashes) {
@@ -411,14 +493,33 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     await dataForModelsCache.refresh(modelId);
   }
 
+  if (failedScan) {
+    await unpublishForFailedScan(modelVersionId).catch((e) =>
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'model-file-scan',
+          message: `failed-scan unpublish failed: ${String(e)}`,
+          modelVersionId,
+        },
+        'webhooks'
+      ).catch(() => undefined)
+    );
+  }
+
   // A first scan of a weight file can make a version coverable (`scannedAt` gates the uploaded-file
   // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
   // expiry, resourceDataCache for an hour. Last and logged, not thrown: the scan result is
   // already written, and a throw would make the orchestrator redeliver the whole workflow.
-  if (ranScan && LOADABLE_FILE_TYPES.includes(file.type))
+  // A failed scan of any file, or an errored scan of a loadable one, uncovers the version, and a
+  // clean rescan recovers it, so both bust too.
+  if (coverageMoved || (ranScan && LOADABLE_FILE_TYPES.includes(file.type)))
     await Promise.all([
       resourceDataCache.bust([modelVersionId]),
       bustOrchestratorModelCache(modelVersionId),
+      coverageMoved &&
+        file.modelVersion &&
+        bustVersionScannedFileAirs(modelVersionId, file.modelVersion),
     ]).catch((e) =>
       logToAxiom(
         {
@@ -646,6 +747,24 @@ export function normalizeScanHashes(
   return out;
 }
 
+/** Clam statuses for a file the scanner could not fully read: never clean, and not malware. */
+const UNVERIFIED_CLAM_STATUSES = new Set(['encrypted', 'limitsexceeded']);
+
+const CLAM_FOUND_LINE = /:\s(\S+)\sFOUND\s*$/gm;
+const isUnverifiedSignature = (sig: string) =>
+  sig.startsWith('Heuristics.Encrypted.') || sig.startsWith('Heuristics.Limits.Exceeded');
+
+/**
+ * The verdict the scanner's FOUND lines give, or null when they give none. Encrypted and over-limit
+ * alerts share exit codes with errors and with clean scans, so the exit code cannot tell them apart.
+ */
+function clamSignatureResult(text: string | null | undefined): ScanResultCode | null {
+  const signatures = [...(text ?? '').matchAll(CLAM_FOUND_LINE)].map((match) => match[1]);
+  if (signatures.some((sig) => !isUnverifiedSignature(sig))) return ScanResultCode.Danger;
+  if (signatures.length) return ScanResultCode.Error;
+  return null;
+}
+
 // Orchestrator now reports scan outcomes via a `status` enum (and explicit
 // boolean flags) instead of POSIX exit codes. Map the known status strings,
 // fall through to the legacy exitCode path to remain compatible with any
@@ -656,17 +775,40 @@ function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>):
   if (status) {
     if (status === 'clean') return ScanResultCode.Success;
     if (status.includes('infect') || status.includes('danger')) return ScanResultCode.Danger;
+    if (UNVERIFIED_CLAM_STATUSES.has(status)) return ScanResultCode.Error;
     if (status.includes('error') || status.includes('fail')) return ScanResultCode.Error;
     return ScanResultCode.Pending;
   }
-  return exitCodeToScanResult(output.exitCode);
+  // Exit 1 stays Danger whatever the alerts say.
+  if (output.exitCode === 1) return ScanResultCode.Danger;
+  return clamSignatureResult(output.output) ?? exitCodeToScanResult(output.exitCode);
 }
 
-function derivePickleScanResult(
-  output: NonNullable<ModelPickleScanStep['output']>
-): ScanResultCode {
+const PICKLE_NOT_READ_MESSAGE = 'The pickle scan could not read this file';
+
+type PickleScanOutput = NonNullable<ModelPickleScanStep['output']>;
+type ScanOutcomeUnread = NonNullable<NonNullable<ScanOutcome['pickleScan']>['unread']>;
+
+const FORMAT_SKIP_STATUSES = new Set(['skippedsafetensors', 'skippedgguf']);
+
+/** Why the scanner read no pickle, if it read none; undefined when it read the file or skipped a
+ *  format that cannot hold pickled code. picklescan exits 0, and the step reports clean, when it
+ *  found no pickle to read. */
+function pickleUnreadReason(output: PickleScanOutput): ScanOutcomeUnread | undefined {
+  const status = output.status?.toLowerCase();
+  const skipped = status ? status.startsWith('skipped') : output.skipped === true;
+  if (skipped) {
+    const formatSkip = status
+      ? FORMAT_SKIP_STATUSES.has(status)
+      : /^(safetensors|gguf)/.test(output.skipReason ?? '');
+    return formatSkip ? undefined : 'unknown-format';
+  }
+  const clean = status ? status === 'clean' : output.exitCode === 0;
+  return clean && clamFilesScanned(output) === 0 ? 'nothing-read' : undefined;
+}
+
+function derivePickleScanResult(output: PickleScanOutput): ScanResultCode {
   if (output.dangerousImportsFound === true) return ScanResultCode.Danger;
-  if (output.skipped === true) return ScanResultCode.Success;
   const status = output.status?.toLowerCase();
   if (status) {
     if (status === 'clean' || status.startsWith('skipped')) return ScanResultCode.Success;
@@ -674,6 +816,7 @@ function derivePickleScanResult(
     if (status.includes('error') || status.includes('fail')) return ScanResultCode.Error;
     return ScanResultCode.Pending;
   }
+  if (output.skipped === true) return ScanResultCode.Success;
   return exitCodeToScanResult(output.exitCode);
 }
 
@@ -745,6 +888,10 @@ async function handleScanWorkflow(event: WorkflowEvent) {
   if (!fileId) throw new Error(`missing workflow metadata.fileId - ${event.workflowId}`);
 
   const modelVersionId = data.metadata?.modelVersionId as number | undefined;
+  const trainingDataUrl =
+    data.metadata?.scan === TRAINING_DATA_BLOB_SCAN
+      ? (data.metadata?.url as string | undefined)
+      : undefined;
 
   if (event.status !== 'succeeded') {
     logToAxiom(
@@ -758,7 +905,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       },
       'webhooks'
     ).catch();
-    await applyScanOutcome({ fileId, modelVersionId, failed: true });
+    await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
     return;
   }
 
@@ -775,15 +922,69 @@ async function handleScanWorkflow(event: WorkflowEvent) {
   const outcome: ScanOutcome = {
     fileId,
     modelVersionId,
+    trainingDataUrl,
     rawScanResult: { source: 'orchestrator', workflowId: event.workflowId, steps },
   };
 
   if (clamScan?.output) {
-    const result = deriveClamScanResult(clamScan.output);
+    const derived = deriveClamScanResult(clamScan.output);
+    // A zip's scan that read no files has not cleared it.
+    const readNothing =
+      !!trainingDataUrl &&
+      derived === ScanResultCode.Success &&
+      clamFilesScanned(clamScan.output) === 0;
+    const result = readNothing ? ScanResultCode.Error : derived;
     outcome.virusScan = {
       result,
-      message: result !== ScanResultCode.Success ? clamScan.output.output ?? null : null,
+      message: readNothing
+        ? 'The virus scan read no files'
+        : result !== ScanResultCode.Success
+        ? clamScan.output.output ?? null
+        : null,
     };
+
+    if (
+      trainingDataUrl &&
+      result === ScanResultCode.Success &&
+      !(await trainingDataObjectUnchanged({
+        fileId,
+        url: trainingDataUrl,
+        etag: data.metadata?.etag,
+        size: data.metadata?.size,
+      }))
+    ) {
+      // Not confirmed as the object that was scanned: it stays Pending, and the self-heal scans it again.
+      const { count: reset } = await dbWrite.modelFile.updateMany({
+        where: {
+          id: fileId,
+          url: trainingDataUrl,
+          type: 'Training Data',
+          // A Danger stands; an Error the self-heal gave up on stays given up.
+          virusScanResult: { notIn: [ScanResultCode.Danger, ScanResultCode.Error] },
+        },
+        data: {
+          virusScanResult: ScanResultCode.Pending,
+          virusScanMessage: null,
+          scanRequestedAt: new Date(),
+        },
+      });
+      if (reset && data.metadata?.op === HEAL_OP)
+        await uncountUnconfirmedResubmit({
+          fileId,
+          url: trainingDataUrl,
+          workflowId: event.workflowId,
+        });
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'training-data-scan-unconfirmed',
+          fileId,
+          workflowId: event.workflowId,
+        },
+        'webhooks'
+      ).catch();
+      return;
+    }
   }
 
   if (pickleScan?.output) {
@@ -804,10 +1005,12 @@ async function handleScanWorkflow(event: WorkflowEvent) {
 
     const baseResult = derivePickleScanResult(pickleOut);
     const hasDanger = pickleOut.dangerousImportsFound === true || importsDanger;
+    const result = hasDanger ? ScanResultCode.Danger : baseResult;
     outcome.pickleScan = {
-      result: hasDanger ? ScanResultCode.Danger : baseResult,
-      message: pickleScanMessage,
+      result,
+      message: result === ScanResultCode.Error ? PICKLE_NOT_READ_MESSAGE : pickleScanMessage,
       dangerousImports: pickleOut.dangerousImports ?? undefined,
+      unread: hasDanger ? undefined : pickleUnreadReason(pickleOut),
     };
   }
 
@@ -860,6 +1063,8 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     select: {
       id: true,
       url: true,
+      type: true,
+      sizeKB: true,
       modelVersion: {
         select: {
           id: true,
@@ -879,6 +1084,16 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     // Soft-deleted version → orphaned file. Skip rather than crash.
     if (!file.modelVersion) {
       failed.push(file.id);
+      return;
+    }
+    if (file.type === 'Training Data') {
+      // A Training Studio placeholder has no zip until the archive job swaps one in, and scans it then.
+      if (!file.sizeKB) return;
+      const submitted = await submitTrainingDataScanSafe(
+        { fileId: file.id, modelVersionId: file.modelVersion.id, url: file.url },
+        'rescan-model'
+      );
+      (submitted ? sent : failed).push(file.id);
       return;
     }
     try {
@@ -923,6 +1138,33 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
 // Lives here (vs. model.service.ts) so the orchestrator-side scan flow and the
 // retroactive-hash-blocking job can both import it from a stable location.
 // -----------------------------------------------------------------------------
+
+export async function unpublishForFailedScan(modelVersionId: number) {
+  const live: ModelStatus[] = [ModelStatus.Published, ModelStatus.Scheduled];
+  const version = await dbWrite.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: { status: true, meta: true, modelId: true },
+  });
+  if (!version || !live.includes(version.status)) return;
+
+  // Not resolveUnpublishScope: it never cascades from a Scheduled version, and a Scheduled model
+  // left with no live version stays Scheduled for good.
+  const liveSiblings = await dbWrite.modelVersion.count({
+    where: { modelId: version.modelId, status: { in: live }, id: { not: modelVersionId } },
+  });
+  const reason = 'failed-scan';
+  if (!liveSiblings) {
+    await unpublishModelById({ id: version.modelId, reason, userId: -1, isModerator: true });
+  } else {
+    await unpublishModelVersionById({
+      id: modelVersionId,
+      reason,
+      // Written back whole, so it carries the stored meta.
+      meta: (version.meta as ModelMeta | null) ?? undefined,
+      user: { id: -1, isModerator: true },
+    });
+  }
+}
 
 export async function unpublishBlockedModel(modelVersionId: number) {
   const version = await dbWrite.modelVersion.findUnique({

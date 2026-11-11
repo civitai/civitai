@@ -15,3 +15,14 @@ export type ComFace = {
 /** civitai.com shows nothing above PG-13, and passes over an unrated image on a mature model, so a
  *  face cover outside PG to PG-13 is not what civitai.com shows. */
 export const isComSafeLevel = (nsfwLevel: number) => nsfwLevel > 0 && nsfwLevel <= NsfwLevel.PG13;
+
+/** A Needs review lead's .com cover starts hidden when the lead is held as minor, or the cover is not
+ *  .com-safe. Only that row's own reveal shows it; opening the row does not. */
+export function leadComCoverBlurred(
+  lead: { modelId: number; restriction: string; comFace: ComFace | null },
+  revealed: ReadonlySet<number>
+): boolean {
+  const cover = lead.comFace?.cover;
+  if (!cover || revealed.has(lead.modelId)) return false;
+  return lead.restriction === 'minor' || !isComSafeLevel(cover.nsfwLevel);
+}

@@ -1,5 +1,6 @@
+import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as OnsiteModule from '~/components/Apps/OnsiteReviewModal';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
@@ -62,6 +63,17 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 
 const { ReviewDetailTabsView } = await import('./ReviewDetailTabsView');
+
+/*
+  The counting stub is `ManifestScopes`, which renders on the PERMISSIONS tab. That was the
+  default tab when this file was written; the default is now the Overview (which shows a
+  summary, not `ManifestScopes`), so the tab is selected explicitly. What the file measures —
+  whether the memoised subtree re-renders on a parent tick — is unchanged.
+*/
+const readRouter = useRouter;
+beforeEach(() => {
+  (readRouter() as unknown as { query: Record<string, unknown> }).query = { tab: 'permissions' };
+});
 
 const REQUEST = {
   id: 'pubreq_01HZX',

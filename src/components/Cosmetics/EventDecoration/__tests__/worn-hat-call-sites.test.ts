@@ -41,6 +41,10 @@ const CALL_SITES: [file: string, expected: string][] = [
     "eventDecorationOn={{ entityType: 'Model', entityId: data.id }}",
   ],
   [
+    'src/components/Article/ArticleCoverHat.tsx',
+    "wornOn={{ entityType: 'Article', entityId: articleId }}",
+  ],
+  [
     'src/components/Model/ModelCarousel/ModelCarousel.tsx',
     "wornOn={{ entityType: 'Image', entityId: image.id }}",
   ],

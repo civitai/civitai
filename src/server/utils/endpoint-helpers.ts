@@ -11,27 +11,22 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import {
-  credentialLogFields,
-  getRequestCredential,
-  type RequestCredential,
-} from '~/server/auth/request-credential';
+import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
-import {
-  BANNED_ACCOUNT_MESSAGE,
-  isClientAbortError,
-  isDriverAuthoredMessage,
-} from '~/server/utils/errorHandling';
+import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
+import { matchProbeToken, matchWebhookToken } from '~/server/utils/webhook-token';
+import { recordWebhookTokenMatch } from '~/server/prom/webhook-token.metrics';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
@@ -328,12 +323,7 @@ export function TokenSecuredEndpoint(
       return;
     }
 
-    // `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
-    // `?token=` stays accepted until every caller has moved to the header. Either one passing is
-    // enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
-    // arrives as an array and is refused rather than read.
-    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
-    const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
+    const { bearer, queryToken } = presentedTokens(req);
     const bearerOk = timingSafeEqualStrings(token, bearer);
     const queryOk = timingSafeEqualStrings(token, queryToken);
     if (!bearerOk && !queryOk) {
@@ -343,6 +333,19 @@ export function TokenSecuredEndpoint(
 
     await handler(req, res);
   });
+}
+
+/**
+ * `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
+ * `?token=` stays accepted until every caller has moved to the header. Either one passing is
+ * enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
+ * arrives as an array and is refused rather than read.
+ */
+function presentedTokens(req: NextApiRequest) {
+  return {
+    bearer: req.headers.authorization?.match(/^Bearer (.+)$/)?.[1],
+    queryToken: typeof req.query.token === 'string' ? req.query.token : undefined,
+  };
 }
 
 const MIN_HEADER_TOKEN_LENGTH = 32;
@@ -383,10 +386,49 @@ export function JobEndpoint(
   return TokenSecuredEndpoint(env.JOB_TOKEN, handler);
 }
 
+/**
+ * `TokenSecuredEndpoint` for the webhook token, also accepting `WEBHOOK_TOKEN_PREVIOUS` when that
+ * is set. Only `WEBHOOK_TOKEN` decides whether the endpoint is configured.
+ */
 export function WebhookEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
-  return TokenSecuredEndpoint(env.WEBHOOK_TOKEN, handler);
+  return webhookTokenEndpoint(handler, false);
+}
+
+/**
+ * `WebhookEndpoint` that also accepts `PROBE_TOKEN`, for /api/live, /api/ready and /api/health
+ * only (pinned by webhook-endpoint-probe-token.test.ts).
+ */
+export function ProbeEndpoint(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
+  return webhookTokenEndpoint(handler, true);
+}
+
+function webhookTokenEndpoint(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
+  acceptProbeToken: boolean
+) {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (!isConfiguredSecret(env.WEBHOOK_TOKEN)) {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
+    const { bearer, queryToken } = presentedTokens(req);
+    const slot =
+      matchWebhookToken(bearer) ??
+      matchWebhookToken(queryToken) ??
+      (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
+    if (!slot) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    recordWebhookTokenMatch(req, slot);
+
+    await handler(req, res);
+  });
 }
 
 const PUBLIC_CACHE_MAX_AGE = 300;
@@ -622,12 +664,12 @@ export function AuthedEndpoint(
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
-    const session = await getServerAuthSession({ req, res });
-    if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
-    // The cookie session outlives a ban (it renders the banned page); bearer tokens are refused upstream.
     // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
-    if (session.user.bannedAt && !allowBanned)
-      return res.status(403).json({ error: BANNED_ACCOUNT_MESSAGE });
+    const session = allowBanned
+      ? await getServerAuthSession({ req, res })
+      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    if (session === false) return;
+    if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
     await handler(req, res, session.user);
   });
 }
@@ -638,7 +680,8 @@ export function MixedAuthEndpoint(
     res: NextApiResponse,
     user: Session['user'] | undefined
   ) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  { allowBanned = false }: { allowBanned?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // Same two properties as `PublicEndpoint`, for the same reasons — see the
@@ -674,7 +717,12 @@ export function MixedAuthEndpoint(
     if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res);
 
-    const session = await getServerAuthSession({ req, res });
+    // Acts as the signed-in user, so a banned session is refused rather than served as anonymous.
+    // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
+    const session = allowBanned
+      ? await getServerAuthSession({ req, res })
+      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    if (session === false) return;
 
     if (!!req.query?.etag && req.query.etag !== '') {
       const isNotUpToDate = await checkNotUpToDate(
@@ -870,32 +918,6 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   }
 }
 
-// Off while `orchestrator-endpoint-scope-would-refuse` counts show which keys call these routes
-// without the route's scope; true refuses them on every `OrchestratorEndpoint` route.
-let enforceOrchestratorEndpointScope = false;
-
-export const orchestratorEndpointScopeTesting = {
-  isEnforcing: () => enforceOrchestratorEndpointScope,
-  setEnforce(value: boolean) {
-    enforceOrchestratorEndpointScope = value;
-  },
-};
-
-/** Records a call `OrchestratorEndpoint` would refuse once enforcing. No user, key or IP. */
-function logScopeWouldRefuse(
-  req: AxiomAPIRequest,
-  requiredScope: number,
-  credential: RequestCredential
-) {
-  logToAxiom({
-    name: 'orchestrator-endpoint-scope-would-refuse',
-    type: 'info',
-    route: req.url?.split('?')[0],
-    requiredScope,
-    ...credentialLogFields(credential),
-  }).catch(() => undefined);
-}
-
 export function OrchestratorEndpoint(
   handler: (
     req: AxiomAPIRequest,
@@ -913,11 +935,17 @@ export function OrchestratorEndpoint(
       credential.tokenScope !== TokenScope.Full &&
       !Flags.hasFlag(credential.tokenScope, requiredScope)
     ) {
-      if (enforceOrchestratorEndpointScope)
-        return res
-          .status(403)
-          .json({ error: 'Your API key does not have the required scope for this action' });
-      logScopeWouldRefuse(req, requiredScope, credential);
+      // No user, key or IP.
+      logToAxiom({
+        name: 'orchestrator-endpoint-scope-refused',
+        type: 'info',
+        route: req.url?.split('?')[0],
+        requiredScope,
+        ...credentialLogFields(credential),
+      }).catch(() => undefined);
+      return res
+        .status(403)
+        .json({ error: 'Your API key does not have the required scope for this action' });
     }
     let token: string;
     try {

@@ -7,13 +7,9 @@ import { bootLabelStore } from '~/server/services/__tests__/label-store.fixture'
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const mocks = vi.hoisted(() => ({ toggleBan: vi.fn(), removeV2: vi.fn(), removeV3: vi.fn() }));
+const mocks = vi.hoisted(() => ({ toggleBan: vi.fn(), removeV3: vi.fn() }));
 
 // Hand-listed: only the decision's own SQL runs against the real label store here.
-vi.mock('~/server/services/comment.service', () => ({ bulkSetCommentTosViolation: vi.fn() }));
-vi.mock('~/server/services/commentsv2.service', () => ({
-  bulkSetCommentV2TosViolation: mocks.removeV2,
-}));
 vi.mock('~/server/services/commentv3/moderation.service', () => ({
   bulkSetCommentV3TosViolation: mocks.removeV3,
 }));
@@ -57,16 +53,16 @@ beforeEach(async () => {
   await db.pg.exec(`TRUNCATE "TextScanHold" RESTART IDENTITY`);
   await db.pg
     .exec(`INSERT INTO "TextScanHold" ("id","entityType","entityId","label","textHash","userId","text","reason","updatedAt","meta")
-    VALUES (12, 'CommentV2', 55, 'csam', 'h', 900, 'held text', 'r', now(), '{"chatId": 3}')`);
-  mocks.removeV2.mockReset();
+    VALUES (12, 'CommentV3', 55, 'csam', 'h', 900, 'held text', 'r', now(), '{"chatId": 3}')`);
+  mocks.removeV3.mockReset();
   mocks.toggleBan.mockReset();
-  mocks.removeV2.mockResolvedValue({ count: 1 });
+  mocks.removeV3.mockResolvedValue({ count: 1 });
   mocks.toggleBan.mockResolvedValue({});
   dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null });
   dbMock.dbWrite.textScanHold.findFirst.mockResolvedValue({
     id: 12,
     status: 'Pending',
-    entityType: 'CommentV2',
+    entityType: 'CommentV3',
     entityId: 55,
     userId: 900,
     text: 'held text',
@@ -116,28 +112,14 @@ describe('the csam hold decision record, against the real label store', () => {
   it('records a removal as a csam label with the action as its reason', async () => {
     await decide('remove', 'gone');
     expect(await labels()).toEqual([
-      { value: 'csam', reason: 'remove', subjectType: 'comment_v2_text', subjectId: '55' },
+      { value: 'csam', reason: 'remove', subjectType: 'comment_v3_text', subjectId: '55' },
     ]);
     expect((await db.pg.query('SELECT * FROM label_store.record_failure')).rows).toEqual([]);
   });
 
-  // A comment on a CommentV3-write surface is held, and removed, as CommentV3.
   it('removes a CommentV3 comment through the CommentV3 ToS removal', async () => {
-    await db.pg.exec(`UPDATE "TextScanHold" SET "entityType" = 'CommentV3' WHERE id = 12`);
-    dbMock.dbWrite.textScanHold.findFirst.mockResolvedValueOnce({
-      id: 12,
-      status: 'Pending',
-      entityType: 'CommentV3',
-      entityId: 55,
-      userId: 900,
-      text: 'held text',
-      textHash: 'h',
-      meta: null,
-    });
-    mocks.removeV3.mockResolvedValueOnce({ count: 1 });
     await decide('remove');
     expect(mocks.removeV3).toHaveBeenCalledWith(expect.objectContaining({ ids: [55] }));
-    expect(mocks.removeV2).not.toHaveBeenCalled();
   });
 
   it('records a dismissal as not csam', async () => {
@@ -158,7 +140,7 @@ describe("a decision applied to the author's other holds", () => {
   beforeEach(async () => {
     await db.pg
       .exec(`INSERT INTO "TextScanHold" ("id","entityType","entityId","label","textHash","userId","text","reason","updatedAt")
-      VALUES (13, 'CommentV2', 56, 'csam', 'h13', 900, 'other held text', 'r', now())`);
+      VALUES (13, 'CommentV3', 56, 'csam', 'h13', 900, 'other held text', 'r', now())`);
     dbMock.dbWrite.textScanHold.findFirst.mockImplementation(
       (async ({ where }: { where: { id: number } }) =>
         (
@@ -184,8 +166,8 @@ describe("a decision applied to the author's other holds", () => {
       expect(results).toMatchObject([{ holdId: 13, ok: true }]);
       const value = decision === 'remove' ? 'csam' : 'not_csam';
       expect((await labels()).sort((a, b) => Number(a.subjectId) - Number(b.subjectId))).toEqual([
-        { value, reason: decision, subjectType: 'comment_v2_text', subjectId: '55' },
-        { value, reason: 'batch_apply', subjectType: 'comment_v2_text', subjectId: '56' },
+        { value, reason: decision, subjectType: 'comment_v3_text', subjectId: '55' },
+        { value, reason: 'batch_apply', subjectType: 'comment_v3_text', subjectId: '56' },
       ]);
     }
   );
@@ -205,7 +187,7 @@ describe('claiming the hold before its effects run, against the real hold table'
   it('refuses a second decision while a live claim exists, running no effect', async () => {
     await setClaim('1 minute');
     await expect(decide('remove_ban')).rejects.toMatchObject({ code: 'CONFLICT' });
-    expect(mocks.removeV2).not.toHaveBeenCalled();
+    expect(mocks.removeV3).not.toHaveBeenCalled();
     expect(mocks.toggleBan).not.toHaveBeenCalled();
   });
 
@@ -241,7 +223,7 @@ describe('deciding text that changed underneath the moderator', () => {
     dbMock.dbWrite.textScanHold.findFirst.mockResolvedValueOnce({
       id: 12,
       status: 'Pending',
-      entityType: 'CommentV2',
+      entityType: 'CommentV3',
       entityId: 55,
       userId: 900,
       text: 'newer text',
@@ -249,7 +231,7 @@ describe('deciding text that changed underneath the moderator', () => {
       meta: null,
     });
     await expect(decide('remove_ban')).rejects.toMatchObject({ code: 'CONFLICT' });
-    expect(mocks.removeV2).not.toHaveBeenCalled();
+    expect(mocks.removeV3).not.toHaveBeenCalled();
     expect(mocks.toggleBan).not.toHaveBeenCalled();
   });
 

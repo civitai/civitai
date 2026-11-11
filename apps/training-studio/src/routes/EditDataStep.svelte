@@ -12,6 +12,7 @@
     IconUpload,
   } from '@tabler/icons-svelte';
   import { backend, browser, portalProps } from '$lib/host';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { pool } from '$lib/pool';
   import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
@@ -342,13 +343,15 @@
     setAllOpen = false;
   }
 
-  function openImport(file: File) {
-    importFile = file;
+  // Each zip of a multi-drop or multi-pick gets its own import dialog, one after another.
+  const zipQueue = $state<File[]>([]);
+  $effect(() => {
+    if (importOpen || zipQueue.length === 0) return;
+    importFile = zipQueue.shift()!;
     importOpen = true;
-  }
+  });
   function takeFiles(files: File[]) {
-    const zip = files.find(isZip);
-    if (zip) openImport(zip);
+    zipQueue.push(...files.filter(isZip));
     void addStarts(files.filter((f) => !isZip(f)));
   }
 
@@ -444,7 +447,6 @@
 {/snippet}
 
 <!-- The whole step is a drop target; the visible drop zone below is its keyboard/click entry. -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="relative flex flex-col gap-5" {...drop}>
   <div class="flex flex-wrap items-end justify-between gap-4">
     <div class="min-w-0">
@@ -498,10 +500,14 @@
   </div>
 
   <input bind:this={fileInput} type="file" multiple accept="image/*" class="hidden" onchange={(e) => takeFiles(pickedFiles(e))} />
-  <input bind:this={zipInput} type="file" accept=".zip,application/zip" class="hidden" onchange={(e) => {
-    const [zip] = pickedFiles(e);
-    if (zip) openImport(zip);
-  }} />
+  <input
+    bind:this={zipInput}
+    type="file"
+    multiple
+    accept=".zip,application/zip"
+    class="hidden"
+    onchange={(e) => zipQueue.push(...pickedFiles(e))}
+  />
   <input
     bind:this={afterInput}
     type="file"
@@ -580,6 +586,10 @@
     </div>
   {/if}
 
+  {#if pairs.length > 0}
+    <BlueFirstNote />
+  {/if}
+
   {#if view === 'pairs'}
     <div class="grid gap-3 lg:grid-cols-2">
       {#each visible as pair (pair.id)}
@@ -653,9 +663,10 @@
     </span>
   </button>
 
-  <!-- Below lg the actions float over a long pair list instead of waiting at its end. -->
+  <!-- Below lg the actions float over a long pair list instead of waiting at its end. Embedded, they
+       clear the host's sticky footer (`--footer-height`); standalone the var is unset and adds 0. -->
   <div
-    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-3 max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
+    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-[calc(0.75rem+var(--footer-height,0px)+var(--safe-area-inset-bottom-unpaid,0px))] max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
   >
     <Button variant="outline" onclick={onBack}>
       <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back

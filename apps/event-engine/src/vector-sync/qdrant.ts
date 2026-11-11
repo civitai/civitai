@@ -9,7 +9,9 @@ export const EMBED_MODEL = 'wemm-2b';
 // On disk, all of them: RAM is budgeted for the quantized vectors. Ids and tags are only ever
 // matched, so they skip the range index; nsfwLevel is filtered by range and match. userId (an
 // exclusion) and postId (not a search filter) get no payload-aware HNSW links.
-const PAYLOAD_INDEXES: Array<[keyof ImagePayload, Schemas['PayloadSchemaParams']]> = [
+export type PayloadIndexes<P> = Array<[keyof P & string, Schemas['PayloadSchemaParams']]>;
+
+const PAYLOAD_INDEXES: PayloadIndexes<ImagePayload> = [
   ['nsfwLevel', { type: 'integer', lookup: true, range: true, on_disk: true }],
   ['tagIds', { type: 'integer', lookup: true, range: false, on_disk: true }],
   ['baseModels', { type: 'keyword', on_disk: true }],
@@ -52,10 +54,30 @@ function stampConflicts(stored: Partial<ModelStamp>, got: ModelStamp) {
   );
 }
 
-export type VectorPoint = { id: number; vector: number[]; payload: ImagePayload };
+export type VectorPoint<P = ImagePayload> = { id: number; vector: number[]; payload: P };
 
-export class VectorStore {
-  constructor(readonly client: QdrantClient, readonly collection: string) {}
+/** What a collection is created with. Images keep their original settings. */
+export type CollectionSpec<P> = {
+  indexes: PayloadIndexes<P>;
+  quantile: number;
+  /** Unset keeps Qdrant's default of 1, which the single-node image instance runs on. */
+  replicationFactor?: number;
+  writeConsistencyFactor?: number;
+};
+
+/**
+ * Every non-image collection lives on the 3-node site-search instance: two copies of each shard,
+ * and a write is acknowledged by one so a node down never stalls the sync.
+ */
+export const SITE_REPLICATION = { replicationFactor: 2, writeConsistencyFactor: 1 } as const;
+const IMAGE_COLLECTION: CollectionSpec<ImagePayload> = { indexes: PAYLOAD_INDEXES, quantile: 1.0 };
+
+export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
+  constructor(
+    readonly client: QdrantClient,
+    readonly collection: string,
+    readonly spec: CollectionSpec<P> = IMAGE_COLLECTION as unknown as CollectionSpec<P>
+  ) {}
 
   static fromConfig() {
     const { qdrantUrl, qdrantApiKey, collection } = config.vectorSync;
@@ -70,15 +92,19 @@ export class VectorStore {
       await this.client.createCollection(this.collection, {
         vectors: { size: VECTOR_DIMENSIONS, distance: 'Cosine', on_disk: true },
         hnsw_config: { m: 16, ef_construct: 128, on_disk: true },
-        quantization_config: { scalar: { type: 'int8', quantile: 1.0, always_ram: true } },
+        quantization_config: {
+          scalar: { type: 'int8', quantile: this.spec.quantile, always_ram: true },
+        },
         on_disk_payload: true,
+        replication_factor: this.spec.replicationFactor,
+        write_consistency_factor: this.spec.writeConsistencyFactor,
         metadata: { model: EMBED_MODEL, dimensions: VECTOR_DIMENSIONS },
       });
       logger.info({ collection: this.collection }, 'vector-sync: created collection');
     }
 
     const info = await this.client.getCollection(this.collection);
-    for (const [field, schema] of PAYLOAD_INDEXES) {
+    for (const [field, schema] of this.spec.indexes) {
       if (info.payload_schema?.[field]) continue;
       await this.client.createPayloadIndex(this.collection, {
         field_name: field,
@@ -150,7 +176,7 @@ export class VectorStore {
     return (info.config.metadata ?? {}) as Partial<ModelStamp>;
   }
 
-  async upsert(points: VectorPoint[]) {
+  async upsert(points: VectorPoint<P>[]) {
     if (!points.length) return;
     await this.client.upsert(this.collection, { wait: true, points });
   }
@@ -161,7 +187,7 @@ export class VectorStore {
   }
 
   /** Overwrites the payload of points that exist; ids with no point are ignored by the caller. */
-  async setPayloads(payloads: Map<number, ImagePayload>) {
+  async setPayloads(payloads: Map<number, P>) {
     if (!payloads.size) return;
     await this.client.batchUpdate(this.collection, {
       wait: true,
@@ -169,6 +195,26 @@ export class VectorStore {
         overwrite_payload: { payload, points: [id] },
       })),
     });
+  }
+
+  /** The named payload fields of the points among `ids` that exist. */
+  async payloadFields(ids: number[], fields: Array<keyof P & string>) {
+    if (!ids.length) return new Map<number, Partial<P>>();
+    const points = await this.client.retrieve(this.collection, {
+      ids,
+      with_payload: { include: fields },
+      with_vector: false,
+    });
+    return new Map(points.map((p) => [Number(p.id), (p.payload ?? {}) as Partial<P>]));
+  }
+
+  /** Merges keys into the collection metadata. */
+  async setMetadata(metadata: Record<string, string | number>) {
+    await this.client.updateCollection(this.collection, { metadata });
+  }
+
+  async count() {
+    return (await this.client.count(this.collection, { exact: true })).count;
   }
 
   /** The subset of `ids` that have a point. */
@@ -180,6 +226,25 @@ export class VectorStore {
       with_vector: false,
     });
     return new Set(points.map((p) => Number(p.id)));
+  }
+
+  /** Ids of the points whose integer `field` holds any of `values`. */
+  async idsMatching(field: keyof P & string, values: number[], pageSize = 1_000) {
+    const ids: number[] = [];
+    let offset: string | number | undefined;
+    if (!values.length) return ids;
+    do {
+      const page = await this.client.scroll(this.collection, {
+        filter: { must: [{ key: field, match: { any: values } }] },
+        offset,
+        limit: pageSize,
+        with_payload: false,
+        with_vector: false,
+      });
+      ids.push(...page.points.map((p) => Number(p.id)));
+      offset = page.next_page_offset == null ? undefined : (page.next_page_offset as number);
+    } while (offset !== undefined);
+    return ids;
   }
 
   /** Point ids with lo <= id < hi. Scroll walks ids in ascending order from `offset`. */

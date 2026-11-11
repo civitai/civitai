@@ -20,13 +20,13 @@ import { collectionsSortableAttributes } from '~/server/search-index/sortable-at
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import {
   collectionIndexImageSql,
   type CollectionIndexImage,
 } from '~/server/search-index/collection-index-image';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
-import { profileImageSelect } from '~/server/selectors/image.selector';
 import {
   collectionItemCoversSql,
   coverUploadSql,
@@ -342,16 +342,18 @@ export const pullData = async (
 
   logger(`PullData :: Pulled collection images.`);
 
-  // Use Redis cache for tag lookups (much faster than direct DB query)
-  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
+  // Use Redis cache for tag lookups (much faster than direct DB query).
+  // Past this process's L1: a document written here keeps these tag ids until its next reindex, so an
+  // L1 entry from before a tag edit would outlive the L1 window by that much.
+  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds, { bypassLocal: true });
   const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
     cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
   );
 
-  const profilePictures = await db.image.findMany({
-    where: { id: { in: collections.map((c) => c.user.profilePictureId).filter(isDefined) } },
-    select: profileImageSelect,
-  });
+  const profilePictures = await getServableProfilePictures(
+    db,
+    collections.map((c) => c.user.profilePictureId).filter(isDefined)
+  );
 
   logger(`PullData :: Pulled tags & profile pics.`);
 

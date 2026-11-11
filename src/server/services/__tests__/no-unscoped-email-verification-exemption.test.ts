@@ -55,8 +55,7 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
  */
 const MUST_STAY_GUARDED: Record<string, string[]> = {
   'post.router.ts': ['create', 'createWithImages', 'addImage'],
-  'commentv2.router.ts': ['upsert'],
-  'comment.router.ts': ['upsert'],
+  'commentv3.router.ts': ['create', 'update'],
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],
@@ -114,8 +113,11 @@ const DERIVED_BASES: Record<string, string> = {
   postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',
   // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
+  // `remix-app.router.ts` `admin.*`: mod-only edits of the remix app rows, and a mod's own test run.
+  remixAppAdminProcedure: 'moderatorProcedure',
   remixAppProcedure: 'protectedProcedure',
-  semanticSearchProcedure: 'protectedProcedure',
+  // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
+  semanticSearchProcedure: 'publicProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
   sharedStorageProcedure: 'publicProcedure',

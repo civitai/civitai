@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { getEcosystemStates } from '~/shared/form-graph/generation/ecosystem-gates';
 import type { GenerationCtx } from '~/shared/generation/context';
 import type { GenerationHandlerCtx, GenerationData } from '../../orchestration-new.service';
 import type * as FliptClient from '~/server/flipt/client';
@@ -12,7 +13,9 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: vi.fn(async () => wan22MultiStep),
 }));
 
+import { hiDreamO1AspectRatiosByResolution } from '~/shared/form-graph/generation/image/hi-dream-o1.graph';
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
+import { seedreamVersionIds } from '~/shared/form-graph/generation/image/seedream.graph';
 import { flux3VideoVersionIds } from '~/shared/generation/version-ids';
 import { createFlux3VideoInput } from '../flux3-video.handler';
 import { createFormGraphStepInput } from '../index';
@@ -362,6 +365,215 @@ describe('krea3.handler', () => {
   });
 });
 
+describe('seedream.handler', () => {
+  const ON = { seedream55: true };
+  const v55 = seedreamVersionIds['v5.5'];
+  const v50pro = seedreamVersionIds['v5.0-pro'];
+  const modelMeta = (flags: GenerationCtx['flags']) => {
+    const store = generationHub.createStore({ ext: { ...BASE, flags } });
+    store.set({ workflow: 'txt2img', ecosystem: 'Seedream' });
+    return store.getField('model')?.meta as {
+      versions?: { options: { label: string; value: number; newUntil?: Date }[] };
+      defaultModelId?: number;
+    };
+  };
+
+  it('with seedream55 off, the default and the version list are v5.0-pro and the four before it', async () => {
+    const steps = await dispatch({ workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat' });
+    expect(firstInput(steps)).toMatchObject({ engine: 'seedream', version: 'v5.0-pro' });
+
+    const meta = modelMeta({});
+    expect(meta.defaultModelId).toBe(v50pro);
+    expect(meta.versions?.options).toEqual([
+      { label: 'v3', value: 2208174 },
+      { label: 'v4', value: 2208278 },
+      { label: 'v4.5', value: 2470991 },
+      { label: 'v5.0 lite', value: 2720141 },
+      { label: 'v5.0 pro', value: 3110984 },
+    ]);
+  });
+
+  // The orchestrator answers 400 to v5.5 until its release, which is what the flag waits on.
+  it('with seedream55 off, a submitted v5.5 is sent as v5.0-pro', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Seedream',
+      prompt: 'a cat',
+      model: v55,
+    });
+    expect(firstInput(steps)).toMatchObject({ version: 'v5.0-pro' });
+  });
+
+  it('with seedream55 on, v5.5 is offered, marked New and the default', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Seedream',
+      prompt: 'a cat',
+      expectFlags: ON,
+    });
+    expect(firstInput(steps)).toMatchObject({ engine: 'seedream', version: 'v5.5' });
+
+    const meta = modelMeta(ON);
+    expect(meta.defaultModelId).toBe(v55);
+    expect(meta.versions?.options.at(-1)).toEqual({
+      label: 'v5.5',
+      value: v55,
+      newUntil: expect.any(Date),
+    });
+  });
+
+  // Like v5.0-pro, v5.5 is offered at 2K only, with no 2K/4K toggle.
+  it('with seedream55 on, v5.5 has no resolution toggle and sends 2K sizes', async () => {
+    const store = generationHub.createStore({ ext: { ...BASE, flags: ON } });
+    store.set({ workflow: 'txt2img', ecosystem: 'Seedream' });
+    expect(store.getField('resolution')).toBeNull();
+    // the toggle exists for v4.5, so the null above is about v5.5
+    store.set({
+      model: { id: seedreamVersionIds['v4.5'], model: { type: 'Checkpoint' } },
+    } as never);
+    expect(store.getField('resolution')).not.toBeNull();
+
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Seedream',
+      prompt: 'a cat',
+      aspectRatio: '1:1',
+      expectFlags: ON,
+    });
+    expect(firstInput(steps)).toMatchObject({ version: 'v5.5', width: 2048, height: 2048 });
+  });
+
+  it('with seedream55 on, a picked v5.0-pro stays v5.0-pro', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Seedream',
+      prompt: 'a cat',
+      model: v50pro,
+      expectFlags: ON,
+    });
+    expect(firstInput(steps)).toMatchObject({ version: 'v5.0-pro' });
+  });
+});
+
+describe('minimax-h3-image.handler', () => {
+  const MOD = { minimaxH3ImageGenerator: true };
+
+  it('create sends a comfy createImage step at the 2K size for the ratio, with no images', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      aspectRatio: '16:9',
+      quantity: 3,
+      seed: 42,
+      images: [IMAGE],
+    });
+    expect(firstInput(create)).toEqual({
+      engine: 'comfy',
+      ecosystem: 'h3-image',
+      operation: 'createImage',
+      prompt: 'a cat',
+      width: 2784,
+      height: 1568,
+      quantity: 3,
+      seed: 42,
+      diffusionModel: null,
+    });
+  });
+
+  it('4K doubles both sides and stays inside the 4-20 MP canvas', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      resolution: '4K',
+      aspectRatio: '3:1',
+    });
+    const { width, height } = firstInput(create) as { width: number; height: number };
+    expect([width, height]).toEqual([7104, 2368]);
+    expect(width * height).toBeLessThanOrEqual(20_971_520);
+  });
+
+  it('a resolution the engine cannot render falls back to 2K', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      resolution: '1K',
+    });
+    expect(firstInput(create)).toMatchObject({ width: 2048, height: 2048 });
+  });
+
+  it('edit switches operation and sends the references in order', async () => {
+    const edit = await dispatch({
+      workflow: 'img2img:edit',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      aspectRatio: '1:1',
+      images: [IMAGE, IMAGE2],
+    });
+    expect(firstInput(edit)).toMatchObject({
+      engine: 'comfy',
+      ecosystem: 'h3-image',
+      operation: 'editImage',
+      width: 2048,
+      height: 2048,
+      images: [IMAGE.url, IMAGE2.url],
+    });
+  });
+
+  it('caps quantity at 4 even when the tier allows more', () => {
+    const parsed = generationHub.parse(
+      { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat', quantity: 12 },
+      { ...BASE, limits: { ...BASE.limits, maxQuantity: 12 }, flags: MOD }
+    );
+    expect(parsed.success && (parsed.data as { quantity: number }).quantity).toBe(4);
+  });
+
+  it('accepts sixteen references and no more', () => {
+    const images = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ ...IMAGE, url: `https://example.com/${i}.png` }));
+    const parse = (n: number) =>
+      generationHub.parse(
+        {
+          workflow: 'img2img:edit',
+          ecosystem: 'MiniMaxH3Image',
+          prompt: 'a cat',
+          images: images(n),
+        },
+        { ...BASE, flags: MOD }
+      );
+    const sixteen = parse(16);
+    expect(sixteen.success && (sixteen.data as { images: unknown[] }).images).toHaveLength(16);
+    const seventeen = parse(17);
+    expect(seventeen.success && (seventeen.data as { images: unknown[] }).images).not.toHaveLength(
+      17
+    );
+  });
+
+  // The flag keeps it to moderators until the workers and pricing are confirmed.
+  it('without the flag it is not offered, and a submission naming it never reaches it', () => {
+    const input = { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat' };
+    const ecosystemOf = (ext: GenerationCtx) => {
+      const parsed = generationHub.parse(input, ext);
+      return parsed.success ? (parsed.data as { ecosystem: string }).ecosystem : undefined;
+    };
+    expect(ecosystemOf({ ...BASE, flags: MOD })).toBe('MiniMaxH3Image');
+    expect(ecosystemOf(BASE)).not.toBe('MiniMaxH3Image');
+
+    expect(getEcosystemStates('txt2img', { ...BASE, flags: MOD }).compatibleEcosystems).toContain(
+      'MiniMaxH3Image'
+    );
+    const off = getEcosystemStates('txt2img', BASE);
+    expect(off.compatibleEcosystems).not.toContain('MiniMaxH3Image');
+    expect(off.hiddenEcosystems).toContain('MiniMaxH3Image');
+  });
+});
+
 describe('ideogram.handler', () => {
   // The fork is on the version id: 4.5 is a fal API model.
   it('4.5 routes to fal with its own resolution and quality', async () => {
@@ -434,6 +646,75 @@ describe('hunyuan.handler', () => {
       model: 1314512,
     });
     expect(firstInput(steps)).toMatchObject({ checkpointModel: 'urn:air:test:1313562' });
+  });
+});
+
+describe('hi-dream-o1.handler', () => {
+  // The orchestrator refuses any side past 2048.
+  it('every preset, at every resolution, keeps each side within 64-2048 on a /64 grid', () => {
+    const presets = Object.entries(hiDreamO1AspectRatiosByResolution).flatMap(([res, options]) =>
+      options.map((o) => ({ res, ...o }))
+    );
+    expect(presets.length).toBeGreaterThan(0);
+    for (const { res, label, width, height } of presets) {
+      for (const side of [width, height]) {
+        expect(side, `${res} ${label}`).toBeGreaterThanOrEqual(64);
+        expect(side, `${res} ${label}`).toBeLessThanOrEqual(2048);
+        expect(side % 64, `${res} ${label}`).toBe(0);
+      }
+    }
+  });
+
+  it('submits 2K 16:9 at 2048 × 1152', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'HiDream-O1',
+      prompt: 'a cat',
+      resolution: '2K',
+      aspectRatio: '16:9',
+    });
+    expect(firstInput(steps)).toMatchObject({ width: 2048, height: 1152 });
+  });
+
+  it('txt2img 1K is unchanged', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'HiDream-O1',
+      prompt: 'a cat',
+      resolution: '1K',
+      aspectRatio: '16:9',
+    });
+    expect(firstInput(steps)).toMatchObject({ width: 1408, height: 768 });
+  });
+
+  // A stale client still sending 1K is clamped to 2K, not refused.
+  it('edit never submits 1K', async () => {
+    const steps = await dispatch({
+      workflow: 'img2img:edit',
+      ecosystem: 'HiDream-O1',
+      prompt: 'a cat',
+      resolution: '1K',
+      aspectRatio: '16:9',
+      images: [IMAGE],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      operation: 'editImage',
+      width: 2048,
+      height: 1152,
+    });
+  });
+
+  it('a saved 1K comes back on returning from edit to txt2img', () => {
+    const store = generationHub.createStore({ ext: BASE });
+    store.set({ workflow: 'txt2img', ecosystem: 'HiDream-O1', prompt: 'a cat' });
+    store.set({ resolution: '1K' });
+    const resolution = () => (store.getSnapshot().state as { resolution?: string }).resolution;
+
+    store.set({ workflow: 'img2img:edit' });
+    expect(resolution()).toBe('2K');
+
+    store.set({ workflow: 'txt2img' });
+    expect(resolution()).toBe('1K');
   });
 });
 

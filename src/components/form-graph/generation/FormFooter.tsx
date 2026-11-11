@@ -7,8 +7,10 @@
  * engine-free and imported from `~/components/Generation/footer-parts`.
  */
 
+import { ReportProblemButton } from '~/components/Feedback/ReportProblemButton';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 import { trackRecentEcosystem } from '~/store/recent-ecosystems.store';
-import { ActionIcon, Alert, Button, Card, NumberInput, Text } from '@mantine/core';
+import { ActionIcon, Alert, Button, Card, NumberInput, Text, UnstyledButton } from '@mantine/core';
 import { Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
@@ -31,7 +33,7 @@ import {
 import { useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
-import { QueueLimitBanner, QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
+import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GEN_BUZZ_KEY, GEN_SUBMIT_KEY, GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -97,7 +99,7 @@ import { FOOTER_RESET } from './footer-reset';
 import { CostPicker } from './CostPicker';
 import { QuantityPicker, TitleRowReset } from './MobileFooterParts';
 import { FooterStrips } from '~/components/generation_v2/FooterStrips';
-import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
+import { getMissingField, getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
 import {
   useSelectedResourceIds,
   type GenerationStore,
@@ -105,6 +107,8 @@ import {
   useFormStateKey,
 } from './store';
 import { switchToMatureSourceAlternative, useFlux3MatureSource } from './useFlux3MatureSource';
+import { useGenerationLicense } from './useGenerationLicense';
+import type { GenerationLicenseTerms } from '~/shared/constants/generation-license.constants';
 
 // =============================================================================
 // Cost (including tips)
@@ -158,6 +162,60 @@ export function ConnectedCostPicker({ store }: { store: GenerationStore }) {
 // Priority alerts
 // =============================================================================
 
+export function GenerationLicenseNotice({
+  terms,
+  onAccept,
+  accepting,
+}: {
+  terms: GenerationLicenseTerms;
+  onAccept: () => void;
+  accepting: boolean;
+}) {
+  return (
+    <Notification
+      icon={<IconAlertTriangle size={18} />}
+      color="blue"
+      className="rounded-md bg-blue-8/20"
+      withCloseButton={false}
+      title={terms.title}
+    >
+      <div className="flex flex-col gap-2">
+        <Text size="sm">{terms.intro}</Text>
+        <ul className="list-disc pl-5">
+          {terms.restrictions.map((line) => (
+            <li key={line}>
+              <Text size="sm">{line}</Text>
+            </li>
+          ))}
+        </ul>
+        <Text size="sm">
+          Read the{' '}
+          <Text
+            component="a"
+            href={terms.licenseUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            td="underline"
+            inherit
+          >
+            {terms.licenseName}
+          </Text>
+          .
+        </Text>
+        <Button
+          radius="xl"
+          size="compact-sm"
+          onClick={onAccept}
+          loading={accepting}
+          className="self-start"
+        >
+          I agree to these terms
+        </Button>
+      </div>
+    </Notification>
+  );
+}
+
 export function MatureSourceNotice({
   store,
   canSwitch,
@@ -190,18 +248,40 @@ export function MatureSourceNotice({
   );
 }
 
+/**
+ * Scrolls the form to the field a footer alert names, for fields that mark themselves with
+ * `data-generation-field`; the footer can be a long way below the field it is about.
+ */
+export function ShowFieldButton({ fieldKey }: { fieldKey: string }) {
+  const find = () => document.querySelector<HTMLElement>(`[data-generation-field="${fieldKey}"]`);
+  // Looked up after every render and again on the tap, not kept: the field can mount after the
+  // footer, and a workflow change remounts it.
+  const [present, setPresent] = useState(false);
+  useEffect(() => setPresent(!!find())); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!present) return null;
+  return (
+    <UnstyledButton
+      data-tap-area
+      className="ml-1 font-semibold text-blue-4 underline"
+      onClick={() => find()?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+    >
+      Show
+    </UnstyledButton>
+  );
+}
+
 function PriorityAlertSpace({
   store,
   submitError,
   onClearSubmitError,
-  missingFieldMessage,
+  missingField,
   forceInsufficientBuzz,
   onClearInsufficientBuzz,
 }: {
   store: GenerationStore;
   submitError?: string;
   onClearSubmitError: () => void;
-  missingFieldMessage?: string | null;
+  missingField?: { key: string; message: string } | null;
   forceInsufficientBuzz?: boolean;
   onClearInsufficientBuzz?: () => void;
 }) {
@@ -224,6 +304,7 @@ function PriorityAlertSpace({
   const selectedIds = useSelectedResourceIds(store);
   const featureFlags = useFeatureFlags();
   const matureSource = useFlux3MatureSource(store);
+  const license = useGenerationLicense(store);
   const mobileGenerator = useMobileGenerator();
 
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
@@ -261,7 +342,7 @@ function PriorityAlertSpace({
   let showingTrialAlert = false;
   // A blocking alert is not folded to a strip in the mobile generator.
   let blocking = true;
-  if (missingFieldMessage) {
+  if (missingField) {
     priorityAlert = (
       <Notification
         icon={<IconAlertTriangle size={18} />}
@@ -269,8 +350,17 @@ function PriorityAlertSpace({
         className="whitespace-pre-wrap rounded-md bg-blue-8/20"
         withCloseButton={false}
       >
-        {missingFieldMessage}
+        {missingField.message}
+        <ShowFieldButton fieldKey={missingField.key} />
       </Notification>
+    );
+  } else if (license.blocked && license.terms) {
+    priorityAlert = (
+      <GenerationLicenseNotice
+        terms={license.terms}
+        onAccept={license.accept}
+        accepting={license.accepting}
+      />
     );
   } else if (matureSource.blocked) {
     priorityAlert = <MatureSourceNotice store={store} canSwitch={matureSource.canSwitch} />;
@@ -304,6 +394,11 @@ function PriorityAlertSpace({
         className="whitespace-pre-wrap rounded-md bg-red-8/20"
       >
         {submitError}
+        <ReportProblemButton
+          area={ORCHESTRATION_FEEDBACK_AREA}
+          title="Generation failed to submit"
+          message={submitError}
+        />
       </Notification>
     );
   } else if (insufficientBuzz) {
@@ -397,8 +492,7 @@ function PriorityAlertSpace({
 
   return (
     <>
-      {/* The mobile generator shows the slots in its header. */}
-      {mobileGenerator ? <QueueLimitBanner /> : <QueueSnackbar />}
+      <QueueSnackbar mobile={mobileGenerator} />
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
       <DownloadWarning />
@@ -455,7 +549,14 @@ export function SubmitButton({
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
-  const { isError, isLoading: isWhatIfLoading, canEstimateCost, gateBlocked } = useWhatIfContext();
+  const {
+    isError,
+    isLoading: isWhatIfLoading,
+    canEstimateCost,
+    gateBlocked,
+    download,
+    boostRequired,
+  } = useWhatIfContext();
   const totalCost = useTotalGenerationCost(store);
 
   const {
@@ -466,16 +567,20 @@ export function SubmitButton({
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
   const canGenerate = useGenerationContext((state) => state.canGenerate);
   const matureSource = useFlux3MatureSource(store);
+  const license = useGenerationLicense(store);
 
   const submitBlocked =
     !canGenerate ||
     matureSource.blocked ||
+    license.blocked ||
     gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
     isError ||
     !canEstimateCost ||
-    insufficientBuzz;
+    insufficientBuzz ||
+    // A required boost not yet priced, or with nothing shown to download: the server refuses both.
+    (boostRequired && download?.boostFee == null);
 
   useEffect(() => {
     setBlockedTarget(running && submitBlocked ? GEN_SUBMIT_TARGET : null);
@@ -851,7 +956,7 @@ export function FormFooter({
   } = useWhatIfContext();
   const isMobile = useGeneratorLayout() !== 'desktop';
   const mobileGenerator = useMobileGenerator();
-  const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
+  const missingField = !canEstimateCost ? getMissingField(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
   const [lastSubmitted, setLastSubmitted] = useState<LastSubmitted>();
@@ -898,9 +1003,10 @@ export function FormFooter({
 
   // "Generate Anyway" on a flagged prompt submits without the Generate button.
   const matureSource = useFlux3MatureSource(store);
+  const license = useGenerationLicense(store);
 
   const handleSubmit = async (acknowledgedSoftBlock = false) => {
-    if (preparingRemixRef.current || matureSource.blocked) return;
+    if (preparingRemixRef.current || matureSource.blocked || license.blocked) return;
     setSubmitError(undefined);
 
     // One Generator_Submit event per click; validate FIRST so the invalid +
@@ -1186,7 +1292,7 @@ export function FormFooter({
           store={store}
           submitError={submitError}
           onClearSubmitError={() => setSubmitError(undefined)}
-          missingFieldMessage={missingFieldMessage}
+          missingField={missingField}
           forceInsufficientBuzz={insufficientBuzzError}
           onClearInsufficientBuzz={() => setInsufficientBuzzError(false)}
         />

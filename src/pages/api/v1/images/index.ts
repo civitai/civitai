@@ -17,7 +17,7 @@ import {
   BulkheadFullError,
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -163,7 +163,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
 
-    const session = await getServerAuthSession({ req, res });
+    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
 
     // Handle pagination
     const {
@@ -218,10 +218,16 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     const region = getRegion(req);
     let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
     if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
-    // A minor or SFW-only model's images are served only at its gallery's held level.
+    // A minor or SFW-only model's images are served only at its gallery's held level, and a
+    // taken-down model's not at all.
     if (data.modelId || data.modelVersionId || data.postId) {
       // Loaded on demand: the model service's import graph is large and only this branch needs it.
-      const { getHeldGalleryLevel } = await import('~/server/services/model.service');
+      const { getHeldGalleryLevel, isModelGalleryWithheld } = await import(
+        '~/server/services/model.service'
+      );
+      // A taken-down model's images are withheld here from everyone, its owner included.
+      if (await isModelGalleryWithheld(data))
+        return res.status(200).json({ items: [], metadata: {} });
       const heldLevel = await getHeldGalleryLevel(data);
       if (heldLevel !== undefined) {
         _browsingLevel = Flags.intersection(_browsingLevel, heldLevel);

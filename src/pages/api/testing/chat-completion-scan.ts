@@ -75,7 +75,7 @@
  *     and needs a signed-in moderator, so only /api/mod/text-scan serves it. poi/minor take
  *     `auto | review`; csam takes `off | review` only.
  *
- *   { "action": "scanTexts", "entityType": "Comment",
+ *   { "action": "scanTexts", "entityType": "CommentV3",
  *     "texts": [{ "key": "...", "fields": [{ "heading": "...", "text": "..." }] }],
  *     "promptOverrides"?, "model"?, "thinking"?, "concurrency"?, "wait"? }
  *     `batchEntities` over up to 50 free texts, composed and labelled as that entity type.
@@ -83,7 +83,7 @@
  *     declares nothing. A missing prompt key comes back as that item's error.
  *     `"labels"?` replaces the profile's labels, as for batchEntities.
  *
- *   { "action": "quoteTexts", "entityType": "Comment", "texts": [...], "promptOverrides"?,
+ *   { "action": "quoteTexts", "entityType": "CommentV3", "texts": [...], "promptOverrides"?,
  *     "model"?, "thinking"? }
  *     `whatif`-prices the `scanTexts` composition. Submits nothing.
  *

@@ -7,16 +7,7 @@ import {
 import type { RequestHandler } from './$types';
 import { callPlanner, postPlannerEnabled } from '$lib/server/post-planner';
 import { sessionCookies } from '$lib/server/session-cookies';
-
-/** Same-site pages share the session cookie, so a write must look like this app's own fetch: JSON,
- *  and same-origin when the browser says where it came from. SvelteKit's CSRF check covers form
- *  posts; this keeps the guarantee local to the route that needs it. */
-function assertOwnWrite(request: Request) {
-  const site = request.headers.get('sec-fetch-site');
-  if (site && site !== 'same-origin') error(403, 'Cross-site request refused');
-  if (!(request.headers.get('content-type') ?? '').toLowerCase().startsWith('application/json'))
-    error(415, 'Send this request as application/json');
-}
+import { assertOwnWrite } from '$lib/server/own-write';
 
 async function gate(locals: App.Locals, action: string) {
   if (!isPlannerAction(action)) error(404, 'Not found');

@@ -27,14 +27,23 @@ export type ModAlertOutcome = 'delivered' | 'rejected' | 'unconfigured';
  * act on it. A caller reporting "paged" off its own intent instead of this answer keeps claiming it
  * alerted someone long after the webhook is revoked.
  */
-export async function notifyModAlert(title: string, description: string): Promise<ModAlertOutcome> {
-  return postDiscordAlert(env.DISCORD_WEBHOOK_MOD_ALERTS, { title, description });
+export async function notifyModAlert(
+  title: string,
+  description: string,
+  opts: { noMentions?: boolean } = {}
+): Promise<ModAlertOutcome> {
+  return postDiscordAlert(env.DISCORD_WEBHOOK_MOD_ALERTS, { title, description, ...opts });
 }
 
 /** Same delivery as `notifyModAlert`, to any Discord webhook and with a chosen embed colour. */
 export async function postDiscordAlert(
   webhookUrl: string | undefined,
-  { title, description, color = 0xf44336 }: { title: string; description: string; color?: number }
+  {
+    title,
+    description,
+    color = 0xf44336,
+    noMentions = false,
+  }: { title: string; description: string; color?: number; noMentions?: boolean }
 ): Promise<ModAlertOutcome> {
   if (!webhookUrl) return 'unconfigured';
 
@@ -43,6 +52,8 @@ export async function postDiscordAlert(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       embeds: [{ title, description, color, timestamp: new Date().toISOString() }],
+      // For text an outsider wrote: Discord then pings nobody, whatever the text says.
+      ...(noMentions ? { allowed_mentions: { parse: [] } } : {}),
     }),
   })
     .then((res) => (res.ok ? ('delivered' as const) : ('rejected' as const)))

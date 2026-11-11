@@ -24,13 +24,17 @@ function modelsTransform(items: Hit<ModelSearchIndexRecord>[]) {
 
 type ImagesTransformed = ReturnType<typeof imagesTransform>;
 function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
-  return items.map((item) => ({
-    ...item,
-    hasMeta: !item.hideMeta && item.prompt,
-    nsfwLevel: item.nsfwLevel,
-    ingestion: ImageIngestionStatus.Scanned,
-    publishedAt: item.sortAt,
-  }));
+  return items.map((item) => {
+    // Semantic search hits are already full images and carry their own values.
+    const hydrated = item as { hasMeta?: boolean; publishedAt?: Date | null };
+    return {
+      ...item,
+      hasMeta: hydrated.hasMeta ?? (!item.hideMeta && item.prompt),
+      nsfwLevel: item.nsfwLevel,
+      ingestion: ImageIngestionStatus.Scanned,
+      publishedAt: hydrated.publishedAt ?? item.sortAt,
+    };
+  });
 }
 
 type ArticlesTransformed = ReturnType<typeof articlesTransform>;
@@ -38,7 +42,7 @@ function articlesTransform(items: Hit<ArticleSearchIndexRecord>[]) {
   return items.map((article) => ({
     ...article,
     nsfwLevel: flagifyBrowsingLevel(article.nsfwLevel),
-    coverImage: {
+    coverImage: article.coverImage && {
       ...article.coverImage,
       tags: article.coverImage.tags.map((x) => x.id),
       metadata: article.coverImage.metadata as ImageMetadata,

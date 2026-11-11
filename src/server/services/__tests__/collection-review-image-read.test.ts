@@ -1,12 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 import type * as PromClient from '~/server/prom/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as MeilisearchClient from '~/server/meilisearch/client';
+import type * as CollectionReviewSql from '~/server/services/collection-review.sql';
 
 // A collection review reads its submissions as the reviewer: the normal read's filters, plus the
 // collection's unrated REVIEW and REJECTED images. Mock recipe follows image-feed-blocked-for.test.ts.
 
-const { queryWithTimeoutMock } = vi.hoisted(() => ({ queryWithTimeoutMock: vi.fn() }));
+const { queryWithTimeoutMock, pendingViewerMock, actualSql } = vi.hoisted(() => ({
+  queryWithTimeoutMock: vi.fn(),
+  pendingViewerMock: vi.fn(),
+  actualSql: {} as { pendingViewerImageSql?: typeof CollectionReviewSql.pendingViewerImageSql },
+}));
+
+vi.mock('~/server/services/collection-review.sql', async (importOriginal) => {
+  const actual = await importOriginal<typeof CollectionReviewSql>();
+  actualSql.pendingViewerImageSql = actual.pendingViewerImageSql;
+  return { ...actual, pendingViewerImageSql: pendingViewerMock };
+});
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
@@ -30,6 +42,11 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
+}));
+
+vi.mock('~/server/services/collection.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getUserCollectionPermissionsById: vi.fn().mockResolvedValue({ read: true }),
 }));
 
 import { getAllImages } from '../image.service';
@@ -56,12 +73,26 @@ async function statementFor(
   return queryWithTimeoutMock.mock.calls[0][2] as { text: string; values: unknown[] };
 }
 
-const REVIEW_ARM = /rci\."collectionId" = \$(\d+)/;
+// The rating clause's arm, not the acceptableMinor exception that also names the collection.
+const REVIEW_ARM =
+  /i\."nsfwLevel" = 0 AND \([\s\S]*?"ingestion" = \$\d+::"ImageIngestionStatus"[\s\S]*?\) AND EXISTS \(\s*SELECT 1 FROM "CollectionItem" rci[\s\S]*?rci\."collectionId" = \$(\d+)/;
 
 beforeEach(() => {
   vi.clearAllMocks();
   queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
+  pendingViewerMock.mockImplementation(actualSql.pendingViewerImageSql!);
 });
+
+// What the filter keeps and drops is run against rows in pending-viewer-image.sql.behavior.test.ts;
+// these check only that the read applies it, with the viewer and the collection under review.
+const withMarker = () =>
+  pendingViewerMock.mockImplementation(
+    ({ userId }: { userId: number }) => Prisma.sql`pending_viewer_marker(${userId})`
+  );
+const markerViewer = (stmt: { text: string; values: unknown[] }) => {
+  const m = stmt.text.match(/pending_viewer_marker\(\$(\d+)\)/);
+  return m ? stmt.values[Number(m[1]) - 1] : undefined;
+};
 
 describe("a collection review's image read", () => {
   it("adds the collection's unrated submissions, bound to that collection", async () => {
@@ -111,18 +142,40 @@ describe("a collection review's image read", () => {
   });
 
   // A choice, not an accident: a judge sees a submission that is acceptable only in a collection,
-  // so they can reject it. Once ACCEPTED, a collection items read loads it by id with no collection,
-  // and that read leaves it out; a read of the collection's own image feed keeps it.
+  // so they can reject it. Once ACCEPTED, it is the owner's and moderators' only, in a read by id
+  // and in the collection's own image feed alike.
   it('keeps collection-only acceptable images in the review read, and out of a read by id with no collection', async () => {
-    const review = await statementFor(
-      { id: REVIEWER },
-      { pending: true, reviewCollectionId: COLLECTION }
-    );
-    expect(review.text).not.toMatch(/i\."acceptableMinor" = FALSE/);
+    await statementFor({ id: REVIEWER }, { pending: true, reviewCollectionId: COLLECTION });
+    expect(pendingViewerMock).toHaveBeenCalledWith({
+      userId: REVIEWER,
+      browsingLevel: 31,
+      reviewCollectionId: COLLECTION,
+    });
     vi.clearAllMocks();
     queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
     const accepted = await statementFor({ id: REVIEWER }, { pending: false });
     expect(accepted.text).toMatch(/i\."acceptableMinor" = FALSE/);
+  });
+
+  it("applies the pending filter to a non-moderator's pending read, bound to the viewer", async () => {
+    withMarker();
+    const stmt = await statementFor({ id: REVIEWER }, { pending: true });
+    expect(markerViewer(stmt)).toBe(REVIEWER);
+    expect(pendingViewerMock).toHaveBeenCalledTimes(1);
+    expect(pendingViewerMock).toHaveBeenCalledWith({
+      userId: REVIEWER,
+      browsingLevel: 31,
+      reviewCollectionId: undefined,
+    });
+  });
+
+  it("gives a moderator's pending read the level check but not the per-image conditions", async () => {
+    withMarker();
+    const stmt = await statementFor({ id: REVIEWER, isModerator: true }, { pending: true });
+    expect(markerViewer(stmt)).toBeUndefined();
+    expect(pendingViewerMock).not.toHaveBeenCalled();
+    // A moderator's pending read still checks the level.
+    expect(stmt.text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
   });
 
   it("checks the collection's ownership and MANAGE against the viewer, not a profile being browsed", async () => {
@@ -143,5 +196,44 @@ describe("a collection review's image read", () => {
     };
     expect(await ownerIds(REVIEWER)).toEqual([REVIEWER, REVIEWER]);
     expect(await ownerIds(REVIEWER + 1)).toEqual([REVIEWER + 1, REVIEWER + 1]);
+  });
+});
+
+describe("a collection's image feed", () => {
+  const FLAGGED = /i\."acceptableMinor" = FALSE(?: OR i\."userId" = \$(\d+))?/g;
+
+  async function flaggedClauses(viewer?: { id: number; isModerator?: boolean }) {
+    vi.clearAllMocks();
+    queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
+    await getAllImages({
+      limit: 20,
+      period: 'AllTime',
+      periodMode: 'stats',
+      sort: 'Newest',
+      browsingLevel: 31,
+      include: [],
+      collectionId: COLLECTION,
+      user: viewer ? { isModerator: false, ...viewer } : undefined,
+    } as unknown as Parameters<typeof getAllImages>[0]).catch(() => undefined);
+    expect(queryWithTimeoutMock, 'the build no longer reaches queryWithTimeout').toHaveBeenCalled();
+    const { text, values } = queryWithTimeoutMock.mock.calls[0][2] as {
+      text: string;
+      values: unknown[];
+    };
+    return [...text.matchAll(FLAGGED)].map((m) => (m[1] ? values[Number(m[1]) - 1] : null));
+  }
+
+  // Any signed-in non-moderator, a manager of the collection included: the clause ignores
+  // collection permissions, so only the image's owner passes it.
+  it("shows another user's flagged image only to its owner", async () => {
+    expect(await flaggedClauses({ id: REVIEWER })).toEqual([REVIEWER]);
+  });
+
+  it('shows it to no signed-out viewer', async () => {
+    expect(await flaggedClauses()).toEqual([null]);
+  });
+
+  it('leaves it to moderators', async () => {
+    expect(await flaggedClauses({ id: REVIEWER, isModerator: true })).toEqual([]);
   });
 });

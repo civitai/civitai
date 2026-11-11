@@ -14,7 +14,7 @@ import type { modelRouter } from '~/server/routers/model.router';
 import type { modelVersionRouter } from '~/server/routers/model-version.router';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { postStatCache, userPostCountCache } from '~/server/redis/caches';
-import { getDailyPostLimit } from '~/server/schema/post.schema';
+import { getDailyPostLimit } from '~/server/services/usage-limit-config.service';
 import { preventReplicationLagBatch } from '~/server/db/db-lag-helpers';
 import { withPostScheduleLock } from '~/server/services/post-schedule-lock';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -165,7 +165,7 @@ export async function getScheduledPosts({
 
   return {
     posts,
-    dailyLimit: getDailyPostLimit(user),
+    dailyLimit: await getDailyPostLimit(user),
     minGapMinutes: POST_BATCH_MIN_GAP_MINUTES,
     truncated,
   };
@@ -184,7 +184,7 @@ export async function getPlannerPostDetail({
 
   const live = !!post.publishedAt && post.publishedAt <= new Date();
   const [resources, version, stats] = await Promise.all([
-    getPostResources({ id }),
+    getPostResources({ id, userId: user.id, isModerator: user.isModerator }),
     post.modelVersionId
       ? dbRead.modelVersion.findUnique({
           where: { id: post.modelVersionId },
@@ -484,7 +484,7 @@ async function assertMovesFit({
     now,
     publishedAts: targets,
     existingPublishedAts: others.map((other) => other.publishedAt as Date),
-    dailyLimit: user.isModerator ? Number.POSITIVE_INFINITY : getDailyPostLimit(user),
+    dailyLimit: user.isModerator ? Number.POSITIVE_INFINITY : await getDailyPostLimit(user),
     minGapMinutes: POST_BATCH_MIN_GAP_MINUTES,
   });
   if (!validation.ok)

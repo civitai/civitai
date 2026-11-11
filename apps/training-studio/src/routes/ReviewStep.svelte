@@ -16,6 +16,7 @@
   import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { isAbort, uploadFile } from '$lib/upload';
@@ -33,7 +34,6 @@
     paramBounds,
     seenFor,
     TARGET_STEPS,
-    TE_TRAINING_UNSUPPORTED_REASON,
     typesForMedia,
     type ExtraParamField,
     type LabelType,
@@ -44,6 +44,7 @@
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
+    numberInputValue,
     PARAM_LABELS,
     optimizerLrParams,
     paramDeviations,
@@ -58,8 +59,10 @@
     runVersion,
     sampleImagesProblem,
     runVersionLabel,
+    blockedSelectionMessage,
     filledPrompts,
     teLocked,
+    teLockReason,
     withTrigger,
     type LaunchedRun,
     type NumericInput,
@@ -69,7 +72,8 @@
     type Selection,
   } from './trainingFlow';
 
-  // name / prompts / params / presetType are owned and seeded by the flow so they survive Back.
+  // name / prompts / params / presetType and the Advanced panel state are owned by the flow so they
+  // survive Back.
   let {
     selection,
     trigger,
@@ -78,6 +82,8 @@
     prompts = $bindable(),
     params = $bindable(),
     presetType = $bindable(),
+    openAdvanced = $bindable(),
+    acknowledgedAdvanced = $bindable(),
     imageCount,
     trainsPairs = false,
     matureCount: scannedMature,
@@ -95,6 +101,10 @@
     /** Keyed by `runParamsKey`; the flow guarantees an entry for every run in `selection`. */
     params: Record<string, RunParams>;
     presetType: string;
+    /** `runParamsKey` of the run whose Advanced panel is open, or '' when none is. */
+    openAdvanced: string;
+    /** Refund-forfeit acknowledgements, keyed by `runParamsKey`. */
+    acknowledgedAdvanced: Record<string, boolean>;
     imageCount: number;
     /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
     trainsPairs?: boolean;
@@ -125,6 +135,8 @@
 
   // Moderators can switch training off on the main app; the flow's banner carries their message.
   const trainingDisabled = $derived(serviceStatus.value?.available === false);
+  // A run on a model that went down after it was picked (a stale tab, a restored draft).
+  const blockedMessage = $derived(blockedSelectionMessage(selection.runs, serviceStatus.value));
 
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
@@ -151,11 +163,10 @@
   const typeName = $derived(loraTypeById(selection.loraType).name);
 
   const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
-  let openAdv = $state(-1);
+  const advancedOpen = (i: number) => openAdvanced === runParamsKey(selection.runs[i]!);
 
   // Support refuses refunds on a poor result once advanced params were edited, so editing them needs
   // the same acknowledgement as the in-app trainer — per run, and again when its model changes.
-  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
   const advancedAcknowledged = (i: number) =>
     acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
   const fieldLocked = (i: number, field: ParamField) =>
@@ -229,7 +240,7 @@
   const spend = $derived(
     nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
   );
-  const ackKey = $derived(matureAckKey(spend?.amount ?? total, matureCount));
+  const ackKey = $derived(matureAckKey(total, spend?.amount, matureCount));
   let ackedFor = $state<string | null>(null);
   const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
   const runCostLabel = (i: number) => {
@@ -299,10 +310,13 @@
   const isExtra = (field: ParamField): field is ExtraParamField =>
     EXTRA_PARAM_FIELDS.includes(field as ExtraParamField);
 
-  const defaultsAt = (i: number) => defaultRunParams(selection.runs[i]!, trigger);
+  const defaultsAt = (i: number) =>
+    defaultRunParams(selection.runs[i]!, trigger, selection.loraType);
   const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode);
   const deviationsByRun = $derived(
-    selection.runs.map((run, i) => paramDeviations(run, paramsAt(i), labelMode, trigger))
+    selection.runs.map((run, i) =>
+      paramDeviations(run, paramsAt(i), labelMode, trigger, selection.loraType)
+    )
   );
   const deviationsAt = (i: number) => deviationsByRun[i] ?? [];
   // The Advanced panel's own count — Steps lives in the header, Checkpoints in the panel.
@@ -328,8 +342,8 @@
     isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;
-    if (field === 'textEncoderLr' && teLocked(run))
-      return `Not available for ${runCard(run).name} — ${TE_TRAINING_UNSUPPORTED_REASON}`;
+    const teReason = field === 'textEncoderLr' ? teLockReason(run) : undefined;
+    if (teReason) return teReason;
     return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
@@ -358,6 +372,9 @@
   // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
   function clampField(i: number, field: ParamField, bound: ParamBound) {
     const p = paramsAt(i) as unknown as Record<string, NumericInput | boolean>;
+    // Leave a cleared field blank — Number('') is 0, which would clamp up to `min`; the Start payload
+    // fills a blank with the model's default instead.
+    if (typeof p[field] === 'string' && !p[field].trim()) return;
     const n = Number(p[field]);
     if (!Number.isFinite(n)) return;
     const clamped = Math.min(bound.max, Math.max(bound.min, n));
@@ -418,8 +435,8 @@
   );
   // Blank rows generate no sample image, so they are not counted.
   const filledCount = $derived(filledPrompts(prompts.map((p) => p.text)).length);
-  // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
-  // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
+  // With Blue first on (the default), the moment the price exceeds the Blue balance the remainder
+  // comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
   // drifted. Anything beyond Blue requires an explicit confirmation naming the amount — and when
   // the balance is UNKNOWN (a host without getBuzzBalances, a buzz-service blip), fail safe:
@@ -439,6 +456,7 @@
     if (
       starting ||
       trainingDisabled ||
+      blockedMessage ||
       total == null ||
       (needsAttestation && !attestSfw) ||
       ackMissing ||
@@ -455,7 +473,7 @@
   }
 
   async function reallyStart() {
-    if (starting || trainingDisabled) return;
+    if (starting || trainingDisabled || blockedMessage) return;
     spendDialogOpen = false;
     starting = true;
     startError = '';
@@ -601,7 +619,8 @@
         max={bound?.max}
         step={bound?.step}
         aria-label={PARAM_LABELS[f.field]}
-        bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
+        bind:value={() => numberInputValue(paramsAt(i)[f.field] as NumericInput),
+          (v) => setField(i, f.field, v ?? '')}
         onblur={() => bound && clampField(i, f.field, bound)}
         disabled={locked || unacknowledged}
         class="h-7 font-mono"
@@ -675,9 +694,9 @@
               {:else}
                 <button
                   type="button"
-                  onclick={() => (openAdv = openAdv === i ? -1 : i)}
+                  onclick={() => (openAdvanced = advancedOpen(i) ? '' : runParamsKey(run))}
                   class="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition
-                  {openAdv === i
+                  {advancedOpen(i)
                     ? 'border-primary/50 bg-primary/10 text-primary'
                     : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
                 >
@@ -687,7 +706,7 @@
                       {advancedDeviationsAt(i).length} changed
                     </span>
                   {/if}
-                  {#if openAdv === i}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
+                  {#if advancedOpen(i)}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
                       size={12}
                       stroke={2}
                     />{/if}
@@ -733,7 +752,7 @@
           </div>
           {/if}
 
-          {#if openAdv === i && !noAdvancedParams(run)}
+          {#if advancedOpen(i) && !noAdvancedParams(run)}
             {@const extras = supportedExtras(i)}
             {@const hidden = unsupportedExtras(i)}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
@@ -859,7 +878,7 @@
     </div>
   </div>
 
-  <aside class="h-fit rounded-xl lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto border border-dark-4 bg-dark-6 p-5">
+  <StickySummary>
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">What you're starting</h3>
     <dl class="m-0 flex flex-col gap-1 text-sm">
       <div class="flex justify-between gap-2.5">
@@ -968,8 +987,12 @@
           {/if}
           {#if membership === true}
             Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
-            <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is charged
-            in <span class="text-yellow-400">Yellow</span> Buzz.
+            {#if buzzMode.blueFirst}
+              <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is
+              charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              It is charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
           {:else}
             <span class="text-blue-400">Blue</span> and <span class="text-emerald-400">Green</span> Buzz
             can't pay for mature content without a membership, so {membership === undefined
@@ -995,9 +1018,12 @@
                 >{spend.amount.toLocaleString()} Yellow Buzz</strong
               >
               will be charged because this dataset has mature images.
-            {:else}
+            {:else if buzzMode.blueFirst}
               I understand this dataset has mature images, so anything beyond my
               <span class="text-blue-400">Blue</span> Buzz is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              I understand this dataset has mature images, so it is charged in
               <span class="text-yellow-400">Yellow</span> Buzz.
             {/if}
           </label>
@@ -1024,6 +1050,7 @@
       onclick={start}
       disabled={starting ||
         trainingDisabled ||
+        !!blockedMessage ||
         total == null ||
         (needsAttestation && !attestSfw) ||
         ackMissing ||
@@ -1041,6 +1068,8 @@
       <p class="mt-2 text-center font-mono text-xs text-dark-2">
         Training is currently disabled — see the notice above.
       </p>
+    {:else if blockedMessage}
+      <p class="mt-2 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if imagesProblem}
@@ -1053,7 +1082,7 @@
     <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails
     </p>
-  </aside>
+  </StickySummary>
 </div>
 
 <div class="mt-6 flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
@@ -1071,7 +1100,10 @@
         {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz
       </Dialog.Title>
       <Dialog.Description>
-        {#if confirmSpend?.uncertain}
+        {#if !buzzMode.blueFirst}
+          Blue Buzz first is off, so all <strong>{confirmSpend?.amount.toLocaleString()}</strong> of
+          this run will come out of your {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.
+        {:else if confirmSpend?.uncertain}
           Blue Buzz spends first, but your balance couldn't be read — up to
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> of this run may come out of your
           {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.

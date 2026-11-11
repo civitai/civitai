@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSafeTensorFormat } from '../training-custom-model';
+import { isBlockedCustomModel, isSafeTensorFormat } from '../training-custom-model';
 
 /**
  * Both spellings of the same fact must pass: the main app reads `'SafeTensor'` off ModelFile
@@ -21,5 +21,21 @@ describe('isSafeTensorFormat', () => {
     expect(isSafeTensorFormat('')).toBe(false);
     expect(isSafeTensorFormat(null)).toBe(false);
     expect(isSafeTensorFormat(undefined)).toBe(false);
+  });
+});
+
+describe('isBlockedCustomModel', () => {
+  it('blocks every version of a blocked model, in either AIR form', () => {
+    expect(isBlockedCustomModel('urn:air:anima:checkpoint:civitai:2855007@3224434')).toBe(true);
+    expect(isBlockedCustomModel('urn:air:anima:checkpoint:civitai:2855007@9999999')).toBe(true);
+    expect(isBlockedCustomModel(' civitai:2855007@3224434 ')).toBe(true);
+    expect(isBlockedCustomModel('urn:air:sd1:checkpoint:civitai:53761@285757')).toBe(true);
+  });
+
+  it('leaves other models alone, including ids that only share digits', () => {
+    expect(isBlockedCustomModel('urn:air:anima:checkpoint:civitai:2458426@2945208')).toBe(false);
+    expect(isBlockedCustomModel('urn:air:anima:checkpoint:civitai:28550071@1')).toBe(false);
+    expect(isBlockedCustomModel('urn:air:anima:checkpoint:civitai:1@2855007')).toBe(false);
+    expect(isBlockedCustomModel('anima')).toBe(false);
   });
 });

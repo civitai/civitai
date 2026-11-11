@@ -6,6 +6,9 @@ import { instrumentationRegistry } from '~/server/prom/client';
 // Side-effect import: registers the challenge state gauges (collect()-based) on the default
 // registry so they are present + scraped even before the first challenge op runs this session.
 import '~/server/prom/challenge.metrics';
+// Side-effect import: registers the app publish review-queue gauges (collect()-based, one replica
+// read per minute, served from the last good snapshot).
+import '~/server/prom/app-publish-queue.metrics';
 // Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue,
 // cached for a minute).
 import '~/server/prom/resource-intent-cooc.metrics';
@@ -77,11 +80,15 @@ import { refreshDocStoreEnabled } from '~/server/services/apps/doc-store.instanc
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
+import { ensureRegisterAppReviewAutodeployMetrics } from '~/server/prom/app-review-autodeploy.metrics';
 // Side-effect import: installs the fleet-shared store the image-ingestion gauges refresh through.
 // Without it every process runs those queries itself. Here rather than in ~/server/prom/client so
 // that module's graph never loads the redis client.
 import '~/server/prom/ingestion-gauge-store';
 import { ensureRegisterThreadCpuMetrics } from '~/server/prom/thread-cpu.metrics';
+// Seeds civitai_provider_download_total at 0 for every live provider. The providers are read on each
+// scrape, so a new one is seeded by the first scrape after it is minted.
+import { seedProviderDownloadMetrics } from '~/server/prom/provider-download.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
@@ -89,6 +96,7 @@ seedGenerationValidationMetrics();
 ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
 ensureRegisterAppBlockBuildMetrics();
+ensureRegisterAppReviewAutodeployMetrics();
 ensureRegisterThreadCpuMetrics();
 
 const labels: Record<string, string> = {};
@@ -226,6 +234,7 @@ const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockSharedStorageMetrics();
   seedAppBlockDocStoreMetrics();
   await refreshDocStoreEnabled();
+  await seedProviderDownloadMetrics();
 
   const metrics = await collectRegistryMetrics(client.register, 'default');
 

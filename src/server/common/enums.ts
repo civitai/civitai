@@ -100,11 +100,6 @@ export enum ImageScanType {
   SpineRating = 9,
 }
 
-// export enum CommentV2Sort {
-//   Newest = 'Newest',
-//   Oldest = 'Oldest',
-// }
-
 export enum ArticleSort {
   MostBookmarks = 'Most Bookmarks',
   MostReactions = 'Most Reactions',
@@ -157,6 +152,8 @@ export enum SignalMessages {
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
+  /** Also sent for a remix-app workflow's steps, so the remix tray need not watch every generation. */
+  RemixAppUpdate = 'orchestrator:remix-app-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   ResourceLoadUpdate = 'resource-load:update',
@@ -184,6 +181,8 @@ export enum SignalMessages {
   EventPointsHat = 'event-points:hat',
   EventPointsTeams = 'event-points:teams',
   EventPointsOwner = 'event-points:owner',
+  // To one user only: their own live total, while they watch it (watch.ts selfWatchMember).
+  EventPointsSelf = 'event-points:self',
   EventPointsTurf = 'event-points:turf',
 }
 
@@ -425,6 +424,11 @@ export enum BlocklistType {
   // "spread"). Suppresses a substring match from the profanity filter rather than
   // being blanked from the text — different matcher to the two phrase lists above.
   ProfanityBenignWord = 'ProfanityBenignWord',
+  // Brand names that flag an App Block whose name or slug contains one, whatever its listing
+  // says — read by the agent review's impersonation check (and by the same check on an approved
+  // app's listing edit). Edited by moderators at /moderator/blocklists; an empty list fails
+  // that check rather than passing it.
+  AppProtectedBrandTerm = 'AppProtectedBrandTerm',
 }
 
 export enum ToolSort {

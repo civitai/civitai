@@ -7,7 +7,8 @@ import { comicsFilterableAttributes } from '~/server/search-index/filterable-att
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { profileImageSelect } from '../selectors/image.selector';
+import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import type { profileImageSelect } from '../selectors/image.selector';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -102,7 +103,7 @@ type ComicForSearchIndex = {
 //    *clean* underlying Image: ingestion = Scanned, not in review, not
 //    TOS-violated. Without the Image checks, panels whose underlying
 //    Image was flagged AFTER scan would still surface in search.
-const WHERE = [
+export const comicSearchEligibleWhere = [
   Prisma.sql`cp."status" = 'Active'::"ComicProjectStatus"`,
   Prisma.sql`cp."tosViolation" = FALSE`,
   Prisma.sql`cp."userId" != -1`,
@@ -175,10 +176,11 @@ type ProfileImage = Prisma.ImageGetPayload<{
 
 export const comicsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
+  outboxEntity: 'Comic',
   setup: onIndexSetup,
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
-      ...WHERE,
+      ...comicSearchEligibleWhere,
       lastUpdatedAt ? Prisma.sql`cp."createdAt" >= ${lastUpdatedAt}` : undefined,
     ].filter(isDefined);
 
@@ -205,7 +207,7 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
       batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
     );
     const where = [
-      ...WHERE,
+      ...comicSearchEligibleWhere,
       batch.type === 'update' ? Prisma.sql`cp.id IN (${Prisma.join(batch.ids)})` : undefined,
       batch.type === 'new'
         ? Prisma.sql`cp.id >= ${batch.startId} AND cp.id <= ${batch.endId}`
@@ -272,12 +274,10 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
 
     if (!comics.length) return null;
 
-    const profilePictures = await db.image.findMany({
-      where: {
-        id: { in: comics.map((c) => c.user.profilePictureId).filter(isDefined) },
-      },
-      select: profileImageSelect,
-    });
+    const profilePictures = await getServableProfilePictures(
+      db,
+      comics.map((c) => c.user.profilePictureId).filter(isDefined)
+    );
 
     logger(`PullData :: Pulled comics and profile pictures`);
 

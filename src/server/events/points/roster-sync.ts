@@ -23,6 +23,7 @@ import {
 } from '~/server/events/points/roster-score';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { refreshShowcaseHats, SHOWCASE_SETTING } from '~/server/events/showcase-hat';
 
 // Keeps the roster sets (roster.ts) in step with Postgres, one member at a time or in batches. Every
@@ -41,7 +42,7 @@ export type RosterEvent = {
 export type RosterMemberState = {
   userId: number;
   optedIn: boolean;
-  // Not banned, deleted or excluded from leaderboards: the owners whose hats may earn.
+  // Not banned, deleted or excluded from event points: the owners whose hats may earn.
   eligible: boolean;
   // The team of the join cosmetic they hold, or null when they never joined.
   team: string | null;
@@ -80,7 +81,7 @@ export async function loadRosterMemberStates(
     )
     SELECT u.id AS "userId",
       (u.settings -> ${ROSTER_SETTING} ->> ${event.name}) = 'true' AS "optedIn",
-      (u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards") AS eligible,
+      (u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND (u.flags & ${UserFlag.ExcludeFromEventPoints}::int) = 0) AS eligible,
       j.team, j."obtainedAt" AS "joinedAt", h.hats
     FROM "User" u
     LEFT JOIN LATERAL (

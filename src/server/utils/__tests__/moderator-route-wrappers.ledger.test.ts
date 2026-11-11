@@ -23,9 +23,7 @@ const WEBHOOK_ROUTES = [
   'adjust-tag-level',
   'ban-user',
   'custom-challenge',
-  'daily-challenge/backfill-theme-elements',
   'daily-challenge/cycle',
-  'daily-challenge/re-review',
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
@@ -190,11 +188,15 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
     'App Blocks author submit: moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
   'v1/blocks/submit-version':
     'App Blocks author submit (CLI): moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
-  'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
+  'download/[...key]': FULL_CREDENTIAL,
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'download/vault/[vaultItemId]':
+    'moderators may download a vault copy of a file that failed its scan; the caller’s own vault only',
   'search/[...path]':
     'site search: moderators skip the POI and private-model filters, not the site’s browsing-level cap',
+  'search/token':
+    'site search token: moderators skip the POI and private-model rules, not the site’s browsing-level cap',
   'service-deals/files/[fileId]/download':
     'party access check: the seller, the paid buyer, or a moderator for dispute review',
   'training-studio/check-text':
@@ -204,6 +206,13 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',
   'v1/me': 'reports the flag',
   'v1/model-versions/[id]': 'moderators also see unpublished versions',
+  'v1/model-versions/[id]/gifts/[giftId]': 'owner-or-moderator gift revoke',
+  'v1/model-versions/[id]/gifts/[giftId]/claims': 'owner-or-moderator gift claimer list',
+  'v1/model-versions/[id]/gifts/[giftId]/claims/[userId]': 'owner-or-moderator gift claim removal',
+  'v1/model-versions/[id]/gifts/batch/[batchId]': 'owner-or-moderator gift batch revoke',
+  'v1/model-versions/[id]/gifts/batch/[batchId]/claims':
+    'owner-or-moderator gift batch claimer list',
+  'v1/model-versions/[id]/gifts/index': 'owner-or-moderator gift list; mint is owner-only',
   'v1/model-versions/bust-cache': 'owner-or-moderator cache bust; owners bust their own versions',
   'v1/model-versions/early-access': 'owner-or-moderator early-access settings',
   'v1/model-versions/mini/[id]': 'moderators also see unpublished versions',
@@ -521,10 +530,14 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'auth/freshdesk',
   // Session submit (App Assistant's Submit for review): no OAuth-client token reaches submitVersion here.
   'blocks/submit-version',
+  // Raw key download, moderators only.
+  'download/[...key]',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
   'user/orchestrator-key',
   'v1/block-tokens/index',
+  // A creator's own engagement counts and tipped Buzz: no read scope maps to them yet.
+  'v1/creator/engagement',
 ];
 
 describe('routes under src/pages/api outside the moderator wrappers', () => {

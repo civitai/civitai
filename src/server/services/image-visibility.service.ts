@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -41,8 +43,8 @@ export function imageVisibilityConditions({
   return [
     Prisma.sql`(
       i."needsReview" IS NULL AND ${imageReviewedSql()}
-      -- A manager of the collection the image owner's own post was submitted to.
-      OR p."collectionId" IS NOT NULL AND p."userId" = i."userId" AND EXISTS (
+      -- A manager of the collection the image owner's own post was submitted to, once reviewed.
+      OR p."collectionId" IS NOT NULL AND p."userId" = i."userId" AND ${imageReviewedSql()} AND EXISTS (
         SELECT 1 FROM "CollectionContributor" cc
         WHERE cc."collectionId" = p."collectionId"
           AND cc."userId" = ${userId}
@@ -53,7 +55,7 @@ export function imageVisibilityConditions({
     // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
     // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
     // `Image` separates that from a never-posted upload, so a postless image is owner-only unless
-    // it is the cover of an article the viewer could read (getArticleById's non-owner rule), or
+    // it is the cover or banner of an article the viewer could read (getArticleById's non-owner rule), or
     // shown on a bounty or bounty entry whose bounty the viewer could open (canViewBounty).
     Prisma.sql`(
       p."publishedAt" < now()
@@ -61,7 +63,7 @@ export function imageVisibilityConditions({
       OR (i."postId" IS NULL AND i."userId" = ${userId})
       OR (i."postId" IS NULL AND EXISTS (
         SELECT 1 FROM "Article" a
-        WHERE a."coverId" = i.id
+        WHERE (a."coverId" = i.id OR a."bannerId" = i.id)
           AND a.status = 'Published'
           AND a."publishedAt" IS NOT NULL
           AND a.ingestion = 'Scanned'
@@ -89,6 +91,10 @@ export function imageVisibilityConditions({
     // mod review) — never serve it by direct id to anyone but the owner. Feeds already
     // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
     Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`,
+    // Owner-only, as in the image feeds (`pendingOthersImageConditions`).
+    userId
+      ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
+      : Prisma.sql`(i."acceptableMinor" = FALSE)`,
     ...imageBlockedForConditions({ userId }),
   ];
 }
@@ -102,6 +108,7 @@ export async function assertImageVisibleToViewer({
   userId,
   isModerator,
   confirmBlockOnPrimary = false,
+  withSignedOutVerdict = false,
 }: {
   id: number;
   userId?: number;
@@ -111,18 +118,39 @@ export async function assertImageVisibleToViewer({
    * confirm a cache "not blocked" against the primary. Read callers leave it off.
    */
   confirmBlockOnPrimary?: boolean;
+  /**
+   * Also answer whether a signed-out viewer may open it (`visibleSignedOut`), from the same read,
+   * for a caller deciding whether the response may go to a shared cache.
+   */
+  withSignedOutVerdict?: boolean;
 }) {
-  const [visible] = await dbRead.$queryRaw<
-    { id: number; userId: number; nsfwLevel: number; postId: number | null }[]
-  >`
-    SELECT i.id, i."userId", i."nsfwLevel", i."postId"
+  const signedOutVerdict = withSignedOutVerdict
+    ? Prisma.sql`(${Prisma.join([Prisma.sql`TRUE`, ...imageVisibilityConditions({})], ' AND ')})`
+    : Prisma.sql`NULL::boolean`;
+  // Through Kysely over the pg pools, not Prisma's `$queryRaw`: one of the hottest single-image
+  // reads, and the same statement and parameters either way (`queryPrismaSql`). Every column is
+  // int4 or boolean, which both executors parse alike.
+  // An id past int4 names no image: not found, as Prisma answered, rather than a range error.
+  if (!isPgInt4(id)) throw throwNotFoundError();
+  const { kyselyRead } = await loadKyselyDb();
+  const [visible] = await queryPrismaSql<{
+    id: number;
+    userId: number;
+    nsfwLevel: number;
+    postId: number | null;
+    visibleSignedOut: boolean | null;
+  }>(
+    kyselyRead,
+    Prisma.sql`
+    SELECT i.id, i."userId", i."nsfwLevel", i."postId", ${signedOutVerdict} AS "visibleSignedOut"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
       [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })],
       ' AND '
     )}
-  `;
+  `
+  );
   if (!visible) throw throwNotFoundError();
   if (userId && !isModerator) {
     // Imported here: user.service sits in the image.service import cycle.

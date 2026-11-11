@@ -77,7 +77,11 @@ vi.mock('~/server/services/image.service', () => ({
   uploadImageFromUrl: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
-vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
+vi.mock('~/server/services/orchestrator/models', () => ({
+  bustOrchestratorModelCache: vi.fn(),
+  getOrchestratorVersionAirs: vi.fn(() => Promise.resolve([])),
+  bustOrchestratorAirs: vi.fn(),
+}));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
@@ -332,6 +336,82 @@ describe('mergeVersions file remaps', () => {
     );
   });
 
+  it('sends a file a merge makes loadable back to the scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({
+        type: 'Config',
+        name: 'a.ckpt',
+        virusScanResult: 'Success',
+        pickleScanResult: 'Success',
+      }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, type: 'Model' }])).rejects.toThrow(PAST_REMAP);
+
+    expect(fileUpdateMany.mock.calls[0][0].data).toMatchObject({ pickleScanResult: 'Pending' });
+  });
+
+  it("refuses a merge a format the file's name does not have", async () => {
+    fileFindMany.mockResolvedValue([storedFile({ name: 'a.safetensors' })]);
+
+    await expect(merge([{ fileId: FILE, metadata: { format: 'PickleTensor' } }])).rejects.toThrow(
+      "A file's format must match its file name."
+    );
+    expect(fileUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('sends a loadable file whose format a merge changes back to the scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({
+        name: 'pack.zip',
+        metadata: { format: 'Other' },
+        virusScanResult: 'Success',
+        pickleScanResult: 'Success',
+      }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, metadata: { format: 'Diffusers' } }])).rejects.toThrow(
+      PAST_REMAP
+    );
+
+    expect(fileUpdateMany.mock.calls[0][0].data).toMatchObject({ pickleScanResult: 'Pending' });
+  });
+
+  it('sends training data relabelled in a merge back to the model-file scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({ type: 'Training Data', virusScanResult: 'Success' }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, type: 'Other' }])).rejects.toThrow(PAST_REMAP);
+
+    expect(fileUpdateMany).toHaveBeenCalledWith({
+      where: { id: FILE, ...inMerge, virusScanResult: 'Success' },
+      data: expect.objectContaining({
+        type: 'Other',
+        virusScanResult: 'Pending',
+        pickleScanResult: 'Pending',
+        scanRequestedAt: null,
+      }),
+    });
+    // Prisma refuses a bare null for a Json column.
+    expect(fileUpdateMany.mock.calls[0][0].data.rawScanResult).toBe(Prisma.JsonNull);
+  });
+
+  it('leaves a Danger that landed after the merge read the training data as clean', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({ type: 'Training Data', virusScanResult: 'Success' }),
+    ]);
+    fileUpdateMany.mockImplementation(
+      async ({ where }: { where: { virusScanResult?: string } }) => ({
+        count: where.virusScanResult === 'Success' ? 0 : 1,
+      })
+    );
+
+    await expect(merge([{ fileId: FILE, type: 'Other' }])).rejects.toThrow(
+      "Training data can't be changed to another type until its security scan completes."
+    );
+  });
+
   // The lookup above returns nothing for a file outside the merge: another owner's file, or a
   // version of this model that is not being merged.
   it('refuses a file that is not part of the merge, writing nothing', async () => {
@@ -403,7 +483,11 @@ describe('mergeVersions training runs', () => {
   });
   const tx = {
     $queryRaw: versionRows,
-    modelFile: { findFirst: datasetFindFirst, updateMany: fileMove },
+    modelFile: {
+      findFirst: datasetFindFirst,
+      findMany: vi.fn(() => Promise.resolve([])),
+      updateMany: fileMove,
+    },
   };
 
   const row = (id: number, status: string, trainingStatus: string | null) => ({
@@ -496,6 +580,48 @@ describe('mergeVersions training runs', () => {
   it('merges a trained source that has no training data', async () => {
     stored({ trainingStatus: 'InReview' });
     datasetFindFirst.mockResolvedValue(null);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
+  });
+
+  const withBaseModels = (source: string, target: string, targetStatus = 'Published') =>
+    versionRows.mockResolvedValue([
+      { ...row(TARGET, targetStatus, null), baseModel: target },
+      { ...row(SOURCE, 'Published', null), baseModel: source },
+    ]);
+
+  it('refuses merging a non-commercial source into a version on another base model', async () => {
+    withBaseModels('Flux.2 Klein 9B', 'SDXL 1.0');
+
+    await expect(merge()).rejects.toThrow(
+      "Files from a version on a non-commercial base model can't be merged into a version on a different base model. Contact a moderator."
+    );
+    expect(fileMove).not.toHaveBeenCalled();
+  });
+
+  it('refuses merging a published non-commercial source into a draft', async () => {
+    withBaseModels('Flux.2 Klein 9B', 'Flux.2 Klein 9B', 'Draft');
+
+    await expect(merge()).rejects.toThrow(
+      'Files from a published version on a non-commercial base model can only be merged into a published version. Contact a moderator.'
+    );
+    expect(fileMove).not.toHaveBeenCalled();
+  });
+
+  it('merges a non-commercial draft into a draft on the same base model (control)', async () => {
+    versionRows.mockResolvedValue([
+      { ...row(TARGET, 'Draft', null), baseModel: 'Flux.2 Klein 9B' },
+      { ...row(SOURCE, 'Draft', null), baseModel: 'Flux.2 Klein 9B' },
+    ]);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
+  });
+
+  it.each([
+    ['a non-commercial source into the same base model', 'Flux.2 Klein 9B', 'Flux.2 Klein 9B'],
+    ['a commercial source into a non-commercial target', 'SDXL 1.0', 'Flux.2 Klein 9B'],
+  ])('merges %s', async (_, source, target) => {
+    withBaseModels(source, target);
 
     await expect(merge()).rejects.toThrow(PAST_CHECKS);
   });

@@ -7,7 +7,7 @@ Link straight to a setting on `/user/account`. Source: `src/components/Account/s
 
 | Link | Lands on |
 |------|----------|
-| `/user/account/<pane>` | a pane: `profile`, `preferences`, `notifications`, `content`, `creator`, `billing`, `security` |
+| `/user/account/<pane>` | a pane: `profile`, `preferences`, `notifications`, `content`, `creator`, `billing`, `usage`, `security` |
 | `/user/account?setting=<anchor>` | the pane that owns `<anchor>`, scrolled to it and briefly highlighted |
 | `/user/account/<pane>?setting=<anchor>` | the same, naming the pane yourself |
 
@@ -28,7 +28,7 @@ An anchor is the element `id`. A section's id is the slug of its title unless th
 | preferences | `media-playback`, `generation`, `file-preferences`, `civbot-assistant`, `privacy`, `hide-reaction-lists`, `features` |
 | notifications | `delivery` |
 | content | `ads`, `mature-content`, `topics`, `hidden-tags`, `hidden-users` |
-| creator | `metric-visibility`, `stickers` |
+| creator | `metric-visibility`, `stickers`, `hat-turf-owner` |
 | billing | `manage-subscription`, `payment-methods`, `payments`, `membership-gifts` |
 | security | `accounts`, `api-keys`, `oauth-applications`, `connected-apps`, `store-items` |
 
