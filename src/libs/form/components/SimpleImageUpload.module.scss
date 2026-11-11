@@ -29,3 +29,26 @@
     border-radius: var(--mantine-radius-md);
   }
 }
+
+// Feed cards are about 320px wide; a full-width portrait preview would dwarf the form.
+.cardCropWrapper {
+  max-width: 320px;
+}
+
+.imageContainerCardCrop {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--mantine-radius-md);
+
+  // Mirrors the card's crop (AspectRatioImageCard `.image`). `!important` beats EdgeMedia's own
+  // `.responsive` height: auto, which sits on this same element.
+  & > img {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+    object-position: top;
+  }
+}
