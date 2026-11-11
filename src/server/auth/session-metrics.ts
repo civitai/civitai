@@ -13,7 +13,7 @@
 import type { RefreshFailure } from '@civitai/auth';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 
-// `identity` = token cookie path (getSessionUser); `identity-by-id` = API-key/OAuth/preview by-userId read
+// `identity` = token cookie path (getSessionUser); `identity-by-id` = API-key/OAuth by-userId read
 // (getSessionUserById); `hub-write` = the invalidate/refresh/invalidateAll hub writes; `jwks` = ES256 verify
 // key fetch; `revocation` = sysRedis TOKEN_STATE/ALL read.
 export type SessionLeg = 'identity' | 'identity-by-id' | 'hub-write' | 'jwks' | 'revocation';

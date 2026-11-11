@@ -122,6 +122,16 @@ describe('a preview sign-in cookie', () => {
     refusalLogged();
   });
 
+  it('resolves to no session for the account by username when no id is configured', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    h.decodePreviewSessionCookie.mockResolvedValue({
+      sub: '902',
+      user: { id: 902, username: 'CivitaiModeration' },
+    });
+    expect(await getServerAuthSession({ req: request() as never, res: {} as never })).toBeNull();
+    refusalLogged();
+  });
+
   it('still resolves for anyone else', async () => {
     h.decodePreviewSessionCookie.mockResolvedValue({
       sub: String(SOMEONE),

@@ -185,7 +185,7 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     return (await resolveSessionUser(token)).user;
   }
 
-  // READ-THROUGH by userId — for consumer paths with no session token (API-key/bearer auth, preview sign-in).
+  // READ-THROUGH by userId — for consumer paths with no session token (API-key/bearer auth).
   // Shared-cache read → single-flight the miss to the INTERNAL-authed GET identity?userId= (read-through, NOT
   // a bust — refresh() is the bust path). Routed in-cluster + bounded by hubFetch (AUTH_HUB_INTERNAL_URL) —
   // this is the hot read for EVERY API-key / OAuth request, so it's the same hairpin SPOF as the token path.
