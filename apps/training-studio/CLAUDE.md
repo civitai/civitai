@@ -78,7 +78,9 @@ Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
 
 `hooks.server.ts` has a **dev-only** bypass: in `vite dev` with `TRAINING_STUDIO_DEV_LOGIN=1` (set in
 `.env`) it injects a stub user and skips the guard (dead code in the built server). `pnpm dev:training-studio`
-→ http://localhost:5173. Screenshot with a headless browser to iterate.
+→ http://localhost:5173. Screenshot with a headless browser to iterate. To sign in for real through the
+local auth hub instead, leave that unset and run `node .claude/skills/dev-server/cli.mjs start --app
+training-studio` (port 5176; the hub holds 5173).
 
 ## Deltas
 

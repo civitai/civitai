@@ -494,7 +494,7 @@ Redbird binds ports 80 and 443. On Windows the daemon must be launched from an e
 
 ## Apps
 
-`moderator` and `creator-studio` run through the daemon the same way the main app does — started
+`moderator`, `creator-studio` and `training-studio` run through the daemon the same way the main app does — started
 from the worktree you are in, logs in the same place, port reserved by the same allocator.
 
 ```bash
@@ -515,12 +515,13 @@ appear under `apps` in `status`, beside the main-app sessions.
 |-----|----------------|
 | moderator | 5174 |
 | creator-studio | 5175 |
+| training-studio | 5176 |
 
 **Preferred, not fixed.** The first worktree to start an app gets the number in that table; a second
 worktree starting the same app drifts to the next free port instead of dying on EADDRINUSE, so two
 branches of the same app can run side by side. Nothing has to be rewritten to follow the drift:
-neither app's `.env` carries its own port or base URL. Every app's preferred port is held back from
-the drift search, so moderator drifting never displaces creator-studio.
+no app's `.env` carries its own port or base URL. Every app's preferred port is held back from
+the drift search, so one app drifting never displaces another.
 
 🔴 **Read the `path` field, not just the fact that it started.** An app serving the wrong checkout
 answers 200s and looks completely healthy — the only thing that contradicts you is `path`.

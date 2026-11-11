@@ -8,7 +8,7 @@ export type BlobRefreshResult =
   /** Fresh signed URL — the caller should replace the one it holds. */
   | { blobId: string; status: 'refreshed'; url: string }
   /** The orchestrator says this blob is gone or blocked — safe to forget. */
-  | { blobId: string; status: 'gone' }
+  | { blobId: string; status: 'gone'; reason?: 'missing' | 'blocked' }
   /** Refresh failed for a reason that says nothing about the blob — keep it. */
   | { blobId: string; status: 'unknown' };
 
@@ -20,9 +20,11 @@ export type BlobRefreshResult =
 export async function refreshBlobsService({
   token,
   blobIds,
+  signal,
 }: {
   token: string;
   blobIds: string[];
+  signal?: AbortSignal;
 }): Promise<BlobRefreshResult[]> {
   const client = createOrchestratorClient(token);
   const unique = [...new Set(blobIds)].slice(0, MAX_BLOB_REFRESH_BATCH);
@@ -30,9 +32,10 @@ export async function refreshBlobsService({
   return Promise.all(
     unique.map(async (blobId): Promise<BlobRefreshResult> => {
       try {
-        const { data, response } = await refreshBlob({ client, path: { blobId } });
-        if (response?.status === 404) return { blobId, status: 'gone' };
-        if (data?.blockedReason || data?.available === false) return { blobId, status: 'gone' };
+        const { data, response } = await refreshBlob({ client, path: { blobId }, signal });
+        if (data?.blockedReason || data?.available === false)
+          return { blobId, status: 'gone', reason: 'blocked' };
+        if (response?.status === 404) return { blobId, status: 'gone', reason: 'missing' };
         if (!data?.url) return { blobId, status: 'unknown' };
         return { blobId, status: 'refreshed', url: data.url };
       } catch (error) {
