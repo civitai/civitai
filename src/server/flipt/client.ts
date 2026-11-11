@@ -332,6 +332,8 @@ export enum FLIPT_FEATURE_FLAGS {
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
   // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
+  // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
+  APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:

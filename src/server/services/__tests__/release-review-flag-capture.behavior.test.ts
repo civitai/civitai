@@ -26,6 +26,7 @@ beforeAll(async () => {
       ingestion text NOT NULL,
       "needsReview" text
     );
+    CREATE TABLE "ImageDeferredBlockEffect" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,
@@ -37,14 +38,19 @@ beforeAll(async () => {
   `);
 });
 
+const run = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+  const flat = Prisma.sql(strings, ...(values as never[]));
+  return holder.db.query(flat.text, flat.values as unknown[]);
+};
+const tx = {
+  $queryRaw: async (s: TemplateStringsArray, ...v: unknown[]) => (await run(s, ...v)).rows,
+  $executeRaw: async (s: TemplateStringsArray, ...v: unknown[]) =>
+    (await run(s, ...v)).affectedRows ?? 0,
+};
+
 beforeEach(async () => {
-  dbMock.dbWrite.$executeRaw.mockImplementation((async (
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ) => {
-    const flat = Prisma.sql(strings, ...(values as never[]));
-    return (await holder.db.query(flat.text, flat.values as unknown[])).affectedRows ?? 0;
-  }) as never);
+  dbMock.dbWrite.$transaction.mockImplementation((async (fn: (t: typeof tx) => unknown) =>
+    fn(tx)) as never);
   await holder.db.exec(`
     TRUNCATE "Image", "CsamReport";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES

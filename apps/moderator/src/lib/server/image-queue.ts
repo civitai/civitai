@@ -16,7 +16,7 @@ import {
   closedAppellants,
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
-  FlagOnlyRemovedError,
+  RemovedImageNotRestorableError,
   AppealRestoreRefusedError,
   APPEAL_RESTORE_REFUSED,
   resolveImageAppeal,
@@ -55,8 +55,8 @@ const querySchema = z.object({
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
 
-const FLAG_ONLY_REASON = 'removed, and a review queue cannot put it back';
-const FLAG_ONLY_REMEDY =
+const REMOVED_REASON = 'removed, and a review queue cannot put it back';
+const REMOVED_REMEDY =
   'Dismiss a flagged image from its review queue, or restore the image explicitly. Reload.';
 
 /** `string`, not the union: `blockImage` takes the ClickHouse column's type, and the schema is what
@@ -238,9 +238,9 @@ export const imageQueueActions = {
     try {
       await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
     } catch (e) {
-      if (e instanceof FlagOnlyRemovedError)
+      if (e instanceof RemovedImageNotRestorableError)
         return fail(409, {
-          error: `This image was ${FLAG_ONLY_REASON}. ${FLAG_ONLY_REMEDY}`,
+          error: `This image was ${REMOVED_REASON}. ${REMOVED_REMEDY}`,
           imageId,
         });
       throw e;
@@ -446,7 +446,7 @@ export const imageQueueActions = {
           userId: locals.user.id,
           deferAppealEmail: true,
         }).catch((e) => {
-          if (!(e instanceof FlagOnlyRemovedError)) throw e;
+          if (!(e instanceof RemovedImageNotRestorableError)) throw e;
           refused.push(imageId);
           return undefined;
         })
@@ -459,8 +459,8 @@ export const imageQueueActions = {
         error: [
           `${imageIds.length - refused.length} of ${imageIds.length} accepted.`,
           reportIds.length ? 'No report was moved.' : '',
-          `Not accepted (${FLAG_ONLY_REASON}): ${refused.join(', ')}.`,
-          FLAG_ONLY_REMEDY,
+          `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.`,
+          REMOVED_REMEDY,
         ]
           .filter(Boolean)
           .join(' '),

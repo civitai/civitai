@@ -310,8 +310,8 @@ export async function notifyImageTosViolation(image: {
    *  app's processor keeps the unreasoned message for that case, and for every notification written
    *  before this field existed. */
   reason?: string;
-}): Promise<void> {
-  if (isFeedbackCaptureOwner(image.ownerId)) return;
+}): Promise<boolean> {
+  if (isFeedbackCaptureOwner(image.ownerId)) return false;
   try {
     await getNotifications().createNotification({
       userId: image.ownerId,
@@ -325,8 +325,10 @@ export async function notifyImageTosViolation(image: {
         ...(image.reason ? { reason: image.reason } : {}),
       },
     });
+    return true;
   } catch {
     // onFailure already logged; best-effort.
+    return false;
   }
 }
 
@@ -359,9 +361,9 @@ export async function applyBlockSideEffects(
     userAgent?: string;
     violationType?: string;
     violationDetails?: string;
-    /** `HELD_IMAGE` as the block wrote it: no owner notice, and a CSAM blocklist entry. */
+    /** `HELD_IMAGE` as the block wrote it. */
     heldImage?: boolean;
-    /** Under the moderator-only review flag as the block wrote it: a CSAM blocklist entry. */
+    /** Under the review flag as the block wrote it. */
     underReview?: boolean;
   }
 ): Promise<void> {
