@@ -30,7 +30,7 @@ export async function getMiniEpochGateMode(): Promise<MiniEpochGateMode> {
   return variant === 'log' || variant === 'enforce' || variant === 'enforce-anon' ? variant : 'off';
 }
 
-function credentialKind(
+export function credentialKind(
   req: NextApiRequest,
   user: Session['user'] | undefined,
   orchestrator: boolean
