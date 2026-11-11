@@ -3,7 +3,7 @@ import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 
 /** Explicit check: being admitted to the app is not enough to run an import. */
-export function assertModerator(user: { isModerator?: boolean } | undefined): void {
+function assertModerator(user: { isModerator?: boolean } | undefined): void {
   if (user?.isModerator !== true) error(403, 'Moderators only.');
 }
 
