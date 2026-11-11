@@ -181,7 +181,9 @@ export const getUserWithProfile = async ({
         ? // The Prisma read has already nulled an unscanned picture; its owner and moderators get it.
           user.profilePicture ??
           (viaKysely ? null : await getProfilePictureOfUser(dbWrite, user.id))
-        : servableProfilePicture(user.profilePicture),
+        : // Both reads have already dropped a `csam` picture for every viewer (the Prisma
+          // extension; `profilePictureOf`), so only the Scanned check remains here.
+          servableProfilePicture(user.profilePicture, null),
       // Claim keys are owner-only; withheld from every other viewer, moderators included.
       cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
         ...c,

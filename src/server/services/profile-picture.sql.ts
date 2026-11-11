@@ -37,7 +37,7 @@ export async function getProfilePictureOfUser(db: RawQueryClient, userId: number
       i.width, i.height, i.metadata
     FROM "User" u
     JOIN "Image" i ON i.id = u."profilePictureId"
-    WHERE u.id = ${userId}
+    WHERE u.id = ${userId} AND i."needsReview" IS DISTINCT FROM 'csam'
   `;
   return picture ?? null;
 }

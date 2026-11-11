@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client';
+import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 
 /**
  * A user's `profilePicture`, read through Prisma's nested select (`simpleUserSelect` and every copy
- * of it), comes back as `null` unless the picture is Scanned and not flagged `csam`, as
- * `servableProfilePictureSql` requires. `User.profilePicture` is the only relation of that name, so the
+ * of it), comes back as `null` unless `servableProfilePicture` serves it: Scanned and not flagged
+ * `csam`. Stricter than `servableProfilePictureSql`, which also admits moderator-locked ratings. `User.profilePicture` is the only relation of that name, so the
  * match is by key: a spread or hand-built copy of the select is caught too.
  *
  * Only find queries are touched; writes return what they wrote. A query whose select tree has no
@@ -110,7 +111,13 @@ export function applyProfilePicturePlan(result: unknown, plan: Plan): void {
     }
     const picture = result[key];
     if (!isObject(picture)) continue;
-    if (picture.ingestion !== 'Scanned' || picture.needsReview === 'csam') result[key] = null;
+    if (
+      !servableProfilePicture(
+        picture as { ingestion: string | null },
+        picture.needsReview as string | null
+      )
+    )
+      result[key] = null;
     else for (const field of node.added) delete picture[field];
   }
 }

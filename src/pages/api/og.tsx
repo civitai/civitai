@@ -33,7 +33,7 @@ import {
 } from '~/server/services/creator-milestone-share.service';
 import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
 import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
-import { servableBanner } from '~/shared/utils/article-card-image';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 
 // --- Schema & Types ---
 
@@ -347,7 +347,9 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
     description: cleanDescription(removeSpoilers(article.content ?? '')),
     creator: article.user.username ?? 'Unknown',
     ...buildEntityImage(
-      getSafeImage(servableBanner(article.coverImage) ?? servableBanner(article.bannerImage))
+      getSafeImage(
+        servableArticleImage(article.coverImage) ?? servableArticleImage(article.bannerImage)
+      )
     ),
     stats,
   };

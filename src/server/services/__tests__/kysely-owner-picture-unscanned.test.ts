@@ -27,6 +27,7 @@ const picture = (ingestion: string) => ({
   profilePictureWidth: null,
   profilePictureHeight: null,
   profilePictureMetadata: null,
+  profilePictureNeedsReview: null as string | null,
 });
 const ownerRow = (ingestion: string) => ({
   id: 5,
@@ -67,6 +68,13 @@ describe('Kysely reads of a content owner', () => {
     rows.current = ownerRow(state);
     expect((await readModelVersionOwnerViaKysely(db, 1))?.model.user.profilePicture).toBeNull();
     rows.current = collectionRow(state);
+    expect((await readCollectionByIdViaKysely(db, 1))?.user.profilePicture).toBeNull();
+  });
+
+  it('carry no Scanned picture flagged csam', async () => {
+    rows.current = { ...ownerRow('Scanned'), profilePictureNeedsReview: 'csam' };
+    expect((await readModelVersionOwnerViaKysely(db, 1))?.model.user.profilePicture).toBeNull();
+    rows.current = { ...collectionRow('Scanned'), profilePictureNeedsReview: 'csam' };
     expect((await readCollectionByIdViaKysely(db, 1))?.user.profilePicture).toBeNull();
   });
 

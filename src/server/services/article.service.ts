@@ -1,4 +1,5 @@
 import type { EventViewer } from '~/server/events/event-access';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { Prisma } from '@prisma/client';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
@@ -861,13 +862,13 @@ export const getArticleById = async ({
 
 type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
 
-/** Whether a reader may see this cover or banner; see `viewableArticleImage`. */
+/** Whether a reader may see this cover or banner: owners and moderators always. */
 function isArticleImageViewable<T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview'>>(
   image: T | null | undefined,
   isOwnerOrMod: boolean
 ): image is T {
   if (!image) return false;
-  return isOwnerOrMod || (image.ingestion === 'Scanned' && !image.needsReview);
+  return isOwnerOrMod || servableArticleImage(image) !== null;
 }
 
 /**

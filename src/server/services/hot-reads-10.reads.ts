@@ -121,7 +121,8 @@ export async function readCollectionByIdViaKysely(
               height: row.profilePictureHeight,
               metadata: row.profilePictureMetadata,
             }
-          : null
+          : null,
+        row.profilePictureNeedsReview
       ),
       cosmetics: row.cosmetics.map((cosmetic) => ({
         data: cosmetic.data,

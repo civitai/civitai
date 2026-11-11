@@ -1,9 +1,10 @@
 /**
- * A banner standing in for a missing cover on a card, only once it is servable: the article page
- * hides a banner that is not scanned or awaits review from readers, so a card must not show it.
+ * An article's cover or banner as anyone but its owner and moderators may see it: only once it is
+ * scanned and not awaiting review. The article page hides any other, so no card, search document
+ * or share image may show it either.
  */
-export function servableBanner<T extends { ingestion: string; needsReview: string | null }>(
-  banner: T | null | undefined
+export function servableArticleImage<T extends { ingestion: string; needsReview: string | null }>(
+  image: T | null | undefined
 ): T | null {
-  return banner && banner.ingestion === 'Scanned' && !banner.needsReview ? banner : null;
+  return image && image.ingestion === 'Scanned' && !image.needsReview ? image : null;
 }

@@ -60,7 +60,8 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
             height: row.profilePictureHeight,
             metadata: row.profilePictureMetadata as Prisma.JsonValue,
           }
-        : null
+        : null,
+      row.profilePictureNeedsReview
     ),
     cosmetics: row.cosmetics.map((cosmetic) => ({
       data: cosmetic.data as Prisma.JsonValue,

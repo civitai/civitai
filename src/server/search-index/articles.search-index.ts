@@ -4,7 +4,7 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import { servableBanner } from '~/shared/utils/article-card-image';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
@@ -79,7 +79,8 @@ export const transformData = async ({
   const records = articles
     .map(({ tags, stats, bannerImage, ...articleRecord }) => {
       // The cover, else the banner, once servable: the article can read Scanned before its cover.
-      const coverImage = servableBanner(articleRecord.coverImage) ?? servableBanner(bannerImage);
+      const coverImage =
+        servableArticleImage(articleRecord.coverImage) ?? servableArticleImage(bannerImage);
       if (!coverImage) return null;
       return {
         ...articleRecord,

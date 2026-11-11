@@ -9,7 +9,7 @@ vi.mock('@civitai/db-queries/hot-reads', () => ({
   getUserStatRow: vi.fn(async () => null),
 }));
 
-import { readUserCreatorViaKysely } from '~/server/services/user-creator.reads';
+import { profilePictureOf, readUserCreatorViaKysely } from '~/server/services/user-creator.reads';
 
 const db = { connection: () => ({ execute: (fn: (c: unknown) => unknown) => fn({}) }) } as never;
 
@@ -40,6 +40,7 @@ const creatorRow = (ingestion: string) => ({
   profilePictureWidth: null,
   profilePictureHeight: null,
   profilePictureMetadata: null,
+  profilePictureNeedsReview: null as string | null,
 });
 
 describe('creator card profile picture', () => {
@@ -54,6 +55,20 @@ describe('creator card profile picture', () => {
     row.current = { ...creatorRow('Pending'), profilePictureNsfwLevelLocked: true };
     const read = await readUserCreatorViaKysely(db, { id: 5 });
     expect(read?.user.profilePicture).toBeNull();
+  });
+
+  it('carries no Scanned picture flagged csam', async () => {
+    row.current = { ...creatorRow('Scanned'), profilePictureNeedsReview: 'csam' };
+    const read = await readUserCreatorViaKysely(db, { id: 5 });
+    expect(read?.user.profilePicture).toBeNull();
+  });
+
+  it('the profile read drops a picture flagged csam for every viewer, its owner included', () => {
+    // `profilePictureOf` also builds the profile read's picture (hot-reads-9), whose owner branch
+    // otherwise serves the owner their own unscanned picture.
+    const flagged = { ...creatorRow('Scanned'), profilePictureNeedsReview: 'csam' };
+    expect(profilePictureOf(flagged as never)).toBeNull();
+    expect(profilePictureOf(creatorRow('Pending') as never)?.url).toBe('avatar-Pending');
   });
 
   it('carries a Scanned picture', async () => {
