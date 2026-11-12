@@ -4,6 +4,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { asksBlockReason, blockReasonProblem } from '../../block-reasons';
 import { recordVoteDay } from '../daily/daily.service';
 import { heldSql } from '../conversion/held';
+import { metrics, type VoteKind } from '../metrics';
 import { goldForRank, PROGRESSION } from '../progression/config';
 import { ledgerOf } from '../progression/progression';
 import { standingOf } from '../progression/rating';
@@ -55,6 +56,10 @@ export type InsertedVote = {
   /** What the vote was stored with: 0 for a held player's. */
   weight: number;
 };
+
+/** Only yes/no questions bring their own one-judgment rule. */
+const voteKind = (subject: VoteSubject): VoteKind =>
+  subject.itemId < 0 ? 'hidden_check' : subject.ownJudgmentRule ? 'yesno' : 'rating';
 
 /**
  * Validates a player's answer and writes the pending ledger row. Credit follows with `creditVote`.
@@ -151,6 +156,7 @@ export async function insertVote(
       ...(subject.labelled ? { labelled: true } : {}),
     })
     .execute();
+  metrics.vote(voteKind(subject));
   return {
     status: 'inserted',
     player: { rankType: player.rankType, startAt: player.startAt },
@@ -195,6 +201,7 @@ export async function creditVote(
       .where('createdAt', '=', utc(input.now))
       .execute();
   }
+  metrics.goldEarned('streak_bonus', day.bonus);
   if (day.gold > 0 || day.bonus > 0) {
     await trx
       .updateTable('NewOrderPlayer')

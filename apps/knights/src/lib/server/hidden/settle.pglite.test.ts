@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { ledgerOf } from '../progression/progression';
@@ -18,6 +19,8 @@ const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
 const settings = { ...DEFAULT_HIDDEN_CHECKS, settleDelayMinutes: 30 };
 const minutes = (m: number, from = NOW) => new Date(from.getTime() + m * 60_000);
+
+vi.mock('../axiom', () => ({ logToAxiom: vi.fn() }));
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -87,11 +90,26 @@ describe('grading hidden checks', () => {
 
   it('pays a right answer like a correct vote: bulk XP, pending gold earned, and the accuracy ledger', async () => {
     await seedPlayer(pg, 1);
+    const votesBefore = await counterValue('knights_votes_total', { kind: 'hidden_check' });
     await answer(1, await reference(10), '4');
     const before = await player(1);
     expect(before.goldPending).toBeGreaterThan(0);
+    const gradedBefore = await counterValue('knights_hidden_checks_graded_total', {
+      verdict: 'correct',
+    });
+    const goldBefore = await counterValue('knights_gold_earned_total', { source: 'hidden_check' });
 
     expect(await settle(minutes(31))).toMatchObject({ graded: 1, failed: 0 });
+
+    expect(await counterValue('knights_votes_total', { kind: 'hidden_check' })).toBe(
+      votesBefore + 1
+    );
+    expect(await counterValue('knights_hidden_checks_graded_total', { verdict: 'correct' })).toBe(
+      gradedBefore + 1
+    );
+    expect(await counterValue('knights_gold_earned_total', { source: 'hidden_check' })).toBe(
+      goldBefore + before.goldPending
+    );
 
     const after = await player(1);
     expect(after.exp).toBe(before.exp + PROGRESSION.correctXp);
@@ -156,8 +174,10 @@ describe('grading hidden checks', () => {
   it('smites at once for rating far below the known answer', async () => {
     await seedPlayer(pg, 1);
     await answer(1, await reference(10, '16'), '2');
+    const before = await counterValue('knights_smites_total');
     await settle(minutes(31));
     expect(await smites(1)).toHaveLength(1);
+    expect(await counterValue('knights_smites_total')).toBe(before + 1);
   });
 
   it('treats failures outside the window, or before a career reset, as no earlier failure', async () => {
@@ -193,8 +213,12 @@ describe('grading hidden checks', () => {
     await seedPlayer(pg, 1);
     await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (1),(1)`);
     await answer(1, await reference(10, '16'), '2');
+    const before = await counterValue('knights_career_resets_total', { trigger: 'smites' });
     expect(await settle(minutes(31))).toMatchObject({ resets: 1 });
     expect(resetPlayer).toHaveBeenCalledWith(1);
+    expect(await counterValue('knights_career_resets_total', { trigger: 'smites' })).toBe(
+      before + 1
+    );
 
     await seedPlayer(pg, 2);
     await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (2),(2)`);
@@ -202,6 +226,9 @@ describe('grading hidden checks', () => {
     await answer(2, await reference(11, '16'), '2', minutes(40));
     expect(await settle(minutes(80))).toMatchObject({ resets: 0 });
     expect(await activeSmiteCount(db, 2)).toBe(3);
+    expect(await counterValue('knights_career_resets_total', { trigger: 'smites' })).toBe(
+      before + 1
+    );
   });
 
   it('grades a check whose reference image is gone as inconclusive, paying nothing', async () => {

@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import {
   castVote,
@@ -392,10 +393,16 @@ describe('resolution', () => {
     await fiveKnights();
     await image(10, 4);
     const id = await item(10);
+    const votesBefore = await counterValue('knights_votes_total', { kind: 'rating' });
+    const resolvedBefore = await counterValue('knights_items_resolved_total', { stage: 'Knight' });
 
     for (const u of [1, 2, 3]) expect((await vote(u, id, '4')).status).toBe('recorded');
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await vote(4, id, '4')).status).toBe('resolved');
+    expect(await counterValue('knights_votes_total', { kind: 'rating' })).toBe(votesBefore + 4);
+    expect(await counterValue('knights_items_resolved_total', { stage: 'Knight' })).toBe(
+      resolvedBefore + 1
+    );
 
     expect(applyConsensus).toHaveBeenCalledTimes(1);
     expect(applyConsensus).toHaveBeenCalledWith({
@@ -436,8 +443,12 @@ describe('resolution', () => {
     const answers = ['1', '2', '4', '8', '16', '1', '2', '4', '8', '16'];
     for (let i = 0; i < 9; i++) expect((await vote(i + 1, id, answers[i])).status).toBe('recorded');
     expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Knight' });
+    const before = await counterValue('knights_escalations_total', { reason: 'next-stage' });
 
     expect((await vote(10, id, answers[9])).status).toBe('escalated');
+    expect(await counterValue('knights_escalations_total', { reason: 'next-stage' })).toBe(
+      before + 1
+    );
     expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
     expect((await itemRow(id)).expiresAt).toEqual(new Date('2026-12-18T12:00:00Z'));
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
@@ -467,7 +478,11 @@ describe('resolution', () => {
     await image(10, 4);
     const id = await item(10, { minRank: 'Paladin' });
     const answers = ['1', '2', '4', '8'];
+    const before = await counterValue('knights_escalations_total', { reason: 'no-consensus' });
     for (let i = 0; i < 4; i++) await vote(20 + i, id, answers[i]);
+    expect(await counterValue('knights_escalations_total', { reason: 'no-consensus' })).toBe(
+      before + 1
+    );
 
     expect(await itemRow(id)).toMatchObject({
       status: 'Inquisitor',
@@ -672,7 +687,13 @@ describe('writing a settled rating back', () => {
     expect(await itemRow(id)).toMatchObject({ status: 'Resolved' });
 
     minutes += 24 * 60;
+    const before = await counterValue('knights_escalations_total', {
+      reason: 'attempts-exhausted',
+    });
     expect(await pendingRun(minutes)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+    expect(await counterValue('knights_escalations_total', { reason: 'attempts-exhausted' })).toBe(
+      before + 1
+    );
     expect(await itemRow(id)).toMatchObject({
       status: 'Inquisitor',
       reason: 'attempts-exhausted',

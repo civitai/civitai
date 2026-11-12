@@ -12,8 +12,10 @@ import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
+import { votePartitionName } from './vote-partition';
 import { RANKS, rankIndex, type Rank } from '../ranks';
 import { heldSql } from '../conversion/held';
+import { metrics } from '../metrics';
 import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
 import { FEED_STRETCH_SIZE, isStageRank, nextStaffedRank, stagesWorkedBy } from './ranks';
 import { SMITES } from '../smites/config';
@@ -377,6 +379,7 @@ async function escalate(
       })
       .where('id', '=', item.id)
       .execute();
+    metrics.escalation('next-stage');
     return 'escalated';
   }
   await toInquisitor(trx, item.id, now, 'no-consensus');
@@ -417,6 +420,7 @@ async function toInquisitor(
     })
     .where('id', '=', itemId)
     .execute();
+  metrics.escalation(escalationReason);
 }
 
 export async function lockItemVoters(trx: Executor, itemId: number) {
@@ -576,6 +580,7 @@ export async function castVote(
           .where('id', '=', item.id)
           .execute();
         await gradeKnightsVotes(trx, item.id, decision.value);
+        metrics.itemResolved(item.minRank);
         // Not yet written back: a reroute can still regrade these votes.
         const settled = writesBack ? undefined : await settleItemVotes(trx, item.id, now);
 
@@ -649,6 +654,7 @@ async function reroute(
         .where('id', '=', itemId)
         .execute();
       await regradeVotes(trx, itemId, 'pending');
+      metrics.escalation(route.reason);
       return [];
     }
 
@@ -924,7 +930,7 @@ const monthStart = (year: number, month: number) => {
 type Month = { year: number; month: number };
 
 export async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Month): Promise<void> {
-  const name = `KnightsVote_${year}_${pad(month)}`;
+  const name = votePartitionName({ year, month });
   const existing = await sql<{ found: boolean }>`
     SELECT to_regclass(${`"${name}"`}) IS NOT NULL AS found
   `.execute(db);

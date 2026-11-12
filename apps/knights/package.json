@@ -27,7 +27,8 @@
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",
     "kysely": "^0.28.7",
-    "pg-connection-string": "2.9.1"
+    "pg-connection-string": "2.9.1",
+    "prom-client": "^14.2.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.6",

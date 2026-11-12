@@ -3,6 +3,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { ensureKeeper } from '../daily/daily.service';
 import { utcDay } from '../daily/days';
+import { metrics } from '../metrics';
 import { SMITES } from './config';
 
 type Executor = Kysely<DB> | Transaction<DB>;
@@ -43,6 +44,7 @@ export async function issueSmite(
       createdAt: utc(now),
     })
     .execute();
+  metrics.smite();
   return activeSmiteCount(trx, playerId);
 }
 
@@ -128,6 +130,7 @@ export async function playersDueForReset(db: Executor, limit = 100): Promise<num
 export async function resetNow(playerId: number, deps: ResetDeps): Promise<boolean> {
   try {
     await deps.resetPlayer(playerId);
+    metrics.careerReset(playerId, 'smites');
     return true;
   } catch (error) {
     console.error('knights: career reset failed, the tick will retry it', { playerId, error });

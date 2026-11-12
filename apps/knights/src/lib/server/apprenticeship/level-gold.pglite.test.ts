@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage } from '../../../test/seed';
 import { restartCareer } from '../career/restart.service';
@@ -102,8 +103,12 @@ describe('Acolyte level gold', () => {
   it('pays the configured gold once when an answer gains a level, in the same step as the XP', async () => {
     await player(1, { exp: expForLevel(2) - 100 });
     await reference(1);
+    const before = await counterValue('knights_gold_earned_total', { source: 'acolyte_level' });
 
     const result = await answerRight(1);
+    expect(await counterValue('knights_gold_earned_total', { source: 'acolyte_level' })).toBe(
+      before + GOLD
+    );
 
     expect(result).toMatchObject({ status: 'recorded', xp: 100, gold: GOLD });
     expect(await goldEarned(1)).toBe(GOLD);

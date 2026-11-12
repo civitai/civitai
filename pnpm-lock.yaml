@@ -1259,6 +1259,9 @@ importers:
       pg-connection-string:
         specifier: 2.9.1
         version: 2.9.1
+      prom-client:
+        specifier: ^14.2.0
+        version: 14.2.0
     devDependencies:
       '@electric-sql/pglite':
         specifier: ^0.4.6

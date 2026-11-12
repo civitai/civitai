@@ -4,6 +4,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { BuzzRejectedError, type BuzzPort } from './buzz';
 import { PENDING_CONVERSION_RETRY_AFTER_MS } from './config';
 import { heldSql } from './held';
+import { metrics } from '../metrics';
 
 type Conversion = Selectable<DB['KnightsGoldConversion']>;
 type Log = (event: Record<string, unknown>) => unknown;
@@ -134,6 +135,7 @@ export async function settleConversion(
   } catch (error) {
     if (error instanceof BuzzRejectedError) {
       const forfeited = await failConversion(db, conversion);
+      metrics.buzzGrant('failed');
       await log?.({
         type: 'error',
         name: 'knights-gold-conversion-rejected',
@@ -142,6 +144,7 @@ export async function settleConversion(
       });
       return { status: 'failed', gold, buzz: amount, forfeited };
     }
+    metrics.buzzGrant('retry');
     await log?.({
       type: 'warning',
       name: 'knights-gold-conversion-unconfirmed',
@@ -151,6 +154,7 @@ export async function settleConversion(
     return { status: 'pending', gold, buzz: amount };
   }
   await markConversionPaid(db, conversion.id, transactionId, now);
+  metrics.buzzGrant('paid');
   return { status: 'converted', gold, buzz: amount, transactionId };
 }
 

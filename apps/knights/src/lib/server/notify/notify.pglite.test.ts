@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer as seedPlayerRow } from '../../../test/seed';
 import { enqueueItem, ensureVotePartitions } from '../queue/queue.service';
@@ -468,6 +469,9 @@ describe('sendNotifications', () => {
     await enqueueImage();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const refusing = vi.fn().mockRejectedValue(new BatchRejected('bad request'));
+    const sentBefore = await counterValue('knights_notifications_sent_total', {
+      kind: 'new-images',
+    });
 
     const first = await sendNotifications(db, {
       now: at(9),
@@ -476,11 +480,17 @@ describe('sendNotifications', () => {
       silenceTypes: SILENCE_TYPES,
     });
     expect(first).toMatchObject({ failed: 1, unconfirmed: 0 });
+    expect(await counterValue('knights_notifications_sent_total', { kind: 'new-images' })).toBe(
+      sentBefore
+    );
 
     const { run, received, send } = runner();
     await run(at(10));
     expect(received().get(1)).toEqual(['new-images']);
     expect(send.mock.calls[0]![0].key).toBe(refusing.mock.calls[0]![0].key);
+    expect(await counterValue('knights_notifications_sent_total', { kind: 'new-images' })).toBe(
+      sentBefore + 1
+    );
   });
 
   it('keeps the day when the outcome of a send is unknown, so a retry cannot double-send', async () => {
