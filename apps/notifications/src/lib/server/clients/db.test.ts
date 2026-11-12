@@ -1,16 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { DB_LOG_FLAG, log } from './db';
 
-// The pools' query echo is opt-in: `cancellableQuery` hands every statement, with its parameter
-// values inlined, to the logger it was built with, so an always-on logger prints every query.
+// The pools' query echo is opt-in: `cancellableQuery` hands every statement's text, including any
+// values formatted into it, to the logger it was built with, so an always-on logger prints every query.
 
 describe('log (the pools logger)', () => {
   let consoleLog: MockInstance<typeof console.log>;
+  let savedLogging: string | undefined;
   beforeEach(() => {
+    // An explicit `undefined` falls back to `process.env.LOGGING`, so the "unset" case is only
+    // unset if the environment's own LOGGING is cleared for it.
+    savedLogging = process.env.LOGGING;
+    delete process.env.LOGGING;
     consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
   afterEach(() => {
     consoleLog.mockRestore();
+    if (savedLogging === undefined) delete process.env.LOGGING;
+    else process.env.LOGGING = savedLogging;
   });
 
   it.each([
@@ -36,8 +43,9 @@ describe('log (the pools logger)', () => {
 });
 
 // The seam: the module's own pools, built by the real `createPool`, which must accept the missing
-// logger as a no-op. Pool construction does not connect, so a placeholder URL is enough; the
-// "Creating <label> client" line `createPool` logs at construction is the observable.
+// logger as a no-op. Pool construction does not connect, so a placeholder URL is enough. Both log
+// paths are observed: the "Creating <label> client" line at construction, and the statement echo
+// from a real `cancellableQuery`, run over a stubbed connection so nothing reaches a database.
 describe('the module pools', () => {
   const TOUCHED = ['LOGGING', 'NOTIFICATION_DB_URL', 'NOTIFICATION_DB_REPLICA_URL'];
   let saved: Record<string, string | undefined> = {};
@@ -60,25 +68,44 @@ describe('the module pools', () => {
     vi.resetModules();
   });
 
-  const creationLines = () =>
+  const dbLines = () =>
     consoleLog.mock.calls.filter(
       ([first]) => typeof first === 'string' && first.startsWith('[notifications:db:')
     );
 
-  it('builds a pool and prints nothing when LOGGING is unset', async () => {
-    delete process.env.LOGGING;
+  // The shape the app's callers use: values formatted into the statement text (pg-format `%L`).
+  const STATEMENT = `SELECT 'formatted-into-text' AS v`;
+
+  /** Builds the write pool and runs one statement through its real `cancellableQuery`. */
+  async function runOneQuery() {
     const db = await import('./db');
     const pool = db.notifDbWrite();
-    expect(pool).toBeDefined();
-    expect(creationLines()).toEqual([]);
+    const connection = {
+      processID: 1,
+      query: vi.fn(async () => ({ rows: [{ v: 'formatted-into-text' }] })),
+      release: vi.fn(),
+    };
+    pool.connect = vi.fn(async () => connection) as unknown as typeof pool.connect;
+    const query = await pool.cancellableQuery(STATEMENT);
+    expect(await query.result()).toEqual([{ v: 'formatted-into-text' }]);
+    expect(connection.query).toHaveBeenCalledWith(STATEMENT);
+    return pool;
+  }
+
+  it('builds a pool, runs a query and prints nothing when LOGGING is unset', async () => {
+    delete process.env.LOGGING;
+    const pool = await runOneQuery();
+    expect(dbLines()).toEqual([]);
     await pool.end();
   });
 
-  it('echoes through the pool when LOGGING contains notif-db', async () => {
+  it('echoes the statement through the pool when LOGGING contains notif-db', async () => {
     process.env.LOGGING = DB_LOG_FLAG;
-    const db = await import('./db');
-    const pool = db.notifDbWrite();
-    expect(creationLines()).toEqual([['[notifications:db:notif] Creating notif client']]);
+    const pool = await runOneQuery();
+    expect(dbLines()).toEqual([
+      ['[notifications:db:notif] Creating notif client'],
+      ['[notifications:db:notif] notif', STATEMENT],
+    ]);
     await pool.end();
   });
 });

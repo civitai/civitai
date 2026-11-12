@@ -17,9 +17,11 @@ export const DB_LOG_FLAG = 'notif-db';
 /**
  * The pools' logger, or `undefined` unless `LOGGING` (comma-delimited) contains `notif-db`.
  *
- * Off by default because `cancellableQuery` passes every statement it runs to this logger with its
- * parameter values inlined, so an always-on logger prints each query, and the user data bound into
- * it, once per call. `createPool` treats a missing logger as a no-op.
+ * Off by default because `cancellableQuery` passes the text of every statement it runs to this
+ * logger, so an always-on logger prints each query once per call, including any user data formatted
+ * into that text (the batched writes build their VALUES lists with pg-format). `$n` parameters
+ * passed separately to a plain-string statement are not inlined. `createPool` treats a missing
+ * logger as a no-op.
  */
 export function log(label: string, logging = process.env.LOGGING): DbLogFn | undefined {
   const flags = (logging ?? '').split(',').map((s) => s.trim());
