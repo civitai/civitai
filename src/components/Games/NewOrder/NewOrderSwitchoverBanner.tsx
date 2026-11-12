@@ -12,8 +12,15 @@ const banner: NavBanner = {
   href: KNIGHTS_V2_ARTICLE_URL,
   cta: "See what's changing",
   image: '820ede9b-b96f-4d72-9983-8415f3dc044e',
-  // The cover art's left edge, so the strip runs on seamlessly into the image.
-  background: '#2b1542',
+  // The Knights v2 app's palette (apps/knights/src/global.css: surface, parchment, gold).
+  background: '#1f1a13',
+  theme: {
+    text: '#e8dcc0',
+    mutedText: '#a89c80',
+    accent: '#c9a24a',
+    ctaBackground: '#c9a24a',
+    ctaText: '#14110d',
+  },
   dismissible: true,
   priority: 0,
 };
