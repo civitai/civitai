@@ -18,4 +18,8 @@ export const NOTIFY = {
   verdictLookbackDays: 3,
   /** Votes older than this are not searched at all (the ledger is partitioned by month). */
   voteSearchDays: 30,
+  /** A player who voted within this many days hears about new images daily. */
+  activeDays: 30,
+  /** Anyone else hears about new images at most once in this many days. */
+  inactiveNudgeDays: 30,
 } as const;

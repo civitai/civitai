@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { dayStart, utcDay, type Day } from '../daily/days';
+import { addDays, dayStart, utcDay, type Day } from '../daily/days';
 import { liveStreak, shieldCoversToday, streakAfterReset } from '../daily/streak';
 import { servableItems } from '../queue/queue.service';
 import { SMITES } from '../smites/config';
@@ -188,6 +188,8 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
     .where('status', '=', 'Open')
     .executeTakeFirst();
   if (!oldest?.at) return [];
+  const activeFrom = utc(dayStart(addDays(day, -NOTIFY.activeDays)));
+  const lastNudgeAfter = dateOf(addDays(day, -NOTIFY.inactiveNudgeDays));
   const found: number[] = [];
   for (const rank of RANKS) {
     const stages = stagesWorkedBy(rank);
@@ -196,6 +198,11 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
     const rows = await recipients(db, 'new-images', day)
       .select('pl.userId')
       .where('pl.rankType', '=', rank)
+      // Daily for players who voted recently; others at most once per window, to bring them back.
+      .where(
+        sql<boolean>`(exists (select 1 from "KnightsVote" a where a."playerId" = pl."userId" and a."createdAt" >= ${activeFrom})
+          or not exists (select 1 from "KnightsNotificationSend" s where s."playerId" = pl."userId" and s."kind" = 'new-images' and s."day" > ${lastNudgeAfter}))`
+      )
       .where((eb) =>
         eb.exists(
           servableItems(db)
