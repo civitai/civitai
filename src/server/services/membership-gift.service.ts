@@ -876,8 +876,9 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
       .unix();
     await stripe.subscriptions
       .update(subscription.id, {
+        // Alone: Stripe rejects cancel_at sent with cancel_at_period_end, and setting it
+        // replaces the period-end cancel.
         cancel_at: cancelAt,
-        cancel_at_period_end: false,
         proration_behavior: 'none',
       })
       .catch((error) =>

@@ -1071,7 +1071,8 @@ describe('honorGiftResidualsForUser', () => {
       // Jan 31 + 3 months clamps to Apr 30, as Stripe's monthly cycle does.
       expect(effectiveCancelAt()).toBe(dayjs.utc('2026-04-30T12:00:01Z').unix());
       const update = mockStripe.subscriptions.update.mock.calls[0][1];
-      expect(update).toMatchObject({ cancel_at_period_end: false, proration_behavior: 'none' });
+      // Stripe rejects the update if cancel_at_period_end rides along with cancel_at.
+      expect(update).toEqual({ cancel_at: effectiveCancelAt(), proration_behavior: 'none' });
     });
 
     it('needs no second call for a single month', async () => {
