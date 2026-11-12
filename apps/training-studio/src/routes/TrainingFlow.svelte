@@ -114,6 +114,48 @@
       : images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
   );
 
+  // The blobs the submit sends (buildTrainingRuns / pairItems), keyed order-free.
+  const datasetBlobIds = $derived(
+    trainsPairs
+      ? pairItems(pairs).map((i) => i.air)
+      : images.filter((i) => i.status === 'uploaded' && !!i.blobId).map((i) => i.blobId!)
+  );
+  const datasetKey = $derived([...datasetBlobIds].sort().join('\n'));
+  // The server's count under the v2 rating, for the dataset it was made for. Until it answers, or when
+  // the rating is off for this user, Review counts from the upload rating as before.
+  let ratedMature = $state<{ key: string; count: number } | null>(null);
+  const RATING_POLLS = 6;
+  const RATING_POLL_MS = 5000;
+  $effect(() => {
+    if (step !== 3) return;
+    const be = backend();
+    if (!be.datasetRating) return;
+    const ids = datasetBlobIds;
+    const key = datasetKey;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = async (poll: number) => {
+      try {
+        const res = await be.datasetRating!(ids);
+        if (stopped || !res.enabled) return;
+        ratedMature = { key, count: res.matureCount };
+        // The server is rating the rest in the background; ask again while it does.
+        if (res.unrated > 0 && poll < RATING_POLLS)
+          timer = setTimeout(() => void ask(poll + 1), RATING_POLL_MS);
+      } catch {
+        // the upload rating's count stands
+      }
+    };
+    void ask(1);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  });
+  const reviewMatureCount = $derived(
+    ratedMature?.key === datasetKey ? ratedMature.count : matureCount
+  );
+
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
   const datasetLabels = $derived.by(() => {
     if (!selection) return [];
@@ -331,7 +373,7 @@
       bind:acknowledgedAdvanced
       imageCount={trainableCount}
       {trainsPairs}
-      {matureCount}
+      matureCount={reviewMatureCount}
       onStart={start}
       onBack={() => (step = 2)}
       onShowMature={() => {

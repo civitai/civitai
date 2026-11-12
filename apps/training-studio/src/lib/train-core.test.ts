@@ -7,10 +7,12 @@ import {
   MatureAckRequiredError,
   submitTraining,
   submitTrainingBatch,
+  TrainingBatchValidationError,
   TrainingTextRefusedError,
   type TrainingRunInput,
   type TrainingTextCheck,
 } from './train-core';
+import type { DatasetRating, StoredRating } from './dataset-rating';
 
 const submitWorkflow = vi.fn();
 const getWorkflow = vi.fn();
@@ -1122,5 +1124,220 @@ describe('the checkpoint a run actually trains', () => {
         status: parseServiceStatus({ blockedModels: [customAir] }),
       })
     ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+  });
+});
+
+// The v2 rating replaces only the mature count: every refusal still applies, and any image it hasn't
+// rated (or can't be trusted on) is counted from its upload rating, exactly as without it. The mature
+// level is private flag state, so these run at every level rather than the deployed one.
+describe('dataset maturity under the v2 rating', () => {
+  const air = (id: string) => `urn:air:other:blob:civitai:blob@${id}`;
+  const items = (...ids: string[]) => ids.map((id) => ({ air: air(id), caption: 'a' }));
+  /** Every image's upload rating; `null` is a failed HEAD. */
+  const uploadRatings = (levels: Record<string, string | null>) => {
+    headBlob.mockReset();
+    headBlob.mockImplementation(async ({ path }: { path: { blobId: string } }) => {
+      const level = levels[path.blobId];
+      return {
+        response:
+          level === null
+            ? new Response(null, { status: 404 })
+            : new Response(null, { status: 204, headers: level ? { 'X-NSFW-Level': level } : {} }),
+      };
+    });
+  };
+  const ratingAt = (
+    matureLevel: number,
+    stored: Record<string, StoredRating>,
+    read?: DatasetRating['read']
+  ): DatasetRating => ({
+    matureLevel,
+    read:
+      read ?? (async (keys) => new Map(keys.flatMap((k) => (stored[k] ? [[k, stored[k]]] : [])))),
+  });
+  const submitWith = (rating: DatasetRating | undefined, run: Partial<TrainingRunInput>) =>
+    submitTrainingBatch(client, [{ ...baseRun(), ...run }], { checkText, datasetRating: rating });
+  const lastBody = () => submitWorkflow.mock.calls.at(-1)![0].body;
+
+  describe.each([1, 2, 3, 4])('mature from level %i', (level) => {
+    it('a clothed dataset the upload rating called mature, rated below the level, trains unconfirmed', async () => {
+      uploadRatings({ 'outfit-1': 'R', 'outfit-2': 'X' });
+      submitWorkflow.mockResolvedValueOnce({ data: { id: `wf-sfw-${level}` } });
+      const rating = ratingAt(level, {
+        'outfit-1': { s: level - 1, r: false },
+        'outfit-2': { s: 0, r: false },
+      });
+      await submitWith(rating, { items: items('outfit-1', 'outfit-2') });
+      expect('allowMatureContent' in lastBody()).toBe(false);
+    });
+
+    it('a nude image rated at the level still needs the confirm', async () => {
+      uploadRatings({ 'nude-1': 'PG' });
+      const calls = submitWorkflow.mock.calls.length;
+      const rating = ratingAt(level, { 'nude-1': { s: level, r: false } });
+      await expect(submitWith(rating, { items: items('nude-1') })).rejects.toMatchObject({
+        matureCount: 1,
+      });
+      expect(submitWorkflow.mock.calls.length).toBe(calls);
+    });
+
+    it('a restricted image is mature whatever its level', async () => {
+      uploadRatings({ 'r-1': 'PG' });
+      const rating = ratingAt(level, { 'r-1': { s: 0, r: true } });
+      await expect(submitWith(rating, { items: items('r-1') })).rejects.toBeInstanceOf(
+        MatureAckRequiredError
+      );
+    });
+
+    it('an unrated image is counted from its upload rating', async () => {
+      uploadRatings({ 'rated-1': 'R', 'unrated-2': 'R' });
+      const rating = ratingAt(level, { 'rated-1': { s: 0, r: false } });
+      await expect(
+        submitWith(rating, { items: items('rated-1', 'unrated-2') })
+      ).rejects.toMatchObject({ matureCount: 1 });
+    });
+  });
+
+  it('a cache that cannot be read counts every image from its upload rating', async () => {
+    uploadRatings({ 'a-1': 'R', 'a-2': 'PG' });
+    const rating = ratingAt(1, {}, async () => {
+      throw new Error('redis down');
+    });
+    await expect(submitWith(rating, { items: items('a-1', 'a-2') })).rejects.toMatchObject({
+      matureCount: 1,
+    });
+  });
+
+  it("never uses a stored rating for a blob this caller's HEAD could not read", async () => {
+    uploadRatings({ 'theirs-1': null });
+    const read = vi.fn(async () => new Map([['theirs-1', { s: 4, r: true }]]));
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-theirs' } });
+    // Counted as the upload path counts a failed HEAD (not mature), not by the shared cache's entry.
+    await submitWith(ratingAt(1, {}, read), { items: items('theirs-1') });
+    expect('allowMatureContent' in lastBody()).toBe(false);
+  });
+
+  it('keep training counts an unstamped source under the v2 rating', async () => {
+    uploadRatings({ 'safe-1': 'PG', 'spicy-2': 'R' });
+    getWorkflow.mockResolvedValueOnce({
+      data: {
+        id: 'wf-src-v2',
+        metadata: {},
+        steps: [
+          {
+            $type: 'training',
+            input: {
+              engine: 'ai-toolkit',
+              ecosystem: 'sdxl',
+              epochs: 10,
+              steps: 2000,
+              trainingData: { type: 'blobs', items: items('safe-1', 'spicy-2') },
+            },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-cont-v2' } });
+    await continueTraining(
+      client,
+      { workflowId: 'wf-src-v2', fromEpoch: 10, addEpochs: 2 },
+      {
+        checkText,
+        datasetRating: ratingAt(2, { 'spicy-2': { s: 1, r: false }, 'safe-1': { s: 0, r: false } }),
+      }
+    );
+    expect('allowMatureContent' in lastBody()).toBe(false);
+    expect(lastBody().metadata.matureCount).toBe(0);
+  });
+
+  // Each refusal, with a dataset the v2 rating calls not mature: the rating must not clear any of them.
+  describe('every refusal still applies to a dataset rated not mature', () => {
+    const sfw = () => {
+      uploadRatings({ 'sfw-1': 'PG' });
+      return ratingAt(1, { 'sfw-1': { s: 0, r: false } });
+    };
+
+    it('the trigger word check', async () => {
+      const calls = submitWorkflow.mock.calls.length;
+      const refuse: TrainingTextCheck = async () => {
+        throw new TrainingTextRefusedError('blocked');
+      };
+      await expect(
+        submitTrainingBatch(client, [{ ...baseRun(), items: items('sfw-1') }], {
+          checkText: refuse,
+          datasetRating: sfw(),
+        })
+      ).rejects.toBeInstanceOf(TrainingTextRefusedError);
+      expect(submitWorkflow.mock.calls.length).toBe(calls);
+    });
+
+    it('training switched off', async () => {
+      const calls = submitWorkflow.mock.calls.length;
+      await expect(
+        submitTrainingBatch(client, [{ ...baseRun(), items: items('sfw-1') }], {
+          checkText,
+          datasetRating: sfw(),
+          status: parseServiceStatus({ available: false, message: 'Training is paused.' }),
+        })
+      ).rejects.toThrow(/Training is paused/);
+      expect(submitWorkflow.mock.calls.length).toBe(calls);
+    });
+
+    it('a custom base that is not SafeTensor', async () => {
+      const calls = submitWorkflow.mock.calls.length;
+      getResource.mockResolvedValueOnce({ data: { fileFormat: 'PickleTensor' } });
+      await expect(
+        submitTrainingBatch(
+          client,
+          [
+            {
+              ...baseRun(),
+              items: items('sfw-1'),
+              customModel: 'urn:air:sdxl:checkpoint:civitai:1@2',
+            },
+          ],
+          { checkText, datasetRating: sfw() }
+        )
+      ).rejects.toBeInstanceOf(TrainingBatchValidationError);
+      expect(submitWorkflow.mock.calls.length).toBe(calls);
+    });
+
+    it('keep training checks the trigger word again', async () => {
+      uploadRatings({ 'sfw-1': 'PG' });
+      getWorkflow.mockResolvedValueOnce({
+        data: {
+          id: 'wf-src-tw',
+          metadata: {},
+          steps: [
+            {
+              $type: 'training',
+              input: {
+                engine: 'ai-toolkit',
+                ecosystem: 'sdxl',
+                epochs: 10,
+                steps: 2000,
+                trainingData: { type: 'blobs', items: items('sfw-1') },
+              },
+              output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+            },
+          ],
+        },
+      });
+      const calls = submitWorkflow.mock.calls.length;
+      await expect(
+        continueTraining(
+          client,
+          { workflowId: 'wf-src-tw', fromEpoch: 10, addEpochs: 1 },
+          {
+            checkText: async () => {
+              throw new TrainingTextRefusedError('blocked');
+            },
+            datasetRating: ratingAt(1, { 'sfw-1': { s: 0, r: false } }),
+          }
+        )
+      ).rejects.toBeInstanceOf(TrainingTextRefusedError);
+      expect(submitWorkflow.mock.calls.length).toBe(calls);
+    });
   });
 });
