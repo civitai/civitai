@@ -416,6 +416,8 @@ export const userSettingsSchema = z.object({
   hideBlueBuzzInHeader: z.boolean().optional(),
   fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
+  // Opt-out: creators can't feature my images in their model version showcases.
+  hideFromVersionShowcases: z.boolean().optional(),
   // Opt-out: leave me out of every "who reacted" / "who collected" list shown to someone else (image and
   // comment reactions, Creator Studio). Counts still include me. Filtered in SQL via HIDE_FROM_REACTION_LISTS_KEY.
   hideFromReactionLists: z.boolean().optional(),
@@ -519,6 +521,7 @@ export const setUserSettingsInput = z.object({
   hideBlueBuzzInHeader: z.boolean().optional(),
   fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
+  hideFromVersionShowcases: z.boolean().optional(),
   hideFromReactionLists: z.boolean().optional(),
   showPreLaunchReactions: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
