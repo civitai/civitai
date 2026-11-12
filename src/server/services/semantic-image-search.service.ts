@@ -188,15 +188,24 @@ export async function searchSemanticImages({
     : { text: input.query ?? '' };
 
   let correctedQuery: string | undefined;
-  let correctedReviewed: boolean | undefined;
+  // Every correction is audited, not only the first: rounds of one page can come from cached blocks
+  // of different ages.
+  const corrections = new Map<string, Promise<boolean>>();
+  let refused = false;
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await timed('candidates', cachedSource({ query, filter, offset, limit }));
       // The service embeds its spelling correction, not the text audited above.
-      if (correctedReviewed === undefined && result.correctedQuery !== undefined)
-        correctedReviewed =
-          result.correctedQuery === input.query || !(await refusalOf(result.correctedQuery));
-      if (correctedReviewed === false) return [];
+      const corrected = result.correctedQuery;
+      if (corrected !== undefined && corrected !== input.query) {
+        if (!corrections.has(corrected))
+          corrections.set(
+            corrected,
+            refusalOf(corrected).then((refusal) => !!refusal)
+          );
+        if (await corrections.get(corrected)) refused = true;
+      }
+      if (refused) return [];
       correctedQuery ??= result.correctedQuery;
       return result.ids;
     },
@@ -205,6 +214,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (correctedReviewed === false) return emptyPage();
+  if (refused) return emptyPage();
   return { ...page, correctedQuery };
 }

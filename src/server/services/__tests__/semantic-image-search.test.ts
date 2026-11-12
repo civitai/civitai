@@ -656,6 +656,23 @@ describe('the query audit and the browsing level', () => {
     );
   });
 
+  it('audits a correction that changes between hydration rounds of one page', async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? 'minor' : false
+    );
+    h.fakeGetAllImages = visibleOnly(new Set([1, 150]));
+    const source: CandidateSource = async ({ offset, limit }) => ({
+      ids: Array.from({ length: limit }, (_, i) => offset + i + 1),
+      correctedQuery: offset < 100 ? 'fine' : 'corrected',
+    });
+    const result = await searchSemanticImages({
+      input: textQuery({ limit: 50 }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(result.items).toEqual([]);
+  });
+
   it('refuses a cached later page whose correction fails the audit, without asking the service again', async () => {
     h.includesInappropriate.mockImplementation(({ prompt }) =>
       prompt === 'corrected' ? 'minor' : false
