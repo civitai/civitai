@@ -173,6 +173,12 @@ describe('throwOnBlockedUserContent', () => {
      * recording mode exists — so this is an assertion about the DECISION the log feeds, not
      * about tidiness.
      */
+    it('records one hit per value, not one per scanned form', async () => {
+      setLists({ patterns: [PHISH] });
+      await throwOnBlockedUserContent(`<p>${PHISH}</p><p>${PHISH}</p>`);
+      expect(patternLogs()).toHaveLength(1);
+    });
+
     // A whitespace-only entry is as dangerous as an empty one: ' ' is in nearly every sentence.
     it('ignores a whitespace-only entry', async () => {
       setLists({ patterns: [' ', PHISH] });
@@ -182,12 +188,6 @@ describe('throwOnBlockedUserContent', () => {
 
       await throwOnBlockedUserContent(`<p>${PHISH}</p>`);
       expect(patternLogs()[0][0].details).toMatchObject({ patternId: 1 });
-    });
-
-    it('records one hit per value, not one per scanned form', async () => {
-      setLists({ patterns: [PHISH] });
-      await throwOnBlockedUserContent(`<p>${PHISH}</p><p>${PHISH}</p>`);
-      expect(patternLogs()).toHaveLength(1);
     });
   });
 

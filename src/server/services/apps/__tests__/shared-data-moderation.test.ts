@@ -187,6 +187,15 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
     expect(mockFindBlocked.mock.calls[0][0]).toEqual(['first leaf', 'second leaf']);
   });
 
+  // With no Blocklist row there is no id to name; the reference still never falls back to the entry.
+  it('marks a pattern hit with no list row as an unknown list', async () => {
+    mockFindBlocked.mockResolvedValue([
+      { kind: 'pattern', index: 0, matched: 'scam phrase', patternId: 2, listId: null },
+    ]);
+    const [hit] = await classifySharedTexts([leaf('zero')]);
+    expect(hit).toMatchObject({ matched: 'blocklist:?#2', label: 'blocklist:?#2' });
+  });
+
   it('maps blocklist hits back to their leaf by index', async () => {
     mockFindBlocked.mockResolvedValue([
       { kind: 'link', index: 1, matched: ['bad.example', 'worse.example'] },
