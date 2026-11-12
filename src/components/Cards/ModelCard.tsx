@@ -236,6 +236,12 @@ function ModelCardContent({ data, linkVersionId }: Props) {
       : undefined) ??
     data.images[0];
 
+  // A cover the creator featured from someone else's post is credited to its author.
+  const coverCredit =
+    image && 'authorUsername' in image && typeof image.authorUsername === 'string'
+      ? image.authorUsername
+      : null;
+
   return (
     <AspectRatioImageCard
       impression={{ entityType: 'Model', entityId: data.id }}
@@ -349,6 +355,11 @@ function ModelCardContent({ data, linkVersionId }: Props) {
           <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={3} lh={1.2}>
             {modelName}
           </Text>
+          {coverCredit && (
+            <Text className={cardClasses.dropShadow} size="xs" c="white" lineClamp={1}>
+              Cover image by {coverCredit}
+            </Text>
+          )}
           {data.rank && <ModelCardStats data={data} />}
         </div>
       }
