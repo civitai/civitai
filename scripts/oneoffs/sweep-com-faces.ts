@@ -6,10 +6,11 @@
  *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts [--out <file>] [--concurrency 4] [--delay-ms 250]
  *     Dry run. Writes nothing to the database. Writes the run file to --out (default: a new file in
  *     the OS temp dir) and prints counts, up to 10 sample ids, the file's path and its sha256.
- *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --apply --ids-file <file> --expect <n> [--log <file>]
+ *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --apply --ids-file <file> --sha256 <hex> --expect <n> [--log <file>]
  *     Takes off exactly the models the dry run flagged, without checking again; refused unless the
- *     file lists exactly n. A model whose .com cover changed since the dry run is left alone. Writes
- *     the run log (the input to restore-com-faces.ts) and one batch-level ModActivity row.
+ *     file has the sha256 the dry run printed and lists exactly n. A model whose .com cover or
+ *     listing changed since the dry run is left alone. Writes the run log (the input to
+ *     restore-com-faces.ts) as it goes, and one batch-level ModActivity row at the end.
  *
  * The run file holds the check's reasons and the run log holds model ids: both stay private. Never
  * commit or paste either.
@@ -31,7 +32,14 @@ export type Face = {
   description: string | null;
   sfwCoverImageId: number;
 };
-export type Detected = { id: number; sfwCoverImageId: number; reason?: string };
+export type Listing = { name: string; description: string | null; triggerWords: string[] };
+export type Detected = {
+  id: number;
+  sfwCoverImageId: number;
+  /** The listing the verdict was on; apply leaves a model whose listing changed since. */
+  listingHash: string;
+  reason?: string;
+};
 export type RunFile = {
   kind: 'com-face-sweep-dry-run';
   createdAt: string;
@@ -45,6 +53,7 @@ export type RunLog = {
   startedAt: string;
   finishedAt: string;
   removed: { id: number; sfwCoverImageId: number }[];
+  /** The cover or the listing changed since the dry run. */
   skipped: number[];
   /** Threw part-way: the cover may or may not be off. restore-com-faces.ts takes these too. */
   failed: { id: number; sfwCoverImageId: number }[];
@@ -52,8 +61,13 @@ export type RunLog = {
 
 export type Deps = {
   faces: (after: number, take: number) => Promise<Face[]>;
-  check: (face: Face) => Promise<ComFaceIntentVerdict>;
+  listing: (face: Face) => Promise<Listing>;
+  check: (listing: Listing) => Promise<ComFaceIntentVerdict>;
+  /** The model's listing now, read from the primary; null when it is gone. */
+  currentListing: (modelId: number) => Promise<Listing | null>;
   remove: (model: Detected) => Promise<boolean>;
+  /** Writes the run log; called before the first removal and after every batch. */
+  save: (log: RunLog) => void;
   logRun: (row: { activity: string; entityType: string; entityId: number }) => Promise<void>;
   sleep: (ms: number) => Promise<void>;
 };
@@ -64,6 +78,26 @@ export const runEntityType = (runId: string, runFileSha256: string) =>
   `comFaceSweep:${runId}:${runFileSha256.slice(0, 16)}`;
 
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
+export const listingHash = ({ name, description, triggerWords }: Listing) =>
+  sha256(JSON.stringify([name, description ?? '', [...triggerWords].sort()]));
+
+/** Parses a private run file without letting its text reach an error message. */
+export function parseRunFile<T>(text: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error('the file is not valid JSON');
+  }
+}
+
+export function readPace(raw: { concurrency?: string; delayMs?: string }): Pace {
+  const concurrency = Number(raw.concurrency ?? 4);
+  const delayMs = Number(raw.delayMs ?? 250);
+  if (!Number.isInteger(concurrency) || concurrency < 1 || !(delayMs >= 0))
+    throw new Error('--concurrency must be a whole number from 1, --delay-ms 0 or more');
+  return { concurrency, delayMs };
+}
 
 async function paced<T>(
   items: T[],
@@ -92,13 +126,18 @@ export async function scan(deps: Deps, pace: Pace) {
     after = faces[faces.length - 1].id;
     await paced(faces, pace, deps, async (face) => {
       // No verdict is never a removal: a later run can pick these up.
-      const verdict = await deps.check(face).catch(() => ({ status: 'unavailable' as const }));
+      const read = await deps
+        .listing(face)
+        .then(async (listing) => ({ listing, verdict: await deps.check(listing) }))
+        .catch(() => ({ listing: null, verdict: { status: 'unavailable' as const } }));
+      const { verdict } = read;
       counts.faces++;
       counts[verdict.status]++;
       if (verdict.status === 'detected')
         file.detected.push({
           id: face.id,
           sfwCoverImageId: face.sfwCoverImageId,
+          listingHash: listingHash(read.listing as Listing),
           reason: verdict.reason,
         });
       else if (verdict.status === 'unavailable') file.unavailable.push(face.id);
@@ -113,9 +152,16 @@ export async function scan(deps: Deps, pace: Pace) {
 export async function apply(
   deps: Deps,
   fileText: string,
-  { expect, ...pace }: Pace & { expect: number }
+  {
+    expect,
+    fileSha256,
+    runId,
+    ...pace
+  }: Pace & { expect: number; fileSha256: string; runId: string }
 ): Promise<RunLog> {
-  const file = JSON.parse(fileText) as RunFile;
+  if (sha256(fileText) !== fileSha256)
+    throw new Error('the file is not the one whose sha256 was given; nothing written');
+  const file = parseRunFile<RunFile>(fileText);
   if (file.kind !== 'com-face-sweep-dry-run')
     throw new Error('not a dry-run file from this script');
   if (file.detected.length !== expect)
@@ -125,7 +171,7 @@ export async function apply(
 
   const log: RunLog = {
     kind: 'com-face-sweep-apply',
-    runId: randomUUID(),
+    runId,
     runFileSha256: sha256(fileText),
     startedAt: new Date().toISOString(),
     finishedAt: '',
@@ -133,16 +179,21 @@ export async function apply(
     skipped: [],
     failed: [],
   };
+  deps.save(log);
   await paced(file.detected, pace, deps, async (model) => {
     try {
-      if (await deps.remove(model))
+      const now = await deps.currentListing(model.id);
+      if (!now || listingHash(now) !== model.listingHash) log.skipped.push(model.id);
+      else if (await deps.remove(model))
         log.removed.push({ id: model.id, sfwCoverImageId: model.sfwCoverImageId });
       else log.skipped.push(model.id);
     } catch {
       log.failed.push({ id: model.id, sfwCoverImageId: model.sfwCoverImageId });
     }
+    deps.save(log);
   });
   log.finishedAt = new Date().toISOString();
+  deps.save(log);
   await deps.logRun({
     activity: 'comFaceSweep',
     entityType: runEntityType(log.runId, log.runFileSha256),
@@ -158,12 +209,15 @@ function arg(name: string) {
 
 async function main() {
   const { dbRead, dbWrite } = await import('~/server/db/client');
-  const { finishRemoval, removeComFace } = await import(
+  const { finishRemoval, queueComFaceRecheck, removeComFace } = await import(
     '~/server/services/model-com-face-recheck.service'
   );
   const { checkComFaceIntentVerdict, getOwnTriggerWords } = await import(
     '~/server/services/model-sfw-face.service'
   );
+  const apply_ = process.argv.includes('--apply');
+  const runId = randomUUID();
+  const logPath = arg('--log') ?? path.join(os.tmpdir(), `${SCRIPT_BASENAME}-apply-${runId}.json`);
   const deps: Deps = {
     faces: (after, take) =>
       dbRead.model.findMany({
@@ -178,33 +232,42 @@ async function main() {
         orderBy: { id: 'asc' },
         take,
       }) as Promise<Face[]>,
-    check: async (face) =>
-      checkComFaceIntentVerdict({
-        name: face.name,
-        description: face.description,
-        triggerWords: await getOwnTriggerWords({ modelId: face.id, userId: face.userId }),
-      }),
+    listing: async (face) => ({
+      name: face.name,
+      description: face.description,
+      triggerWords: await getOwnTriggerWords({ modelId: face.id, userId: face.userId }),
+    }),
+    check: (listing) => checkComFaceIntentVerdict(listing),
+    currentListing: async (modelId) => {
+      const model = await dbWrite.model.findUnique({
+        where: { id: modelId },
+        select: { userId: true, name: true, description: true },
+      });
+      if (!model) return null;
+      const triggerWords = await getOwnTriggerWords({ modelId, userId: model.userId, db: dbWrite });
+      return { name: model.name, description: model.description, triggerWords };
+    },
     remove: async (model) => {
       try {
         return await removeComFace(model.id, model.sfwCoverImageId, 'detected', model.reason);
       } catch (error) {
         // The cover may be off with the level not yet recomputed, which leaves the model on .com.
-        // Recomputing is idempotent and harmless when the write never landed.
+        // Recomputing is idempotent and harmless when the write never landed; the queued re-check
+        // finishes it again if this try fails too.
         await finishRemoval(model.id).catch(() => undefined);
+        await queueComFaceRecheck(model.id);
         throw error;
       }
     },
+    save: (log) => writeFileSync(logPath, JSON.stringify(log), { mode: 0o600 }),
     logRun: async (data) => {
       await dbWrite.modActivity.create({ data });
     },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
-  const pace = {
-    concurrency: Number(arg('--concurrency') ?? 4),
-    delayMs: Number(arg('--delay-ms') ?? 250),
-  };
+  const pace = readPace({ concurrency: arg('--concurrency'), delayMs: arg('--delay-ms') });
 
-  if (!process.argv.includes('--apply')) {
+  if (!apply_) {
     const { counts, file } = await scan(deps, pace);
     const out = arg('--out') ?? path.join(os.tmpdir(), `${SCRIPT_BASENAME}-${Date.now()}.json`);
     const text = JSON.stringify(file);
@@ -220,23 +283,27 @@ async function main() {
   }
 
   const idsFile = arg('--ids-file');
+  const fileSha256 = arg('--sha256');
   const expect = Number(arg('--expect'));
-  if (!idsFile || !Number.isInteger(expect))
-    throw new Error('--apply needs --ids-file and --expect');
-  const log = await apply(deps, readFileSync(idsFile, 'utf8'), { expect, ...pace });
-  const out = arg('--log') ?? path.join(os.tmpdir(), `${SCRIPT_BASENAME}-apply-${log.runId}.json`);
-  writeFileSync(out, JSON.stringify(log), { mode: 0o600 });
+  if (!idsFile || !fileSha256 || !Number.isInteger(expect))
+    throw new Error('--apply needs --ids-file, --sha256 and --expect');
+  const log = await apply(deps, readFileSync(idsFile, 'utf8'), {
+    expect,
+    fileSha256,
+    runId,
+    ...pace,
+  });
   console.log({
     mode: 'apply',
-    runId: log.runId,
+    runId,
     removed: log.removed.length,
     skipped: log.skipped.length,
     failed: log.failed.length,
-    log: out,
+    log: logPath,
   });
 }
 
-if (process.argv[1]?.includes(SCRIPT_BASENAME))
+if (path.basename(process.argv[1] ?? '').startsWith(`${SCRIPT_BASENAME}.`))
   main()
     .then(() => process.exit(0))
     .catch((e) => {

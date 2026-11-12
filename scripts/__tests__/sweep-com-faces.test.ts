@@ -8,7 +8,10 @@ import { restore, SCRIPT_BASENAME as RESTORE } from '../oneoffs/restore-com-face
 import {
   apply,
   type Deps,
+  type Detected,
   type Face,
+  type Listing,
+  listingHash,
   type RunLog,
   runEntityType,
   scan,
@@ -29,26 +32,36 @@ const face = (id: number): Face => ({
   description: null,
   sfwCoverImageId: id * 10,
 });
+const listingOf = (id: number): Listing => ({
+  name: `m${id}`,
+  description: null,
+  triggerWords: ['t'],
+});
 const pace = { concurrency: 2, delayMs: 0 };
 
 function deps(verdicts: Record<number, 'allowed' | 'detected' | 'unavailable' | 'throws'>) {
   const ids = Object.keys(verdicts).map(Number);
+  const saved: RunLog[] = [];
   return {
+    saved,
     faces: vi.fn(async (after: number, take: number) =>
       ids
         .filter((id) => id > after)
         .slice(0, take)
         .map(face)
     ),
-    check: vi.fn(async (f: Face) => {
-      const v = verdicts[f.id];
+    listing: vi.fn(async (f: Face) => listingOf(f.id)),
+    check: vi.fn(async (l: Listing) => {
+      const v = verdicts[Number(l.name.slice(1))];
       if (v === 'throws') throw new Error('down');
       return v === 'detected' ? { status: v, reason: 'r' } : { status: v };
     }),
-    remove: vi.fn(async () => true),
+    currentListing: vi.fn(async (id: number) => listingOf(id)),
+    remove: vi.fn<(model: Detected) => Promise<boolean>>(async () => true),
+    save: vi.fn((log: RunLog) => void saved.push(structuredClone(log))),
     logRun: vi.fn(async () => undefined),
     sleep: vi.fn(async () => undefined),
-  } satisfies Deps;
+  } satisfies Deps & { saved: RunLog[] };
 }
 
 describe('dry run', () => {
@@ -58,11 +71,12 @@ describe('dry run', () => {
 
     expect(counts).toEqual({ faces: 5, allowed: 1, detected: 2, unavailable: 2 });
     expect(file.detected).toEqual([
-      { id: 2, sfwCoverImageId: 20, reason: 'r' },
-      { id: 5, sfwCoverImageId: 50, reason: 'r' },
+      { id: 2, sfwCoverImageId: 20, listingHash: listingHash(listingOf(2)), reason: 'r' },
+      { id: 5, sfwCoverImageId: 50, listingHash: listingHash(listingOf(5)), reason: 'r' },
     ]);
     expect(file.unavailable).toEqual([3, 4]);
     expect(d.remove).not.toHaveBeenCalled();
+    expect(d.save).not.toHaveBeenCalled();
     expect(d.logRun).not.toHaveBeenCalled();
   });
 });
@@ -71,19 +85,31 @@ describe('apply', () => {
   const fileText = JSON.stringify({
     kind: 'com-face-sweep-dry-run',
     createdAt: '2026-11-12T00:00:00.000Z',
-    detected: [
-      { id: 2, sfwCoverImageId: 20, reason: 'r' },
-      { id: 5, sfwCoverImageId: 50 },
-      { id: 7, sfwCoverImageId: 70 },
-    ],
+    detected: [2, 5, 7, 9].map((id) => ({
+      id,
+      sfwCoverImageId: id * 10,
+      listingHash: listingHash(listingOf(id)),
+    })),
     unavailable: [],
   });
+  const opts = { ...pace, expect: 4, fileSha256: sha256(fileText), runId: 'run-1' };
 
-  it('refuses a file whose count is not --expect, before any write', async () => {
+  it.each([
+    ['a count that is not --expect', { expect: 3 }, 'lists 4'],
+    ['another file than the dry run printed', { fileSha256: sha256('x') }, 'sha256'],
+  ])('refuses %s, before any write', async (_, over, message) => {
     const d = deps({});
-    await expect(apply(d, fileText, { ...pace, expect: 2 })).rejects.toThrow('lists 3');
+    await expect(apply(d, fileText, { ...opts, ...over })).rejects.toThrow(message);
     expect(d.remove).not.toHaveBeenCalled();
+    expect(d.save).not.toHaveBeenCalled();
     expect(d.logRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps a bad file's text out of the error", async () => {
+    const text = '{"detected":[{"reason":"secret';
+    await expect(apply(deps({}), text, { ...opts, fileSha256: sha256(text) })).rejects.toThrow(
+      /^the file is not valid JSON$/
+    );
   });
 
   it('removes exactly the file, without checking again, and logs one batch row', async () => {
@@ -92,20 +118,28 @@ describe('apply', () => {
       if (m.id === 7) throw new Error('db');
       return m.id === 2;
     });
-    const log = await apply(d, fileText, { ...pace, expect: 3 });
+    // 9: its listing changed since the dry run.
+    d.currentListing.mockImplementation(async (id) =>
+      id === 9 ? { ...listingOf(9), description: 'edited' } : listingOf(id)
+    );
+    const log = await apply(d, fileText, opts);
 
     expect(d.check).not.toHaveBeenCalled();
     expect(d.remove.mock.calls.map(([m]) => m.id).sort()).toEqual([2, 5, 7]);
     expect(log).toMatchObject({
+      runId: 'run-1',
       removed: [{ id: 2, sfwCoverImageId: 20 }],
-      skipped: [5],
+      skipped: [5, 9],
       failed: [{ id: 7, sfwCoverImageId: 70 }],
       runFileSha256: sha256(fileText),
     });
+    // On disk before the first removal, so an interrupted run still leaves its undo input.
+    expect(d.saved[0]).toMatchObject({ removed: [], skipped: [], failed: [] });
+    expect(d.saved.at(-1)).toEqual(log);
     expect(d.logRun).toHaveBeenCalledTimes(1);
     expect(d.logRun).toHaveBeenCalledWith({
       activity: 'comFaceSweep',
-      entityType: runEntityType(log.runId, sha256(fileText)),
+      entityType: runEntityType('run-1', sha256(fileText)),
       entityId: 1,
     });
   });
@@ -174,40 +208,45 @@ describe('undo', () => {
     write ? raw().executeRaw(q) : (await raw().queryRaw(q)).length;
 
   it('dry run counts and writes nothing', async () => {
-    const d = { run: run(false), finish: vi.fn(), logRun: vi.fn() };
+    const d = { run: run(false), finish: vi.fn(), recheck: vi.fn(), logRun: vi.fn() };
     const before = (await pg.query(`SELECT * FROM "Model" ORDER BY id`)).rows;
     const result = await restore(d, JSON.stringify(log), { write: false });
 
     expect(result).toMatchObject({ restored: [1, 5], skipped: [2, 3, 4, 6, 7, 8] });
     expect((await pg.query(`SELECT * FROM "Model" ORDER BY id`)).rows).toEqual(before);
     expect(d.finish).not.toHaveBeenCalled();
+    expect(d.recheck).not.toHaveBeenCalled();
     expect(d.logRun).not.toHaveBeenCalled();
   });
 
-  it('puts back only covers nothing has moved, then recomputes and logs one batch row', async () => {
+  it('puts back only covers nothing has moved, re-checks them, and logs one batch row', async () => {
     const d = {
       run: run(true),
-      finish: vi.fn(async () => undefined),
+      // 5: the recompute fails; the run carries on and counts it apart.
+      finish: vi.fn(async (id: number) => {
+        if (id === 5) throw new Error('search down');
+      }),
+      recheck: vi.fn<(id: number) => Promise<void>>(async () => undefined),
       logRun: vi.fn(async () => undefined),
     };
     const result = await restore(d, JSON.stringify(log), { write: true });
 
-    expect(result).toMatchObject({ restored: [1, 5], skipped: [2, 3, 4, 6, 7, 8] });
+    expect(result).toMatchObject({ restored: [1], skipped: [2, 3, 4, 6, 7, 8], failed: [5] });
+    expect(d.recheck.mock.calls.map(([id]) => id)).toEqual([1, 5]);
     expect(await cover(1)).toEqual({ sfwCoverImageId: 10, meta: { keep: 1 } });
     expect((await cover(2)).sfwCoverImageId).toBe(11);
     expect((await cover(3)).sfwCoverImageId).toBeNull();
     expect((await cover(4)).sfwCoverImageId).toBeNull();
-    expect(d.finish.mock.calls.map(([id]) => id)).toEqual([1, 5]);
     expect(d.logRun).toHaveBeenCalledTimes(1);
     expect(d.logRun).toHaveBeenCalledWith({
       activity: 'comFaceSweepUndo',
       entityType: runEntityType('run-1', 'a'.repeat(64)),
-      entityId: 2,
+      entityId: 1,
     });
   });
 
   it('limits to --ids and refuses an id the run never touched', async () => {
-    const d = { run: run(false), finish: vi.fn(), logRun: vi.fn() };
+    const d = { run: run(false), finish: vi.fn(), recheck: vi.fn(), logRun: vi.fn() };
     expect(await restore(d, JSON.stringify(log), { ids: [1], write: false })).toMatchObject({
       restored: [1],
       skipped: [],

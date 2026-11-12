@@ -2,7 +2,8 @@
  * One-off: undoes a sweep-com-faces.ts run. Puts back the .com cover the run took off, only while
  * nothing has moved since: the cover is still empty, the removal marker is the one that run wrote
  * (reason `detected`, the same cover, stamped inside the run), and the image still exists. The
- * level is then recomputed, which re-checks that the cover is still a valid .com cover.
+ * level is then recomputed, which re-checks that the cover is still a valid .com cover, and the
+ * listing re-check is queued, which takes the face off again if today's listing fails it.
  *
  * Usage (repo root, with the app's env):
  *   pnpm run tsscript scripts/oneoffs/restore-com-faces.ts --log <apply run log> [--ids 1,2,3]
@@ -16,7 +17,7 @@ import { Prisma } from '@prisma/client';
 import { readFileSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
-import { runEntityType, type RunLog } from './sweep-com-faces';
+import { parseRunFile, runEntityType, type RunLog } from './sweep-com-faces';
 
 export const SCRIPT_BASENAME = 'restore-com-faces';
 
@@ -45,6 +46,9 @@ export type Deps = {
   /** $executeRaw for the write; for the dry run, a query that returns the matched row count. */
   run: Sql;
   finish: (modelId: number) => Promise<void>;
+  /** Queues the listing re-check, which takes the face off again if today's listing fails. Never
+   *  throws. */
+  recheck: (modelId: number) => Promise<void>;
   logRun: (row: { activity: string; entityType: string; entityId: number }) => Promise<void>;
 };
 
@@ -53,7 +57,7 @@ export async function restore(
   logText: string,
   { ids, write }: { ids?: number[]; write: boolean }
 ) {
-  const log = JSON.parse(logText) as RunLog;
+  const log = parseRunFile<RunLog>(logText);
   if (log.kind !== 'com-face-sweep-apply') throw new Error('not a run log from sweep-com-faces.ts');
   let targets = [...log.removed, ...log.failed];
   if (ids) {
@@ -63,14 +67,32 @@ export async function restore(
   }
   const restored: number[] = [];
   const skipped: number[] = [];
+  /** The restore or its level recompute threw; the cover may be back while the model stays off .com. */
+  const failed: number[] = [];
   for (const target of targets) {
-    const touched = await deps.run(restoreSql(log, target, write));
+    let touched: number;
+    try {
+      touched = await deps.run(restoreSql(log, target, write));
+    } catch {
+      failed.push(target.id);
+      continue;
+    }
     if (!touched) {
       skipped.push(target.id);
       continue;
     }
-    restored.push(target.id);
-    if (write) await deps.finish(target.id);
+    if (!write) {
+      restored.push(target.id);
+      continue;
+    }
+    // The restore matched the run's marker, not today's listing: re-check it either way.
+    await deps.recheck(target.id);
+    try {
+      await deps.finish(target.id);
+      restored.push(target.id);
+    } catch {
+      failed.push(target.id);
+    }
   }
   if (write)
     await deps.logRun({
@@ -78,7 +100,7 @@ export async function restore(
       entityType: runEntityType(log.runId, log.runFileSha256),
       entityId: restored.length,
     });
-  return { runId: log.runId, restored, skipped };
+  return { runId: log.runId, restored, skipped, failed };
 }
 
 function arg(name: string) {
@@ -91,12 +113,17 @@ async function main() {
   if (!logPath) throw new Error('--log <apply run log> is required');
   const write = process.argv.includes('--apply');
   const ids = arg('--ids')?.split(',').map(Number);
+  if (ids?.some((id) => !Number.isInteger(id)))
+    throw new Error('--ids takes model ids, comma-separated');
   const { dbWrite } = await import('~/server/db/client');
-  const { finishRemoval } = await import('~/server/services/model-com-face-recheck.service');
+  const { finishRemoval, queueComFaceRecheck } = await import(
+    '~/server/services/model-com-face-recheck.service'
+  );
   const deps: Deps = {
     run: async (query) =>
       write ? dbWrite.$executeRaw(query) : (await dbWrite.$queryRaw<unknown[]>(query)).length,
     finish: finishRemoval,
+    recheck: queueComFaceRecheck,
     logRun: async (data) => {
       await dbWrite.modActivity.create({ data });
     },
@@ -111,6 +138,7 @@ async function main() {
       mode: 'apply',
       restored: result.restored.length,
       skipped: result.skipped.length,
+      failed: result.failed.length,
       log: out,
     });
   } else {
@@ -122,7 +150,7 @@ async function main() {
   }
 }
 
-if (process.argv[1]?.includes(SCRIPT_BASENAME))
+if (path.basename(process.argv[1] ?? '').startsWith(`${SCRIPT_BASENAME}.`))
   main()
     .then(() => process.exit(0))
     .catch((e) => {
