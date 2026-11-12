@@ -3285,6 +3285,8 @@ export type Feedback = {
    */
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  appSourceCommit: string | null;
+  appSourceDirty: boolean | null;
   /**
    * Owner (developer) status, SEPARATE from the moderator `status` / `triageNote` / `handledBy`
    * columns above so an owner can never move moderator triage. NULL = new to the developer; otherwise

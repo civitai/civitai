@@ -154,7 +154,7 @@ const ACCESS: Record<string, AccessRow> = {
 type StatusRow = {
   status: string;
   name: string;
-  appBlock: { version: string; currentVersionSha: string | null } | null;
+  appBlock: { id: string; version: string; currentVersionSha: string | null } | null;
 };
 let STATUS: Record<string, StatusRow>;
 let SLUGS: Record<string, { id: string; revisionOfId: string | null }>;
@@ -166,13 +166,13 @@ function freshFixtures() {
     [PARENT]: {
       status: 'approved',
       name: 'Cool App',
-      appBlock: { version: '1.4.2', currentVersionSha: 'sha-parent-91c' },
+      appBlock: { id: 'blk_parent', version: '1.4.2', currentVersionSha: 'sha-parent-91c' },
     },
     [SHADOW]: { status: 'draft', name: 'Cool App (draft)', appBlock: null },
     [OFFSITE]: {
       status: 'approved',
       name: 'Far Away',
-      appBlock: { version: '9.9.9', currentVersionSha: 'sha-offsite-zz' },
+      appBlock: { id: 'blk_offsite', version: '9.9.9', currentVersionSha: 'sha-offsite-zz' },
     },
   };
   SLUGS = {
@@ -250,6 +250,7 @@ describe('resolveAppFeedbackTarget', () => {
         appName: 'Cool App',
         appBlockVersion: '1.4.2',
         appBlockSha: 'sha-parent-91c',
+        appBlockId: 'blk_parent',
       },
     });
   });
@@ -304,6 +305,7 @@ describe('resolveAppFeedbackTarget', () => {
         appName: 'Cool App',
         appBlockVersion: '1.4.2',
         appBlockSha: 'sha-parent-91c',
+        appBlockId: 'blk_parent',
       },
     });
   });
@@ -337,6 +339,7 @@ describe('resolveAppFeedbackTarget', () => {
     appName: 'Cool App',
     appBlockVersion: '1.4.2',
     appBlockSha: 'sha-parent-91c',
+    appBlockId: 'blk_parent',
   };
 
   it('admits the canonical owner (page and slot surfaces)', async () => {
@@ -392,6 +395,7 @@ describe('resolveAppFeedbackTarget', () => {
           appName: 'Cool App',
           appBlockVersion: '1.4.2',
           appBlockSha: 'sha-parent-91c',
+          appBlockId: 'blk_parent',
         },
       });
     }
@@ -438,6 +442,7 @@ describe('resolveAppFeedbackTarget', () => {
       appName: 'Far Away',
       appBlockVersion: null,
       appBlockSha: null,
+      appBlockId: null,
     };
     for (const id of [REPORTER, OFFSITE_OWNER])
       expect(await resolveAppFeedbackTarget(user(id), { slug: 'far-away' })).toEqual({
@@ -482,6 +487,8 @@ describe('createAppFeedback', () => {
         appListingId: PARENT,
         appBlockVersion: '1.4.2',
         appBlockSha: 'sha-parent-91c',
+        appSourceCommit: null,
+        appSourceDirty: null,
       },
       select: { id: true },
     });
@@ -494,6 +501,61 @@ describe('createAppFeedback', () => {
     });
     expect(dbMock.dbWrite.feedback.create.mock.calls[0][0].data.context).toEqual({
       surface: 'slot',
+    });
+  });
+
+  describe("the developer's source commit", () => {
+    // Distinct from the platform sha the fixture serves, so a stamp of the wrong one shows.
+    const LIVE_COMMIT = '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901';
+    const data = () => dbMock.dbWrite.feedback.create.mock.calls[0][0].data;
+
+    it('stamps the commit of the approved request that built the serving sha', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        sourceCommit: LIVE_COMMIT,
+        sourceDirty: true,
+      });
+      await createAppFeedback({ user: user(REPORTER), input });
+      expect(dbMock.dbRead.appBlockPublishRequest.findFirst).toHaveBeenCalledWith({
+        where: {
+          appBlockId: 'blk_parent',
+          status: 'approved',
+          forgejoCommitSha: 'sha-parent-91c',
+        },
+        orderBy: { reviewedAt: 'desc' },
+        select: { sourceCommit: true, sourceDirty: true },
+      });
+      expect(data()).toMatchObject({
+        appBlockSha: 'sha-parent-91c',
+        appSourceCommit: LIVE_COMMIT,
+        appSourceDirty: true,
+      });
+    });
+
+    it('keeps an unknown dirty flag NULL rather than calling it clean', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        sourceCommit: LIVE_COMMIT,
+        sourceDirty: null,
+      });
+      await createAppFeedback({ user: user(REPORTER), input });
+      expect(data()).toMatchObject({ appSourceCommit: LIVE_COMMIT, appSourceDirty: null });
+    });
+
+    it('records unknown when no approved request carries the serving sha', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+      await createAppFeedback({ user: user(REPORTER), input });
+      expect(data()).toMatchObject({ appSourceCommit: null, appSourceDirty: null });
+    });
+
+    it('looks nothing up for an off-site app or a block that has no serving sha', async () => {
+      await createAppFeedback({
+        user: user(REPORTER),
+        input: { ...input, target: { slug: 'far-away' } },
+      });
+      STATUS[PARENT].appBlock!.currentVersionSha = null;
+      await createAppFeedback({ user: user(REPORTER), input });
+      expect(dbMock.dbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+      for (const [call] of dbMock.dbWrite.feedback.create.mock.calls)
+        expect(call.data).toMatchObject({ appSourceCommit: null, appSourceDirty: null });
     });
   });
 
@@ -521,6 +583,8 @@ describe('createAppFeedback', () => {
         appListingId: PARENT,
         appBlockVersion: '1.4.2',
         appBlockSha: 'sha-parent-91c',
+        appSourceCommit: null,
+        appSourceDirty: null,
       },
       select: { id: true },
     });
@@ -660,6 +724,8 @@ const ownerRow = {
   createdAt: new Date('2026-10-01T10:00:00Z'),
   appBlockVersion: '1.4.2',
   appBlockSha: 'sha-row-77',
+  appSourceCommit: 'c0ffee1234567890c0ffee1234567890c0ffee12',
+  appSourceDirty: false,
   surface: 'slot',
   ownerStatus: 'acknowledged',
   ownerStatusAt: new Date('2026-10-02T11:00:00Z'),
@@ -675,6 +741,8 @@ describe('the owner projection', () => {
       [
         'appBlockSha',
         'appBlockVersion',
+        'appSourceCommit',
+        'appSourceDirty',
         'createdAt',
         'id',
         'message',
@@ -750,6 +818,8 @@ describe('listAppFeedbackForListing', () => {
       'f."createdAt"',
       'f."appBlockVersion"',
       'f."appBlockSha"',
+      'f."appSourceCommit"',
+      'f."appSourceDirty"',
       "f.context->>'surface' AS surface",
       'f."ownerStatus"',
       'f."ownerStatusAt"',

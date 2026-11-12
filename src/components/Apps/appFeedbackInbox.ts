@@ -82,10 +82,29 @@ const SURFACE_LABELS: Readonly<Record<AppFeedbackSurface, string>> = Object.free
   slot: 'Model page',
 });
 
-/** Version/sha and surface, e.g. ["v1.4.0 (3f9c2ab)", "App page"]; the caller appends the date. */
+/**
+ * The developer's own commit for the build the report was sent from, e.g. "source 05c2d58" or
+ * "source 05c2d58, uncommitted changes". `appBlockSha` is the platform's sha, which names nothing
+ * in the developer's tree. A NULL dirty flag is unknown, so it claims neither clean nor dirty.
+ */
+export function feedbackSourceLabel(row: {
+  appSourceCommit?: string | null;
+  appSourceDirty?: boolean | null;
+}): string | null {
+  if (!row.appSourceCommit) return null;
+  const commit = `source ${row.appSourceCommit.slice(0, 7)}`;
+  return row.appSourceDirty === true ? `${commit}, uncommitted changes` : commit;
+}
+
+/**
+ * Version/sha, source commit and surface, e.g. ["v1.4.0 (3f9c2ab)", "source 05c2d58", "App page"];
+ * the caller appends the date.
+ */
 export function feedbackRowMeta(row: {
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  appSourceCommit?: string | null;
+  appSourceDirty?: boolean | null;
   surface: AppFeedbackSurface | null;
 }): string[] {
   const sha = row.appBlockSha ? row.appBlockSha.slice(0, 7) : null;
@@ -95,7 +114,9 @@ export function feedbackRowMeta(row: {
     ? `build ${sha}`
     : null;
   const surface = row.surface ? SURFACE_LABELS[row.surface] : null;
-  return [version, surface].filter((part): part is string => part !== null);
+  return [version, feedbackSourceLabel(row), surface].filter(
+    (part): part is string => part !== null
+  );
 }
 
 /** Names the same readers as the send dialog's notice, from the one shared phrase. */

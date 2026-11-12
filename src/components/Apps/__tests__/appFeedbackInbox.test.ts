@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSetOwnerStatusInput,
   feedbackRowMeta,
+  feedbackSourceLabel,
   INBOX_EMPTY_MESSAGE,
   INBOX_FILTER_EMPTY_MESSAGE,
   INBOX_GENERIC_ERROR_MESSAGE,
@@ -144,6 +145,29 @@ describe('feedbackRowMeta — "version live when sent" and surface', () => {
     expect(
       feedbackRowMeta({ appBlockVersion: '2.0.1', appBlockSha: null, surface: 'slot' })
     ).toEqual(['v2.0.1', 'Model page']);
+  });
+
+  it("names the developer's own source commit between the version and the surface", () => {
+    expect(
+      feedbackRowMeta({
+        appBlockVersion: '1.4.0',
+        appBlockSha: '07ee0915aa',
+        appSourceCommit: '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901',
+        appSourceDirty: false,
+        surface: 'page',
+      })
+    ).toEqual(['v1.4.0 (07ee091)', 'source 05c2d58', 'App page']);
+  });
+
+  it('says "uncommitted changes" only on a known-dirty tree, never on an unknown one', () => {
+    const commit = '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901';
+    expect(feedbackSourceLabel({ appSourceCommit: commit, appSourceDirty: true })).toBe(
+      'source 05c2d58, uncommitted changes'
+    );
+    expect(feedbackSourceLabel({ appSourceCommit: commit, appSourceDirty: null })).toBe(
+      'source 05c2d58'
+    );
+    expect(feedbackSourceLabel({ appSourceCommit: null, appSourceDirty: true })).toBeNull();
   });
 
   it('a sha with no version still identifies the build', () => {

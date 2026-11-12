@@ -71,6 +71,8 @@ export type ResolvedAppFeedbackTarget = {
   appName: string;
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  /** The running AppBlock's row id; `null` for an off-site app. */
+  appBlockId: string | null;
 };
 
 export type AppFeedbackTargetResolution =
@@ -115,7 +117,7 @@ export async function resolveAppFeedbackTarget(
       select: {
         status: true,
         name: true,
-        appBlock: { select: { version: true, currentVersionSha: true } },
+        appBlock: { select: { id: true, version: true, currentVersionSha: true } },
       },
     }),
     resolveStoreVisibilityScope({ user }),
@@ -158,8 +160,38 @@ export async function resolveAppFeedbackTarget(
       appName: listing.name,
       appBlockVersion: block?.version ?? null,
       appBlockSha: block?.currentVersionSha ?? null,
+      appBlockId: block?.id ?? null,
     },
   };
+}
+
+export type AppSourceCommit = { appSourceCommit: string | null; appSourceDirty: boolean | null };
+
+const UNKNOWN_SOURCE: AppSourceCommit = { appSourceCommit: null, appSourceDirty: null };
+
+/**
+ * The developer's own `sourceCommit` / `sourceDirty` for the build that is serving: the approved
+ * publish request whose platform commit is the block's current one, the same link the git-push
+ * webhook uses. No current sha, or no request carrying it, is unknown: a guess from the version
+ * string could name a different submission of the same version.
+ */
+export async function resolveLiveSourceCommit(target: {
+  appBlockId: string | null;
+  appBlockSha: string | null;
+}): Promise<AppSourceCommit> {
+  if (!target.appBlockId || !target.appBlockSha) return UNKNOWN_SOURCE;
+  const row = await dbRead.appBlockPublishRequest.findFirst({
+    where: {
+      appBlockId: target.appBlockId,
+      status: 'approved',
+      forgejoCommitSha: target.appBlockSha,
+    },
+    orderBy: { reviewedAt: 'desc' },
+    select: { sourceCommit: true, sourceDirty: true },
+  });
+  return row
+    ? { appSourceCommit: row.sourceCommit, appSourceDirty: row.sourceDirty }
+    : UNKNOWN_SOURCE;
 }
 
 export async function getAppFeedbackEligibility(user: SessionUser, target: AppFeedbackTarget) {
@@ -255,6 +287,9 @@ export async function createAppFeedback({
   });
   if (recent >= APP_FEEDBACK_PER_LISTING_DAILY_CAP) throwRateLimitError(APP_FEEDBACK_CAP_MESSAGE);
 
+  // Stamped now: the live submission changes on the next approve, so it cannot be recovered later.
+  const source = await resolveLiveSourceCommit(resolved.target);
+
   return dbWrite.feedback.create({
     data: {
       userId: user.id,
@@ -264,6 +299,7 @@ export async function createAppFeedback({
       appListingId,
       appBlockVersion,
       appBlockSha,
+      ...source,
     },
     select: { id: true },
   });
@@ -341,6 +377,8 @@ export type OwnerFeedbackRow = {
   createdAt: Date;
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  appSourceCommit: string | null;
+  appSourceDirty: boolean | null;
   surface: string | null;
   ownerStatus: string | null;
   ownerStatusAt: Date | null;
@@ -356,6 +394,10 @@ export type OwnerFeedbackDto = {
   reporter: { id: number; username: string | null };
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  /** The developer's commit for the live build, as their CLI claimed it at submit. */
+  appSourceCommit: string | null;
+  /** `null` = unknown, which is not `false` (clean). */
+  appSourceDirty: boolean | null;
   surface: AppFeedbackSurface | null;
   ownerStatus: FeedbackOwnerStatus | null;
   ownerStatusAt: Date | null;
@@ -378,6 +420,8 @@ export function toOwnerFeedbackDto(row: OwnerFeedbackRow): OwnerFeedbackDto {
     reporter: { id: row.reporterId, username: row.reporterUsername },
     appBlockVersion: row.appBlockVersion,
     appBlockSha: row.appBlockSha,
+    appSourceCommit: row.appSourceCommit,
+    appSourceDirty: row.appSourceDirty,
     // `context` is a client claim; only a value from the closed set is shown, never used for authz.
     surface: isSurface(row.surface) ? row.surface : null,
     ownerStatus: row.ownerStatus as FeedbackOwnerStatus | null,
@@ -406,6 +450,8 @@ export async function listAppFeedbackForListing({
       f."createdAt",
       f."appBlockVersion",
       f."appBlockSha",
+      f."appSourceCommit",
+      f."appSourceDirty",
       f.context->>'surface' AS surface,
       f."ownerStatus",
       f."ownerStatusAt",
@@ -575,6 +621,8 @@ type ModFeedbackRow = {
   appListingId: string | null;
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  appSourceCommit: string | null;
+  appSourceDirty: boolean | null;
   ownerStatus: string | null;
   ownerStatusAt: Date | null;
   ownerStatusById: number | null;
@@ -621,6 +669,8 @@ export async function modListAppFeedback(input: ModListAppFeedbackInput) {
       f."appListingId",
       f."appBlockVersion",
       f."appBlockSha",
+      f."appSourceCommit",
+      f."appSourceDirty",
       f."ownerStatus",
       f."ownerStatusAt",
       f."ownerStatusById",

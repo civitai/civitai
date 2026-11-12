@@ -1,0 +1,57 @@
+-- ============================================================
+-- Feedback → the developer's source commit on each app-block report
+-- ============================================================
+-- ADDITIVE ONLY. Two NULLable columns and one CHECK on "Feedback". No existing
+-- column, constraint or row is changed.
+--
+-- "appBlockSha" (already stamped) is the platform's own repo sha, which a developer
+-- cannot map to their code. These two columns copy the developer's own
+-- `sourceCommit` / `sourceDirty` claim from the publish request that was live when
+-- the report was written, so the report names a commit in the developer's tree.
+-- Both are an UNVERIFIED client claim, and NULL means unknown, never "clean".
+--
+-- ⚠️ MANUAL APPLY, per environment (the dev database PR previews use, then
+-- production). APPLY BEFORE the code that declares these fields deploys: the app
+-- feedback create writes both columns, so it fails until they exist. Pre-applying
+-- is safe: nothing reads or writes them until then.
+--
+-- One transaction, run as written including the `BEGIN`: `SET LOCAL lock_timeout`
+-- only takes effect inside a transaction block.
+--
+-- `ADD COLUMN ... NULL` with no default is metadata-only (Postgres 11+). The CHECK
+-- takes ACCESS EXCLUSIVE on "Feedback" and scans it once to validate; every
+-- existing row passes because both columns are created NULL. On
+-- `canceling statement due to lock timeout` nothing was applied: re-run it.
+--
+-- Idempotent: `IF NOT EXISTS` on the columns, a `pg_constraint` guard on the CHECK.
+
+BEGIN;
+
+SET LOCAL lock_timeout = '3s';
+
+ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "appSourceCommit" TEXT    NULL;
+ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "appSourceDirty"  BOOLEAN NULL;
+
+DO $$
+BEGIN
+  -- Same rule as "Feedback_app_columns_check", for the two new columns: NULL unless
+  -- "area" = 'app-block'. A separate constraint so that one is left untouched.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Feedback_app_source_columns_check') THEN
+    ALTER TABLE "Feedback" ADD CONSTRAINT "Feedback_app_source_columns_check"
+      CHECK ("area" = 'app-block' OR ("appSourceCommit" IS NULL AND "appSourceDirty" IS NULL));
+  END IF;
+END $$;
+
+COMMIT;
+
+-- ------------------------------------------------------------
+-- Verification (read-only). Expect columns = 2, constraints = 1.
+-- ------------------------------------------------------------
+-- SELECT count(*) AS columns
+--   FROM information_schema.columns
+--  WHERE table_schema = current_schema() AND table_name = 'Feedback'
+--    AND column_name IN ('appSourceCommit', 'appSourceDirty');
+-- SELECT count(*) AS constraints
+--   FROM pg_constraint
+--  WHERE conrelid = '"Feedback"'::regclass
+--    AND conname = 'Feedback_app_source_columns_check';
