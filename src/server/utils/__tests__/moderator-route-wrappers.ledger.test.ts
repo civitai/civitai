@@ -524,6 +524,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'apps/assistant/preview',
   'apps/assistant/run-grant',
   'apps/assistant/runner-viewer-token',
+  // App Assistant's save of the caller's own app to its source repo.
+  'apps/assistant/source-save',
   'apps/assistant/token',
   // The /apps/dev page's Retry: a freshly signed dev-tunnel entry URL.
   'apps/dev/entry-url',

@@ -33,6 +33,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 const { getPagedResourceReviews } = await import('~/server/services/resourceReview.service');
 const { REVIEW_IMAGE_COUNT_CAP } = await import('~/server/schema/resourceReview.schema');
 const { NsfwLevel } = await import('~/server/common/enums');
+const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
 
 const MODEL = 10;
 const V1 = 20;
@@ -79,6 +80,7 @@ beforeAll(async () => {
       "blockedFor" text,
       "nsfwLevel" int NOT NULL DEFAULT 1,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      "acceptableMinor" boolean NOT NULL DEFAULT false,
       metadata jsonb,
       "scanJobs" jsonb
     );
@@ -118,12 +120,13 @@ type Review = {
   userId?: number;
   postId?: number | null;
   details?: string | null;
+  recommended?: boolean;
   daysAgo: number;
 };
 const insertReviews = (rows: Review[]) =>
   pg.query(
-    `INSERT INTO "ResourceReview" (id, "modelId", "modelVersionId", "userId", "postId", details, "createdAt")
-     SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[], $5::int[], $6::text[], $7::timestamp[])`,
+    `INSERT INTO "ResourceReview" (id, "modelId", "modelVersionId", "userId", "postId", details, "createdAt", recommended)
+     SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[], $5::int[], $6::text[], $7::timestamp[], $8::boolean[])`,
     [
       rows.map((r) => r.id),
       rows.map((r) => r.modelId ?? MODEL),
@@ -132,11 +135,32 @@ const insertReviews = (rows: Review[]) =>
       rows.map((r) => r.postId ?? null),
       rows.map((r) => r.details ?? null),
       rows.map((r) => new Date(Date.UTC(2026, 0, 31 - r.daysAgo))),
+      rows.map((r) => r.recommended ?? true),
     ]
   );
 
-const page = (input: { modelVersionId?: number; page?: number; limit?: number }, userId?: number) =>
-  getPagedResourceReviews({ input: { modelId: MODEL, limit: 10, page: 1, ...input }, userId });
+const page = (
+  input: {
+    modelVersionId?: number;
+    page?: number;
+    limit?: number;
+    writtenOnly?: boolean;
+    hasImages?: boolean;
+    recommended?: boolean;
+    browsingLevel?: number;
+  },
+  userId?: number
+) =>
+  getPagedResourceReviews({
+    input: {
+      modelId: MODEL,
+      limit: 10,
+      page: 1,
+      browsingLevel: allBrowsingLevelsFlag,
+      ...input,
+    },
+    userId,
+  });
 
 describe('getPagedResourceReviews', () => {
   it("lists every version's reviews of the model when no version is selected", async () => {
@@ -170,6 +194,119 @@ describe('getPagedResourceReviews', () => {
 
     const [review] = (await page({ modelVersionId: V1 })).items;
     expect(review.imageCount).toBe(1);
+  });
+
+  describe("the viewer's browsing level", () => {
+    const AUTHOR = 40;
+    beforeEach(async () => {
+      await pg.exec(`
+        INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+          (2000, ${AUTHOR}, now() - interval '1 day'),
+          (2001, ${AUTHOR}, now() - interval '1 day');
+        INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel") VALUES
+          (50, ${AUTHOR}, 2000, ${NsfwLevel.PG}),
+          (51, ${AUTHOR}, 2000, ${NsfwLevel.R}),
+          (52, ${AUTHOR}, 2001, ${NsfwLevel.R});
+        INSERT INTO "ImageResourceNew" VALUES (50, ${V1}), (51, ${V1}), (52, ${V1});
+      `);
+      await insertReviews([
+        { id: 1, userId: AUTHOR, postId: 2000, daysAgo: 1 },
+        { id: 2, userId: AUTHOR, postId: 2001, daysAgo: 2 },
+      ]);
+    });
+
+    it('does not count images above the level', async () => {
+      const sfw = await page({ modelVersionId: V1, browsingLevel: NsfwLevel.PG });
+      expect(sfw.items.map((r) => [r.id, r.imageCount])).toEqual([
+        [1, 1],
+        [2, 0],
+      ]);
+      const all = await page({ modelVersionId: V1 });
+      expect(all.items.map((r) => [r.id, r.imageCount])).toEqual([
+        [1, 2],
+        [2, 1],
+      ]);
+    });
+
+    it('keeps in hasImages only reviews with an image within the level', async () => {
+      const sfw = await page({ modelVersionId: V1, hasImages: true, browsingLevel: NsfwLevel.PG });
+      expect(sfw.items.map((r) => r.id)).toEqual([1]);
+    });
+  });
+
+  // A review outside a post counts the reviewer's own images; the level must apply on both sides of
+  // that walk and in the `hasImages` reviewer lookup.
+  describe("the viewer's browsing level, for a review with no post", () => {
+    // The reviewer has more images than the version, or fewer: picks which side the count walks.
+    it.each([
+      ['a reviewer with more images than the version', { reviewerPad: 10, versionPad: 0 }],
+      ['a version with more images than the reviewer', { reviewerPad: 0, versionPad: 10 }],
+    ])('hides an R image from a PG viewer for %s', async (_label, { reviewerPad, versionPad }) => {
+      const AUTHOR = 50;
+      await pg.exec(`
+        INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+          (700, ${AUTHOR}, now() - interval '1 day'),
+          (701, 99, now() - interval '1 day');
+        INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel") VALUES (1, ${AUTHOR}, 700, ${NsfwLevel.R});
+        INSERT INTO "ImageResourceNew" VALUES (1, ${V1});
+        INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel")
+          SELECT 100 + g, ${AUTHOR}, 700, ${NsfwLevel.PG} FROM generate_series(1, ${reviewerPad}) g;
+        INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel")
+          SELECT 200 + g, 99, 701, ${NsfwLevel.PG} FROM generate_series(1, ${versionPad}) g;
+        INSERT INTO "ImageResourceNew" SELECT 200 + g, ${V1} FROM generate_series(1, ${versionPad}) g;
+      `);
+      await insertReviews([{ id: 1, userId: AUTHOR, postId: null, daysAgo: 1 }]);
+
+      const sfw = await page({ modelVersionId: V1, browsingLevel: NsfwLevel.PG });
+      expect(sfw.items.map((r) => r.imageCount)).toEqual([0]);
+      const sfwWithImages = await page({
+        modelVersionId: V1,
+        hasImages: true,
+        browsingLevel: NsfwLevel.PG,
+      });
+      expect(sfwWithImages.items).toEqual([]);
+
+      // At a level that includes R the same review counts it and matches.
+      const all = await page({ modelVersionId: V1 });
+      expect(all.items.map((r) => r.imageCount)).toEqual([1]);
+      expect((await page({ modelVersionId: V1, hasImages: true })).items.map((r) => r.id)).toEqual([
+        1,
+      ]);
+    });
+  });
+
+  // The image feed (`getAllImages`) drops `acceptableMinor` images for every viewer outside the
+  // pending view, so the counts and `hasImages` must too or they promise images the card can't load.
+  it('does not count or match acceptableMinor images, for the owner either', async () => {
+    const AUTHOR = 51;
+    await pg.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (710, ${AUTHOR}, now() - interval '1 day');
+      INSERT INTO "Image" (id, "userId", "postId", "acceptableMinor") VALUES
+        (1, ${AUTHOR}, 710, true), (2, ${AUTHOR}, 710, false);
+      INSERT INTO "ImageResourceNew" VALUES (1, ${V1}), (2, ${V1});
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (711, 52, now() - interval '1 day');
+      INSERT INTO "Image" (id, "userId", "postId", "acceptableMinor") VALUES (3, 52, 711, true);
+      INSERT INTO "ImageResourceNew" VALUES (3, ${V1});
+    `);
+    await insertReviews([
+      { id: 1, userId: AUTHOR, postId: 710, daysAgo: 1 },
+      { id: 2, userId: 52, postId: 711, daysAgo: 2 },
+      { id: 3, userId: 52, postId: null, daysAgo: 3 },
+    ]);
+
+    for (const viewer of [undefined, AUTHOR, 52]) {
+      const result = await page({ modelVersionId: V1 }, viewer);
+      expect(
+        result.items.map((r) => [r.id, r.imageCount]),
+        `viewer ${viewer}`
+      ).toEqual([
+        [1, 1],
+        [2, 0],
+        [3, 0],
+      ]);
+    }
+    const withImages = await page({ modelVersionId: V1, hasImages: true });
+    expect(withImages.items.map((r) => r.id)).toEqual([1]);
   });
 
   // The version having fewer images than the reviewer, or more, picks which side the count walks.
@@ -343,5 +480,99 @@ describe('getPagedResourceReviews', () => {
     expect([...first.items, ...second.items, ...third.items].map((r) => r.id)).toEqual([
       2, 3, 5, 4, 1,
     ]);
+  });
+
+  it("returns each review's postId", async () => {
+    await pg.exec(
+      `INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (900, 1, now() - interval '1 day')`
+    );
+    await insertReviews([
+      { id: 1, postId: 900, daysAgo: 1 },
+      { id: 2, postId: null, daysAgo: 2 },
+    ]);
+
+    const items = (await page({})).items;
+    expect(items.map((r) => [r.id, r.postId])).toEqual([
+      [1, 900],
+      [2, null],
+    ]);
+  });
+
+  it.each([
+    [true, [1, 3]],
+    [false, [2]],
+  ])(
+    'recommended: %s keeps only matching thumbs, with a matching total',
+    async (recommended, ids) => {
+      await insertReviews([
+        { id: 1, recommended: true, daysAgo: 3 },
+        { id: 2, recommended: false, daysAgo: 2 },
+        { id: 3, recommended: true, daysAgo: 1 },
+      ]);
+
+      const result = await page({ recommended });
+      expect(result.items.map((r) => r.id)).toEqual(ids.slice().reverse());
+      expect(result.totalItems).toBe(ids.length);
+    }
+  );
+
+  describe('hasImages', () => {
+    const AUTHOR = 20;
+    beforeEach(async () => {
+      await pg.exec(`
+        INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+          (1000, ${AUTHOR}, now() - interval '1 day'),
+          (1001, ${AUTHOR}, now() - interval '1 day'),
+          (1002, ${AUTHOR}, now() - interval '1 day'),
+          (1003, 21, now() - interval '1 day');
+        INSERT INTO "Image" (id, "userId", "postId", "needsReview") VALUES
+          (1, ${AUTHOR}, 1000, NULL),
+          (2, ${AUTHOR}, 1001, 'minor'),
+          (3, ${AUTHOR}, 1002, NULL),
+          (4, 21, 1003, NULL);
+        INSERT INTO "ImageResourceNew" VALUES (1, ${V1}), (2, ${V1}), (3, ${V2}), (4, ${V1});
+      `);
+      await insertReviews([
+        { id: 1, userId: AUTHOR, postId: 1000, details: '<p>with image</p>', daysAgo: 1 },
+        { id: 2, userId: AUTHOR, postId: 1001, details: '<p>unservable image</p>', daysAgo: 2 },
+        { id: 3, userId: AUTHOR, postId: 1002, details: '<p>other version image</p>', daysAgo: 3 },
+        { id: 4, userId: 22, postId: null, details: '<p>no post, no images</p>', daysAgo: 4 },
+        { id: 5, userId: 21, postId: null, daysAgo: 5 },
+      ]);
+    });
+
+    it('keeps a review with a servable post image and drops the rest, counting the same images as imageCount', async () => {
+      const result = await page({ modelVersionId: V1, hasImages: true });
+      expect(result.items.map((r) => r.id)).toEqual([1, 5]);
+      expect(result.items.every((r) => r.imageCount > 0)).toBe(true);
+      expect(result.totalItems).toBe(2);
+    });
+
+    it('pages by hasMore without counting', async () => {
+      await pg.exec(`
+        INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+          (1010, 30, now() - interval '1 day'),
+          (1011, 31, now() - interval '1 day');
+        INSERT INTO "Image" (id, "userId", "postId") VALUES (10, 30, 1010), (11, 31, 1011);
+        INSERT INTO "ImageResourceNew" VALUES (10, ${V1}), (11, ${V1});
+      `);
+      await insertReviews([
+        { id: 6, userId: 30, postId: 1010, daysAgo: 6 },
+        { id: 7, userId: 31, postId: 1011, daysAgo: 7 },
+      ]);
+
+      const first = await page({ modelVersionId: V1, hasImages: true, limit: 1, page: 1 });
+      expect(first.items.map((r) => r.id)).toEqual([1]);
+      expect(first.hasMore).toBe(true);
+
+      const last = await page({ modelVersionId: V1, hasImages: true, limit: 3, page: 2 });
+      expect(last.items.map((r) => r.id)).toEqual([7]);
+      expect(last.hasMore).toBe(false);
+    });
+
+    it('combines with writtenOnly', async () => {
+      const result = await page({ modelVersionId: V1, hasImages: true, writtenOnly: true });
+      expect(result.items.map((r) => r.id)).toEqual([1]);
+    });
   });
 });

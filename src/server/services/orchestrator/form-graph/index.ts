@@ -46,6 +46,7 @@ import { createFlux3VideoInput } from './flux3-video.handler';
 import { createMiniMaxInput } from './minimax.handler';
 import { createHappyHorseInput } from './happy-horse.handler';
 import { createVeo3Input } from './veo3.handler';
+import { createGeminiOmniInput } from './gemini-omni.handler';
 import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
 import { createAceAudioInput } from './ace.handler';
@@ -104,6 +105,7 @@ export { createFlux3VideoInput } from './flux3-video.handler';
 export { createMiniMaxInput } from './minimax.handler';
 export { createHappyHorseInput } from './happy-horse.handler';
 export { createVeo3Input } from './veo3.handler';
+export { createGeminiOmniInput } from './gemini-omni.handler';
 export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
 export { createAceAudioInput } from './ace.handler';
@@ -286,6 +288,8 @@ function createStep(
 
     case 'Veo3':
       return createVeo3Input(data, handlerCtx);
+    case 'GeminiOmni':
+      return createGeminiOmniInput(data, handlerCtx);
 
     case 'Vidu':
       return createViduInput(data, handlerCtx);

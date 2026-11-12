@@ -51,3 +51,15 @@ export const requestableLocks = (model?: LockReviewModelFlags | null): Requestab
 
 export const locksToLift = (named: readonly string[], locked: readonly (string | null)[]) =>
   REQUESTABLE_LOCKS.filter((key) => named.includes(key) && locked.includes(key));
+
+/** What the owner is told of a ruling, in app and by email. Neutral, with no reason: a moderator's
+ *  reason or note is never shown, and every rejection reads the same. */
+export function lockReviewRulingMessage(approved: boolean, unlocked: readonly unknown[] = []) {
+  if (!approved)
+    return 'Your request to review the locked settings on your model was declined, so those settings stay locked.';
+  const labels = REQUESTABLE_LOCKS.filter((key) => unlocked.includes(key)).map(
+    (key) => requestableLockLabels[key]
+  );
+  const base = 'Your request to review the locked settings on your model was approved.';
+  return labels.length ? `${base} You can now change: ${labels.join(', ')}.` : base;
+}

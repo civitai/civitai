@@ -516,7 +516,7 @@ async function reconnectClusterBounded(clusterClient: any, stepTimeoutMs: number
   // forever. On timeout connect() keeps running in the background — it still completes the
   // reconnect if the node comes back — but the watchdog is free to re-arm after its cooldown.
   await withTimeout(
-    clusterClient.connect(),
+    connectWithRetry(clusterClient, { label: 'cluster' }),
     stepTimeoutMs,
     `connect() did not settle within ${stepTimeoutMs}ms`
   );
@@ -604,47 +604,59 @@ function startClusterSelfHeal(
 /** Sys clients whose reconnect is waiting on a teardown that outlived the step timeout. */
 const lateSysReconnects = new WeakSet<object>();
 
-/** Sys clients with a connect() retry pending (see connectSysClient). */
-const sysConnectRetries = new WeakSet<object>();
+/** Clients with a connect() retry pending (see connectWithRetry). */
+const connectRetries = new WeakSet<object>();
+
+export type ConnectWithRetryOptions = {
+  /** Names the client in the retry log lines. */
+  label: string;
+  delayMs?: (attempt: number) => number;
+  /** Runs when a RETRY (not the first attempt) leaves the client open. */
+  onRetryConnected?: () => void;
+};
 
 /**
- * `client.connect()` for a sys base client and, while it rejects and leaves the client CLOSED,
- * connect() again in the background with backoff until one succeeds.
+ * `client.connect()` and, while it rejects and leaves the client CLOSED, connect() again in the
+ * background with backoff until one succeeds.
  *
- * WHY (node-redis 6): RedisSentinel's connect() gives up after `maxCommandRediscovers` failed
- * discovery passes (each pass fails on a master connection's first error since 6.2.0) and then
- * destroys the client (@redis/client 6.3.0 sentinel/index.js, RedisSentinelInternal.connect).
- * Nothing reopens it: every command then fails at once, so the sys watchdog, which triggers on
- * commands piling up, never fires again and the client stays down until the process restarts. A
- * connect() overlapping a master outage with no failover (the Sentinel still naming the master)
- * longer than those passes ends that way: at startup, or in a self-heal's reconnect.
+ * WHY (node-redis 6): a connect() that fails leaves the client closed, and nothing reopens it:
+ * every command then throws "The client is closed" at once, so neither watchdog (both trigger on
+ * commands piling up or timing out) ever fires again, and the client stays down until the process
+ * restarts. RedisSentinel's connect() gives up after `maxCommandRediscovers` failed discovery
+ * passes and destroys the client (sentinel/index.js, RedisSentinelInternal.connect); RedisCluster's
+ * connect() resets `isOpen` when discovery fails on every root node (cluster/cluster-slots.js
+ * connect). Both happen when a connect() overlaps an outage: at startup, or in a self-heal.
  *
  * Settles with the FIRST attempt, so callers that bound it behave as before. One retry is pending
- * per client at a time, and retrying stops once the client is open again (someone else connected
- * it). Exported (with an injectable backoff) for tests.
+ * per client at a time whichever call site scheduled it, and retrying stops once the client is open
+ * again (someone else connected it).
  */
-export function connectSysClient(
+export function connectWithRetry(
   client: { connect: () => unknown; isOpen?: boolean },
-  delayMs: (attempt: number) => number = reconnectDelayMs
+  { label, delayMs = reconnectDelayMs, onRetryConnected }: ConnectWithRetryOptions
 ): Promise<unknown> {
   const attempt = (n: number): Promise<unknown> => {
     const p = Promise.resolve().then(() => client.connect());
     p.catch((err: unknown) => {
       if (n > 0) {
         log(
-          `Redis sys connect() retry ${n} failed: ${
+          `Redis ${label} connect() retry ${n} failed: ${
             err instanceof Error ? err.message : String(err)
           }`
         );
       }
-      if (client.isOpen !== false || sysConnectRetries.has(client)) return;
-      sysConnectRetries.add(client);
+      if (client.isOpen !== false || connectRetries.has(client)) return;
+      connectRetries.add(client);
       const timer = setTimeout(() => {
-        sysConnectRetries.delete(client);
+        connectRetries.delete(client);
         if (client.isOpen !== false) return;
         attempt(n + 1).then(
-          // A destroy() racing the attempt (a self-heal) also resolves it, with the client closed.
-          () => client.isOpen !== false && log(`Redis sys client connected on retry ${n + 1}`),
+          () => {
+            // A destroy() racing the attempt (a self-heal) also resolves it, with the client closed.
+            if (client.isOpen === false) return;
+            log(`Redis ${label} client connected on retry ${n + 1}`);
+            onRetryConnected?.();
+          },
           () => undefined
         );
       }, delayMs(n + 1));
@@ -653,6 +665,37 @@ export function connectSysClient(
     return p;
   };
   return attempt(0);
+}
+
+/** Clients whose first ensureClientOpen() connect() attempt has not settled yet. */
+const reopening = new WeakSet<object>();
+
+/**
+ * Reopen a client found CLOSED (connectWithRetry), unless something already owns its reconnect: a
+ * first attempt still in flight, a pending retry, or a self-heal waiting on a late teardown. Cheap
+ * enough to call on every client access, so a client closed by a path that schedules no reconnect
+ * is reopened by its next caller; concurrent callers start one connect(), not one each.
+ */
+export function ensureClientOpen(
+  client: { connect: () => unknown; isOpen?: boolean },
+  label: string,
+  delayMs?: (attempt: number) => number
+): void {
+  if (client.isOpen !== false) return;
+  if (reopening.has(client) || connectRetries.has(client) || lateSysReconnects.has(client)) return;
+  reopening.add(client);
+  log(`Redis ${label} client found closed; reconnecting`);
+  void connectWithRetry(client, { label, delayMs })
+    .catch(() => undefined)
+    .finally(() => reopening.delete(client));
+}
+
+/** connectWithRetry for a sys base client. */
+export function connectSysClient(
+  client: { connect: () => unknown; isOpen?: boolean },
+  delayMs: (attempt: number) => number = reconnectDelayMs
+): Promise<unknown> {
+  return connectWithRetry(client, { label: 'sys', delayMs });
 }
 
 /**
@@ -1699,21 +1742,25 @@ function getBaseClient(type: 'cache' | 'system') {
     // Don't await here - let connection happen in background
     // The client will queue commands until connected
     log(`Calling connect() for ${type} (cluster) client...`);
-    baseClient
-      .connect()
-      .then(async () => {
-        log(`${type} cluster client connected`);
-        await setupEnhancedFailover();
-        // FIX #1: start the inflight-leak self-heal watchdog ONCE per process for the cache
-        // cluster client. Guarded so a self-heal forced reconnect doesn't stack a second
-        // watchdog interval. Pass setupEnhancedFailover so forceClusterReconnect re-establishes
-        // the periodic-rediscover interval after a heal (FIX #3). The forced reconnect does NOT
-        // re-run this connect() .then callback (it calls baseClient.connect() directly), so the
-        // re-setup must be threaded through the watchdog, not relied on here.
-        if (type === 'cache' && !clusterSelfHealInterval) {
-          startClusterSelfHeal(baseClient, setupEnhancedFailover);
-        }
-      })
+    const onConnected = async () => {
+      log(`${type} cluster client connected`);
+      await setupEnhancedFailover();
+      // FIX #1: start the inflight-leak self-heal watchdog ONCE per process for the cache
+      // cluster client. Guarded so a self-heal forced reconnect doesn't stack a second
+      // watchdog interval. Pass setupEnhancedFailover so forceClusterReconnect re-establishes
+      // the periodic-rediscover interval after a heal (FIX #3). The forced reconnect does NOT
+      // re-run this callback (it calls baseClient.connect() directly), so the re-setup must be
+      // threaded through the watchdog, not relied on here.
+      if (type === 'cache' && !clusterSelfHealInterval) {
+        startClusterSelfHeal(baseClient, setupEnhancedFailover);
+      }
+    };
+    connectWithRetry(baseClient, {
+      label: `${type} cluster`,
+      // A first connect() that failed never ran onConnected, so the watchdog was never started.
+      onRetryConnected: () => void onConnected().catch(() => undefined),
+    })
+      .then(onConnected)
       .catch((err) => {
         log(`Redis connection failed (${type})`, err);
       });
@@ -2093,8 +2140,8 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // because the app builds exactly ONE sys client per process: `createRedisClients` is called once
   // (src/server/redis/client.ts `make()`, memoized on globalThis.__civitaiRedisClients in every
   // environment — this module is evaluated once per bundler module graph, so a module-scope memo
-  // would not be enough; build builds nothing), and `createSysRedis` has zero
-  // callers (civitai-auth uses createCacheRedis → cache-only). So there is never a second, unwatched
+  // would not be enough; build builds nothing), and every app that calls `createSysRedis` memoizes
+  // the one it builds. So there is never a second, unwatched
   // sys client. If a future caller builds an ADDITIONAL sys client, this guard would leave it
   // unwatched — revisit the guard (key it per client set) at that point.
   if (type === 'system' && !sysSelfHealInterval) {
@@ -2401,6 +2448,13 @@ export const REDIS_SYS_KEYS = {
      * MULTI (always created with its TTL); fail-closed on a redis error.
      */
     FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
+    /**
+     * SOURCE REPOS — one writer at a time per source repo, keyed
+     * `system:blocks:source-repo-lock:${slug}`. `SET NX EX` (60 s) around an App Assistant save or
+     * a backfill seed, so two saves of one app never race each other into a spurious conflict
+     * (`app-source-repo.service.ts`). Released by its holder; the TTL frees a dead holder's lock.
+     */
+    SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
