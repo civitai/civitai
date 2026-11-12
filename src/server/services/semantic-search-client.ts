@@ -222,6 +222,7 @@ export async function collectPage<T extends { id: number }>({
   excluded?: Set<number>;
 }) {
   const items: T[] = [];
+  const kept = new Set<number>();
   let position = offset;
   let exhausted = false;
 
@@ -244,7 +245,10 @@ export async function collectPage<T extends { id: number }>({
       if (items.length >= limit) break;
       consumed++;
       const item = byId.get(id);
-      if (item && !excluded.has(id)) items.push(item);
+      // Ties in the ranking reorder between requests, so a later round can repeat an earlier id.
+      if (!item || excluded.has(id) || kept.has(id)) continue;
+      kept.add(id);
+      items.push(item);
     }
     position += consumed;
     if (ids.length < batchSize && consumed === ids.length) {
