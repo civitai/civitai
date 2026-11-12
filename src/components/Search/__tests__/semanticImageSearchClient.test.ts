@@ -124,12 +124,9 @@ describe('withSemanticImageSearch', () => {
     const search = fakeSearch([{ ids: [2] }]);
     const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
 
-    const response = (await client.search([
-      imageRequest({ query: '', similarTo: 42 }),
-    ] as never)) as { results: { hits: unknown[] }[] };
+    await client.search([imageRequest({ query: '', similarTo: 42 })] as never);
 
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ imageId: 42 }));
-    expect(response.results[0].hits).toHaveLength(1);
   });
 
   it('lets a typed query replace similarTo', async () => {

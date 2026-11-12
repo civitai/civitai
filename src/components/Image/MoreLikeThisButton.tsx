@@ -1,13 +1,26 @@
 import { IconPhotoSearch } from '@tabler/icons-react';
 import Router from 'next/router';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
-/** Opens image search with the images that look like this one. Only images are embedded. */
-export function MoreLikeThisButton({ image }: { image: { id: number; type: MediaType } }) {
+type MoreLikeThisImage = { id: number; type: MediaType | `${MediaType}` };
+
+/** Only images are embedded, so videos have no "more like this". */
+export function isMoreLikeThisVisible(
+  features: Pick<FeatureAccess, 'imageSearch'>,
+  image: MoreLikeThisImage
+) {
+  return !!features.imageSearch && image.type === MediaType.image;
+}
+
+export const moreLikeThisHref = (imageId: number) => `/search/images?similarTo=${imageId}`;
+
+/** Opens image search with the images that look like this one. */
+export function MoreLikeThisButton({ image }: { image: MoreLikeThisImage }) {
   const features = useFeatureFlags();
-  if (!features.imageSearch || image.type !== MediaType.image) return null;
+  if (!isMoreLikeThisVisible(features, image)) return null;
 
   return (
     <HoverActionButton
@@ -20,7 +33,7 @@ export function MoreLikeThisButton({ image }: { image: { id: number; type: Media
         // The card itself links to the image detail.
         e.preventDefault();
         e.stopPropagation();
-        void Router.push(`/search/images?similarTo=${image.id}`);
+        void Router.push(moreLikeThisHref(image.id));
       }}
     >
       <IconPhotoSearch stroke={2.5} size={16} />

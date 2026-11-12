@@ -37,6 +37,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useToggleImageFlag } from '~/components/Image/hooks/useToggleImageFlag';
 import { useImageContextMenuContext } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
 import { useImageContext } from '~/components/Image/ImageProvider';
+import { isMoreLikeThisVisible, moreLikeThisHref } from '~/components/Image/MoreLikeThisButton';
 import {
   moderatorBulkImageManagerPath,
   moderatorImageLookupPath,
@@ -142,10 +143,10 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           View Post
         </Menu.Item>
       )}
-      {features.imageSearch && isImage && image.type === 'image' && (
+      {isImage && isMoreLikeThisVisible(features, image) && (
         <Menu.Item
           component={NextLink}
-          href={`/search/images?similarTo=${imageId}`}
+          href={moreLikeThisHref(imageId)}
           leftSection={<IconSparkles size={14} stroke={1.5} />}
         >
           More like this
