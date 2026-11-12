@@ -16,6 +16,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
   // on every mini request.
   DOWNLOAD_HASH_URLS = 'download-hash-urls',
+  // On: "more like this" stops capping results at the anchor image's level. Off or missing, the cap
+  // holds. Create the key in Flipt (disabled) before this deploys: a missing key logs on every eval.
+  SEMANTIC_SIMILAR_ANCHOR_CAP_OFF = 'semantic-similar-anchor-cap-off',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from

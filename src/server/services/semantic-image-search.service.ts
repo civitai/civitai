@@ -7,7 +7,9 @@ import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/servi
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
+  anchorBrowsingLevel,
   recordRefusal,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
@@ -101,12 +103,51 @@ export async function searchSemanticImages({
     .filter((x) => !x.tagId || hiddenTagIds.includes(x.tagId))
     .map((x) => x.id);
 
+  // The feed's own fetch path decides visibility (publish state, privacy, blocks, moderation,
+  // browsing level, hidden users and tags); Qdrant only proposes candidates.
+  const fetchVisible = async (
+    ids: number[],
+    level: number,
+    filters: { tags?: number[]; excludedTagIds: number[] }
+  ) => {
+    const { items } = await getAllImages({
+      ...getInfiniteImagesSchema.parse({
+        ids,
+        limit: ids.length,
+        sort: ImageSort.Newest,
+        browsingLevel: level,
+        ...filters,
+        excludedUserIds,
+        disablePoi: addons.disablePoi,
+        disableMinor: addons.disableMinor,
+        include: ['cosmetics', 'tagIds'],
+      }),
+      user,
+      domain,
+      headers: { src: 'semanticImageSearch' },
+    });
+    return items;
+  };
+
+  // "More like this" from an image the viewer cannot see would reveal what it resembles.
+  let level = browsingLevel;
+  if (input.imageId) {
+    const [anchor] = await fetchVisible([input.imageId], browsingLevel, {
+      excludedTagIds: viewerExcludedTagIds,
+    });
+    if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+    if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
+      level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
+  }
+  const hydrate: Hydrate<HydratedImage> = (ids) =>
+    fetchVisible(ids, level, { tags: tagIds, excludedTagIds });
+
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
   const filter: CandidateFilter = {
     gate: {
       kind: 'level',
-      nsfwLevels: Flags.instanceToArray(browsingLevel),
+      nsfwLevels: Flags.instanceToArray(level),
     },
     tagIds,
     anyOf: { baseModels: input.baseModels, type: input.types },
@@ -127,38 +168,6 @@ export async function searchSemanticImages({
     ],
   };
 
-  // The feed's own fetch path decides visibility (publish state, privacy, blocks, moderation,
-  // browsing level, hidden users and tags); Qdrant only proposes candidates.
-  const fetchVisible = async (
-    ids: number[],
-    filters: { tags?: number[]; excludedTagIds: number[] }
-  ) => {
-    const { items } = await getAllImages({
-      ...getInfiniteImagesSchema.parse({
-        ids,
-        limit: ids.length,
-        sort: ImageSort.Newest,
-        browsingLevel,
-        ...filters,
-        excludedUserIds,
-        disablePoi: addons.disablePoi,
-        disableMinor: addons.disableMinor,
-        include: ['cosmetics', 'tagIds'],
-      }),
-      user,
-      domain,
-      headers: { src: 'semanticImageSearch' },
-    });
-    return items;
-  };
-  const hydrate: Hydrate<HydratedImage> = (ids) =>
-    fetchVisible(ids, { tags: tagIds, excludedTagIds });
-
-  // "More like this" from an image the viewer cannot see would reveal what it resembles.
-  if (input.imageId) {
-    const [anchor] = await fetchVisible([input.imageId], { excludedTagIds: viewerExcludedTagIds });
-    if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
-  }
   const query: SearchQuery = input.imageId
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
