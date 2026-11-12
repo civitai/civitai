@@ -132,7 +132,11 @@ describe('upsertBountyEntry images', () => {
     vi.clearAllMocks();
     redisMock.sysRedis.mGet.mockResolvedValue([String(ENTRANT_ID)] as never);
     dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+    // A new entry first locks the Bounty row; everything else here reads nothing.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FOR UPDATE')
+        ? [{ entryLimit: 5, complete: false }]
+        : []) as never);
     dbMock.dbWrite.bountyEntry.update.mockResolvedValue({ id: ENTRY_ID, userId: ENTRANT_ID });
     dbMock.dbWrite.bountyEntry.create.mockResolvedValue({ id: ENTRY_ID, userId: ENTRANT_ID });
     dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);

@@ -112,6 +112,26 @@ export const getBountyEntryEarnedBuzz = async ({
   return data;
 };
 
+export const BOUNTY_ENTRY_LIMIT_REACHED =
+  'You have reached the maximum number of entries for this bounty';
+
+// Locks the same Bounty row, the same way, as `lockBountyForPayout`, so a create racing an award
+// or refund waits rather than deadlocks, and reads `complete` as the payout left it.
+async function assertEntryAllowedUnderLock(
+  tx: Prisma.TransactionClient,
+  { bountyId, userId }: { bountyId: number; userId: number }
+) {
+  const [bounty] = await tx.$queryRaw<{ entryLimit: number; complete: boolean }[]>`
+    SELECT "entryLimit", complete FROM "Bounty" WHERE id = ${bountyId} FOR UPDATE
+  `;
+  if (!bounty) throw throwBadRequestError('Bounty not found');
+  if (bounty.complete) throw throwBadRequestError('Bounty is already complete');
+
+  const existing = await tx.bountyEntry.count({ where: { bountyId, userId } });
+  if (bounty.entryLimit && existing >= bounty.entryLimit)
+    throw throwBadRequestError(BOUNTY_ENTRY_LIMIT_REACHED);
+}
+
 export const upsertBountyEntry = async ({
   id,
   bountyId,
@@ -160,6 +180,11 @@ export const upsertBountyEntry = async ({
 
       return entry;
     } else {
+      // First statement of the create: the controller's limit check reads outside this
+      // transaction, so two parallel submits could both pass it. The row lock makes the second
+      // wait and then count the first one's committed entry.
+      await assertEntryAllowedUnderLock(tx, { bountyId, userId });
+
       const entry = await tx.bountyEntry.create({
         data: {
           bountyId,
