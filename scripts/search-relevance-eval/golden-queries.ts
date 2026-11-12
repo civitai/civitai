@@ -46,8 +46,6 @@ export function defineGoldenSet(queries: GoldenQuery[]) {
 const HOMER_TARGETS: GoldenTarget[] = ['images', 'models'];
 
 export const GOLDEN_QUERIES = defineGoldenSet([
-  // Misspelled "Homer Simpson", one per error class (transposed, substituted, doubled, dropped,
-  // joined): query expansion should recover each.
   { id: 'homer-simpson', kind: 'canonical', text: 'homer simpson', targets: HOMER_TARGETS },
   {
     id: 'homer-simpson-typo-transposed',
@@ -86,7 +84,6 @@ export const GOLDEN_QUERIES = defineGoldenSet([
     note: 'No space: a token-level spell corrector sees one unknown word.',
   },
 
-  // Name-only queries: the user typed a name, so named boosting should put it first.
   {
     id: 'name-moss-image-misspelled',
     kind: 'named',
