@@ -6,9 +6,16 @@ import { describe, expect, it, vi } from 'vitest';
  * of the community showcase stays out of search.
  */
 
-const community = vi.hoisted(() => ({ covers: new Map<number, { image: object }>() }));
-vi.mock('~/server/services/version-showcase.service', () => ({
-  getShowcaseCommunityCovers: vi.fn(async () => community.covers),
+const community = vi.hoisted(() => ({
+  covers: new Map<string, { image: object; sites: Set<string> }>(),
+  lookup: vi.fn(),
+}));
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getShowcaseCommunityCovers: vi.fn(async (covers: unknown) => {
+    community.lookup(covers);
+    return community.covers;
+  }),
 }));
 
 const { appendCommunityCoverImages, pickModelIndexImages } = await import(
@@ -23,14 +30,25 @@ const owner = (id: number, modelVersionId: number) => ({
 });
 
 describe('the search document and a community cover', () => {
-  it("adds the cover's row, and only the cover's", async () => {
+  it('looks up only covers missing from the list, and adds the one featured on its site', async () => {
     const featured = { id: 90, modelVersionId: 9, availability: 'Public', authorUsername: 'ann' };
-    community.covers = new Map([[90, { image: featured }]]);
+    community.covers = new Map([['5:90', { image: featured, sites: new Set(['red']) }]]);
     const images = [owner(1, 10)] as unknown as Images;
 
     await appendCommunityCoverImages([{ id: 5, coverImageId: 90, sfwCoverImageId: 1 }], images);
 
+    expect(community.lookup).toHaveBeenCalledWith([{ modelId: 5, imageId: 90, site: 'red' }]);
     expect(images.map((image) => image.id)).toEqual([1, 90]);
+  });
+
+  it('leaves out a cover featured only on the other site', async () => {
+    const featured = { id: 90, modelVersionId: 9, availability: 'Public', authorUsername: 'ann' };
+    community.covers = new Map([['5:90', { image: featured, sites: new Set(['red']) }]]);
+    const images = [owner(1, 10)] as unknown as Images;
+
+    await appendCommunityCoverImages([{ id: 5, coverImageId: null, sfwCoverImageId: 90 }], images);
+
+    expect(images.map((image) => image.id)).toEqual([1]);
   });
 
   it('hoists a community cover featured on an older version', () => {

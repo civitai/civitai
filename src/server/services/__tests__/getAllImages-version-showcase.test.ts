@@ -67,9 +67,8 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
-// Force the Flipt model-version-cache flag ON so `useModelVersionCache` is true
-// and the branch containing BOTH guards is taken. Keep every other flipt export
-// real (FLIPT_FEATURE_FLAGS etc. are used at module load).
+// The model-version-cache flag is OFF here: a curated showcase must take the cached-ids path on its
+// own.
 vi.mock('../../flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: vi.fn().mockResolvedValue(false) };

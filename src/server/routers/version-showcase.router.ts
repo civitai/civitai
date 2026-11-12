@@ -13,7 +13,13 @@ import {
   setVersionShowcase,
   setVersionShowcaseCover,
 } from '~/server/services/version-showcase.service';
-import { isFlagProtected, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  moderatorProcedure,
+  protectedProcedure,
+  router,
+} from '~/server/trpc';
 
 // Curating is behind the flag. Removals are not: turning the flag off must not take away the
 // author's or a moderator's way to take an image down.
@@ -28,13 +34,13 @@ export const versionShowcaseRouter = router({
         isModerator: !!ctx.user.isModerator,
       })
     ),
-  set: protectedProcedure
+  set: guardedProcedure
     .input(setVersionShowcaseSchema)
     .use(isFlagProtected('modelVersionShowcase'))
     .mutation(({ input, ctx }) =>
       setVersionShowcase({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
     ),
-  setCover: protectedProcedure
+  setCover: guardedProcedure
     .input(setVersionShowcaseCoverSchema)
     .use(isFlagProtected('modelVersionShowcase'))
     .mutation(({ input, ctx }) =>

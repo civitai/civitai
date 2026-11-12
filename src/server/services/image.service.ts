@@ -129,10 +129,8 @@ import {
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
-import {
-  getCarouselShowcaseIds,
-  showcaseSiteForDomain,
-} from '~/server/services/version-showcase.service';
+import { getCarouselShowcaseIds } from '~/server/services/version-showcase.service';
+import { showcaseSiteForDomain } from '~/shared/constants/version-showcase.constants';
 import { createLruCache } from '~/server/utils/lru-cache';
 import {
   fetchSharedContestCollectionItems,
@@ -2312,6 +2310,9 @@ const getAllImagesUncaptured = async (
     prefetchedNewCreators,
     prefetchedCollectionPermissions,
     prefetchedCollectionSeed,
+    // A version whose creator curated its showcase for this site serves that list, in its order,
+    // whichever branch the flag below picks for everyone else.
+    showcaseIds,
   ] = await Promise.all([
     hidden && userId
       ? dbRead.imageEngagement.findMany({
@@ -2338,6 +2339,9 @@ const getAllImagesUncaptured = async (
       ? getUserCollectionPermissionsById({ userId, isModerator, id: collectionId })
       : undefined,
     needsCollectionSeed ? getCollectionRandomSeed() : undefined,
+    prioritizedUserIds?.length && modelVersionId
+      ? getCarouselShowcaseIds({ modelVersionId, site: showcaseSiteForDomain(domain) })
+      : null,
   ]);
 
   if (hidden) {
@@ -2359,12 +2363,6 @@ const getAllImagesUncaptured = async (
 
   // Hacked this to use the model version image cache instead
   const prioritizeUser = !!prioritizedUserIds?.length;
-  // A version whose creator curated its showcase for this site serves that list, in its order,
-  // whichever branch the flag below picks for everyone else.
-  const showcaseIds =
-    prioritizeUser && modelVersionId
-      ? await getCarouselShowcaseIds({ modelVersionId, site: showcaseSiteForDomain(domain) })
-      : null;
   const useModelVersionCache = prioritizeUser && (prefetchedIsFlipt || !!showcaseIds);
   if (prioritizeUser && useModelVersionCache) {
     if (cursor) throw throwBadRequestError('Cannot use cursor with prioritizedUserIds');

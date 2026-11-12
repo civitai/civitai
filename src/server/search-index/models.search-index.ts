@@ -9,7 +9,10 @@ import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
-import { getShowcaseCommunityCovers } from '~/server/services/version-showcase.service';
+import {
+  getShowcaseCommunityCovers,
+  isShowcaseCoverImage,
+} from '~/server/services/version-showcase.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
@@ -189,13 +192,24 @@ export async function appendCommunityCoverImages(
 ) {
   const present = new Set(images.map((image) => image.id));
   const missing = models.flatMap((model) =>
-    [model.coverImageId, model.sfwCoverImageId]
-      .filter((imageId): imageId is number => !!imageId && !present.has(imageId))
-      .map((imageId) => ({ modelId: model.id, imageId }))
+    (
+      [
+        ['red', model.coverImageId],
+        ['com', model.sfwCoverImageId],
+      ] as const
+    )
+      .filter((cover): cover is ['red' | 'com', number] => !!cover[1] && !present.has(cover[1]))
+      .map(([site, imageId]) => ({ modelId: model.id, imageId, site }))
   );
   if (!missing.length) return;
   const community = await getShowcaseCommunityCovers(missing);
-  for (const { image } of community.values()) if (!present.has(image.id)) images.push(image);
+  for (const cover of missing) {
+    const image = isShowcaseCoverImage(community, cover);
+    if (image && !present.has(image.id)) {
+      images.push(image);
+      present.add(image.id);
+    }
+  }
 }
 
 /** A taken-down model's document names none of its images: its cover ids are cleared. */

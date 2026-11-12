@@ -27,14 +27,6 @@ import {
 } from '~/shared/constants/version-showcase.constants';
 import { Flags } from '~/shared/utils/flags';
 
-export {
-  coverColumnForSite,
-  showcaseSiteForDomain,
-  VERSION_SHOWCASE_LIMIT,
-  versionShowcaseSites,
-} from '~/shared/constants/version-showcase.constants';
-export type { VersionShowcaseSite } from '~/shared/constants/version-showcase.constants';
-
 export type VersionShowcaseRow = {
   imageId: number;
   site: VersionShowcaseSite;
@@ -83,6 +75,7 @@ function communityImageConditions(): Prisma.Sql[] {
     Prisma.sql`p.availability = 'Public'`,
     Prisma.sql`u."bannedAt" IS NULL AND u."deletedAt" IS NULL`,
     Prisma.sql`COALESCE((u.settings->>'hideFromVersionShowcases')::boolean, FALSE) = FALSE`,
+    // The same list `getCreatorGalleryHiddenUserIds` reads, inlined for this batched join.
     Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "CreatorGalleryHiddenUser" cgh
       WHERE cgh."creatorId" = m."userId" AND cgh."userId" = i."userId"
@@ -159,9 +152,14 @@ const buildVersionShowcaseCache = () =>
         select: { id: true, modelId: true },
       });
       const modelOf = new Map(versionModels.map((v) => [v.id, v.modelId]));
-      const settings = new Map<number, Awaited<ReturnType<typeof getGallerySettingsByModelId>>>();
-      for (const modelId of new Set(modelOf.values()))
-        settings.set(modelId, await getGallerySettingsByModelId({ id: modelId }));
+      const settings = new Map(
+        await Promise.all(
+          [...new Set(modelOf.values())].map(
+            async (modelId) =>
+              [modelId, await getGallerySettingsByModelId({ id: modelId })] as const
+          )
+        )
+      );
 
       for (const image of community) {
         const gallery = settings.get(modelOf.get(image.modelVersionId) ?? -1);
@@ -297,20 +295,23 @@ export async function getCarouselShowcaseIds({
   }
 }
 
+export type ShowcaseCommunityCovers = Map<
+  string,
+  { image: VersionShowcaseCommunityImage; sites: Set<VersionShowcaseSite> }
+>;
+const coverKey = (modelId: number, imageId: number) => `${modelId}:${imageId}`;
+
 /**
- * Community images of a model that may serve as its cover: each image id that has a live showcase
- * row on any of the model's versions and still passes the showcase filters, with its image row and
- * the sites it is featured on. Covers set on an older version stay valid after a new version
- * publishes.
+ * Community images of a model that may serve as its cover: each (model, image) with a live showcase
+ * row on any of that model's versions, whose image still exists and passes the showcase filters,
+ * with its image row and the sites it is featured on. Covers set on an older version stay valid
+ * after a new version publishes. Look results up with `isShowcaseCoverImage`.
  */
 export async function getShowcaseCommunityCovers(
   covers: { modelId: number; imageId: number }[],
   { primary = false }: { primary?: boolean } = {}
-) {
-  const found = new Map<
-    number,
-    { image: VersionShowcaseCommunityImage; sites: Set<VersionShowcaseSite> }
-  >();
+): Promise<ShowcaseCommunityCovers> {
+  const found: ShowcaseCommunityCovers = new Map();
   if (!covers.length) return found;
   try {
     return await findShowcaseCommunityCovers(covers, primary, found);
@@ -322,29 +323,48 @@ export async function getShowcaseCommunityCovers(
   }
 }
 
+/** The one rule for whether a community image is a valid cover of this model on this site. */
+export function isShowcaseCoverImage(
+  covers: ShowcaseCommunityCovers,
+  { modelId, imageId, site }: { modelId: number; imageId: number; site: VersionShowcaseSite }
+) {
+  const entry = covers.get(coverKey(modelId, imageId));
+  return entry?.sites.has(site) ? entry.image : undefined;
+}
+
 async function findShowcaseCommunityCovers(
   covers: { modelId: number; imageId: number }[],
   primary: boolean,
-  found: Map<number, { image: VersionShowcaseCommunityImage; sites: Set<VersionShowcaseSite> }>
+  found: ShowcaseCommunityCovers
 ) {
   const db = primary ? dbWrite : dbRead;
-  const versions = await db.$queryRaw<{ modelVersionId: number; imageId: number }[]>`
-    SELECT DISTINCT s."modelVersionId", s."imageId"
+  // Joined to Image, so a deleted image stops counting at once rather than when the cache expires.
+  const versions = await db.$queryRaw<
+    { modelVersionId: number; modelId: number; imageId: number }[]
+  >`
+    SELECT DISTINCT s."modelVersionId", mv."modelId", s."imageId"
     FROM "ModelVersionShowcaseItem" s
     JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
+    JOIN "Image" i ON i.id = s."imageId"
     WHERE s."imageId" IN (${Prisma.join(covers.map((cover) => cover.imageId))})
       AND mv."modelId" IN (${Prisma.join(covers.map((cover) => cover.modelId))})
       AND s.source = 'Community'
       AND NOT s."removedByContributor"
   `;
-  if (!versions.length) return found;
-  const showcases = await getVersionShowcases([...new Set(versions.map((v) => v.modelVersionId))]);
-  for (const { modelVersionId, imageId } of versions) {
+  const wanted = new Set(covers.map((cover) => coverKey(cover.modelId, cover.imageId)));
+  const rows = versions.filter((row) => wanted.has(coverKey(row.modelId, row.imageId)));
+  if (!rows.length) return found;
+  const versionIds = [...new Set(rows.map((row) => row.modelVersionId))];
+  // Validation judges the current state, not a cache a missed bust left behind.
+  if (primary) await refreshVersionShowcases(versionIds);
+  const showcases = await getVersionShowcases(versionIds);
+  for (const { modelVersionId, modelId, imageId } of rows) {
     for (const image of showcases[modelVersionId]?.community ?? []) {
       if (image.id !== imageId) continue;
-      const entry = found.get(imageId) ?? { image, sites: new Set<VersionShowcaseSite>() };
+      const key = coverKey(modelId, imageId);
+      const entry = found.get(key) ?? { image, sites: new Set<VersionShowcaseSite>() };
       entry.sites.add(image.site);
-      found.set(imageId, entry);
+      found.set(key, entry);
     }
   }
   return found;
@@ -416,7 +436,7 @@ export async function dropInvalidCommunityCovers(modelIds: number[]) {
   const valid = await getShowcaseCommunityCovers(candidates, { primary: true });
   const { saveModelCovers } = await import('~/server/services/model-cover.service');
   for (const { modelId, site, imageId } of candidates) {
-    if (valid.get(imageId)?.sites.has(site)) continue;
+    if (isShowcaseCoverImage(valid, { modelId, imageId, site })) continue;
     await saveModelCovers({
       modelId,
       covers: { [coverColumnForSite(site)]: null },
@@ -583,8 +603,9 @@ export async function setVersionShowcase({
   const ids = unique.map((item) => item.imageId);
   const [ownerIds, tombstones, existing] = await Promise.all([
     getOwnerImageIds(modelVersionId, ids),
+    // An author's removal holds on both sites, whichever site the image was featured on.
     dbWrite.modelVersionShowcaseItem.findMany({
-      where: { modelVersionId, site, removedByContributor: true },
+      where: { modelVersionId, removedByContributor: true },
       select: { imageId: true },
     }),
     dbWrite.modelVersionShowcaseItem.findMany({
@@ -865,4 +886,36 @@ export async function getMyImageShowcaseFeatures({
       AND s.source = 'Community'
       AND NOT s."removedByContributor"
   `;
+}
+
+/**
+ * A version merge moves the source versions' showcase rows to the target, keeping the target's own
+ * row (or the newest source's) when two name the same image and site, then refreshes the caches.
+ * Runs after the merge commits and never fails it.
+ */
+export async function repointVersionShowcases(targetVersionId: number, sourceVersionIds: number[]) {
+  if (!sourceVersionIds.length) return;
+  try {
+    await dbWrite.$transaction([
+      dbWrite.$executeRaw`
+        INSERT INTO "ModelVersionShowcaseItem"
+          ("modelVersionId", site, "imageId", source, position, excluded,
+           "removedByContributor", "addedById", "createdAt")
+        SELECT DISTINCT ON (s.site, s."imageId")
+          ${targetVersionId}, s.site, s."imageId", s.source, s.position, s.excluded,
+          s."removedByContributor", s."addedById", s."createdAt"
+        FROM "ModelVersionShowcaseItem" s
+        WHERE s."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
+        ORDER BY s.site, s."imageId", s."modelVersionId" DESC
+        ON CONFLICT ("modelVersionId", site, "imageId") DO NOTHING
+      `,
+      dbWrite.$executeRaw`
+        DELETE FROM "ModelVersionShowcaseItem"
+        WHERE "modelVersionId" IN (${Prisma.join(sourceVersionIds)})
+      `,
+    ]);
+    await refreshVersionShowcases([targetVersionId, ...sourceVersionIds]);
+  } catch (error) {
+    logShowcaseError('version-showcase-merge-repoint-failed', error);
+  }
 }

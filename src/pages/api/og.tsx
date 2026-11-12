@@ -23,7 +23,10 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
-import { getShowcaseCommunityCovers } from '~/server/services/version-showcase.service';
+import {
+  getShowcaseCommunityCovers,
+  isShowcaseCoverImage,
+} from '~/server/services/version-showcase.service';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
@@ -278,7 +281,14 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   // it still passes the showcase's filters, and credited to its author.
   const communityCover =
     !coverImage && coverId && !withheld
-      ? (await getShowcaseCommunityCovers([{ modelId: id, imageId: coverId }])).get(coverId)?.image
+      ? isShowcaseCoverImage(
+          await getShowcaseCommunityCovers([{ modelId: id, imageId: coverId }]),
+          {
+            modelId: id,
+            imageId: coverId,
+            site: coverId === model.sfwCoverImageId ? 'com' : 'red',
+          }
+        )
       : undefined;
 
   const stats: StatItem[] = metric

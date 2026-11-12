@@ -1180,6 +1180,16 @@ describe('.com face re-check after a listing edit', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
+  it('refuses an owner’s save whose .red cover changed after the save read it', async () => {
+    // The version showcase writes this cover too.
+    mockStored({ coverImageId: 4 });
+    mockLocked({ coverImageId: 9 });
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 7 })).rejects.toThrow(
+      'cover changed while you were editing'
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
   it('drops the removal marker when a save sets a .com cover again', async () => {
     mockStored({
       sfwName: 'Retro Style',

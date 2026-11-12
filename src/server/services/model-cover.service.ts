@@ -6,7 +6,11 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
-import { getShowcaseCommunityCovers } from '~/server/services/version-showcase.service';
+import {
+  getShowcaseCommunityCovers,
+  isShowcaseCoverImage,
+} from '~/server/services/version-showcase.service';
+import type { VersionShowcaseSite } from '~/shared/constants/version-showcase.constants';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
   throwBadRequestError,
@@ -55,22 +59,24 @@ export async function assertCoverImagesValid({
       )
     : new Map();
 
-  if (coverImageId && !byId.has(coverImageId) && !community.get(coverImageId)?.sites.has('red'))
+  const featuredOn = (imageId: number, site: VersionShowcaseSite) =>
+    isShowcaseCoverImage(community, { modelId, imageId, site });
+  if (coverImageId && !byId.has(coverImageId) && !featuredOn(coverImageId, 'red'))
     throw throwBadRequestError(
       'The cover must be one of your published images on this model, or an image featured in its civitai.red showcase.'
     );
   if (sfwCoverImageId) {
     const owned = byId.get(sfwCoverImageId);
-    const featured = community.get(sfwCoverImageId);
-    if (!owned && featured && modelNsfw)
+    const featured = featuredOn(sfwCoverImageId, 'com');
+    if (!owned && (featured ?? featuredOn(sfwCoverImageId, 'red')) && modelNsfw)
       throw throwBadRequestError(
         'On a mature model the civitai.com cover must be one of your own images.'
       );
-    if (!owned && !featured?.sites.has('com'))
+    if (!owned && !featured)
       throw throwBadRequestError(
         'The civitai.com cover must be one of your published images on this model, or an image featured in its civitai.com showcase.'
       );
-    if (!isComSafeLevel(owned?.nsfwLevel ?? featured?.image.nsfwLevel ?? 0))
+    if (!isComSafeLevel(owned?.nsfwLevel ?? featured?.nsfwLevel ?? 0))
       throw throwBadRequestError('The civitai.com cover must be an image rated PG or PG-13.');
   }
 }
@@ -86,7 +92,14 @@ export async function getCoverImages({
   modelVersionImages,
   sameVersionOnly,
 }: {
-  covers: { modelId: number; ownerId: number; shownVersionId?: number; coverId: number | null }[];
+  covers: {
+    modelId: number;
+    ownerId: number;
+    shownVersionId?: number;
+    coverId: number | null;
+    /** The site whose cover this is: which showcase a community cover must be featured in. */
+    site?: VersionShowcaseSite;
+  }[];
   modelVersionImages: Record<number, { images: ImagesForModelVersions[] }>;
   sameVersionOnly: boolean;
 }) {
@@ -142,7 +155,12 @@ export async function getCoverImages({
  */
 async function withCommunityCovers(
   found: Map<number, ImagesForModelVersions>,
-  pending: { modelId: number; shownVersionId?: number; coverId: number }[],
+  pending: {
+    modelId: number;
+    shownVersionId?: number;
+    coverId: number;
+    site?: VersionShowcaseSite;
+  }[],
   sameVersionOnly: boolean
 ) {
   const missing = pending.filter((cover) => !found.has(cover.modelId));
@@ -151,10 +169,14 @@ async function withCommunityCovers(
     missing.map((cover) => ({ modelId: cover.modelId, imageId: cover.coverId }))
   );
   for (const cover of missing) {
-    const featured = community.get(cover.coverId);
+    const featured = isShowcaseCoverImage(community, {
+      modelId: cover.modelId,
+      imageId: cover.coverId,
+      site: cover.site ?? 'red',
+    });
     if (!featured) continue;
-    if (sameVersionOnly && featured.image.modelVersionId !== cover.shownVersionId) continue;
-    found.set(cover.modelId, featured.image);
+    if (sameVersionOnly && featured.modelVersionId !== cover.shownVersionId) continue;
+    found.set(cover.modelId, featured);
   }
   return found;
 }
@@ -224,9 +246,9 @@ export async function getComCoverState(model: {
 type CoverColumns = { coverImageId: number | null; sfwCoverImageId: number | null };
 
 /**
- * The checks every cover change runs before it is stored: the .com face text when the model has a
- * face and its .com cover is being set, then the covers themselves. Shared by the model editor
- * (`upsertModel`) and the showcase.
+ * The checks a showcase cover change runs before it is stored: the .com face text when the model
+ * has a face and its .com cover is being set, then the covers themselves. The model editor
+ * (`upsertModel`) runs the same two checks inline, within its own save.
  */
 export async function assertCoverChange({
   model,
