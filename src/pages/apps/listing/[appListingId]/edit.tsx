@@ -1,7 +1,6 @@
 import { Anchor, Center, Group, Loader, Stack, Tabs } from '@mantine/core';
 import {
   IconArrowLeft,
-  IconCoin,
   IconHistory,
   IconMessage2,
   IconPhoto,
@@ -15,7 +14,6 @@ import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppCollaboratorsPanel } from '~/components/Apps/AppCollaboratorsPanel';
 import { AppFeedbackInboxPanel } from '~/components/Apps/AppFeedbackInboxPanel';
-import { AppEarningsPanel } from '~/components/Apps/AppEarningsPanel';
 import type { EditorTab } from '~/components/Apps/appListingEditorTabs';
 import {
   EDITOR_TAB_LABELS,
@@ -93,7 +91,6 @@ const TAB_ICONS: Record<EditorTab, typeof IconSettings> = {
   details: IconWriting,
   media: IconPhoto,
   manifest: IconSettings,
-  earnings: IconCoin,
   collaborators: IconUsers,
   publishing: IconRocket,
   history: IconHistory,
@@ -294,15 +291,6 @@ export default function AppListingEditPage() {
             {tabs.includes('manifest') && context.appBlockId ? (
               <Tabs.Panel value="manifest" pt="md" data-testid="apps-edit-panel-manifest">
                 <ManifestTabPanel appBlockId={context.appBlockId} />
-              </Tabs.Panel>
-            ) : null}
-
-            {/* 🔴 Keyed on the LISTING, like the proc. `getAppEarnings` resolves the
-                caller's role itself and refuses an off-site listing, so the tab set (which
-                mirrors that refusal) and the panel agree by construction. */}
-            {tabs.includes('earnings') ? (
-              <Tabs.Panel value="earnings" pt="md" data-testid="apps-edit-panel-earnings">
-                <AppEarningsPanel appListingId={context.appListingId} />
               </Tabs.Panel>
             ) : null}
 

@@ -344,6 +344,9 @@ export const appCollaboratorsRouter = router({
   /**
    * APP-SCOPED earnings — the collaborator money surface.
    *
+   * No client today: it returns only the card-purchase revenue share, which is recorded but
+   * never paid out, so the listing editor's Earnings tab was removed until a payout exists.
+   *
    * 🔴 NOT a widening of `blocks.getMyRevenue`. That proc is keyed on the snapshotted
    * `appOwnerUserId` and is USER-WIDE; reusing it for an editor (by passing the
    * owner's id) would return the owner's ENTIRE PORTFOLIO. This one resolves the

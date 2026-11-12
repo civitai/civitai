@@ -1234,8 +1234,7 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
  * among several seats — a split nobody has specified". **There is no split to
  * specify.** `getAppEarnings` already shows the app's UNDIVIDED owner-share total
  * to every seat — its own test asserts the accepted editor reads the same
- * `shareCents` as the owner, and `AppEarningsPanel` says so on screen ("shared
- * with everyone seated on it"). The split argument is real but belongs to a
+ * `shareCents` as the owner. The split argument is real but belongs to a
  * different axis: it is about the PAYEE on the write side, which is why
  * `app-access.call-site-ledger.test.ts` records it for `resolveBlockGoodForPurchase`
  * below. Carrying it over to a READ, where nobody receives anything, was wrong.

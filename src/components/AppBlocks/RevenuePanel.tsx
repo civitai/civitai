@@ -15,6 +15,11 @@ import { Tooltip } from '~/components/MantineOverlays';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
 import { AppsTableColgroup, APPS_REVENUE_COLUMNS } from '~/components/Apps/appsWideLayout';
+import type {
+  AuthorFeeBucket,
+  AuthorFeeEarnings,
+} from '~/server/services/blocks/author-fee-earnings.service';
+import { capitalize } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -46,25 +51,6 @@ function unavailableMessage(reason: RevenueUnavailableReason): string {
     }
   }
 }
-
-type SummaryShape = {
-  pending: { count: number; grossCents: number; shareCents: number };
-  confirmed: { count: number; grossCents: number; shareCents: number };
-  paidOut: { count: number; grossCents: number; shareCents: number };
-  voided: { count: number; grossCents: number };
-};
-
-type RecentRow = {
-  id: string;
-  attributedAt: Date | string;
-  scope: string;
-  buzzAmount: number;
-  usdAmountCents: number;
-  appOwnerShareCents: number;
-  status: string;
-  voidedReason: string | null;
-  appBlockId: string;
-};
 
 /**
  * Mirrors `GoodsUnavailableReason` in
@@ -120,9 +106,11 @@ type GoodsShape = {
 };
 
 type RevenueData = {
-  summary: SummaryShape;
-  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
-  recentAttributions: RecentRow[];
+  /**
+   * Optional because `data` is an `as`-cast wire payload and an API process older than this
+   * bundle omits it during a rollout; the card renders that as unreadable, never as zero.
+   */
+  authorFees?: AuthorFeeEarnings;
   /**
    * REQUIRED in the type, because an optional field invites a renderer to skip it
    * and skipping it is the defect being fixed — goods revenue that exists and is
@@ -200,90 +188,216 @@ function approxDollars(cents: number, buzzAmount: number) {
   return `≈ ${dollars(cents)}`;
 }
 
-function SummaryCards({ summary }: { summary: SummaryShape }) {
+/**
+ * Pinned whole by `payout-copy-truthfulness.test.ts`, together with an assertion that the daily
+ * settlement job is still registered, because this sentence promises a payout cadence.
+ */
+const AUTHOR_FEE_PAYOUT_COPY =
+  'Viewers pay your author fee when they run a generation in your app. Fees are paid into your Buzz account once a day: the fees for each day settle in a daily batch after that day ends, in the Buzz type the viewer paid with.';
+
+const AUTHOR_FEE_PENDING_TOOLTIP =
+  'Charged to viewers and not yet paid to you. A fee whose generation fails is refunded to the viewer and removed from this figure.';
+
+const AUTHOR_FEE_BLUE_CAVEAT =
+  'Some of these fees were paid with Blue Buzz. You receive those as Blue Buzz, which cannot be withdrawn.';
+
+const AUTHOR_FEES_UNAVAILABLE =
+  'Author fee earnings could not be loaded, so none are shown here. This is not a report of zero earnings.';
+
+const STATUS_LABEL: Record<string, string> = { accrued: 'Pending payout', settled: 'Paid' };
+
+function buzzTypeBreakdown(bucket: AuthorFeeBucket) {
+  return Object.entries(bucket.byBuzzType)
+    .filter(([, buzz]) => buzz > 0)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([type, buzz]) => `${capitalize(type)} ${buzz.toLocaleString()}`)
+    .join(' · ');
+}
+
+function AuthorFeeTile({
+  label,
+  tooltip,
+  bucket,
+  testId,
+  color,
+}: {
+  label: string;
+  tooltip?: string;
+  bucket: AuthorFeeBucket;
+  testId: string;
+  color?: string;
+}) {
+  const breakdown = buzzTypeBreakdown(bucket);
   return (
-    <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-      <Card padding="md" radius="md" withBorder>
-        <Group gap="xs">
-          <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-            Pending
-          </Text>
-          <Tooltip label="Settles after the refund window (Stripe: 30 days)" position="top">
-            <IconInfoCircle size={14} />
-          </Tooltip>
-        </Group>
-        <Title order={3} mt={4}>
-          {dollars(summary.pending.shareCents)}
-        </Title>
-        <Text size="xs" c="dimmed">
-          {summary.pending.count} purchase{summary.pending.count === 1 ? '' : 's'}
-        </Text>
-      </Card>
-      <Card padding="md" radius="md" withBorder>
-        <Group gap="xs">
-          <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-            Confirmed (unpaid)
-          </Text>
-          <Tooltip
-            label="Past the refund window. This amount accrues; automated payouts are not yet enabled."
-            position="top"
-          >
-            <IconInfoCircle size={14} />
-          </Tooltip>
-        </Group>
-        <Title order={3} mt={4} c="green">
-          {dollars(summary.confirmed.shareCents)}
-        </Title>
-        <Text size="xs" c="dimmed">
-          {summary.confirmed.count} purchase{summary.confirmed.count === 1 ? '' : 's'}
-        </Text>
-      </Card>
-      <Card padding="md" radius="md" withBorder>
+    <div data-testid={`${testId}-tile`}>
+      <Group gap="xs">
         <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-          Paid out
+          {label}
         </Text>
-        <Title order={3} mt={4}>
-          {dollars(summary.paidOut.shareCents)}
-        </Title>
-        <Text size="xs" c="dimmed">
-          {summary.paidOut.count} purchase{summary.paidOut.count === 1 ? '' : 's'}
-        </Text>
-      </Card>
-      <Card padding="md" radius="md" withBorder>
-        <Group gap="xs">
-          <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-            Voided
-          </Text>
-          <Tooltip label="Refunds, chargebacks, and self-purchases. Not paid out." position="top">
+        {tooltip && (
+          <Tooltip label={tooltip} position="top" multiline w={280}>
             <IconInfoCircle size={14} />
           </Tooltip>
-        </Group>
-        <Title order={3} mt={4} c="dimmed">
-          {dollars(summary.voided.grossCents)}
+        )}
+      </Group>
+      <Group gap={4} mt={4}>
+        <IconBolt size={18} />
+        <Title order={3} c={color} data-testid={`${testId}-buzz`}>
+          {bucket.feeBuzz.toLocaleString()}
         </Title>
-        <Text size="xs" c="dimmed">
-          {summary.voided.count} purchase{summary.voided.count === 1 ? '' : 's'}
+      </Group>
+      <Text size="xs" c="dimmed" data-testid={`${testId}-count`}>
+        {bucket.count.toLocaleString()} generation{bucket.count === 1 ? '' : 's'}
+        {breakdown ? ` · ${breakdown}` : ''}
+      </Text>
+    </div>
+  );
+}
+
+function AuthorFeeCard({
+  authorFees,
+  scoped,
+}: {
+  authorFees: AuthorFeeEarnings | undefined;
+  scoped: boolean;
+}) {
+  const empty = !!authorFees && authorFees.accrued.count === 0 && authorFees.settled.count === 0;
+  const hasBlue =
+    !!authorFees &&
+    ((authorFees.accrued.byBuzzType.blue ?? 0) > 0 ||
+      (authorFees.settled.byBuzzType.blue ?? 0) > 0);
+  return (
+    <Card padding="md" radius="md" withBorder data-testid="author-fees-card">
+      <Title order={5}>Author fees</Title>
+      <Text size="sm" c="dimmed" mt={4} data-testid="author-fees-payout-copy">
+        {AUTHOR_FEE_PAYOUT_COPY}
+      </Text>
+
+      {!authorFees ? (
+        <Text c="yellow" size="sm" mt="sm" data-testid="author-fees-unavailable">
+          {AUTHOR_FEES_UNAVAILABLE}
         </Text>
-      </Card>
-    </SimpleGrid>
+      ) : empty ? (
+        <Text c="dimmed" size="sm" mt="sm" data-testid="author-fees-empty">
+          {scoped
+            ? 'No author fees attributed to you for this app yet.'
+            : 'No author fees attributed to you on your apps yet.'}
+        </Text>
+      ) : (
+        <>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md" mt="sm">
+            <AuthorFeeTile
+              label="Pending payout"
+              tooltip={AUTHOR_FEE_PENDING_TOOLTIP}
+              bucket={authorFees.accrued}
+              testId="author-fees-pending"
+            />
+            <AuthorFeeTile
+              label="Paid to you"
+              bucket={authorFees.settled}
+              testId="author-fees-paid"
+              color="green"
+            />
+          </SimpleGrid>
+          {hasBlue && (
+            <Text size="xs" c="dimmed" mt="sm" data-testid="author-fees-blue-caveat">
+              {AUTHOR_FEE_BLUE_CAVEAT}
+            </Text>
+          )}
+
+          {!scoped && authorFees.byApp.length > 0 && (
+            <Stack gap="xs" mt="md" data-testid="author-fees-by-app">
+              <Text size="xs" c="dimmed" fw={600} tt="uppercase">
+                By app
+              </Text>
+              {authorFees.byApp.map((app) => (
+                <Group
+                  key={app.appBlockId}
+                  justify="space-between"
+                  data-testid={`author-fees-app-${app.appBlockId}`}
+                >
+                  <Anchor component={Link} href={`/apps/${app.appBlockId}/revenue`} size="sm">
+                    {app.appBlockId}
+                  </Anchor>
+                  <Text size="sm">
+                    {app.settled.feeBuzz.toLocaleString()} paid ·{' '}
+                    {app.accrued.feeBuzz.toLocaleString()} pending
+                  </Text>
+                </Group>
+              ))}
+            </Stack>
+          )}
+
+          {authorFees.recent.length > 0 && (
+            <>
+              <Text size="xs" c="dimmed" fw={600} tt="uppercase" mt="md">
+                Recent fees
+              </Text>
+              <Table mt="xs" highlightOnHover data-testid="author-fees-recent">
+                {/*
+                  🔴 FIRST CHILD, BEFORE the row groups — the ordering is pinned by
+                  `~/components/Apps/__tests__/appsWideLayout.test.ts`. The ledger is chosen by
+                  `scoped`, the SAME flag that decides whether the App column renders.
+                */}
+                <AppsTableColgroup
+                  columns={scoped ? APPS_REVENUE_COLUMNS.scoped : APPS_REVENUE_COLUMNS.withApp}
+                />
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Date</Table.Th>
+                    {!scoped && <Table.Th>App</Table.Th>}
+                    <Table.Th>
+                      <Group gap={4}>
+                        <IconBolt size={14} />
+                        Fee
+                      </Group>
+                    </Table.Th>
+                    <Table.Th>Buzz type</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {authorFees.recent.map((row) => (
+                    <Table.Tr key={row.id}>
+                      <Table.Td>{new Date(row.accruedAt).toLocaleDateString()}</Table.Td>
+                      {!scoped && (
+                        <Table.Td>
+                          <Anchor
+                            component={Link}
+                            href={`/apps/${row.appBlockId}/revenue`}
+                            size="sm"
+                          >
+                            {row.appBlockId}
+                          </Anchor>
+                        </Table.Td>
+                      )}
+                      <Table.Td>{row.feeBuzz.toLocaleString()}</Table.Td>
+                      <Table.Td>{capitalize(row.buzzType)}</Table.Td>
+                      <Table.Td>
+                        <Badge
+                          variant="light"
+                          color={row.status === 'settled' ? 'green' : 'gray'}
+                          size="sm"
+                        >
+                          {STATUS_LABEL[row.status] ?? row.status}
+                        </Badge>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 
 /**
- * Digital-goods sales — the second revenue rail, and the whole point of this
- * card existing separately.
- *
- * 🔴 ITS OWN LINE, NOT FOLDED INTO THE BUCKETS ABOVE, for three reasons that each
- * rule out folding on their own:
- *   - UNITS. Those buckets are USD cents; this rail is whole Buzz, and cents
- *     cannot represent a 7-Buzz share. Adding them would either round this rail
- *     to zero or silently redenominate theirs.
- *   - LIFECYCLE. `pending → confirmed → paid_out` is the card-purchase refund
- *     window. A goods sale has no such window: the owner is credited in the same
- *     request. There is no bucket above that a sale honestly belongs in.
- *   - PROVENANCE. These figures come from `block_good_purchase`, not from
- *     `BlockBuzzAttribution`. Merging the totals would make the two
- *     indistinguishable in a dispute.
+ * Digital-goods sales — its own card, not folded into the author-fee totals: a goods
+ * sale pays out in the same request while an author fee settles daily, and the two
+ * come from different ledgers, so merged totals would be indistinguishable in a dispute.
  *
  * 🔴 RENDERED EVEN WHEN EVERY FIGURE IS ZERO. Hiding the card on no-sales would
  * make "this app sold nothing" indistinguishable from "this surface does not
@@ -310,7 +424,7 @@ function SummaryCards({ summary }: { summary: SummaryShape }) {
  * exactly what the column is.
  */
 const GOODS_TIMING_TOOLTIP =
-  'This rail pays out immediately in Buzz rather than accruing like the buckets above. The figure is your recorded share of each settled sale. Reversed, refunded and not-yet-settled rows are all excluded.';
+  'This rail pays out immediately in Buzz rather than settling daily like author fees. The figure is your recorded share of each settled sale. Reversed, refunded and not-yet-settled rows are all excluded.';
 
 /**
  * 🔴 BLUE BUZZ IS NOT CASH, so a dollar figure beside it needs saying so.
@@ -454,28 +568,18 @@ function GoodsSalesCard({ goods, scoped }: { goods: GoodsShape; scoped: boolean 
 }
 
 /**
- * Publisher revenue dashboard for `blocks.getMyRevenue`.
+ * Publisher earnings dashboard for `blocks.getMyRevenue`: author fees first, then
+ * digital-goods sales.
  *
  * Pass `appBlockId` to scope to a single app (the /apps/[appBlockId]/revenue
  * page); omit it entirely for the caller's whole portfolio (/apps/revenue).
  * Both pages render THIS component so the fabricated-zero guard below exists in
- * exactly one place — it previously lived in neither, duplicated across two
- * page-local copies of this markup.
+ * exactly one place.
  *
  * The guard: `getMyRevenue` returns all-zero buckets both for a publisher who
  * has genuinely earned nothing yet and for a caller the dark `appBlocks` flag
  * never let it query. Only `unavailable` separates them, so presenting the
  * zeroed dashboard for the latter reports fabricated earnings as fact.
- *
- * ⚠️ TWO RAILS, AND `topApps` ONLY RANKS ONE. `SummaryCards` + `topApps` +
- * "Recent attributions" are the card-purchase rail (`BlockBuzzAttribution`, USD
- * cents); `GoodsSalesCard` is the digital-goods rail (`block_good_purchase`,
- * whole Buzz). The ranking is deliberately NOT merged: the two are denominated
- * differently, so one ordering over both would be comparing cents to Buzz. An
- * owner whose only revenue is sales therefore sees a populated goods card and an
- * absent "Top earning apps" — correct, if initially surprising. A unified
- * ranking needs a decision about which unit it is in; this change does not make
- * one.
  */
 export function RevenuePanel({ appBlockId }: { appBlockId?: string }) {
   // `appBlockId === undefined` means "all my apps"; an explicitly-passed empty
@@ -517,7 +621,7 @@ export function RevenuePanel({ appBlockId }: { appBlockId?: string }) {
 
       {data && !unavailable && (
         <>
-          <SummaryCards summary={data.summary} />
+          <AuthorFeeCard authorFees={data.authorFees} scoped={scoped} />
 
           {/*
             `?? GOODS_ABSENT` rather than `data.goods` alone: the type says this key is
@@ -527,111 +631,6 @@ export function RevenuePanel({ appBlockId }: { appBlockId?: string }) {
             took the whole page down. The fallback is the UNREADABLE shape, not zeros.
           */}
           <GoodsSalesCard goods={data.goods ?? GOODS_ABSENT} scoped={scoped} />
-
-          {!scoped && data.topApps.length > 0 && (
-            <Card padding="md" radius="md" withBorder>
-              <Title order={5}>Top earning apps</Title>
-              <Stack gap="xs" mt="sm">
-                {data.topApps.map((app) => (
-                  <Group key={app.appBlockId} justify="space-between">
-                    <Anchor component={Link} href={`/apps/${app.appBlockId}/revenue`} size="sm">
-                      {app.appBlockId}
-                    </Anchor>
-                    <Group gap="xs">
-                      <Text size="sm" fw={600}>
-                        {dollars(app.shareCents)}
-                      </Text>
-                      <Badge variant="light" size="sm">
-                        {app.count}
-                      </Badge>
-                    </Group>
-                  </Group>
-                ))}
-              </Stack>
-            </Card>
-          )}
-
-          <Card padding="md" radius="md" withBorder>
-            <Title order={5}>Recent attributions</Title>
-            {data.recentAttributions.length === 0 ? (
-              <Text c="dimmed" size="sm" mt="sm">
-                {scoped
-                  ? 'No buzz purchases attributed to this app yet.'
-                  : 'No buzz purchases yet. Install your apps on more models to earn share.'}
-              </Text>
-            ) : (
-              <Table mt="sm" highlightOnHover>
-                {/*
-                  🔴 FIRST CHILD, BEFORE the row groups — HTML requires it there; the
-                  ordering is pinned by `~/components/Apps/__tests__/appsWideLayout.test.ts`.
-                  The ledger is chosen by `scoped`, the SAME flag that
-                  decides whether the App column renders, so the column count and the width
-                  list cannot drift apart. Unscoped (`/apps/revenue`, full container) the
-                  App link is primary; scoped there is no App column and Scope takes the
-                  slack.
-                */}
-                <AppsTableColgroup
-                  columns={scoped ? APPS_REVENUE_COLUMNS.scoped : APPS_REVENUE_COLUMNS.withApp}
-                />
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Date</Table.Th>
-                    {!scoped && <Table.Th>App</Table.Th>}
-                    <Table.Th>Scope</Table.Th>
-                    <Table.Th>
-                      <Group gap={4}>
-                        <IconBolt size={14} />
-                        Buzz
-                      </Group>
-                    </Table.Th>
-                    <Table.Th>Gross</Table.Th>
-                    <Table.Th>Your share</Table.Th>
-                    <Table.Th>Status</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {data.recentAttributions.map((row: RecentRow) => (
-                    <Table.Tr key={row.id}>
-                      <Table.Td>{new Date(row.attributedAt).toLocaleDateString()}</Table.Td>
-                      {!scoped && (
-                        <Table.Td>
-                          <Anchor
-                            component={Link}
-                            href={`/apps/${row.appBlockId}/revenue`}
-                            size="sm"
-                          >
-                            {row.appBlockId}
-                          </Anchor>
-                        </Table.Td>
-                      )}
-                      <Table.Td>{row.scope}</Table.Td>
-                      <Table.Td>{row.buzzAmount.toLocaleString()}</Table.Td>
-                      <Table.Td>{dollars(row.usdAmountCents)}</Table.Td>
-                      <Table.Td>{dollars(row.appOwnerShareCents)}</Table.Td>
-                      <Table.Td>
-                        <Badge
-                          variant="light"
-                          color={
-                            row.status === 'paid_out'
-                              ? 'green'
-                              : row.status === 'confirmed'
-                              ? 'teal'
-                              : row.status === 'voided'
-                              ? 'red'
-                              : 'gray'
-                          }
-                          size="sm"
-                        >
-                          {row.status}
-                          {row.voidedReason ? ` (${row.voidedReason})` : ''}
-                        </Badge>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            )}
-          </Card>
         </>
       )}
     </Stack>

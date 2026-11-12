@@ -202,11 +202,10 @@ import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   emptyRevenue,
   getGoodsSalesForOwner,
-  getRecentAttributionsForOwner,
-  getRevenueForOwner,
   isMissingGoodsTableError,
   unreadableGoodsSales,
 } from '~/server/services/blocks/buzz-attribution.service';
+import { getAuthorFeeEarningsForOwner } from '~/server/services/blocks/author-fee-earnings.service';
 import {
   emptyAnalytics,
   getMyAppAnalytics,
@@ -8551,7 +8550,9 @@ export const blocksRouter = router({
     }),
 
   /**
-   * Publisher revenue summary. Caller must be the app owner — the
+   * Publisher earnings: the per-generation author fee and digital-goods sales.
+   * The card-purchase revenue share is recorded but never paid out, so it is not
+   * returned here. Caller must be the app owner — the
    * service filters by `app_owner_user_id` so even if the request
    * carries a different appBlockId, the rows are scoped to the caller.
    * Auth is enforced by appDeveloperProcedure (the `appBlocksAuthor`
@@ -8566,12 +8567,10 @@ export const blocksRouter = router({
    * consistent choice, for the reasons spelled out on getMyAppAnalytics.
    *
    * 🔴 DELIBERATELY **NOT** WIDENED FOR COLLABORATORS. This proc answers "what have
-   * *I* accrued", keyed on the snapshotted `BlockBuzzAttribution.appOwnerUserId` — and,
-   * for the `goods` bucket, the snapshotted `block_good_purchase.app_owner_user_id`,
-   * which was chosen for the identical reason. Both arguments below therefore hold for
-   * both rails, which is what made the goods bridge a safe addition to THIS proc and
-   * not to the collaborator ones. That is exactly the right question for it to keep
-   * answering:
+   * *I* earned", keyed on the snapshotted `block_author_fee_accrual.app_owner_user_id`
+   * and `block_good_purchase.app_owner_user_id`, both chosen for the identical reason.
+   * Both arguments below therefore hold for both rails. That is exactly the right
+   * question for it to keep answering:
    *   - an editor calling it sees THEIR OWN portfolio, and nothing of the owner's —
    *     no leak, no change;
    *   - an owner who TRANSFERRED an app away still sees the rows they accrued before
@@ -8615,44 +8614,21 @@ export const blocksRouter = router({
       const user = ctx.user as SessionUser;
       const from = input.from ? new Date(input.from) : undefined;
       const to = input.to ? new Date(input.to) : undefined;
-      // THREE BRANCHES, **SEVEN** CONCURRENT READS — do not read this as "three
-      // queries". `getRevenueForOwner` is itself a `Promise.all` of five (four
-      // single-status aggregates plus a groupBy), `getRecentAttributionsForOwner`
-      // is one, and the goods bridge is one.
-      //
-      // ⚠️ SEVEN IS THE ONLY NUMBER HERE THAT IS DERIVABLE FROM THIS REPO, and an
-      // earlier version of this comment also claimed the call holds "~20% of a
-      // pod's read pool, so ~5 concurrent callers exhaust it". That was removed as
-      // unfounded: the pool size comes from `connection_limit` on `DATABASE_URL`,
-      // which is deployment configuration this repo does not set, and Prisma's
-      // default is `num_cpus * 2 + 1` — on a small pod that is single digits, under
-      // which seven concurrent reads is most of the pool rather than a fifth. A
-      // fabricated capacity figure is worse than none, because the next author
-      // widening this proc would have budgeted against it.
-      //
-      // What survives is the shape of the concern: this proc fans out SEVEN reads
-      // per call, it is only acceptable because `appDeveloperProcedure` plus the
-      // `appBlocks` flag keeps the audience tiny, and anyone widening the audience
-      // should measure the live pool rather than trust a number in a comment.
-      //
-      // Parallel rather than sequential is still right: the connections are held
-      // for the same total work either way, just longer, and
-      // `/apps/[appBlockId]/revenue` documents at its `<RevenuePanel>` mount that
-      // it refuses to serialize independent reads on a money screen.
-      //
-      // `getGoodsSalesForOwner` is the digital-goods bridge: sales record into
-      // `block_good_purchase` and write no attribution row, so the owner's own
-      // revenue page sees them only because this call is here. It is a READ, not
-      // a back-fill — see the function's docblock for why that distinction was
-      // chosen deliberately.
-      const [{ summary, topApps }, recentAttributions, goods] = await Promise.all([
-        getRevenueForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId, from, to }),
-        getRecentAttributionsForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId }),
+      // THREE concurrent reads: two in `getAuthorFeeEarningsForOwner`, one for goods. Acceptable only
+      // because `appDeveloperProcedure` plus the `appBlocks` flag keeps the audience tiny; measure the
+      // live read pool before widening it. The pool size is deployment configuration, not set here.
+      const [authorFees, goods] = await Promise.all([
+        getAuthorFeeEarningsForOwner({
+          ownerUserId: user.id,
+          appBlockId: input.appBlockId,
+          from,
+          to,
+        }),
         // 🔴 THE ONLY BRANCH THAT MAY DEGRADE, and only for ONE error. The table
         // `block_good_purchase` is applied BY HAND per environment (see the
         // migration header), so this code can legitimately run against a database
-        // that does not have it. Unguarded, that took down BOTH revenue pages
-        // entirely — including the card-purchase figures, which were readable.
+        // that does not have it. Unguarded, that takes down BOTH revenue pages
+        // entirely — including the author-fee figures, which are readable.
         //
         // 🔴 `isMissingGoodsTableError` IS WHAT MAKES THIS SAFE, AND THE WIDE
         // VERSION OF THIS CATCH WAS A BUG. Catching every rejection means a column
@@ -8686,7 +8662,7 @@ export const blocksRouter = router({
           return unreadableGoodsSales();
         }),
       ]);
-      return { summary, topApps, recentAttributions, goods };
+      return { authorFees, goods };
     }),
 
   /**
@@ -15339,7 +15315,7 @@ function buildWorkflowTags(
   // recipe id here (with `baseModel` also the recipe id) so a customComfy job is
   // NOT mislabeled 'txt2img' — while the `app-block:*` provenance tags below are
   // preserved verbatim, so the per-app subqueue read (appBlockTag) is unaffected.
-  workflowType: string = 'txt2img'
+  workflowType = 'txt2img'
 ): string[] {
   return [
     WORKFLOW_TAGS.GENERATION,

@@ -17,20 +17,26 @@ import type * as TrpcModule from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({ revenue: { current: undefined as unknown } }));
 
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    blocks: {
-      getMyRevenue: {
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy({
+      'blocks.getMyRevenue': {
         useQuery: () => ({ data: mocks.revenue.current, isLoading: false, error: null }),
       },
-    },
-  },
-}));
+    }),
+  };
+});
 
 const { RevenuePanel } = await import('./RevenuePanel');
 
-const ZERO_BUCKET = { count: 0, grossCents: 0, shareCents: 0 };
+const ZERO_FEES = {
+  accrued: { count: 0, feeBuzz: 0, byBuzzType: {} },
+  settled: { count: 0, feeBuzz: 0, byBuzzType: {} },
+  byApp: [],
+  recent: [],
+};
 const ZERO_GOODS = {
   sales: {
     count: 0,
@@ -43,16 +49,21 @@ const ZERO_GOODS = {
   refunded: { count: 0, grossBuzz: 0 },
 };
 const ZEROED = {
-  summary: {
-    pending: { ...ZERO_BUCKET },
-    confirmed: { ...ZERO_BUCKET },
-    paidOut: { ...ZERO_BUCKET },
-    voided: { count: 0, grossCents: 0 },
-  },
-  topApps: [],
-  recentAttributions: [],
+  authorFees: ZERO_FEES,
   goods: ZERO_GOODS,
 };
+
+/** The card-purchase share's labels. That share is recorded but never paid out. */
+const CARD_SHARE_LABELS = [
+  'Pending',
+  'Confirmed (unpaid)',
+  'Paid out',
+  'Voided',
+  'Top earning apps',
+  'Recent attributions',
+];
+const cardShareOnScreen = () =>
+  CARD_SHARE_LABELS.filter((l) => page.getByText(l, { exact: true }).elements().length > 0);
 
 describe('RevenuePanel — unavailable vs genuine zero', () => {
   test('dark flag (notEntitled): shows an honest unavailable state, NOT a $0.00 dashboard', async () => {
@@ -61,13 +72,9 @@ describe('RevenuePanel — unavailable vs genuine zero', () => {
 
     await expect.element(page.getByText('Revenue unavailable')).toBeInTheDocument();
     await expect.element(page.getByText(/not a report of zero earnings/i)).toBeInTheDocument();
-    // The fabricated dashboard must be gone entirely.
-    expect(page.getByText('Pending').elements()).toHaveLength(0);
-    expect(page.getByText('Confirmed (unpaid)').elements()).toHaveLength(0);
-    expect(page.getByText('Recent attributions').elements()).toHaveLength(0);
-    // ...the goods card included. It is a second money surface on this component,
-    // so suppressing the first four and leaving this one would render a
-    // never-measured "no sales" as a measurement.
+    // The fabricated dashboard must be gone entirely — both money cards.
+    expect(page.getByRole('heading', { name: 'Author fees' }).elements()).toHaveLength(0);
+    expect(page.getByTestId('author-fees-pending-buzz').elements()).toHaveLength(0);
     expect(page.getByRole('heading', { name: 'Digital goods sales' }).elements()).toHaveLength(0);
   });
 
@@ -76,8 +83,7 @@ describe('RevenuePanel — unavailable vs genuine zero', () => {
     renderWithProviders(<RevenuePanel appBlockId="apb_1" />);
 
     await expect.element(page.getByText('Revenue unavailable')).toBeInTheDocument();
-    expect(page.getByText('Pending').elements()).toHaveLength(0);
-    expect(page.getByText('Recent attributions').elements()).toHaveLength(0);
+    expect(page.getByRole('heading', { name: 'Author fees' }).elements()).toHaveLength(0);
   });
 
   test('DISCRIMINATOR: a genuine earned-nothing result still renders the real dashboard', async () => {
@@ -88,9 +94,10 @@ describe('RevenuePanel — unavailable vs genuine zero', () => {
     mocks.revenue.current = { ...ZEROED };
     renderWithProviders(<RevenuePanel />);
 
-    await expect.element(page.getByText('Pending')).toBeInTheDocument();
-    await expect.element(page.getByText('Confirmed (unpaid)')).toBeInTheDocument();
-    await expect.element(page.getByText('Recent attributions')).toBeInTheDocument();
+    await expect.element(page.getByRole('heading', { name: 'Author fees' })).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('author-fees-empty'))
+      .toHaveTextContent(/^No author fees attributed to you on your apps yet\.$/);
     expect(page.getByText('Revenue unavailable').elements()).toHaveLength(0);
     // Rendered even at zero: "sold nothing" and "sales are not reported here" must
     // not look the same, which is this file's whole thesis one rail over.
@@ -321,7 +328,7 @@ describe('RevenuePanel — digital goods sales', () => {
   test('UNREADABLE: a bucket that could not be read says so, and does NOT read as zero sales', async () => {
     // 🔴 `block_good_purchase` is applied by hand per environment, so this code can
     // run against a database without it. Before the discriminator existed that
-    // threw and took BOTH revenue pages down, including the card-purchase figures
+    // threw and took BOTH revenue pages down, including the other figures
     // that were fine. The fix must not swing to the other error either: zeroing the
     // bucket would report "no sales" for a rail nobody read — the fabricated zero
     // the payload-level guard in the describe above exists to prevent.
@@ -361,8 +368,7 @@ describe('RevenuePanel — digital goods sales', () => {
 
     // 🔴 DISCRIMINATOR, and the whole point: the REST of the dashboard still
     // renders. One unreadable rail must degrade to a labelled gap, not an outage.
-    await expect.element(page.getByText('Confirmed (unpaid)')).toBeInTheDocument();
-    await expect.element(page.getByText('Recent attributions')).toBeInTheDocument();
+    await expect.element(page.getByTestId('author-fees-empty')).toBeInTheDocument();
     expect(page.getByText('Revenue unavailable').elements()).toHaveLength(0);
   });
 
@@ -380,7 +386,7 @@ describe('RevenuePanel — digital goods sales', () => {
     // here — so during a rollout an API process older than this bundle can answer
     // the revenue bundle without the key at all. `GoodsSalesCard` destructures its
     // prop (`const { sales, refunded, unavailable } = goods`), so an unchecked
-    // `data.goods` threw and took the whole page down, card figures included.
+    // `data.goods` threw and took the whole page down, other figures included.
     //
     // 🔴 AND IT DEGRADES TO THE UNREADABLE SHAPE, NOT TO ZEROS. "Absent from the
     // payload" is not a measurement of zero sales; rendering a clean $0.00 goods
@@ -414,8 +420,168 @@ describe('RevenuePanel — digital goods sales', () => {
     // 🔴 AND THE REST OF THE DASHBOARD SURVIVES — the property the guard exists for.
     // A page-wide crash is what the missing key used to cause, so these are the
     // assertions that separate "degraded one rail" from "took the page down".
-    await expect.element(page.getByText('Confirmed (unpaid)')).toBeInTheDocument();
-    await expect.element(page.getByText('Recent attributions')).toBeInTheDocument();
+    await expect.element(page.getByTestId('author-fees-empty')).toBeInTheDocument();
     expect(page.getByText('Revenue unavailable').elements()).toHaveLength(0);
+  });
+});
+
+const FEES = {
+  accrued: { count: 3, feeBuzz: 41, byBuzzType: { yellow: 41 } },
+  settled: { count: 5, feeBuzz: 97, byBuzzType: { yellow: 90, blue: 7 } },
+  byApp: [
+    {
+      appBlockId: 'apb_big',
+      accrued: { count: 2, feeBuzz: 33, byBuzzType: { yellow: 33 } },
+      settled: { count: 4, feeBuzz: 88, byBuzzType: { yellow: 81, blue: 7 } },
+    },
+    {
+      appBlockId: 'apb_small',
+      accrued: { count: 1, feeBuzz: 8, byBuzzType: { yellow: 8 } },
+      settled: { count: 1, feeBuzz: 9, byBuzzType: { yellow: 9 } },
+    },
+  ],
+  recent: [
+    {
+      id: 'bafa_2',
+      appBlockId: 'apb_small',
+      feeBuzz: 8,
+      buzzType: 'yellow',
+      status: 'accrued',
+      accruedAt: '2026-11-11T10:00:00Z',
+      settledAt: null,
+    },
+    {
+      id: 'bafa_1',
+      appBlockId: 'apb_big',
+      feeBuzz: 7,
+      buzzType: 'blue',
+      status: 'settled',
+      accruedAt: '2026-11-09T10:00:00Z',
+      settledAt: '2026-11-10T02:30:00Z',
+    },
+  ],
+};
+
+describe('RevenuePanel — author fees', () => {
+  test('pending and paid totals render against their labels, with the buzz-type split', async () => {
+    mocks.revenue.current = { ...ZEROED, authorFees: FEES };
+    renderWithProviders(<RevenuePanel />);
+
+    await expect.element(page.getByRole('heading', { name: 'Author fees' })).toBeInTheDocument();
+    // Each figure is anchored inside the tile that labels it, so swapping the two buckets
+    // (or their labels) fails.
+    const pending = page.getByTestId('author-fees-pending-tile');
+    const paid = page.getByTestId('author-fees-paid-tile');
+    await expect.element(pending).toHaveTextContent(/^Pending payout/);
+    await expect.element(pending.getByTestId('author-fees-pending-buzz')).toHaveTextContent(/^41$/);
+    await expect
+      .element(pending.getByTestId('author-fees-pending-count'))
+      .toHaveTextContent(/^3 generations · Yellow 41$/);
+    await expect.element(paid).toHaveTextContent(/^Paid to you/);
+    await expect.element(paid.getByTestId('author-fees-paid-buzz')).toHaveTextContent(/^97$/);
+    await expect
+      .element(paid.getByTestId('author-fees-paid-count'))
+      .toHaveTextContent(/^5 generations · Blue 7 · Yellow 90$/);
+    await expect
+      .element(page.getByTestId('author-fees-payout-copy'))
+      .toHaveTextContent(/paid into your Buzz account once a day/);
+    // Blue was paid, so the non-withdrawable caveat shows.
+    await expect.element(page.getByTestId('author-fees-blue-caveat')).toBeInTheDocument();
+  });
+
+  test('the portfolio page lists each app and the recent fees with their status', async () => {
+    mocks.revenue.current = { ...ZEROED, authorFees: FEES };
+    renderWithProviders(<RevenuePanel />);
+
+    await expect
+      .element(page.getByTestId('author-fees-app-apb_big'))
+      .toHaveTextContent(/^apb_big88 paid · 33 pending$/);
+    await expect
+      .element(page.getByTestId('author-fees-app-apb_small'))
+      .toHaveTextContent(/^apb_small9 paid · 8 pending$/);
+
+    const rows = page.getByTestId('author-fees-recent').getByRole('row').elements();
+    expect(rows.map((r) => r.textContent)).toEqual([
+      'DateAppFeeBuzz typeStatus',
+      `${new Date('2026-11-11T10:00:00Z').toLocaleDateString()}apb_small8YellowPending payout`,
+      `${new Date('2026-11-09T10:00:00Z').toLocaleDateString()}apb_big7BluePaid`,
+    ]);
+  });
+
+  test('scoped to one app: no per-app list and no App column', async () => {
+    mocks.revenue.current = { ...ZEROED, authorFees: FEES };
+    renderWithProviders(<RevenuePanel appBlockId="apb_big" />);
+
+    await expect.element(page.getByTestId('author-fees-recent')).toBeInTheDocument();
+    expect(page.getByTestId('author-fees-by-app').elements()).toHaveLength(0);
+    const header = page.getByTestId('author-fees-recent').getByRole('row').elements()[0];
+    expect(header.textContent).toBe('DateFeeBuzz typeStatus');
+  });
+
+  test('no blue paid: no blue caveat', async () => {
+    mocks.revenue.current = {
+      ...ZEROED,
+      authorFees: {
+        ...FEES,
+        settled: { count: 5, feeBuzz: 97, byBuzzType: { yellow: 97 } },
+      },
+    };
+    renderWithProviders(<RevenuePanel />);
+
+    await expect.element(page.getByTestId('author-fees-paid-buzz')).toHaveTextContent(/^97$/);
+    expect(page.getByTestId('author-fees-blue-caveat').elements()).toHaveLength(0);
+  });
+
+  test('ABSENT authorFees key (older API process): says it could not load, not zero', async () => {
+    const payload: Record<string, unknown> = { ...ZEROED };
+    delete payload.authorFees;
+    mocks.revenue.current = payload;
+    renderWithProviders(<RevenuePanel />);
+
+    await expect
+      .element(page.getByTestId('author-fees-unavailable'))
+      .toHaveTextContent(/not a report of zero earnings/);
+    expect(page.getByTestId('author-fees-empty').elements()).toHaveLength(0);
+    expect(page.getByTestId('author-fees-pending-buzz').elements()).toHaveLength(0);
+    // The goods card still renders.
+    await expect
+      .element(page.getByRole('heading', { name: 'Digital goods sales' }))
+      .toBeInTheDocument();
+  });
+});
+
+describe('RevenuePanel — the card-purchase share is not shown', () => {
+  test('even when the payload carries it (an older API process), none of it renders', async () => {
+    // The share is recorded but never paid out, so author pages do not show it.
+    mocks.revenue.current = {
+      ...ZEROED,
+      authorFees: FEES,
+      summary: {
+        pending: { count: 2, grossCents: 1234, shareCents: 864 },
+        confirmed: { count: 3, grossCents: 4321, shareCents: 3025 },
+        paidOut: { count: 1, grossCents: 999, shareCents: 699 },
+        voided: { count: 1, grossCents: 555 },
+      },
+      topApps: [{ appBlockId: 'apb_top', shareCents: 3025, count: 3 }],
+      recentAttributions: [
+        {
+          id: 'bba_1',
+          attributedAt: '2026-11-01T00:00:00Z',
+          scope: 'per_model_install',
+          buzzAmount: 5000,
+          usdAmountCents: 1000,
+          appOwnerShareCents: 700,
+          status: 'confirmed',
+          voidedReason: null,
+          appBlockId: 'apb_top',
+        },
+      ],
+    };
+    renderWithProviders(<RevenuePanel />);
+
+    await expect.element(page.getByRole('heading', { name: 'Author fees' })).toBeInTheDocument();
+    expect(cardShareOnScreen()).toEqual([]);
+    for (const dollars of ['$8.64', '$30.25', '$6.99', '$7.00', '$10.00'])
+      expect(page.getByText(dollars).elements(), dollars).toHaveLength(0);
   });
 });

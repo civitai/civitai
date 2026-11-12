@@ -8,8 +8,9 @@ import { stripCommentsAndStrings } from '../../../../test/strip-comments';
 
 /**
  * 🔴 THE PROC↔CLIENT SEAM. Every `appCollaborators.*` procedure must have at least one
- * CALLER in the app. {@link DEFERRED_PROCS} is now EMPTY — the four ownership-transfer
- * procs it used to hold were wired by the follow-up PR, and their entries were deleted.
+ * CALLER in the app, or be listed in {@link DEFERRED_PROCS} with a reason. The four
+ * ownership-transfer procs it used to hold were wired by the follow-up PR, and their
+ * entries were deleted.
  *
  * ## Why this guard exists, stated as the failure it caught
  *
@@ -50,7 +51,11 @@ const ROUTER_FILE = 'src/server/routers/app-collaborators.router.ts';
 const ROUTER_EXPORT = 'appCollaboratorsRouter';
 
 /**
- * 🔴 THE DEFERRED SET — procs knowingly shipped without a client. **EMPTY.**
+ * 🔴 THE DEFERRED SET — procs knowingly shipped without a client.
+ *
+ * `getAppEarnings` — its only data is the card-purchase revenue share, which is recorded
+ * but never paid out, so its panel was removed from the listing editor until a payout
+ * exists. The proc stays so that panel can return; delete it if it will not.
  *
  * It held the four ownership-TRANSFER procs while the collaborator-UI PR shipped without
  * them. The follow-up PR wired them and DELETED the four entries, which is the event
@@ -59,7 +64,7 @@ const ROUTER_EXPORT = 'appCollaboratorsRouter';
  * DELETE an entry from this list when its proc gets a client. Do NOT widen it, and do NOT
  * replace it with a pattern.
  */
-const DEFERRED_PROCS = [] as const;
+const DEFERRED_PROCS = ['getAppEarnings'] as const;
 
 /**
  * 🔴 THE DELETION LEDGER — the entries that had to leave {@link DEFERRED_PROCS}.
@@ -408,8 +413,8 @@ describe('appCollaborators proc↔client seam', () => {
   });
 
   /**
-   * 🔴 THE DELETION ASSERTION. The test above is VACUOUS now that `DEFERRED_PROCS` is
-   * empty — it iterates nothing — so it can no longer notice anything about transfer. This
+   * 🔴 THE DELETION ASSERTION. The test above iterates only `DEFERRED_PROCS`, so it
+   * cannot notice anything about transfer. This
    * one names the procs directly and fails in both directions: re-adding an entry to the
    * deferred list, and dropping the last caller of any of them.
    */
@@ -422,9 +427,9 @@ describe('appCollaborators proc↔client seam', () => {
             `may not be excused from the client-seam check.`
         ).not.toContain(proc);
       }
-      // POSITIVE CONTROL on this assertion's own instrument: the list really is empty, so
+      // POSITIVE CONTROL on this assertion's own instrument: the list is exactly this, so
       // "not contained" is a fact about the list rather than about a typo in a name.
-      expect(DEFERRED_PROCS).toEqual([]);
+      expect(DEFERRED_PROCS).toEqual(['getAppEarnings']);
     });
 
     it('every transfer proc is DECLARED on the router', () => {

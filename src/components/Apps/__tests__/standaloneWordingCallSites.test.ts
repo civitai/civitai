@@ -197,7 +197,6 @@ const ENROLLED: Record<string, string> = {
   'components/Apps/KindFilterButtons.tsx': 'store kind filter toggles',
   'components/Apps/AppInvitesBody.tsx': 'collaborator-invite kind badge',
   'components/Apps/AppTransferOffersView.tsx': 'ownership-transfer kind badge',
-  'components/Apps/AppEarningsPanel.tsx': 'earnings-unavailable explanation',
   'components/Apps/SubmitModeSelector.tsx': 'submit mode-picker card title + body',
   'components/Apps/ExternalSubmitForm.tsx': 'submit wizard header + draft-created note',
   'pages/apps/submit.tsx': 'submit page subtitle',

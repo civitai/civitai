@@ -196,7 +196,6 @@ describe('🔴 the owner-repair bit survives the whole trip: DB row → normalis
       'details',
       'media',
       'manifest',
-      'earnings',
       'collaborators',
       'publishing',
       'history',

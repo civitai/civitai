@@ -113,9 +113,6 @@ vi.mock('~/components/Apps/ListingMediaEditor', () => ({
 vi.mock('~/components/Apps/ManifestEditForm', () => ({
   ManifestEditForm: () => <div data-testid="stub-manifest" />,
 }));
-vi.mock('~/components/Apps/AppEarningsPanel', () => ({
-  AppEarningsPanel: () => <div data-testid="stub-earnings" />,
-}));
 vi.mock('~/components/Apps/AppCollaboratorsPanel', () => ({
   AppCollaboratorsPanel: () => <div data-testid="stub-collaborators" />,
 }));
@@ -242,15 +239,15 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     expect(renderedTabs()).toEqual(['publishing', 'history']);
   });
 
-  test('🔴 the repair state does NOT open Collaborators, Manifest or Earnings', async () => {
-    // Every one of the three is available on this fixture's kind + block id, so their
+  test('🔴 the repair state does NOT open Collaborators or Manifest', async () => {
+    // Both are available on this fixture's kind + block id, so their
     // absence is the branch split alone and not a collapsed payload. The two tabs that DO
     // render are the control that the page is not simply empty.
     state.context = contextFor({ lastModerationAction: 'owner-unpublish' });
     renderWithProviders(<AppListingEditPage />);
 
     await expect.element(page.getByTestId('apps-edit-tab-details')).toBeInTheDocument();
-    for (const tab of ['collaborators', 'manifest', 'earnings']) {
+    for (const tab of ['collaborators', 'manifest']) {
       expect(page.getByTestId(`apps-edit-tab-${tab}`).elements(), tab).toHaveLength(0);
     }
   });
@@ -279,7 +276,6 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
       'details',
       'media',
       'manifest',
-      'earnings',
       'collaborators',
       'publishing',
       'history',
@@ -314,7 +310,6 @@ describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
       'details',
       'media',
       'manifest',
-      'earnings',
       'collaborators',
       'publishing',
       'history',
