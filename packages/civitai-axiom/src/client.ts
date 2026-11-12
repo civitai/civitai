@@ -64,6 +64,12 @@ function serializePlainObject(e: object): string {
 
 export type AxiomLogger = {
   logToAxiom: (data: MixedObject, datastream?: string) => Promise<void>;
+  /**
+   * Resolve once every Axiom dual-write this logger started has an outcome (landed, failed, or
+   * passed its AXIOM_INGEST_TIMEOUT_MS budget). `logToAxiom` no longer waits for the dual-write, so
+   * a short-lived process that must ship its last events before exiting awaits this instead.
+   */
+  flush: () => Promise<void>;
   safeError: typeof safeError;
 };
 
@@ -88,20 +94,17 @@ export type AxiomDeps = {
 };
 
 /**
- * How long the Axiom dual-write may hold the CALLER before we stop waiting for it.
+ * How long a dual-write may stay pending before its outcome is reported as `'timeout'`.
  *
- * 🔴 This is a CEILING ON THE CALLER, not a request timeout — nothing here cancels the
- * in-flight POST. The underlying SDK (`@axiomhq/axiom-node`) drives axios with its own
- * hardcoded `timeout: 30000`, which is not reachable through `new Client({token, orgId})`,
- * so 30 s is what a request against a black-holed endpoint actually costs. That number is
- * fine for a background flush and catastrophic on a request path: on 2026-08-23 Axiom's
- * ingest host became unreachable for 44 minutes and every awaited `logToAxiom` on
- * `/api/upload/{complete,abort,index}` stalled 30 s and then threw, turning uploads that
- * had ALREADY SUCCEEDED into 500s for 350 users. See the containment note at the
- * `ingestEvents` call below.
+ * It does NOT bound the caller any more: `logToAxiom` never waits for the dual-write (see the
+ * `ingestEvents` call below). Nor does it cancel the request: the SDK (`@axiomhq/axiom-node`)
+ * drives axios with its own hardcoded `timeout: 30000`, not reachable through
+ * `new Client({token, orgId})`, so 30 s is how long a request against a black-holed endpoint
+ * really lives, and how long it holds one of the AXIOM_MAX_INGESTS_IN_FLIGHT slots.
  *
- * 2 s is chosen to be longer than a healthy ingest (single-digit ms) by a wide margin and
- * short enough to be invisible next to the work these hot paths already did.
+ * History: on 2026-08-23 Axiom's ingest host became unreachable for 44 minutes and every awaited
+ * `logToAxiom` on the upload completion paths stalled 30 s and then threw, turning uploads that
+ * had ALREADY SUCCEEDED into 500s. See the containment note at the `ingestEvents` call below.
  */
 const AXIOM_INGEST_TIMEOUT_MS = 2_000;
 
@@ -115,6 +118,31 @@ const AXIOM_INGEST_TIMEOUT_MS = 2_000;
  * recovery with the total.
  */
 const AXIOM_INGEST_FAILURE_REPORT_EVERY = 500;
+
+/**
+ * Most Axiom dual-writes allowed in flight at once, per process. Beyond it the Axiom copy of an
+ * event is DROPPED (the stderr line, the durable sink, is already written) and the drop is counted
+ * as an ingest failure with reason `'dropped'`.
+ *
+ * Why a cap: `logToAxiom` does not wait for the dual-write (see the call site), so nothing else
+ * limits how many are outstanding. Against a black-holed ingest endpoint each one holds a socket
+ * and its payload for the SDK's 30 s request timeout, and at this logger's event rate that is
+ * thousands. A healthy ingest settles in milliseconds, so the cap is never approached in normal
+ * operation.
+ */
+const AXIOM_MAX_INGESTS_IN_FLIGHT = 256;
+
+/**
+ * globalThis-pinned count of dual-writes in flight, shared by every emitted copy of this module
+ * for the same reason the failure counter is: a per-copy count would multiply the cap by the
+ * number of copies the bundler emits.
+ */
+const IN_FLIGHT_KEY = Symbol.for('@civitai/axiom.ingestsInFlight');
+
+function getSharedInFlight(): { count: number } {
+  const g = globalThis as typeof globalThis & { [IN_FLIGHT_KEY]?: { count: number } };
+  return (g[IN_FLIGHT_KEY] ??= { count: 0 });
+}
 
 /**
  * globalThis-pinned consecutive-failure counts, keyed by datastream.
@@ -221,7 +249,10 @@ export function createAxiomLogger(
    * the line in hand can attribute it without joining. It is ALSO already a Loki stream label
    * from k8s service discovery, so this is redundancy rather than the only source.
    */
-  function recordIngestOutcome(outcome: 'ok' | 'error' | 'timeout', datastream: string) {
+  function recordIngestOutcome(
+    outcome: 'ok' | 'error' | 'timeout' | 'dropped',
+    datastream: string
+  ) {
     const failures = ingestFailuresByDatastream.get(datastream) ?? 0;
     if (outcome === 'ok') {
       if (failures > 0) {
@@ -258,6 +289,9 @@ export function createAxiomLogger(
   }
 
   const unprovisionedReported = getSharedUnprovisionedReported();
+  const inFlight = getSharedInFlight();
+  /** This logger's dual-writes still waiting on an outcome; what `flush` awaits. */
+  const pendingOutcomes = new Set<Promise<void>>();
 
   /**
    * Say ONCE, on the stderr/log-store path, that a datastream was skipped because no Axiom dataset
@@ -407,40 +441,41 @@ export function createAxiomLogger(
        *   - the background `jobs` pods call it WITHOUT awaiting, so there the rejection was
        *     an `unhandledRejection` and Node exited. All three pods died at 01:06:45Z.
        *
-       * WHY A RACE AND NOT JUST A TRY/CATCH. try/catch alone fixes the throw but not the
-       * 30 s stall (see AXIOM_INGEST_TIMEOUT_MS) — the caller would still be held for 30 s
-       * per logged event against a black-holed endpoint, which on the upload path is
-       * indistinguishable from an outage. Nothing here cancels the request; we stop
-       * WAITING for it.
+       * WHY IT IS NOT AWAITED. The first containment raced the ingest against a 2 s budget and
+       * awaited the race, which bounded the caller at 2 s per logged event: still seconds of
+       * added latency on a request that logs several events against a stalled endpoint. The
+       * caller now waits for nothing. The stderr line is written synchronously above and the
+       * dual-write's outcome is recorded in the background. Nothing here cancels the request.
        *
-       * 🔴 THE PAIRING AND THE RACE ARE BOTH LOAD-BEARING, FOR DIFFERENT FAILURE MODES. Keep
-       * both. Three earlier versions of this comment each named one of them as the only one
-       * that mattered; all three were wrong, so these are stated from a node probe with a
-       * positive control (a promise nobody subscribes to, which does leak):
+       * THE RACE now bounds only how long an outcome takes to be REPORTED: an ingest still
+       * pending at AXIOM_INGEST_TIMEOUT_MS is recorded as `'timeout'`.
        *
-       *   - THE PAIRING converts a rejection into the value `'error'`, so the awaited race
-       *     RESOLVES instead of rejecting into the caller. Measured: for an ingest that
-       *     rejects INSIDE the budget, a bare or fulfilment-handler-only promise gives `THREW`
-       *     while the paired one gives `'error'`. Precisely scoped: it re-creates a
-       *     caller-side throw for rejections inside the budget (an ECONNREFUSED shape), NOT
-       *     for the 30 s axios timeout the incident above describes — that one is already
-       *     outside the 2 s budget and resolves as `'timeout'` either way.
-       *   - THE RACE is what bounds the CALLER (see "WHY A RACE AND NOT JUST A TRY/CATCH"
-       *     above). ⚠️ It is NOT here to prevent unhandled rejections: with no race there is no
-       *     budget, nothing is ever abandoned, and that hazard does not arise. Measured, once
-       *     raced, paired handlers / trailing `.catch` / fulfilment-only / bare ALL produce
-       *     zero unhandled rejections — which is why the test that appears to cover this is
-       *     labelled an invariant guard, and why "the race prevents the leak" is a theory this
-       *     comment has already retracted once. Do not re-derive it.
-       *
-       * Neither substitutes for the other. `.then(onOk).catch(onErr)` would be equivalent to
-       * the paired form; what is NOT equivalent is dropping either the rejection handler or
-       * the race.
+       * THE PAIRING converts a rejection into the value `'error'` so the outcome chain records
+       * it. Because nothing awaits the dual-write, every promise in that chain must end in a
+       * handler, or a rejection becomes an `unhandledRejection` and, in the background `jobs`
+       * pods, exits Node (see above). The paired form is what ends it: both racers then only ever
+       * resolve. The rejection handler on the race's `.then` is unreachable today and is kept only
+       * as a belt. Pinned by the NO UNHANDLED REJECTION test.
        */
+      // 🔴 NOT AWAITED. The caller gets control back as soon as the stderr line above is written;
+      // the dual-write finishes in the background. The 2 s race below now bounds how long we wait
+      // for an OUTCOME to report, not how long the caller waits. Over the in-flight cap the Axiom
+      // copy is dropped rather than queued: an unbounded queue in front of a stalled endpoint is
+      // the pile-up the cap exists to prevent.
+      if (inFlight.count >= AXIOM_MAX_INGESTS_IN_FLIGHT) {
+        recordIngestOutcome('dropped', datastream);
+        return;
+      }
+      inFlight.count++;
       const ingest = axiom.ingestEvents(datastream, sendData).then(
         () => 'ok' as const,
         () => 'error' as const
       );
+      // The slot is held until the request itself settles, not until the budget expires: the
+      // socket and payload live that long.
+      void ingest.then(() => {
+        inFlight.count--;
+      });
 
       let onBudgetExpired!: (outcome: 'timeout') => void;
       const budget = new Promise<'timeout'>((resolve) => {
@@ -452,15 +487,24 @@ export function createAxiomLogger(
         (timer as unknown as { unref: () => void }).unref();
       }
 
-      try {
-        recordIngestOutcome(await Promise.race([ingest, budget]), datastream);
-      } finally {
-        clearTimeout(timer);
-      }
+      const stream = datastream;
+      const outcome = Promise.race([ingest, budget]).then(
+        (result) => {
+          clearTimeout(timer);
+          recordIngestOutcome(result, stream);
+        },
+        () => clearTimeout(timer) // unreachable: both racers resolve; kept so this can never reject
+      );
+      pendingOutcomes.add(outcome);
+      void outcome.then(() => pendingOutcomes.delete(outcome));
     } else {
       console.log('logToAxiom', sendData);
     }
   }
 
-  return { logToAxiom, safeError };
+  async function flush() {
+    await Promise.all([...pendingOutcomes]);
+  }
+
+  return { logToAxiom, flush, safeError };
 }

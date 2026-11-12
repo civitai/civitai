@@ -165,10 +165,52 @@ export function isAliasHost(host: string): boolean {
 
 // The OAuth providers a user can connect — sourced from the HUB, which is the SINGLE authority for provider
 // config + secrets (the spoke holds NO provider secrets). Fetched server-to-server from `GET {hub}/api/auth/
-// providers` and cached in-memory; fails OPEN to the last-good (or empty) list so an SSR render never breaks on
-// a hub blip. Server-only (reads AUTH_JWT_ISSUER). Replaces the old per-host CLIENT_ID/SECRET resolution.
+// providers` and cached in-memory. Server-only (reads AUTH_JWT_ISSUER).
+//
+// `_app` awaits this on EVERY full server render, anonymous included, so it must never hold a render on
+// the hub:
+//   - an expired list is served at once and refreshed in the background (stale-while-revalidate);
+//   - with no list yet, the fetch is bounded by PROVIDERS_FETCH_TIMEOUT_MS (headers and body);
+//   - concurrent renders share one in-flight fetch;
+//   - after a failure, cold renders skip the hub for PROVIDERS_FAILURE_BACKOFF_MS and get the empty list.
+// Every failure fails OPEN to the last-good (or empty) list.
 const PROVIDERS_TTL_MS = 10 * 60_000;
+const PROVIDERS_FETCH_TIMEOUT_MS = 1_500;
+const PROVIDERS_FAILURE_BACKOFF_MS = 30_000;
 let providersCache: { ids: OAuthProviderId[]; at: number } | undefined;
+let providersInFlight: Promise<OAuthProviderId[] | undefined> | undefined;
+let providersFailedAt: number | undefined;
+
+async function fetchOAuthProviders(hub: string): Promise<OAuthProviderId[] | undefined> {
+  try {
+    const res = await fetch(`${hub}/api/auth/providers`, {
+      signal: AbortSignal.timeout(PROVIDERS_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as { providers?: { id?: string }[] };
+    const known = new Set<string>(oauthProviderIds);
+    const ids = (data.providers ?? [])
+      .map((p) => p?.id)
+      .filter((id): id is OAuthProviderId => typeof id === 'string' && known.has(id));
+    providersCache = { ids, at: Date.now() };
+    providersFailedAt = undefined;
+    return ids;
+  } catch {
+    return undefined; // hub unreachable or too slow
+  }
+}
+
+function refreshOAuthProviders(hub: string) {
+  providersInFlight ??= fetchOAuthProviders(hub)
+    .then((ids) => {
+      if (ids === undefined) providersFailedAt = Date.now();
+      return ids;
+    })
+    .finally(() => {
+      providersInFlight = undefined;
+    });
+  return providersInFlight;
+}
 
 export async function getAvailableOAuthProviders(): Promise<OAuthProviderId[]> {
   if (providersCache && Date.now() - providersCache.at < PROVIDERS_TTL_MS)
@@ -177,20 +219,16 @@ export async function getAvailableOAuthProviders(): Promise<OAuthProviderId[]> {
   const hub = (process.env.AUTH_JWT_ISSUER ?? '').replace(/\/+$/, '');
   if (!hub) return providersCache?.ids ?? [];
 
-  try {
-    const res = await fetch(`${hub}/api/auth/providers`);
-    if (!res.ok) return providersCache?.ids ?? [];
-    const data = (await res.json()) as { providers?: { id?: string }[] };
-    const known = new Set<string>(oauthProviderIds);
-    const ids = (data.providers ?? [])
-      .map((p) => p?.id)
-      .filter((id): id is OAuthProviderId => typeof id === 'string' && known.has(id));
-    providersCache = { ids, at: Date.now() };
-    return ids;
-  } catch {
-    // hub unreachable — keep rendering with the last-good (or empty) list rather than throwing in SSR.
-    return providersCache?.ids ?? [];
+  const backingOff =
+    providersFailedAt !== undefined &&
+    Date.now() - providersFailedAt < PROVIDERS_FAILURE_BACKOFF_MS;
+
+  if (providersCache) {
+    if (!backingOff) void refreshOAuthProviders(hub);
+    return providersCache.ids;
   }
+  if (backingOff) return [];
+  return (await refreshOAuthProviders(hub)) ?? [];
 }
 
 /**

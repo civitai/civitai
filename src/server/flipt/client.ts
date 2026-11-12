@@ -213,10 +213,12 @@ export enum FLIPT_FEATURE_FLAGS {
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
   WILDCARDS = 'wildcards',
-  // Global flag for the anti-hang timeouts on server request-path fetches,
-  // DEFAULT-OFF (feature ships dormant; the timeout applies only when this is
-  // explicitly ON). Flip ON to activate. See fetchTimeoutSignal.
-  HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
+  // OFF switch for the anti-hang deadlines on server-side outbound fetches
+  // (`fetchTimeoutSignal` / `outboundFetch`). The deadlines are ON unless this
+  // reads explicitly true; null (absent flag, uninitialised client) keeps them.
+  // Replaces the retired opt-in `hot-path-fetch-timeouts`, whose value no longer
+  // has any effect.
+  OUTBOUND_FETCH_TIMEOUTS_OFF = 'outbound-fetch-timeouts-off',
   // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
   // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
