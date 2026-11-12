@@ -14,7 +14,7 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
    * When set (and the read URL differs from the write URL), a model read on `dbRead` whose replica
    * connection fails is re-run on `dbWrite`, bounded by the fallback's cap. See ./replica-fallback.
    */
-  replicaFallback?: ReplicaFallback;
+  readFallback?: ReplicaFallback;
 };
 
 /**
@@ -24,7 +24,7 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
  * that calls this. See the `~/server/db/client` shim.
  */
 export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
-  const { onSlowQuery, replicaFallback, ...envOverrides } = options;
+  const { onSlowQuery, readFallback, ...envOverrides } = options;
   const config = { ...loadDbEnv(), ...envOverrides };
 
   const singleClient = config.replicaUrl === config.databaseUrl;
@@ -89,7 +89,7 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
   // Interactive transactions on dbRead go through this too: a fallback read then runs on dbWrite,
   // outside the transaction — whose replica connection is already gone.
   const dbRead =
-    replicaFallback && !singleClient
+    readFallback && !singleClient
       ? (baseRead.$extends({
           name: 'replica-fallback',
           query: {
@@ -98,7 +98,7 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
                 runPrismaReadWithFallback(
                   params as Parameters<typeof runPrismaReadWithFallback>[0],
                   dbWrite,
-                  replicaFallback
+                  readFallback
                 ),
             },
           },

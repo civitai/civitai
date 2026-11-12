@@ -19,7 +19,7 @@ const make = (): PrismaClients => {
     onSlowQuery: ({ query, duration, target }) =>
       logToAxiom({ query, duration, target }, 'db-logs'),
     // Undefined (nothing wired) unless DATABASE_REPLICA_FALLBACK is on.
-    replicaFallback: replicaFallbackFor('dbRead'),
+    readFallback: replicaFallbackFor('dbRead'),
   });
   return withServableProfilePictures(base, (error) => {
     logToAxiom({

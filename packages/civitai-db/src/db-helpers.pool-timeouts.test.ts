@@ -10,24 +10,25 @@ import { startFakePgServer, type FakePgServer } from './test-support/fake-pg-ser
 //     half-open connection).
 // Every case asserts a literal time bound. Before the defaults, each of these waited forever.
 
-const HUNG = Symbol('hung');
-/** Settles with the promise's outcome, or HUNG after `ms`. */
+type Outcome<T> = { kind: 'hung' } | { kind: 'ok'; value: T } | { kind: 'err'; error: Error };
+/** Settles with the promise's outcome, or `hung` after `ms`. */
 async function within<T>(p: Promise<T>, ms: number) {
   let timer: NodeJS.Timeout | undefined;
-  const guard = new Promise<typeof HUNG>((resolve) => {
-    timer = setTimeout(() => resolve(HUNG), ms);
+  const guard = new Promise<Outcome<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: 'hung' }), ms);
   });
   const start = Date.now();
-  const outcome = await Promise.race([
+  const outcome = await Promise.race<Outcome<T>>([
     p.then(
-      (value) => ({ ok: true as const, value }),
-      (error: Error) => ({ ok: false as const, error })
+      (value): Outcome<T> => ({ kind: 'ok', value }),
+      (error: Error): Outcome<T> => ({ kind: 'err', error })
     ),
     guard,
   ]);
   clearTimeout(timer);
   return { outcome, elapsed: Date.now() - start };
 }
+const errorMessage = (o: Outcome<unknown>) => (o.kind === 'err' ? o.error.message : o.kind);
 
 async function startSilentServer() {
   const sockets = new Set<net.Socket>();
@@ -61,8 +62,7 @@ describe('createPool defaults bound every wait', () => {
 
     const { outcome, elapsed } = await within(pool.query('select 1'), 6_500);
 
-    expect(outcome, 'pool.query never settled').not.toBe(HUNG);
-    expect(outcome !== HUNG && outcome.ok).toBe(false);
+    expect(outcome.kind, 'pool.query never settled').toBe('err');
     expect(elapsed).toBeLessThan(6_000);
   }, 10_000);
 
@@ -76,8 +76,7 @@ describe('createPool defaults bound every wait', () => {
 
     const { outcome, elapsed } = await within(pool.connect(), 6_500);
 
-    expect(outcome, 'pool.connect never settled').not.toBe(HUNG);
-    expect(outcome !== HUNG && !outcome.ok && outcome.error.message).toBe(
+    expect(errorMessage(outcome), 'pool.connect never settled').toBe(
       'timeout exceeded when trying to connect'
     );
     expect(elapsed).toBeLessThan(6_000);
@@ -97,7 +96,7 @@ describe('createPool defaults bound every wait', () => {
 
     const { outcome, elapsed } = await within(pool.query('select 1'), 3_000);
 
-    expect(outcome !== HUNG && outcome.ok).toBe(false);
+    expect(outcome.kind).toBe('err');
     expect(elapsed).toBeLessThan(1_500);
   });
 
@@ -119,8 +118,9 @@ describe('queryWithTimeout on a connection whose answer never comes', () => {
 
     const { outcome, elapsed } = await within(queryWithTimeout(pool, 200, 'select 1'), 5_000);
 
-    expect(outcome, 'queryWithTimeout never settled').not.toBe(HUNG);
-    expect(outcome !== HUNG && !outcome.ok && outcome.error.message).toBe('Query read timeout');
+    expect(errorMessage(outcome), 'queryWithTimeout never settled').toMatch(
+      /^Query deadline exceeded/
+    );
     expect(elapsed).toBeLessThan(3_500);
     // The wedged client was not handed back for the next caller to queue behind.
     expect(pool.totalCount).toBe(0);

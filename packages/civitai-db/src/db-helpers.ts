@@ -1,5 +1,5 @@
 import { Prisma } from '@civitai/db-schema';
-import type { QueryConfig, QueryResult, QueryResultRow } from 'pg';
+import type { QueryResult, QueryResultRow } from 'pg';
 import { Client, Pool, types } from 'pg';
 import { performance } from 'node:perf_hooks';
 import client from 'prom-client';
@@ -386,34 +386,48 @@ export async function queryWithTimeout<R extends QueryResultRow = any>(
   const client = await pool.connect();
   // A client-side deadline just past the server's own: it fires only when the server's answer
   // never arrives (a half-open connection), never on a query the server is still allowed to run.
-  // pg's `query_timeout` leaves the timed-out query active on the client, so such a client is
-  // destroyed on release rather than handed to the next caller.
-  const query_timeout = Number(timeoutMs) + QUERY_DEADLINE_MARGIN_MS;
-  const run = <T extends QueryResultRow>(text: string, values?: unknown[]) =>
-    client.query<T>({ text, values, query_timeout } as QueryConfig);
-  let broken: Error | undefined;
-  try {
-    await run('BEGIN READ ONLY');
-    await run(`SET LOCAL statement_timeout = ${Number(timeoutMs)}`);
-    // Prisma.Sql carries its own params in `.values`.
+  // On expiry the client is destroyed (released with an error), which also rejects whatever is
+  // still pending on it — it is never handed to the next caller. A timer rather than pg's
+  // `query_timeout`, so the statements keep the plain `(text, values)` call shape.
+  const deadlineMs = Number(timeoutMs) + QUERY_DEADLINE_MARGIN_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new QueryDeadlineError(deadlineMs)), deadlineMs);
+  });
+  const work = (async () => {
+    await client.query('BEGIN READ ONLY');
+    await client.query(`SET LOCAL statement_timeout = ${Number(timeoutMs)}`);
     const result =
       typeof sql === 'string'
-        ? await run<R>(sql, params as unknown[] | undefined)
-        : await run<R>(sql.text, sql.values as unknown[]);
-    await run('COMMIT');
+        ? await client.query<R>(sql, params as unknown[] | undefined)
+        : // Prisma.Sql carries its own params in `.values`; pass as QueryConfig
+          await client.query<R>({ text: sql.text, values: sql.values });
+    await client.query('COMMIT');
     return result;
+  })();
+  let broken: Error | undefined;
+  try {
+    return await Promise.race([work, deadline]);
   } catch (e) {
-    if (isQueryReadTimeout(e)) broken = e as Error;
-    else await run('ROLLBACK').catch(() => undefined);
+    if (e instanceof QueryDeadlineError) {
+      broken = e;
+      work.catch(() => undefined); // settles when the destroyed connection rejects it
+    } else {
+      await client.query('ROLLBACK').catch(() => undefined);
+    }
     throw e;
   } finally {
+    clearTimeout(timer);
     client.release(broken);
   }
 }
 
-// pg's own text for a `query_timeout` expiry (pg/lib/client.js).
-function isQueryReadTimeout(e: unknown) {
-  return e instanceof Error && e.message === 'Query read timeout';
+/** `queryWithTimeout` got no answer by its client-side deadline; the connection was destroyed. */
+export class QueryDeadlineError extends Error {
+  constructor(deadlineMs: number) {
+    super(`Query deadline exceeded (${deadlineMs}ms) with no answer from the database`);
+    this.name = 'QueryDeadlineError';
+  }
 }
 
 function formatSqlType(value: any): string {
