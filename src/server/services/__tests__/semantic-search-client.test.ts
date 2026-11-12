@@ -42,7 +42,8 @@ describe('the content gate', () => {
     ['no gate', 'articles', undefined],
     ['no browsing level', 'articles', { kind: 'level' }],
     ['an empty browsing level', 'images', { kind: 'level', nsfwLevels: [] }],
-    ['level 0', 'comics', { kind: 'level', nsfwLevels: [0] }],
+    ['level 0', 'comics', { kind: 'mask', nsfwLevels: [0] }],
+    ['a level gate for comics', 'comics', { kind: 'level', nsfwLevels: [1] }],
     ['only one level for a challenge', 'challenges', { kind: 'level', nsfwLevels: [1] }],
     ['a challenge without the domain', 'challenges', { ...challenge, domainBuzzType: undefined }],
     [
@@ -67,6 +68,23 @@ describe('the content gate', () => {
   it('sends a query that carries the browsing level', async () => {
     await search('articles', { kind: 'level', nsfwLevels: [1, 2] });
     expect(sent[0].must).toContainEqual({ key: 'nsfwLevel', match: { any: [1, 2] } });
+  });
+
+  it('refuses a comic with any level the viewer does not allow, and every unrated one', async () => {
+    await search('comics', { kind: 'mask', nsfwLevels: [1] });
+    await search('comics', { kind: 'mask', nsfwLevels: [1, 4] });
+    const allowed = (i: number) =>
+      (sent[i].must[0] as { key: string; match: { any: number[] } }).match.any;
+    // PG + R is 5: refused for a PG-only viewer, allowed for PG + R.
+    expect(allowed(0)).toEqual([1]);
+    expect(allowed(0)).not.toContain(1 | 4);
+    expect(allowed(1)).toEqual([1, 4, 5]);
+    // Unrated (0) for a PG-only viewer, and for one who allows every level.
+    await search('comics', { kind: 'mask', nsfwLevels: [1, 2, 4, 8, 16, 32] });
+    expect(allowed(2)).not.toContain(0);
+    // Every rated mask, Blocked ones included, once the viewer allows every level.
+    expect(allowed(2)).toHaveLength(63);
+    expect(allowed(2)).toEqual(expect.arrayContaining([32, 63]));
   });
 
   it('requires both levels of a challenge, and keeps user challenges to their domain', async () => {
