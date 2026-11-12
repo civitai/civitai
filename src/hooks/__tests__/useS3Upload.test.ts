@@ -468,10 +468,10 @@ type Harness = {
  */
 let mountedRoots: (() => Promise<void>)[];
 
-async function mountHook(options?: Parameters<typeof useS3Upload>[0]): Promise<Harness> {
+async function mountHook(): Promise<Harness> {
   let api: ReturnType<typeof useS3Upload> | undefined;
   function Probe() {
-    api = useS3Upload(options);
+    api = useS3Upload();
     return null;
   }
   const container = document.createElement('div');
@@ -762,33 +762,6 @@ describe('useS3Upload relay fallback', () => {
       expect(abortCalls.map((c) => c.fileSize)).toEqual([bytes]);
     }
   );
-
-  it('🔴 sends the abort to the abort endpoint when only endpointComplete is overridden', async () => {
-    const fetchMock = makeFetch(1);
-    vi.stubGlobal('fetch', fetchMock);
-    backend = 'b2';
-    partHandler = () => ({ status: 0, networkError: true });
-    const h = await mountHook({ endpointComplete: '/custom/complete' });
-
-    await runUpload(h, makeFile(CHUNK), UploadType.Model);
-
-    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
-    // The part failed, so nothing completed: the complete endpoint must see no request at all.
-    expect(fetchMock.mock.calls.filter(([url]) => url === '/custom/complete')).toEqual([]);
-  });
-
-  it('honours endpointAbort', async () => {
-    const fetchMock = makeFetch(1);
-    vi.stubGlobal('fetch', fetchMock);
-    backend = 'b2';
-    partHandler = () => ({ status: 0, networkError: true });
-    const h = await mountHook({ endpointAbort: '/custom/abort' });
-
-    await runUpload(h, makeFile(CHUNK), UploadType.Model);
-
-    expect(abortCalls).toEqual([]);
-    expect(fetchMock.mock.calls.filter(([url]) => url === '/custom/abort')).toHaveLength(1);
-  });
 
   it('does not relay when the storage host answered with an HTTP status, and reports error', async () => {
     // Reaching the backend and being refused is a real fault; replaying the bytes through

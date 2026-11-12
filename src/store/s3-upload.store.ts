@@ -41,11 +41,6 @@ type UploadToS3Options = {
   endpoint?: EndpointOptions;
 };
 
-type UseS3UploadOptions = {
-  endpoint?: string;
-  endpointComplete?: string;
-};
-
 type ApiUploadResponse =
   | {
       urls: Array<{ url: string; partNumber: number }>;
