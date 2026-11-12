@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { StickerMotionEditor } from '~/components/Sticker/StickerMotionEditor';
 import { useStickerPlacementDraftStore as store } from '~/store/sticker-placement-draft.store';
@@ -207,6 +207,30 @@ describe('the sticker timeline', () => {
     // Opening the tray closes the timeline while the video is still playing.
     store.setState({ trayOpen: true });
     await expect.poll(() => store.getState().videoPlaying).toBe(false);
+  });
+});
+
+describe('the timeline inside the image detail dialog', () => {
+  test('its keys step the video, not the carousel the dialog holds', async () => {
+    // The detail view opened from a feed is a modal: the video and the editor sit inside it.
+    const host = page
+      .getByRole('radiogroup', { name: 'Sticker mode' })
+      .element()
+      .closest<HTMLElement>('[style*="600px"]')!;
+    host.setAttribute('role', 'dialog');
+    host.append(video);
+    const carousel = vi.fn();
+    const onCarouselKey = (event: KeyboardEvent) => {
+      if (!event.defaultPrevented && event.key === 'ArrowRight') carousel();
+    };
+    document.addEventListener('keydown', onCarouselKey, true);
+    onTestFinished(() => document.removeEventListener('keydown', onCarouselKey, true));
+
+    await page.getByText('Movement').click();
+    await userEvent.keyboard('{ArrowRight}');
+
+    expect(video.currentTime).toBeCloseTo(0.1);
+    expect(carousel).not.toHaveBeenCalled();
   });
 });
 
