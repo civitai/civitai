@@ -1223,7 +1223,8 @@ const PENDING_READ_CONCURRENCY = 8;
  *  unchecked rather than holding the page. */
 const PENDING_READ_BUDGET_MS = 20_000;
 /** How long one build of either queue serves a page load. A ruling clears it in this process only, so
- *  another replica can list a ruled run for up to this long. A partial build is never held. */
+ *  another replica can list a ruled run for up to this long. A build with an unanswered read is not
+ *  held (see each cache's discard). */
 const QUEUE_CACHE_MS = 30_000;
 /** The sidebar badge takes a build up to this old rather than start one on every refresh. */
 const BADGE_MAX_AGE_MS = 2 * 60_000;

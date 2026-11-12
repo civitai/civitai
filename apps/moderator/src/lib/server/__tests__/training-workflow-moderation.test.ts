@@ -24,6 +24,7 @@ let pageGranted = true;
 
 /** Every `orderBy` the query builder was given, in order. */
 const orderBys: unknown[][] = [];
+const limits: unknown[] = [];
 // A query builder whose every call chains, ending in `fileRows`.
 const chain: object = new Proxy(
   {},
@@ -35,6 +36,7 @@ const chain: object = new Proxy(
         ? fileRows
         : (...args: unknown[]) => {
             if (prop === 'orderBy') orderBys.push(args);
+            if (prop === 'limit') limits.push(args[0]);
             return chain;
           },
   }
@@ -179,6 +181,7 @@ beforeEach(() => {
   fileRows.mockReset();
   fileRows.mockResolvedValue([]);
   orderBys.length = 0;
+  limits.length = 0;
   pageGranted = true;
   clearTrainingWorkflowBlobCache();
   invalidatePendingWorkflowGates();
@@ -667,6 +670,8 @@ describe('getTrainingReviewQueue', () => {
     expect(queue.items).toEqual([
       expect.objectContaining({ id: 6, workflowId: GATED, underReview: true }),
     ]);
+    // The picker takes the first pending file, so the lookup's order decides between two.
+    expect(orderBys).toContainEqual(['id', 'asc']);
   });
 
   it('keeps every row, unchecked, and says so when the orchestrator is unreachable', async () => {
@@ -715,6 +720,7 @@ describe('getTrainingReviewQueue', () => {
     expect(queue.truncated).toBe(true);
     // Newest kept: gone-workflow rows stay Paused and pile up at the old end.
     expect(orderBys[0]).toEqual(['mv.id', 'desc']);
+    expect(limits[0]).toBe(MAX_PAUSED_VERSIONS + 1);
   });
 
   describe('countTrainingDataReview', () => {
@@ -1339,6 +1345,16 @@ describe('the pending queue is bounded and shared', () => {
     paused();
     await Promise.all([getPendingWorkflowGates(), getTrainingReviewQueue()]);
     expect([readsOf(ids[0]), readsOf(V)]).toEqual([2, 2]);
+  });
+
+  it('rebuilds for the badge once its build is over 2 minutes old', async () => {
+    ledgerOf(ids);
+    route = (url) => json(workflow({ id: byIdOf(url) }));
+    await countTrainingDataReview();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 2 * 60_000 + 1_000);
+    await countTrainingDataReview();
+    expect(readsOf(ids[0])).toBe(2);
   });
 });
 
