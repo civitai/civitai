@@ -1,9 +1,7 @@
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageResourcesCache } from '~/server/redis/caches';
-import { imagesSearchIndex } from '~/server/search-index';
 import { createImageResources } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
@@ -105,9 +103,6 @@ export default WebhookEndpoint(async (req, res) => {
         // "could not be matched" list -- without it the warning keeps naming the removed model.
         await createImageResources({ imageId });
         await imageResourcesCache.refresh(imageId);
-        await imagesSearchIndex.queueUpdate([
-          { id: imageId, action: SearchIndexUpdateQueueAction.Update },
-        ]);
       }
     }
 

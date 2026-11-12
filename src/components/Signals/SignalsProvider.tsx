@@ -14,6 +14,7 @@ import { useSignalsWorker } from '~/utils/signals/useSignalsWorker';
 import { useMetricSignalsStore } from '~/store/metric-signals.store';
 import { useSignalTopicsStore } from '~/store/signal-topics.store';
 import { trpc } from '~/utils/trpc';
+import { backoffDelay } from '~/utils/backoff';
 
 type TopicString = `${SignalTopic}${'' | `:${number | string}`}`;
 
@@ -313,7 +314,10 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (prev) clearTimeout(prev.timerId);
-      const delay = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (nextAttempts - 1));
+      const delay = backoffDelay(nextAttempts - 1, {
+        baseMs: RETRY_BASE_DELAY_MS,
+        maxMs: RETRY_MAX_DELAY_MS,
+      });
       const timerId = setTimeout(() => {
         // Re-check desired state before retrying.
         if ((topicRefs.current!.get(status.topic) ?? 0) === 0) {

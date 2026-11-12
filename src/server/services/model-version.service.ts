@@ -101,11 +101,7 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import {
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { imagesMetricsSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
   assertPaidAccessInput,
@@ -2012,9 +2008,6 @@ export const publishModelVersionsWithEarlyAccess = async ({
         // await modelsSearchIndex.queueUpdate([
         //   { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
         // ]);
-        // await imagesSearchIndex.queueUpdate(
-        //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
-        // );
         // await imagesMetricsSearchIndex.queueUpdate(
         //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
         // );
@@ -2292,9 +2285,6 @@ export const publishModelVersionById = async ({
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
-    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
@@ -2472,9 +2462,6 @@ export const unpublishModelVersionById = async ({
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
-    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );

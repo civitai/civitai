@@ -117,9 +117,14 @@ export const SUPPORTED_SCOPE_NAMES: string[] = [
   ...Object.keys(TokenScope).filter((name) => name !== 'None' && name !== 'WorkerRegister'),
 ];
 
+/** Each labelled scope bit set in `scope`, with its label. */
+export function scopeLabelEntries(scope: number): { bit: number; label: string }[] {
+  return Object.entries(tokenScopeLabels)
+    .map(([bit, label]) => ({ bit: parseInt(bit, 10), label }))
+    .filter(({ bit }) => hasScope(scope, bit));
+}
+
 /** Human-readable labels for the scope bits set in `scope` (shared by the consent + device-verify screens). */
 export function scopeLabels(scope: number): string[] {
-  return Object.entries(tokenScopeLabels)
-    .filter(([bit]) => hasScope(scope, parseInt(bit, 10)))
-    .map(([, label]) => label);
+  return scopeLabelEntries(scope).map(({ label }) => label);
 }
