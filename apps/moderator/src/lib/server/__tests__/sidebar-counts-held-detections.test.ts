@@ -63,6 +63,7 @@ vi.mock('../minor-hash.service', () => ({
   getFlaggedCount,
 }));
 
+vi.mock('../training-moderation.service', () => ({ countTrainingDataReview: async () => 0 }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
 vi.mock('../restricted-nsfw-verdicts', () => ({ getRestrictedVerdictCount }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals }));
@@ -244,8 +245,8 @@ describe('Needs review badge when a part does not answer', () => {
   });
 
   it('still answers when Redis does not', async () => {
-    redis.set.mockRejectedValueOnce(new Error('redis down'));
-    redis.set.mockRejectedValueOnce(new Error('redis down'));
+    // One per last-good part: minor queue, held detections, training data review.
+    for (let i = 0; i < 3; i++) redis.set.mockRejectedValueOnce(new Error('redis down'));
     expect((await getSidebarCounts()).counts).toMatchObject({ modelFlagsNeedsReview: 12 });
     redis.get.mockRejectedValueOnce(new Error('redis down'));
     getHeldDetectionModelCount.mockReturnValue(hang());

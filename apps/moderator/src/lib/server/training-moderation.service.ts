@@ -363,41 +363,62 @@ export type PausedTrainingRow = {
   workflowId: string | null;
 };
 
+export type TrainingReviewRow = PausedTrainingRow & {
+  /** The gate's run is waiting on a moderator. */
+  underReview: boolean;
+  /** False when the run could not be read (orchestrator unreachable or slow), so it is listed as is. */
+  checked: boolean;
+};
+
+export type TrainingReviewQueue = {
+  /** Under review first, then the rest; oldest first within each. */
+  items: TrainingReviewRow[];
+  /** At least one row could not be checked; those are listed unchecked. */
+  workflowFilterUnavailable: boolean;
+  /** More Paused versions than one build reads; the newest were not checked. */
+  truncated: boolean;
+};
+
+/** Paused versions read from the orchestrator per build. Exported for tests. */
+export const MAX_PAUSED_VERSIONS = 300;
+
+/** Every live Paused version is listed; "under review only" would be `row.underReview || !row.checked`. */
+const listedOnReviewQueue = (_row: TrainingReviewRow) => true;
+
 /**
- * The paused queue, filtered to versions whose workflow the orchestrator still has.
+ * Every Paused version whose gate's workflow the orchestrator still has.
  *
  * The orchestrator round-trip is NOT incidental. A paused version whose workflow has expired can never
  * be approved — the gate is gone — so listing it gives the moderator a row whose every button
- * errors. Reading the workflow also nudges the orchestrator into reaping failed/expired jobs, which is
- * the only thing in either app that moves those runs out of `Paused`.
+ * errors. Reading the workflow through the consumer API also nudges the orchestrator into reaping
+ * failed/expired jobs, which is the only thing in either app that moves those runs out of `Paused`.
  *
- * When the orchestrator is unreachable the queue is returned UNFILTERED and says so. Dropping every row
- * on a transport failure would render as "nothing to review", which is the one answer this page must
- * never give wrongly.
+ * A row that could not be read is kept, unchecked: dropping rows on a transport failure would render
+ * as "nothing to review", which is the one answer this page must never give wrongly.
  */
-export async function getPausedTrainingVersions(query: {
-  limit: number;
-  cursor?: number;
-}): Promise<{
-  items: PausedTrainingRow[];
-  nextCursor?: number;
-  workflowFilterUnavailable: boolean;
-}> {
-  const rows = await dbWrite
+export function getTrainingReviewQueue(): Promise<TrainingReviewQueue> {
+  return reviewQueueCache.get();
+}
+
+export function invalidateTrainingReviewQueue(): void {
+  reviewQueueCache.clear();
+}
+
+async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
+  const fetched = await dbWrite
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
     .select(['mv.id', 'mv.name', 'mv.createdAt', 'm.id as modelId', 'm.name as modelName'])
     .where('mv.trainingStatus', '=', 'Paused')
-    .$if(query.cursor != null, (qb) => qb.where('mv.id', '<', query.cursor!))
-    .orderBy('mv.id', 'desc')
-    .limit(query.limit)
+    .orderBy('mv.id', 'asc')
+    .limit(MAX_PAUSED_VERSIONS + 1)
     .execute();
+  const truncated = fetched.length > MAX_PAUSED_VERSIONS;
+  const rows = fetched.slice(0, MAX_PAUSED_VERSIONS).sort((a, b) => a.id - b.id);
+  if (!rows.length) return { items: [], workflowFilterUnavailable: false, truncated };
 
-  const nextCursor = rows.length === query.limit ? rows[rows.length - 1].id : undefined;
-  if (!rows.length) return { items: [], nextCursor, workflowFilterUnavailable: false };
-
-  // Same picker the detail page and the gate use. A different one here would print an id in the queue
-  // that is not the run the Approve button acts on, one click away.
+  // The gate's picker, as the version route releases with: the scored one returns a version's
+  // finished run, and the queue would check a workflow other than the one Approve acts on.
   const files = await dbWrite
     .selectFrom('ModelFile')
     .select(['id', 'modelVersionId', 'metadata'])
@@ -407,6 +428,7 @@ export async function getPausedTrainingVersions(query: {
       rows.map((r) => r.id)
     )
     .where('type', '=', TRAINING_DATA_FILE_TYPE)
+    .orderBy('id', 'asc')
     .execute();
 
   const byVersion = new Map<number, typeof files>();
@@ -417,42 +439,56 @@ export async function getPausedTrainingVersions(query: {
   }
 
   const withWorkflow = rows.map((row) => {
-    const best = pickBestTrainingFile(byVersion.get(row.id) ?? []);
-    const results = (best?.metadata as FileMetadata | null)?.trainingResults;
+    const gated = pickGatedTrainingFile(byVersion.get(row.id) ?? []);
+    const results = (gated?.metadata as FileMetadata | null)?.trainingResults;
     return { ...row, workflowId: results?.workflowId ?? null };
   });
 
-  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN)
-    return { items: withWorkflow, nextCursor, workflowFilterUnavailable: true };
+  const configured = !!env.ORCHESTRATOR_ENDPOINT && !!env.ORCHESTRATOR_ACCESS_TOKEN;
+  type Read = 'gone' | { underReview: boolean };
+  const reads = configured
+    ? await mapBounded(
+        withWorkflow,
+        async (row): Promise<Read | undefined> => {
+          if (!row.workflowId) return 'gone';
+          const { data, error, response } = await getWorkflow({
+            client: getOrchestratorClient(),
+            path: { workflowId: row.workflowId },
+          });
+          // HTTP failures arrive in `error`, not as a throw; only a 404/410 means the run is gone.
+          if (error || !data) return isGoneStatus(response?.status ?? 0) ? 'gone' : undefined;
+          const read = readTrainingWorkflow(row.workflowId, data);
+          return { underReview: read.ok && read.reading.underReview };
+        },
+        {
+          concurrency: PENDING_READ_CONCURRENCY,
+          budgetMs: PENDING_READ_BUDGET_MS,
+        }
+      )
+    : withWorkflow.map(() => undefined);
 
-  const client = getOrchestratorClient();
-  const live = await Promise.all(
-    withWorkflow.map(async (row) => {
-      if (!row.workflowId) return { row, alive: false, reachable: true };
-      try {
-        const { data, error, response } = await getWorkflow({
-          client,
-          path: { workflowId: row.workflowId },
-        });
-        if (!error && data) return { row, alive: true, reachable: true };
-        // The client reports HTTP failures in `error` rather than throwing, so status is the only thing
-        // separating "this workflow is gone" (404 — genuinely not reviewable) from "the orchestrator is
-        // refusing or broken" (401/5xx — every row would look gone, and the queue would read empty).
-        const status = response?.status ?? 0;
-        return { row, alive: false, reachable: isGoneStatus(status) };
-      } catch {
-        return { row, alive: false, reachable: false };
-      }
-    })
-  );
-
-  // One transport failure means the filter is untrustworthy for the whole page, not just its row.
-  const unreachable = live.some((r) => !r.reachable);
+  const classified = withWorkflow.flatMap((row, i): TrainingReviewRow[] => {
+    const read = reads[i];
+    if (read === 'gone') return [];
+    return [{ ...row, underReview: read?.underReview ?? false, checked: read !== undefined }];
+  });
+  const listed = classified.filter(listedOnReviewQueue);
   return {
-    items: unreachable ? withWorkflow : live.filter((r) => r.alive).map((r) => r.row),
-    nextCursor,
-    workflowFilterUnavailable: unreachable,
+    items: [...listed.filter((r) => r.underReview), ...listed.filter((r) => !r.underReview)],
+    workflowFilterUnavailable: classified.some((r) => !r.checked),
+    truncated,
   };
+}
+
+/**
+ * The Training Data Review badge: versions under review plus workflow-only gates. Null when either
+ * half is partial, so the sidebar shows it as unknown rather than a short count.
+ */
+export async function countTrainingDataReview(): Promise<number | null> {
+  const [queue, gates] = await Promise.all([getTrainingReviewQueue(), getPendingWorkflowGates()]);
+  if (queue.workflowFilterUnavailable || queue.truncated) return null;
+  if (gates.ledgerUnavailable || gates.workflowFilterUnavailable || gates.truncated) return null;
+  return queue.items.filter((r) => r.underReview).length + gates.items.length;
 }
 
 export type TrainingVersionDetail = {
@@ -603,6 +639,7 @@ export async function moderateTrainingData(input: {
   const released = await releaseModerationGate(workflowId, input.approve);
   if (!released.ok) return released;
   invalidatePendingWorkflowGates();
+  invalidateTrainingReviewQueue();
 
   await recordModActivity({
     userId: input.moderatorId,
@@ -1188,10 +1225,11 @@ const PENDING_READ_CONCURRENCY = 8;
 /** The whole fan-out of orchestrator reads gets this long; whatever has not answered is listed as
  *  unchecked rather than holding the page. */
 const PENDING_READ_BUDGET_MS = 20_000;
-/** One queue serves every moderator opening the page within this window, and concurrent loads share
- *  one build. A ruling clears it — in this process only; another replica can list a ruled run for up
- *  to this long, and the ruling itself then refuses it as no longer under review. */
-const PENDING_CACHE_MS = 30_000;
+/** How long one build of a queue serves every caller. A ruling clears it — in this process only;
+ *  another replica can list a ruled run for up to this long, and the ruling itself then refuses it as
+ *  no longer under review. The gate build is held longer: its ledger reads cost seconds. */
+const REVIEW_QUEUE_CACHE_MS = 30_000;
+const PENDING_CACHE_MS = 10 * 60_000;
 
 export type PendingWorkflowGate = {
   workflowId: string;
@@ -1237,28 +1275,51 @@ export function getPendingWorkflowGates(
   // A caller shaping the build (tests) gets its own; the cache holds only the default build.
   if (options.now !== undefined || options.readBudgetMs !== undefined)
     return buildPendingWorkflowGates(options);
-  const now = Date.now();
-  if (pendingCache && now - pendingCache.at < PENDING_CACHE_MS) return pendingCache.result;
-  const result = buildPendingWorkflowGates(options);
-  const entry = { at: now, result };
-  pendingCache = entry;
-  // A failed build is not worth holding: the next load should try again.
-  void result.then(
-    (r) => {
-      if (r.ledgerUnavailable && pendingCache === entry) pendingCache = null;
-    },
-    () => {
-      if (pendingCache === entry) pendingCache = null;
-    }
-  );
-  return result;
+  return pendingCache.get();
 }
 
-let pendingCache: { at: number; result: Promise<PendingWorkflowGates> } | null = null;
+/**
+ * One build serves every caller for `ttlMs`, and concurrent callers share it. A build that failed, or
+ * that `discard` rejects, is dropped so the next caller tries again.
+ */
+function sharedBuild<T>(
+  ttlMs: number,
+  build: () => Promise<T>,
+  discard: (result: T) => boolean = () => false
+) {
+  let cache: { at: number; result: Promise<T> } | null = null;
+  return {
+    get(): Promise<T> {
+      const now = Date.now();
+      if (cache && now - cache.at < ttlMs) return cache.result;
+      const entry = { at: now, result: build() };
+      cache = entry;
+      void entry.result.then(
+        (r) => {
+          if (discard(r) && cache === entry) cache = null;
+        },
+        () => {
+          if (cache === entry) cache = null;
+        }
+      );
+      return entry.result;
+    },
+    clear() {
+      cache = null;
+    },
+  };
+}
+
+const pendingCache = sharedBuild(
+  PENDING_CACHE_MS,
+  () => buildPendingWorkflowGates({}),
+  (r) => r.ledgerUnavailable
+);
+const reviewQueueCache = sharedBuild(REVIEW_QUEUE_CACHE_MS, buildTrainingReviewQueue);
 
 /** Called after any accepted ruling, and by tests. */
 export function invalidatePendingWorkflowGates(): void {
-  pendingCache = null;
+  pendingCache.clear();
 }
 
 async function buildPendingWorkflowGates(options: {

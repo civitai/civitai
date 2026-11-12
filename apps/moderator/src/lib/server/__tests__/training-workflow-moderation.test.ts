@@ -32,8 +32,16 @@ const chain: object = new Proxy(
 
 // The SDK's dist does not load under Node's ESM resolver (a directory import), and the workflow-only
 // path does not use it — it reads the manager API with plain fetch, which is what these cases stub.
+// The consumer read the version queue makes is served by the same `route` as the manager reads.
 vi.mock('@civitai/orchestration-client', () => ({
-  getWorkflow: vi.fn(),
+  getWorkflow: vi.fn(async ({ path }: { path: { workflowId: string } }) => {
+    const response: Response = await fetch(
+      `https://orchestrator.example/v2/consumer/workflows/${encodeURIComponent(path.workflowId)}`
+    );
+    return response.ok
+      ? { data: await response.json(), response }
+      : { error: { status: response.status }, response };
+  }),
   createCivitaiClient: vi.fn(),
 }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: chain }));
@@ -62,6 +70,10 @@ const {
   invalidatePendingWorkflowGates,
   getDatasetItemStates,
   MAX_PENDING_CANDIDATES,
+  getTrainingReviewQueue,
+  invalidateTrainingReviewQueue,
+  countTrainingDataReview,
+  MAX_PAUSED_VERSIONS,
 } = await import('../training-moderation.service');
 const { releaseModerationGate, probeOrchestratorBlob } = await import('../orchestrator');
 const { mapBounded, someBounded } = await import('../bounded');
@@ -166,6 +178,7 @@ beforeEach(() => {
   pageGranted = true;
   clearTrainingWorkflowBlobCache();
   invalidatePendingWorkflowGates();
+  invalidateTrainingReviewQueue();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -568,6 +581,142 @@ describe('getPendingWorkflowGates', () => {
       ledgerUnavailable: true,
       workflowFilterUnavailable: false,
       truncated: false,
+    });
+  });
+});
+
+describe('getTrainingReviewQueue', () => {
+  const run = (owner: number, n: number) => `${owner}-2026100512000${n}123-v${n}`;
+  const W1 = run(1, 1); // under review
+  const W2 = run(2, 2); // alive, already ruled on
+  const W3 = run(3, 3); // orchestrator no longer has it
+  const W4 = run(4, 4); // under review
+  const version = (id: number) => ({
+    id,
+    name: `v${id}`,
+    createdAt: new Date('2026-10-01T00:00:00Z'),
+    modelId: 100 + id,
+    modelName: `model ${id}`,
+  });
+
+  /** The version query answers first, then the `Training Data` file lookup. */
+  function db(versions: unknown[], files: unknown[]) {
+    fileRows.mockResolvedValueOnce(versions).mockResolvedValueOnce(files);
+  }
+
+  const byId = (url: URL) => decodeURIComponent(url.pathname.split('/').pop()!);
+  function orchestratorFor(state: Record<string, string | 404>) {
+    route = (url) => {
+      const s = state[byId(url)];
+      if (s === undefined) return new Response(null, { status: 599 });
+      if (s === 404) return new Response(null, { status: 404 });
+      return json(workflow({ id: byId(url), moderationStatus: s }));
+    };
+  }
+
+  function standard() {
+    // Ids out of order on purpose: the queue must sort, not trust the query.
+    db(
+      [version(4), version(2), version(1), version(3), version(5)],
+      [file(11, 1, W1), file(12, 2, W2), file(13, 3, W3), file(14, 4, W4)]
+    );
+    orchestratorFor({ [W1]: 'UnderReview', [W2]: 'Approved', [W3]: 404, [W4]: 'UnderReview' });
+  }
+
+  it('lists under-review versions first, then the rest, oldest first within each, without 404s', async () => {
+    standard();
+    const queue = await getTrainingReviewQueue();
+    expect(queue.items.map((i) => [i.id, i.underReview])).toEqual([
+      [1, true],
+      [4, true],
+      [2, false],
+    ]);
+    expect(queue.workflowFilterUnavailable).toBe(false);
+    expect(queue.truncated).toBe(false);
+  });
+
+  it('checks the run awaiting the gate, not the version’s most complete run', async () => {
+    const FINISHED = run(6, 1);
+    const GATED = run(6, 2);
+    db(
+      [version(6)],
+      [file(21, 6, FINISHED, '2026-10-02T00:00:00Z'), file(22, 6, GATED)].map((f, i) =>
+        i === 0
+          ? {
+              ...f,
+              metadata: {
+                trainingResults: {
+                  ...f.metadata.trainingResults,
+                  epochs: [{}],
+                  history: [{}],
+                  submittedAt: 'x',
+                  startedAt: 'x',
+                },
+              },
+            }
+          : f
+      )
+    );
+    orchestratorFor({ [FINISHED]: 'Approved', [GATED]: 'UnderReview' });
+    const queue = await getTrainingReviewQueue();
+    expect(queue.items).toEqual([
+      expect.objectContaining({ id: 6, workflowId: GATED, underReview: true }),
+    ]);
+  });
+
+  it('keeps every row, unchecked, and says so when the orchestrator is unreachable', async () => {
+    db([version(1), version(2)], [file(11, 1, W1), file(12, 2, W2)]);
+    route = () => {
+      throw new TypeError('fetch failed');
+    };
+    const queue = await getTrainingReviewQueue();
+    expect(queue.items.map((i) => [i.id, i.checked])).toEqual([
+      [1, false],
+      [2, false],
+    ]);
+    expect(queue.workflowFilterUnavailable).toBe(true);
+  });
+
+  it('says the newest were not checked when there are more Paused versions than one build reads', async () => {
+    db(
+      Array.from({ length: MAX_PAUSED_VERSIONS + 1 }, (_, n) => version(n + 1)),
+      []
+    );
+    route = () => new Response(null, { status: 599 });
+    const queue = await getTrainingReviewQueue();
+    expect(queue.truncated).toBe(true);
+  });
+
+  describe('countTrainingDataReview', () => {
+    const GATE = run(9, 9);
+    function gates(ids: string[]) {
+      chQuery.mockImplementation(async (sql: string) =>
+        sql.includes("type = 'training'") ? ids.map((workflowId) => ({ workflowId })) : []
+      );
+    }
+
+    it('counts under-review versions plus pending workflow gates, not the stale Paused row', async () => {
+      standard();
+      gates([GATE]);
+      const versionRoute = route;
+      route = (url, init) =>
+        byId(url) === GATE ? json(workflow({ id: GATE })) : versionRoute(url, init);
+      expect(await countTrainingDataReview()).toBe(3);
+    });
+
+    it('is unknown, not zero, when the orchestrator is unreachable', async () => {
+      db([version(1)], [file(11, 1, W1)]);
+      gates([]);
+      route = () => {
+        throw new TypeError('fetch failed');
+      };
+      expect(await countTrainingDataReview()).toBeNull();
+    });
+
+    it('is unknown when the gate ledger cannot be read', async () => {
+      standard();
+      chQuery.mockRejectedValue(new Error('clickhouse down'));
+      expect(await countTrainingDataReview()).toBeNull();
     });
   });
 });
@@ -1072,7 +1221,11 @@ describe('the pending queue is bounded and shared', () => {
     route = () => new Response(null, { status: 599 });
     await getPendingWorkflowGates();
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.now() + 31_000);
+    const start = Date.now();
+    vi.setSystemTime(start + 9 * 60_000);
+    await getPendingWorkflowGates();
+    expect(chQuery).toHaveBeenCalledTimes(3);
+    vi.setSystemTime(start + 10 * 60_000 + 1_000);
     await getPendingWorkflowGates();
     expect(chQuery).toHaveBeenCalledTimes(6);
   });
