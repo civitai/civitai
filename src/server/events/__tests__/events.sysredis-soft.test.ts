@@ -31,6 +31,7 @@ const {
   mockLLen,
   mockLPopCount,
   mockWithSysReadDeadline,
+  mockWithSysDeadline,
   mockLogSysRedisFailOpen,
   mockGetDiscordRoles,
   mockGetDiscordIds,
@@ -41,6 +42,7 @@ const {
   mockLLen: vi.fn(),
   mockLPopCount: vi.fn(),
   mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+  mockWithSysDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
   mockLogSysRedisFailOpen: vi.fn(),
   mockGetDiscordRoles: vi.fn(async () => ({ Team1: 'role-1' } as Record<string, string>)),
   mockGetDiscordIds: vi.fn(async () => new Map<number, string>()),
@@ -55,6 +57,7 @@ vi.mock('~/server/redis/client', async () => ({
   sysRedis: { lRange: mockLRange, lPush: mockLPush, lLen: mockLLen, lPopCount: mockLPopCount },
   redis: { get: vi.fn(), set: vi.fn(), del: vi.fn(), purgeTags: vi.fn() },
   withSysReadDeadline: mockWithSysReadDeadline,
+  withSysDeadline: mockWithSysDeadline,
 }));
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
@@ -106,6 +109,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 beforeEach(() => {
   vi.clearAllMocks();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
+  mockWithSysDeadline.mockImplementation((p) => p);
   mockGetDiscordRoles.mockResolvedValue({ Team1: 'role-1' });
   mockGetDiscordIds.mockResolvedValue(new Map<number, string>());
 });
@@ -229,15 +233,14 @@ describe('processAddRoleQueue — lLen + lPopCount READ soft-dependency', () => 
   it('SLOW/half-open (lPopCount NEVER settles + deadline REJECTS): skips cycle, no items processed (fail-on-revert; never-popped sub-case)', async () => {
     mockLLen.mockResolvedValue(3);
     mockLPopCount.mockReturnValue(new Promise(() => undefined));
-    // lLen resolves (transparent), only the lPopCount race rejects. Make the
-    // deadline reject only for the second (lPopCount) call.
-    mockWithSysReadDeadline
-      .mockImplementationOnce((p) => p) // lLen: transparent
-      .mockRejectedValueOnce(new Error('sysRedis read timed out after 2000ms')); // lPopCount
+    // lLen resolves (transparent), only the lPopCount race rejects. The pop is destructive, so it
+    // goes through withSysDeadline (never refused by the read breaker); lLen is a plain read.
+    mockWithSysDeadline.mockRejectedValueOnce(new Error('sysRedis read timed out after 2000ms'));
 
     await expect(eventEngine.processAddRoleQueue()).resolves.toBeUndefined();
 
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(2);
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockWithSysDeadline).toHaveBeenCalledTimes(1);
     expect(mockAddRoleToUser).not.toHaveBeenCalled();
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][1]).toBe('events.processAddRoleQueue lPopCount');

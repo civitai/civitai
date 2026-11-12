@@ -53,6 +53,7 @@ vi.mock('~/server/redis/client', async () => ({
   redis: redisMock.redis,
   sysRedis: redisMock.sysRedis,
   withSysReadDeadline: redisMock.withSysReadDeadline,
+  withSysDeadline: redisMock.withSysDeadline,
 }));
 
 // The orchestrator SDK is ESM-only with directory imports Node refuses, so the unit suite stubs

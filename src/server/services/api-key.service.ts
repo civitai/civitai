@@ -19,7 +19,7 @@ import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai'
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
 import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysDeadline } from '~/server/redis/client';
 
 export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
   return dbRead.apiKey.findFirst({
@@ -291,7 +291,7 @@ export async function forgetGenerationToken(userId: number) {
   try {
     // Raced like a read: a half-open sysRedis must not stall the ban.
     const field = userId.toString();
-    await withSysReadDeadline(
+    await withSysDeadline(
       Promise.all([
         sysRedis.hDel(REDIS_KEYS.GENERATION.TOKENS_OWNED, field),
         // The training studio's own cache, and the older shared key it still reads.

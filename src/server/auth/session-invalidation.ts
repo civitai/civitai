@@ -1,6 +1,6 @@
 import { impersonatorCutKey } from '@civitai/auth';
 import { SignalMessages } from '~/server/common/enums';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysDeadline } from '~/server/redis/client';
 import { hSetMultiWithTTL, hSetMultiWithTTLUnlessValue } from '~/server/redis/atomic';
 import { logToAxiom } from '~/server/logging/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -19,7 +19,7 @@ const MARKER_EXPIRATION = 60 * 60 * 24 * 91;
 // Fields per HSCAN page. Only bounds how many field names come back per round trip; the scan is incremental
 // either way, so this trades round trips against per-command size rather than affecting correctness.
 const SCAN_PAGE = 500;
-// 🔴 Aggregate bound for the scan. `withSysReadDeadline` bounds ONE page, and a bounded primitive repeated an
+// 🔴 Aggregate bound for the scan. `withSysDeadline` bounds ONE page, and a bounded primitive repeated an
 // unbounded number of times is not bounded: the largest account is 108 pages at this COUNT, so a sysRedis
 // degraded enough that every page returns just under its own deadline would hang a logout or ban request for
 // minutes while the per-page fail-open never trips. This caps the whole scan instead. Exceeding it yields a
@@ -56,13 +56,14 @@ async function updateSessionState(
     // posture: the invalidation doesn't take effect during the outage (retry
     // after recovery), but the request never 500s or parks. Each page is
     // raced separately, so the bound applies per page rather than to the
-    // whole scan.
+    // whole scan. withSysDeadline, not withSysReadDeadline: a failed read here
+    // skips a revocation, so the read breaker must never refuse it.
     // HSCAN may return the same field twice across pages when the hash rehashes mid-scan. The write dedupes
     // structurally, but the COUNT feeding the log line and the histogram would over-report without this.
     const seen = new Set<string>();
     let cursor = '0';
     do {
-      const page = await withSysReadDeadline(
+      const page = await withSysDeadline(
         sysRedis.hScanNoValues(key as any, cursor, { COUNT: SCAN_PAGE })
       );
       for (const field of page.fields) seen.add(field);
@@ -261,7 +262,7 @@ export async function refreshSession(
  * SECURITY/IR NOTE: this path is fail-open on sysRedis unreachability
  * on BOTH the read and the write (PR #2332 round-3 audit fix for the
  * write; STEP-4 soft-dependency sweep for the read). Each scan page of the
- * read is wrapped in `withSysReadDeadline` + try/catch and fails open to an
+ * read is wrapped in `withSysDeadline` + try/catch and fails open to an
  * empty token list — subtype `read-degraded`; the write (hSetMultiWithTTL)
  * swallows its error — subtype `write-degraded`. Both emit a
  * `sysredis-fail-open` Loki/Axiom event; see `updateSessionState` above.

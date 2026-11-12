@@ -9,7 +9,12 @@ import {
   type PreviewErrorSource,
 } from '@civitai/app-assistant';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import {
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysDeadline,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { getActiveDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
 
 /**
@@ -153,7 +158,7 @@ export async function storePreviewErrors({
   );
   pipeline.lTrim(key, 0, PREVIEW_ERRORS_MAX_ENTRIES - 1);
   pipeline.expire(key, PREVIEW_ERRORS_TTL_SECONDS);
-  const replies: unknown = await withSysReadDeadline(pipeline.exec());
+  const replies: unknown = await withSysDeadline(pipeline.exec());
 
   // Another write pushed between the read and the replace, so the pop took ITS entry: it goes back
   // (readers order by time, so its place in the list does not matter). The entry this meant to
@@ -171,7 +176,7 @@ export async function storePreviewErrors({
       const putBack = sysRedis.multi();
       putBack.lPush(key, others);
       putBack.expire(key, PREVIEW_ERRORS_TTL_SECONDS);
-      await withSysReadDeadline(putBack.exec());
+      await withSysDeadline(putBack.exec());
     }
   }
   return { status: 'stored', stored: entries.length };

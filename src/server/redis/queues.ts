@@ -3,6 +3,7 @@ import {
   REDIS_SUB_KEYS,
   REDIS_SYS_KEYS,
   sysRedis,
+  withSysDeadline,
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -106,7 +107,7 @@ async function safeSysWrite(
   extra?: Record<string, unknown>
 ): Promise<boolean> {
   try {
-    await withSysReadDeadline(op());
+    await withSysDeadline(op());
     return true;
   } catch (err) {
     logSysRedisFailOpen('write-degraded', fn, err, extra);

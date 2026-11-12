@@ -281,10 +281,10 @@ async function autoBuildBudgetKey(userId: number) {
 }
 
 async function takeAutoBuildBudget(userId: number): Promise<'ok' | 'limited' | 'unavailable'> {
-  const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+  const { sysRedis, withSysDeadline } = await import('~/server/redis/client');
   const key = await autoBuildBudgetKey(userId);
   try {
-    const res = await withSysReadDeadline(
+    const res = await withSysDeadline(
       sysRedis
         .multi()
         .set(key, '0', { NX: true, EX: AUTO_BUILD_BUDGET_TTL_SECONDS })
@@ -302,8 +302,8 @@ async function takeAutoBuildBudget(userId: number): Promise<'ok' | 'limited' | '
 /** Give back a build taken by {@link takeAutoBuildBudget}. Best-effort. */
 async function refundAutoBuildBudget(userId: number): Promise<void> {
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
-    await withSysReadDeadline(sysRedis.decr(await autoBuildBudgetKey(userId)));
+    const { sysRedis, withSysDeadline } = await import('~/server/redis/client');
+    await withSysDeadline(sysRedis.decr(await autoBuildBudgetKey(userId)));
   } catch {
     // The counter expires with the day; a lost refund costs one build of budget.
   }
@@ -319,10 +319,10 @@ export const SUBMISSION_ALERTS_PER_USER_PER_HOUR = 10;
  */
 async function takeSubmissionAlertSlot(userId: number): Promise<'alert' | 'rollup' | 'silent'> {
   try {
-    const { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } = await import('~/server/redis/client');
+    const { sysRedis, REDIS_SYS_KEYS, withSysDeadline } = await import('~/server/redis/client');
     const hour = new Date().toISOString().slice(0, 13);
     const key = `${REDIS_SYS_KEYS.BLOCKS.REVIEW_SUBMISSION_ALERTS}:${userId}:${hour}` as const;
-    const res = await withSysReadDeadline(
+    const res = await withSysDeadline(
       sysRedis
         .multi()
         .set(key, '0', { NX: true, EX: 2 * 60 * 60 })
@@ -509,9 +509,9 @@ async function readListingCheckSpendUsd(now: Date): Promise<number> {
 export async function recordListingCheckSpendUsd(usd: number): Promise<void> {
   if (!Number.isFinite(usd) || usd <= 0) return;
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    const { sysRedis, withSysDeadline } = await import('~/server/redis/client');
     const key = await listingCheckSpendKey(new Date());
-    await withSysReadDeadline(
+    await withSysDeadline(
       sysRedis
         .multi()
         .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
@@ -612,9 +612,9 @@ async function reserveAgentAutostartBudget(
   cents: number
 ): Promise<{ totalCents: number; key: AgentAutostartReservedKey } | null> {
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    const { sysRedis, withSysDeadline } = await import('~/server/redis/client');
     const key = await agentAutostartReservedKey();
-    const res = await withSysReadDeadline(
+    const res = await withSysDeadline(
       sysRedis
         .multi()
         .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
@@ -634,8 +634,8 @@ async function releaseAgentAutostartBudget(
   key: AgentAutostartReservedKey
 ): Promise<void> {
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
-    await withSysReadDeadline(sysRedis.incrBy(key, -cents));
+    const { sysRedis, withSysDeadline } = await import('~/server/redis/client');
+    await withSysDeadline(sysRedis.incrBy(key, -cents));
   } catch {
     // The key expires with the day; a lost release only makes later starts more conservative.
   }

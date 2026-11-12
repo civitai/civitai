@@ -53,7 +53,7 @@ import {
 } from '~/server/events/turf/flag-day';
 import { logToAxiom } from '~/server/logging/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
+import { withSysDeadline } from '~/server/redis/sys-read-deadline';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { TurfHatArt, TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
@@ -667,7 +667,7 @@ export async function getReactionEarns(
   now = new Date(),
   { deadlineMs = REACTION_EARNS_MS } = {}
 ) {
-  return withSysReadDeadline(
+  return withSysDeadline(
     (async () => {
       const event = await getTurfEvent(name, now);
       if (!event || !isRunning(event, now)) return false;

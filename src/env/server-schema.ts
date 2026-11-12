@@ -125,6 +125,13 @@ export const serverSchema = z
     // (~OS-keepalive minutes) per request without this. Bounds the request handler and
     // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
     REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
+    // Process-wide breaker over the same reads (redis/sys-read-breaker.ts): after THRESHOLD
+    // consecutive failed reads (timeout or error), withSysReadDeadline rejects at once instead of
+    // waiting out the deadline, until COOLDOWN passes and one probe read succeeds. Dark by default —
+    // while off, every read waits on the client as before. Writes (withSysDeadline) never use it.
+    REDIS_SYS_READ_BREAKER_ENABLED: zc.booleanString.default(false),
+    REDIS_SYS_READ_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
+    REDIS_SYS_READ_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),
     // Bound on the sys client's node-redis command queue. The sys client has no
     // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
     // (minutes), during which every authenticated request enqueues a MULTI that never

@@ -1,6 +1,11 @@
 import { isNonProductionDatabase } from '~/env/database-target';
 import { setIngestionGaugeSharedStore, type IngestionGaugeSharedStore } from '~/server/prom/client';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import {
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysDeadline,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 
 // One snapshot (and lock) per version, so releases whose queries differ never share one.
 const snapshotKey = (version: string) =>
@@ -16,11 +21,10 @@ export function createIngestionGaugeStore(redis: StoreRedis): IngestionGaugeShar
   return {
     read: (version) => withSysReadDeadline(redis.get(snapshotKey(version))),
     tryLock: async (version, ttlMs) =>
-      (await withSysReadDeadline(
-        redis.set<string>(lockKey(version), '1', { NX: true, PX: ttlMs })
-      )) === 'OK',
+      (await withSysDeadline(redis.set<string>(lockKey(version), '1', { NX: true, PX: ttlMs }))) ===
+      'OK',
     write: async (version, value, ttlMs) => {
-      await withSysReadDeadline(redis.set(snapshotKey(version), value, { PX: ttlMs }));
+      await withSysDeadline(redis.set(snapshotKey(version), value, { PX: ttlMs }));
     },
   };
 }

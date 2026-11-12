@@ -7,7 +7,12 @@ import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbWrite } from '~/server/db/client';
 import { emitMintAuditToStdout } from '~/server/logging/mint-audit-stdout';
-import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
+import {
+  sysRedis,
+  REDIS_SYS_KEYS,
+  withSysDeadline,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import {
@@ -471,7 +476,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // try/catch alone can't unpark it. Racing the `.exec()` against the sys read
     // deadline (default REDIS_SYS_READ_TIMEOUT_MS=2000) turns that open-ended hang
     // into a clean rejection caught here → fail closed (503) instead of parking.
-    const multiResult = await withSysReadDeadline(
+    const multiResult = await withSysDeadline(
       sysRedis
         .multi()
         .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })

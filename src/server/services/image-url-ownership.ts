@@ -6,7 +6,12 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import {
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysDeadline,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 
 /** Shown when a client-supplied image url cannot be used. Keep it actionable. */
 export const COVER_IMAGE_UNAVAILABLE_MESSAGE =
@@ -302,7 +307,7 @@ const ownerKey = (key: string) =>
 /** Records that upload key `key` was issued to `userId`. Never throws. */
 export async function recordUploadKeyOwner(key: string, userId: number) {
   try {
-    await withSysReadDeadline(
+    await withSysDeadline(
       sysRedis.set(ownerKey(key.toLowerCase()), String(userId), {
         EX: UPLOAD_KEY_OWNER_TTL_SECONDS,
       })

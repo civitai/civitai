@@ -55,6 +55,7 @@ vi.mock('~/server/redis/client', async () => {
       hGetAll: vi.fn().mockResolvedValue({}),
     },
     withSysReadDeadline: vi.fn((p: Promise<unknown>) => p),
+    withSysDeadline: vi.fn((p: Promise<unknown>) => p),
   };
 });
 

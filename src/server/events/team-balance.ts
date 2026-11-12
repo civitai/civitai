@@ -1,9 +1,4 @@
-import {
-  REDIS_SUB_KEYS,
-  REDIS_SYS_KEYS,
-  sysRedis,
-  withSysReadDeadline,
-} from '~/server/redis/client';
+import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis, withSysDeadline } from '~/server/redis/client';
 
 // Join-time team balancing. An event that opts in (`join.balance`) reads a list of users, each with
 // the points they are predicted to earn, from sysRedis. A listed user joining is placed on the team
@@ -64,7 +59,7 @@ export async function placeListedJoiner(
 ): Promise<string | undefined> {
   const keys = teamBalanceKeys(event);
   // A timed-out call may still run later; that is safe, since a retry finds the placement it wrote.
-  const team = await withSysReadDeadline(
+  const team = await withSysDeadline(
     sysRedis.eval(PLACE_LISTED_JOINER, {
       keys: [keys.manual, keys.list, keys.totals, keys.assigned],
       arguments: [userId.toString(), ...teams],

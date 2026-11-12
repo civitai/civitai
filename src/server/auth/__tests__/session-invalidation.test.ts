@@ -25,21 +25,17 @@ import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis/client';
  *                 fail-open logger is touched.
  */
 
-const {
-  mockHSetMultiWithTTL,
-  mockLogSysRedisFailOpen,
-  mockHScanNoValues,
-  mockWithSysReadDeadline,
-} = vi.hoisted(() => ({
-  mockHSetMultiWithTTL: vi.fn(),
-  mockLogSysRedisFailOpen: vi.fn(),
-  mockHScanNoValues: vi.fn(),
-  // STEP-4 soft-dependency: the hGetAll read is now wrapped in
-  // withSysReadDeadline so a SLOW/half-open sysRedis rejects (deadline)
-  // instead of parking ~11min. Transparent by default (returns the wrapped
-  // promise) — override per-test to reject to model the SLOW path.
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
-}));
+const { mockHSetMultiWithTTL, mockLogSysRedisFailOpen, mockHScanNoValues, mockWithSysDeadline } =
+  vi.hoisted(() => ({
+    mockHSetMultiWithTTL: vi.fn(),
+    mockLogSysRedisFailOpen: vi.fn(),
+    mockHScanNoValues: vi.fn(),
+    // STEP-4 soft-dependency: the hGetAll read is now wrapped in
+    // withSysDeadline so a SLOW/half-open sysRedis rejects (deadline)
+    // instead of parking ~11min. Transparent by default (returns the wrapped
+    // promise) — override per-test to reject to model the SLOW path.
+    mockWithSysDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+  }));
 
 // Refresh writes through the conditional variant. It is routed to the same mock, minus its keepValue argument,
 // so these boundary tests read one call shape; what keepValue does is covered in
@@ -73,7 +69,7 @@ vi.mock('~/server/redis/client', async () => ({
     hDel: vi.fn().mockResolvedValue(0),
     set: vi.fn().mockResolvedValue('OK'),
   },
-  withSysReadDeadline: mockWithSysReadDeadline,
+  withSysDeadline: mockWithSysDeadline,
 }));
 
 vi.mock('~/server/utils/cache-helpers', () => ({
@@ -108,7 +104,7 @@ const onePage = (fields: string[]) => ({ cursor: '0', fields });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
+  mockWithSysDeadline.mockImplementation((p) => p); // transparent by default
   // Default: user has 2 tokens in the hash.
   mockHScanNoValues.mockResolvedValue(onePage(['token-a', 'token-b']));
 });
@@ -158,13 +154,13 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
 });
 
 describe('updateSessionState READ fail-open wrapper (STEP-4)', () => {
-  it('happy path: scans field names through withSysReadDeadline and does not log fail-open', async () => {
+  it('happy path: scans field names through withSysDeadline and does not log fail-open', async () => {
     mockHSetMultiWithTTL.mockResolvedValue(undefined);
 
     await refreshSession(7, { sendSignal: false });
 
     // The read is deadline-wrapped even on the happy path.
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockWithSysDeadline).toHaveBeenCalledTimes(1);
     expect(mockHScanNoValues).toHaveBeenCalledTimes(1);
     // Tokens resolved → the write ran with them.
     expect(mockHSetMultiWithTTL).toHaveBeenCalledTimes(1);
@@ -188,16 +184,16 @@ describe('updateSessionState READ fail-open wrapper (STEP-4)', () => {
 
   it('SLOW/half-open: the scan NEVER settles + deadline REJECTS → fails open (fail-on-revert: a bare await would hang and time out)', async () => {
     // Model a SLOW/half-open sysRedis: the scan never settles (would park
-    // ~11min in prod), so ONLY the withSysReadDeadline race can unblock the
-    // caller. This PINS the wrap — remove `withSysReadDeadline(...)` and the
+    // ~11min in prod), so ONLY the withSysDeadline race can unblock the
+    // caller. This PINS the wrap — remove `withSysDeadline(...)` and the
     // bare `await sysRedis.hScanNoValues` hangs forever → this test TIMES OUT.
     // A resolved mock would pass even without the wrap.
     mockHScanNoValues.mockReturnValue(new Promise(() => undefined));
-    mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+    mockWithSysDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
     await expect(refreshSession(123, { sendSignal: false })).resolves.toBeUndefined();
 
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockWithSysDeadline).toHaveBeenCalledTimes(1);
     expect(mockHSetMultiWithTTL).not.toHaveBeenCalled();
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
@@ -294,11 +290,11 @@ describe('updateSessionState reads field names incrementally', () => {
 
     await refreshSession(42, { sendSignal: false });
 
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(2);
+    expect(mockWithSysDeadline).toHaveBeenCalledTimes(2);
   });
 });
 
-// 🔴 A bounded primitive repeated an unbounded number of times is not bounded. withSysReadDeadline bounds ONE
+// 🔴 A bounded primitive repeated an unbounded number of times is not bounded. withSysDeadline bounds ONE
 // page; the largest production account is 108 pages, so a sysRedis degraded enough that every page returns
 // just under its own deadline would hang a logout or ban for minutes while the per-page fail-open never
 // trips. Reported by charlie on #3756.

@@ -66,6 +66,8 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { QUEUES: { BUCKETS: 'queues:buckets' } },
   REDIS_SUB_KEYS: { QUEUES: { MERGING: 'merging' } },
   withSysReadDeadline,
+  // Writes take the breaker-free deadline; the same race stands in for both.
+  withSysDeadline: withSysReadDeadline,
 }));
 
 // The fail-open logger fires to Axiom; stub it so the tests don't touch the
