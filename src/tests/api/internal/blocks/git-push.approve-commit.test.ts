@@ -54,12 +54,15 @@ const {
   // (status + forgejoCommitSha), and the approve-commit lookup (id + slug + status set).
   const findRequest = async ({ where }: { where: Record<string, unknown> }) => {
     if (typeof where.id !== 'string') return null; // no approved/pending row for any sha here
-    const allowed = (where.status as { in?: string[] } | undefined)?.in;
+    // A real filter: every key the query names must match, and a key it leaves out matches
+    // anything (so a query that drops a condition finds MORE rows, as Prisma would).
+    const status = where.status as string | { in?: string[] } | undefined;
     const row = state.requests.find(
       (r) =>
         r.id === where.id &&
-        r.slug === where.slug &&
-        (allowed ? allowed.includes(r.status) : r.status === where.status)
+        (where.slug === undefined || r.slug === where.slug) &&
+        (status === undefined ||
+          (typeof status === 'string' ? r.status === status : !!status.in?.includes(r.status)))
     );
     return row ? { id: row.id } : null;
   };
