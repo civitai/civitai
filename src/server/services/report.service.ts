@@ -74,7 +74,12 @@ import {
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
-import { LOCK_REVIEW_KIND, type LockReviewContext } from '@civitai/shared/lock-review';
+import {
+  LOCK_REVIEW_KIND,
+  type LockReviewContext,
+  lockReviewRulingMessage,
+  type RequestableLock,
+} from '@civitai/shared/lock-review';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -1740,7 +1745,11 @@ export async function settleResolvedAppeals(
     status,
     resolvedMessage,
     refundBuzz,
-  }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'>
+    lockReview,
+  }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'> & {
+    /** Set for a model's lock review: its own words, naming the settings the approval unlocked. */
+    lockReview?: { unlocked: RequestableLock[] };
+  }
 ) {
   const approved = status === AppealStatus.Approved;
 
@@ -1872,6 +1881,7 @@ export async function settleResolvedAppeals(
         entityId: appeal.entityId,
         status,
         resolvedMessage,
+        ...(lockReview && { kind: LOCK_REVIEW_KIND, unlocked: lockReview.unlocked }),
       },
     });
   }
@@ -1898,7 +1908,14 @@ export async function settleResolvedAppeals(
       await moderationActionEmail.send({
         to: recipient.email,
         username: recipient.username ?? 'User',
-        kind: approved ? 'appeal-approved' : 'appeal-rejected',
+        kind: lockReview
+          ? approved
+            ? 'lock-review-approved'
+            : 'lock-review-rejected'
+          : approved
+          ? 'appeal-approved'
+          : 'appeal-rejected',
+        intro: lockReview && lockReviewRulingMessage(approved, lockReview.unlocked),
         items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId)),
       });
     } catch (error) {

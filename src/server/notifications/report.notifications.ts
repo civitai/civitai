@@ -2,6 +2,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { EntityType } from '~/shared/utils/prisma/enums';
 import type { OrphanedAppealOutcome } from '~/shared/utils/appeal';
+import { LOCK_REVIEW_KIND, lockReviewRulingMessage } from '@civitai/shared/lock-review';
 import {
   isSiteAppealCategory,
   siteAppealDecisionText,
@@ -104,6 +105,14 @@ export const reportNotifications = createNotificationProcessor({
           restored: details.restored,
           resolvedMessage: details.resolvedMessage,
         });
+      if (details.kind === LOCK_REVIEW_KIND)
+        return {
+          message: lockReviewRulingMessage(
+            details.status === 'Approved',
+            Array.isArray(details.unlocked) ? details.unlocked : []
+          ),
+          url: `/models/${details.entityId}`,
+        };
       return {
         message: `Your appeal regarding your ${
           details.entityType
