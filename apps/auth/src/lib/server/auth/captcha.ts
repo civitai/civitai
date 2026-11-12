@@ -86,6 +86,9 @@ function secretFor(mode: CaptchaMode): string | undefined {
   return real || (devCaptcha() ? TEST_SECRET_PASS : undefined);
 }
 
+/** Bound on one siteverify call; Cloudflare answers in well under a second when healthy. */
+const SITEVERIFY_TIMEOUT_MS = 5_000;
+
 /** Verify a Turnstile token with Cloudflare. Returns true when captcha is disabled; false on a
  *  missing/invalid token or any verification error (fail-closed when enabled).
  *
@@ -133,6 +136,8 @@ export async function verifyCaptchaToken(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ secret, response: token, remoteip: ip }),
+      // A hung siteverify fails closed through the catch below instead of holding the sign-in.
+      signal: AbortSignal.timeout(SITEVERIFY_TIMEOUT_MS),
     });
     if (!res.ok) {
       console.error('captcha verify rejected', { reason: 'siteverify-http', status: res.status });
