@@ -272,6 +272,12 @@ describe('recentErrorLine — one failed SDK call in the inbox', () => {
     );
   });
 
+  it('a time Date cannot render reads as unknown instead of throwing', () => {
+    expect(
+      recentErrorLine({ method: 'X', message: 'm', at: 8_640_000_000_000_001, count: 1 })
+    ).toBe('unknown time X: m');
+  });
+
   it('no details, no parentheses', () => {
     expect(
       recentErrorLine({

@@ -115,3 +115,24 @@ describe('appFeedbackContextSchema — environment', () => {
     expect(parse({ environment: { viewport: { width: -1, height: 2 } } }).success).toBe(false);
   });
 });
+
+describe('appFeedbackContextSchema — text a crafted client could send', () => {
+  it('refuses a time past the range Date can render', () => {
+    expect(parse({ recentErrors: [{ ...error, at: 8_640_000_000_000_000 }] }).success).toBe(true);
+    expect(parse({ recentErrors: [{ ...error, at: 8_640_000_000_000_001 }] }).success).toBe(false);
+  });
+
+  it('refuses control, zero-width and bidi characters in error text and routes', () => {
+    for (const bad of ['a\u202eb', 'a\u0000b', 'a\u200bb', 'a\u2066b'])
+      expect(parse({ recentErrors: [{ ...error, message: bad }] }).success).toBe(false);
+    expect(parse({ recentErrors: [{ ...error, appRoute: '/a\u202e' }] }).success).toBe(false);
+    expect(parse({ environment: { appRoute: '/a\u0007' } }).success).toBe(false);
+    // Control: ordinary non-ASCII text, an emoji included, is fine.
+    expect(parse({ recentErrors: [{ ...error, message: 'échec 🚫 失败' }] }).success).toBe(true);
+  });
+
+  it('refuses a lone surrogate, which Postgres would refuse in jsonb', () => {
+    expect(parse({ recentErrors: [{ ...error, message: 'x\ud83d' }] }).success).toBe(false);
+    expect(parse({ environment: { appRoute: '/\ude00' } }).success).toBe(false);
+  });
+});

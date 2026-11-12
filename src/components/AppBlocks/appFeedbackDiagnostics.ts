@@ -8,7 +8,9 @@ import type {
 import {
   APP_FEEDBACK_APP_ROUTE_MAX,
   APP_FEEDBACK_ERROR_MESSAGE_MAX,
+  APP_FEEDBACK_LONE_SURROGATE,
   APP_FEEDBACK_RECENT_ERRORS_MAX,
+  APP_FEEDBACK_UNSAFE_CHARS,
 } from '~/server/schema/app-feedback.schema';
 
 /**
@@ -26,13 +28,24 @@ const OPAQUE_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const NO_WORKFLOW_ID = 'failed';
 const FALLBACK_MESSAGE = 'request failed';
 
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
+const CONTROL_CHARS = APP_FEEDBACK_UNSAFE_CHARS;
+
+/**
+ * At most `max` UTF-16 units (the unit the server's `.max()` counts), never ending on half of a
+ * surrogate pair, and with any lone surrogate already in the text removed: either would make the
+ * stored JSON invalid and the report fail to save.
+ */
+function clampUnits(text: string, max: number): string {
+  const whole = text.replace(APP_FEEDBACK_LONE_SURROGATE, '');
+  if (whole.length <= max) return whole;
+  const cut = whole.slice(0, max);
+  return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
 
 export function clampErrorText(text: string): string {
-  const flat = text.replace(CONTROL_CHARS, ' ').replace(/\s+/g, ' ').trim();
+  const flat = clampUnits(text.replace(CONTROL_CHARS, ' ').replace(/\s+/g, ' ').trim(), Infinity);
   if (flat.length <= APP_FEEDBACK_ERROR_MESSAGE_MAX) return flat;
-  return `${flat.slice(0, APP_FEEDBACK_ERROR_MESSAGE_MAX - 1)}…`;
+  return `${clampUnits(flat, APP_FEEDBACK_ERROR_MESSAGE_MAX - 1)}…`;
 }
 
 function opaqueId(value: unknown, max = 128): string | undefined {
@@ -167,7 +180,7 @@ export function hostRefusal(
 /** The app-relative path of a NAVIGATE: no query, no fragment, no control characters, capped. */
 function appRelativeRoute(path: string): string {
   const bare = path.split(/[?#]/, 1)[0].replace(CONTROL_CHARS, '').trim();
-  return `/${bare.replace(/^\/+/, '')}`.slice(0, APP_FEEDBACK_APP_ROUTE_MAX);
+  return clampUnits(`/${bare.replace(/^\/+/, '')}`, APP_FEEDBACK_APP_ROUTE_MAX);
 }
 
 /**
@@ -317,10 +330,10 @@ export function buildAppFeedbackEnvironment(input: {
   appRoute?: string;
 }): AppFeedbackEnvironment {
   const dpr = Math.round(input.devicePixelRatio * 100) / 100;
-  const route = input.appRoute
-    ?.replace(CONTROL_CHARS, '')
-    .trim()
-    .slice(0, APP_FEEDBACK_APP_ROUTE_MAX);
+  const route =
+    input.appRoute !== undefined
+      ? clampUnits(input.appRoute.replace(CONTROL_CHARS, '').trim(), APP_FEEDBACK_APP_ROUTE_MAX)
+      : undefined;
   return {
     browser: browserFromUserAgent(input.userAgent, input.brands),
     os: osFromUserAgent(input.userAgent, input.platform),

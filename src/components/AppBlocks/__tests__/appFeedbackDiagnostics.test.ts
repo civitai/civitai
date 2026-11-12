@@ -122,6 +122,18 @@ describe('clampErrorText', () => {
     expect(clampErrorText('y'.repeat(300))).toBe('y'.repeat(300));
   });
 
+  it('never cuts an emoji in half at the cap, so the stored JSON stays valid', () => {
+    const out = clampErrorText(`${'a'.repeat(298)}🚫🚫`);
+    expect(out.length).toBeLessThanOrEqual(300);
+    expect(out).toBe(`${'a'.repeat(298)}…`);
+    const entry = failureFromHostMessage('WORKFLOW_STATUS', { error: out }, AT)!;
+    expect(appFeedbackRecentErrorSchema.safeParse(entry).success).toBe(true);
+  });
+
+  it('drops a lone surrogate already in the text', () => {
+    expect(clampErrorText('bad\ud83d text')).toBe('bad text');
+  });
+
   it('flattens control and bidi characters to spaces', () => {
     expect(clampErrorText('a\nb\u202ec\u0000d')).toBe('a b c d');
   });
@@ -301,6 +313,14 @@ describe('buildAppFeedbackEnvironment', () => {
     expect(buildAppFeedbackEnvironment({ ...base, scrollbarWidth: 17 }).scrollbars).toBe('classic');
     expect(buildAppFeedbackEnvironment({ ...base, scrollbarWidth: 0 }).scrollbars).toBe('overlay');
     expect(buildAppFeedbackEnvironment(base)).not.toHaveProperty('scrollbars');
+  });
+
+  it('caps an app route ending in an emoji without leaving half of it', () => {
+    const env = buildAppFeedbackEnvironment({ ...base, appRoute: `/${'r'.repeat(198)}🚫` });
+    expect(env.appRoute).toBe(`/${'r'.repeat(198)}`);
+    expect(appFeedbackEnvironmentSchema.safeParse(env).success).toBe(true);
+    const nav = navigateDiagnostic({ path: `/${'r'.repeat(198)}🚫` }, { scope: 'app' }, AT)!;
+    expect(appFeedbackRecentErrorSchema.safeParse(nav).success).toBe(true);
   });
 
   it('cleans and caps the app route, and omits an empty one', () => {

@@ -201,7 +201,10 @@ export const RECENT_ERRORS_NOTE =
  * Plain text: the caller renders it as text, never as markup.
  */
 export function recentErrorLine(error: AppFeedbackRecentError): string {
-  const time = `${new Date(error.at).toISOString().slice(11, 19)} UTC`;
+  const date = new Date(error.at);
+  const time = Number.isNaN(date.getTime())
+    ? 'unknown time'
+    : `${date.toISOString().slice(11, 19)} UTC`;
   const details = [
     error.count > 1 ? `×${error.count}` : null,
     error.code ? `code ${error.code}` : null,

@@ -28,6 +28,29 @@ const BRIDGE_TYPE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const OPAQUE_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const ENUM_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
+/** C0/C1 controls and the zero-width and bidi format characters a reader cannot see. */
+export const APP_FEEDBACK_UNSAFE_CHARS =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
+/** A UTF-16 surrogate with no partner: Postgres refuses it inside `jsonb`. */
+export const APP_FEEDBACK_LONE_SURROGATE =
+  /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+
+/**
+ * Free text from the reporter's browser, held to what the honest client produces: no control,
+ * zero-width or bidi characters (they can make an error line read as something else), and no lone
+ * surrogate (it fails the insert, losing the report).
+ */
+const diagnosticText = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .refine((s) => !new RegExp(APP_FEEDBACK_UNSAFE_CHARS.source).test(s), 'unsafe characters')
+    .refine((s) => !new RegExp(APP_FEEDBACK_LONE_SURROGATE.source).test(s), 'malformed text');
+
+/** `Date`'s own range: past it `toISOString()` throws, and the inbox renders every entry's time. */
+const MAX_EPOCH_MS = 8_640_000_000_000_000;
+
 /**
  * Why the host did not carry out a request as asked. Bridge drops (`rate_limited`, `deduped`,
  * `no_handler`, `not_applicable`, `validator_rejected`), surface refusals (`review_mode`,
@@ -53,7 +76,7 @@ export type AppFeedbackHostReason = (typeof APP_FEEDBACK_HOST_REASONS)[number];
  */
 export const appFeedbackRecentErrorSchema = z.object({
   method: z.string().regex(BRIDGE_TYPE),
-  message: z.string().max(APP_FEEDBACK_ERROR_MESSAGE_MAX),
+  message: diagnosticText(APP_FEEDBACK_ERROR_MESSAGE_MAX),
   code: z.string().regex(OPAQUE_ID).max(64).optional(),
   workflowId: z.string().regex(OPAQUE_ID).optional(),
   /**
@@ -77,8 +100,8 @@ export const appFeedbackRecentErrorSchema = z.object({
     })
     .optional(),
   /** NAVIGATE only: the app-relative path, without query or fragment. Never a full URL. */
-  appRoute: z.string().max(200).optional(),
-  at: z.number().int().nonnegative(),
+  appRoute: diagnosticText(200).optional(),
+  at: z.number().int().nonnegative().max(MAX_EPOCH_MS),
   /** Consecutive identical failures folded into this entry. */
   count: z.number().int().min(1).max(10_000),
 });
@@ -130,7 +153,7 @@ export const appFeedbackEnvironmentSchema = z.object({
   scrollbars: z.enum(APP_FEEDBACK_SCROLLBAR_KINDS).optional(),
   viewport: z.object({ width: pixels, height: pixels }).optional(),
   devicePixelRatio: z.number().min(0.1).max(16).optional(),
-  appRoute: z.string().max(APP_FEEDBACK_APP_ROUTE_MAX).optional(),
+  appRoute: diagnosticText(APP_FEEDBACK_APP_ROUTE_MAX).optional(),
 });
 export type AppFeedbackEnvironment = z.infer<typeof appFeedbackEnvironmentSchema>;
 
