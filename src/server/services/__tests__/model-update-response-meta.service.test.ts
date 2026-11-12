@@ -45,7 +45,12 @@ describe('updateModelById — the returned model', () => {
     ['a plain write', () => updateModelById({ id: MODEL, data: { name: 'Renamed' } })],
     [
       'a locked meta write',
-      () => updateModelById({ id: MODEL, data: {}, meta: (stored) => stored ?? STORED_META }),
+      () =>
+        updateModelById({
+          id: MODEL,
+          data: {},
+          meta: (stored) => stored ?? (STORED_META as never),
+        }),
     ],
   ])('leaves moderator-only meta out after %s', async (_, write) => {
     const result = (await write()) as { meta: object };
