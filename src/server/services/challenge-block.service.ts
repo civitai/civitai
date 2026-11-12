@@ -1,11 +1,27 @@
 import { Prisma } from '@prisma/client';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
-import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 
-// The viewer's bounded block/hide exclusion set, used to drop user challenges whose creator is on
-// it — parity with comment/review feeds. Empty for anon.
+// The viewer's bounded block/hide exclusion set (hidden ∪ blocked-by ∪ blocked), used to drop
+// user challenges whose creator is on it — parity with comment/review feeds. Empty for anon.
+// Ordering into boundExcludedUserIds is load-bearing (see its doc): hidden, blockedBy, blocked.
 export async function getChallengeExcludedUserIds(viewerId?: number): Promise<number[]> {
-  return viewerId ? getHiddenOrBlockedUserIds(viewerId) : [];
+  if (!viewerId) return [];
+  const [hidden, blockedBy, blocked] = await Promise.all([
+    HiddenUsers.getCached({ userId: viewerId }),
+    BlockedByUsers.getCached({ userId: viewerId }),
+    BlockedUsers.getCached({ userId: viewerId }),
+  ]);
+  return boundExcludedUserIds(
+    hidden.map((u) => u.id),
+    blockedBy.map((u) => u.id),
+    blocked.map((u) => u.id)
+  );
 }
 
 // Raw-SQL predicate (aliased `c`) dropping user challenges whose creator is in the viewer's
