@@ -76,7 +76,7 @@ describe('AppEarningsPanelView', () => {
   });
 
   test('does NOT render the card-purchase share, even if the payload carries it', async () => {
-    const legacy = {
+    const legacy: Record<string, unknown> = {
       ...ok(),
       summary: {
         pending: { count: 2, grossCents: 2468, shareCents: 1234 },
@@ -84,8 +84,8 @@ describe('AppEarningsPanelView', () => {
         paidOut: { count: 4, grossCents: 19800, shareCents: 9900 },
         voided: { count: 1, grossCents: 250 },
       },
-    } as AppEarningsResult;
-    renderWithProviders(<AppEarningsPanelView data={legacy} />);
+    };
+    renderWithProviders(<AppEarningsPanelView data={legacy as AppEarningsResult} />);
     await expect.element(page.getByTestId('apps-earnings-panel')).toBeInTheDocument();
     for (const label of CARD_SHARE_LABELS)
       expect(page.getByText(label, { exact: true }).elements(), label).toHaveLength(0);

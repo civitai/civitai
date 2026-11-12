@@ -63,6 +63,8 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
         role: 'editor',
         status: 'approved',
         capabilities: onsite,
+        lastModerationAction: null,
+        hasFeedback: false,
       })
     ).toEqual(['details', 'media', 'manifest', 'earnings', 'collaborators', 'history']);
   });
