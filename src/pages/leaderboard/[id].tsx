@@ -21,7 +21,7 @@ import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useReducer, useState } from 'react';
 import * as z from 'zod';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
@@ -143,7 +143,12 @@ export default function Leaderboard() {
   );
   const hasLegends = !!selectedLeaderboard && !excludeLegendsRegex.test(selectedLeaderboard.title);
   const [selectedPosition, setSelectedPosition] = useState<number | null>(null);
+  const [scrollRequest, requestScroll] = useReducer((n: number) => n + 1, 0);
   const leaderboardResults = board === 'season' ? leaderboardSeason : leaderboardLegend;
+  // Positions are season ranks. Hold off while a badge for another board is still navigating,
+  // or the old board's row at that rank is scrolled to first.
+  const highlightedPosition =
+    board === 'season' && selectedLeaderboard?.id === id ? urlPosition : null;
   const loadingLeaderboardResults =
     board === 'season' ? loadingLeaderboardSeason : loadingLeaderboardLegend;
 
@@ -167,7 +172,9 @@ export default function Leaderboard() {
           }),
         },
         undefined,
-        { shallow }
+        // CreatorList scrolls to the row once results load; Next's own hash scroll would fire
+        // before then, or top-align the row under the sticky header.
+        { shallow, scroll: !selectedPosition }
       );
       setUrlPosition(selectedPosition);
     }
@@ -189,6 +196,8 @@ export default function Leaderboard() {
               onClick={(position) => {
                 setSelectedPosition(position);
                 setSelectedLeaderboard(item);
+                // Same board and row: the URL doesn't change, so ask CreatorList to scroll again.
+                if (item.id === id && position === urlPosition) requestScroll();
                 close();
               }}
             />
@@ -302,7 +311,11 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                   <Loader size="xl" />
                 </Center>
               ) : leaderboardResults.length > 0 ? (
-                <CreatorList data={leaderboardResults} />
+                <CreatorList
+                  data={leaderboardResults}
+                  highlightedPosition={highlightedPosition}
+                  scrollRequest={scrollRequest}
+                />
               ) : null}
             </Stack>
           </ContainerGrid2.Col>
