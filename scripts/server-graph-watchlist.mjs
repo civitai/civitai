@@ -104,7 +104,7 @@ export const WATCHLIST = [
   {
     rule: 'SINGLETON',
     module: 'packages/civitai-telemetry/src/otel-logs.ts',
-    why: 'Holds the memoized OTel Logger and the bridge counters in module scope, and is loaded only from the instrumentation entry, which is also what registers the LoggerProvider. A second copy would be a second bridge that never sees that registration — and whose counters register into a registry nothing scrapes.',
+    why: 'Holds the memoized OTel Logger, the bridge counters and the log-timestamp sequence in module scope, and is loaded only from the instrumentation entry, which is also what registers the LoggerProvider. A second copy would be a second bridge that never sees that registration, whose counters register into a registry nothing scrapes, and whose own timestamp sequence would re-issue stamps the first copy already used. Records with the same line and timestamp are then deduplicated by the log store.',
   },
   {
     rule: 'SHARED_STATE',

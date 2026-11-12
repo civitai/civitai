@@ -20,6 +20,7 @@ import {
   type LogRecordExporter,
   type LogRecordProcessor,
 } from '@opentelemetry/sdk-logs';
+import type { HrTime } from '@opentelemetry/api';
 import type { Resource } from '@opentelemetry/resources';
 import promClient from 'prom-client';
 import { instrumentationRegistry, registerInstrumentationMetric, PROM_PREFIX } from './client';
@@ -224,6 +225,76 @@ export function resetOtelLogBridge(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Timestamps
+// ---------------------------------------------------------------------------
+// 🔴 WHY THE BRIDGE STAMPS ITS OWN TIMESTAMPS
+//
+// Left to itself, `@opentelemetry/sdk-logs` stamps a record with `Date.now()`, which has
+// MILLISECOND resolution (read off the installed 0.219.0 build: `LogRecordImpl` sets
+// `hrTime = timeInputToHrTime(timestamp ?? Date.now())`). So two records from the same
+// process with the same body, emitted in the same millisecond, leave this process
+// byte-identical: same resource, same body, same timestamp.
+//
+// Log stores commonly treat an entry with the same stream, timestamp and line as a
+// duplicate and keep ONE. For a log store that does that, every same-millisecond repeat
+// is silently discarded. Nothing errors and nothing counts it, and it is not rare. One
+// request that runs the same procedure several times in a batch logs the same line
+// several times in under a millisecond. Measured against such a store, a logger whose
+// repeats come in bursts like that lost most of its records on the OTLP path. Loggers
+// whose lines never repeat within one millisecond lost none, including one whose line
+// text repeats constantly at different milliseconds. The OTLP-side count matched the
+// number of distinct (process, line, millisecond) groups on the stdout copy, so the
+// timestamp collision is the discriminating signal. Content alone is not enough.
+//
+// The fix is to make the timestamp unique per process. It keeps `Date.now()`'s
+// millisecond as the wall-clock source of truth, and puts a per-process sequence number
+// in the sub-millisecond nanoseconds, so the Nth record in a millisecond is stamped
+// `ms + N ns`.
+//   - Not `performance.now()`. It is offset from a time origin fixed at process start, so
+//     it drifts from wall time across a long uptime, while the stdout copy of the same
+//     line is stamped from wall time. `Date.now()` is also what the SDK uses here.
+//   - Strictly increasing, even if the wall clock steps BACKWARDS. A backward step holds
+//     the stamp at the last millisecond issued, still incrementing, until the wall clock
+//     passes it again. A step of S ms therefore stamps records up to S ms late. The other
+//     choice is to repeat a timestamp, which is the bug.
+//   - Uniqueness holds only if every emitter in the process shares ONE sequence. Module
+//     scope is enough for that because this module is a build-checked SINGLETON
+//     (`scripts/server-graph-watchlist.mjs`). The build fails if a second emitted copy
+//     appears, and such a copy would have its own counter and issue `ms + 0 ns` again.
+const NANOS_PER_MS = 1_000_000;
+
+const clock = { ms: -Infinity, seq: 0 };
+
+/**
+ * A wall-clock timestamp that is unique and strictly increasing within this process.
+ *
+ * Millisecond part from `now()` (default `Date.now()`), sub-millisecond part is a
+ * per-millisecond sequence number. Exported for tests; `now` is injectable so a test can
+ * hold the clock still or step it backwards.
+ */
+export function nextOtelLogTimestamp(now: () => number = Date.now): HrTime {
+  const wall = Math.floor(now());
+  if (wall > clock.ms) {
+    clock.ms = wall;
+    clock.seq = 0;
+  } else if (++clock.seq >= NANOS_PER_MS) {
+    // A million records in one millisecond: borrow the next millisecond rather than
+    // wrap the sequence back onto a stamp already issued.
+    clock.ms += 1;
+    clock.seq = 0;
+  }
+  const seconds = Math.floor(clock.ms / 1000);
+  const nanos = (clock.ms - seconds * 1000) * NANOS_PER_MS + clock.seq;
+  return [seconds, nanos];
+}
+
+/** Forget the shared clock state. For tests only. */
+export function resetOtelLogClock(): void {
+  clock.ms = -Infinity;
+  clock.seq = 0;
+}
+
+// ---------------------------------------------------------------------------
 // Emit
 // ---------------------------------------------------------------------------
 /**
@@ -257,12 +328,17 @@ export function emitOtelLog(body: string, data: MixedObject, datastream?: string
 
     const { severityNumber, severityText } = deriveSeverity(data?.type);
 
-    // No `timestamp`/`observedTimestamp`: the SDK stamps those at emit.
-    // No trace/span id either — the SDK reads the active context itself.
+    // Timestamps are set HERE, not left to the SDK — see `nextOtelLogTimestamp`. Both
+    // fields get the SAME value, so a receiver that treats "observed == timestamp" as
+    // redundant can still drop the second copy.
+    // No trace/span id — the SDK reads the active context itself.
+    const timestamp = nextOtelLogTimestamp();
     const record: ApiLogRecord = {
       severityNumber,
       body,
       attributes: buildOtelLogAttributes(data, datastream),
+      timestamp,
+      observedTimestamp: timestamp,
     };
     if (severityText !== undefined) record.severityText = severityText;
 
