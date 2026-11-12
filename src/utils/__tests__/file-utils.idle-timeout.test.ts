@@ -72,15 +72,17 @@ afterAll(async () => {
 });
 
 const url = (plan: Plan) => `${base}?p=${encodeURIComponent(JSON.stringify(plan))}`;
-// 50 KB every 50 ms for 1.5 s: longer than the deadline, never idle for long.
-const STEADY: Plan = { bytes: 1_500_000, chunk: 50_000, everyMs: 50 };
+// A Wan 3.0 output's size (45 MB), 1.5 MB every 50 ms for 1.5 s: longer than the deadline,
+// never idle for long.
+const BIG = 45_000_000;
+const STEADY: Plan = { bytes: BIG, chunk: 1_500_000, everyMs: 50 };
 const idle = { idleTimeoutMs: IDLE };
 
 describe('fetchBlob idle timeout', () => {
   it('finishes a steady body that takes longer than the deadline', async () => {
     const blob = await fetchBlob(url(STEADY), DEADLINE, idle);
 
-    expect(blob?.size).toBe(1_500_000);
+    expect(blob?.size).toBe(BIG);
     expect(blob?.type).toBe('video/mp4');
   });
 
@@ -131,7 +133,7 @@ describe('fetchBlob idle timeout', () => {
   // Server jobs (process-vault-items, youtube, csam) budget their leases on this total cap.
   it('keeps the total cap for callers that do not opt in', async () => {
     // Control: the same body arrives in full under a cap it fits in.
-    expect((await fetchBlob(url(STEADY), 5_000))?.size).toBe(1_500_000);
+    expect((await fetchBlob(url(STEADY), 5_000))?.size).toBe(BIG);
     expect(await fetchBlob(url(STEADY), DEADLINE)).toBeNull();
   });
 });
