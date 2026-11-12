@@ -226,7 +226,9 @@ export function shouldRetryPartError(err: UploadPartError) {
  * Statuses from `/api/upload/complete` that are TERMINAL — re-POSTing the same parts
  * manifest cannot succeed, so the client must stop and (where it can) re-upload.
  *
- * 🔴 409 = the multipart session is already finalized or aborted. 422 = the upload
+ * 🔴 400 = a malformed completion body (the route's input guard, or the framework's own
+ * body parser); the same body fails the same way every time. 409 = the multipart
+ * session is already finalized or aborted. 422 = the upload
  * STATE is bad (a parts manifest the backend won't accept, or a completion whose
  * object could not be verified). Neither improves on a retry.
  *

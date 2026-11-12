@@ -323,6 +323,31 @@ describe('/api/upload/complete — a malformed body is a 400, not a 500', () => 
     expect(res.statusCode).toBe(422);
   });
 
+  // Missing `parts` does not throw in the SDK, so it must get past the guard to the
+  // backend (and its 422), not be widened into the 400.
+  it('absent parts still reaches S3 and keeps the 422 re-upload path', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(
+      s3Error({
+        name: 'MalformedXML',
+        message: 'The XML you provided was not well-formed',
+        $metadata: { httpStatusCode: 400 },
+      })
+    );
+    const res = makeRes();
+    await handler(reqWithBody({ parts: undefined }), res);
+    expect(mockCompleteMultipartUpload).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(422);
+  });
+
+  it('a literal null JSON body → 400, not a destructuring 500', async () => {
+    const req = makeReq();
+    req.body = null;
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+    expect(mockCompleteMultipartUpload).not.toHaveBeenCalled();
+  });
+
   it('a valid body still reaches completion → 200', async () => {
     const res = makeRes();
     await handler(makeReq(), res);

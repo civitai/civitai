@@ -52,7 +52,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
-  const { bucket, key, type, uploadId, parts, backend } = req.body;
+  // `?? {}`: a literal JSON `null` body would otherwise throw here, outside the try (500).
+  const { bucket, key, type, uploadId, parts, backend } = req.body ?? {};
   // A malformed body is the client's fault (400), but the SDK rejects it client-side
   // with an error the classifier below would answer as a 500, so check it before the try.
   // Missing `parts` is left to the backend (no SDK throw → the 422 re-upload path).
