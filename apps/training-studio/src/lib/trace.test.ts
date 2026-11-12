@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { followTrace, interpretTraceLine, traceLossPoints, tracePath } from './trace';
+import {
+  followTrace,
+  interpretTraceLine,
+  parseTraceLine,
+  traceLineText,
+  traceLossPoints,
+  tracePath,
+} from './trace';
+import { metricKeys, recordReadings, metricSeries, type Reading } from './loss';
 
 describe('traceLossPoints', () => {
   it('reads every tqdm redraw on a concatenated log line, skipping ones without a loss', () => {
@@ -47,6 +55,42 @@ describe('traceLossPoints', () => {
     expect(traceLossPoints(line)).toEqual([{ step: 20, losses: { loss: 0.3213 }, lr: 1e-4 }]);
     expect(interpretTraceLine(line)).toEqual({ kind: 'loss' });
   });
+
+  it.each(['logs', 'events'])('plots Kohya metrics from %s traces across resumed steps', (mode) => {
+    const readings = new Map<number, Reading>();
+    for (const [step, loss, average] of [
+      [41, 0.25, 0.3],
+      [42, 0.125, 0.1875],
+    ]) {
+      const message = JSON.stringify({ type: 'loss', step, loss: { loss, average }, lr: 0.00005 });
+      const line =
+        mode === 'logs' ? message : JSON.stringify({ type: 'log', epoch: 2, t: 1, message });
+      recordReadings(readings, 2, traceLossPoints(line));
+      expect(interpretTraceLine(line)).toEqual({ kind: 'loss' });
+      expect(traceLineText(line)).toContain(`step ${step}: loss:`);
+      expect(traceLineText(line)).toContain('lr: 0.000050000');
+      if (mode === 'events')
+        expect(parseTraceLine(line)).toMatchObject({ kind: 'event', event: { epoch: 2, t: 1 } });
+    }
+    const sorted = [...readings.entries()];
+    expect(metricKeys(sorted)).toEqual(['loss', 'average', 'lr']);
+    expect(metricSeries(sorted, 'loss', false)).toMatchObject({ xs: [41, 42], ys: [0.25, 0.125] });
+    expect(metricSeries(sorted, 'average', false)).toMatchObject({
+      xs: [41, 42],
+      ys: [0.3, 0.1875],
+    });
+    expect(metricSeries(sorted, 'lr', false)).toMatchObject({ ys: [0.00005, 0.00005] });
+  });
+
+  it.each(['epoch 226/500', '{broken', '{"type":"other","step":9}', 'null'])(
+    'keeps ordinary or malformed trainer output as text: %s',
+    (message) => {
+      const line = JSON.stringify({ type: 'log', message });
+      expect(traceLossPoints(line)).toEqual([]);
+      expect(traceLineText(line)).toBe(message);
+      expect(interpretTraceLine(line)).toEqual({ kind: 'noise' });
+    }
+  );
 
   it('never files a learning rate as a loss', () => {
     expect(

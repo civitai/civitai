@@ -594,12 +594,12 @@
   {@const bound = fieldBound(i, f.field)}
   {@const unacknowledged = fieldLocked(i, f.field)}
   <div
-    class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm {last
+    class="grid min-w-0 grid-cols-[minmax(0,1fr)_120px] items-center gap-2 py-1.5 text-sm {last
       ? ''
       : 'border-b border-dark-4/60'}"
   >
     <span class="flex min-w-0 flex-col">
-      <span class="flex items-center gap-1 text-dark-2">
+      <span class="flex flex-wrap items-center gap-1 text-dark-2">
         {PARAM_LABELS[f.field]}
         {#if locked}<span>(unavailable)</span>{/if}
         {@render help(helpFor(i, f.field), PARAM_LABELS[f.field])}
@@ -630,8 +630,10 @@
         disabled={unacknowledged}
         bind:value={() => String(paramsAt(i)[f.field]), (v) => setField(i, f.field, v)}
       >
-        <Select.Trigger class="h-7 font-mono" aria-label={PARAM_LABELS[f.field]}>
-          {optionLabel(String(paramsAt(i)[f.field]))}
+        <Select.Trigger class="h-7 w-full min-w-0 font-mono" aria-label={PARAM_LABELS[f.field]}>
+          <span class="min-w-0 truncate" title={optionLabel(String(paramsAt(i)[f.field]))}>
+            {optionLabel(String(paramsAt(i)[f.field]))}
+          </span>
         </Select.Trigger>
         <Select.Content portalProps={portalProps()}>
           {#each f.options ?? [] as o (o)}
