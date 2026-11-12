@@ -14,7 +14,7 @@ import { UserFlag } from '~/shared/constants/user-flags.constants';
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, clickhouseLongQueries: null }));
 const homeBlockCacheBust = vi.fn(async () => undefined);
 vi.mock('~/server/services/home-block-cache.service', () => ({ homeBlockCacheBust }));
 const catchUp: Record<string, number> = {};
