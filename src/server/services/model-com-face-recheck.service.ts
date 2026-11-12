@@ -146,7 +146,7 @@ export const comFaceRemovalSql = (
   `;
 };
 
-async function removeComFace(
+export async function removeComFace(
   modelId: number,
   coverId: number,
   reason: ComFaceRemovedReason,
@@ -175,7 +175,7 @@ async function removeComFace(
 }
 
 /** Drops the cover's safe bits from the model's level, which is what takes it off .com. */
-async function finishRemoval(modelId: number) {
+export async function finishRemoval(modelId: number) {
   // Imported here: the level service pulls in search.
   const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
   await updateModelNsfwLevels([modelId]);
