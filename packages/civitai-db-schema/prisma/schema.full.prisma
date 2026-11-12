@@ -5007,6 +5007,30 @@ model AppStorageHookSource {
   @@map("app_storage_hook_sources")
 }
 
+// App Blocks source repos: one row per fork or App Assistant app that has a developer-facing git
+// repo (`civitai-apps-src/<slug>`). RAW SQL ONLY (`app-source-repo.service.ts`), so the model is
+// stripped from the generated client; the migration `20270105120000_app_source_repos` is applied by
+// hand (with its CHECKs and indexes, which live only there) and the service tolerates the table's
+// absence.
+// @no-type
+model AppSourceRepo {
+  slug                   String    @id
+  ownerUserId            Int       @map("owner_user_id")
+  appBlockId             String?   @map("app_block_id")
+  origin                 String
+  forkedFromAppBlockId   String?   @map("forked_from_app_block_id")
+  forkedFromCommitSha    String?   @map("forked_from_commit_sha")
+  assistantTree          Json?     @map("assistant_tree")
+  lastAssistantCommitSha String?   @map("last_assistant_commit_sha")
+  lastAssistantBranch    String?   @map("last_assistant_branch")
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([ownerUserId], map: "app_source_repos_owner_idx")
+  @@index([appBlockId], map: "app_source_repos_app_block_idx")
+  @@map("app_source_repos")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.

@@ -96,6 +96,15 @@ const GATE_LEDGER: Record<string, string> = {
     'invitee does not. NO mod bypass — preserved exactly as it was (D1). getMyApps is ' +
     'widened to owned+seated via getMyAppsEarnings; getMyRevenue is deliberately NOT ' +
     'widened (D4).',
+  'src/server/services/blocks/app-source-repo.service.ts':
+    'resolveSourceRepoAccess is THE gate on a SOURCE repo (civitai-apps-src/<slug>): a row ' +
+    'bound to an app block defers ENTIRELY to assertAppEditAccess (owner | ACCEPTED ' +
+    'collaborator, NO mod bypass — the same cell as the build repo), so a transfer or a ' +
+    'seat removal moves access with it; an unbound row (no block yet: a fork or an App ' +
+    'Assistant app before approval) admits its own owner only. A block under the slug the ' +
+    "repo's owner never had is NOT bound, so a squatter's block owner cannot reach it. " +
+    'creationGate uses the same assertAppEditAccess before a repo may be created for a ' +
+    'slug that has a block. Pinned in app-source-repo.service.test.ts.',
   'src/server/services/blocks/app-listing-visibility-write.service.ts':
     'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
     'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +

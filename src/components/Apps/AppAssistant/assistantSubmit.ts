@@ -8,6 +8,7 @@ import {
 import { getBase64 } from '~/utils/file-utils';
 import type { SubmitListingReadiness } from '~/server/services/blocks/publish-request.service';
 import { FLOOR_PROBLEM_CODES } from '~/shared/utils/listing-publish-floor';
+import { cliLeavesOut } from '~/shared/utils/app-bundle-paths';
 import { BUTTON_STYLE, CARD_STYLE, line } from '~/components/Apps/AppAssistant/assistantCards';
 
 /**
@@ -87,14 +88,8 @@ export class SubmitError extends Error {
 
 export const SUBMIT_UNREACHABLE = 'Civitai could not be reached. Try again in a moment.';
 
-/**
- * Whether `civitai app submit` leaves `rel` (a path inside the app) out of its package, for what the
- * export lets through: the root `scratch/` folder (throwaway probes) and any `*.zip` (a package an
- * earlier `app submit` wrote), as the CLI's packager (`pkgzip`) drops them.
- */
-export function cliLeavesOut(rel: string): boolean {
-  return rel.startsWith('scratch/') || rel.toLowerCase().endsWith('.zip');
-}
+// One rule for the page's Submit for review and the server's source-repo writer.
+export { cliLeavesOut };
 
 /**
  * The bundle `civitai app submit` would send, from the app's export: a submission holds the app's
