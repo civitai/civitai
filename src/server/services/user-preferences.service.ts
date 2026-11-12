@@ -278,6 +278,7 @@ export const getBlockedPairIds = async (userId: number) => {
 };
 
 // User ids a cross-user feed drops for this viewer: the ones they hid, plus a block either way.
+// The argument order into boundExcludedUserIds is load-bearing (see its doc).
 export const getHiddenOrBlockedUserIds = async (userId: number) => {
   const [hidden, blockedBy, blocked] = await Promise.all([
     HiddenUsers.getCached({ userId }),
