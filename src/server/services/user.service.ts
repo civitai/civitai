@@ -2484,7 +2484,10 @@ const leaderboardRankInsert = ({
   leaderboardFilter: Prisma.Sql;
   userFilter: Prisma.Sql;
   onConflict?: Prisma.Sql;
-  /** Boards not populated for today: read their latest earlier day so their badges carry over. */
+  /**
+   * Boards not populated for today: read their latest day in the last week so their badges carry
+   * over. Older than that they drop out, so a long-dead board can't bring back stale ranks.
+   */
   carriedBoardIds?: string[];
 }) => {
   // Bound only when a board is carried: the plain rebuild binds nothing, which
@@ -2493,11 +2496,11 @@ const leaderboardRankInsert = ({
   // One index-backed max per carried board, not per row: a board can miss more than one night.
   const carriedDays = carried
     ? Prisma.sql`carried_day AS (
-        SELECT id, (
+        SELECT c.id, (
           SELECT max(r.date) FROM "LeaderboardResult" r
-          WHERE r."leaderboardId" = id AND r.date < current_date
+          WHERE r."leaderboardId" = c.id AND r.date < current_date AND r.date >= current_date - 7
         ) AS day
-        FROM unnest(${carriedBoardIds}::text[]) AS id
+        FROM unnest(${carriedBoardIds}::text[]) AS c(id)
       ),`
     : Prisma.empty;
   const dayFilter = carried

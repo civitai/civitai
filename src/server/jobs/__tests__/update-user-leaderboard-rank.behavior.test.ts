@@ -130,6 +130,28 @@ describe('update-user-leaderboard-rank', () => {
     expect(await rankOf(B_USER)).toBe(7);
   });
 
+  it('reads today for a board the 23:00 run has already marked for tomorrow', async () => {
+    await q(`UPDATE "KeyValue" SET value = to_jsonb((current_date + 1)::text)
+               WHERE key = 'leaderboard:populated:board-b';`);
+
+    await job.run({});
+
+    expect(await rankOf(B_USER)).toBe(6);
+  });
+
+  it('drops a board whose latest day is older than the carry window', async () => {
+    await q(`DELETE FROM "LeaderboardResult" WHERE "leaderboardId" = 'board-b';
+             INSERT INTO "LeaderboardResult" ("leaderboardId", date, "userId", position)
+               VALUES ('board-b', current_date - 8, ${B_USER}, 8);
+             UPDATE "KeyValue" SET value = to_jsonb((current_date - 8)::text)
+               WHERE key = 'leaderboard:populated:board-b';`);
+
+    await job.run({});
+
+    expect(await rankOf(A_USER)).toBe(4);
+    expect(await rankOf(B_USER)).toBeNull();
+  });
+
   it('retries a failed rebuild later the same day', async () => {
     // Hourly, not once a day: a missed run must get another chance before tomorrow.
     expect(job.cron.split(' ')[1]).toBe('*');

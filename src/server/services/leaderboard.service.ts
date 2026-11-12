@@ -43,7 +43,8 @@ export async function getLeaderboardPopulation() {
   return {
     boards: rows.length,
     unpopulated: rows.filter((x) => !x.hasRows && x.marker !== x.today).map((x) => x.id),
-    unmarked: rows.filter((x) => x.marker !== x.today).map((x) => x.id),
+    // ISO dates compare as text. The 23:00 run marks finished boards for tomorrow.
+    unmarked: rows.filter((x) => !x.marker || x.marker < x.today).map((x) => x.id),
   };
 }
 
