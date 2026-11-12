@@ -26,7 +26,7 @@ const RULE_MODULES = [
 
 /** Permissive sites, by file:line. */
 const PERMIT_SITES = [
-  'src/server/services/image.service.ts:1322',
+  'src/server/services/image.service.ts:1323',
   'apps/moderator/src/lib/server/image-moderation.service.ts:134',
 ];
 
