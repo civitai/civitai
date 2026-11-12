@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { metrics } from '../metrics';
 import { dismissResetNotice } from '../smites/smites.service';
 
 /**
@@ -13,7 +14,7 @@ export async function restartCareer(
   playerId: number,
   now: Date
 ): Promise<{ reset: boolean }> {
-  return db.transaction().execute(async (trx) => {
+  const result = await db.transaction().execute(async (trx) => {
     const locked = await trx
       .selectFrom('NewOrderPlayer')
       .select('userId')
@@ -44,4 +45,6 @@ export async function restartCareer(
     await dismissResetNotice(trx, playerId, now);
     return { reset: true };
   });
+  if (result.reset) metrics.careerReset(playerId, 'restart');
+  return result;
 }

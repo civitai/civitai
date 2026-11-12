@@ -31,7 +31,6 @@ export type GaugeSnapshot = {
   shopPurchasesStuck: number;
   referencePool: Record<string, number>;
   harvestLastRun: Date | null;
-  notifyLastSend: Date | null;
   nextPartitionReady: boolean;
 };
 
@@ -135,12 +134,6 @@ export async function readGaugeSnapshot(db: Kysely<DB>, now: Date): Promise<Gaug
       .select(sql<Date | null>`max("updatedAt")`.as('at'))
       .executeTakeFirstOrThrow();
 
-    // No index leads with sentAt: this reads the whole table.
-    const notify = await trx
-      .selectFrom('KnightsNotificationSend')
-      .select(sql<Date | null>`max("sentAt")`.as('at'))
-      .executeTakeFirstOrThrow();
-
     const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
     const partition = votePartitionName({
       year: next.getUTCFullYear(),
@@ -174,7 +167,6 @@ export async function readGaugeSnapshot(db: Kysely<DB>, now: Date): Promise<Gaug
       shopPurchasesStuck: purchases.n,
       referencePool: Object.fromEntries(pools.map((row) => [row.pool, row.n])),
       harvestLastRun: harvest.at,
-      notifyLastSend: notify.at,
       nextPartitionReady: ready.rows[0]?.ready === true,
     };
   });
@@ -301,14 +293,6 @@ export function registerGauges(register: Registry, load: Load) {
     [],
     (g, s) => {
       g.set(s.harvestLastRun ? seconds(s.harvestLastRun) : NaN);
-    }
-  );
-  gauge(
-    'knights_notify_last_send_timestamp_seconds',
-    'When the notify job last sent a notification (NaN before its first send).',
-    [],
-    (g, s) => {
-      g.set(s.notifyLastSend ? seconds(s.notifyLastSend) : NaN);
     }
   );
   gauge(

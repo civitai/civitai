@@ -1,11 +1,14 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedPlayer, setGold } from '../../../test/seed';
 import { hasUnseenReset } from '../smites/smites.service';
 import { restartCareer } from './restart.service';
+
+vi.mock('../axiom', () => ({ logToAxiom: vi.fn() }));
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -36,8 +39,12 @@ describe('restartCareer', () => {
     await seedPlayer(pg, 7, 'Templar');
     await pg.query(`UPDATE "NewOrderPlayer" SET "exp"=900, "fervor"=40 WHERE "userId"=7`);
     const before = await player(7);
+    const counted = await counterValue('knights_career_resets_total', { trigger: 'restart' });
 
     expect(await restartCareer(db, 7, new Date())).toEqual({ reset: true });
+    expect(await counterValue('knights_career_resets_total', { trigger: 'restart' })).toBe(
+      counted + 1
+    );
 
     const after = await player(7);
     expect(after).toMatchObject({ rankType: 'Acolyte', exp: 0 });

@@ -5,6 +5,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { addDays, dayStart, utcDay, type Day } from '../daily/days';
 import { liveStreak, shieldCoversToday, streakAfterReset } from '../daily/streak';
 import { servableItems } from '../queue/queue.service';
+import { metrics } from '../metrics';
 import { SMITES } from '../smites/config';
 import { stagesWorkedBy } from '../queue/ranks';
 import { RANKS } from '../ranks';
@@ -406,6 +407,7 @@ export async function sendNotifications(
         continue;
       }
       result.sent[kind] += claimed.length;
+      metrics.notificationsSent(kind, claimed.length);
       if (!(await confirm(db, kind, day, claimed, clock()))) {
         result.confirmFailed += claimed.length;
       }

@@ -156,7 +156,7 @@ some inside a transaction, so a transaction that rolls back after that point can
 | Metric                               | Labels                                                                                                      | Meaning                                                                                                                               |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `knights_votes_total`                | `kind`: rating, yesno, hidden_check                                                                         | Votes written to the ledger (`insertVote`)                                                                                            |
-| `knights_gold_earned_total`          | `source`: vote, hidden_check, streak_bonus                                                                  | Gold moved to earned: settled correct votes, graded hidden checks, Watch streak bonuses                                               |
+| `knights_gold_earned_total` | `source`: vote, hidden_check, streak_bonus, acolyte_level | Gold moved to earned: settled correct votes, graded hidden checks, Watch streak bonuses, Acolyte level gold |
 | `knights_gold_spent_total`           | `item_kind`: buzz_pack, cosmetic, membership                                                                | Gold reserved by new shop purchases (a purchase that fails later gives it back)                                                       |
 | `knights_shop_purchases_total`       | `item_kind`; `outcome`: granted, pending, failed                                                            | New purchases by the first answer the buyer got (replays and refusals are not counted)                                                |
 | `knights_buzz_grants_total`          | `outcome`: paid, failed, retry                                                                              | Buzz grant attempts behind a shop Buzz pack (`settleConversion`, at purchase and on the tick's retries); retry = Buzz did not confirm |
@@ -164,13 +164,14 @@ some inside a transaction, so a transaction that rolls back after that point can
 | `knights_items_resolved_total`       | `stage`: Knight, Templar, Paladin                                                                           | Items resolved by a stage consensus                                                                                                   |
 | `knights_hidden_checks_graded_total` | `verdict`: correct, failed, inconclusive                                                                    | Hidden checks graded                                                                                                                  |
 | `knights_smites_total`               |                                                                                                             | Smites issued                                                                                                                         |
-| `knights_career_resets_total`        |                                                                                                             | Career resets done after the smite limit (a player's own restart is not counted)                                                      |
+| `knights_career_resets_total` | `trigger`: smites, restart | Career resets: done in the main app after the smite limit, or the player's own restart |
 | `knights_joins_total`                |                                                                                                             | Players who joined                                                                                                                    |
-| `knights_rank_ups_total`             | `rank`: Knight, Templar, Paladin                                                                            | Rank-ups from settled votes (the apprenticeship's promotion to Knight is not counted)                                                 |
+| `knights_rank_ups_total` | `rank`: Knight, Templar, Paladin | Rank-ups: the apprenticeship's promotion to Knight, and rank-ups from settled votes |
+| `knights_notifications_sent_total` | `kind`: verdicts, streak, new-images | Daily-loop notifications the notifications app accepted, per player; alert on no increase in 26h |
 | `knights_unhandled_errors_total`     |                                                                                                             | Server errors (status 500 and up) reaching `handleError` in `hooks.server.ts`                                                         |
 
 Joins, rank-ups and career resets also log one Axiom event each (`knights-player-joined`, `knights-rank-up`,
-`knights-career-reset`), and `handleError` logs `knights-unhandled-error`.
+`knights-career-reset`, with its trigger), and `handleError` logs `knights-unhandled-error`.
 
 Gauges are read by SQL on scrape, one snapshot shared by all of them and cached 60s per process, with a 5s statement
 timeout. When the read fails, `knights_db_up` is 0, labelled gauges are absent and unlabelled ones are NaN; a scrape
@@ -189,12 +190,11 @@ never errors.
 | `knights_shop_purchases_stuck`               |                                                          | Shop purchases pending for more than 15 minutes                                    |
 | `knights_reference_pool_items`               | `pool`: trials, hiddenCheck                              | Active reference images                                                            |
 | `knights_harvest_last_run_timestamp_seconds` |                                                          | Latest `KnightsHarvestCursor.updatedAt` (NaN before the first run)                 |
-| `knights_notify_last_send_timestamp_seconds` |                                                          | Latest `KnightsNotificationSend.sentAt` (NaN before the first send)                |
 | `knights_vote_partition_next_month_ready`    |                                                          | 1 when next month's `KnightsVote_YYYY_MM` partition exists                         |
 
-Every gauge query is served by an index from `20261210120000_knights_v2_tables` except two: the newest-item gauge
-walks the primary key backwards over the newest 50,000 rows (there is no index on `source`), and the notify gauge
-reads all of `KnightsNotificationSend` (no index leads with `sentAt`).
+Every gauge query is served by an index from `20261210120000_knights_v2_tables` or reads a table of a few rows
+(`KnightsHarvestCursor`), except the newest-item gauge, which walks the primary key backwards over the newest 50,000
+rows (there is no index on `source`).
 
 ## Tests
 

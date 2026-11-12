@@ -213,10 +213,12 @@ describe('grading hidden checks', () => {
     await seedPlayer(pg, 1);
     await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (1),(1)`);
     await answer(1, await reference(10, '16'), '2');
-    const before = await counterValue('knights_career_resets_total');
+    const before = await counterValue('knights_career_resets_total', { trigger: 'smites' });
     expect(await settle(minutes(31))).toMatchObject({ resets: 1 });
     expect(resetPlayer).toHaveBeenCalledWith(1);
-    expect(await counterValue('knights_career_resets_total')).toBe(before + 1);
+    expect(await counterValue('knights_career_resets_total', { trigger: 'smites' })).toBe(
+      before + 1
+    );
 
     await seedPlayer(pg, 2);
     await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (2),(2)`);
@@ -224,7 +226,9 @@ describe('grading hidden checks', () => {
     await answer(2, await reference(11, '16'), '2', minutes(40));
     expect(await settle(minutes(80))).toMatchObject({ resets: 0 });
     expect(await activeSmiteCount(db, 2)).toBe(3);
-    expect(await counterValue('knights_career_resets_total')).toBe(before + 1);
+    expect(await counterValue('knights_career_resets_total', { trigger: 'smites' })).toBe(
+      before + 1
+    );
   });
 
   it('grades a check whose reference image is gone as inconclusive, paying nothing', async () => {

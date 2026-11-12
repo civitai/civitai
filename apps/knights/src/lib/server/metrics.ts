@@ -13,7 +13,9 @@ export const register = new Registry();
 collectDefaultMetrics({ register });
 
 const VOTE_KINDS = ['rating', 'yesno', 'hidden_check'] as const;
-const GOLD_SOURCES = ['vote', 'hidden_check', 'streak_bonus'] as const;
+const GOLD_SOURCES = ['vote', 'hidden_check', 'streak_bonus', 'acolyte_level'] as const;
+const RESET_TRIGGERS = ['smites', 'restart'] as const;
+const NOTIFY_KINDS = ['verdicts', 'streak', 'new-images'] as const;
 const SHOP_ITEM_KINDS = ['buzz_pack', 'cosmetic', 'membership'] as const;
 const SHOP_OUTCOMES = ['granted', 'pending', 'failed'] as const;
 const BUZZ_OUTCOMES = ['paid', 'failed', 'retry'] as const;
@@ -25,6 +27,7 @@ const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
 
 export type VoteKind = (typeof VOTE_KINDS)[number];
 export type GoldSource = (typeof GOLD_SOURCES)[number];
+export type ResetTrigger = (typeof RESET_TRIGGERS)[number];
 export type BuzzOutcome = (typeof BUZZ_OUTCOMES)[number];
 export type ShopOutcome = (typeof SHOP_OUTCOMES)[number];
 
@@ -49,7 +52,7 @@ const votes = counter('knights_votes_total', 'Votes written to the ledger, by ki
 });
 const goldEarned = counter(
   'knights_gold_earned_total',
-  'Gold moved to earned: settled correct votes, graded hidden checks and Watch streak bonuses.',
+  'Gold moved to earned: settled correct votes, graded hidden checks, Watch streak bonuses and Acolyte levels.',
   { source: GOLD_SOURCES }
 );
 const goldSpent = counter(
@@ -85,10 +88,16 @@ const hiddenChecksGraded = counter(
 const smites = counter('knights_smites_total', 'Smites issued by hidden-check grading.');
 const careerResets = counter(
   'knights_career_resets_total',
-  'Career resets done in the main app after a player reached the smite limit.'
+  'Career resets, by trigger: the smite limit (done in the main app) or the player restarting.',
+  { trigger: RESET_TRIGGERS }
+);
+const notificationsSent = counter(
+  'knights_notifications_sent_total',
+  'Daily-loop notifications handed to the notification service, by kind.',
+  { kind: NOTIFY_KINDS }
 );
 const joins = counter('knights_joins_total', 'Players who joined the Order.');
-const rankUps = counter('knights_rank_ups_total', 'Rank-ups from settled votes, by new rank.', {
+const rankUps = counter('knights_rank_ups_total', 'Rank-ups, by new rank.', {
   rank: KNIGHTS_STAGE_RANKS,
 });
 const unhandledErrors = counter(
@@ -128,14 +137,18 @@ export const metrics = {
     safely(() => hiddenChecksGraded.inc({ verdict: bounded(verdict, HIDDEN_VERDICTS) })),
   smite: () => safely(() => smites.inc()),
   unhandledError: () => safely(() => unhandledErrors.inc()),
+  notificationsSent: (kind: string, count: number) =>
+    safely(() => {
+      if (count > 0) notificationsSent.inc({ kind: bounded(kind, NOTIFY_KINDS) }, count);
+    }),
   // No table records these three, so each also leaves one Axiom event.
-  careerReset: (playerId: number) => {
-    safely(() => careerResets.inc());
+  careerReset: (playerId: number, trigger: ResetTrigger) => {
+    safely(() => careerResets.inc({ trigger }));
     void logToAxiom({
       type: 'info',
       name: 'knights-career-reset',
-      message: 'A career was reset after the smite limit',
-      details: { playerId },
+      message: 'A career was reset',
+      details: { playerId, trigger },
     });
   },
   join: (playerId: number) => {

@@ -110,10 +110,6 @@ beforeAll(async () => {
     `INSERT INTO "KnightsHarvestCursor" ("name","updatedAt") VALUES ('mod-ratings', $1)`,
     [minutesAgo(90)]
   );
-  await pg.query(
-    `INSERT INTO "KnightsNotificationSend" ("playerId","day","kind","sentAt") VALUES (1,'2030-01-14','daily',$1),(2,'2030-01-15','daily',$2)`,
-    [minutesAgo(26 * 60), minutesAgo(3 * 60)]
-  );
 });
 afterAll(() => pg.close());
 
@@ -139,7 +135,6 @@ describe('readGaugeSnapshot', () => {
     expect(snapshot.shopPurchasesStuck).toBe(1);
     expect(snapshot.referencePool).toEqual({ trials: 2, hiddenCheck: 1 });
     expect(snapshot.harvestLastRun).toEqual(new Date(minutesAgo(90)));
-    expect(snapshot.notifyLastSend).toEqual(new Date(minutesAgo(3 * 60)));
     expect(snapshot.nextPartitionReady).toBe(false);
   });
 

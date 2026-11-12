@@ -1,6 +1,7 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { metrics } from '../metrics';
 import { PROGRESSION } from '../progression/config';
 import { APPRENTICE } from './config';
 
@@ -35,6 +36,7 @@ export async function grantAcolyteLevelGold(
     .returning('gold')
     .execute();
   const total = paid.reduce((sum, row) => sum + row.gold, 0);
+  metrics.goldEarned('acolyte_level', total);
   if (total > 0) {
     await trx
       .updateTable('NewOrderPlayer')
