@@ -4,6 +4,7 @@ import { parseServiceStatus } from '$lib/service-status-core';
 import {
   continueTraining,
   continueTrainingWhatIf,
+  countDatasetMature,
   MatureAckRequiredError,
   submitTraining,
   submitTrainingBatch,
@@ -1250,6 +1251,22 @@ describe('dataset maturity under the v2 rating', () => {
     expect('allowMatureContent' in lastBody()).toBe(false);
     expect(lastBody().metadata.matureCount).toBe(0);
   });
+
+  // The rater's AIR names the blob by its full key, extension included: without it, it names no blob.
+  it.each([
+    ['an uploaded blob AIR', 'urn:air:other:blob:civitai:blob@abc.jpeg', 'abc.jpeg'],
+    ['a generation blob URL', 'https://orch.example/v2/consumer/blobs/def.webp?sig=1', 'def.webp'],
+    ['a bare blob key', 'ghi.png', 'ghi.png'],
+  ])(
+    '%s is HEADed and queued for rating by its key with the extension',
+    async (_form, item, key) => {
+      headBlob.mockReset();
+      headBlob.mockResolvedValue({ response: new Response(null, { status: 204 }) });
+      const count = await countDatasetMature(client, [item], ratingAt(1, {}));
+      expect(headBlob.mock.calls[0]![0].path.blobId).toBe(key);
+      expect(count.unratedKeys).toEqual([key]);
+    }
+  );
 
   it('a confirmed dataset v2 rates mature unlocks at submit', async () => {
     uploadRatings({ 'nude-1': 'PG' });

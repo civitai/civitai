@@ -134,6 +134,14 @@ describe('one rating call', () => {
     }
   );
 
+  it.each(['abc.jpeg', 'def.webp', 'ghi'])('sends %j as a blob AIR, extension kept', async (id) => {
+    invokeScan.mockResolvedValueOnce(ok('S0'));
+    await rateImage(client, id, new AbortController().signal);
+    expect(invokeScan.mock.calls[0]![0].body.image).toBe(
+      `urn:air:other:other:orchestrator:blob@${id}`
+    );
+  });
+
   it('reads a label in either case', async () => {
     invokeScan.mockResolvedValueOnce(ok('s3'));
     expect((await rateImage(client, 'b', new AbortController().signal)).rating).toEqual({
