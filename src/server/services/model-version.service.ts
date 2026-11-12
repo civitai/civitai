@@ -760,9 +760,11 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
+  const patternLogIds = { entityType: 'ModelVersion', entityId: id, userId: actorUserId };
   await throwOnBlockedUserContent(data.description, {
     isModerator,
     surface: 'modelVersion',
+    ...patternLogIds,
   });
 
   // Name and trained words are scanned only where they DIFFER from the stored row.
@@ -784,6 +786,7 @@ export const upsertModelVersion = async ({
   await throwOnBlockedUserContent(changedVersionText(data, storedText), {
     isModerator,
     surface: 'modelVersion',
+    ...patternLogIds,
   });
   // Trigger words are part of the listing the .com face re-check reads (queued after commit).
   const trainedWordsChanged =
@@ -868,7 +871,11 @@ export const upsertModelVersion = async ({
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
-    await throwOnBlockedUserContent(data.description, { isModerator, surface: 'modelVersion' });
+    await throwOnBlockedUserContent(data.description, {
+      isModerator,
+      surface: 'modelVersion',
+      ...patternLogIds,
+    });
   }
 
   // Validate NSFW + restricted base model combination
@@ -1427,7 +1434,11 @@ export async function applyModelVersionContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedUserContent(description, { surface: 'modelVersion' });
+  await throwOnBlockedUserContent(description, {
+    surface: 'modelVersion',
+    entityType: 'ModelVersion',
+    entityId: id,
+  });
 
   let modelId: number;
   if (context) {
