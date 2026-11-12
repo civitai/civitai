@@ -117,7 +117,7 @@ entropy. Only a SHA-256 of the normalised code is stored. The plaintext is retur
 or mint call. Input is normalised before hashing: case-insensitive, hyphens ignored, and `I`/`L` read as
 `1`, `O` as `0`.
 
-`/gift/<code>` never renders: it moves the code into a short-lived, `HttpOnly` cookie scoped to `/gift`
+`/gift/<code>` never renders: it moves the code into a short-lived, `HttpOnly` cookie on `Path=/`
 and redirects to a bare `/gift`, so the code is not in any URL that page scripts or analytics record. The
 cookie is cleared when the signed-in page reads it, so it cannot prefill the next account on that browser. Ads
 are off on the claim page, and Faro's URL redaction (`src/utils/faro/redact.ts`) blanks a `/gift/<code>`
