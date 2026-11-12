@@ -6,6 +6,7 @@ import {
   feedbackForkLabel,
   feedbackRowMeta,
   feedbackSourceLabel,
+  INBOX_COMMITS_NOTE,
   INBOX_EMPTY_MESSAGE,
   INBOX_FILTER_EMPTY_MESSAGE,
   INBOX_GENERIC_ERROR_MESSAGE,
@@ -342,5 +343,24 @@ describe('feedbackForkLabel', () => {
       feedbackForkLabel({ upstreamSlug: null, upstreamVersion: null, forkedAtCommit: null })
     ).toBe('Forked from another app');
     expect(feedbackForkLabel(null)).toBeNull();
+  });
+});
+
+describe('INBOX_COMMITS_NOTE — the checkout advice must be a command that runs', () => {
+  // Bug: the note told the owner to run `civitai app pull <slug>`. `app pull` takes the app in
+  // `--app` and the DIRECTORY as its positional, so that command exits 2. And for a fork or an
+  // App Assistant app, `app pull` clones the SOURCE repository, which does not hold the platform
+  // commit.
+  it('every `civitai app pull` it names passes the app in --app', () => {
+    const invocations = [...INBOX_COMMITS_NOTE.matchAll(/civitai app pull([^`]*)/g)].map(
+      (m) => m[1]
+    );
+    expect(invocations.length).toBeGreaterThan(0);
+    for (const rest of invocations) expect(rest).toContain('--app');
+  });
+
+  it('places the platform commit in the build repository, not in a source-repository clone', () => {
+    expect(INBOX_COMMITS_NOTE).toContain('build repository');
+    expect(INBOX_COMMITS_NOTE).toContain('source repository');
   });
 });
