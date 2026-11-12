@@ -9,7 +9,11 @@ import {
 } from '~/server/services/collection.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
-import { publicCoverImageSelect, toPublicCoverImage } from '~/server/utils/public-cover-image';
+import {
+  getCoverBrowsingLevels,
+  publicCoverImageSelect,
+  toPublicCoverImage,
+} from '~/server/utils/public-cover-image';
 import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -91,7 +95,8 @@ export default MixedAuthEndpoint(async function handler(
           select: publicCoverImageSelect,
         })
       : null;
-    const coverImage = toPublicCoverImage(cover, browsingLevel);
+    const coverLevel = await getCoverBrowsingLevels([cover], browsingLevel);
+    const coverImage = toPublicCoverImage(cover, coverLevel(cover));
 
     return res.status(200).json({
       id: collection.id,

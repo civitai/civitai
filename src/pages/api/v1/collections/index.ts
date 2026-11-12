@@ -8,7 +8,11 @@ import { withServableCovers } from '~/server/services/collection-cover-visibilit
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
-import { publicCoverImageSelect, toPublicCoverImage } from '~/server/utils/public-cover-image';
+import {
+  getCoverBrowsingLevels,
+  publicCoverImageSelect,
+  toPublicCoverImage,
+} from '~/server/utils/public-cover-image';
 import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
@@ -170,8 +174,12 @@ export default MixedAuthEndpoint(async function handler(
     });
     const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
 
+    const coverLevel = await getCoverBrowsingLevels(
+      shown.map((c) => c.image),
+      browsingLevel
+    );
     const items: CollectionListItem[] = shown.map((c) => {
-      const coverImage = toPublicCoverImage(c.image, browsingLevel);
+      const coverImage = toPublicCoverImage(c.image, coverLevel(c.image));
       return {
         id: c.id,
         name: c.name,

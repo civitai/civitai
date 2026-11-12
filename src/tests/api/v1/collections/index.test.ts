@@ -21,8 +21,10 @@ const {
   mockGetRegion,
   mockIsRegionRestricted,
   mockWithServableCovers,
+  mockGetHeldLevelsByPost,
 } = vi.hoisted(() => ({
   mockWithServableCovers: vi.fn(),
+  mockGetHeldLevelsByPost: vi.fn(),
   mockGetAllCollections: vi.fn(),
   mockGetCollectionItemCount: vi.fn(),
   mockGetUserCollectionPermissionsById: vi.fn(),
@@ -80,6 +82,10 @@ vi.mock('~/server/services/collection.service', () => ({
   getCollectionItemCount: mockGetCollectionItemCount,
   getUserCollectionPermissionsById: mockGetUserCollectionPermissionsById,
   getCollectionById: mockGetCollectionById,
+}));
+
+vi.mock('~/server/services/model.service', () => ({
+  getHeldLevelsByPost: mockGetHeldLevelsByPost,
 }));
 
 vi.mock('~/server/services/collection-cover-visibility', () => ({
@@ -179,6 +185,7 @@ beforeEach(() => {
   mockImageFindUnique.mockImplementation((async ({ where, select }: FindUniqueArgs) =>
     where.id === cleanCover.id ? pickSelected(cleanCover, select) : null) as never);
   mockWithServableCovers.mockImplementation(async (rows: unknown[]) => rows);
+  mockGetHeldLevelsByPost.mockResolvedValue(new Map());
 });
 
 describe('GET /api/v1/collections (list)', () => {
@@ -541,6 +548,38 @@ describe.each(['list', 'detail'] as const)('public collection cover (%s)', (endp
 
     expect(pg13.coverImage).toMatchObject({ id: 99, nsfwLevel: NsfwLevel.PG13 });
     expect(r.coverImage).toBeNull();
+  });
+});
+
+describe.each(['list', 'detail'] as const)('held gallery level on the cover (%s)', (endpoint) => {
+  const query = endpoint === 'list' ? { nsfw: 'true' } : {};
+
+  it('withholds a cover above the held level of its post', async () => {
+    mockGetHeldLevelsByPost.mockResolvedValue(new Map([[7, { level: NsfwLevel.PG13 }]]));
+
+    const item = await requestCollection(endpoint, cleanCover, { query });
+
+    expect(mockGetHeldLevelsByPost).toHaveBeenCalledWith([7]);
+    expect(item.coverImageUrl).toBeNull();
+    expect(item.coverImage).toBeNull();
+  });
+
+  it('shows a cover within the held level of its post', async () => {
+    mockGetHeldLevelsByPost.mockResolvedValue(
+      new Map([[7, { level: NsfwLevel.PG | NsfwLevel.PG13 }]])
+    );
+
+    const item = await requestCollection(endpoint, cleanCover, { query });
+
+    expect(item.coverImage).toMatchObject({ id: 99, nsfwLevel: NsfwLevel.PG });
+  });
+
+  it('judges a cover by its own post, not by a hold on another post', async () => {
+    mockGetHeldLevelsByPost.mockResolvedValue(new Map([[8, { level: NsfwLevel.PG13 }]]));
+
+    const item = await requestCollection(endpoint, cleanCover, { query });
+
+    expect(item.coverImage).toMatchObject({ id: 99 });
   });
 });
 
