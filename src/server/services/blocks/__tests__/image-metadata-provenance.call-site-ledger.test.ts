@@ -618,7 +618,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 1,
   },
-  'src/server/services/collection.service.ts#queueNeverScannedImages': {
+  'src/server/services/judge-collection-rescan.service.ts#queueNeverScannedRescan': {
     decision: 'raw-legacy-judge-rating-seed',
     sites: 1,
   },

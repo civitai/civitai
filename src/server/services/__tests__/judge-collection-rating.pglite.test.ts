@@ -437,6 +437,15 @@ describe('an image that was never scanned', () => {
     expect((await imageRow()).metadata?.judgeRating).toEqual(existing);
   });
 
+  it('queues an image waiting for a manual level even if it carries a scan workflow', async () => {
+    await seed({ ingestion: 'PendingManualAssignment', nsfwLevel: 0 });
+
+    await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
+
+    expect((await imageRow()).ingestion).toBe('Rescan');
+    expect(await queuedScans()).toEqual([{ entityId: IMAGE_ID }]);
+  });
+
   it('a second attempt does not queue it again', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R, scanJobs: null });
     await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
@@ -566,6 +575,27 @@ describe('an image that was never scanned', () => {
 
     expect((await imageRow()).ingestion).toBe('Pending');
     expect(await queuedScans()).toEqual([]);
+  });
+});
+
+describe('approving a judge-rated item held for moderator review', () => {
+  it('is refused as waiting for moderator review', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R });
+    await rate(NsfwLevel.R);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor'`);
+
+    await expect(approve()).rejects.toThrow(
+      'Some of the items selected are waiting for moderator review.'
+    );
+  });
+
+  it('goes ahead once the hold is cleared', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R });
+    await rate(NsfwLevel.R);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor'`);
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL`);
+
+    await expect(approve()).rejects.toThrow(PAST_GATE);
   });
 });
 

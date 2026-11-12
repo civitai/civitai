@@ -14,10 +14,7 @@ function toPositiveInt(value: QueryValue) {
   return num > 0 ? num : undefined;
 }
 
-/**
- * The canonical URL of a model's reviews listing. The version filter is the only query param that
- * changes what the page lists, so it is the only one kept — and only when a version is selected.
- */
+/** The canonical URL of a model's reviews listing: the version only. Filter and page are not canonical. */
 export function getModelReviewsCanonical(modelId: number, modelVersionId?: number | null) {
   const base = `/models/${modelId}/reviews`;
   return modelVersionId ? `${base}?modelVersionId=${modelVersionId}` : base;
@@ -64,5 +61,63 @@ export function getModelReviewsRedirect(modelId: number, query: Query): string |
     (dialogs.length === 0 && normalized.reviewId !== undefined);
 
   if (!isDuplicate) return null;
-  return getModelReviewsCanonical(modelId, modelVersionId);
+  return withFilter(
+    getModelReviewsCanonical(modelId, modelVersionId),
+    parseReviewsFilter(normalized.filter)
+  );
+}
+
+function withFilter(url: string, filter: ReviewsFilter | undefined) {
+  if (!filter) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}filter=${filter}`;
+}
+
+/**
+ * Where to send a request that names no (usable) version: the listing of `versionId`, keeping the
+ * filter. The page is dropped, as it counted another version's reviews. Temporary by nature: the
+ * default version changes as versions publish.
+ */
+export function getModelReviewsVersionRedirect(
+  modelId: number,
+  query: Query,
+  versionId: number
+): string {
+  return withFilter(getModelReviewsCanonical(modelId, versionId), parseReviewsFilter(query.filter));
+}
+
+type ReviewsVersionDecision =
+  | { type: 'ok' }
+  | { type: 'redirect'; versionId: number }
+  | { type: 'notFound' };
+
+/** The list is always one version's, so any version that is not this model's goes to the fallback; no fallback means no reviews page. */
+export async function resolveReviewsVersion({
+  modelVersionId,
+  requested,
+  loadFallback,
+}: {
+  modelVersionId: number | undefined;
+  requested: { id: number } | null | undefined;
+  loadFallback: () => Promise<{ id: number } | null | undefined>;
+}): Promise<ReviewsVersionDecision> {
+  if (modelVersionId && requested?.id === modelVersionId) return { type: 'ok' };
+  const fallback = await loadFallback();
+  return fallback ? { type: 'redirect', versionId: fallback.id } : { type: 'notFound' };
+}
+
+export type ReviewsFilter = 'images' | 'up' | 'down';
+
+const REVIEWS_FILTERS: readonly string[] = ['images', 'up', 'down'] satisfies ReviewsFilter[];
+
+/** The `filter` query param of the reviews page; anything unrecognised means "all reviews". */
+export function parseReviewsFilter(value: QueryValue): ReviewsFilter | undefined {
+  const raw = firstValue(value);
+  return raw !== undefined && REVIEWS_FILTERS.includes(raw) ? (raw as ReviewsFilter) : undefined;
+}
+
+export function getReviewsFilterInput(filter: ReviewsFilter | undefined) {
+  if (filter === 'images') return { hasImages: true };
+  if (filter === 'up') return { recommended: true };
+  if (filter === 'down') return { recommended: false };
+  return {};
 }
