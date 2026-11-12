@@ -2087,6 +2087,7 @@ export const getModelVersionsMicro = async ({
       index: true,
       createdAt: true,
       publishedAt: true,
+      metrics: { select: { thumbsUpCount: true, thumbsDownCount: true } },
     },
   });
 
@@ -2094,9 +2095,16 @@ export const getModelVersionsMicro = async ({
     'ModelVersion',
     versions.map((v) => v.id)
   );
-  return versions.map((v) => {
+  return versions.map(({ metrics, ...v }) => {
     const row = paidAccess[v.id];
-    return { ...v, isEarlyAccess: !!row && isPaidAccessActive(row) };
+    return {
+      ...v,
+      isEarlyAccess: !!row && isPaidAccessActive(row),
+      rank: {
+        thumbsUpCountAllTime: metrics[0]?.thumbsUpCount ?? 0,
+        thumbsDownCountAllTime: metrics[0]?.thumbsDownCount ?? 0,
+      },
+    };
   });
 };
 

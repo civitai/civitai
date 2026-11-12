@@ -1935,6 +1935,9 @@ model ResourceReview {
   // NOTE: the partial index "ResourceReview_unreleased_postId_idx" (postId WHERE postId IS NOT NULL
   // AND releasedAt IS NULL) serves the review release sweep. It lives only in migration
   // 20261231130000_resource_review_post_id: Prisma does not support partial indexes.
+  // The partial index "ResourceReview_modelVersionId_createdAt_written_idx" (modelVersionId,
+  // createdAt DESC WHERE details IS NOT NULL AND details <> '') serves the text-only reviews list;
+  // it lives only in migration 20270102120000_resource_review_written_idx.
 }
 
 model ResourceReviewReaction {
