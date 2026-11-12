@@ -35,7 +35,7 @@ import { NewOrderImageRatings } from '~/components/Games/NewOrder/NewOrderImageR
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { RankUp } from '~/components/Games/LevelProgress/RankUp';
 import { newOrderConfig } from '~/server/common/constants';
-import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
+import { NewOrderSwitchoverBanner } from '~/components/Games/NewOrder/NewOrderSwitchoverBanner';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { useIsTabActive } from '~/hooks/useIsTabActive';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -176,7 +176,7 @@ export default Page(
             <PageLoader />
           ) : playerData ? (
             <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-gray-2 p-4 @md:flex-row @md:p-0 dark:bg-dark-9">
-              <NewOrderBetaBanner />
+              <NewOrderSwitchoverBanner />
               <NewOrderSidebar />
               {anotherTabOpen ? (
                 <div className="mx-auto flex size-full max-w-sm items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
