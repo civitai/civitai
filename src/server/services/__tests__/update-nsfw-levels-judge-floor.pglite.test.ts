@@ -104,6 +104,19 @@ describe('update_nsfw_levels_new and a judge rating', () => {
     }
   );
 
+  it('keeps a csam review on a minor-flagged image with no judge rating', async () => {
+    await recompute({
+      tagLevelTagId: 2,
+      nsfwLevel: PG13,
+      needsReview: 'csam',
+      scanJobs: { hasMinor: true },
+    });
+    const { rows } = await db.query<{ needsReview: string }>(
+      `SELECT "needsReview" FROM "Image" WHERE id = 1`
+    );
+    expect(rows[0].needsReview).toBe('csam');
+  });
+
   it('leaves a locked level alone', async () => {
     expect(
       await recompute({ tagLevelTagId: 2, nsfwLevel: PG13, metadata: judgeRated(R), locked: true })

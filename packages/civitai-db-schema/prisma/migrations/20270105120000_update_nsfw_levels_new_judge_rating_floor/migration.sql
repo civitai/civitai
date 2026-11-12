@@ -1,6 +1,8 @@
 -- update_nsfw_levels_new: a tag recompute never takes an unlocked image below the level a collection
 -- judge recorded in metadata.judgeRating (written by setCollectionItemNsfwLevel). Rows without a
--- judge rating get exactly the level they got before. Mirrors programmability/update_nsfw_level.sql.
+-- judge rating get the level they got before. On every row, a recompute that flags a minor keeps an
+-- existing csam or appeal review instead of replacing it with minor. Mirrors
+-- programmability/update_nsfw_level.sql.
 CREATE OR REPLACE FUNCTION update_nsfw_levels_new(image_ids INTEGER[])
 RETURNS VOID AS $$
 BEGIN

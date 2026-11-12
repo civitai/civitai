@@ -1,4 +1,5 @@
-import { SegmentedControl } from '@mantine/core';
+import { SegmentedControl, Text } from '@mantine/core';
+import { useState } from 'react';
 import { useCollection, useMutateCollection } from '~/components/Collections/collection.utils';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 
@@ -19,6 +20,7 @@ export const CollectionItemNSFWLevelSelector = ({
     updatingCollectionItemNsfwLevel,
     updateCollectionItemNsfwLevelPayload,
   } = useMutateCollection();
+  const [rescanning, setRescanning] = useState(false);
 
   const handleNSFWLevelChange = (value: string) => {
     updateCollectionItemNsfwLevel(
@@ -27,8 +29,10 @@ export const CollectionItemNSFWLevelSelector = ({
         nsfwLevel: parseInt(value, 10),
       },
       {
-        // The saved level is the higher of the pick and the scan's level.
+        // The saved level is the higher of the pick and the scan's level. A raise into an NSFW level
+        // is saved once the rescan's checks have run at it, so until then the old level shows.
         onSuccess: async (res) => {
+          setRescanning(!!res?.rescanning);
           onNsfwLevelUpdated?.(String(res?.nsfwLevel ?? value));
         },
       }
@@ -42,17 +46,24 @@ export const CollectionItemNSFWLevelSelector = ({
   if (!judgesCanApplyRatings || !permissions?.manage) return null;
 
   return (
-    <SegmentedControl
-      value={nsfwLevel?.toString() ?? undefined}
-      onChange={handleNSFWLevelChange}
-      data={browsingLevels.map((level) => ({
-        value: level.toString(),
-        label: browsingLevelLabels[level],
-      }))}
-      disabled={
-        updatingCollectionItemNsfwLevel &&
-        updateCollectionItemNsfwLevelPayload?.collectionItemId === collectionItemId
-      }
-    />
+    <>
+      <SegmentedControl
+        value={nsfwLevel?.toString() ?? undefined}
+        onChange={handleNSFWLevelChange}
+        data={browsingLevels.map((level) => ({
+          value: level.toString(),
+          label: browsingLevelLabels[level],
+        }))}
+        disabled={
+          updatingCollectionItemNsfwLevel &&
+          updateCollectionItemNsfwLevelPayload?.collectionItemId === collectionItemId
+        }
+      />
+      {rescanning && (
+        <Text size="xs" c="dimmed">
+          Rescanning: try again after the scan finishes.
+        </Text>
+      )}
+    </>
   );
 };

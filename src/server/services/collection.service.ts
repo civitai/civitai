@@ -2883,17 +2883,37 @@ export const updateCollectionItemsStatus = async ({
       collection.type === CollectionType.Image &&
       collectionItemIds.length > 0
     ) {
-      const unrated = await dbWrite.$queryRaw<{ id: number }[]>`
-        SELECT ci.id
+      // "Scanning": waiting on a scan verdict, or never scanned (queued below), and not blocked.
+      const unrated = await dbWrite.$queryRaw<{ imageId: number; scanning: boolean }[]>`
+        SELECT i.id AS "imageId", (
+          i."blockedFor" IS NULL AND i."nsfwLevel" != ${NsfwLevel.Blocked} AND (
+            i.ingestion IN (
+              ${ImageIngestionStatus.Pending}::"ImageIngestionStatus",
+              ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus",
+              ${ImageIngestionStatus.PendingManualAssignment}::"ImageIngestionStatus"
+            )
+            OR (
+              i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+              AND NOT COALESCE(i."scanJobs" ? 'workflowId', false)
+            )
+          )
+        ) AS scanning
         FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
         WHERE ci."collectionId" = ${collectionId}
           AND ci.id IN (${Prisma.join(collectionItemIds)})
           AND NOT ${judgeRatedSql('i', collectionId)}
-        LIMIT 1
       `;
 
       if (unrated.length) {
+        await queueNeverScannedImages(
+          unrated.filter((r) => r.scanning).map((r) => r.imageId),
+          collectionId
+        );
+        if (unrated.some((r) => r.scanning))
+          throw throwBadRequestError(
+            'Some of the items selected are still being scanned. Try again shortly.'
+          );
         throw throwBadRequestError(
           'Some of the items selected have not been given a NSFW rating. Please ensure all items have a NSFW rating before approving them.'
         );
@@ -4209,6 +4229,41 @@ export const judgeRatedSql = (alias: string, collectionId: number) => {
   ), false)`;
 };
 
+/**
+ * Sends never-scanned images posted to this collection to the scan, once: `Scanned` with no scan
+ * workflow, or `PendingManualAssignment` (uploads from before these images were scanned). An image
+ * already queued, scanning, blocked or held for review is left alone. Returns the ids it queued.
+ */
+async function queueNeverScannedImages(imageIds: number[], collectionId: number) {
+  if (!imageIds.length) return [];
+  const queued = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "Image" i
+    SET ingestion = ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus", "updatedAt" = NOW()
+    FROM "Post" p
+    WHERE p.id = i."postId"
+      AND p."collectionId" = ${collectionId}
+      AND i.id IN (${Prisma.join(imageIds)})
+      AND i.ingestion IN (
+        ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus",
+        ${ImageIngestionStatus.PendingManualAssignment}::"ImageIngestionStatus"
+      )
+      AND NOT COALESCE(i."scanJobs" ? 'workflowId', false)
+      AND i."blockedFor" IS NULL
+      AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+      AND i."needsReview" IS NULL
+    RETURNING i.id
+  `;
+  if (queued.length) {
+    await dbWrite.$executeRaw`
+      INSERT INTO "JobQueue" (type, "entityType", "entityId")
+      SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", id
+      FROM unnest(ARRAY[${Prisma.join(queued.map((r) => r.id))}]::int[]) AS id
+      ON CONFLICT DO NOTHING
+    `;
+  }
+  return queued.map((r) => r.id);
+}
+
 export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
   nsfwLevel,
@@ -4264,8 +4319,10 @@ export const setCollectionItemNsfwLevel = async ({
 
   if (hasBlockMarker(image))
     throw throwBadRequestError('This image is blocked and cannot be rated.');
-  if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned)
+  if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned) {
+    await queueNeverScannedImages([imageId], collectionItem.collectionId);
     throw throwBadRequestError('This image is still being scanned. Try again shortly.');
+  }
   // A rating can send the image back through the scan, whose verdict replaces a moderation hold.
   if (image.needsReview != null)
     throw throwBadRequestError('This image is waiting for moderator review.');
@@ -4324,7 +4381,11 @@ export const setCollectionItemNsfwLevel = async ({
     { id: imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
 
-  return { nsfwLevel: updated.nsfwLevel };
+  // `rescanning`: the judge's level applies once the rescan's checks have run at it.
+  return {
+    nsfwLevel: updated.nsfwLevel,
+    rescanning: updated.ingestion === ImageIngestionStatus.Rescan,
+  };
 };
 
 export type CollectionEntityType = 'image' | 'model' | 'post' | 'article';

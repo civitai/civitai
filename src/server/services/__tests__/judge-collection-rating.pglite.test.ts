@@ -52,6 +52,14 @@ beforeAll(async () => {
       metadata jsonb,
       "updatedAt" timestamp(3)
     );
+    CREATE TYPE "JobQueueType" AS ENUM ('ImageScan');
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    CREATE TABLE "JobQueue" (
+      type "JobQueueType" NOT NULL,
+      "entityType" "EntityType" NOT NULL,
+      "entityId" int NOT NULL,
+      PRIMARY KEY (type, "entityType", "entityId")
+    );
     CREATE TABLE "CollectionItem" (
       id int PRIMARY KEY,
       "collectionId" int NOT NULL,
@@ -71,14 +79,15 @@ async function seed(image: {
   blockedFor?: string | null;
   postCollectionId?: number;
   scanJobs?: string | null;
+  needsReview?: string | null;
 }) {
   await db.query(`INSERT INTO "Post" (id, "collectionId") VALUES ($1, $2)`, [
     POST_ID,
     image.postCollectionId ?? COLLECTION_ID,
   ]);
   await db.query(
-    `INSERT INTO "Image" (id, "postId", "nsfwLevel", ingestion, "blockedFor", "scannedAt", "scanJobs")
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    `INSERT INTO "Image" (id, "postId", "nsfwLevel", ingestion, "blockedFor", "scannedAt", "scanJobs", "needsReview")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       IMAGE_ID,
       POST_ID,
@@ -87,6 +96,7 @@ async function seed(image: {
       image.blockedFor ?? null,
       SCANNED_AT,
       image.scanJobs === undefined ? SCANNED : image.scanJobs,
+      image.needsReview ?? null,
     ]
   );
   await db.query(
@@ -108,6 +118,13 @@ const imageRow = async () =>
       metadata: { judgeRating?: JudgeRating } | null;
     }>(`SELECT * FROM "Image" WHERE id = $1`, [IMAGE_ID])
   ).rows[0];
+
+const queuedScans = async () =>
+  (
+    await db.query<{ entityId: number }>(
+      `SELECT "entityId" FROM "JobQueue" WHERE type = 'ImageScan'`
+    )
+  ).rows;
 
 const rate = (nsfwLevel: NsfwLevel) =>
   setCollectionItemNsfwLevel({ collectionItemId: ITEM_ID, nsfwLevel, userId: JUDGE_ID });
@@ -131,7 +148,9 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
   dbMock.dbWrite.collectionItem.findMany.mockRejectedValue(new Error(PAST_GATE));
-  await db.exec(`DELETE FROM "CollectionItem"; DELETE FROM "Image"; DELETE FROM "Post";`);
+  await db.exec(
+    `DELETE FROM "CollectionItem"; DELETE FROM "Image"; DELETE FROM "Post"; DELETE FROM "JobQueue";`
+  );
   dbMock.dbRead.collectionItem.findUniqueOrThrow.mockResolvedValue({
     id: ITEM_ID,
     imageId: IMAGE_ID,
@@ -218,7 +237,10 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.X });
 
     // The caller is told the saved level, so the judge's control shows it.
-    await expect(rate(NsfwLevel.PG)).resolves.toEqual({ nsfwLevel: NsfwLevel.X });
+    await expect(rate(NsfwLevel.PG)).resolves.toEqual({
+      nsfwLevel: NsfwLevel.X,
+      rescanning: false,
+    });
 
     expect((await imageRow()).nsfwLevel).toBe(NsfwLevel.X);
   });
@@ -226,7 +248,10 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
   it('raises the level when the judge picks a higher SFW one', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG });
 
-    await expect(rate(NsfwLevel.PG13)).resolves.toEqual({ nsfwLevel: NsfwLevel.PG13 });
+    await expect(rate(NsfwLevel.PG13)).resolves.toEqual({
+      nsfwLevel: NsfwLevel.PG13,
+      rescanning: false,
+    });
 
     expect((await imageRow()).nsfwLevel).toBe(NsfwLevel.PG13);
   });
@@ -249,19 +274,22 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
   it('sends a raise into an NSFW level back through the scan, which holds approval', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG13 });
 
-    await rate(NsfwLevel.X);
+    expect(await rate(NsfwLevel.X)).toEqual({ nsfwLevel: NsfwLevel.PG13, rescanning: true });
 
     const row = await imageRow();
     expect(row).toMatchObject({ ingestion: 'Rescan', blockedFor: null });
     expect(row.metadata?.judgeRating).toMatchObject({ nsfwLevel: NsfwLevel.X });
     expect(row.scannedAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
-    await expect(approve()).rejects.toThrow(/NSFW rating/);
+    await expect(approve()).rejects.toThrow(/still being scanned/i);
   });
 
   it('keeps the old level while the rescan runs, so the image never shows a level unchecked', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG13 });
 
-    await expect(rate(NsfwLevel.X)).resolves.toEqual({ nsfwLevel: NsfwLevel.PG13 });
+    await expect(rate(NsfwLevel.X)).resolves.toEqual({
+      nsfwLevel: NsfwLevel.PG13,
+      rescanning: true,
+    });
 
     expect(await imageRow()).toMatchObject({ nsfwLevel: NsfwLevel.PG13, ingestion: 'Rescan' });
   });
@@ -331,7 +359,6 @@ describe('updateCollectionItemsStatus: approving in a judge-rated collection', (
       `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'tos', "nsfwLevel" = 32`,
     ],
     ['has a block reason', `UPDATE "Image" SET "blockedFor" = 'tos'`],
-    ['carries no scan workflow', `UPDATE "Image" SET "scanJobs" = NULL`],
     [
       'carries only a legacy rating',
       `UPDATE "Image" SET metadata = jsonb_set(metadata, '{judgeRating}', (metadata->'judgeRating') || '{"legacy": true, "userId": null}')`,
@@ -342,6 +369,95 @@ describe('updateCollectionItemsStatus: approving in a judge-rated collection', (
     await db.exec(change);
 
     await expect(approve()).rejects.toThrow(/NSFW rating/);
+  });
+});
+
+describe('an image that was never scanned', () => {
+  // Uploads from before collection images were scanned: Scanned with no scan record, or waiting for
+  // a manual level. A rating or an approval sends it to the scan once, and waits for the verdict.
+  it.each([
+    [
+      'Scanned with no scan record',
+      { ingestion: 'Scanned', nsfwLevel: NsfwLevel.R, scanJobs: null },
+    ],
+    [
+      'waiting for a manual level',
+      { ingestion: 'PendingManualAssignment', nsfwLevel: 0, scanJobs: null },
+    ],
+  ])('%s: a rating queues one scan and is refused until it lands', async (_, image) => {
+    await seed(image);
+
+    await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Rescan', metadata: null });
+    expect(await queuedScans()).toEqual([{ entityId: IMAGE_ID }]);
+  });
+
+  it('a second attempt does not queue it again', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R, scanJobs: null });
+    await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
+    await db.exec(`DELETE FROM "JobQueue"`);
+
+    await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
+    await expect(approve()).rejects.toThrow(/still being scanned/i);
+
+    expect(await queuedScans()).toEqual([]);
+  });
+
+  it('an approval queues the scan and is refused', async () => {
+    await seed({ ingestion: 'PendingManualAssignment', nsfwLevel: 0, scanJobs: null });
+
+    await expect(approve()).rejects.toThrow(/still being scanned/i);
+
+    expect((await imageRow()).ingestion).toBe('Rescan');
+    expect(await queuedScans()).toEqual([{ entityId: IMAGE_ID }]);
+  });
+
+  it('can be rated and approved once the scan verdict lands', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG13, scanJobs: null });
+    await expect(rate(NsfwLevel.PG13)).rejects.toThrow(/still being scanned/i);
+    await db.exec(
+      `UPDATE "Image" SET ingestion = 'Scanned', "scanJobs" = '{"workflowId": "wf-2"}'`
+    );
+
+    await rate(NsfwLevel.PG13);
+
+    await expect(approve()).rejects.toThrow(PAST_GATE);
+  });
+
+  it.each([
+    ['held for moderator review', { needsReview: 'minor' }],
+    ['blocked', { blockedFor: 'tos' }],
+  ])('is not queued while %s', async (_, extra) => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R, scanJobs: null, ...extra });
+
+    await expect(rate(NsfwLevel.R)).rejects.toThrow();
+    await expect(approve()).rejects.toThrow();
+
+    expect((await imageRow()).ingestion).toBe('Scanned');
+    expect(await queuedScans()).toEqual([]);
+  });
+
+  it('is not queued from another collection', async () => {
+    await seed({
+      ingestion: 'Scanned',
+      nsfwLevel: NsfwLevel.R,
+      scanJobs: null,
+      postCollectionId: OTHER_COLLECTION_ID,
+    });
+
+    await expect(approve()).rejects.toThrow();
+
+    expect(await queuedScans()).toEqual([]);
+  });
+
+  it('leaves an image whose first scan is still running alone', async () => {
+    await seed({ ingestion: 'Pending', nsfwLevel: 0, scanJobs: null });
+
+    await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
+
+    expect((await imageRow()).ingestion).toBe('Pending');
+    expect(await queuedScans()).toEqual([]);
   });
 });
 

@@ -34,7 +34,10 @@ For the `nsfwLevel` bitflag itself and browsing-level filtering, see [nsfw-filte
    scan nor a tag recompute (`update_nsfw_levels_new`) writes an unlocked, unblocked level below it,
    and the scan's checks run at no less than it. A raise into an NSFW level sends the image back
    through the scan (`Rescan`). Approval in such a collection requires that collection's rating,
-   not a `legacy` one, on a scanned (`scanJobs` has a `workflowId`), unblocked image.
+   not a `legacy` one, on a scanned (`scanJobs` has a `workflowId`), unblocked image. An older
+   upload that was never scanned (`PendingManualAssignment`, or `Scanned` with no `workflowId`) is
+   sent to the scan (`Rescan`) the first time a judge rates or approves it, and refused until the
+   verdict lands.
 2. It calls `ingestImage`, which submits the scan and stamps `scanRequestedAt` and `scanJobs.workflowId`.
 3. A database trigger also queues the image in `JobQueue(ImageScan)` whenever `ingestion` becomes `Pending`,
    `Rescan` or `Error`, so a lost submit is retried by the cron (step 3).
