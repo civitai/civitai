@@ -26,6 +26,8 @@ type Row = {
   appBlockVersion: string | null;
   appBlockSha: string | null;
   surface: 'slot' | 'page' | null;
+  recentErrors: unknown[];
+  environment: unknown;
   ownerStatus: 'acknowledged' | 'resolved' | 'wont_fix' | null;
   ownerStatusAt: Date | null;
   ownerFlaggedAt: Date | null;
@@ -134,6 +136,8 @@ const NEWEST: Row = {
   appBlockVersion: '1.4.0',
   appBlockSha: '3f9c2ab81d0e',
   surface: 'page',
+  recentErrors: [],
+  environment: null,
   ownerStatus: null,
   ownerStatusAt: null,
   ownerFlaggedAt: null,
@@ -146,6 +150,8 @@ const OLDER: Row = {
   appBlockVersion: '1.3.2',
   appBlockSha: null,
   surface: 'slot',
+  recentErrors: [],
+  environment: null,
   ownerStatus: 'acknowledged',
   ownerStatusAt: new Date('2026-10-01T12:00:00Z'),
   ownerFlaggedAt: null,
@@ -158,6 +164,8 @@ const SECOND_PAGE: Row = {
   appBlockVersion: null,
   appBlockSha: null,
   surface: null,
+  recentErrors: [],
+  environment: null,
   ownerStatus: 'resolved',
   ownerStatusAt: new Date('2026-09-03T12:00:00Z'),
   ownerFlaggedAt: new Date('2026-09-03T13:00:00Z'),
@@ -211,7 +219,7 @@ describe('the inbox lists what the server returned, newest first', () => {
     expect(byId('reporter', NEWEST.id).element().getAttribute('href')).toBe('/user/mira_dev');
     await expect
       .element(byId('meta', NEWEST.id))
-      .toHaveTextContent('v1.4.0 (3f9c2ab) · App page · Oct 8, 2026');
+      .toHaveTextContent('v1.4.0 (platform commit 3f9c2ab) · App page · Oct 8, 2026');
     await expect.element(byId('meta', OLDER.id)).toHaveTextContent('v1.3.2 · Model page');
     await expect.element(byId('status', NEWEST.id)).toHaveTextContent('New');
     await expect.element(byId('status', OLDER.id)).toHaveTextContent('Acknowledged');

@@ -16,7 +16,7 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { getComments, getCommentsV2 } = await import('../user-account.service');
+const { getComments } = await import('../user-account.service');
 
 let db: PGlite;
 
@@ -43,17 +43,42 @@ afterEach(async () => {
   await db.close();
 });
 
-describe("a user's comment lists, which moderators bulk-delete and flag by id", () => {
-  it('lists every live model comment by its CommentV3 id, old or new, and no tombstone', async () => {
+describe("a user's comment list, which moderators bulk-delete and flag by id", () => {
+  it('lists every live comment on any surface by its CommentV3 id, newest first, and no tombstone', async () => {
     const { items } = await getComments(10);
-    expect(items.map((r) => [r.id, r.modelId])).toEqual([
-      [2, 70],
-      [1, 70],
+    expect(items.map((r) => [r.id, r.entityType, r.entityId])).toEqual([
+      [2, 'model', 70],
+      [3, 'image', 80],
+      [1, 'model', 70],
     ]);
   });
 
-  it('lists everything else under the other comments', async () => {
-    const { items } = await getCommentsV2(10);
-    expect(items.map((r) => [r.id, r.entityType])).toEqual([[3, 'image']]);
+  it('says when it stopped short', async () => {
+    const { items, truncated } = await getComments(10, 2);
+    expect(items.map((r) => r.id)).toEqual([2, 3]);
+    expect(truncated).toBe(true);
+  });
+
+  it('pages through the whole history from the cursor each page hands back', async () => {
+    const first = await getComments(10, 2);
+    const second = await getComments(10, 2, first.next!);
+    expect(second.items.map((r) => r.id)).toEqual([1]);
+    expect(second.next).toBeNull();
+  });
+
+  it('breaks a createdAt tie on id rather than skipping the rows that share it', async () => {
+    await db.exec(`INSERT INTO "CommentV3" VALUES
+      (6, 10, 'image', 81, 'same instant', false, NULL, NULL, '2026-11-07 00:00:00.000123'),
+      (7, 10, 'image', 82, 'same instant', false, NULL, NULL, '2026-11-07 00:00:00.000123')`);
+    const first = await getComments(10, 2);
+    const rest = await getComments(10, 50, first.next!);
+    expect([...first.items, ...rest.items].map((r) => r.id)).toEqual([2, 7, 6, 3, 1]);
+  });
+
+  it('still finds the next page when the comment it ended on has since been deleted', async () => {
+    const first = await getComments(10, 2);
+    await db.exec(`DELETE FROM "CommentV3" WHERE id = ${first.items.at(-1)!.id}`);
+    const rest = await getComments(10, 2, first.next!);
+    expect(rest.items.map((r) => r.id)).toEqual([1]);
   });
 });

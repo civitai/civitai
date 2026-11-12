@@ -357,6 +357,83 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
   });
 });
 
+describe('OnsiteReviewModal — the issue-tracker link (`bugs`) is surfaced INLINE', () => {
+  // `bugs` is manifest-governed and becomes the store's Support link on approve, so the
+  // reviewer must read it next to Source — as plain text, never a clickable anchor — rather
+  // than inside the collapsed "Other manifest fields" raw-JSON disclosure.
+  const TRACKER = 'https://tracker-7719.example.test/issues';
+
+  test('a first version with `bugs` shows it beside Source, and it is a HANDLED key', async () => {
+    const withBugs = {
+      ...ONSITE_PENDING,
+      manifest: {
+        ...ONSITE_PENDING.manifest,
+        repository: 'https://github.com/example/remix-app',
+        bugs: TRACKER,
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: withBugs, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    const support = page.getByTestId('apps-onsite-review-support');
+    await expect.element(support).toBeInTheDocument();
+    await expect.element(support).toHaveTextContent(`Support: ${TRACKER}`);
+    // Plain text, not an outbound link out of the review surface.
+    expect(document.querySelectorAll(`a[href="${TRACKER}"]`).length).toBe(0);
+    // Still only the base fixture's one novel key in the raw-JSON disclosure.
+    await expect
+      .element(page.getByRole('button', { name: 'Other manifest fields (1)' }))
+      .toBeInTheDocument();
+  });
+
+  test('🔴 a v2 that changes ONLY `bugs` shows the new link in the same place', async () => {
+    const v2 = {
+      ...ONSITE_PENDING,
+      version: '1.3.0',
+      manifest: { ...ONSITE_PENDING.manifest, version: '1.3.0', bugs: TRACKER },
+      manifestDiffSummary: {
+        kind: 'update',
+        added: ['bugs'],
+        removed: [],
+        changed: [{ field: 'version', from: '1.2.0', to: '1.3.0' }],
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: v2, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect
+      .element(page.getByTestId('apps-onsite-review-support'))
+      .toHaveTextContent(`Support: ${TRACKER}`);
+    await expect
+      .element(page.getByRole('button', { name: 'Other manifest fields (1)' }))
+      .toBeInTheDocument();
+  });
+
+  test('a non-string `bugs` (a legacy stored manifest) is shown, marked as producing no link', async () => {
+    const legacy = {
+      ...ONSITE_PENDING,
+      manifest: { ...ONSITE_PENDING.manifest, bugs: { url: TRACKER } },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: legacy, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    const support = page.getByTestId('apps-onsite-review-support');
+    await expect.element(support).toHaveTextContent(/not a URL string/);
+    await expect.element(support).toHaveTextContent(TRACKER);
+  });
+
+  test('no `bugs` renders no Support line', async () => {
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('My Onsite Block')).toBeInTheDocument();
+    expect(page.getByTestId('apps-onsite-review-support').elements()).toHaveLength(0);
+  });
+});
+
 describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
   /**
    * 🔴 WHY THIS SUITE EXISTS — stated precisely, because the first version of this

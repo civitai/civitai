@@ -32,9 +32,6 @@ export function parseLockReviewContext(context: unknown): LockReviewContext | nu
   return lockReviewContext(value.locks.filter(isRequestableLock));
 }
 
-/** While either of these is locked, none of the model's locks can be requested. */
-const NON_REQUESTABLE_LOCKS = ['poi', 'minor'];
-
 export type LockReviewModelFlags = {
   lockedProperties?: (string | null)[] | null;
   poi?: boolean | null;
@@ -44,12 +41,11 @@ export type LockReviewModelFlags = {
 /**
  * The model's locked settings an owner may ask a moderator to review, in display order. None while
  * the model is marked as a real person or a minor, whether that mark is locked or the owner's own:
- * those go through the flag appeal instead.
+ * those go through the flag appeal instead. A locked `poi` or `minor` that is off blocks nothing.
  */
 export const requestableLocks = (model?: LockReviewModelFlags | null): RequestableLock[] => {
   const locked = model?.lockedProperties ?? [];
   if (model?.poi || model?.minor) return [];
-  if (locked.some((key) => !!key && NON_REQUESTABLE_LOCKS.includes(key))) return [];
   return REQUESTABLE_LOCKS.filter((key) => locked.includes(key));
 };
 

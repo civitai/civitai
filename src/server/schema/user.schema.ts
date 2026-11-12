@@ -388,6 +388,11 @@ export const userSettingsSchema = z.object({
   assistantPersonality: userAssistantPersonality.optional(),
   airEmail: z.email().optional(),
   creatorsProgramCodeOfConductAccepted: z.union([z.boolean(), z.date()]).optional(),
+  // Generation licences accepted, by terms key. Written only by `acceptGenerationLicense`, which
+  // stamps the server's time; see `generation-license.constants.ts`.
+  generationLicenseAcceptances: z
+    .record(z.string(), z.object({ version: z.number(), acceptedAt: z.coerce.date() }))
+    .optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
@@ -557,7 +562,8 @@ export const userOnboardingSchema = z.discriminatedUnion('step', [
     username: usernameInputSchema,
     // `.email()`, not a bare string: this is the only writer of `User.email` that was unvalidated,
     // so a tRPC caller could post `x@!!!` and have it stored verbatim.
-    email: z.string().email(),
+    // Required only when the account has no address yet; the handler enforces that.
+    email: z.string().email().optional(),
   }),
   z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
   z.object({

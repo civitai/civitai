@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { L1_CACHE_BYTE_BUDGETS, L1_TOTAL_BYTE_CEILING } from '../l1-cache-budget';
+import {
+  L1_CACHE_BYTE_BUDGETS,
+  L1_SWITCHED_BYTE_BUDGETS,
+  L1_TOTAL_BYTE_CEILING,
+  worstCaseL1Bytes,
+} from '../l1-cache-budget';
 
 /**
  * Heap-safety invariant for the per-pod L1 (in-process LRU) caches in caches.ts.
@@ -15,6 +20,22 @@ describe('L1 cache byte budget', () => {
 
   it('sum of all per-pod L1 byte budgets stays under the hard ceiling', () => {
     expect(sum).toBeLessThanOrEqual(L1_TOTAL_BYTE_CEILING);
+  });
+
+  it('the worst case (every switched cache at its larger tier) stays under the hard ceiling', () => {
+    expect(worstCaseL1Bytes()).toBeLessThanOrEqual(L1_TOTAL_BYTE_CEILING);
+    // Literal, so a switched tier added or enlarged without re-checking the ceiling shows up here:
+    // 4 + 12 + 16 + 96 (tag-ids-for-images, switched) + 20 + 2 MB.
+    expect(worstCaseL1Bytes()).toBe(150 * 1024 * 1024);
+  });
+
+  it('every switched tier names an existing cache and is larger than its base budget', () => {
+    for (const [name, bytes] of Object.entries(L1_SWITCHED_BYTE_BUDGETS)) {
+      const base = (L1_CACHE_BYTE_BUDGETS as Record<string, number | undefined>)[name];
+      expect(base, name).toBeDefined();
+      expect(bytes, name).toBeGreaterThan(base as number);
+      expect(Number.isInteger(bytes), name).toBe(true);
+    }
   });
 
   it('ceiling is a small fraction of the 4096MB pod old-space limit (heap safety)', () => {

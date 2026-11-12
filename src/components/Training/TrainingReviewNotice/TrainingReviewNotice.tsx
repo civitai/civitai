@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import {
   TRAINING_REVIEW_COPY as copy,
   canRaiseTrainingReview,
+  trainingReviewPendingBody,
 } from '@civitai/shared/training-review';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { Tooltip } from '~/components/MantineOverlays';
@@ -14,9 +15,13 @@ import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 export function TrainingReviewNotice({
   heldSince,
   runId,
+  completedEpochs,
+  plannedEpochs,
 }: {
   heldSince: string | null;
   runId: string;
+  completedEpochs: number;
+  plannedEpochs: number | null | undefined;
 }) {
   // Re-read the clock once a minute so a page left open offers the raise when the threshold passes.
   const [now, setNow] = useState(() => new Date());
@@ -31,7 +36,7 @@ export function TrainingReviewNotice({
       <IconClockPause size={52} />
       <Text fw={600}>{copy.pendingTitle}</Text>
       <Text ta="center" maw={480}>
-        {copy.pendingBody}
+        {trainingReviewPendingBody(completedEpochs, plannedEpochs)}
       </Text>
       {canRaise && (
         <>

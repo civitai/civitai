@@ -5,7 +5,7 @@ import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thres
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
-import { REPORT_ENTITIES, reportEntity, reportLinkFilter } from './report-entities';
+import { REPORT_ENTITIES, reportEntity } from './report-entities';
 import { SYSTEM_USER_ID, usersByIds } from './users.service';
 import { rewardReportReporters } from './rewards';
 import { ENQUEUE_SOURCE } from './unpublished-version-posts';
@@ -48,8 +48,8 @@ export type ModeratorReportRow = {
   statusSetAt: Date | null;
   statusSetByUsername: string | null;
   entityId: number | null;
-  /** Site-relative path for report types whose entity has no page of its own. Only comments set it —
-   *  see `commentContextUrl`. `null` everywhere else, where `entityUrl` already answers. */
+  /** Site-relative path for report types whose entity has no page of its own. Set for the types in
+   *  `CONTEXT_RESOLVERS`; `null` everywhere else, where `entityUrl` already answers. */
   contextUrl: string | null;
 };
 
@@ -62,53 +62,12 @@ export type ModeratorReportRow = {
  * only way to the words being reported was to search for them.
  *
  * Resolved in SQL because every parent is a join away and the queue already pays for one.
- *
- * `commentV2` threads carry the parent as one of a dozen nullable columns, and a REPLY carries none of
- * them — its thread's parent is the comment above it — so the resolution falls back to `rootThreadId`
- * (6,429 of the 6,785 reported replies on the dev clone). `bountyEntryId` threads never carry the
- * `bountyId` the URL needs (248 of 248), hence the join. `highlight` is what scrolls to and marks the
- * comment once the page opens, and is the whole point of linking rather than landing on the entity.
  */
 type ContextResolver = (
   entityId: ReturnType<typeof sql<number | null>>
 ) => ReturnType<typeof sql<string | null>>;
 
 const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
-  comment: (entityId) =>
-    sql<string | null>`(
-      SELECT '/models/' || c."modelId" || '?dialog=commentThread&commentId=' ||
-             coalesce(c."parentId", c.id) || '&highlight=' || c.id
-      FROM "Comment" c WHERE c.id = ${entityId} AND c."modelId" IS NOT NULL
-    )`,
-
-  commentV2: (entityId) =>
-    sql<string | null>`(
-      SELECT coalesce(CASE
-        WHEN p."imageId"       IS NOT NULL THEN '/images/'   || p."imageId"
-        WHEN p."postId"        IS NOT NULL THEN '/posts/'    || p."postId"
-        WHEN p."articleId"     IS NOT NULL THEN '/articles/' || p."articleId"
-        WHEN p."reviewId"      IS NOT NULL THEN '/reviews/'  || p."reviewId"
-        WHEN p."bountyEntryId" IS NOT NULL THEN '/bounties/' || be."bountyId" || '/entries/' || p."bountyEntryId"
-        WHEN p."bountyId"      IS NOT NULL THEN '/bounties/' || p."bountyId"
-        WHEN p."challengeId"   IS NOT NULL THEN '/challenges/' || p."challengeId"
-        WHEN p."modelId"       IS NOT NULL THEN '/models/'   || p."modelId"
-        WHEN p."comicProjectId" IS NOT NULL THEN '/comics/'  || p."comicProjectId"
-        WHEN p."model3dId"     IS NOT NULL THEN '/3d-models/' || p."model3dId"
-        -- Threads with no parent column at all are the remainder (3,519 on the dev clone). They are
-        -- orphaned rows, not a missing mapping: one carries 110 comments and no entity of any kind.
-        -- /comments/v2/:id is the main app resolving the thread itself, the only thing left that can
-        -- find the comment — better than the dead text this used to render.
-        ELSE NULL
-      END || '?highlight=' || cv.id, '/comments/v2/' || cv.id)
-      FROM "CommentV2" cv
-      JOIN "Thread" t ON t.id = cv."threadId"
-      -- A reply's own thread hangs off a comment; the entity is on the root.
-      LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
-      JOIN LATERAL (SELECT * FROM "Thread" x WHERE x.id = CASE WHEN t."commentId" IS NULL THEN t.id ELSE coalesce(root.id, t.id) END) p ON true
-      LEFT JOIN "BountyEntry" be ON be.id = p."bountyEntryId"
-      WHERE cv.id = ${entityId}
-    )`,
-
   // The main app's comment permalink resolves a live `CommentV3` row to its thread; a deleted one
   // gets no link rather than a dead one.
   commentV3: (entityId) =>
@@ -170,22 +129,22 @@ function reportContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<nu
 
 /** Whether the report page can still open this report (it finds one only through the entity's report
  *  join row, deleted with the entity), plus the content's context URL. Null when the lookup failed:
- *  read it as unknown, never as gone. */
+ *  read it as unknown, never as gone. The entity is read from that join row rather than taken from
+ *  the caller: a snapshot taken before the comment tables merged holds a v1 comment's old id. */
 export async function reportReachability(
   type: ReportEntity,
-  entityId: number | null,
   reportId: number
 ): Promise<{ reachable: boolean; contextUrl: string | null } | null> {
   const join = reportEntity(type);
   try {
     const { rows } = await sql<{ reachable: boolean; url: string | null }>`
       SELECT EXISTS (
-               SELECT 1 FROM ${sql.table(join.reportTable)} er
-               WHERE er."reportId" = ${reportId} AND ${reportLinkFilter(join, 'er.reportId')}
+               SELECT 1 FROM ${sql.table(join.reportTable)} er WHERE er."reportId" = ${reportId}
              ) AS reachable,
-             ${
-               entityId ? reportContextUrl(type, sql<number>`${entityId}::int`) : sql`null::text`
-             } AS url
+             (SELECT ${reportContextUrl(type, sql<number>`er.${sql.ref(join.fk)}`)}
+              FROM ${sql.table(
+                join.reportTable
+              )} er WHERE er."reportId" = ${reportId} LIMIT 1) AS url
     `.execute(dbRead);
     return rows[0] ? { reachable: Boolean(rows[0].reachable), contextUrl: rows[0].url } : null;
   } catch {
@@ -248,8 +207,7 @@ function reportQueueBase({
     // Who RESOLVED it, aliased so it does not collide with the reporter join above. Retool's report
     // table showed this column; without it a moderator cannot tell whether to re-open a closed report.
     .leftJoin('User as resolver', 'resolver.id', 'Report.statusSetBy')
-    .where(entityExists)
-    .where(reportLinkFilter(join, 'Report.id'));
+    .where(entityExists);
 
   if (reasons !== 'all') base = base.where('Report.reason', 'in', reasons);
   if (reportedBy) base = base.where('User.username', 'ilike', `${reportedBy}%`);
@@ -421,7 +379,6 @@ export async function getReportHistory(
         join.reportTable
       )} er where er."reportId" = "Report"."id")`
     )
-    .where(reportLinkFilter(join, 'Report.id'))
     .where('Report.statusSetAt', 'is not', null)
     // The daily Clavata expiry closes reports as the system user; nobody worked those.
     .where('Report.statusSetBy', 'is distinct from', SYSTEM_USER_ID)
@@ -503,8 +460,7 @@ export async function getReportQueueWorkers(type: ReportEntity): Promise<QueueWo
     select r."statusSetBy" as "by", max(r."statusSetAt") as "at", count(*)::int as "count"
     from "Report" r
     join ${sql.table(join.reportTable)} er on er."reportId" = r."id"
-    where ${reportLinkFilter(join, 'er.reportId')}
-      and r."statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
+    where r."statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
       and r."statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
       and r."status" in (${sql.join(REVIEWED_REPORT_STATUSES.map((s) => sql.lit(s)))})
     group by r."statusSetBy"
@@ -545,8 +501,7 @@ async function perReportType<V>(
   const branches = REPORT_ENTITIES.map(
     (e) => sql`select ${sql.lit(e.type)} as type, ${value} as value
       from ${sql.table(e.reportTable)} er
-      join matched r on r."id" = er."reportId"
-      where ${reportLinkFilter(e, 'er.reportId')}`
+      join matched r on r."id" = er."reportId"`
   );
   const { rows } = await sql<{ type: string; value: V }>`with matched as materialized (${reports})
     ${sql.join(branches, sql` union all `)}`.execute(dbRead);
@@ -558,11 +513,14 @@ export async function setReportStatus({
   status,
   userId,
   ip,
+  noRewardFor = [],
 }: {
   id: number;
   status: ReportStatus;
   userId: number;
   ip?: string;
+  /** Reporters paid nothing for this report, whatever it says. */
+  noRewardFor?: readonly number[];
 }) {
   // A stale tab or a forged id must not report success. The UPDATE is deliberately a no-op when the
   // report is ALREADY in the requested status (that guard protects the reward path), so "nothing
@@ -603,7 +561,7 @@ export async function setReportStatus({
     await rewardReportReporters({
       reportId: id,
       reporterIds,
-      unpaidReporterIds: reportersWithoutReward(updated),
+      unpaidReporterIds: [...reportersWithoutReward(updated), ...noRewardFor],
       ip,
     });
   }
@@ -671,7 +629,7 @@ export type MostReportedRow = {
   /** `other` only when the report has no row in ANY report table. */
   entity: ReportEntity | 'other';
   entityId: number | null;
-  /** Site-relative deep link for entities with no page of their own — see `commentContextUrl`. */
+  /** Site-relative deep link for entities with no page of their own — see `CONTEXT_RESOLVERS`. */
   contextUrl: string | null;
   reportedByUsername: string | null;
   /** See `getOwnerFlaggedMinorModelIds`. Always false for anything but a model. */
@@ -837,7 +795,7 @@ async function fetchMostReported({
   const entityId = (type: ReportEntity) => {
     const join = reportEntity(type);
     return sql<number | null>`(SELECT er.${sql.ref(join.fk)} FROM ${sql.table(join.reportTable)} er
-                WHERE er."reportId" = top.id AND ${reportLinkFilter(join, 'er.reportId')} LIMIT 1)`;
+                WHERE er."reportId" = top.id LIMIT 1)`;
   };
 
   const { rows } = await sql<
@@ -935,7 +893,7 @@ export async function getReportedEntityId(
   // The primary, not the replica: the moderator is acting on a row they just opened.
   const { rows } = await sql<{ id: number }>`
     SELECT er.${sql.ref(join.fk)} AS id FROM ${sql.table(join.reportTable)} er
-    WHERE er."reportId" = ${reportId} AND ${reportLinkFilter(join, 'er.reportId')} LIMIT 1
+    WHERE er."reportId" = ${reportId} LIMIT 1
   `.execute(dbWrite);
   return rows[0]?.id ?? null;
 }

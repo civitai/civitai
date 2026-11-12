@@ -72,6 +72,8 @@ export function eventSeasonKeys(event: string, season: EventPointSeason) {
     crucibleAwarded: (crucibleId: number) => `${root}:crucible-awarded:${crucibleId}` as const,
     // the bucket the referee last settled up to
     cut: `${root}:cut` as const,
+    // ms the referee last settled removals to; unlike cut, it advances through the finalize window
+    removeCut: `${root}:remove-cut` as const,
     // UTC day -> JSON { team: points per UTC hour (24) }, plus `cut`: when the hours were settled to
     teamHours: `${root}:team-hours` as const,
   } as const;
@@ -168,6 +170,9 @@ export const eventOwnerTopic = (event: string, topicId: string) =>
   `${SignalTopic.EventPoints}:${event}:owner:${topicId}` as const;
 
 export const LIVE_BUCKET_MS = 5 * 60 * 1000;
+// Must outlast failed settles: a read sums every bucket since the cut, so one that expires first
+// drops out of the shown total. Also the read's lookback limit.
+export const LIVE_BUCKET_TTL_S = 12 * 60 * 60;
 export const liveBucket = (time: Date) => Math.floor(time.getTime() / LIVE_BUCKET_MS);
 export const utcDay = (time: Date) => time.toISOString().slice(0, 10);
 // storyline ids whose spark scored for this person on this UTC day

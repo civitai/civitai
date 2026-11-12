@@ -1,8 +1,8 @@
 {
   "metrics": {
-    "handlers": 24,
-    "handlersWithDebug": 19,
-    "metrics": 79
+    "handlers": 23,
+    "handlersWithDebug": 18,
+    "metrics": 78
   },
   "entityTypes": {
     "Article": {
@@ -171,9 +171,6 @@
     "CollectionContributor": [
       "Collection.contributorCount",
       "Collection.followerCount"
-    ],
-    "CommentV2": [
-      "User.commentCount"
     ],
     "CommentV3": [
       "Article.commentCount",

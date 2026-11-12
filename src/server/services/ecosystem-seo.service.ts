@@ -250,11 +250,7 @@ async function getTopLoras(
   // Prefer the page's media type, but fall back to any PG-rated showcase item: a video LoRA
   // whose showcase is a still would otherwise render as a coverless card. Over-fetch and drop
   // the ones with no usable cover so the row is always full.
-  // Past this process's L1: the result is stored for a day.
-  const imagesByVersion = await imagesForModelVersionsCache.fetch(
-    loras.map((l) => l.versionId),
-    { bypassLocal: true }
-  );
+  const imagesByVersion = await imagesForModelVersionsCache.fetch(loras.map((l) => l.versionId));
   return loras
     .map((l): EcosystemSeoLora | null => {
       const candidates = (imagesByVersion[l.versionId]?.images ?? []).filter(

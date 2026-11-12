@@ -23,6 +23,10 @@ import { sysRedis } from '~/server/redis/client';
 import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challenge/challenge-collection-owner';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
+import {
+  distributeParticipationPrizes,
+  refundBannedEntrantReviews,
+} from '~/server/games/daily-challenge/challenge-rewards';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import {
@@ -2765,6 +2769,16 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     let process: string | undefined;
     let outcome: string | undefined;
 
+    // Before any early return: a challenge left with no judged entries still owes these.
+    if (challenge.collectionId) {
+      const refundedReviews = await refundBannedEntrantReviews({
+        challengeId,
+        collectionId: challenge.collectionId,
+        reviewMeTagId: config.reviewMeTagId,
+      });
+      log('Paid reviews refunded to banned entrants:', refundedReviews.length);
+    }
+
     if (existingWinners.length > 0) {
       log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
       winningEntries = existingWinners.map((w) => ({
@@ -2982,56 +2996,18 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
     // even though it's only populated inside the conditional (participation prizes are optional).
     const participationUserIds: number[] = [];
-    if (challenge.entryPrize && challenge.entryPrize.buzz > 0 && challenge.collectionId) {
-      const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
-        SELECT DISTINCT i."userId"
-        FROM "CollectionItem" ci
-        JOIN "Image" i ON i.id = ci."imageId"
-        WHERE ci."collectionId" = ${challenge.collectionId}
-          AND ci.status = 'ACCEPTED'
-        GROUP BY i."userId"
-        HAVING COUNT(*) >= ${challenge.entryPrizeRequirement}
-      `;
-
-      if (earnedEntryPrizes.length > 0) {
-        const winnerUserIds = winningEntries.map((e) => e.userId);
-        // Exclude winners from entry prizes (they get winner prizes instead)
-        const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
-        participationUserIds.push(...entryPrizeUsers.map((e) => e.userId));
-
-        if (entryPrizeUsers.length > 0) {
-          // Note: externalTransactionId uses challengeId-userId pattern for idempotency
-          // This ensures retries don't create duplicate payments
-          await withRetries(() =>
-            createBuzzTransactionMany(
-              entryPrizeUsers.map(({ userId }) => ({
-                type: TransactionType.Reward,
-                toAccountId: userId,
-                fromAccountId: 0, // central bank
-                amount: challenge.entryPrize!.buzz,
-                description: `Challenge Entry Prize: ${challenge.title}`,
-                externalTransactionId: `challenge-entry-prize-${challengeId}-${userId}`,
-                toAccountType: 'blue',
-              }))
-            )
-          );
-          log('Entry participation prizes sent:', entryPrizeUsers.length);
-
-          // Notify entry prize recipients
-          await createNotification({
-            type: 'challenge-participation',
-            category: NotificationCategory.System,
-            key: `challenge-participation:${challengeId}:final`,
-            userIds: entryPrizeUsers.map((e) => e.userId),
-            details: {
-              challengeId,
-              challengeName: challenge.title,
-              prize: challenge.entryPrize!.buzz,
-            },
-          });
-          log('Entry prize users notified');
-        }
-      }
+    if (challenge.entryPrize && challenge.collectionId) {
+      const paid = await distributeParticipationPrizes({
+        challengeId,
+        collectionId: challenge.collectionId,
+        title: challenge.title,
+        entryPrize: challenge.entryPrize,
+        entryPrizeRequirement: challenge.entryPrizeRequirement,
+        excludeUserIds: winningEntries.map((e) => e.userId),
+        notificationKey: `challenge-participation:${challengeId}:final`,
+      });
+      participationUserIds.push(...paid);
+      log('Entry participation prizes sent:', paid.length);
     }
 
     // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).

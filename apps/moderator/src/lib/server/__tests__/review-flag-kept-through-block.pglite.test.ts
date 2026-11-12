@@ -1,8 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { freshPglite } from '../../../test/pglite';
+import { DEFERRED_BLOCK_EFFECT_TABLE_SQL } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { imagesVersion, imageVersion, removedNotDismissed } from '../csam-queue-set-aside';
 import type * as ModActivity from '../mod-activity';
 import type * as ThumbnailCache from '../thumbnail-cache';
@@ -69,7 +71,7 @@ const {
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   AppealRestoreRefusedError,
-  FlagOnlyRemovedError,
+  RemovedImageNotRestorableError,
   resolveImageAppeal,
 } = await import('../image-moderation.service');
 
@@ -90,6 +92,7 @@ CREATE TABLE "Image" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "Appeal" (
@@ -273,7 +276,7 @@ describe('blockImage and the block reason', () => {
 describe('an image removed with only the review flag left', () => {
   it('is not put back live by accepting it, and the refusal reaches the caller', async () => {
     await expect(acceptImage({ imageId: FLAGGED_REMOVED, userId: 2 })).rejects.toBeInstanceOf(
-      FlagOnlyRemovedError
+      RemovedImageNotRestorableError
     );
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
@@ -452,6 +455,29 @@ describe('dismissUserFromCsamQueue', () => {
       )
     ).rows.map((r) => r.entityId);
 
+  it('refuses the feedback capture account: its captures are dismissed one at a time', async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+        VALUES (58, ${FEEDBACK_CAPTURE_OWNER_ID}, 'csam', 'moderated', 'Blocked', 32);
+    `);
+    const version = (
+      await removedNotDismissed(kysely(), { table: true, writable: true })
+        .select(imagesVersion('i').as('v'))
+        .where('i.userId', '=', FEEDBACK_CAPTURE_OWNER_ID)
+        .executeTakeFirstOrThrow()
+    ).v;
+
+    expect(
+      await dismissUserFromCsamQueue({
+        userId: FEEDBACK_CAPTURE_OWNER_ID,
+        expectedCount: 1,
+        moderatorId: 2,
+        version,
+      })
+    ).toEqual({ ok: false, reason: 'capture' });
+    expect(await dismissedIds()).toEqual([57]);
+  });
+
   it('dismisses every removed image not yet dismissed and keeps every flag', async () => {
     expect(await dismissUser(2)).toEqual({
       ok: true,
@@ -557,17 +583,50 @@ describe('dismissUserFromCsamQueue', () => {
 });
 
 describe('resolveImageAppeal', () => {
-  it('approving does not restore an image under the review flag', async () => {
+  it('approving is refused for an image under the review flag, and the appeal stays Pending', async () => {
     await seedPendingAppeal(FLAGGED_REMOVED);
 
-    await resolveImageAppeal({
-      imageId: FLAGGED_REMOVED,
-      status: 'Approved',
-      resolvedReason: 'misclassified',
-      userId: 2,
-    });
+    await expect(
+      resolveImageAppeal({
+        imageId: FLAGGED_REMOVED,
+        status: 'Approved',
+        resolvedReason: 'misclassified',
+        userId: 2,
+      })
+    ).rejects.toBeInstanceOf(AppealRestoreRefusedError);
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    const { rows } = await db.query<{ status: string }>(
+      `SELECT status FROM "Appeal" WHERE "entityId" = $1`,
+      [FLAGGED_REMOVED]
+    );
+    expect(rows).toEqual([{ status: 'Pending' }]);
+  });
+
+  it('approving does not restore an image dismissed from the review queue either, and pays nothing', async () => {
+    await seedPendingAppeal(FLAGGED_REMOVED);
+    expect(await dismiss(FLAGGED_REMOVED, 2)).toEqual({ ok: true });
+    const effects = await import('../image-moderation-effects');
+    vi.mocked(effects.refundAppealFee).mockClear();
+    vi.mocked(effects.notifyAppealResolved).mockClear();
+
+    await expect(
+      resolveImageAppeal({
+        imageId: FLAGGED_REMOVED,
+        status: 'Approved',
+        resolvedReason: 'misclassified',
+        userId: 2,
+      })
+    ).rejects.toBeInstanceOf(AppealRestoreRefusedError);
+
+    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    const { rows } = await db.query<{ status: string }>(
+      `SELECT status FROM "Appeal" WHERE "entityId" = $1`,
+      [FLAGGED_REMOVED]
+    );
+    expect(rows).toEqual([{ status: 'Pending' }]);
+    expect(effects.refundAppealFee).not.toHaveBeenCalled();
+    expect(effects.notifyAppealResolved).not.toHaveBeenCalled();
   });
 
   it('rejecting does not clear the review flag', async () => {
@@ -630,5 +689,76 @@ describe('approving the appeal of an image blocked for CSAM', () => {
 
     expect(await appealStatus(CSAM_BLOCKED)).toBe('Rejected');
     expect((await imageRow(CSAM_BLOCKED)).ingestion).toBe('Blocked');
+  });
+});
+
+describe('approving an appeal whose image turns held after the close', () => {
+  const TURNS_HELD = 59;
+  const approve = () =>
+    resolveImageAppeal({ imageId: TURNS_HELD, status: 'Approved', resolvedReason: 'x', userId: 2 });
+  const appealStatus = async () =>
+    (
+      await db.query<{ status: string }>(`SELECT status FROM "Appeal" WHERE "entityId" = $1`, [
+        TURNS_HELD,
+      ])
+    ).rows[0].status;
+
+  beforeEach(async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES ($1, 10, 'appeal', 'moderated', 'Blocked', 32)`,
+      [TURNS_HELD]
+    );
+    await seedPendingAppeal(TURNS_HELD);
+    // The flag lands inside the closing statement, after its held check has read the image.
+    await db.exec(`
+      CREATE FUNCTION flag_on_close() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        UPDATE "Image" SET "needsReview" = 'csam' WHERE id = NEW."entityId";
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER flag_on_close AFTER UPDATE OF status ON "Appeal"
+        FOR EACH ROW WHEN (NEW.status = 'Approved') EXECUTE FUNCTION flag_on_close();
+    `);
+    const effects = await import('../image-moderation-effects');
+    vi.mocked(effects.refundAppealFee).mockClear();
+    vi.mocked(effects.notifyAppealResolved).mockClear();
+    vi.mocked(effects.emailAppealResolution).mockClear();
+  });
+
+  afterEach(async () => {
+    await db.exec(`
+      DROP TRIGGER IF EXISTS flag_on_close ON "Appeal"; DROP FUNCTION IF EXISTS flag_on_close();
+      DROP TRIGGER IF EXISTS no_revert ON "Appeal"; DROP FUNCTION IF EXISTS no_revert();
+    `);
+  });
+
+  const nothingPaidOrTold = async () => {
+    const effects = await import('../image-moderation-effects');
+    expect(effects.refundAppealFee).not.toHaveBeenCalled();
+    expect(effects.notifyAppealResolved).not.toHaveBeenCalled();
+    expect(effects.emailAppealResolution).not.toHaveBeenCalled();
+  };
+
+  it('is refused and put back to Pending, with no refund and no notice', async () => {
+    await expect(approve()).rejects.toBeInstanceOf(AppealRestoreRefusedError);
+
+    expect(await imageRow(TURNS_HELD)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(await appealStatus()).toBe('Pending');
+    await nothingPaidOrTold();
+  });
+
+  it('neither refunds nor tells when putting it back to Pending fails', async () => {
+    await db.exec(`
+      CREATE FUNCTION no_revert() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'connection lost'; END $$;
+      CREATE TRIGGER no_revert BEFORE UPDATE OF status ON "Appeal"
+        FOR EACH ROW WHEN (OLD.status = 'Approved' AND NEW.status = 'Pending') EXECUTE FUNCTION no_revert();
+    `);
+
+    await expect(approve()).rejects.toBeInstanceOf(AppealRestoreRefusedError);
+
+    expect(await appealStatus()).toBe('Approved');
+    await nothingPaidOrTold();
   });
 });

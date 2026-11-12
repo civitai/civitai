@@ -35,6 +35,12 @@ const EVENT = {
   getTeamCosmetic: async () => 11,
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// getTurfStock and getTurfSummaries read through Kysely, not Prisma's `$queryRaw`: both Kysely
+// clients' statements go to the same PGlite (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 // Blocks and suspensions have their own tests; nobody here is blocked.
 vi.mock('~/server/services/placement-moderation.service', () => ({
   assertCanPlace: () => Promise.resolve(),
@@ -89,6 +95,10 @@ beforeAll(async () => {
     );
     CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
+    -- contestEntry also reads running flag Crucibles.
+    CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+    CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[]);
+    CREATE TABLE "CrucibleEntry" (id serial PRIMARY KEY, "crucibleId" int, "imageId" int);
     CREATE TABLE "EventCosmeticPlacement" (
       id serial PRIMARY KEY, event text NOT NULL, "userId" int NOT NULL, "endedAt" timestamp
     );
@@ -121,6 +131,8 @@ beforeEach(async () => {
       SELECT 'e', id, ${PLACER}, 'Blue', 11, '{}' FROM "Image";
   `);
   const raw = pgliteRaw(db);
+  kysely.read.mockReset().mockImplementation(raw.queryRaw);
+  kysely.write.mockReset().mockImplementation(raw.queryRaw);
   for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
     client.$executeRaw.mockImplementation(raw.executeRaw as never);
@@ -196,6 +208,38 @@ describe("an owner's switch: keep Hat Turf off my images", () => {
     await setTurfOwnerOff('e', OFF, false);
     expect(await drawnOn(IMAGES[1])).toBe(1);
     expect(await countedImages()).toEqual([`Image:${IMAGES[0]}`, `Image:${IMAGES[1]}`]);
+  });
+});
+
+// Prisma's raw reads answered an id past int4 with no rows; through the pg pools the `int[]` bind is
+// a range error that fails the whole batch. Such an id is dropped before the statement runs.
+describe('an image id past int4 in the batch', () => {
+  const PAST_INT4 = 2 ** 31;
+  beforeEach(async () => {
+    const { rejectPastInt4 } = await import('~/test-utils/kysely-raw-fake');
+    const raw = pgliteRaw(db);
+    kysely.read.mockImplementation(async (strings: readonly string[], ...values: unknown[]) => {
+      rejectPastInt4(values);
+      return raw.queryRaw(strings as TemplateStringsArray, ...values);
+    });
+  });
+
+  it('answers the other ids, and leaves it out', async () => {
+    const { open, mine } = await getTurfSummaries('e', [IMAGES[0], PAST_INT4, IMAGES[1]], PLACER);
+    expect(open).toEqual({ [IMAGES[0]]: true, [IMAGES[1]]: false });
+    expect(mine).toEqual({ [IMAGES[0]]: true, [IMAGES[1]]: true });
+  });
+
+  it('with no other id, answers empty without a statement', async () => {
+    kysely.read.mockClear();
+    await expect(getTurfSummaries('e', [PAST_INT4], PLACER)).resolves.toEqual({
+      team: null,
+      images: {},
+      open: {},
+      mine: {},
+      hidden: {},
+    });
+    expect(kysely.read).not.toHaveBeenCalled();
   });
 });
 

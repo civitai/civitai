@@ -1,4 +1,5 @@
 import type * as z from 'zod';
+import { hfRepoOfAir, isRefusedHfRepo } from '~/server/services/blocks/app-base-model-licence';
 import { seamlessPano360Recipe } from './seamless-pano.recipe';
 import { starterComfyTxt2imgRecipe } from './starter-comfy-txt2img.recipe';
 
@@ -240,5 +241,17 @@ for (const [id, recipe] of Object.entries(recipeRegistry)) {
           'Buzz ceiling (plan §5).'
       );
     }
+  }
+}
+
+// Excluded until hub task 1a1c6c4a6c010a212 lands; the submit-time check still covers it.
+const RECIPES_EXCLUDED_FROM_LICENCE_CHECK: ReadonlySet<string> = new Set(['seamless-pano-360']);
+
+for (const [id, recipe] of Object.entries(recipeRegistry) as [string, AnyBlockRecipe][]) {
+  if (RECIPES_EXCLUDED_FROM_LICENCE_CHECK.has(id)) continue;
+  for (const air of recipe.resourceAllowlist.staticAirs) {
+    const repo = hfRepoOfAir(air);
+    if (repo && isRefusedHfRepo(repo))
+      throw new Error(`recipe '${id}' pins a resource no app may use: ${air}`);
   }
 }

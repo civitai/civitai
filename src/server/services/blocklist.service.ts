@@ -1,3 +1,5 @@
+import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
+import addressparser from 'nodemailer/lib/addressparser/index.js';
 import { CacheTTL } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -384,6 +386,15 @@ function findBlockedPattern(value: string, blockedPatterns: string[]) {
   return blockedPatterns.find((pattern) => lowerValue.includes(pattern));
 }
 
+/** Position of the first entry `value` contains in the STORED list (empties keep their slot), or -1. */
+function findBlockedPatternId(value: string, blockedPatterns: string[]) {
+  const lowerValue = value.toLowerCase();
+  return blockedPatterns.findIndex(
+    // Load-bearing: `includes('')` is true for every string, so one empty entry would block everything.
+    (pattern) => pattern.trim().length > 0 && lowerValue.includes(pattern)
+  );
+}
+
 /**
  * Entries for a SUBSTRING match. Empties dropped, and deliberately NOT folded.
  *
@@ -490,7 +501,14 @@ export type BlockedContentKind = 'link' | 'pattern';
  */
 export type BlockedContentHit =
   | { kind: 'link'; index: number; matched: string[] }
-  | { kind: 'pattern'; index: number; matched: string };
+  | {
+      kind: 'pattern';
+      index: number;
+      matched: string;
+      patternId: number;
+      /** The `Blocklist` row `patternId` indexes into; null when the type has no row. */
+      listId: number | null;
+    };
 
 type UserText = string | null | undefined;
 
@@ -530,11 +548,12 @@ async function findBlockedText(
   const present = values.flatMap((value, index) => (value ? [{ value, index }] : []));
   if (!present.length) return [];
 
-  const [blockedDomains, blockedPatterns] = await Promise.all([
+  const [blockedDomains, patternList] = await Promise.all([
     getBlocklistData(BlocklistType.LinkDomain),
-    getBlocklistData(BlocklistType.MessagePattern),
+    getBlocklistDTO({ type: BlocklistType.MessagePattern }),
   ]);
-  const matchable = substringEntries(blockedPatterns);
+  const blockedPatterns = patternList.data;
+  const listId = patternList.id ?? null;
   const matchableDomains = exactEntries(blockedDomains);
 
   const hits: BlockedContentHit[] = [];
@@ -550,9 +569,15 @@ async function findBlockedText(
     }
 
     for (const form of exemptFromPatterns ? [] : forms) {
-      const matched = findBlockedPattern(form, matchable);
-      if (matched !== undefined) {
-        hits.push({ kind: 'pattern', index, matched });
+      const patternId = findBlockedPatternId(form, blockedPatterns);
+      if (patternId !== -1) {
+        hits.push({
+          kind: 'pattern',
+          index,
+          matched: blockedPatterns[patternId],
+          patternId,
+          listId,
+        });
         break;
       }
     }
@@ -598,7 +623,7 @@ async function throwOnBlockedText(
     exemptFromLinks: boolean;
     exemptFromPatterns: boolean;
     onLinkMatch: (matched: string[]) => void;
-    onPatternMatch: (matched: string) => Promise<void> | void;
+    onPatternMatch: (patternId: number) => Promise<void> | void;
   }
 ) {
   const hits = await findBlockedText(values, { exemptFromLinks, exemptFromPatterns });
@@ -607,7 +632,7 @@ async function throwOnBlockedText(
       onLinkMatch(hit.matched);
       return;
     }
-    await onPatternMatch(hit.matched);
+    await onPatternMatch(hit.patternId);
   }
 }
 
@@ -694,10 +719,18 @@ export async function throwOnBlockedUserContent(
   {
     isModerator = false,
     surface,
+    entityType,
+    entityId,
+    userId,
     onBlocked,
   }: {
     isModerator?: boolean;
     surface?: string;
+    /** The row being written, for the pattern-match log. Omitted on a create (no id yet). */
+    entityType?: string;
+    entityId?: number;
+    /** The user saving the content, when the caller has one. */
+    userId?: number;
     /**
      * Replaces the thrown `BAD_REQUEST` for a caller that has its own error type. It is handed
      * WHICH list rejected the text, so a caller that classifies a block never has to read the
@@ -718,7 +751,7 @@ export async function throwOnBlockedUserContent(
     exemptFromLinks: false,
     exemptFromPatterns: isModerator,
     onLinkMatch: (blockedFor) => reject('link', `invalid urls: ${blockedFor.join(', ')}`),
-    onPatternMatch: async (matched) => {
+    onPatternMatch: async (patternId) => {
       // No try/catch: `getBoolean` swallows its own failures and returns `false`, so an
       // unreachable or uninitialised Flipt already degrades to recording. A catch here would be
       // unreachable code that reads as a safety net, and the only test able to exercise it would
@@ -734,7 +767,7 @@ export async function throwOnBlockedUserContent(
         message: enforce
           ? 'Blocked pattern found in user content; write rejected'
           : 'Blocked pattern found in user content; not enforced on this surface yet',
-        details: { surface, matched, enforced: enforce },
+        details: { surface, entityType, entityId, userId, patternId, enforced: enforce },
       }).catch(() => undefined);
 
       if (enforce) {
@@ -827,11 +860,14 @@ export function matchesBlockedSuffix(entries: string[], domain: string) {
  * Callers must exempt users who ALREADY have this address. A domain appended to the upstream list
  * later must not lock out an account that predates it — same rule as the hub's login action.
  */
-export async function assertEmailAllowed(email: string) {
-  // `lastIndexOf`, not `split('@')[1]`: a quoted-local address ("a@b"@host) has more than one `@`,
-  // and taking the first segment yields a domain that matches nothing. A trailing dot is the FQDN
-  // root and resolves identically, so `provider.com.` would otherwise miss every list entry, pass
-  // the MX probe, and take a second slot in a citext-unique column for one real mailbox.
+export async function assertEmailAllowed(input: string) {
+  // `addressparser` from the same nodemailer `~/server/email/client` sends with.
+  const email = parsePlainEmailAddress(input, addressparser);
+  if (!email) throw throwBadRequestError('Please provide a valid email address');
+
+  // A trailing dot is the FQDN root and resolves identically, so `provider.com.` would otherwise
+  // miss every list entry, pass the MX probe, and take a second slot in a citext-unique column for
+  // one real mailbox.
   // Kept identical to the hub's `emailDomain` -- fixing one side only is how the two diverge.
   const at = email.lastIndexOf('@');
   const rawDomain = at === -1 ? '' : email.slice(at + 1);

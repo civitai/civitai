@@ -81,7 +81,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
-import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
+import { BLOCK_CONSENT_BUDGET_MAX_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -421,7 +421,7 @@ describe('blocks.grantScopes — consent budget', () => {
       caller.grantScopes({
         appBlockId: 'ab_x',
         scopes: ['ai:write:budgeted'],
-        buzzBudgetPerDay: BLOCK_BUZZ_CAP_PER_DAY + 1,
+        buzzBudgetPerDay: BLOCK_CONSENT_BUDGET_MAX_PER_DAY + 1,
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(grantMock.create).not.toHaveBeenCalled();

@@ -42,6 +42,7 @@
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import LossGraph from '$lib/components/LossGraph.svelte';
+  import RunLog from '$lib/components/RunLog.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
@@ -864,6 +865,12 @@
   {#if d.traces.length}
     {#key d.workflowId}
       <LossGraph traces={d.traces} training={d.state === 'training'} />
+    {/key}
+  {/if}
+
+  {#if d.state !== 'training' && d.traces.length}
+    {#key d.workflowId}
+      <RunLog traces={d.traces} name={d.name} />
     {/key}
   {/if}
 

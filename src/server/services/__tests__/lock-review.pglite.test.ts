@@ -67,6 +67,8 @@ const {
   resolveLockReviewAppeal,
   getLockReviewState,
   latestModelAppealOfKind,
+  LOCK_REVIEW_DETECTION_HELD,
+  LOCK_REVIEW_MATCH_CHECK_FAILED,
   LOCK_REVIEW_HELD,
   LOCK_REVIEW_UNAVAILABLE,
 } = await import('~/server/services/lock-review.service');
@@ -94,8 +96,17 @@ beforeAll(async () => {
       nsfw boolean NOT NULL DEFAULT false,
       poi boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'Published',
       meta jsonb NOT NULL DEFAULT '{}'
     );
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE "ModelFile" (
+      id int PRIMARY KEY,
+      "modelVersionId" int NOT NULL,
+      type text NOT NULL,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "ModelFileHash" ("fileId" int NOT NULL, type text NOT NULL, hash text NOT NULL);
     CREATE TABLE "Appeal" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -155,7 +166,9 @@ async function seed({
   owner,
   meta = {},
 }: Seed) {
-  await db.exec(`DELETE FROM "Model"; DELETE FROM "Appeal"; DELETE FROM "Held";`);
+  await db.exec(
+    `DELETE FROM "Model"; DELETE FROM "Appeal"; DELETE FROM "Held"; DELETE FROM "ModelVersion"; DELETE FROM "ModelFile"; DELETE FROM "ModelFileHash";`
+  );
   await db.query(
     `INSERT INTO "Model" (id, "userId", "lockedProperties", nsfw, poi, minor, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [MODEL, owner ?? OWNER, locked, nsfw, !!poi, !!minor, meta]
@@ -291,13 +304,8 @@ describe('approving a lock review', () => {
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { poi: true },
-    { minor: true },
-    { locked: ['nsfw', 'minor'] },
-    { locked: ['nsfw', 'poi'] },
-  ])(
-    'refuses once the model is flagged or locked as a real person or a minor (%o)',
+  it.each([{ poi: true }, { minor: true }])(
+    'refuses once the model is flagged as a real person or a minor (%o)',
     async (flag) => {
       await seed({ locked: ['nsfw'], ...flag });
       const before = (await modelRow()).lockedProperties;
@@ -307,6 +315,114 @@ describe('approving a lock review', () => {
       expect((await appealRow()).status).toBe('Pending');
     }
   );
+
+  it('lifts the named lock while poi and minor stay locked off', async () => {
+    await seed({ locked: ['poi', 'minor', 'sfwOnly', 'nsfw'] });
+
+    await approve();
+
+    expect(await modelRow()).toMatchObject({
+      lockedProperties: ['poi', 'minor', 'sfwOnly'],
+      nsfw: true,
+    });
+    expect((await appealRow()).status).toBe('Approved');
+  });
+
+  const heldDetection = (label: string) => ({
+    textScanFlags: { [label]: { redetected: { kind: 'redetected', textHash: 'held' } } },
+  });
+
+  it.each(['poi', 'minor'])(
+    'refuses while a %s detection is held for a moderator, and changes nothing',
+    async (label) => {
+      await seed({ locked: ['poi', 'minor', 'nsfw'], meta: heldDetection(label) });
+
+      await expect(approve()).rejects.toThrow(LOCK_REVIEW_DETECTION_HELD);
+      expect((await modelRow()).lockedProperties).toEqual(['poi', 'minor', 'nsfw']);
+      expect((await appealRow()).status).toBe('Pending');
+    }
+  );
+
+  it('refuses while a real person file match waits for a moderator', async () => {
+    await seed({ locked: ['poi', 'nsfw'], meta: { poiHashMatch: { at: 'then', hash: 'h' } } });
+
+    await expect(approve()).rejects.toThrow(LOCK_REVIEW_DETECTION_HELD);
+    expect((await modelRow()).lockedProperties).toEqual(['poi', 'nsfw']);
+  });
+
+  describe('with a minor file match waiting for a moderator', () => {
+    const SEED_MODEL = 90;
+    const SEED_OWNER = 99;
+
+    /** A moderator-flagged minor model, by default another uploader's, shares a weights file with the model. */
+    async function matchFile(seedOwner = SEED_OWNER) {
+      await db.query(
+        `INSERT INTO "Model" (id, "userId", "lockedProperties", minor) VALUES ($1, $2, '{minor}', true)`,
+        [SEED_MODEL, seedOwner]
+      );
+      await db.exec(`
+        INSERT INTO "ModelVersion" VALUES (1, ${MODEL}), (2, ${SEED_MODEL});
+        INSERT INTO "ModelFile" (id, "modelVersionId", type) VALUES (1, 1, 'Model'), (2, 2, 'Model');
+        INSERT INTO "ModelFileHash" VALUES (1, 'SHA256', 'same'), (2, 'SHA256', 'same');
+      `);
+    }
+
+    it('refuses to approve, and changes nothing', async () => {
+      await seed({ locked: ['poi', 'minor', 'nsfw'] });
+      await matchFile();
+
+      await expect(approve()).rejects.toThrow(LOCK_REVIEW_DETECTION_HELD);
+      expect((await modelRow()).lockedProperties).toEqual(['poi', 'minor', 'nsfw']);
+      expect((await appealRow()).status).toBe('Pending');
+    });
+
+    it('approves once a moderator has dismissed the match', async () => {
+      await seed({
+        locked: ['minor', 'nsfw'],
+        meta: { minorHashDismissed: { at: 'then', by: 1 } },
+      });
+      await matchFile();
+
+      await approve();
+
+      expect((await modelRow()).lockedProperties).toEqual(['minor']);
+    });
+
+    it('approves when the match is to the same uploader, which the sweep flags rather than queues', async () => {
+      await seed({ locked: ['minor', 'nsfw'] });
+      await matchFile(OWNER);
+
+      await approve();
+
+      expect((await modelRow()).lockedProperties).toEqual(['minor']);
+    });
+
+    it('still lets the review be rejected', async () => {
+      await seed({ locked: ['minor', 'nsfw'] });
+      await matchFile();
+
+      await reject();
+
+      expect((await appealRow()).status).toBe('Rejected');
+    });
+
+    it('refuses to approve when the match cannot be checked', async () => {
+      await seed({ locked: ['minor', 'nsfw'] });
+      dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('timeout'));
+
+      await expect(approve()).rejects.toThrow(LOCK_REVIEW_MATCH_CHECK_FAILED);
+      expect((await modelRow()).lockedProperties).toEqual(['minor', 'nsfw']);
+      expect((await appealRow()).status).toBe('Pending');
+    });
+  });
+
+  it('still lets the review be rejected while a detection is held', async () => {
+    await seed({ locked: ['poi', 'nsfw'], meta: heldDetection('poi') });
+
+    await reject();
+
+    expect((await appealRow()).status).toBe('Rejected');
+  });
 
   it('refuses a request filed by someone who no longer owns the model', async () => {
     await seed({ locked: ['nsfw'], owner: NEW_OWNER });
@@ -520,7 +636,7 @@ describe("an owner's request", () => {
     );
   });
 
-  it.each([{ poi: true }, { minor: true }, { lockedProperties: ['nsfw', 'poi'] }])(
+  it.each([{ poi: true }, { minor: true }])(
     'is refused on a model flagged as a real person or a minor (%o)',
     async (flag) => {
       ownModel(flag);
@@ -531,6 +647,28 @@ describe("an owner's request", () => {
       expect(mocks.createEntityAppeal).not.toHaveBeenCalled();
     }
   );
+
+  it.each([['poi'], ['minor'], ['poi', 'minor']].map((marks) => [marks.join(' and '), marks]))(
+    'is filed while %s is locked off',
+    async (_, marks) => {
+      ownModel({ lockedProperties: [...marks, 'sfwOnly', 'nsfw'] });
+
+      await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+
+      expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw'] } })
+      );
+    }
+  );
+
+  it('is refused when it names a locked poi or minor', async () => {
+    ownModel({ lockedProperties: ['poi', 'minor', 'nsfw'] });
+
+    expect(
+      await refusal(createEntityAppealHandler({ input: request(['nsfw', 'poi']), ctx: owner() }))
+    ).toEqual({ code: 'BAD_REQUEST', message: LOCK_REVIEW_UNAVAILABLE });
+    expect(mocks.createEntityAppeal).not.toHaveBeenCalled();
+  });
 
   it("reopens only the owner's flag-appeal row for a flag appeal, never a lock review", async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });

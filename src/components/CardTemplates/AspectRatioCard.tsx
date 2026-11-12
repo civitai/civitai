@@ -9,7 +9,7 @@ import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecorati
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 type AspectRatio = keyof typeof aspectRatioMap;
-const aspectRatioMap = {
+export const aspectRatioMap = {
   portrait: '7/9',
   landscape: '9/7',
   square: '1',

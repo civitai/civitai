@@ -19,7 +19,7 @@ export const commentDetailFetcher = createDetailFetcher({
     // flags, because the two takedown paths write different ones: a moderator sets `tosViolation`,
     // while `entity-moderation`'s automated sweep sets `hidden`. A tombstone keeps its row, so it is
     // excluded the same way.
-    // Model-page notifications carry the old Comment id, or since the model flip (version 4) the
+    // Model-page notifications carry the old Comment id, or (version 4) the
     // comment's own id when it has no old one. A versioned row is model-page by its type, or by the
     // missing threadType for the two types that emit both shapes, not by `modelId`, which
     // new-image-comment and new-review-response carry too.

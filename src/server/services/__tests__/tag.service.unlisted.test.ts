@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -11,6 +11,7 @@ const {
   modelVotableTagsFetch,
   modelVotableTagsBust,
   bustCacheTagSpy,
+  amIBlocked,
 } = vi.hoisted(() => ({
   imageTagsFetch: vi.fn(),
   imageTagsBust: vi.fn(),
@@ -20,6 +21,7 @@ const {
   modelVotableTagsFetch: vi.fn(),
   modelVotableTagsBust: vi.fn(),
   bustCacheTagSpy: vi.fn().mockResolvedValue(undefined),
+  amIBlocked: vi.fn().mockResolvedValue(false),
 }));
 
 // The db and redis clients come from the canonical shared mocks. The read/write
@@ -50,6 +52,8 @@ modelFindFirst.mockResolvedValue({ userId: 999 });
 // `image.findFirst` shared the same spy — `addTagVotes` reads `creator?.userId`
 // from whichever of the two the entity type selects.
 dbMock.dbRead.image.findFirst.mockResolvedValue({ userId: 999 });
+// The model the model-path tests read is published and owned by someone else, unless a test says.
+dbMock.dbRead.model.findUnique.mockResolvedValue({ status: 'Published', userId: 999, poi: false });
 redisDel.mockResolvedValue(1);
 redisPackedGet.mockResolvedValue(null);
 redisPackedSet.mockResolvedValue(undefined);
@@ -82,6 +86,10 @@ vi.mock('@civitai/db-queries/tag', () => ({
   listImageTagVotesMany: imageVotes,
   listModelTagVotes: modelVotes,
 }));
+vi.mock('~/server/services/user.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  amIBlockedByUser: amIBlocked,
+}));
 // clearCache() fans out to the hidden-preferences caches — stub them so the vote
 // mutations don't reach real Redis/DB.
 vi.mock('~/server/services/user-preferences.service', () => ({
@@ -104,6 +112,17 @@ import {
 // bottom of this file for why `toBe` and not a structural matcher.
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import type { SessionUser } from '~/types/session';
+
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
 
 const WRONG_TIER =
   'ported read was handed a client other than kyselyRead (kyselyWrite / kyselyReadLong routes it ' +
@@ -225,6 +244,88 @@ describe('getVotableTags — model tags', () => {
       expect(tags.find((t) => t.id === NUDE)?.vote).toBeUndefined();
       expect(modelVotes).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('getVotableTags — a model the viewer may not see', () => {
+  const OWNER = 5;
+  const STRANGER = 77;
+  type Viewer = { userId?: number; isModerator?: boolean };
+  const ANON: Viewer = {};
+  const SELF: Viewer = { userId: OWNER };
+  const OTHER: Viewer = { userId: STRANGER };
+  const MOD: Viewer = { userId: STRANGER, isModerator: true };
+
+  const modelIs = (model: Record<string, unknown> | null) =>
+    dbMock.dbRead.model.findUnique.mockResolvedValue(
+      model && { status: 'Published', userId: OWNER, poi: false, ...model }
+    );
+  const tagNames = async (viewer: Viewer) =>
+    (await getVotableTags({ type: 'model', id: 1, ...viewer })).map((t) => t.name);
+
+  afterAll(() => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Published',
+      userId: 999,
+      poi: false,
+    });
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    modelVotes.mockResolvedValue([]);
+    amIBlocked.mockResolvedValue(false);
+    primeModelCache(1, [modelTag(NUDE, 'nude')]);
+    tagCacheFetch.mockResolvedValue({ [NUDE]: { id: NUDE, name: 'nude' } });
+  });
+
+  it('answers a draft model as an unknown id: no tags, except for its owner and moderators', async () => {
+    for (const viewer of [ANON, OTHER]) {
+      modelIs({ status: 'Draft' });
+      expect(await tagNames(viewer)).toEqual([]);
+    }
+    for (const viewer of [SELF, MOD]) {
+      modelIs({ status: 'Draft' });
+      expect(await tagNames(viewer)).toEqual(['nude']);
+    }
+  });
+
+  it('hides a poi model from everyone but its owner and moderators', async () => {
+    for (const [viewer, expected] of [
+      [ANON, []],
+      [OTHER, []],
+      [SELF, ['nude']],
+      [MOD, ['nude']],
+    ] as const) {
+      modelIs({ poi: true });
+      expect(await tagNames(viewer)).toEqual(expected);
+    }
+  });
+
+  it("hides a published model from a viewer its owner blocked, not from the owner's own read", async () => {
+    amIBlocked.mockResolvedValue(true);
+    modelIs({});
+    expect(await tagNames(OTHER)).toEqual([]);
+    modelIs({});
+    expect(await tagNames(SELF)).toEqual(['nude']);
+  });
+
+  it('serves a published model to a moderator its owner blocked', async () => {
+    amIBlocked.mockResolvedValue(true);
+    modelIs({});
+    expect(await tagNames(MOD)).toEqual(['nude']);
+  });
+
+  it('serves a published model to anyone (control)', async () => {
+    for (const viewer of [ANON, OTHER]) {
+      modelIs({});
+      expect(await tagNames(viewer)).toEqual(['nude']);
+    }
+  });
+
+  it('answers a missing model with no tags', async () => {
+    modelIs(null);
+    expect(await tagNames(OTHER)).toEqual([]);
   });
 });
 

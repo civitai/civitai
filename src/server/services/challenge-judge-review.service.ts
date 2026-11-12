@@ -1,9 +1,9 @@
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { judgeReviewCommentSql } from '~/server/games/daily-challenge/challenge-helpers';
 import { clearLadder } from '~/server/games/daily-challenge/challenge-pairwise-store';
-import { bulkDeleteCommentsV2 } from '~/server/services/commentsv2.service';
 import { writeJudgeComment } from '~/server/services/commentv3/comment-write.service';
+import { bulkDeleteComments } from '~/server/services/commentv3/moderation.service';
 import { toggleReaction } from '~/server/services/reaction.service';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
@@ -86,7 +86,7 @@ export async function rejudgeEntries({
       WHERE cm."entityId" = ANY(${imageIds}::int[]) AND ${judgeComment}
     `
   ).map((r) => r.id);
-  await bulkDeleteCommentsV2({ ids: commentIds });
+  await bulkDeleteComments({ ids: commentIds });
 
   const owed = JSON.stringify(Object.fromEntries(imageIds.map((imageId) => [imageId, 0])));
   await dbWrite.$transaction([
@@ -110,4 +110,22 @@ export async function rejudgeEntries({
   ]);
   await bustContestCollectionItemsCache(imageIds);
   return { entries: imageIds.length, comments: commentIds.length };
+}
+
+export async function getJudgeCommentForImage({
+  imageId,
+  judgeUserId,
+}: {
+  imageId: number;
+  judgeUserId: number;
+}) {
+  const result = await dbRead.$queryRaw<[{ content: string }?]>`
+    SELECT c.content
+    FROM "CommentV3" c
+    WHERE c."entityType" = 'image' AND c."entityId" = ${imageId} AND c."parentId" IS NULL
+      AND c."userId" = ${judgeUserId} AND c."deletedAt" IS NULL
+    ORDER BY c."createdAt" ASC
+    LIMIT 1
+  `;
+  return result[0]?.content ?? null;
 }

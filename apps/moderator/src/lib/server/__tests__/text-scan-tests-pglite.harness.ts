@@ -27,7 +27,7 @@ END $$;`;
 const MAIN_STUB = `
   CREATE TABLE "User" (id integer PRIMARY KEY, "deletedAt" timestamp);
   CREATE TABLE "Model" (id integer PRIMARY KEY, "userId" integer, "deletedAt" timestamp);
-  CREATE TABLE "CommentV2" (id integer PRIMARY KEY, "userId" integer);
+  CREATE TABLE "CommentV3" (id integer PRIMARY KEY, "userId" integer, "deletedAt" timestamp);
 `;
 
 function usePglite(schema: string): { pg: PGlite } {
@@ -109,7 +109,7 @@ export async function seedCase(
     .insertInto('text_scan_test_case')
     .values({
       set_id: String(setId),
-      entity_type: over.entityType ?? 'CommentV2',
+      entity_type: over.entityType ?? 'CommentV3',
       entity_id: over.entityId ?? null,
       author_id: over.authorId ?? null,
       fields: over.fields === null ? null : JSON.stringify([{ heading: 'Comment', text }]),

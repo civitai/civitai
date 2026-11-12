@@ -34,6 +34,7 @@ CREATE TYPE "ReviewReactions" AS ENUM ('Like','Dislike','Laugh','Cry','Heart');
 ${ENTITY_TABLES.map((t) => `CREATE TABLE "${t}"(id serial PRIMARY KEY);`).join('\n')}
 CREATE TABLE "ComicChapter"(id serial UNIQUE NOT NULL, "projectId" int NOT NULL, position int NOT NULL, PRIMARY KEY ("projectId", position));
 CREATE TABLE app_listings(id text PRIMARY KEY, serial_id serial UNIQUE);
+CREATE TABLE "KeyValue"(key text PRIMARY KEY, value jsonb NOT NULL);
 
 CREATE TABLE "Comment"(
   id serial PRIMARY KEY, content text NOT NULL,

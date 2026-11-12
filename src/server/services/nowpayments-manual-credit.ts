@@ -30,12 +30,19 @@ export type ManualCredit = {
   fromAccountId: number;
   description: string | null;
   externalTransactionId: string | null;
+  /**
+   * The payment a Support top-up Reward says it paid by hand (`details.kind` "hand-paid…",
+   * `details.entityId` the paymentId); 'unreadable' when its entityId is not one. Null otherwise.
+   */
+  handPaidFor: number | 'unreadable' | null;
 };
 
 export type ManualCreditMatch = ManualCredit & {
   strength: 'hard' | 'soft';
   why: string;
   fromStaff: boolean;
+  /** Set on a hand-paid top-up marker: it covers the deposit whoever sent it. */
+  handPaid?: 'paid' | 'unreadable';
 };
 
 const containsPaymentId = (text: string, paymentId: number) =>
@@ -64,7 +71,18 @@ const SOFT_AMOUNT_TOLERANCE = 0.5;
 export function matchManualCredit(
   credit: ManualCredit,
   ctx: { paymentId: number; payinHash: string | null; expectedBuzz: number; fromStaff: boolean }
-): Pick<ManualCreditMatch, 'strength' | 'why'> | null {
+): Pick<ManualCreditMatch, 'strength' | 'why' | 'handPaid'> | null {
+  // Only a Reward can carry the marker: users can tip with any details, but cannot create Rewards.
+  if (credit.type === 'Reward' && credit.handPaidFor === ctx.paymentId)
+    return { strength: 'hard', why: 'hand-paid top-up names the payment', handPaid: 'paid' };
+  if (credit.type === 'Reward' && credit.handPaidFor === 'unreadable')
+    // It may be for another of the user's deposits: holds the automatic credit, but a moderator can
+    // acknowledge it.
+    return {
+      strength: 'soft',
+      why: 'hand-paid top-up with unreadable entityId',
+      handPaid: 'unreadable',
+    };
   const text = [credit.description, credit.externalTransactionId].filter(Boolean).join(' ');
   if (containsPaymentId(text, ctx.paymentId))
     return { strength: 'hard', why: 'cites the payment id' };
@@ -83,6 +101,15 @@ export function matchManualCredit(
   )
     return { strength: 'soft', why: 'staff grant near the deposit amount' };
   return null;
+}
+
+const HAND_PAID_KIND = /^hand-paid/;
+
+function readHandPaidFor(details: { entityId?: number } | null | undefined) {
+  const kind = (details as Record<string, unknown> | null | undefined)?.kind;
+  if (typeof kind !== 'string' || !HAND_PAID_KIND.test(kind)) return null;
+  const id = details?.entityId;
+  return typeof id === 'number' && Number.isSafeInteger(id) ? id : 'unreadable';
 }
 
 /**
@@ -122,6 +149,7 @@ async function getCreditsSince(userId: number, start: Date, overflowed?: string[
             fromAccountId: t.fromAccountId,
             description: t.description ?? null,
             externalTransactionId,
+            handPaidFor: readHandPaidFor(t.details),
           });
         }
         if (!parsed.cursor || parsed.transactions.length === 0) break;
@@ -151,8 +179,10 @@ export async function findManualCredits(
   const matches: ManualCreditMatch[] = [];
   for (const credit of credits) {
     const fromStaff = staff.has(credit.fromAccountId);
-    // A creator's Rewards are mostly from other users' actions; only a staff Reward can be a hand grant.
-    if (credit.type === 'Reward' && !fromStaff) continue;
+    // A creator's Rewards are mostly from other users' actions; only a staff Reward can be a hand
+    // grant, unless it carries the hand-paid marker.
+    const marker = credit.handPaidFor === ctx.paymentId || credit.handPaidFor === 'unreadable';
+    if (credit.type === 'Reward' && !fromStaff && !marker) continue;
     const match = matchManualCredit(credit, { ...ctx, fromStaff });
     if (match) matches.push({ ...credit, ...match, fromStaff });
   }
@@ -182,6 +212,15 @@ export async function findHandGrantsForDeposit(
   // Failing closed would strand every deposit of an account with that many refunds a day.
   const overflowed: string[] = [];
   const matches = await findManualCredits(userId, { ...ctx, since }, overflowed);
-  const covering = matches.filter((m) => m.strength === 'hard' && m.fromStaff);
-  return { covering, possible: covering.length ? [] : matches, overflowed };
+  const handPaid = matches.filter((m) => m.handPaid === 'paid');
+  const unreadable = matches.filter((m) => m.handPaid === 'unreadable');
+  const covering = matches.filter((m) => m.strength === 'hard' && m.fromStaff && !m.handPaid);
+  const settled = handPaid.length > 0;
+  return {
+    handPaid,
+    covering: settled ? [] : covering,
+    unreadable: settled || covering.length ? [] : unreadable,
+    possible: settled || covering.length || unreadable.length ? [] : matches,
+    overflowed,
+  };
 }

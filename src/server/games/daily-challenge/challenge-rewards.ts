@@ -3,9 +3,13 @@ import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import {
+  createBuzzTransactionMany,
+  getTransactionByExternalId,
+} from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { withRetries } from '~/utils/errorHandling';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { getChallengeById } from '~/server/games/daily-challenge/challenge-helpers';
 import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import {
@@ -87,12 +91,15 @@ export async function distributeParticipationPrizes(args: {
 
   if (!entryPrize || entryPrize.buzz <= 0) return [];
 
-  const earned = await dbRead.$queryRaw<{ userId: number }[]>`
+  // Primary, not replica: this pays Buzz outright, so a ban made moments ago must be seen.
+  const earned = await dbWrite.$queryRaw<{ userId: number }[]>`
     SELECT i."userId"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
     WHERE ci."collectionId" = ${collectionId}
       AND ci.status = 'ACCEPTED'
+      AND u."bannedAt" IS NULL
     GROUP BY i."userId"
     HAVING COUNT(*) >= ${entryPrizeRequirement}
   `;
@@ -126,6 +133,69 @@ export async function distributeParticipationPrizes(args: {
   });
 
   return payUserIds;
+}
+
+export const challengeReviewRefundTxId = (challengeId: number, imageId: number) =>
+  `challenge-review-refund-${challengeId}-${imageId}`;
+
+/**
+ * Refunds a banned entrant's per-entry paid reviews still waiting at completion, for the purchase's
+ * own amount. The entry then leaves the paid-review queue, so a later pass refunds nothing more.
+ */
+export async function refundBannedEntrantReviews(args: {
+  challengeId: number;
+  collectionId: number;
+  reviewMeTagId: number;
+}): Promise<number[]> {
+  const { challengeId, collectionId, reviewMeTagId } = args;
+
+  const waiting = await dbWrite.$queryRaw<{ imageId: number; userId: number }[]>`
+    SELECT ci."imageId", i."userId"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
+    WHERE ci."collectionId" = ${collectionId}
+      -- REVIEW: still awaiting its scan, but the review was paid for.
+      AND ci.status IN ('ACCEPTED', 'REVIEW')
+      AND ci."tagId" = ${reviewMeTagId}
+      AND ci.note = 'challenge-review-' || ${String(challengeId)} || '-' || ci."imageId"
+      AND u."bannedAt" IS NOT NULL
+    ORDER BY ci."imageId"
+  `;
+  if (waiting.length === 0) return [];
+
+  const refunds: { imageId: number; userId: number; amount: number }[] = [];
+  for (const entry of waiting) {
+    const purchase = await getTransactionByExternalId(
+      `challenge-review-${challengeId}-${entry.imageId}`
+    );
+    if (!purchase || purchase.fromAccountId !== entry.userId || purchase.amount <= 0) continue;
+    refunds.push({ ...entry, amount: purchase.amount });
+  }
+  if (refunds.length === 0) return [];
+
+  await withRetries(() =>
+    createBuzzTransactionMany(
+      refunds.map((e) => ({
+        fromAccountId: 0,
+        toAccountId: e.userId,
+        type: TransactionType.Refund,
+        amount: e.amount,
+        description: `Challenge review refund: entry ${e.imageId}`,
+        externalTransactionId: challengeReviewRefundTxId(challengeId, e.imageId),
+      }))
+    )
+  );
+
+  const refundedIds = refunds.map((e) => e.imageId);
+  await dbWrite.$executeRaw`
+    UPDATE "CollectionItem"
+    SET note = 'refunded-' || note, "tagId" = NULL
+    WHERE "collectionId" = ${collectionId}
+      AND "imageId" = ANY(${refundedIds}::int[])
+  `;
+  await bustContestCollectionItemsCache(refundedIds);
+  return refundedIds;
 }
 
 export async function reconcileCompletedChallenge(
@@ -216,5 +286,9 @@ export async function reconcileCompletedChallenge(
     },
   });
 
-  return { promoted, paid: paid.length, buzzGranted: paid.length * (challenge.entryPrize?.buzz ?? 0) };
+  return {
+    promoted,
+    paid: paid.length,
+    buzzGranted: paid.length * (challenge.entryPrize?.buzz ?? 0),
+  };
 }

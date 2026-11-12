@@ -29,8 +29,6 @@ export type TextScanEntityType =
   | 'BountyEntry'
   | 'Challenge'
   | 'ChatMessage'
-  | 'Comment'
-  | 'CommentV2'
   | 'CommentV3'
   | 'ResourceReview'
   | 'User'

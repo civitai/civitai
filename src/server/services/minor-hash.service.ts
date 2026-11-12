@@ -373,6 +373,43 @@ export type MinorHashReviewRow = {
   minorModelVersionId: number | null;
 };
 
+// The review queue's matches, one row per matching file hash. Shared with the lock-review approval
+// check, so a model that is on the queue is exactly a model that check refuses.
+const reviewMatchFrom = Prisma.sql`
+  FROM "ModelFileHash" mfh
+  JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
+  JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mfh.type = 'SHA256'
+    AND mfh.hash IN (SELECT hash FROM minor_src)
+    AND NOT m.minor
+    AND m.status <> 'Deleted'
+    AND NOT (m.meta ? 'minorHashDismissed')
+    -- A targeted rollback of a manual flag applied from this very queue would
+    -- otherwise put the model straight back on it.
+    AND ${notMinorHashClearedPredicate}
+`;
+// A same-uploader match is flagged by the sweep rather than queued.
+const reviewMatchSameUploader = Prisma.sql`bool_or(EXISTS (
+  SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
+))`;
+
+/** Whether the model is on the minor file-match review queue, waiting for a moderator. */
+export async function hasPendingMinorHashMatch(
+  modelId: number,
+  db: Pick<typeof dbRead, '$queryRaw'> = dbRead
+): Promise<boolean> {
+  const [row] = await db.$queryRaw<{ pending: boolean }[]>`
+    WITH ${minorSrcCte}
+    SELECT EXISTS (
+      SELECT 1 ${reviewMatchFrom} AND m.id = ${modelId}
+      GROUP BY m.id
+      HAVING NOT ${reviewMatchSameUploader}
+    ) AS pending
+  `;
+  return row?.pending === true;
+}
+
 export async function getMinorHashMatchesForReview({ limit }: { limit: number }) {
   // One extra row tells us the cap truncated the queue, so the UI can say so
   // rather than silently presenting a partial list as the whole thing.
@@ -383,26 +420,13 @@ export async function getMinorHashMatchesForReview({ limit }: { limit: number })
     candidates AS (
       SELECT m.id AS "modelId", m.name AS "modelName", m."userId", m.status::text AS status,
              m."createdAt",
-             bool_or(EXISTS (
-               SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
-             )) AS "sameUploader",
+             ${reviewMatchSameUploader} AS "sameUploader",
              -- Same ORDER BY in both aggregates so element [1] of each comes from
              -- the same row: the reported version is the one carrying the
              -- reported hash, not just any version of the model.
              (array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1] AS hash,
              (array_agg(mv.id ORDER BY mfh.hash, mv.id))[1] AS "modelVersionId"
-      FROM "ModelFileHash" mfh
-      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
-      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mfh.type = 'SHA256'
-        AND mfh.hash IN (SELECT hash FROM minor_src)
-        AND NOT m.minor
-        AND m.status <> 'Deleted'
-        AND NOT (m.meta ? 'minorHashDismissed')
-        -- A targeted rollback of a manual flag applied from this very queue would
-        -- otherwise put the model straight back on it.
-        AND ${notMinorHashClearedPredicate}
+      ${reviewMatchFrom}
       GROUP BY m.id, m.name, m."userId", m.status, m."createdAt"
     )
     SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash, c."createdAt",

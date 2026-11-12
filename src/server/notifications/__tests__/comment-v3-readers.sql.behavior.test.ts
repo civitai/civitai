@@ -46,7 +46,7 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
 const { countedTopLevelCommentSql } = await import('~/server/services/comment-count.sql');
-const { getThreadMuted } = await import('~/server/services/commentv3/section.service');
+const { getCommentMuted } = await import('~/server/services/commentv3/section.service');
 
 const db = { pg: null as unknown as PGlite };
 
@@ -585,7 +585,7 @@ describe('the detail fetcher', () => {
         { type: 'new-thread-response', details: { version: 3, commentId: 400 } },
         { type: 'new-thread-response', details: { version: 3, commentId: 401 } },
         { type: 'new-thread-response', details: { version: 3, commentId: 402 } },
-        // Since the model flip a model comment with no old id is addressed by its own; image
+        // A model comment with no old id is addressed by its own; image
         // comment 100 still may not stand in.
         { type: 'new-comment', details: { version: 4, commentId: 202 } },
         { type: 'new-comment', details: { version: 4, commentId: 100 } },
@@ -606,7 +606,7 @@ describe('the detail fetcher', () => {
 });
 
 describe('the mute menu', () => {
-  // getThreadMuted's raw queries, run here as Prisma would send them.
+  // getCommentMuted's raw queries, run here as Prisma would send them.
   const menu = (commentId: number, userId: number) => {
     dbMock.dbWrite.$queryRawUnsafe.mockImplementation(((sql: string, ...values: unknown[]) =>
       db.pg.query(sql, values).then((r) => r.rows)) as never);
@@ -617,7 +617,7 @@ describe('the mute menu', () => {
       const q = Prisma.sql(strings, ...values);
       return db.pg.query(q.text, q.values).then((r) => r.rows);
     }) as never);
-    return getThreadMuted({ commentId, userId });
+    return getCommentMuted({ commentId, userId });
   };
 
   it("reports the user's own mute, one inherited from an ancestor, and none", async () => {

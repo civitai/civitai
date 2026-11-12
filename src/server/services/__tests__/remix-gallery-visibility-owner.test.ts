@@ -55,6 +55,14 @@ vi.mock('~/server/services/free-placement.service', () => ({
   hasUsedFreePlacementOn: vi.fn(),
 }));
 
+// The host image read runs through Kysely, not Prisma's `$queryRaw`: it gets the same one row (see
+// beforeEach). The hosts-with-entries lookup in front of the has-entries probe finds no placement.
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
+const ONE_ROW = [{ score: 0, exists: false, count: 0, nsfwLevel: 1, minor: false, showable: true }];
+
 const { getRemixGalleryVisibility } = await import('~/server/services/remix-gallery.service');
 
 const OWNER = 41;
@@ -83,9 +91,34 @@ beforeEach(() => {
   placementReads.getUserPlacementScore.mockResolvedValue([{ score: 0 }]);
   // One row answering every raw read on this path: the has-entries probe and
   // the host image. The creator score comes from `getUserPlacementScore` above.
-  dbMock.dbRead.$queryRaw.mockResolvedValue([
-    { score: 0, exists: false, count: 0, nsfwLevel: 1, minor: false, showable: true },
-  ]);
+  dbMock.dbRead.$queryRaw.mockResolvedValue(ONE_ROW);
+  kysely.read
+    .mockReset()
+    .mockImplementation(async (strings: readonly string[]) =>
+      strings.join('?').includes('SELECT DISTINCT pl."targetId" AS "hostId"') ? [] : ONE_ROW
+    );
+});
+
+// Prisma's raw reads answered an id past int4 with no rows; through the pg pools the same
+// statements are a range error. The host image read and the has-entries probe skip it instead.
+describe('a host id past int4', () => {
+  it('still answers, without binding the id in any Kysely read', async () => {
+    const { rejectPastInt4 } = await import('~/test-utils/kysely-raw-fake');
+    hostOwnedBy('host-owner');
+    kysely.read.mockImplementation(async (strings: readonly string[], ...values: unknown[]) => {
+      rejectPastInt4(values);
+      return strings.join('?').includes('SELECT DISTINCT pl."targetId" AS "hostId"') ? [] : ONE_ROW;
+    });
+
+    await expect(
+      getRemixGalleryVisibility({
+        hostImageId: 2 ** 31,
+        browsingLevel: allBrowsingLevelsFlag,
+        domainLevels: allBrowsingLevelsFlag,
+      })
+    ).resolves.toMatchObject({ ownerId: OWNER, hasEntries: false });
+    expect(kysely.read).not.toHaveBeenCalled();
+  });
 });
 
 describe('the owner named by the gallery visibility query', () => {

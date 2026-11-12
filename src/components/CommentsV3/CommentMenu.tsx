@@ -75,7 +75,7 @@ export function CommentMenu({
   const [opened, setOpened] = useState(false);
 
   // Fetched only while the menu is open: one query per comment on every page would cost more.
-  const { data: threadMute } = trpc.commentv3.getThreadMuted.useQuery(
+  const { data: commentMute } = trpc.commentv3.getCommentMuted.useQuery(
     { commentId: comment.id },
     { enabled: opened && !!currentUser }
   );
@@ -201,7 +201,7 @@ export function CommentMenu({
         {currentUser && (
           <Menu.Item
             leftSection={
-              threadMute?.muted ? (
+              commentMute?.muted ? (
                 <IconBell size={14} stroke={1.5} />
               ) : (
                 <IconBellOff size={14} stroke={1.5} />
@@ -209,17 +209,20 @@ export function CommentMenu({
             }
             // The toggle flips from the stored state, so it waits for that state to load.
             disabled={
-              !threadMute || threadMute.viaAncestor || mutations.togglingMute || !threadMute.canMute
+              !commentMute ||
+              commentMute.viaAncestor ||
+              mutations.togglingMute ||
+              !commentMute.canMute
             }
             onClick={() => void mutations.toggleMute(comment).catch(() => null)}
           >
-            {threadMute?.viaAncestor
-              ? 'Muted with the thread above'
-              : threadMute && !threadMute.canMute
+            {commentMute?.viaAncestor
+              ? 'Muted with a comment above'
+              : commentMute && !commentMute.canMute
               ? 'No replies to mute yet'
-              : threadMute?.muted
-              ? 'Unmute this thread'
-              : 'Mute this thread'}
+              : commentMute?.muted
+              ? 'Unmute replies to this comment'
+              : 'Mute replies to this comment'}
           </Menu.Item>
         )}
         <Menu.Item

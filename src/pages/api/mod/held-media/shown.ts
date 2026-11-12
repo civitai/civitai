@@ -6,6 +6,7 @@ import {
   SHOWN_RENDITIONS,
   shownActivity,
 } from '@civitai/shared/held-media';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { dbWrite } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getHeldMedia } from '~/server/services/held-media.service';
@@ -14,11 +15,13 @@ import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import type { SessionUser } from '~/types/session';
 
 const id = z.number().int().positive().max(2_147_483_647);
+/** The subject of a report that names no account. */
+const INTERNAL_SUBJECT_ID = -1;
 const body = z
   .object({
     imageId: id,
-    /** The account whose report page showed the image. */
-    userId: id,
+    /** The account whose report page showed the image: internal (-1) included. */
+    userId: id.or(z.literal(INTERNAL_SUBJECT_ID)),
     action: z.enum(SHOWN_ACTIONS),
     rendition: z.enum(SHOWN_RENDITIONS),
   })
@@ -36,10 +39,10 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   if (!parsed.success) return void res.status(400).json({ error: 'Bad request' });
   const { imageId, userId, action, rendition } = parsed.data;
 
-  // The report page lists the subject's images and nothing else. Both reads are on the primary: a
-  // replica can lag a hold placed just before the page loaded.
+  // The report page lists the subject's images and any feedback page capture its link names, nothing
+  // else. Both reads are on the primary: a replica can lag a hold placed just before the page loaded.
   const image = await dbWrite.image.findFirst({
-    where: { id: imageId, userId },
+    where: { id: imageId, userId: { in: [userId, FEEDBACK_CAPTURE_OWNER_ID] } },
     select: { id: true },
   });
   if (!image) return void res.status(404).json({ error: 'Not on this page' });

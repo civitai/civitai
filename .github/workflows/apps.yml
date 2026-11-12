@@ -18,8 +18,7 @@ name: App suites
 # that list on every run of this job and fails when an entry is missing or matches nothing.
 # So when it fails, add the path it names here; do not weaken the scan.
 #
-#   vitest.config.mts + scripts/test-cache/{core,sequencer,load-core}.mjs +
-#   scripts/ci/component-quarantine.mjs
+#   vitest.config.mts + scripts/test-cache/{core,sequencer,load-core}.mjs
 #       `vitest --project 'app:*'` loads the ROOT config (which imports these) before any app
 #       config, and its root-level sequencer applies to the whole run.
 #   scripts/ci/assert-workspace-suites-ran.mjs, scripts/ci/typecheck-apps.mjs,
@@ -94,7 +93,6 @@ on:
       - 'scripts/test-cache/core.mjs'
       - 'scripts/test-cache/sequencer.mjs'
       - 'scripts/test-cache/load-core.mjs'
-      - 'scripts/ci/component-quarantine.mjs'
       - 'scripts/ci/assert-workspace-suites-ran.mjs'
       - 'scripts/ci/typecheck-apps.mjs'
       - 'scripts/ci/assert-apps-paths-filter.mjs'

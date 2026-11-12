@@ -158,7 +158,7 @@ describe('cleanupTextScanRows on csam holds', () => {
       // The id is the entity id, so `supersededBy` can name a row.
       `INSERT INTO "TextScanHold" ("id","entityType","entityId","label","textHash","text","reason","status",
          "decidedAt","decidedById","meta","updatedAt")
-       VALUES ($1,'Comment',$1,$6,'h','held text','r',$2,$3,$4,$5::jsonb,now())`,
+       VALUES ($1,'CommentV3',$1,$6,'h','held text','r',$2,$3,$4,$5::jsonb,now())`,
       [entityId, status, decidedAt, decidedById, JSON.stringify(meta), label]
     );
   const held = async () =>

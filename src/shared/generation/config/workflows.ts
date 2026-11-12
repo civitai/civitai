@@ -78,6 +78,7 @@ const EDIT_IMG_IDS = [
   ECO.Krea2,
   ECO.Krea3,
   ECO.Ming,
+  ECO.MiniMaxH3Image,
 ];
 
 /** Image ecosystems that support image:create */
@@ -129,6 +130,7 @@ const TXT2IMG_IDS = [
   ECO.MuseImage,
   ECO.MageFlow,
   ECO.Ming,
+  ECO.MiniMaxH3Image,
 ];
 
 /** Video ecosystems that support video:create */

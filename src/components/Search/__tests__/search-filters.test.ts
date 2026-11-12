@@ -31,6 +31,18 @@ describe('buildBrowsingLevelClause', () => {
   });
 });
 
+describe('buildBrowsingLevelClause in subset mode', () => {
+  it('excludes every level outside the browsing level, Blocked included', () => {
+    expect(buildBrowsingLevelClause(attribute, pg | pg13, 'subset')).toBe(
+      'nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [4, 8, 16, 32]'
+    );
+  });
+
+  it('still leaves unrated items out when every level is allowed', () => {
+    expect(buildBrowsingLevelClause(attribute, 63, 'subset')).toBe('nsfwLevel IS NOT EMPTY');
+  });
+});
+
 describe('buildBrowsingLevelFilters', () => {
   it('appends the browsing clause after the caller filters', () => {
     expect(

@@ -962,6 +962,10 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
         );
         lines.push(`    Matching grant: ${await describeHoldingGrants(userId, d)}`);
       }
+      if (d.status === 'hand_paid')
+        lines.push(
+          '    Already paid by hand (a hand-paid top-up names this payment); nothing was granted automatically; do not credit by hand'
+        );
       lines.push(`    Created: ${formatDate(d.createdAt)} | Updated: ${formatDate(d.updatedAt)}`);
     }
   }

@@ -165,9 +165,8 @@ import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-help
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isMobileUserAgent } from '~/shared/utils/mobile-user-agent';
 import {
+  forcedMinorModelBrowsingLevel,
   getIsSafeBrowsingLevel,
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import {
@@ -413,9 +412,7 @@ export const getServerSideProps = createServerSideProps({
                 // exactly the models this matters for.
                 const forceMinorLevel = !!model.minor && !session?.user?.isModerator;
                 const browsingLevel = forceMinorLevel
-                  ? session?.user
-                    ? sfwBrowsingLevelsFlag
-                    : publicBrowsingLevelsFlag
+                  ? forcedMinorModelBrowsingLevel(!!session?.user)
                   : getServerBrowsingLevel({
                       canViewNsfw: features?.canViewNsfw ?? false,
                       user: session?.user,
@@ -1692,7 +1689,12 @@ export default function ModelDetailsV2({
               </>
             )}
             {selectedVersion && (
-              <ModelVersionWrittenReviews modelId={model.id} modelVersionId={selectedVersion.id} />
+              <ModelVersionWrittenReviews
+                modelId={model.id}
+                modelVersionId={selectedVersion.id}
+                thumbsUpCount={thumbsUpCount}
+                thumbsDownCount={thumbsDownCount}
+              />
             )}
             <AdUnitTopSection />
             <Container size="xl" my="xl">

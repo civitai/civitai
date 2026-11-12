@@ -450,8 +450,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       END,
       'appListingSlug', al.slug,
       'comicChapterPosition', cch.position,
-      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter', 'model'])
-      THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
@@ -574,8 +573,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       END,
       'appListingSlug', al.slug,
       'comicChapterPosition', cch.position,
-      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter', 'model'])
-      THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
@@ -646,8 +644,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       END,
       'appListingSlug', al.slug,
       'comicChapterPosition', cch.position,
-      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter', 'model'])
-      THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END

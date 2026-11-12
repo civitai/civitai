@@ -1,35 +1,13 @@
 import { createEventHandler } from './base';
 
 /**
-## Metrics driven by the CommentV3 table, for the surfaces in COMMENT_V3_SURFACES:
+## Metrics driven by the CommentV3 table, which holds every comment:
 - Article, Image, Post, Bounty and ModelMetric.commentCount (create, delete, tombstone)
 - UserMetric.commentCount (same) — comments received by the owner of the commented-on entity
-
-The surfaces are the ones the main app reads from CommentV3 (`constants.comments.v3ReadSurfaces`
-in src/server/common/constants.ts; pinned by comment-v3-surfaces.parity.test.ts). Every comment on
-them is counted here, whichever table it was written to: one written to CommentV2 reaches CommentV3
-through the mirror trigger, and `comment-v2.ts` skips these surfaces, so each comment is counted
-once and the count does not depend on which surfaces the main app has flipped.
 
 Replies count too. A deleted comment that keeps its replies stays as a tombstone (`deletedAt` set),
 which takes it off the count; the tombstone's later removal does not take it off again.
 */
-
-export const COMMENT_V3_SURFACES = [
-  'article',
-  'post',
-  'image',
-  'review',
-  'bounty',
-  'bountyEntry',
-  'challenge',
-  'crucible',
-  'storyline',
-  'model3d',
-  'appListing',
-  'comicChapter',
-  'model',
-];
 
 interface CommentV3Record {
   id: number;
@@ -45,7 +23,8 @@ const ownedBy = (table: string, owner = '"userId"') =>
 /**
  * Per surface: the entity metric it feeds, if any, and how to find the owner. `metric` only for
  * pairs registered in the event engine's default.entityMetricKind; an unregistered pair silently
- * counts distinct commenters. Crucible and storyline have no entry: CommentV2 never counted them.
+ * counts distinct commenters. Crucible and storyline have no entry: no comment table ever counted
+ * them.
  */
 const SURFACES: Record<string, { metric?: string; ownerSql: string }> = {
   article: { metric: 'Article', ownerSql: ownedBy('"Article"') },
@@ -57,6 +36,7 @@ const SURFACES: Record<string, { metric?: string; ownerSql: string }> = {
   bountyEntry: { ownerSql: ownedBy('"BountyEntry"') },
   challenge: { ownerSql: ownedBy('"Challenge"', '"createdById"') },
   model3d: { ownerSql: ownedBy('"Model3D"') },
+  model3dReview: { ownerSql: ownedBy('"Model3DReview"') },
   // `entityId` is the listing's serial id.
   appListing: { ownerSql: `SELECT user_id AS "ownerId" FROM app_listings WHERE serial_id = $1` },
   comicChapter: {
@@ -74,7 +54,7 @@ export const commentV3Handler = createEventHandler<CommentV3Record>({
     else if (operation === 'delete') value = record.deletedAt ? 0 : -1;
     // Only the update that tombstones a comment counts.
     else value = !old?.deletedAt && current?.deletedAt ? -1 : 0;
-    if (!value || !COMMENT_V3_SURFACES.includes(record.entityType)) return;
+    if (!value) return;
 
     const surface = SURFACES[record.entityType];
     if (!surface) return;
@@ -90,7 +70,9 @@ export const commentV3Handler = createEventHandler<CommentV3Record>({
         .forMetric(surface.metric, record.entityId)
         .as(record.userId)
         .add('commentCount', value);
-    // A creator answering their own commenters is not engagement received (see comment-v2.ts).
+    // A creator answering their own commenters is not engagement received. Keep this in step with
+    // `reactions_owner_scores`, which excludes self-reactions, and with Creator Studio's tile, which
+    // excludes self-comments: a metric named the same on two surfaces must not mean two things.
     if (owner?.ownerId && owner.ownerId !== record.userId)
       actions.forMetric('User', owner.ownerId).as(record.userId).add('commentCount', value);
   },
@@ -98,7 +80,7 @@ export const commentV3Handler = createEventHandler<CommentV3Record>({
     sample: () => ({
       id: faker.number.int({ min: 1, max: 100000 }),
       userId: faker.number.int({ min: 1, max: 1000 }),
-      entityType: faker.helpers.arrayElement(COMMENT_V3_SURFACES),
+      entityType: faker.helpers.arrayElement(Object.keys(SURFACES)),
       entityId: faker.number.int({ min: 1, max: 5000 }),
       deletedAt: null,
     }),

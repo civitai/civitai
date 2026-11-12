@@ -23,6 +23,8 @@ export type VersionOption = {
   baseModel?: string;
   /** Child options shown when this option is selected */
   children?: VersionGroup;
+  /** Shows a "New" badge on the option until this date. */
+  newUntil?: Date;
 };
 
 export type VersionGroup = {

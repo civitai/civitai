@@ -6,7 +6,7 @@ export const getFlaggedModelsSchema = getAllQuerySchema.extend({
   filters: z
     .object({
       id: z.string(),
-      value: z.unknown(),
+      value: z.unknown().optional(),
     })
     .array()
     .optional(),

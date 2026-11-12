@@ -16,6 +16,9 @@ import type {
   AnimaAiToolkitTrainingInput,
 } from '@civitai/orchestration-client';
 import {
+  BLOCKED_CUSTOM_MODEL_MESSAGE,
+  isBlockedCustomModel,
+  isBlockedCustomModelId,
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
 } from '@civitai/shared/training-custom-model';
@@ -57,49 +60,39 @@ import {
   isInvalidRapid,
   isInvalidAiToolkit,
   isAiToolkitEnabled,
-  isAudioTrainingBaseType,
+  trainingRolloutRefusal,
   isKohyaEnabled,
   isRetiredTrainingTarget,
   trainingModelInfo,
 } from '~/utils/training';
 import { modelUnavailability, unavailableModelMessage } from '~/utils/training-blocked-models';
 
-async function isSafeTensor(modelVersionId: number) {
+async function getCustomModelVersion(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
-  const [data] = await dbWrite.$queryRaw<{ fmt: string }[]>`
-    SELECT mf.metadata ->> 'format' as fmt
+  const [data] = await dbWrite.$queryRaw<{ fmt: string | null; modelId: number }[]>`
+    SELECT mf.metadata ->> 'format' as fmt, mv."modelId" as "modelId"
     FROM "ModelVersion" mv
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Model'
-           JOIN "Model" m ON m.id = mv."modelId"
     WHERE mv.id = ${modelVersionId}
     LIMIT 1
   `;
-
-  return isSafeTensorFormat(data?.fmt);
+  return data;
 }
 
 const checkCustomModel = async (
-  model: string,
-  check_st = true
-): Promise<
-  | {
-      ok: true;
-    }
-  | { ok: false; message: string }
-> => {
+  model: string
+): Promise<{ ok: true } | { ok: false; message: string }> => {
   if (model in trainingModelInfo) return { ok: true };
 
   const mMatch = parseAIRSafe(model);
   if (!mMatch) return { ok: false, message: 'Invalid structure for custom model.' };
 
-  if (check_st) {
-    const isST = await isSafeTensor(mMatch.version);
-    if (!isST)
-      return {
-        ok: false,
-        message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
-      };
-  }
+  // The model id is read off the version, not the AIR: a caller can pair any model id with a version.
+  const version = await getCustomModelVersion(mMatch.version);
+  if (isBlockedCustomModel(model) || (version && isBlockedCustomModelId(version.modelId)))
+    return { ok: false, message: BLOCKED_CUSTOM_MODEL_MESSAGE };
+  if (!isSafeTensorFormat(version?.fmt))
+    return { ok: false, message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE };
 
   return { ok: true };
 };
@@ -432,6 +425,8 @@ export const createTrainingWorkflow = async ({
     })
   )
     throw throwBadRequestError('This base model is not available for training.');
+  const customCheck = await checkCustomModel(baseModel);
+  if (!customCheck.ok) throw throwBadRequestError(customCheck.message);
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];
   const samplesOverrides = modelVersion.trainingDetails.samplesOverrides;
   const negativePrompt = modelVersion.trainingDetails.negativePrompt ?? '';
@@ -459,14 +454,15 @@ export const createTrainingWorkflow = async ({
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
 
+  const catalogEntry = Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
+    ? trainingModelInfo[baseModel as TrainingDetailsBaseModelList]
+    : undefined;
+
   // The ecosystem/variant in params is what gets trained, so for a catalog base model it must be
   // the one that base maps to. A missing variant is tolerated: versions saved before the form sent
   // one still resubmit (the same rule publish-from-workflow.ts uses to match a run to its base).
-  if (
-    trainingParams.engine === 'ai-toolkit' &&
-    Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
-  ) {
-    const expected = trainingModelInfo[baseModel as TrainingDetailsBaseModelList].aiToolkit;
+  if (trainingParams.engine === 'ai-toolkit' && catalogEntry) {
+    const expected = catalogEntry.aiToolkit;
     if (
       !expected ||
       trainingParams.ecosystem !== expected.ecosystem ||
@@ -484,23 +480,27 @@ export const createTrainingWorkflow = async ({
       'Kohya training is no longer available. Please switch this run to AI Toolkit and submit again.'
     );
 
-  // Audio base types are marked `isAiToolkitMandatory`, so the check above
-  // short-circuits to true regardless of feature flags. Enforce the rollout
-  // flag here so API callers can't submit ACE-Step training when the
-  // `audioTraining` flag is off.
-  if (isAudioTrainingBaseType(baseModelType) && !features.audioTraining)
-    throw throwBadRequestError('Audio training is not currently enabled.');
+  // AI Toolkit-only types pass isAiToolkitEnabled whatever their rollout flags say. baseModelType
+  // is caller-written, so the gate also reads the catalog's type for the base model and the type of
+  // the AI Toolkit ecosystem in params: what is actually trained.
+  const ecosystemTypes =
+    trainingParams.engine === 'ai-toolkit'
+      ? Object.values(trainingModelInfo)
+          .filter((info) => info.aiToolkit?.ecosystem === trainingParams.ecosystem)
+          .map((info) => info.type)
+      : [];
+  const rolloutRefusal = trainingRolloutRefusal(
+    {
+      types: [baseModelType, ...(catalogEntry ? [catalogEntry.type] : []), ...ecosystemTypes],
+      ecosystem: trainingParams.engine === 'ai-toolkit' ? trainingParams.ecosystem : undefined,
+    },
+    features
+  );
+  if (rolloutRefusal) throw throwBadRequestError(rolloutRefusal);
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
     : await getGetUrl(modelVersion.trainingUrl);
-
-  if (!(baseModel in trainingModelInfo)) {
-    const customCheck = await checkCustomModel(baseModel);
-    if (!customCheck.ok) {
-      throw throwBadRequestError(customCheck.message);
-    }
-  }
 
   const model = getTrainingFields.getModel(baseModel);
   const priority = getTrainingFields.getPriority(isPriority);

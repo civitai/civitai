@@ -49,6 +49,7 @@ vi.mock('../db', () => {
     where: () => chain,
     orderBy: () => chain,
     limit: (n: number) => ((limit = n), chain),
+    $if: (cond: boolean, apply: (qb: unknown) => unknown) => (cond ? apply(chain) : chain),
     execute: () => {
       if (table !== 'ChatMessageEdit') return Promise.resolve([message]);
       // The relation-missing error a build deployed before its migration gets.

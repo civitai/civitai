@@ -40,6 +40,17 @@ import { amIBlockedByUser } from '~/server/services/user.service';
 import { getImageGenerationFields } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
 
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
+
 const imageRow = vi.mocked(getImageGenerationFields);
 
 const OWNER = 10;
@@ -341,6 +352,19 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees({ userId: MANAGER })).toBe(true);
     expect(await sees(OTHER)).toBe(false);
   });
+
+  it.each(['Pending', 'Error'])(
+    'does not serve a manager of that collection an image whose ingestion is %s',
+    async (state) => {
+      await seed({ image: { ingestion: `'${state}'` }, post: { '"collectionId"': '7' } });
+      await db.exec(
+        `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[])`
+      );
+      expect(await sees({ userId: MANAGER })).toBe(false);
+      expect(await sees(SELF)).toBe(true);
+      expect(await sees(MOD)).toBe(true);
+    }
+  );
 
   it("does not serve it to a manager when the post's author does not own the image", async () => {
     // Another user's unreviewed image in OWNER's post: OWNER chose the collection, not its owner.

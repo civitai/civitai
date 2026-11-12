@@ -56,7 +56,7 @@ export const getBugReportStatsInput = z.object({
 
 // HQ webhook envelope. `data` is only narrowed for `task.closed`, so an event type we ignore can
 // never be refused (a 4xx would make the sender retry it and count it against the endpoint).
-export const hqWebhookSchema = z.object({ type: z.string(), data: z.unknown() });
+export const hqWebhookSchema = z.object({ type: z.string(), data: z.unknown().optional() });
 export const hqTaskClosedSchema = z.object({ task_id: z.string().min(1), status: z.string() });
 
 // ClickUp fires this at us on every task event we subscribe to. `after` is
@@ -72,7 +72,7 @@ export const clickupWebhookSchema = z.object({
     .array(
       z.object({
         field: z.string().optional(),
-        after: z.unknown(),
+        after: z.unknown().optional(),
       })
     )
     .optional(),

@@ -5,6 +5,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { setDocStoreEnabled } from '~/server/metrics/app-block-runtime.metrics';
 import type { DocStore } from '~/server/services/apps/doc-store';
 import { createDocStore } from '~/server/services/apps/doc-store';
+import { docStoreUserLimits } from '~/server/services/blocks/user-app-caps.service';
 
 let instance: DocStore | undefined;
 
@@ -16,6 +17,8 @@ let instance: DocStore | undefined;
 export function getDocStore(): DocStore {
   return (instance ??= createDocStore({
     db: appdataDb,
+    // Each user's ceiling is their membership tier's (`resolveUserAppCaps`).
+    userLimits: docStoreUserLimits,
     onRefused: (role) => {
       logToAxiom(
         {

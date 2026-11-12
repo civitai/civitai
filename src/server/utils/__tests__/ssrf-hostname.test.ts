@@ -27,6 +27,12 @@ describe('isPublicHttpsUrl (lexical URL-shape guard)', () => {
       'https://foo.internal',
       'https://bar.local',
       'https://metadata.google.internal',
+      'https://api.cluster.svc',
+      'https://nas.home.arpa',
+      'https://printer.lan',
+      'https://wiki.corp',
+      'https://portal.intranet',
+      'https://app.localhost',
     ]) {
       expect(isPublicHttpsUrl(u).ok, u).toBe(false);
     }

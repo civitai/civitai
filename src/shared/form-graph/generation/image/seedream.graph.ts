@@ -8,13 +8,13 @@ import {
 } from '~/shared/constants/generation.constants';
 
 /**
- * Seedream (v3 / v4 / v4.5 / v5.0-lite / v5.0-pro). One field set across versions —
+ * Seedream (v3 / v4 / v4.5 / v5.0-lite / v5.0-pro / v5.5). One field set across versions —
  * only the 2K/4K
  * resolution toggle is version-gated. No negative prompt, sampler, steps, or
  * CLIP skip.
  */
 
-export type SeedreamVersion = 'v3' | 'v4' | 'v4.5' | 'v5.0-lite' | 'v5.0-pro';
+export type SeedreamVersion = 'v3' | 'v4' | 'v4.5' | 'v5.0-lite' | 'v5.0-pro' | 'v5.5';
 
 export const seedreamVersionIds = {
   v3: 2208174,
@@ -22,6 +22,7 @@ export const seedreamVersionIds = {
   'v4.5': 2470991,
   'v5.0-lite': 2720141,
   'v5.0-pro': 3110984,
+  'v5.5': 3464384,
 } as const;
 
 const seedreamVersionOptions = [
@@ -30,6 +31,12 @@ const seedreamVersionOptions = [
   { label: 'v4.5', value: seedreamVersionIds['v4.5'] },
   { label: 'v5.0 lite', value: seedreamVersionIds['v5.0-lite'] },
   { label: 'v5.0 pro', value: seedreamVersionIds['v5.0-pro'] },
+];
+
+/** Offered only with `seedream55` on: the orchestrator refuses v5.5 until its release. */
+const seedream55VersionOptions = [
+  ...seedreamVersionOptions,
+  { label: 'v5.5', value: seedreamVersionIds['v5.5'], newUntil: new Date('2026-12-12') },
 ];
 
 const seedreamAspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
@@ -59,15 +66,18 @@ const AR = defFamily((resolution: string) =>
 
 export const seedream = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 7 }))
-  .field('model', ({ _ext }) =>
-    checkpointDef({
+  // Seedream is model-locked, so with the flag off a submitted v5.5 (absent from the options)
+  // is swapped for the default by checkpointDef rather than reaching the orchestrator.
+  .field('model', ({ _ext }) => {
+    const v55 = _ext.flags?.seedream55 === true;
+    return checkpointDef({
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
-      versions: { options: seedreamVersionOptions },
-      defaultModelId: seedreamVersionIds['v5.0-pro'],
-    })
-  )
+      versions: { options: v55 ? seedream55VersionOptions : seedreamVersionOptions },
+      defaultModelId: seedreamVersionIds[v55 ? 'v5.5' : 'v5.0-pro'],
+    });
+  })
   .field('resolution', ({ model }) =>
     modelIdOf(model) != null && versionsWithResolutionToggle.has(modelIdOf(model)!)
       ? RESOLUTION

@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -41,8 +43,8 @@ export function imageVisibilityConditions({
   return [
     Prisma.sql`(
       i."needsReview" IS NULL AND ${imageReviewedSql()}
-      -- A manager of the collection the image owner's own post was submitted to.
-      OR p."collectionId" IS NOT NULL AND p."userId" = i."userId" AND EXISTS (
+      -- A manager of the collection the image owner's own post was submitted to, once reviewed.
+      OR p."collectionId" IS NOT NULL AND p."userId" = i."userId" AND ${imageReviewedSql()} AND EXISTS (
         SELECT 1 FROM "CollectionContributor" cc
         WHERE cc."collectionId" = p."collectionId"
           AND cc."userId" = ${userId}
@@ -125,15 +127,21 @@ export async function assertImageVisibleToViewer({
   const signedOutVerdict = withSignedOutVerdict
     ? Prisma.sql`(${Prisma.join([Prisma.sql`TRUE`, ...imageVisibilityConditions({})], ' AND ')})`
     : Prisma.sql`NULL::boolean`;
-  const [visible] = await dbRead.$queryRaw<
-    {
-      id: number;
-      userId: number;
-      nsfwLevel: number;
-      postId: number | null;
-      visibleSignedOut: boolean | null;
-    }[]
-  >`
+  // Through Kysely over the pg pools, not Prisma's `$queryRaw`: one of the hottest single-image
+  // reads, and the same statement and parameters either way (`queryPrismaSql`). Every column is
+  // int4 or boolean, which both executors parse alike.
+  // An id past int4 names no image: not found, as Prisma answered, rather than a range error.
+  if (!isPgInt4(id)) throw throwNotFoundError();
+  const { kyselyRead } = await loadKyselyDb();
+  const [visible] = await queryPrismaSql<{
+    id: number;
+    userId: number;
+    nsfwLevel: number;
+    postId: number | null;
+    visibleSignedOut: boolean | null;
+  }>(
+    kyselyRead,
+    Prisma.sql`
     SELECT i.id, i."userId", i."nsfwLevel", i."postId", ${signedOutVerdict} AS "visibleSignedOut"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
@@ -141,7 +149,8 @@ export async function assertImageVisibleToViewer({
       [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })],
       ' AND '
     )}
-  `;
+  `
+  );
   if (!visible) throw throwNotFoundError();
   if (userId && !isModerator) {
     // Imported here: user.service sits in the image.service import cycle.

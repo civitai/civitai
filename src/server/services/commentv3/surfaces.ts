@@ -8,6 +8,7 @@ import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getModelVisibleToViewer } from '~/server/services/model-visibility.service';
 import { createNotification } from '~/server/services/notification.service';
 import { assertStorylineVisible } from '~/server/services/storyline.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
@@ -15,6 +16,7 @@ import type { StoredCommentV3 } from '~/server/services/commentv3/write.service'
 import {
   handleLogError,
   throwAuthorizationError,
+  throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
@@ -23,7 +25,6 @@ import {
   isPanelTainted,
   readerPanelsWhere,
 } from '~/server/services/comics/chapter-visibility';
-import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -92,16 +93,7 @@ const accessGated =
 
 /** A model's comments are for whoever may see the model: published, or its owner's; not `poi`. */
 async function assertModelCommentsVisible(modelId: number, ctx: CommentReadContext) {
-  if (ctx.user?.isModerator) return;
-  const model = await dbRead.model.findUnique({
-    where: { id: modelId },
-    select: { status: true, userId: true, poi: true },
-  });
-  if (
-    !model ||
-    (model.status !== ModelStatus.Published && model.userId !== ctx.user?.id) ||
-    !canViewPoiModel(model.poi, model.userId, ctx.user)
-  )
+  if (!(await getModelVisibleToViewer(modelId, ctx.user)))
     throw throwNotFoundError('Model not found');
 }
 
@@ -287,7 +279,12 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     trackAs: (comment) => ({ type: 'Model', entityId: comment.entityId }),
   },
   model3d: {},
-  model3dReview: {},
+  // Nothing renders these comments, and the surface never wrote CommentV3.
+  model3dReview: {
+    assertWritable: async () => {
+      throw throwBadRequestError('Comments on 3D model reviews are closed.');
+    },
+  },
   appListing: {},
 };
 

@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import { arrayMove } from '@dnd-kit/sortable';
 import { createStore, useStore } from 'zustand';
 import { shallow } from 'zustand/shallow';
 import { devtools } from 'zustand/middleware';
@@ -65,6 +66,8 @@ export type BatchComposerState = {
     patch: Partial<Pick<ReviewPost, 'title' | 'publishedAt'>>
   ) => void;
   removeReviewPost: (key: string) => void;
+  /** Moves the image at `fromUrl` to the place of the one at `toUrl`, within one review post. */
+  reorderReviewMedia: (key: string, fromUrl: string, toUrl: string) => void;
   reset: () => void;
 };
 
@@ -194,6 +197,15 @@ export function createBatchComposerStore(input: {
         removeReviewPost: (key) =>
           set((state) => {
             if (state.reviewPlan) state.reviewPlan = state.reviewPlan.filter((x) => x.key !== key);
+          }),
+        reorderReviewMedia: (key, fromUrl, toUrl) =>
+          set((state) => {
+            const post = state.reviewPlan?.find((x) => x.key === key);
+            if (!post) return;
+            const from = post.media.findIndex((x) => x.url === fromUrl);
+            const to = post.media.findIndex((x) => x.url === toUrl);
+            if (from === -1 || to === -1 || from === to) return;
+            post.media = arrayMove(post.media, from, to);
           }),
         reset: () => set({ ...initial(), hydrated: true }),
       })),

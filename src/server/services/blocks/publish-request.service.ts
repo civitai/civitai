@@ -1,5 +1,10 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
-import type { AgentReviewSummary } from '~/shared/utils/agent-review-findings';
+import {
+  agentReviewSummaryFromQueueRow,
+  isImpersonationCheckStale,
+  type AgentReviewQueueRow,
+  type AgentReviewSummary,
+} from '~/shared/utils/agent-review-findings';
 import {
   BUILDING_REVIEW_PREVIEW_STATES,
   REVIEW_PREVIEW_MAX_AGE_MS,
@@ -1601,7 +1606,7 @@ async function submitListingReadiness(args: {
   try {
     const [
       { dbWrite },
-      { computeListingProblems, floorProblems, listingProblemInput },
+      { computeListingProblems, floorProblems, listingProblemInput, listingProblemLinksFrom },
       { loadListingAssetScansBatch },
     ] = await Promise.all([
       import('~/server/db/client'),
@@ -1668,12 +1673,37 @@ async function submitListingReadiness(args: {
       [{ id: row.id, iconId: row.iconId, coverId: row.coverId }],
       dbWrite
     );
+    // The trust-link nudge. On-site links are manifest-governed and reach the listing only at
+    // approve, so the SUBMITTED manifest is what this submit is about: its `repository` / `bugs`
+    // decide the nudge. The columns are still read, for one thing only — whether each exists
+    // here: a link whose column is absent is reported as unknown (no nudge), never as missing.
+    const kind = row.kind === 'offsite' ? 'offsite' : 'onsite';
+    const [
+      { readListingProblemLinkMaps },
+      { resolveListingIssueTracker, resolveListingSourceRepo },
+    ] = await Promise.all([
+      import('./app-listing-issue-tracker.service'),
+      import('./app-listing-mapper'),
+    ]);
+    const linkMaps = await readListingProblemLinkMaps([row.id], dbWrite);
+    const links =
+      kind === 'onsite'
+        ? {
+            sourceRepoUrl: linkMaps.sourceRepoUrls.has(row.id)
+              ? resolveListingSourceRepo(args.manifest)
+              : undefined,
+            issueTrackerUrl: linkMaps.issueTrackerUrls.has(row.id)
+              ? resolveListingIssueTracker(args.manifest)
+              : undefined,
+          }
+        : listingProblemLinksFrom(row.id, linkMaps);
     const { problems } = computeListingProblems(
       listingProblemInput(row, {
-        kind: row.kind === 'offsite' ? 'offsite' : 'onsite',
+        kind,
         appRating:
           typeof args.manifest.contentRating === 'string' ? args.manifest.contentRating : null,
         assetScans: scans.get(row.id) ?? [],
+        links,
       })
     );
     return {
@@ -2830,31 +2860,82 @@ async function agentReviewSummariesForRequests(
                   THEN r.scope_verdicts->'scopes' ELSE '[]'::jsonb END
            ) AS sv
           WHERE jsonb_typeof(sv) = 'object'
-            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate"
+            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate",
+        -- Every analysis produced a result: an object slot with no non-null error key.
+        (jsonb_typeof(r.code_review) = 'object'
+          AND jsonb_typeof(r.security_audit) = 'object'
+          AND jsonb_typeof(r.scope_verdicts) = 'object'
+          AND coalesce(jsonb_typeof(r.code_review->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.security_audit->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.scope_verdicts->'error'), 'null') = 'null') AS "sectionsOk",
+        (CASE WHEN jsonb_typeof(r.security_audit->'impersonationCheck') = 'object'
+              THEN r.security_audit->'impersonationCheck'->>'status' END) AS "impersonationCheck",
+        (CASE WHEN jsonb_typeof(r.security_audit->'impersonationCheck') = 'object'
+              THEN r.security_audit->'impersonationCheck'->>'fingerprint' END) AS "impersonationFingerprint"
       FROM app_review_agent_reports r
       WHERE r.publish_request_id = ANY(${ids}::text[])
       ORDER BY r.publish_request_id, r.started_at DESC
-    `) as Array<{
-      publishRequestId: string;
-      status: string;
-      severities: (string | null)[] | null;
-      overBroad: number | null;
-      underDeclared: number | null;
-      inaccurate: number | null;
-    }>;
-    for (const r of rows) {
-      out.set(r.publishRequestId, {
-        status: r.status,
-        severities: (r.severities ?? []).filter((x): x is string => typeof x === 'string'),
-        overBroad: r.overBroad ?? 0,
-        underDeclared: r.underDeclared ?? 0,
-        inaccurate: r.inaccurate ?? 0,
-      });
-    }
+    `) as Array<AgentReviewQueueRow & { publishRequestId: string }>;
+    // A finding with no severity becomes `unrated` here (not dropped), so it still flags.
+    for (const r of rows) out.set(r.publishRequestId, agentReviewSummaryFromQueueRow(r));
   } catch (err) {
     console.error(
       `[agentReviewSummariesForRequests] summary read failed: ${
         err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+  return out;
+}
+
+/**
+ * The impersonation fingerprint of each request's store listing AS IT IS NOW — the same listing,
+ * found the same way, as the check reads (`gatherImpersonationInputs`: the app's on-site listing
+ * by slug; one keyed to another app does not count). One query for the page. FAIL-SOFT to an
+ * empty map: every check then reads stale, which only keeps rows out of the fast lane.
+ */
+async function liveListingFingerprints(
+  db: { appListing: { findMany(args: unknown): Promise<unknown> } },
+  requests: Array<{ id: string; slug: string; appBlockId: string | null }>
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (requests.length === 0) return out;
+  try {
+    const { impersonationFingerprint } = await import('./app-impersonation.logic');
+    const listings = (await db.appListing.findMany({
+      where: {
+        slug: { in: [...new Set(requests.map((r) => r.slug))] },
+        kind: 'onsite',
+        revisionOfId: null,
+      },
+      select: {
+        slug: true,
+        name: true,
+        tagline: true,
+        description: true,
+        iconId: true,
+        coverId: true,
+        appBlockId: true,
+      },
+    })) as Array<{
+      slug: string;
+      name: string;
+      tagline: string | null;
+      description: string | null;
+      iconId: number | null;
+      coverId: number | null;
+      appBlockId: string | null;
+    }>;
+    const bySlug = new Map(listings.map((l) => [l.slug, l]));
+    for (const r of requests) {
+      const l = bySlug.get(r.slug);
+      if (!l || (l.appBlockId && r.appBlockId && l.appBlockId !== r.appBlockId)) continue;
+      out.set(r.id, impersonationFingerprint(l));
+    }
+  } catch (err) {
+    console.error(
+      `[liveListingFingerprints] read failed: ${
+        err instanceof Error ? err.message || err.name : String(err)
       }`
     );
   }
@@ -2920,12 +3001,26 @@ export async function listPendingRequests(
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const [listingFacts, agentSummaries] = await Promise.all([
+  const [listingFacts, agentSummaries, liveFingerprints] = await Promise.all([
     listingFactsForRequests(items as ListingJoinSubject[]),
     opts.includeAgentReview
       ? agentReviewSummariesForRequests(items.map((r) => r.id))
       : Promise.resolve(null),
+    opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
   ]);
+  // The impersonation check is STALE when the listing changed after it ran (a new app's draft
+  // or pending listing is edited in place); a stale check never fast-lanes the row.
+  const withStaleness = (id: string) => {
+    const summary = agentSummaries?.get(id) ?? null;
+    if (!summary) return null;
+    return {
+      ...summary,
+      impersonationStale: isImpersonationCheckStale(
+        summary.impersonationFingerprint,
+        liveFingerprints?.get(id) ?? null
+      ),
+    };
+  };
   const now = Date.now();
   return {
     items: items.map(
@@ -2937,7 +3032,7 @@ export async function listPendingRequests(
         previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
         // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
         // "not run". `null` = the surface is on and this request has no report.
-        ...(agentSummaries ? { agentReview: agentSummaries.get(r.id) ?? null } : {}),
+        ...(agentSummaries ? { agentReview: withStaleness(r.id) } : {}),
         // BigInt isn't JSON-serializable through tRPC's default transformer;
         // surface as a string. UI can format with Intl.NumberFormat.
         bundleSizeBytes: r.bundleSizeBytes.toString(),
@@ -3195,6 +3290,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // Push-originated requests (git-push webhook) carry an empty bundleKey
       // and this real sha — approve reconstructs the bundle from Forgejo at it.
       forgejoCommitSha: true,
+      // The submitting client's source claim, carried into the approve commit's trailers.
+      sourceCommit: true,
+      sourceDirty: true,
       submittedByUserId: true,
       appBlockId: true,
       // The reviewed file list, which the permission-hook pin below cross-checks with the bytes.
@@ -3331,9 +3429,18 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // here (the H-4 invariant). A post-deploy submission already passed this gate
   // at submit time, and nothing reaches the approve queue without the submit
   // gate first, so skipping the re-check creates no bypass.
+  //
+  // `strictIssueTrackerLink: false` for the same reason: a manifest stored before `bugs` became a
+  // string-only rule must stay approvable. A non-conforming `bugs` is a warning, and the approve's
+  // listing sync publishes no link for it (`resolveListingIssueTracker`).
   const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx, {
     enforceSensitiveScopeJustification: false,
+    strictIssueTrackerLink: false,
   });
+  if (validation.warnings?.length) {
+    // eslint-disable-next-line no-console
+    console.warn(`[approveRequest] manifest warnings: ${validation.warnings.join('; ')}`);
+  }
   if (!validation.valid) {
     throw new Error(
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +
@@ -3706,7 +3813,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // OauthClient owner are mirrored faithfully — important for the transition case
   // where an app approved BEFORE this feature (possibly already curated) has its
   // first listing minted now on a subsequent-version approve.
-  const { mapAppBlockToListing, buildListingScalarSync } = await import('./app-listing-mapper');
+  const { mapAppBlockToListing, buildListingScalarSync, buildListingIssueTrackerSync } =
+    await import('./app-listing-mapper');
   // Is the manual-apply `app_listings.source_repo_url` column there yet? Probed ONCE
   // and threaded into all three write branches below. 🔴 It is deliberately probed
   // rather than assumed: naming a missing column in any of these payloads throws, and
@@ -3718,6 +3826,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // on it must land in this block's log-and-continue rather than abort the approve.
     const { isSourceRepoColumnAvailable } = await import('./app-listing-source-repo.service');
     const sourceRepoAvailable = await isSourceRepoColumnAvailable(dbWrite);
+    // The manual-apply `issue_tracker_url` column (manifest `bugs`), probed the same way. It is a
+    // no-type column, so it is never part of the Prisma payloads below: each branch writes it by
+    // raw SQL right after its own write, and only when this says the column exists.
+    const {
+      isIssueTrackerColumnAvailable,
+      writeIssueTrackerBestEffort,
+      writeListingIssueTrackerUrl,
+      writeOnsiteListingIssueTrackerUrlByAppBlock,
+    } = await import('./app-listing-issue-tracker.service');
+    const issueTrackerAvailable = await isIssueTrackerColumnAvailable(dbWrite);
     // (3b-transition) W13 draft-at-submit — an app SUBMITTED after this feature
     // shipped has a pre-approval on-site DRAFT AppListing (kind='onsite',
     // appBlockId=NULL, status='draft', slug=request.slug) minted at submit, carrying
@@ -3821,6 +3939,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           },
         });
         if (transitioned.count > 0) {
+          const tracker = buildListingIssueTrackerSync({
+            manifest: abForTransition.manifest,
+            issueTrackerAvailable,
+          });
+          if (tracker.write) {
+            await writeIssueTrackerBestEffort(`approve draft ${request.slug}`, () =>
+              writeListingIssueTrackerUrl(dbWrite, draftListing.id, tracker.value)
+            );
+          }
           await recordListingRatingChangeAfterCommit({
             appListingId: draftListing.id,
             slug: request.slug,
@@ -3889,10 +4016,19 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // (don't throw into the already-side-effecting approve flow); the backfill
       // remains the recovery path for such an anomaly.
       if (ab && ab.app && typeof ab.app.userId === 'number') {
-        await dbWrite.appListing.create({
+        const created = await dbWrite.appListing.create({
           data: mapAppBlockToListing(ab as SourceAppBlock, { sourceRepoAvailable }),
           select: { id: true },
         });
+        const tracker = buildListingIssueTrackerSync({
+          manifest: ab.manifest,
+          issueTrackerAvailable,
+        });
+        if (tracker.write && tracker.value !== null && created?.id) {
+          await writeIssueTrackerBestEffort(`approve create ${request.slug}`, () =>
+            writeListingIssueTrackerUrl(dbWrite, created.id, tracker.value)
+          );
+        }
       }
     } else {
       // (3b-sync) MANIFEST-GOVERNED COPY RE-SYNC (subsequent-version approve).
@@ -3952,6 +4088,17 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
               sourceRepoAvailable,
             }),
           });
+          // Re-synced from the manifest on every approved version, like `repository`: removing
+          // `bugs` clears the link.
+          const tracker = buildListingIssueTrackerSync({
+            manifest: ab.manifest,
+            issueTrackerAvailable,
+          });
+          if (tracker.write) {
+            await writeIssueTrackerBestEffort(`approve re-sync ${request.slug}`, () =>
+              writeOnsiteListingIssueTrackerUrlByAppBlock(dbWrite, appBlockId, tracker.value)
+            );
+          }
           if (synced.count === 0) {
             // The replica said a listing exists but the PRIMARY matched no row —
             // replica lag, or the row changed kind between the two reads. Benign
@@ -4281,7 +4428,37 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
 
   // (5) Atomic single-commit replacement of the repo contents on
   // civitai-apps/<slug>. This commit fires the git-push webhook.
-  const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
+  // The subject is unchanged; trailers map the snapshot to the request and to the developer's
+  // source (approve-provenance.ts). A push-originated request's pushed sha is `Pushed-Commit`,
+  // never `Source-Commit`: the latter is only ever the client's own claim.
+  //
+  // An empty bundleKey is NOT enough to call `forgejoCommitSha` the developer's push: approve
+  // overwrites a request's `forgejoCommitSha` with its own snapshot, and reset-to-pending clones
+  // that approved row (bundleKey '' included) into a new pending request. A sha some approved
+  // request already holds is the platform's own commit, so it is not a `Pushed-Commit`.
+  let pushedCommit: string | null = null;
+  if (!request.bundleKey && request.forgejoCommitSha) {
+    const platformOwn = await dbRead.appBlockPublishRequest.findFirst({
+      where: {
+        slug: request.slug,
+        status: 'approved',
+        forgejoCommitSha: request.forgejoCommitSha,
+        NOT: { id: request.id },
+      },
+      select: { id: true },
+    });
+    if (!platformOwn) pushedCommit = request.forgejoCommitSha;
+  }
+  const { buildApproveCommitMessage } = await import('./approve-provenance');
+  const commitMessage = buildApproveCommitMessage({
+    publishRequestId: request.id,
+    slug: request.slug,
+    version: request.version,
+    sourceCommit: request.sourceCommit,
+    sourceDirty: request.sourceDirty,
+    sourceRepo: (manifest as { repository?: unknown }).repository,
+    pushedCommit,
+  });
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,
     files: filesForCommit,
@@ -4319,6 +4496,36 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       appBlockId,
     },
   });
+
+  // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag
+  // already names another commit, `approved-<request id>`; see decideVersionTag). Runs after the
+  // approval markers are durable and before the build trigger. LOG-AND-CONTINUE: a tag is a
+  // pointer for developers, and a Forgejo error here must never fail an approve whose code is
+  // committed or keep its build from starting.
+  try {
+    const { ensureApprovalTag } = await import('./forgejo.service');
+    const tagged = await ensureApprovalTag({
+      slug: request.slug,
+      version: request.version,
+      publishRequestId: request.id,
+      sha: forgejoCommitSha,
+      message: commitMessage,
+    });
+    if (tagged.status === 'skipped' || tagged.fallbackFrom) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] version tag (slug=${request.slug}, id=${request.id}): ${JSON.stringify(
+          tagged
+        )}`
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] version tag not created (slug=${request.slug}, id=${request.id}); ` +
+        `approve/deploy CONTINUES: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // (6b) FORK PROVENANCE — if this request carries a parent (server-written onto the REQUEST at
   // creation; 🔴 never read from `manifest`), stamp it onto the block and link this app's store

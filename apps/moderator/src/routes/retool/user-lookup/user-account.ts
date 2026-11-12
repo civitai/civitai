@@ -6,8 +6,14 @@ import type {
   ReceivedReview as ReceivedReviewRow,
   UserBounty,
   UserBountyEntry,
+  UserComment,
 } from '$lib/server/user-account.service';
+import type { ModActivityCursor } from '$lib/mod-activity';
 import type { Jsonified } from '$lib/format';
+
+/** Where the next page of comments starts: `ModActivityCursor`'s shape, but `at` is CommentV3's
+ *  `createdAt::text` (microseconds and offset), not the activity log's format. */
+export type CommentCursor = ModActivityCursor;
 
 // The `/api/user-account` payload, declared once. Several panels render slices of it, and each used to
 // declare its own copy and issue its own fetch, so every lookup ran the whole endpoint more than once.
@@ -26,24 +32,7 @@ export type Bounty = Jsonified<UserBounty>;
 
 export type BountyEntry = Jsonified<UserBountyEntry>;
 
-export type Comment = {
-  id: number;
-  createdAt: string;
-  content: string;
-  nsfw: boolean | null;
-  tosViolation: boolean | null;
-  modelId: number | null;
-};
-
-export type CommentV2 = {
-  id: number;
-  createdAt: string;
-  content: string;
-  tosViolation: boolean | null;
-  threadId: number;
-  entityType: string | null;
-  entityId: number | null;
-};
+export type Comment = Jsonified<UserComment>;
 
 export type Cosmetic = {
   /** `${cosmeticId}:${claimKey}` — the cosmetic id alone repeats across claims. */
@@ -129,8 +118,6 @@ export type Capped<T> = { items: T[]; truncated: boolean };
 
 export type Account = {
   receivedReviews: Capped<ReceivedReview>;
-  comments: Capped<Comment>;
-  commentsV2: Capped<CommentV2>;
   cosmetics: Capped<Cosmetic>;
   trainings: { runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null };
   bounties: Capped<Bounty>;
@@ -145,6 +132,25 @@ export type Account = {
  *  the balance above the form, and this data does not come from `load`. */
 export async function fetchAccount(userId: number, version = 0): Promise<Account> {
   const r = await fetch(`/api/user-account/${userId}?v=${version}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+
+export type CommentPage = {
+  items: Comment[];
+  truncated: boolean;
+  next: CommentCursor | null;
+  total: number;
+};
+
+/** One page of the account's comments, newest first, starting at `before`. */
+export async function fetchComments(
+  userId: number,
+  before: CommentCursor | null,
+  version: number
+): Promise<CommentPage> {
+  const cursor = before ? `&before=${encodeURIComponent(before.at)}&beforeId=${before.id}` : '';
+  const r = await fetch(`/api/user-comments/${userId}?v=${version}${cursor}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }

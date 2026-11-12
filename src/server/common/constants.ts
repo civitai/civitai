@@ -68,22 +68,6 @@ const v3PageBudgetOverrides: Record<string, number> = {
 const v3PageBudget = 40;
 /** Surfaces whose section leaves hidden top-level comments out, where every other shows them folded. */
 const hiddenCommentsLeftOut = new Set(['model']);
-const v3ReadSurfaces: string[] = [
-  'article',
-  'post',
-  'image',
-  'review',
-  'bounty',
-  'bountyEntry',
-  'challenge',
-  'crucible',
-  'storyline',
-  'model3d',
-  'appListing',
-  'comicChapter',
-  'model',
-];
-
 function getCommentAutoExpandDepth(entityType: string) {
   const override = autoExpandDepthOverrides[entityType];
   if (override === undefined && !wideCommentSurfaces.has(entityType)) return 0;
@@ -355,6 +339,8 @@ export const constants = {
     minCreateAmount: 500,
     maxCreateAmount: 100000000,
     supportedBountyToModels: [BountyType.ModelCreation, BountyType.LoraCreation],
+    // The edit form saves back only the images its read returned, so writes are capped at the same number.
+    maxEntryImagesForEdit: 100,
   },
   defaultCurrency: Currency.BUZZ,
   referrals: {
@@ -469,16 +455,6 @@ export const constants = {
     leavesOutHiddenComments({ entityType }: { entityType: string }) {
       return hiddenCommentsLeftOut.has(entityType);
     },
-    /**
-     * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
-     * it here and mounts `CommentSection`; notifications build their deep links from this list.
-     */
-    v3ReadSurfaces,
-    /**
-     * Surfaces whose comments are written to CommentV3 directly (stage B of a flip): a new comment
-     * on one exists only there. A surface read-flipped ahead of its write flip must be left out.
-     */
-    v3WriteSurfaces: [...v3ReadSurfaces],
     /** Most replies the v3 suite opens up front under one top-level comment. */
     v3RepliesPerRoot: 10,
     /** Replies per "show more" page in the v3 suite. */
@@ -925,6 +901,16 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy: 'MiniMax H3',
     requiresSameLicense: true,
   },
+  'minimax h3 image': {
+    // Same text and permalink as licence 55 in basemodel.constants.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/492fd8c4eca666f1085f57e30738c1e0d86b3439/LICENSE',
+    name: 'MiniMax-H3-Image Community License Agreement',
+    notice:
+      'MiniMax-H3-Image is licensed under the MiniMax-H3-Image Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
+    attribution: 'MiniMax-H3-Image',
+    poweredBy: 'MiniMax-H3-Image',
+    requiresSameLicense: true,
+  },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
     // the published text.
@@ -1111,6 +1097,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
+  'MiniMax H3 Image': baseLicenses['minimax h3 image'],
   'Krea 2': baseLicenses['krea 2 community'],
   'Krea 2 Turbo': baseLicenses['krea 2 community'],
   Ernie: baseLicenses['apache 2.0'],

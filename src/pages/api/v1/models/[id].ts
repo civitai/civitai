@@ -78,9 +78,6 @@ async function buildPublicModelResponse(
     // they 404 minor-flagged and child-tagged models that /models/{id} serves at
     // the same id. POI still applies, matching the model page.
     ignoreBrowsingAddons: true,
-    // This body is cached (here and at the edge), and a version edit clears it right after
-    // refreshing the images cache in Redis: build it from Redis, not this process's L1.
-    bypassImagesL1: true,
   });
   if (items.length === 0) return null;
 

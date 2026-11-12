@@ -35,6 +35,7 @@ import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 type ScheduledEntity = {
   id: number;
   userId: number;
+  publishedAt?: Date;
   extras?: { modelId: number; hasEarlyAccess?: boolean; earlyAccessEndsAt?: Date } & MixedObject;
 };
 
@@ -69,6 +70,7 @@ export const scheduledVersionsDueSql = (now: Date) => Prisma.sql`
   SELECT
     mv.id,
     m."userId",
+    mv."publishedAt",
     JSON_BUILD_OBJECT(
       'modelId', m.id,
       'hasEarlyAccess', EXISTS (
@@ -168,13 +170,31 @@ export const scheduledVersionsGoLiveSql = (ids: number[], now: Date) => Prisma.s
   RETURNING mv.id
 `;
 
-/** Scheduled models due by `now` go live, unless a moderation rule or a wipe's record stops them. */
-export const scheduledModelsGoLiveSql = (ids: number[], now: Date) => Prisma.sql`
+/**
+ * Scheduled models due by `now` go live, and so does the model of a version this run published on
+ * its schedule, whatever the model's own date. Unless a moderation rule or a wipe's record stops them.
+ */
+export const scheduledModelsGoLiveSql = (
+  ids: number[],
+  now: Date,
+  releasedWithVersionIds: number[] = []
+) => Prisma.sql`
   UPDATE "Model"
-  SET status = 'Published'
+  -- A live model left with a future date reads as Scheduled again to restoreModelById, which would
+  -- send it back through this job and fire its publish side effects a second time.
+  SET status = 'Published', "publishedAt" = LEAST("publishedAt", ${now})
   WHERE id IN (${Prisma.join(ids)})
     AND status = 'Scheduled'
-    AND "publishedAt" <= ${now}
+    -- Not every model with a live version: an owner may publish a version at once on a model they
+    -- scheduled for later, and that model keeps its date.
+    AND (
+      "publishedAt" <= ${now}
+      ${
+        releasedWithVersionIds.length
+          ? Prisma.sql`OR id IN (${Prisma.join(releasedWithVersionIds)})`
+          : Prisma.empty
+      }
+    )
     AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('meta')}
     -- After the version UPDATE, so a version it just published counts. A model whose versions all
@@ -305,6 +325,10 @@ export const processScheduledPublishing = createJob(
       }
     }
 
+    const versionModels = scheduledModelVersions.flatMap(({ id, userId, publishedAt, extras }) =>
+      extras?.modelId ? [{ versionId: id, modelId: extras.modelId, userId, publishedAt }] : []
+    );
+
     // What the UPDATEs below actually published, with each post's owner as of the write: they
     // re-check every row, so one taken down or moved since the selects drops out, and must get none
     // of the side effects. Returned rather than assigned out, so a rollback yields none.
@@ -313,9 +337,7 @@ export const processScheduledPublishing = createJob(
         let flipped: ScheduledEntity[] = [];
         let publishedModels = new Set<number>();
         let publishedVersions = new Set<number>();
-        const modelsToUpdate = [
-          ...new Set(scheduledModelVersions.map(({ extras }) => extras?.modelId).filter(isDefined)),
-        ];
+        const modelsToUpdate = uniq(versionModels.map(({ modelId }) => modelId));
 
         // Models, then versions, each by id: the order the model publish and takedown paths take
         // them, which lock their one model first. Without it this crosses them and either side can
@@ -384,11 +406,26 @@ export const processScheduledPublishing = createJob(
           }
         }
 
-        if (scheduledModels.length) {
-          const scheduledModelIds = scheduledModels.map(({ id }) => id);
+        // Only a version whose date came due since the last run: one put back to Scheduled with an
+        // old date it already went live on is published again at once, not on a schedule. This also
+        // holds back a version published late (its file landed after its date); its model waits for
+        // its own date, as before.
+        const releasedWithVersionIds = uniq(
+          versionModels
+            .filter(
+              ({ versionId, publishedAt }) =>
+                publishedVersions.has(versionId) && !!publishedAt && publishedAt > lastRun
+            )
+            .map(({ modelId }) => modelId)
+        );
+        const releasedModelIds = uniq([
+          ...scheduledModels.map(({ id }) => id),
+          ...releasedWithVersionIds,
+        ]);
 
+        if (releasedModelIds.length) {
           const published = await tx.$queryRaw<{ id: number }[]>(
-            scheduledModelsGoLiveSql(scheduledModelIds, now)
+            scheduledModelsGoLiveSql(releasedModelIds, now, releasedWithVersionIds)
           );
           publishedModels = new Set(published.map(({ id }) => id));
         }
@@ -440,13 +477,17 @@ export const processScheduledPublishing = createJob(
       );
 
     // Process event engagements
-    for (const model of scheduledModels) {
-      if (!publishedModelIds.has(model.id)) continue;
+    const modelOwners = new Map<number, number>();
+    for (const { modelId, userId } of versionModels) modelOwners.set(modelId, userId);
+    for (const { id, userId } of scheduledModels) modelOwners.set(id, userId);
+    for (const id of publishedModelIds) {
+      const userId = modelOwners.get(id);
+      if (userId === undefined) continue;
       await eventEngine.processEngagement({
-        userId: model.userId,
+        userId,
         type: 'published',
         entityType: 'model',
-        entityId: model.id,
+        entityId: id,
       });
     }
     for (const modelVersion of scheduledModelVersions) {

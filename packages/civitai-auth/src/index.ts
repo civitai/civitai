@@ -11,11 +11,10 @@ export { loadAuthEnv } from './env';
 export type { AuthEnv } from './env';
 export { createAuthVerifier } from './verify';
 export type { AuthVerifier, AuthVerifierConfig } from './verify';
-export { decodeLegacySessionCookie } from './legacy-cookie'; // read legacy next-auth civitai-token (no next-auth dep)
 // Server-side consumer→hub clients (each file's header has the detail). All hub interaction goes through these,
 // so app code never hand-rolls a hub fetch.
 export { createSessionClient } from './session-client'; // token→user + invalidate/refresh
-export type { SessionClient, SessionClientConfig } from './session-client';
+export type { SessionClient, SessionClientConfig, SessionResolution } from './session-client';
 export { createDeviceAccountClient } from './device-client'; // multi-account switching (cookie-forwarded)
 export type { DeviceAccountClient, DeviceAccount } from './device-client';
 export { createSessionTokenClient } from './session-token-client'; // rolling refresh + revoke
@@ -34,6 +33,7 @@ export type {
   SpokeGuardCheckOptions,
   SpokeGuardConfig,
   SpokeGuardResult,
+  SpokeSignInReason,
 } from './spoke-guard';
 export {
   spokeAuthorize,

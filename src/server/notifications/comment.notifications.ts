@@ -22,7 +22,7 @@ export const liveV3Since = (lastSent: string) =>
 
 /**
  * The id a model-page notification addresses a comment by: its old Comment id when it has one, so
- * links and milestone keys sent before the model flip keep matching, else its own id. Details carry
+ * links and milestone keys already sent keep matching, else its own id. Details carry
  * version 4 so a reader can tell the two apart (`comment.detail-fetcher.ts`).
  */
 export const modelPageId = (alias: string) => `COALESCE(${alias}."legacyV1Id", ${alias}.id)`;
@@ -56,14 +56,10 @@ export const notOnHiddenModel = (alias: string, ownerMay?: string) => `NOT EXIST
 export const answeredId = (alias: string) => `COALESCE(${alias}."replyToId", ${alias}."parentId")`;
 
 /**
- * The comment whose replies a notification opens. A v3 section lists a comment's direct replies,
- * where a clamped reply hangs off its parent; a v2 section opens the answered comment's thread.
+ * The comment whose replies a notification opens: a section lists a comment's direct replies, where
+ * a clamped reply hangs off its parent.
  */
-export const deepLinkParentId = (alias: string) =>
-  `CASE WHEN ${alias}."entityType"::text = ANY(ARRAY[${constants.comments.v3ReadSurfaces
-    .map((t) => `'${t}'`)
-    .join(', ')}])
-     THEN ${alias}."parentId" ELSE ${answeredId(alias)} END`;
+export const deepLinkParentId = (alias: string) => `${alias}."parentId"`;
 
 /**
  * The two entities whose URL is not built from `entityId`: a comic chapter is addressed by its
@@ -309,6 +305,70 @@ const siblingAuthors = (sameParent: string) => `(SELECT ARRAY_AGG(s."userId") FR
                    WHERE ${notBlockedBetween('s."userId"', 'c."userId"')}
                      AND ${notCommentMuted('s."userId"', 'c')})`;
 
+/**
+ * A type has no cursor row until its first run, so it inherits the job's global last-run (new Date(0)
+ * on a fresh DB, stale after an outage). The launch date guards its first week, the window after that.
+ */
+const firstRunFloors = (launchDate: string) => [
+  `c."createdAt" > '${launchDate}'`,
+  `c."createdAt" > NOW() - INTERVAL '7 days'`,
+];
+
+/**
+ * A comment on the recipient's own entity, top-level or a reply. Route every type addressed to the
+ * entity's owner through here so none loses the self, block or mute filter. `ownerId` is SQL.
+ */
+const entityOwnerCommentQuery =
+  ({
+    type,
+    key,
+    dedupe,
+    entityType,
+    level,
+    ownerId,
+    joins,
+    details,
+    where = [],
+  }: {
+    type: string;
+    key: string;
+    dedupe: 'v1' | 'v2';
+    entityType: string;
+    level: 'top' | 'reply';
+    ownerId: string;
+    joins: string;
+    details: string;
+    where?: string[];
+  }) =>
+  ({ lastSent }: { lastSent: string }) =>
+    `
+      WITH owner_comment AS (
+        SELECT DISTINCT
+          ${ownerId} "ownerId",
+          JSONB_BUILD_OBJECT(${details}) "details"
+        FROM "CommentV3" c
+        JOIN "User" u ON c."userId" = u.id
+        ${joins}
+        WHERE c."entityType" = '${entityType}'
+          AND c."parentId" IS ${level === 'top' ? '' : 'NOT '}NULL
+          AND ${liveV3Since(lastSent)}
+          AND ${ownerId} > 0
+          AND c."userId" != ${ownerId}
+          ${where.map((w) => `AND ${w}`).join(' ')}
+          AND ${notBlockedBetween(ownerId, 'c."userId"')}
+          AND ${notCommentMuted(ownerId, 'c')}
+      )
+      SELECT
+        concat('${key}:', details->>'commentId') "key",
+        ${commentDedupeKey(dedupe)} "dedupeKey",
+        "ownerId" "userId",
+        '${type}' "type",
+        details
+      FROM owner_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = '${type}')
+    `;
+
 export const commentNotifications = createNotificationProcessor({
   'new-comment': {
     displayName: 'New comments on your models',
@@ -318,38 +378,17 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} commented on your ${details.modelName} model`,
       url: getModelCommentThreadUrl({ modelId: details.modelId, commentId: details.commentId }),
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_comments AS (
-        SELECT DISTINCT
-          m."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 4,
-            'modelId', c."entityId",
-            'commentId', ${modelPageId('c')},
-            'modelName', m.name,
-            'username', u.username
-          ) "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Model" m ON m.id = c."entityId"
-        WHERE ${isModelComment('c')}
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND m."userId" > 0
-          AND c."userId" != m."userId"
-          AND ${notBlockedBetween('m."userId"', 'c."userId"')}
-          AND ${notCommentMuted('m."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-model:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v1')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-comment' "type",
-        details
-      FROM new_comments r
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment')
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-comment',
+      key: 'new-comment-model:owner:v3',
+      dedupe: 'v1',
+      entityType: 'model',
+      level: 'top',
+      ownerId: 'm."userId"',
+      joins: 'JOIN "Model" m ON m.id = c."entityId"',
+      details: `'version', 4, 'modelId', c."entityId", 'commentId', ${modelPageId('c')},
+        'modelName', m.name, 'username', u.username`,
+    }),
   },
   'new-comment-response': {
     defaultPush: true,
@@ -410,40 +449,19 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} responded to a ${details.parentType} on your ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_comments_nested AS (
-        SELECT DISTINCT
-          m."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 4,
-            'modelId', c."entityId",
-            'commentId', ${modelPageId('c')},
-            'parentId', ${modelPageId('p')},
-            'parentType', 'comment',
-            'modelName', m.name,
-            'username', u.username
-          ) "details"
-        FROM "CommentV3" c
-        JOIN "CommentV3" p ON p.id = c."parentId"
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Model" m ON m.id = c."entityId"
-        WHERE ${isModelComment('c')}
-          AND ${liveV3Since(lastSent)}
-          AND m."userId" > 0
-          AND c."userId" != m."userId"
-          AND ${notBlockedBetween('m."userId"', 'c."userId"')}
-          AND ${notCommentMuted('m."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-nested:user:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v1')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-comment-nested' "type",
-        details
-      FROM new_comments_nested r
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-nested')
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-comment-nested',
+      key: 'new-comment-nested:user:v3',
+      dedupe: 'v1',
+      entityType: 'model',
+      level: 'reply',
+      ownerId: 'm."userId"',
+      joins: `JOIN "CommentV3" p ON p.id = c."parentId"
+        JOIN "Model" m ON m.id = c."entityId"`,
+      details: `'version', 4, 'modelId', c."entityId", 'commentId', ${modelPageId('c')},
+        'parentId', ${modelPageId('p')}, 'parentType', 'comment', 'modelName', m.name,
+        'username', u.username`,
+    }),
   },
   'new-comment-reply': {
     defaultPush: true,
@@ -575,40 +593,19 @@ export const commentNotifications = createNotificationProcessor({
         url: `/reviews/${details.reviewId}?highlight=${details.commentId}`,
       };
     },
-    prepareQuery: ({ lastSent }) => `
-    WITH new_review_response AS (
-      SELECT DISTINCT
-        r."userId" "ownerId",
-        JSONB_BUILD_OBJECT(
-          'version', 3,
-          'modelId', r."modelId",
-          'commentId', c.id,
-          'reviewId', r.id,
-          'modelName', m.name,
-          'username', u.username
-        ) as "details"
-      FROM "CommentV3" c
-      JOIN "ResourceReview" r ON r.id = c."entityId"
-      JOIN "User" u ON c."userId" = u.id
-      JOIN "Model" m ON m.id = r."modelId"
-      WHERE c."entityType" = 'review'
-        AND c."parentId" IS NULL
-        AND ${liveV3Since(lastSent)}
-        AND m."userId" > 0
-        AND c."userId" != r."userId"
-        AND ${notBlockedBetween('r."userId"', 'c."userId"')}
-        AND ${notCommentMuted('r."userId"', 'c')}
-      )
-      SELECT
-        concat('new-review-response:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-review-response' "type",
-        details
-      FROM new_review_response r
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response')
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-review-response',
+      key: 'new-review-response:owner:v3',
+      dedupe: 'v2',
+      entityType: 'review',
+      level: 'top',
+      ownerId: 'r."userId"',
+      joins: `JOIN "ResourceReview" r ON r.id = c."entityId"
+        JOIN "Model" m ON m.id = r."modelId"`,
+      details: `'version', 3, 'modelId', r."modelId", 'commentId', c.id, 'reviewId', r.id,
+        'modelName', m.name, 'username', u.username`,
+      where: ['m."userId" > 0'],
+    }),
   },
   'new-image-comment': {
     displayName: 'New comments on your images',
@@ -643,45 +640,21 @@ export const commentNotifications = createNotificationProcessor({
 
       return { message, url };
     },
-    prepareQuery: ({ lastSent }) => `
-      WITH new_image_comment AS (
-        SELECT DISTINCT
-          i."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'imageId', c."entityId",
-            'postId', i."postId",
-            'commentId', c.id,
-            'username', u.username,
-            'modelName', m.name,
-            'modelId', m.id,
-            'modelVersionId', p."modelVersionId",
-            'modelVersionName', mv.name
-          ) "details"
-        FROM "CommentV3" c
-        JOIN "Image" i ON i.id = c."entityId"
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-image-comment',
+      key: 'new-comment-image:owner:v3',
+      dedupe: 'v2',
+      entityType: 'image',
+      level: 'top',
+      ownerId: 'i."userId"',
+      joins: `JOIN "Image" i ON i.id = c."entityId"
         JOIN "Post" p ON p.id = i."postId"
         LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-        LEFT JOIN "Model" m ON m.id = mv."modelId"
-        JOIN "User" u ON c."userId" = u.id
-        WHERE c."entityType" = 'image'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND i."userId" > 0
-          AND c."userId" != i."userId"
-          AND ${notBlockedBetween('i."userId"', 'c."userId"')}
-          AND ${notCommentMuted('i."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-image:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-image-comment' "type",
-        details
-      FROM new_image_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-image-comment');
-    `,
+        LEFT JOIN "Model" m ON m.id = mv."modelId"`,
+      details: `'version', 3, 'imageId', c."entityId", 'postId', i."postId", 'commentId', c.id,
+        'username', u.username, 'modelName', m.name, 'modelId', m.id,
+        'modelVersionId', p."modelVersionId", 'modelVersionName', mv.name`,
+    }),
   },
   'new-post-comment': {
     displayName: 'New comments on your posts',
@@ -700,52 +673,20 @@ export const commentNotifications = createNotificationProcessor({
       if (details.modelName) message += ` on ${withDefiniteArticle(details.modelName)} model`;
       return { message, url: `/posts/${details.postId}?highlight=${details.commentId}` };
     },
-    prepareQuery: ({ lastSent }) => `
-      WITH new_post_comment AS (
-        SELECT DISTINCT
-          p."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'postId', p.id,
-            'postTitle', p.title,
-            'commentId', c.id,
-            'username', u.username,
-            'modelName', m.name
-          ) "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Post" p ON p.id = c."entityId"
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-post-comment',
+      key: 'new-comment-post:owner:v3',
+      dedupe: 'v2',
+      entityType: 'post',
+      level: 'top',
+      ownerId: 'p."userId"',
+      joins: `JOIN "Post" p ON p.id = c."entityId"
         LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-        LEFT JOIN "Model" m ON m.id = mv."modelId"
-        WHERE c."entityType" = 'post'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND p."userId" > 0
-          -- Two floors, because this type has no cursor row until its first successful run and so
-          -- inherits the job's GLOBAL last-run: new Date(0) on a fresh DB, and stale by the outage
-          -- duration after any send-notifications outage. Unfloored, one such deploy emits all 110k
-          -- historical post comments (measured; the query returns them in 2.6s, well inside the 20s
-          -- timeout, so nothing downstream stops it).
-          -- The launch date is the guard new-bounty-comment carries. It only bites for the first week
-          -- after it passes, but that is the window where a pre-launch comment could still be emitted.
-          AND c."createdAt" > '2026-08-06'
-          -- After that the rolling window is the one doing the work, and it never goes stale: it bounds
-          -- any first batch to ~7 days (~500 rows at the measured 3/hour) however far the cursor drifted.
-          AND c."createdAt" > NOW() - INTERVAL '7 days'
-          AND c."userId" != p."userId"
-          AND ${notBlockedBetween('p."userId"', 'c."userId"')}
-          AND ${notCommentMuted('p."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-post:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-post-comment' "type",
-        details
-      FROM new_post_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-post-comment');
-    `,
+        LEFT JOIN "Model" m ON m.id = mv."modelId"`,
+      details: `'version', 3, 'postId', p.id, 'postTitle', p.title, 'commentId', c.id,
+        'username', u.username, 'modelName', m.name`,
+      where: firstRunFloors('2026-08-06'),
+    }),
   },
   'new-app-listing-comment': {
     displayName: 'New comments on your app listings',
@@ -793,65 +734,27 @@ export const commentNotifications = createNotificationProcessor({
       // SAME segments, so an author always clears the store term.
       url: OWNER_SUBMISSIONS_URL,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_app_listing_comment AS (
-        SELECT DISTINCT
-          ${APP_LISTING_OWNER_SQL} "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'commentId', c.id,
-            'appListingSlug', al.slug,
-            'listingName', al.name,
-            'username', u.username
-          ) "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "app_listings" al ON al."serial_id" = c."entityId"
-        -- Ownership chain for the onsite kind — see APP_LISTING_OWNER_SQL. LEFT, because an
-        -- offsite listing has no block and an onsite one may carry a dangling app_id; both must
-        -- still fall back to the column rather than drop the row.
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-app-listing-comment',
+      key: 'new-comment-app-listing:owner:v3',
+      dedupe: 'v2',
+      entityType: 'appListing',
+      level: 'top',
+      ownerId: APP_LISTING_OWNER_SQL,
+      // LEFT, so an offsite listing (no block) or a dangling app_id still falls back to the column.
+      joins: `JOIN "app_listings" al ON al."serial_id" = c."entityId"
         LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"
-        LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"
-        WHERE c."entityType" = 'appListing'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND ${APP_LISTING_OWNER_SQL} > 0
-          -- Only APPROVED listings. The destination reads through
-          -- \`appListings.getAppDetail\`, which is approved-only, so a comment on a draft /
-          -- rejected / moderator-removed listing would notify its owner toward a NotFound.
-          -- Measured on prod: only 14 of 28 listings are approved. Mirrors the sibling raw-SQL
-          -- consumer (appListing.metrics.sql.ts).
-          AND al."status" = 'approved'
-          -- Never a shadow revision. \`beginListingRevision\` clones an approved parent as a
-          -- hidden draft; the clone freezes \`user_id\` at clone time and no ownership write
-          -- revisits it, so a shadow can name a STALE owner. Not reachable today (shadows are
-          -- draft, so the status filter already excludes them) — belt and braces, and it
-          -- matches every Prisma-side ownership read.
-          AND al."revision_of_id" IS NULL
-          -- Two floors, for the reason new-post-comment carries them: this type has no cursor row
-          -- until its first successful run, so it inherits the job's GLOBAL last-run — new Date(0)
-          -- on a fresh DB, and stale by the outage duration after any send-notifications outage.
-          AND c."createdAt" > '2026-08-19'
-          -- The rolling window is the one that never goes stale: it bounds any first batch to
-          -- ~7 days however far the cursor drifted.
-          AND c."createdAt" > NOW() - INTERVAL '7 days'
-          -- A commenter never notifies themselves for their own listing.
-          AND c."userId" != ${APP_LISTING_OWNER_SQL}
-          -- Argument ORDER is load-bearing: (recipient, actor). Swapped, the owner's Hide stops
-          -- suppressing and the commenter's starts — a silent inversion of who gets muted.
-          AND ${notBlockedBetween(APP_LISTING_OWNER_SQL, 'c."userId"')}
-          AND ${notCommentMuted(APP_LISTING_OWNER_SQL, 'c')}
-      )
-      SELECT
-        concat('new-comment-app-listing:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-app-listing-comment' "type",
-        details
-      FROM new_app_listing_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-app-listing-comment');
-    `,
+        LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"`,
+      details: `'version', 3, 'commentId', c.id, 'appListingSlug', al.slug, 'listingName', al.name,
+        'username', u.username`,
+      where: [
+        // The destination reads through the approved-only `appListings.getAppDetail`.
+        `al."status" = 'approved'`,
+        // A shadow revision's `user_id` is frozen at clone time and can name a stale owner.
+        'al."revision_of_id" IS NULL',
+        ...firstRunFloors('2026-08-19'),
+      ],
+    }),
   },
   'new-article-comment': {
     displayName: 'New comments on your articles',
@@ -864,38 +767,17 @@ export const commentNotifications = createNotificationProcessor({
             url: `/articles/${details.articleId}?highlight=${details.commentId}`,
           }
         : undefined,
-    prepareQuery: ({ lastSent }) => `
-      WITH new_article_comment AS (
-        SELECT DISTINCT
-          a."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'articleId', a.id,
-            'articleTitle', a.title,
-            'commentId', c.id,
-            'username', u.username
-          ) "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Article" a ON a.id = c."entityId"
-        WHERE c."entityType" = 'article'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND a."userId" > 0
-          AND c."userId" != a."userId"
-          AND ${notBlockedBetween('a."userId"', 'c."userId"')}
-          AND ${notCommentMuted('a."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-article:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-article-comment' "type",
-        details
-      FROM new_article_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-comment');
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-article-comment',
+      key: 'new-comment-article:owner:v3',
+      dedupe: 'v2',
+      entityType: 'article',
+      level: 'top',
+      ownerId: 'a."userId"',
+      joins: 'JOIN "Article" a ON a.id = c."entityId"',
+      details: `'version', 3, 'articleId', a.id, 'articleTitle', a.title, 'commentId', c.id,
+        'username', u.username`,
+    }),
   },
   'new-bounty-comment': {
     displayName: 'New comments on your bounty',
@@ -905,39 +787,18 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} commented on your bounty: "${details.bountyTitle}"`,
       url: `/bounties/${details.bountyId}?highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_bounty_comment AS (
-        SELECT DISTINCT
-          b."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'bountyId', b.id,
-            'bountyTitle', b.name,
-            'commentId', c.id,
-            'username', u.username
-          ) as "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Bounty" b ON b.id = c."entityId"
-        WHERE c."entityType" = 'bounty'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND b."userId" > 0
-          AND c."createdAt" > '2024-02-24'
-          AND c."userId" != b."userId"
-          AND ${notBlockedBetween('b."userId"', 'c."userId"')}
-          AND ${notCommentMuted('b."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-bounty:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-bounty-comment' "type",
-        details
-      FROM new_bounty_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-comment');
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-bounty-comment',
+      key: 'new-comment-bounty:owner:v3',
+      dedupe: 'v2',
+      entityType: 'bounty',
+      level: 'top',
+      ownerId: 'b."userId"',
+      joins: 'JOIN "Bounty" b ON b.id = c."entityId"',
+      details: `'version', 3, 'bountyId', b.id, 'bountyTitle', b.name, 'commentId', c.id,
+        'username', u.username`,
+      where: [`c."createdAt" > '2024-02-24'`],
+    }),
   },
   'new-bounty-entry-comment': {
     displayName: 'New comments on your bounty entries',
@@ -950,49 +811,20 @@ export const commentNotifications = createNotificationProcessor({
       // handed the entry id alone, with no bountyId.
       url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}?highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_bounty_entry_comment AS (
-        SELECT DISTINCT
-          be."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'bountyEntryId', be.id,
-            'bountyId', b.id,
-            'bountyTitle', b.name,
-            'commentId', c.id,
-            'username', u.username
-          ) as "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "BountyEntry" be ON be.id = c."entityId"
-        JOIN "Bounty" b ON b.id = be."bountyId"
-        WHERE c."entityType" = 'bountyEntry'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          -- BountyEntry."userId" is nullable (SetNull on user delete); NULL > 0 is NULL, so this drops
-          -- orphaned entries as well as system-owned ones.
-          AND be."userId" > 0
-          -- A new type has no cursor row until its first successful run, so it inherits the job's
-          -- global last-run: new Date(0) on a fresh DB, stale by the outage duration after any
-          -- send-notifications outage. There are 21,812 historical entry comments across 3,876
-          -- owners. Launch date is the guard new-bounty-comment carries; the rolling window is what
-          -- still holds once that date is behind us.
-          AND c."createdAt" > '2026-08-06'
-          AND c."createdAt" > NOW() - INTERVAL '7 days'
-          AND c."userId" != be."userId"
-          AND ${notBlockedBetween('be."userId"', 'c."userId"')}
-          AND ${notCommentMuted('be."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-bounty-entry:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-bounty-entry-comment' "type",
-        details
-      FROM new_bounty_entry_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-entry-comment');
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-bounty-entry-comment',
+      key: 'new-comment-bounty-entry:owner:v3',
+      dedupe: 'v2',
+      entityType: 'bountyEntry',
+      level: 'top',
+      // Nullable (SetNull on user delete): the owner floor drops orphaned entries too.
+      ownerId: 'be."userId"',
+      joins: `JOIN "BountyEntry" be ON be.id = c."entityId"
+        JOIN "Bounty" b ON b.id = be."bountyId"`,
+      details: `'version', 3, 'bountyEntryId', be.id, 'bountyId', b.id, 'bountyTitle', b.name,
+        'commentId', c.id, 'username', u.username`,
+      where: firstRunFloors('2026-08-06'),
+    }),
   },
   'new-challenge-comment': {
     displayName: 'New comments on your challenges',
@@ -1002,38 +834,17 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} commented on your challenge: "${details.challengeTitle}"`,
       url: `/challenges/${details.challengeId}?highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_challenge_comment AS (
-        SELECT DISTINCT
-          ch."createdById" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'challengeId', ch.id,
-            'challengeTitle', ch.title,
-            'commentId', c.id,
-            'username', u.username
-          ) as "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Challenge" ch ON ch.id = c."entityId"
-        WHERE c."entityType" = 'challenge'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND ch."createdById" > 0
-          AND c."userId" != ch."createdById"
-          AND ${notBlockedBetween('ch."createdById"', 'c."userId"')}
-          AND ${notCommentMuted('ch."createdById"', 'c')}
-      )
-      SELECT
-        concat('new-comment-challenge:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId" "userId",
-        'new-challenge-comment' "type",
-        details
-      FROM new_challenge_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-challenge-comment');
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-challenge-comment',
+      key: 'new-comment-challenge:owner:v3',
+      dedupe: 'v2',
+      entityType: 'challenge',
+      level: 'top',
+      ownerId: 'ch."createdById"',
+      joins: 'JOIN "Challenge" ch ON ch.id = c."entityId"',
+      details: `'version', 3, 'challengeId', ch.id, 'challengeTitle', ch.title, 'commentId', c.id,
+        'username', u.username`,
+    }),
   },
   'new-crucible-comment': {
     displayName: 'New comments on your crucibles',
@@ -1046,38 +857,18 @@ export const commentNotifications = createNotificationProcessor({
       }`,
       url: `/crucibles/${details.crucibleId}?highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_crucible_comment AS (
-        SELECT DISTINCT
-          cr."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'crucibleId', cr.id,
-            'crucibleName', CASE WHEN cr.ingestion = 'Scanned' AND NOT cr."textNsfw" THEN cr.name END,
-            'commentId', c.id,
-            'username', u.username
-          ) as "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Crucible" cr ON cr.id = c."entityId"
-        WHERE c."entityType" = 'crucible'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND cr."userId" > 0
-          AND c."userId" != cr."userId"
-          AND ${notBlockedBetween('cr."userId"', 'c."userId"')}
-          AND ${notCommentMuted('cr."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-crucible:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId" "userId",
-        'new-crucible-comment' "type",
-        details
-      FROM new_crucible_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-crucible-comment');
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-crucible-comment',
+      key: 'new-comment-crucible:owner:v3',
+      dedupe: 'v2',
+      entityType: 'crucible',
+      level: 'top',
+      ownerId: 'cr."userId"',
+      joins: 'JOIN "Crucible" cr ON cr.id = c."entityId"',
+      details: `'version', 3, 'crucibleId', cr.id,
+        'crucibleName', CASE WHEN cr.ingestion = 'Scanned' AND NOT cr."textNsfw" THEN cr.name END,
+        'commentId', c.id, 'username', u.username`,
+    }),
   },
   'new-storyline-comment': {
     displayName: 'New comments on your storylines',
@@ -1087,39 +878,18 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} commented on your storyline: "${details.storylineTitle}"`,
       url: `${storylineUrl(details.storylineId)}?highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_storyline_comment AS (
-        SELECT DISTINCT
-          s."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'storylineId', s.id,
-            'storylineTitle', s.title,
-            'commentId', c.id,
-            'username', u.username
-          ) as "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Storyline" s ON s.id = c."entityId"
-        WHERE c."entityType" = 'storyline'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND s."userId" > 0
-          AND c."userId" != s."userId"
-          AND NOT s."tosViolation"
-          AND ${notBlockedBetween('s."userId"', 'c."userId"')}
-          AND ${notCommentMuted('s."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-storyline:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId" "userId",
-        'new-storyline-comment' "type",
-        details
-      FROM new_storyline_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-storyline-comment');
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-storyline-comment',
+      key: 'new-comment-storyline:owner:v3',
+      dedupe: 'v2',
+      entityType: 'storyline',
+      level: 'top',
+      ownerId: 's."userId"',
+      joins: 'JOIN "Storyline" s ON s.id = c."entityId"',
+      details: `'version', 3, 'storylineId', s.id, 'storylineTitle', s.title, 'commentId', c.id,
+        'username', u.username`,
+      where: ['NOT s."tosViolation"'],
+    }),
   },
   // Model3D comments mirror the Model 3-tier (`new-comment` / `new-comment-response` /
   // `new-comment-nested`) but dedupe under `comment:v2:`.
@@ -1131,38 +901,17 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} commented on your 3D model: "${details.model3dName}"`,
       url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_3d_model_comment AS (
-        SELECT DISTINCT
-          m3d."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'model3dId', m3d.id,
-            'model3dName', m3d.name,
-            'commentId', c.id,
-            'username', u.username
-          ) "details"
-        FROM "CommentV3" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Model3D" m3d ON m3d.id = c."entityId"
-        WHERE c."entityType" = 'model3d'
-          AND c."parentId" IS NULL
-          AND ${liveV3Since(lastSent)}
-          AND m3d."userId" > 0
-          AND c."userId" != m3d."userId"
-          AND ${notBlockedBetween('m3d."userId"', 'c."userId"')}
-          AND ${notCommentMuted('m3d."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-model3d:owner:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-3d-model-comment' "type",
-        details
-      FROM new_3d_model_comment
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-3d-model-comment');
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-3d-model-comment',
+      key: 'new-comment-model3d:owner:v3',
+      dedupe: 'v2',
+      entityType: 'model3d',
+      level: 'top',
+      ownerId: 'm3d."userId"',
+      joins: 'JOIN "Model3D" m3d ON m3d.id = c."entityId"',
+      details: `'version', 3, 'model3dId', m3d.id, 'model3dName', m3d.name, 'commentId', c.id,
+        'username', u.username`,
+    }),
   },
   'new-3d-model-comment-response': {
     displayName: 'New responses to your comments on 3D models',
@@ -1213,38 +962,16 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} responded to a comment on your 3D model "${details.model3dName}"`,
       url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH new_3d_model_comment_nested AS (
-        SELECT DISTINCT
-          m3d."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'version', 3,
-            'model3dId', m3d.id,
-            'model3dName', m3d.name,
-            'commentId', c.id,
-            'parentId', ${answeredId('c')},
-            'username', u.username
-          ) "details"
-        FROM "CommentV3" c
-        JOIN "Model3D" m3d ON m3d.id = c."entityId"
-        JOIN "User" u ON c."userId" = u.id
-        WHERE c."entityType" = 'model3d'
-          AND c."parentId" IS NOT NULL
-          AND ${liveV3Since(lastSent)}
-          AND m3d."userId" > 0
-          AND c."userId" != m3d."userId"
-          AND ${notBlockedBetween('m3d."userId"', 'c."userId"')}
-          AND ${notCommentMuted('m3d."userId"', 'c')}
-      )
-      SELECT
-        concat('new-comment-nested-model3d:user:v3:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
-        "ownerId"    "userId",
-        'new-3d-model-comment-nested' "type",
-        details
-      FROM new_3d_model_comment_nested
-      WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-3d-model-comment-nested')
-    `,
+    prepareQuery: entityOwnerCommentQuery({
+      type: 'new-3d-model-comment-nested',
+      key: 'new-comment-nested-model3d:user:v3',
+      dedupe: 'v2',
+      entityType: 'model3d',
+      level: 'reply',
+      ownerId: 'm3d."userId"',
+      joins: 'JOIN "Model3D" m3d ON m3d.id = c."entityId"',
+      details: `'version', 3, 'model3dId', m3d.id, 'model3dName', m3d.name, 'commentId', c.id,
+        'parentId', ${answeredId('c')}, 'username', u.username`,
+    }),
   },
 });

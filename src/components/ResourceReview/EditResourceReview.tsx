@@ -7,6 +7,7 @@ import * as z from 'zod';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { Form, InputRTE, useForm } from '~/libs/form';
+import { showErrorNotification } from '~/utils/notifications';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './EditResourceReview.module.scss';
@@ -76,13 +77,19 @@ export function EditResourceReview({
           setId(response.id);
           await queryUtils.resourceReview.getUserResourceReview.invalidate();
         },
+        onError: (error) => {
+          showErrorNotification({
+            error: new Error(error.message),
+            title: 'Could not save rating',
+          });
+        },
       }
     );
   };
 
   const form = useForm({ schema, defaultValues: { details: details ?? '' } });
   const handleSubmit = ({ details }: z.infer<typeof schema>) => {
-    if (!modelId || !modelVersionId || !id || !recommended) return;
+    if (!modelId || !modelVersionId || !id || recommended === null) return;
 
     mutate(
       { id, modelVersionId, modelId, rating, recommended, details },
@@ -93,6 +100,12 @@ export function EditResourceReview({
           toggleEditDetail();
           onSuccess?.(id);
           await queryUtils.resourceReview.getUserResourceReview.invalidate();
+        },
+        onError: (error) => {
+          showErrorNotification({
+            error: new Error(error.message),
+            title: 'Could not save review',
+          });
         },
       }
     );

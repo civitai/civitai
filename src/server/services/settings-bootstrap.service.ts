@@ -14,6 +14,7 @@ import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { env } from '~/env/server';
 import { env as clientEnv } from '~/env/client';
 import { logToAxiom } from '~/server/logging/client';
+import { eventViewerOf } from '~/server/events/event-viewer';
 
 /**
  * The per-user settings bootstrap: the session plus every ambient seed a page needs on its
@@ -30,6 +31,8 @@ import { logToAxiom } from '~/server/logging/client';
  */
 
 type AuthArgs = Parameters<typeof getServerAuthSession>[0];
+/** What `getServerAuthSession` records on the request it was given (`req.context`). */
+type SessionCredential = Omit<Parameters<typeof eventViewerOf>[0], 'user'>;
 
 /** What the route answers with, and what a server render is seeded from. */
 export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
@@ -64,7 +67,11 @@ export async function resolveSettingsBootstrap({ req, res }: AuthArgs) {
   // Deliberately unbounded: failing this open renders a logged-in user anonymous, which
   // `_app`'s hasAuthCookie carve-out exists to avoid.
   const session = await getServerAuthSession({ req, res });
-  return resolveSettingsBootstrapSeeds(req, session);
+  return resolveSettingsBootstrapSeeds(
+    req,
+    session,
+    (req as { context?: SessionCredential }).context ?? null
+  );
 }
 
 /** The bootstrap's `session`: a session with no user fields is "signed out", never a session. */
@@ -78,7 +85,8 @@ export function bootstrapSession(session: Awaited<ReturnType<typeof getServerAut
  */
 export async function resolveSettingsBootstrapSeeds(
   req: AuthArgs['req'],
-  session: Awaited<ReturnType<typeof getServerAuthSession>>
+  session: Awaited<ReturnType<typeof getServerAuthSession>>,
+  credential: SessionCredential | null
 ) {
   // Concurrent, to keep this hot per-bootstrap read off the critical path.
   // EVERY member swallows its own errors: a single rejection fails the whole
@@ -89,6 +97,10 @@ export async function resolveSettingsBootstrapSeeds(
   // The nav banners and the event seeds both read the viewer's event cosmetic: one read each
   // per request, not one per member (event-cosmetic-reads.ts).
   const eventCosmeticReads: EventCosmeticReads = new Map();
+  const eventUser = session?.user && {
+    ...session.user,
+    isModerator: !!credential && eventViewerOf({ ...credential, user: session.user }).isModerator,
+  };
   const [
     settings,
     tosMeta,
@@ -156,7 +168,7 @@ export async function resolveSettingsBootstrapSeeds(
     // the page. Session-only (no cookies), so the anonymous answer is the same for every
     // anonymous caller, as the route's public cache header requires.
     settle(
-      getNavBanners({ viewer: session?.user, reads: eventCosmeticReads }),
+      getNavBanners({ viewer: eventUser, reads: eventCosmeticReads }),
       undefined,
       'getNavBanners'
     ),
@@ -165,7 +177,7 @@ export async function resolveSettingsBootstrapSeeds(
     // every page otherwise asks for once (see event-seeds.service.ts). Session-only, like the
     // nav banners above.
     settle(
-      getEventSeeds({ user: session?.user, reads: eventCosmeticReads }),
+      getEventSeeds({ user: eventUser, reads: eventCosmeticReads }),
       undefined,
       'getEventSeeds'
     ),

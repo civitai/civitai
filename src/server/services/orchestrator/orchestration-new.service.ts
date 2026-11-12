@@ -20,6 +20,7 @@
  *    - Routes to appropriate step type based on ecosystem
  */
 
+import { assertGenerationLicenseAccepted } from '~/server/services/generation-license.service';
 import type {
   PreprocessImageInput,
   PreprocessImageStepTemplate,
@@ -227,6 +228,8 @@ export type GenerateOptions = {
 export type GenerationInputGate =
   | { entry: GenerationInputEntryPoint; isApiCaller: boolean }
   | 'checked-by-caller';
+
+const ecosystemOf = (data: unknown) => (data as { ecosystem?: string }).ecosystem;
 
 /** Every url the validated graph input carries must pass the generation input gate. */
 async function assertGraphInputsUsable(
@@ -1642,6 +1645,8 @@ export async function createWorkflowStepsFromGraphInput({
 }): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, user?.id, inputGate);
+  if (!isWhatIf)
+    await assertGenerationLicenseAccepted({ ecosystem: ecosystemOf(data), userId: user?.id });
   const sourceImageIds = isWhatIf
     ? undefined
     : await resolveSourceImageIds(
@@ -1907,6 +1912,7 @@ export async function generateFromGraph({
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, userId, inputGate);
+  await assertGenerationLicenseAccepted({ ecosystem: ecosystemOf(data), userId });
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
   // One read for both consumers below, so the provenance check and the prompt

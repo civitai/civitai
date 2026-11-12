@@ -14,6 +14,14 @@ export enum FLIPT_FEATURE_FLAGS {
   RATING_DISPUTE = 'rating-dispute',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
+  // Percentage rollout keyed on the file id: the share of files whose mini response leads with
+  // the content-hash download url. Each file's url changes once over the ramp. Create the key in
+  // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
+  // on every mini request.
+  DOWNLOAD_HASH_URLS = 'download-hash-urls',
+  // On: "more like this" stops capping results at the anchor image's level. Off or missing, the cap
+  // holds. Create the key in Flipt (disabled) before this deploys: a missing key logs on every eval.
+  SEMANTIC_SIMILAR_ANCHOR_CAP_OFF = 'semantic-similar-anchor-cap-off',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
@@ -145,8 +153,12 @@ export enum FLIPT_FEATURE_FLAGS {
   BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
   // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
   COSMETICS_L1 = 'cosmetics-l1',
-  // Gates an L1 in front of `images-for-model-version-2` (imagesForModelVersionsCache).
-  MODEL_VERSION_IMAGES_L1 = 'model-version-images-l1',
+  // Gates the larger `tag-ids-for-images` (tagIdsForImagesCache) L1 tier: longer TTL AND more entries.
+  TAG_IDS_FOR_IMAGES_L1_LARGE = 'tag-ids-for-images-l1-large',
+  // Batches the per-command `redis_command_duration_seconds` observations into a local accumulator
+  // flushed at scrape (same series, same values; see @civitai/telemetry/redis-command-metrics).
+  // Boolean, no entity, read at most once per 5s per process. A missing key reads as off.
+  REDIS_COMMAND_METRICS_BATCHED = 'redis-command-metrics-batched',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -213,6 +225,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
   // no entity or context. See `responseWriteSerialize`.
   TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
+  // With TRPC_FAST_SUPERJSON_WRITE on, lets the fast walk handle a shared (non-circular) object
+  // reference instead of bailing to `superjson.serialize` (same output either way). DEFAULT-OFF.
+  // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
+  TRPC_FAST_SUPERJSON_SHARED_REFS = 'trpc-fast-superjson-shared-refs',
+  // One shared `user` object per creator in the image.getInfinite / image.getImagesAsPostsInfinite
+  // responses, so devalue writes each creator once (decoded shape unchanged). DEFAULT-OFF. Global
+  // boolean, read at most once per 5s per process. A no-op unless TRPC_FAST_SUPERJSON_SHARED_REFS
+  // is on too (the fast walk would bail on the shared users). See `feed-shared-users.ts`.
+  IMAGE_FEED_SHARED_USERS = 'image-feed-shared-users',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
@@ -315,8 +336,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
-  // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts.
+  // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts, which also
+  // still handles an `enforce-anon` variant should the flag define one.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
+  // Variant: `log` | `enforce`; any other answer is off. Read by download-credential-gate.ts.
+  DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
+  // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
+  APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
@@ -384,6 +410,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
   SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',
 
+  // Stores the rating axes an imageScanning result already carries in ImageAxisRating. DEFAULT-OFF:
+  // leave it off until the ImageAxisRating migration is applied. Shadow only: never changes the
+  // verdict. Evaluated with the imageId, so ramp by percentage or boolean.
+  IMAGE_AXIS_SHADOW_WRITE = 'image-axis-shadow-write',
+
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
   SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
@@ -446,6 +477,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // On: generateFromGraph / whatIfFromGraph refuse input urls on external hosts. Off (and unknown
   // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
+  // On: App Blocks generation sources must be scanned Image rows, so orchestrator blob urls from
+  // apps are refused. Off (and unknown or unreachable): blob urls are accepted as before.
+  APP_BLOCK_SOURCE_SCANNED_ROWS = 'app-block-source-scanned-rows',
+  // On: App Blocks generation inputs on an external host are refused. Off (and unknown or
+  // unreachable): they are allowed and each one is logged as `app-block-source-refusal`.
+  APP_BLOCK_REFUSE_EXTERNAL_SOURCES = 'app-block-refuse-external-sources',
 
   // On: the followed creator-announcements feed first narrows to authors this viewer follows who
   // have a live announcement, and makes no feed query when there are none
@@ -466,6 +503,28 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
   // serves traffic.
   BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
+
+  // On: `getImageMetricsObject` serves an image's cached `metrics:Image:<id>` hash straight from
+  // Redis, and hands entries past their refresh age to a per-pod, de-duplicated, concurrency-capped
+  // background refresher instead of reading through MetricService.fetch on the request
+  // (`~/server/services/image-metrics-swr`). Ids with no cached hash, or one older than the
+  // max-staleness bound, still take the MetricService read inline, as before. Off (and unknown,
+  // or a client that has not initialised): every id takes the MetricService read, as before.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  IMAGE_METRICS_SWR = 'image-metrics-swr',
+
+  // On: a full page load of `/images/[imageId]` or `/posts/[postId]` server-renders a fixed
+  // placeholder in place of the sections listed at their `ClientOnlySection` call sites, and those
+  // sections mount right after hydration (`~/components/ClientOnlySection`). Off (and unknown, or a
+  // client that has not initialised): the pages server-render every section, as before.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`, `~/server/utils/ssr-client-only-sections`). The key must exist in flag
+  // state (enabled: false) before this code serves traffic.
+  SSR_CLIENT_ONLY_SECTIONS = 'ssr-client-only-sections',
 
   // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
   // or unreachable: every link answers 404 and no link is minted.
