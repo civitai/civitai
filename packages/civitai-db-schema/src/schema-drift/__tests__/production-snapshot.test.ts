@@ -278,6 +278,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //     fallback in `app-listing-issue-tracker.service.ts` (see its RETIREMENT note).
     //   `Feedback.appSourceCommit` / `.appSourceDirty`: `20270104120000_feedback_app_source_commit`
     //     — no-type, raw SQL in `app-feedback.service.ts`, which degrades while it is unapplied.
+    //   `Article.systemCategoryId`: `20271112120000_article_system_category`
     const inFlightColumns = new Set([
       'BoxOpening.guaranteed',
       'ModActivity.credential',
@@ -323,6 +324,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ResourceReview.releasedAt',
       'Feedback.appSourceCommit',
       'Feedback.appSourceDirty',
+      'Article.systemCategoryId',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

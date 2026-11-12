@@ -401,8 +401,8 @@ export async function scanEntity({
       })
     );
   }
-  // Only on a new text: retry resubmits and unchanged texts keep the first call's answer.
-  if (profile.category && result.status === 'submitted' && !first.variant && !fromRetry)
+  // Not on an unchanged text. A retry resends it: the first submit may have failed before it ran.
+  if (profile.category && result.status === 'submitted' && !first.variant)
     await submitTextCategoryScan({
       entityType,
       entityId,

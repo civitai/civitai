@@ -39,8 +39,13 @@ await import('~/server/services/text-scan/profiles/article.profile');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
 const { handleTextCategoryCallback } = await import('~/server/services/text-scan/category');
 const { handleTextScanCallback } = await import('~/server/services/text-scan/callback');
-const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
-const { getTextScanProfile } = await import('~/server/services/text-scan/profiles');
+const { textScanTextHash, getActiveTextScanPrompts } = await import(
+  '~/server/services/text-scan/prompt'
+);
+const { getTextScanProfile, registerTextScanProfile } = await import(
+  '~/server/services/text-scan/profiles'
+);
+const { getTextScanWebSearchMode } = await import('~/server/services/text-scan/mode');
 const { getCategoryTags } = await import('~/server/services/system-cache');
 const { submitWorkflow, getWorkflow } = await import('@civitai/orchestration-client');
 
@@ -59,7 +64,7 @@ const CATEGORIES = [
   { id: 13, name: 'announcement', adminOnly: true, priority: 3 },
 ];
 const em = dbMock.dbWrite.entityModeration;
-const submitted = () => vi.mocked(submitWorkflow).mock.calls.map(([call]) => call.body!);
+const submitted = () => vi.mocked(submitWorkflow).mock.calls.map(([call]) => call!.body!);
 const categoryCalls = () => submitted().filter((b) => b.tags?.includes('text-category'));
 const writes = () =>
   vi
@@ -156,9 +161,30 @@ describe('scanEntity: the article category call', () => {
     expect(writeArgs()).toEqual([[null, 5]]);
   });
 
-  it('is not re-sent by the retry cron', async () => {
+  it('is sent by the retry cron after a failed first submit', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValueOnce({ data: undefined, error: 'down' } as any);
+    expect((await scanEntity({ entityType: 'Article', entityId: 5 })).status).not.toBe('submitted');
+    expect(categoryCalls()).toHaveLength(0);
     await scanEntity({ entityType: 'Article', entityId: 5, fromRetry: true });
-    expect(submitted().filter((b) => b.tags?.includes('text-scan'))).toHaveLength(1);
+    expect(categoryCalls()).toHaveLength(1);
+  });
+
+  it('is not sent for a web-search-only pass', async () => {
+    vi.mocked(getTextScanWebSearchMode).mockResolvedValue('active');
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValueOnce({
+      ...(await getActiveTextScanPrompts()),
+      'label:poi': { id: 90, key: 'label:poi', content: 'POI DEF' },
+    } as any);
+    registerTextScanProfile({
+      ...getTextScanProfile('Article')!,
+      entityType: 'Model',
+      labels: ['poi'],
+    });
+    const result = await scanEntity({ entityType: 'Model', entityId: 5 });
+    expect(submitted().map((b) => b.tags)).toEqual([
+      ['text-scan', 'Model', 'active', 'web-search'],
+    ]);
+    expect(result.status).toBe('submitted');
     expect(categoryCalls()).toHaveLength(0);
   });
 

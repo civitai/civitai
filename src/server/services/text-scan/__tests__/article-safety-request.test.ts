@@ -71,7 +71,7 @@ describe('article text scan: safety request', () => {
     await scanEntity({ entityType: 'Article', entityId: 5 });
     const safety = vi
       .mocked(submitWorkflow)
-      .mock.calls.map(([call]) => call.body!)
+      .mock.calls.map(([call]) => call!.body!)
       .filter((body) => body.tags?.includes('text-scan'));
     expect(safety).toHaveLength(1);
     await expect(JSON.stringify(safety[0], null, 2) + '\n').toMatchFileSnapshot(
