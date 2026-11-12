@@ -57,7 +57,7 @@ describe('cacheIt cache-read fail-open', () => {
   });
 
   it('a cache read that never answers releases the request within 750ms', async () => {
-    redisFake.packed.get.mockImplementation(() => new Promise(() => {}));
+    redisFake.packed.get.mockImplementation(() => new Promise(() => undefined));
     const next = vi.fn().mockResolvedValue(COMPUTED);
 
     const started = Date.now();

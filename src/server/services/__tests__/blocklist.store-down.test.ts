@@ -47,7 +47,7 @@ describe('getBlocklistDTO with the cache unavailable', () => {
   });
 
   it('a cache read that never answers reads the row from the database within 750ms', async () => {
-    redisMock.redis.get.mockImplementation(() => new Promise(() => {}));
+    redisMock.redis.get.mockImplementation(() => new Promise(() => undefined));
     dbMock.dbWrite.blocklist.findMany.mockResolvedValue([ROW]);
     const { getBlocklistDTO } = await load();
 

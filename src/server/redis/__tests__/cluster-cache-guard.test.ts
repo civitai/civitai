@@ -16,7 +16,7 @@ import {
 const HUNG = Symbol('hung');
 const within = <T>(p: Promise<T>, ms: number) =>
   Promise.race([p, new Promise<typeof HUNG>((r) => setTimeout(() => r(HUNG), ms))]);
-const never = () => new Promise<never>(() => {});
+const never = () => new Promise<never>(() => undefined);
 
 function guardWith(cfg: Partial<ClusterCacheGuardConfig> = {}, now?: () => number) {
   const config: ClusterCacheGuardConfig = {

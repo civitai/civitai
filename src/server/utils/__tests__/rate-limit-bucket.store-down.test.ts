@@ -33,7 +33,7 @@ const freshReq = () =>
   ({
     headers: { 'cf-connecting-ip': `203.0.113.${++ipCounter}` },
     socket: { remoteAddress: '10.0.0.1' },
-  }) as unknown as NextApiRequest;
+  } as unknown as NextApiRequest);
 
 const RULES = [{ limit: 3, period: 60 }];
 
@@ -60,7 +60,7 @@ describe('claimRateLimitAttempt with the store unavailable', () => {
   });
 
   it('a store that never answers decides each attempt within 750ms and still refuses past the limit', async () => {
-    hGet.mockImplementation(() => new Promise(() => {}));
+    hGet.mockImplementation(() => new Promise(() => undefined));
     const req = freshReq();
 
     for (let i = 0; i < 3; i++) {

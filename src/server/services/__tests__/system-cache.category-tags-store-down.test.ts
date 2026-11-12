@@ -43,7 +43,7 @@ describe('getCategoryTags with the cache unavailable', () => {
   });
 
   it('a cache read that never answers rebuilds within 1000ms', async () => {
-    redisMock.redis.get.mockImplementation(() => new Promise(() => {}));
+    redisMock.redis.get.mockImplementation(() => new Promise(() => undefined));
     const { getCategoryTags } = await loadSystemCache();
 
     const started = Date.now();

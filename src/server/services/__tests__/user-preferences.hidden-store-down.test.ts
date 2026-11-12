@@ -40,7 +40,7 @@ describe('getAllHiddenForUser with the cache unavailable', () => {
   });
 
   it('a hash read that never answers resolves from the database within 750ms', async () => {
-    redisMock.redis.packed.hGetAll.mockImplementation(() => new Promise(() => {}));
+    redisMock.redis.packed.hGetAll.mockImplementation(() => new Promise(() => undefined));
 
     const started = Date.now();
     const result = await within(getAllHiddenForUser({ userId: 78 }), 2000);
@@ -54,7 +54,7 @@ describe('getAllHiddenForUser with the cache unavailable', () => {
 
   it('a cache write that never answers does not hold the answer either', async () => {
     // Read misses (the default), the database answers, and the write-back parks.
-    redisMock.redis.packed.hSet.mockImplementation(() => new Promise(() => {}));
+    redisMock.redis.packed.hSet.mockImplementation(() => new Promise(() => undefined));
 
     const started = Date.now();
     const result = await within(getAllHiddenForUser({ userId: 79 }), 2000);

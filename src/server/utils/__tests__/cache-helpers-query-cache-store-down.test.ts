@@ -16,7 +16,7 @@ import { queryCache, queryCacheRaw } from '~/server/utils/cache-helpers';
 const HUNG = Symbol('hung');
 const within = <T>(p: Promise<T>, ms: number) =>
   Promise.race([p, new Promise<typeof HUNG>((r) => setTimeout(() => r(HUNG), ms))]);
-const never = () => new Promise<never>(() => {});
+const never = () => new Promise<never>(() => undefined);
 
 const ROWS = [{ id: 1 }, { id: 2 }];
 const SQL = Prisma.sql`SELECT 1`;
@@ -33,7 +33,10 @@ describe('queryCache with the cache unavailable', () => {
   it('a rejecting cache read runs the query and returns its rows', async () => {
     redisMock.redis.packed.get.mockRejectedValue(new Error('cluster down'));
 
-    const result = await within(queryCache(prismaDb(), 'qc-test')(SQL, { ttl: 60, tag: 't' }), 2000);
+    const result = await within(
+      queryCache(prismaDb(), 'qc-test')(SQL, { ttl: 60, tag: 't' }),
+      2000
+    );
 
     expect(result).toEqual(ROWS);
   });
@@ -44,7 +47,10 @@ describe('queryCache with the cache unavailable', () => {
     redisMock.redis.sAdd.mockImplementation(never);
 
     const started = Date.now();
-    const result = await within(queryCache(prismaDb(), 'qc-test')(SQL, { ttl: 60, tag: 't' }), 3000);
+    const result = await within(
+      queryCache(prismaDb(), 'qc-test')(SQL, { ttl: 60, tag: 't' }),
+      3000
+    );
 
     expect(result).toEqual(ROWS);
     // read (250ms) + write-back incl. tag (250ms) + slack.
@@ -59,7 +65,10 @@ describe('queryCacheRaw with the cache unavailable', () => {
     const executor = vi.fn(async () => ROWS) as never as Parameters<typeof queryCacheRaw>[0];
 
     const started = Date.now();
-    const result = await within(queryCacheRaw(executor, 'qcr-test')(SQL, { ttl: 60, tag: 't' }), 3000);
+    const result = await within(
+      queryCacheRaw(executor, 'qcr-test')(SQL, { ttl: 60, tag: 't' }),
+      3000
+    );
 
     expect(result).toEqual(ROWS);
     expect(Date.now() - started).toBeLessThan(1000);

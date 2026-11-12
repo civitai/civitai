@@ -41,7 +41,7 @@ describe('getHomeBlockCached with the cache unavailable', () => {
   });
 
   it('a cache read that never answers builds the block within 750ms', async () => {
-    redisMock.redis.packed.get.mockImplementation(() => new Promise(() => {}));
+    redisMock.redis.packed.get.mockImplementation(() => new Promise(() => undefined));
 
     const started = Date.now();
     const result = await within(getHomeBlockCached(BLOCK as never, undefined, {}), 2000);
@@ -53,7 +53,7 @@ describe('getHomeBlockCached with the cache unavailable', () => {
 
   it('a cache write that never answers does not hold the block either', async () => {
     redisMock.redis.packed.get.mockResolvedValue(null);
-    redisMock.redis.packed.set.mockImplementation(() => new Promise(() => {}));
+    redisMock.redis.packed.set.mockImplementation(() => new Promise(() => undefined));
 
     const started = Date.now();
     const result = await within(getHomeBlockCached(BLOCK as never, undefined, {}), 2000);
