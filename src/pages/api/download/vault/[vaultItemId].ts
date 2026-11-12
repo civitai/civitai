@@ -17,6 +17,11 @@ import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { isModelTakenDown } from '~/server/utils/model-version-gates';
 import { resolveActorFor } from '~/utils/resolve-attribution';
 import { getGetUrlByKey } from '~/utils/s3-utils';
+import {
+  checkDownloadCredential,
+  DOWNLOAD_SCOPE_REFUSED,
+} from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getVaultState } from '~/utils/vault';
 import { FAILED_SCAN_DOWNLOAD_MESSAGE, hasFailedScan } from '~/server/utils/failed-scan';
 
@@ -27,7 +32,11 @@ const schema = z.object({
 });
 
 export default AuthedEndpoint(
-  async function downloadFromVault(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
+  async function downloadFromVault(
+    req: NextApiRequest,
+    res: NextApiResponse,
+    sessionUser: SessionUser
+  ) {
     const isBrowser = isRequestFromBrowser(req);
     const onError = (status: number, message: string) => {
       res.status(status);
@@ -52,10 +61,16 @@ export default AuthedEndpoint(
     const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
     if (ip && ipBlacklist.includes(ip)) return onError(403, 'Forbidden');
 
-    if (!user) {
+    if (!sessionUser) {
       // All vault items require authorization
       return onError(401, 'Unauthorized');
     }
+    const credential = await checkDownloadCredential(req, sessionUser, {
+      route: '/api/download/vault/[vaultItemId]',
+      requiredScope: TokenScope.VaultRead,
+    });
+    if (credential.refuse) return res.status(403).json(DOWNLOAD_SCOPE_REFUSED);
+    const user = credential.effectiveUser ?? sessionUser;
 
     // Validate query params
 
