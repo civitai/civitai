@@ -68,6 +68,7 @@ const ADMIN_ACTION_ROUTES = [
  */
 const ENDPOINT_ROUTES = [
   '/.well-known/jwks.json',
+  '/.well-known/oauth-authorization-server',
   '/.well-known/openid-configuration',
   '/api/auth/accounts',
   '/api/auth/dev/login',

@@ -9,8 +9,8 @@
 //                       session-revocation marker protocol (createSessionRegistry).
 export { loadAuthEnv } from './env';
 export type { AuthEnv } from './env';
-export { createAuthVerifier } from './verify';
-export type { AuthVerifier, AuthVerifierConfig } from './verify';
+export { createAuthVerifier, createAccessTokenJwtVerifier } from './verify';
+export type { AuthVerifier, AuthVerifierConfig, AccessTokenJwtVerifierConfig } from './verify';
 // Server-side consumer→hub clients (each file's header has the detail). All hub interaction goes through these,
 // so app code never hand-rolls a hub fetch.
 export { createSessionClient } from './session-client'; // token→user + invalidate/refresh
@@ -67,7 +67,8 @@ export {
 } from './first-party-bridge'; // framework-agnostic first-party login bridge (spoke side)
 export type { AuthorizeRedirect, FirstPartyCallbackResult } from './first-party-bridge';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
-export type { SessionSigner, SessionSignerConfig } from './sign';
+export { ACCESS_TOKEN_JWT_TYP } from './sign';
+export type { SessionSigner, SessionSignerConfig, AccessTokenJwtClaims } from './sign';
 export { createAuthMiddleware } from './middleware';
 export type { AuthMiddlewareConfig } from './middleware';
 export {

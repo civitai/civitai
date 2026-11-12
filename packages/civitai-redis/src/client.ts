@@ -3153,6 +3153,7 @@ const REDIS_KEYS_UNPREFIXED = {
     DEVICE_CODES: 'packed:oauth:device-codes',
     DEVICE_USER_CODES: 'packed:oauth:device-user-codes',
     OIDC_CONTEXT: 'packed:oauth:oidc-context',
+    TOKEN_EXCHANGES: 'oauth:xchg',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
