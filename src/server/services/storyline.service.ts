@@ -883,6 +883,30 @@ export const createRootChapter = (
   });
 
 /**
+ * The user's own storyline from this spark that has no chapter 1 yet and is not taken down.
+ * Starting again from the same image returns it, so Back and a second try make no duplicate.
+ */
+export async function findUnwrittenSparkStoryline({
+  userId,
+  sparkImageId,
+}: {
+  userId: number;
+  sparkImageId: number;
+}) {
+  const [row] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT s.id FROM "Storyline" s
+    WHERE s."userId" = ${userId} AND s."sparkImageId" = ${sparkImageId}
+      AND s."tosViolation" = false
+      AND NOT EXISTS (
+        SELECT 1 FROM "StorylineChapter" c WHERE c."storylineId" = s.id AND c.depth = 0
+      )
+    ORDER BY s.id DESC
+    LIMIT 1
+  `;
+  return row ?? null;
+}
+
+/**
  * Without `postId` the storyline starts empty: its chapter 1 is a post written afterwards (see
  * `linkPendingChapter`), and until that is written only its owner and moderators see it.
  */
@@ -912,6 +936,10 @@ export async function createStoryline({
   if (!isStorylineCeilingLevel(maxNsfwLevel)) throw throwBadRequestError('Invalid maximum rating');
   await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
   if (sparkImageId) await assertStorylineSpark({ imageId: sparkImageId, userId, maxNsfwLevel });
+  if (sparkImageId && !postId) {
+    const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId });
+    if (unwritten) return { id: unwritten.id, rootChapterId: null };
+  }
 
   let created: { id: number; rootChapterId: number | null };
   try {

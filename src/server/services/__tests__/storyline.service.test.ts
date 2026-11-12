@@ -5071,6 +5071,15 @@ describe('a storyline started from an image', () => {
       expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
     });
 
+    it('returns the unwritten storyline already started from this image, not a second one', async () => {
+      w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+        Promise.resolve(
+          strings.join('?').includes('"sparkImageId" =') ? [{ id: 9 }] : []
+        )) as never);
+      await expect(start()).resolves.toEqual({ id: 9, rootChapterId: null });
+      expect(w.storyline.create).not.toHaveBeenCalled();
+    });
+
     it('tells event points once chapter 1 is written with the spark', async () => {
       w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
       w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
