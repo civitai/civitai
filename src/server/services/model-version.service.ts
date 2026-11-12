@@ -1231,10 +1231,11 @@ export const upsertModelVersion = async ({
       ownerId: model.userId,
     });
 
-    const mergedMeta =
+    // Merged over the row as locked below: a hold written since the read above must survive the edit.
+    const mergeMeta = (stored: unknown) =>
       metaInput || rightsAffirmation || baseModelAttestation
         ? {
-            ...((existingVersion.meta as Record<string, unknown> | null) ?? {}),
+            ...((stored as Record<string, unknown> | null) ?? {}),
             ...((metaInput as Record<string, unknown> | null) ?? {}),
             ...(rightsAffirmation ? { rightsAffirmation } : {}),
             ...(baseModelAttestation ? { baseModelAttestation } : {}),
@@ -1272,7 +1273,10 @@ export const upsertModelVersion = async ({
           where: { id },
           data: {
             ...data,
-            meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
+            meta:
+              (mergeMeta(
+                locked ? locked.meta : existingVersion.meta
+              ) as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
             availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
             settings: settings !== null ? settings : Prisma.JsonNull,
             monetization:

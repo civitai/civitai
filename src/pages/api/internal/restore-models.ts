@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
+import { PRE_PUBLISH_REVIEW_BASE_MODELS } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { publishModelById } from '~/server/services/model.service';
@@ -11,6 +12,10 @@ import { JobEndpoint } from '~/server/utils/endpoint-helpers';
 const schema = z.object({
   modelIds: z.number().array(),
 });
+
+const gatedBaseModelsSql = PRE_PUBLISH_REVIEW_BASE_MODELS.map(
+  (baseModel) => `'${baseModel.replace(/'/g, "''")}'`
+).join(', ');
 
 export default JobEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const { modelIds } = schema.parse(req.query);
@@ -34,6 +39,8 @@ export default JobEndpoint(async function (req: NextApiRequest, res: NextApiResp
     -- 'UnpublishedViolation'. Matching only the first silently restores an arbitrary subset —
     -- the older rows — and reports 200 either way.
     AND mv."status" IN ('Unpublished', 'UnpublishedViolation')
+    -- Fine-tunes of these go public again only through the pre-publish gate.
+    AND mv."baseModel" NOT IN (${gatedBaseModelsSql})
     GROUP BY 1, 2
   `);
 
@@ -46,6 +53,8 @@ export default JobEndpoint(async function (req: NextApiRequest, res: NextApiResp
       versionIds,
       republishing: true,
       refuseRemovedWithOwner: true,
+      // Under the publish's lock: a version moved onto a gated base model since the select is refused.
+      gateJudgedVersionIds: [],
       meta: (stored) => {
         const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
           stored || {};
@@ -53,7 +62,10 @@ export default JobEndpoint(async function (req: NextApiRequest, res: NextApiResp
       },
     }).catch((error) => {
       // A publish rule refusing one model must not abort the rest of the batch.
-      if (error instanceof TRPCError && ['UNAUTHORIZED', 'BAD_REQUEST'].includes(error.code))
+      if (
+        error instanceof TRPCError &&
+        ['UNAUTHORIZED', 'BAD_REQUEST', 'CONFLICT'].includes(error.code)
+      )
         return;
       throw error;
     });

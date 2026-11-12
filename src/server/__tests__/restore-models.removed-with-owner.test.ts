@@ -13,10 +13,12 @@ const restoreModels = (await import('~/pages/api/internal/restore-models')).defa
 
 const MODEL = 3;
 let lockedMeta: Record<string, unknown>;
+let lockedBaseModel: string;
 
 beforeEach(() => {
   vi.clearAllMocks();
   lockedMeta = {};
+  lockedBaseModel = 'SDXL 1.0';
   // The candidates read before the publishes: no removal record yet.
   dbMock.dbWrite.$queryRawUnsafe.mockResolvedValue([
     { id: MODEL, meta: { unpublishedReason: 'duplicate' }, versionIds: [30] },
@@ -32,6 +34,8 @@ beforeEach(() => {
       values[0] === MODEL
     )
       lockHeld = true;
+    if (Array.isArray(strings) && /FROM "ModelVersion"[\s\S]*FOR SHARE/.test(strings.join('?')))
+      return [{ id: 30, baseModel: lockedBaseModel }];
     return [];
   }) as never);
   // Before the lock, the row as the candidates read it; under it, what a wipe may have written since.
@@ -111,4 +115,30 @@ it('skips a model a publish rule refuses and still restores the rest', async () 
     expect.objectContaining({ where: expect.objectContaining({ id: OTHER }) })
   );
   expect(res.status).toHaveBeenCalledWith(200);
+});
+
+it('leaves a version moved onto a gated base model since the select, and still answers 200', async () => {
+  lockedBaseModel = 'Fibo 2.0';
+  // The version as the publish reads it before its lock, still on an ungated base model.
+  dbMock.dbWrite.modelVersion.findMany.mockResolvedValueOnce([
+    {
+      id: 30,
+      baseModel: 'SDXL 1.0',
+      publishedAt: null,
+      meta: {},
+      model: { type: 'LORA', userId: 5 },
+    },
+  ] as never);
+
+  const res = await run();
+
+  expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  expect(res.status).toHaveBeenCalledWith(200);
+});
+
+it('never selects a version on a gated base model', async () => {
+  await run();
+
+  const [sql] = dbMock.dbWrite.$queryRawUnsafe.mock.calls[0] as [string];
+  expect(sql).toMatch(/mv\."baseModel" NOT IN \('Fibo 2\.0'\)/);
 });

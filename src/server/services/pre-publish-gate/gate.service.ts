@@ -365,8 +365,9 @@ export async function enforcePrePublishGate({
     ...(decision.refusal ? { refusal: decision.refusal } : {}),
     ...(publishVersions !== undefined ? { publishVersions } : {}),
     summary,
-    // Only the scheduled job reads these, and only a moderator can schedule a gated version: an
-    // owner's later date waits in pending. A new path to Scheduled must run the gate, not read these.
+    // Accumulates across runs. Outside the gate only the scheduled job reads it, and only a moderator
+    // can schedule a gated version: an owner's later date waits in pending. A new path to Scheduled
+    // must run the gate, not read this.
     passedVersionIds: [
       ...new Set([
         ...(previous?.passedVersionIds ?? []),

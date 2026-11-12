@@ -86,6 +86,7 @@ const UNGATED = 'SDXL 1.0';
 type Fixture = {
   baseModel?: string;
   ingestion?: string;
+  nsfw?: boolean;
   poi?: boolean;
   textScan?: 'clear' | 'hit' | 'none' | 'stale';
   imagePoi?: boolean;
@@ -109,6 +110,7 @@ const user = (isModerator = false) => ({ id: isModerator ? MOD_ID : OWNER_ID, is
 function seed({
   baseModel = FIBO,
   ingestion = 'Scanned',
+  nsfw = false,
   poi = false,
   textScan = 'clear',
   status = 'Draft',
@@ -124,7 +126,7 @@ function seed({
     userId: OWNER_ID,
     name: 'A style',
     description: null,
-    nsfw: false,
+    nsfw,
     poi,
     minor: false,
     status,
@@ -234,6 +236,12 @@ const rawSql = () =>
   dbMock.dbWrite.$executeRaw.mock.calls.map(([strings]) =>
     (strings as TemplateStringsArray).join('?')
   );
+/** Each raw write with its bound values, so a key sent as a parameter is seen too. */
+const rawSqlWithValues = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls.map(
+    ([strings, ...values]) =>
+      `${(strings as TemplateStringsArray).join('?')} ${JSON.stringify(values)}`
+  );
 
 /** The model went to a moderator the way every hold must: unpublished with a held gate record. */
 const expectModelHeld = () =>
@@ -258,7 +266,26 @@ const publishModel = (isModerator = false) =>
     ctx: { user: user(isModerator), track },
   } as never);
 
+const NSFW_REFUSAL = 'Models marked as mature content cannot use this base model.';
+
 describe('model publish', () => {
+  it('refuses a FIBO model self-flagged as mature content, without scanning its text', async () => {
+    seed({ nsfw: true });
+    await expect(publishModel()).rejects.toThrow(NSFW_REFUSAL);
+    expect(mockPublishModelById).not.toHaveBeenCalled();
+    expect(mockScanEntity).not.toHaveBeenCalled();
+    expect(loggedRows()).toContainEqual(
+      expect.objectContaining({ check: 'nsfw', outcome: 'refused' })
+    );
+  });
+
+  it('publishes a mature model on a base model without the gate (control)', async () => {
+    seed({ nsfw: true, baseModel: UNGATED });
+    await publishModel();
+    expect(mockPublishModelById).toHaveBeenCalledTimes(1);
+    expect(loggedRows()).toEqual([]);
+  });
+
   it('publishes a FIBO model whose images are scanned and whose text is clear (control)', async () => {
     await publishModel();
     expect(mockPublishModelById).toHaveBeenCalledTimes(1);
@@ -448,6 +475,12 @@ describe('private to public', () => {
       ctx: { user: user() },
     } as never);
 
+  it('keeps a private FIBO model self-flagged as mature content private', async () => {
+    seed({ nsfw: true, status: 'Published', availability: 'Private' });
+    await expect(publishPrivate()).rejects.toThrow(NSFW_REFUSAL);
+    expect(mockPublishPrivateModel).not.toHaveBeenCalled();
+  });
+
   it('does not make a private FIBO model public while an image is unscanned', async () => {
     seed({ ingestion: 'Pending', status: 'Published', availability: 'Private' });
     await expect(publishPrivate()).resolves.toMatchObject({ prePublishGate: 'pending' });
@@ -528,7 +561,7 @@ describe('private to public', () => {
       ctx: { user: user(true), track },
     } as never);
     expect(mockPublishModelVersionById).toHaveBeenCalledTimes(1);
-    expect(rawSql()).not.toContainEqual(expect.stringMatching(/'prePublishHold'/));
+    expect(rawSqlWithValues()).not.toContainEqual(expect.stringMatching(/prePublishHold/));
   });
 
   it('tells the owner a moderator declined a held private model', async () => {
@@ -607,6 +640,12 @@ describe('new version on a live model', () => {
         expect.objectContaining({ republishing: true, gateJudgedVersionIds: [VERSION_ID] })
       );
     });
+  });
+
+  it('refuses a new FIBO version on a live model self-flagged as mature content', async () => {
+    seed({ nsfw: true, ...live });
+    await expect(publishVersion()).rejects.toThrow(NSFW_REFUSAL);
+    expect(mockPublishModelVersionById).not.toHaveBeenCalled();
   });
 
   it('does not publish a FIBO version while its images are unscanned', async () => {
@@ -776,6 +815,36 @@ describe('resolver', () => {
       expect.objectContaining({ check: 'gate', outcome: 'pass' })
     );
   });
+
+  it('refuses a waiting model its owner has since marked as mature content', async () => {
+    const { resolveWaitingGate } = await import('~/server/jobs/resolve-pre-publish-gates');
+    seed({ ingestion: 'Pending' });
+    await publishModel();
+    const runId = loggedRows()[0].runId as string;
+
+    seed({ nsfw: true });
+    await expect(
+      resolveWaitingGate(
+        {
+          id: MODEL_ID,
+          userId: OWNER_ID,
+          gate: {
+            state: 'pending',
+            runId,
+            scope: 'model',
+            versionIds: [VERSION_ID],
+            requestedAt: new Date().toISOString(),
+          },
+        },
+        track as never
+      )
+    ).rejects.toThrow(NSFW_REFUSAL);
+
+    expect(mockPublishModelById).not.toHaveBeenCalled();
+    expect(loggedRows()).toContainEqual(
+      expect.objectContaining({ runId, check: 'nsfw', outcome: 'refused' })
+    );
+  });
 });
 
 describe('resolver, ending a waiting run the owner was told would publish', () => {
@@ -911,6 +980,7 @@ describe('resolver, against a forged or stale waiting run', () => {
     seed({ status: 'Published' });
     await resolve({});
     expect(mockPublishModelVersionById).toHaveBeenCalledTimes(1);
+    expect(closed()).toBe(false);
   });
 
   it('asks again exactly as the owner did: a model publish that listed no versions lists none', async () => {

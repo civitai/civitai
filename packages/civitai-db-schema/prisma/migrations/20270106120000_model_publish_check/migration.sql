@@ -14,3 +14,8 @@ CREATE TABLE IF NOT EXISTS "ModelPublishCheck" (
 
 CREATE INDEX IF NOT EXISTS "ModelPublishCheck_modelId_createdAt_idx"
   ON "ModelPublishCheck" ("modelId", "createdAt" DESC);
+
+-- The resolver's queue (waitingGatesSql) reads only these rows; the predicate must match its subquery.
+CREATE INDEX IF NOT EXISTS "ModelPublishCheck_waiting_gate_idx"
+  ON "ModelPublishCheck" ("modelId")
+  WHERE "check" = 'gate' AND (outcome = 'pending' OR detail->>'scheduled' = 'true');

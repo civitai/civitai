@@ -193,21 +193,9 @@ async function republishOne(c: Candidate): Promise<Result> {
   }
 }
 
-export default WebhookEndpoint(async (req, res: NextApiResponse) => {
-  const parsed = schema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: z.treeifyError(parsed.error) });
-  }
-  const { dryRun, concurrency, batchSize, limit, modelIds } = parsed.data;
-
-  // When modelIds is provided we bypass the 30-day window (explicit targeting
-  // for user reports) but still enforce the Draft/has-file/safety-flag guards.
-  const modelIdFilter =
-    modelIds && modelIds.length > 0
-      ? Prisma.sql`AND m.id IN (${Prisma.join(modelIds)})`
-      : Prisma.sql`AND p."publishedAt" > NOW() - INTERVAL '30 days'`;
-
-  const candidates = await dbRead.$queryRaw<Candidate[]>(Prisma.sql`
+/** Draft versions the endpoint would republish. `modelIdFilter` is spliced in as SQL. */
+export const orphanedDraftCandidatesSql = (modelIdFilter: Prisma.Sql, limit?: number) =>
+  Prisma.sql`
     SELECT DISTINCT ON (mv.id)
       mv.id              AS "versionId",
       m.id               AS "modelId",
@@ -235,7 +223,25 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
       AND mv."baseModel" NOT IN (${Prisma.join([...PRE_PUBLISH_REVIEW_BASE_MODELS])})
     ORDER BY mv.id, p."publishedAt" ASC
     ${limit ? Prisma.sql`LIMIT ${limit}` : Prisma.empty}
-  `);
+  `;
+
+export default WebhookEndpoint(async (req, res: NextApiResponse) => {
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: z.treeifyError(parsed.error) });
+  }
+  const { dryRun, concurrency, batchSize, limit, modelIds } = parsed.data;
+
+  // When modelIds is provided we bypass the 30-day window (explicit targeting
+  // for user reports) but still enforce the Draft/has-file/safety-flag guards.
+  const modelIdFilter =
+    modelIds && modelIds.length > 0
+      ? Prisma.sql`AND m.id IN (${Prisma.join(modelIds)})`
+      : Prisma.sql`AND p."publishedAt" > NOW() - INTERVAL '30 days'`;
+
+  const candidates = await dbRead.$queryRaw<Candidate[]>(
+    orphanedDraftCandidatesSql(modelIdFilter, limit)
+  );
 
   const targetingSuffix =
     modelIds && modelIds.length > 0 ? ` modelIds=[${modelIds.join(',')}]` : '';

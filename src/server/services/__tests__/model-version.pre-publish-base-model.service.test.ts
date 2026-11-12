@@ -105,7 +105,11 @@ beforeEach(() => {
 const edit = (
   stored: { status: ModelStatus; baseModel: string; meta?: Record<string, unknown> },
   baseModel: string,
-  { isModerator = false, isNew = false } = {}
+  {
+    isModerator = false,
+    isNew = false,
+    meta,
+  }: { isModerator?: boolean; isNew?: boolean; meta?: Record<string, unknown> } = {}
 ) => {
   const row = {
     id: VERSION_ID,
@@ -129,6 +133,7 @@ const edit = (
     actorUserId: OWNER_ID,
     rightsAffirmed: true,
     isModerator,
+    ...(meta ? { meta } : {}),
   } as never);
 };
 
@@ -221,6 +226,22 @@ describe("upsertModelVersion — a publish that lands between the edit's read an
       edit({ status: ModelStatus.Draft, baseModel: 'SDXL 1.0' }, 'Fibo 2.0')
     ).rejects.toThrowError(REFUSED);
     expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('keeps a moderator hold written after the read: meta merges over the locked row', async () => {
+    mockTx.$queryRaw.mockResolvedValueOnce([
+      { ...lockedRow(ModelStatus.Draft)[0], meta: { needsReview: true } },
+    ] as never);
+    await expect(
+      edit({ status: ModelStatus.Draft, baseModel: 'SDXL 1.0' }, 'SDXL 1.0', {
+        meta: { hideBuzz: true },
+      })
+    ).rejects.toThrowError(REACHED_WRITE);
+    expect(mockTx.modelVersion.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ meta: expect.objectContaining({ needsReview: true }) }),
+      })
+    );
   });
 
   it('lets it through when the locked row is still a draft (control)', async () => {

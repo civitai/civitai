@@ -96,7 +96,7 @@ describe('upsertModelVersion consumes the policy result', () => {
     readFileSync(
       fileURLToPath(new URL('../model-version.service.ts', import.meta.url)),
       'utf8'
-    ).slice(0, 40_000);
+    ).slice(0, 60_000);
 
   it.each([
     // B-2: the goal is written on its own arm, so a gate-only strip leaves it funding nothing.
