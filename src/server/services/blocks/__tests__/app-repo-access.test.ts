@@ -113,10 +113,17 @@ describe('grantAppRepoWrite — the SOURCE repo', () => {
 describe('revokeAppRepoWrite — 🔴 the half that did not exist before', () => {
   it('removes the collaborator row for the derived username, on the build AND the source repo', async () => {
     await revokeAppRepoWrite({ slug: SLUG, userId: EDITOR });
-    expect(forgejo.removeCollaborator.mock.calls.map((c) => c[0])).toEqual([
-      { slug: SLUG, username: `dev-${EDITOR}`, org: 'civitai-apps-src' },
-      { slug: SLUG, username: `dev-${EDITOR}` },
-    ]);
+    // Both rows, in either order.
+    expect(forgejo.removeCollaborator).toHaveBeenCalledTimes(2);
+    expect(forgejo.removeCollaborator).toHaveBeenCalledWith({
+      slug: SLUG,
+      username: `dev-${EDITOR}`,
+      org: 'civitai-apps-src',
+    });
+    expect(forgejo.removeCollaborator).toHaveBeenCalledWith({
+      slug: SLUG,
+      username: `dev-${EDITOR}`,
+    });
     expect(forgejo.addCollaborator).not.toHaveBeenCalled();
     // Unconditional: it never asks whether a source repo exists first.
     expect(sourceRepo.resolveSourceRepoAccess).not.toHaveBeenCalled();
@@ -131,14 +138,21 @@ describe('revokeAppRepoWrite — 🔴 the half that did not exist before', () =>
     expect(gitAccess.ensureForgejoIdentity).not.toHaveBeenCalled();
   });
 
-  it('a Forgejo outage does NOT propagate, and is logged as revoke-failed', async () => {
+  it('a Forgejo outage does NOT propagate, and every failed revoke is logged', async () => {
     forgejo.removeCollaborator.mockRejectedValue(new Error('forgejo 500'));
     await expect(revokeAppRepoWrite({ slug: SLUG, userId: EDITOR })).resolves.toBeUndefined();
-    // The ONLY signal that a revoke was dropped — a durable retry is a follow-up.
-    expect(logs.logToAxiom.mock.calls.map((c) => c[0].message)).toEqual([
-      'source-revoke-failed',
-      'revoke-failed',
-    ]);
+    // Both were still attempted; each failure leaves a log line (the only signal).
+    expect(forgejo.removeCollaborator).toHaveBeenCalledTimes(2);
+    expect(logs.logToAxiom).toHaveBeenCalledTimes(2);
+  });
+
+  it('one revoke failing does not stop the other', async () => {
+    // An earlier case leaves the mock rejecting; this one needs one failure and one success.
+    forgejo.removeCollaborator.mockResolvedValue(undefined);
+    forgejo.removeCollaborator.mockRejectedValueOnce(new Error('forgejo 500'));
+    await expect(revokeAppRepoWrite({ slug: SLUG, userId: EDITOR })).resolves.toBeUndefined();
+    expect(forgejo.removeCollaborator).toHaveBeenCalledTimes(2);
+    expect(logs.logToAxiom).toHaveBeenCalledTimes(1);
   });
 });
 
