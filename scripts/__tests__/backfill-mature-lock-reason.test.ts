@@ -201,13 +201,24 @@ describe('run against Postgres', () => {
     expect((await marker(1)).at).not.toMatch(/Z$/);
   });
 
-  it('leaves a row whose text changed between the read and the write', async () => {
+  // Each is a change the write must see between its read and its UPDATE; the first is the rewrite
+  // a blurb fan-out makes, description only with `updatedAt` untouched.
+  it.each([
+    ['description', `SET description = 'rewritten'`],
+    ['name', `SET name = 'renamed'`],
+    ['updatedAt', `SET "updatedAt" = "updatedAt" + interval '1 second'`],
+    ['nsfw lock', `SET "lockedProperties" = '{}'`],
+    [
+      'lock stamp',
+      `SET meta = jsonb_set(meta, '{systemNsfwLock,at}', '"2020-01-01T00:00:00.000Z"')`,
+    ],
+    ['attribution', `SET meta = jsonb_set(meta, '{systemNsfwLock,textHash}', '"x"')`],
+  ])('leaves a row whose %s changed between the read and the write', async (_, change) => {
     await lock(1);
     const { queryRaw, executeRaw } = raw();
-    // The rewrite a blurb fan-out makes: description only, `updatedAt` untouched.
     const racingRead = async (...args: Parameters<typeof queryRaw>) => {
       const rows = await queryRaw(...args);
-      if (rows.length) await pg.query(`UPDATE "Model" SET description = 'rewritten' WHERE id = 1`);
+      if (rows.length) await pg.query(`UPDATE "Model" ${change} WHERE id = 1`);
       return rows;
     };
 
@@ -216,7 +227,7 @@ describe('run against Postgres', () => {
     });
 
     expect(counts).toMatchObject({ writable: 1, written: 0 });
-    expect(Object.keys(await marker(1)).sort()).toEqual(['at', 'source']);
+    expect(await marker(1)).not.toHaveProperty('fields');
   });
 });
 
