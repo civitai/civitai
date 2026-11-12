@@ -1,11 +1,12 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { TRANSCRIPT_AFTER, TRANSCRIPT_BEFORE } from '$lib/chat-transcript-cursor';
+  import { TRANSCRIPT_AFTER, TRANSCRIPT_AROUND, TRANSCRIPT_BEFORE } from '$lib/chat-transcript-cursor';
   import { urlWith } from '$lib/url';
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { LINK_CLASS, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import MessageMeta from './MessageMeta.svelte';
+  import MessageEdits from './MessageEdits.svelte';
+  import MemberBadges from './MemberBadges.svelte';
   import ListFilterBar from '$lib/components/ListFilterBar.svelte';
   import type { ChatMemberRow, getTranscript } from '$lib/server/chat-audit.service';
 
@@ -29,7 +30,11 @@
   const reporters = $derived(new Set(reporterIds));
 
   const pageHref = (before: number | null, after: number | null) =>
-    urlWith(page.url, { [TRANSCRIPT_BEFORE]: before, [TRANSCRIPT_AFTER]: after });
+    urlWith(page.url, {
+      [TRANSCRIPT_BEFORE]: before,
+      [TRANSCRIPT_AFTER]: after,
+      [TRANSCRIPT_AROUND]: null,
+    });
   const first = $derived(transcript.rows[0]);
   const last = $derived(transcript.rows.at(-1));
   const paged = $derived(
@@ -111,7 +116,6 @@
 
       <ul class="space-y-2 text-sm">
         {#each shown as m (m.id)}
-          {@const edits = transcript.edits[m.id]}
           <li
             class={m.deletedAt
               ? 'rounded-md border-l-2 border-red-500/50 pl-2'
@@ -123,47 +127,7 @@
             <p class="min-w-0 wrap-break-word whitespace-pre-wrap text-dark-0">{m.content}</p>
 
             {#if m.editedAt}
-              {#if edits?.length}
-                <!-- Every superseded version, each labelled with the edit that REPLACED it — so a
-                     timestamp always belongs to the text beside it. The final version is the message
-                     body above, so it is not repeated here. -->
-                <details class="mt-1 text-xs">
-                  <summary class="cursor-pointer text-dark-2">
-                    {edits.length === 1
-                      ? `Before this edit (${dateTime(edits[0].at)})`
-                      : `${edits.length} edits — every earlier version`}
-                  </summary>
-                  <ol class="mt-1 space-y-1">
-                    {#each edits as e, i (e.at + i)}
-                      <li>
-                        <span class="text-dark-2">
-                          {i === 0 ? 'As written' : `Version ${i + 1}`} — replaced {dateTime(e.at)}{e.actorRole ===
-                          'moderator'
-                            ? ' by a moderator'
-                            : ''}
-                        </span>
-                        <p class="wrap-break-word whitespace-pre-wrap text-amber-200/80">
-                          {e.oldValue}{e.truncated ? '…' : ''}
-                        </p>
-                      </li>
-                    {/each}
-                  </ol>
-                  {#if transcript.editsPartial}
-                    <p class="mt-1 text-amber-300">
-                      Part of the edit history could not be read, so earlier versions may be missing.
-                    </p>
-                  {/if}
-                </details>
-              {:else if transcript.editsPartial}
-                <p class="mt-1 text-xs text-amber-300">
-                  Edited — the edit history could not be read, so the original is unknown here, not
-                  absent.
-                </p>
-              {:else}
-                <p class="mt-1 text-xs text-dark-2">
-                  Edited — the original was not recorded, so what it said before is unrecoverable.
-                </p>
-              {/if}
+              <MessageEdits edits={transcript.edits[m.id]} partial={transcript.editsPartial} />
             {/if}
           </li>
         {/each}
@@ -183,13 +147,11 @@
             <a href={userLookupUrl(m.userId)} class={LINK_CLASS}>
               {m.username ?? `#${m.userId}`}
             </a>
-            {#if reported.has(m.userId)}<Badge variant="destructive">reported</Badge>{/if}
-            {#if reporters.has(m.userId)}<Badge variant="secondary">reporter</Badge>{/if}
-            {#if m.isOwner}<Badge variant="secondary">owner</Badge>{/if}
-            {#if m.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
-            {#if m.kickedAt}<Badge variant="destructive">kicked</Badge>{/if}
-            {#if m.leftAt}<Badge variant="secondary">left</Badge>{/if}
-            <span class="text-xs text-dark-2">{m.status}</span>
+            <MemberBadges
+              member={m}
+              reported={reported.has(m.userId)}
+              reporter={reporters.has(m.userId)}
+            />
           </li>
         {/each}
       </ul>
