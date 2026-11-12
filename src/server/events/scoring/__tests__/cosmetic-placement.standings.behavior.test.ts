@@ -48,7 +48,7 @@ const {
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
 const { eventPointsRefereeUsersSql } = await import('~/server/events/points/referee.sql');
-const { crucibleTeamAwardRowsSql } = await import('~/server/events/scoring/crucible-team-awards');
+const { isCrucibleTeamAwardRowsSql } = await import('~/server/events/scoring/crucible-team-awards');
 const { eventSeasonKeys, hatTopicId, LIVE_BUCKET_MS, previewTopicId } = await import(
   '~/server/events/points/keys'
 );
@@ -820,7 +820,7 @@ describe('referee snapshot', () => {
         json: async () =>
           query === eventPointsRefereeUsersSql
             ? [involved]
-            : query === crucibleTeamAwardRowsSql
+            : isCrucibleTeamAwardRowsSql(query)
             ? awards
             : [refereeRow('2026-11-04', 5), refereeRow('2026-11-05', 3)],
       }));
