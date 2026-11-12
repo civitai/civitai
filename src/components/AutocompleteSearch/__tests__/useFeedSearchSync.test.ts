@@ -68,11 +68,10 @@ describe('useFeedSearchSync', () => {
     expect(replacedQueries()).toEqual([{ query: 'red dragon' }]);
   });
 
-  it('clears the search when the bar is cleared', () => {
+  it('clears the search at once when the bar is cleared, even after a refused text', () => {
     router.query = { query: 'cat' };
-    const render = mount({ debouncedSearch: 'cat' });
+    mount({ debouncedSearch: 'refused words', blocked: true });
     act(() => hook.commit(''));
-    render({ debouncedSearch: '' });
     expect(replacedQueries()).toEqual([{}]);
   });
 

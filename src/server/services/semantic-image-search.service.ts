@@ -65,12 +65,12 @@ export async function searchSemanticImages({
     input.usernames?.length ? resolveUserIds(input.usernames) : undefined,
     input.tagNames?.length ? resolveTagIds(input.tagNames) : undefined,
   ]);
-  if (namedUserIds && !namedUserIds.length)
-    return { items: [], nextCursor: undefined, correctedQuery: undefined };
+  // The feed's user and a typed @user are two filters, so both must hold.
   const userIds =
-    namedUserIds || input.userIds?.length
-      ? [...new Set([...(namedUserIds ?? []), ...(input.userIds ?? [])])]
-      : undefined;
+    namedUserIds && input.userIds?.length
+      ? namedUserIds.filter((id) => input.userIds?.includes(id))
+      : namedUserIds ?? (input.userIds?.length ? input.userIds : undefined);
+  if (userIds && !userIds.length) return emptyPage();
   // As the image feed: a tag that cannot be browsed is dropped, and a filter of only such tags is empty.
   // A named tag that does not exist can match nothing.
   if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size)

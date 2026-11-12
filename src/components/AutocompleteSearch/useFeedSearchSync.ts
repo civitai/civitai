@@ -38,7 +38,8 @@ export function useFeedSearchSync({
   const committed = useRef<string | undefined>(undefined);
 
   const apply = (text: string) => {
-    if (!enabled || blocked) return;
+    // An empty bar can't be refused: it is checked against the last text, not its own.
+    if (!enabled || (blocked && text)) return;
     const next = nextFeedSearchQuery(router.query, text, typedUsername.current);
     if (!next) return;
     typedUsername.current = parseFeedSearch(text).username;
@@ -71,7 +72,7 @@ export function useFeedSearchSync({
   return {
     /** Enter, blur or clear: apply `text` to the feed once the refusal checks have read it. */
     commit: (text: string) => {
-      if (text !== debouncedSearch) {
+      if (text && text !== debouncedSearch) {
         committed.current = text;
         return;
       }
