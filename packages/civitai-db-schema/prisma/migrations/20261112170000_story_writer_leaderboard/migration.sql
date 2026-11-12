@@ -9,9 +9,8 @@
 -- `not a.nsfw`, so both boards change together if that filter is fixed.
 --
 -- The board's display flags (active, public, domain) are copied from writer, so it shows wherever
--- writer shows. Badge rows copy writer's badge type, source, unlock rule and art.
--- PLACEHOLDER ART: the four badges reuse the writer badges' images (Cosmetic.data) until the
--- story badge art is approved; swap it with an UPDATE on these four rows.
+-- writer shows. Badge rows copy writer's badge type, source and unlock rule; each carries its own
+-- Storyteller art in data.
 --
 -- Idempotent: a re-run inserts nothing and passes its post-checks.
 
@@ -87,15 +86,15 @@ GROUP BY u.id$query$,
     c.type,
     c.source,
     c."permanentUnlock",
-    c.data,
+    tier.data::jsonb,
     'story-writer',
     tier.story_position
   FROM (VALUES
-    (1, 1, 'Diamond Storyteller'),
-    (3, 3, 'Gold Storyteller'),
-    (10, 10, 'Silver Storyteller'),
-    (100, 25, 'Bronze Storyteller')
-  ) AS tier(writer_position, story_position, name)
+    (1, 1, 'Diamond Storyteller', '{"url": "500eaff2-efff-4fcd-9fcb-a96c4eb3c7dc"}'),
+    (3, 3, 'Gold Storyteller', '{"url": "ed20a778-69a3-4e00-88be-712774848170"}'),
+    (10, 10, 'Silver Storyteller', '{"url": "ffa5ca46-b306-4602-9640-4c6f2d84913c"}'),
+    (100, 25, 'Bronze Storyteller', '{"url": "bf566745-77e3-4423-b043-75209ce6fc60"}')
+  ) AS tier(writer_position, story_position, name, data)
   JOIN "Cosmetic" c ON c."leaderboardId" = 'writer' AND c."leaderboardPosition" = tier.writer_position
   WHERE NOT EXISTS (
     SELECT 1 FROM "Cosmetic" x

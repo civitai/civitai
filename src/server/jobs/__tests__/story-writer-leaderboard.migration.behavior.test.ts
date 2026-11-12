@@ -146,7 +146,7 @@ describe('story-writer leaderboard migration', () => {
     expect(rows[1].metrics).toEqual({ viewCount: 0, bookmark: 100, reactionCount: 0 });
   });
 
-  it('awards four Storyteller badges at 1, 3, 10 and 25 with the writer badge art as placeholder', async () => {
+  it('awards four Storyteller badges at 1, 3, 10 and 25 each with its own Storyteller art', async () => {
     const { rows } = await db.pg.query(
       `SELECT name, "leaderboardPosition" AS position, type, source, "permanentUnlock", data
        FROM "Cosmetic" WHERE "leaderboardId" = 'story-writer' ORDER BY "leaderboardPosition"`
@@ -158,7 +158,7 @@ describe('story-writer leaderboard migration', () => {
         type: 'Badge',
         source: 'Trophy',
         permanentUnlock: false,
-        data: { url: 'diamond' },
+        data: { url: '500eaff2-efff-4fcd-9fcb-a96c4eb3c7dc' },
       },
       {
         name: 'Gold Storyteller',
@@ -166,7 +166,7 @@ describe('story-writer leaderboard migration', () => {
         type: 'Badge',
         source: 'Trophy',
         permanentUnlock: false,
-        data: { url: 'gold' },
+        data: { url: 'ed20a778-69a3-4e00-88be-712774848170' },
       },
       {
         name: 'Silver Storyteller',
@@ -174,7 +174,7 @@ describe('story-writer leaderboard migration', () => {
         type: 'Badge',
         source: 'Trophy',
         permanentUnlock: false,
-        data: { url: 'silver' },
+        data: { url: 'ffa5ca46-b306-4602-9640-4c6f2d84913c' },
       },
       {
         name: 'Bronze Storyteller',
@@ -182,7 +182,7 @@ describe('story-writer leaderboard migration', () => {
         type: 'Badge',
         source: 'Trophy',
         permanentUnlock: false,
-        data: { url: 'bronze' },
+        data: { url: 'bf566745-77e3-4423-b043-75209ce6fc60' },
       },
     ]);
   });
