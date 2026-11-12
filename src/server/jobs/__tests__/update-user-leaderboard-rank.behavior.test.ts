@@ -138,6 +138,25 @@ describe('update-user-leaderboard-rank', () => {
     expect(await rankOf(B_USER)).toBe(6);
   });
 
+  it('carries a board marked for tomorrow that has no rows for today', async () => {
+    // Its run for today failed; tonight's 23:00 run finished it for tomorrow before this retry.
+    await q(`DELETE FROM "LeaderboardResult" WHERE "leaderboardId" = 'board-b' AND date = current_date;
+             UPDATE "KeyValue" SET value = to_jsonb((current_date + 1)::text)
+               WHERE key = 'leaderboard:populated:board-b';`);
+
+    await job.run({});
+
+    expect(await rankOf(B_USER)).toBe(7);
+  });
+
+  it('rebuilds as before when no board has a query', async () => {
+    await q(`UPDATE "Leaderboard" SET active = false;`);
+
+    await job.run({});
+
+    expect(await rankOf(A_USER)).toBe(4);
+  });
+
   it('drops a board whose latest day is older than the carry window', async () => {
     await q(`DELETE FROM "LeaderboardResult" WHERE "leaderboardId" = 'board-b';
              INSERT INTO "LeaderboardResult" ("leaderboardId", date, "userId", position)

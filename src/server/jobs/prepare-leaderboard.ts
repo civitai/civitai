@@ -308,7 +308,7 @@ export async function rebuildUserRanks() {
   // The marker, not rows: rows appear batch by batch while a board is still being written.
   const { boards, unmarked } = await getLeaderboardPopulation();
   // Nothing to rebuild from: the TRUNCATE would blank every badge. Keep yesterday's and retry.
-  if (unmarked.length >= boards) throw new Error('Leaderboard not populated');
+  if (boards > 0 && unmarked.length >= boards) throw new Error('Leaderboard not populated');
   if (unmarked.length)
     logToAxiom({
       type: 'warn',
