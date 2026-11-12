@@ -4364,6 +4364,16 @@ export type ModelVersionSaleItem = {
   saleId: number;
   modelVersionId: number;
 };
+export type ModelVersionShowcaseItem = {
+  modelVersionId: number;
+  site: string;
+  imageId: number;
+  source: string;
+  position: number | null;
+  excluded: Generated<boolean>;
+  addedById: number;
+  createdAt: Generated<Timestamp>;
+};
 export type ModelVersionSponsorshipSettings = {
   id: Generated<number>;
   modelVersionMonetizationId: number;
@@ -6783,6 +6793,7 @@ export type DB = {
   ModelVersionMonetization: ModelVersionMonetization;
   ModelVersionSale: ModelVersionSale;
   ModelVersionSaleItem: ModelVersionSaleItem;
+  ModelVersionShowcaseItem: ModelVersionShowcaseItem;
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
   ModerationRuleVersion: ModerationRuleVersion;
