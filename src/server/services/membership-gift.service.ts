@@ -1176,7 +1176,6 @@ export async function revertGiftTierChange({ userId }: { userId: number }) {
       data: { revertPriceId: originalPriceId },
     });
   await invalidateSubscriptionCaches(userId);
-  await refreshSession(userId, { caller: 'membership' });
 
   await log({
     type: 'info',
