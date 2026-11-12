@@ -96,7 +96,8 @@ export async function searchSemanticImages({
     return refusal;
   };
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
-  if (refusal === 'minor') {
+  // Moderators keep the refusal: they search to find what must come down, not to browse it.
+  if (refusal === 'minor' && !user?.isModerator) {
     browsingLevel = minorSafeBrowsingLevel(browsingLevel);
     addons = addonsFor(browsingLevel);
   } else if (refusal) return refusedPage(refusal);

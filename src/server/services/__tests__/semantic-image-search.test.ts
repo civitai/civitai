@@ -501,9 +501,9 @@ describe('the query audit and the browsing level', () => {
     }).then((result) => ({ result, calls, track }));
   };
 
-  it('narrows a minor query to the safe levels for a moderator too, and records it', async () => {
+  it('narrows a minor query to the safe levels for a non-moderator, and records it', async () => {
     h.includesInappropriate.mockReturnValue('minor');
-    const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS });
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2]);
     expect(result.items.map((i) => i.id)).toEqual([101]);
     expect(result).not.toHaveProperty('refused');
@@ -546,6 +546,13 @@ describe('the query audit and the browsing level', () => {
     expect(result.items).toEqual([]);
     expect(calls).toHaveLength(0);
     expect(track.action).not.toHaveBeenCalled();
+  });
+
+  it('refuses a minor query for a moderator, before asking the index', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result).toMatchObject({ items: [], refused: 'minor' });
+    expect(calls).toHaveLength(0);
   });
 
   it('refuses, and records, a minor match that a POI verdict came back ahead of', async () => {

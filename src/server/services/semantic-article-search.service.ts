@@ -74,7 +74,9 @@ export async function searchSemanticArticles({
     return refusal;
   };
   const refusal = await refusalOf(input.query, 'query');
-  if (refusal === 'minor') browsingLevel = minorSafeBrowsingLevel(browsingLevel);
+  // Moderators keep the refusal: they search to find what must come down, not to browse it.
+  if (refusal === 'minor' && !user?.isModerator)
+    browsingLevel = minorSafeBrowsingLevel(browsingLevel);
   else if (refusal) return { ...none, refused: refusal };
 
   const excludedUserIds = [

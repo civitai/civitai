@@ -189,9 +189,16 @@ describe('semantic article search: the query audit and the browsing level', () =
     }).then((result) => ({ result, track }));
   };
 
-  it('narrows a minor query to the safe levels for a moderator, and records it', async () => {
+  it('refuses a minor query for a moderator, before asking the service', async () => {
     h.includesInappropriate.mockReturnValue('minor');
-    const { result, track } = await run({ browsingLevel: 31, user: MOD });
+    const { result } = await run({ browsingLevel: 31, user: MOD });
+    expect(result).toMatchObject({ items: [], refused: 'minor' });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('narrows a minor query to the safe levels for a non-moderator, and records it', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { result, track } = await run({ browsingLevel: 31 });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
     expect(result.items.map((a) => a.id)).toEqual([10]);
     expect(track.action).toHaveBeenCalledWith(
