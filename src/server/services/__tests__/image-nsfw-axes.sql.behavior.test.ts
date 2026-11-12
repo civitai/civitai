@@ -266,21 +266,17 @@ describe('the scan verdict writes nsfwAxes', () => {
     expect(await axesOfRow()).toMatchObject({ sexual: 3, violence: 2, sexualHighWater: 3 });
   });
 
-  // 🔴 The ordering guard. An older result can arrive after a newer one (a slow or redelivered
-  // webhook). The verdict itself still writes as it always has; only nsfwAxes holds.
+  // 🔴 The ordering guard: only the workflow the row was last submitted for writes nsfwAxes.
   it.each([
     ['lower', 1],
     ['higher, so the high-water holds too', 4],
-  ])(
-    'keeps nsfwAxes when an older result arrives last (%s), and still writes the verdict',
-    async (_, sexual) => {
-      const newer = stored({ sexual: 3, violence: 1, sexualHighWater: 3 });
-      await seed({ current: 'wf-2', nsfwAxes: newer });
-      await scan('wf-1', axes(sexual, 4));
+  ])('keeps nsfwAxes for a result from a superseded workflow (%s)', async (_, sexual) => {
+    const newer = stored({ sexual: 3, violence: 1, sexualHighWater: 3 });
+    await seed({ current: 'wf-2', nsfwAxes: newer });
+    await scan('wf-1', axes(sexual, 4));
 
-      expect(await row()).toEqual({ nsfwAxes: newer, ingestion: 'Scanned', workflowId: 'wf-1' });
-    }
-  );
+    expect(await row()).toEqual({ nsfwAxes: newer, ingestion: 'Scanned', workflowId: 'wf-1' });
+  });
 
   it('writes no axes to a row with no submitted workflowId', async () => {
     await seed({ current: null });
