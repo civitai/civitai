@@ -22,7 +22,7 @@ export function NewOrderSwitchoverBanner() {
               href={KNIGHTS_V2_ARTICLE_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="font-bold text-white underline"
+              className="font-bold text-white underline hover:no-underline"
             >
               Here&apos;s what changes
             </a>
