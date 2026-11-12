@@ -59,26 +59,26 @@ describe('findBlockedUserContent — hits', () => {
       findBlockedUserContent(['an ordinary title', `<p>see ${LINK}</p>`, `<p>${PHISH}</p>`])
     ).resolves.toEqual([
       { kind: 'link', index: 1, matched: [LINK] },
-      { kind: 'pattern', index: 2, matched: PHISH },
+      { kind: 'pattern', index: 2, matched: PHISH, patternId: 0 },
     ]);
   });
 
   it('keeps the caller’s index across absent and empty values', async () => {
     await expect(findBlockedUserContent([null, '', undefined, `<p>${PHISH}</p>`])).resolves.toEqual(
-      [{ kind: 'pattern', index: 3, matched: PHISH }]
+      [{ kind: 'pattern', index: 3, matched: PHISH, patternId: 0 }]
     );
   });
 
   it('reports both lists on one value, link first', async () => {
     await expect(findBlockedUserContent(`<p>${LINK} ${PHISH}</p>`)).resolves.toEqual([
       { kind: 'link', index: 0, matched: [LINK] },
-      { kind: 'pattern', index: 0, matched: PHISH },
+      { kind: 'pattern', index: 0, matched: PHISH, patternId: 0 },
     ]);
   });
 
   it('reports one pattern hit per value, not one per scanned form', async () => {
     await expect(findBlockedUserContent(`<p>${PHISH}</p><p>${PHISH}</p>`)).resolves.toEqual([
-      { kind: 'pattern', index: 0, matched: PHISH },
+      { kind: 'pattern', index: 0, matched: PHISH, patternId: 0 },
     ]);
   });
 
@@ -94,7 +94,7 @@ describe('findBlockedUserContent — hits', () => {
   it('does match the same pattern inside one value', async () => {
     setLists({ patterns: ['balance now'] });
     await expect(findBlockedUserContent(['check your balance now'])).resolves.toEqual([
-      { kind: 'pattern', index: 0, matched: 'balance now' },
+      { kind: 'pattern', index: 0, matched: 'balance now', patternId: 0 },
     ]);
   });
 
@@ -142,7 +142,14 @@ describe('throwOnBlockedUserContent — still produces today’s side effects', 
       name: 'user-content-pattern-match',
       type: 'info',
       message: 'Blocked pattern found in user content; not enforced on this surface yet',
-      details: { surface: 'appSharedStorage', matched: PHISH, enforced: false },
+      details: {
+        surface: 'appSharedStorage',
+        entityType: undefined,
+        entityId: undefined,
+        userId: undefined,
+        patternId: 0,
+        enforced: false,
+      },
     });
   });
 

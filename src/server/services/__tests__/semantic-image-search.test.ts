@@ -367,6 +367,14 @@ describe('filters', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("leaves the viewer's hidden tags, users and images out of the Qdrant filter", async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
+    expect(calls[0].filter).not.toHaveProperty('excludedTagIds');
+    expect(calls[0].filter).not.toHaveProperty('excludedUserIds');
+    expect(calls[0].filter).not.toHaveProperty('excludedIds');
+  });
+
   it('bounds the posted date', async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({

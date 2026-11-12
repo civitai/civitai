@@ -1169,12 +1169,14 @@ async function dropDeletedVersionCaches(versionIds: number[]) {
 }
 
 async function dropDeletedModelCaches(userId: number) {
-  const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
-  for (const ids of chunkIds(
-    models.map((m) => m.id),
-    DELETED_MODEL_CACHE_CHUNK
-  )) {
+  await dropDeletedModelIdCaches(models.map((m) => m.id));
+}
+
+/** The caches and search entries of models already set to Deleted. */
+export async function dropDeletedModelIdCaches(modelIds: number[]) {
+  const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
+  for (const ids of chunkIds(modelIds, DELETED_MODEL_CACHE_CHUNK)) {
     await preventReplicationLagBatch('model', ids);
     await dataForModelsCache.refresh(ids);
     await bustPublicModelResponseCache(ids);
