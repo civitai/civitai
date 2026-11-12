@@ -26,6 +26,7 @@ import {
   otelLogRecordsSkippedCounter,
   registerOtelShutdown,
   resetOtelLogBridge,
+  resetOtelLogClock,
 } from '../otel-logs';
 
 // 🔴 This suite deliberately does NOT `vi.mock('@opentelemetry/api-logs')` (or sdk-logs).
@@ -121,6 +122,9 @@ beforeEach(() => {
   // test's provider and its exporter would look empty.
   logs.disable();
   resetOtelLogBridge();
+  // The timestamp test below freezes the clock in 2100; without this every later record
+  // would be stamped there by the backward-step hold.
+  resetOtelLogClock();
   process.env.OTEL_LOGS_ENABLED = 'true';
 });
 
@@ -344,6 +348,45 @@ describe('emitOtelLog — record shape', () => {
     expect(record.severityNumber).toBe(SeverityNumber.UNSPECIFIED);
     expect(record.severityText).toBeUndefined();
     expect(record.attributes).not.toHaveProperty('civitai.type');
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('emitOtelLog — timestamps', () => {
+  // REGRESSION. A log store that keys entries on (stream, timestamp, line) keeps ONE of
+  // two records with the same body and the same timestamp. Left to the SDK, the timestamp
+  // is `Date.now()`, i.e. millisecond resolution, so a burst of identical lines in one
+  // millisecond (one request running the same procedure several times in a batch) left
+  // this process as identical records, and all but one were discarded downstream.
+  it('stamps two identical records emitted in the same millisecond with DIFFERENT timestamps', () => {
+    const exporter = registerRecordingProvider();
+    const frozenMs = 4_102_444_800_123; // 2100-01-01T00:00:00.123Z
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(frozenMs);
+    try {
+      const line = '{"name":"same-line","type":"warn"}';
+      emitOtelLog(line, { name: 'same-line', type: 'warn' });
+      emitOtelLog(line, { name: 'same-line', type: 'warn' });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const [first, second] = exporter.getFinishedLogRecords();
+    expect(first.body).toBe(second.body);
+    // Wall-clock millisecond preserved, then a sub-millisecond sequence number.
+    expect(first.hrTime).toEqual([4_102_444_800, 123_000_000]);
+    expect(second.hrTime).toEqual([4_102_444_800, 123_000_001]);
+  });
+
+  // Invariant guard (held before the fix too): a receiver may drop observed_timestamp
+  // only when it equals the timestamp.
+  it('sets observedTimestamp to the same value as timestamp', () => {
+    const exporter = registerRecordingProvider();
+    emitOtelLog('{"a":1}', { type: 'info' });
+    emitOtelLog('{"a":1}', { type: 'info' });
+
+    for (const record of exporter.getFinishedLogRecords()) {
+      expect(record.hrTimeObserved).toEqual(record.hrTime);
+    }
   });
 });
 
