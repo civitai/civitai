@@ -16,7 +16,10 @@ import {
 } from '~/server/prom/client';
 import type { RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
 import { redis, REDIS_KEYS, sysRedis } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { fetchThroughCacheStaleServedCounter } from '~/server/prom/cluster-cache-guard.metrics';
+import { env } from '~/env/server';
 
 export type CacheTarget = 'main' | 'sys';
 
@@ -101,29 +104,56 @@ type cachedQueryOptions = {
   ttl: number;
   tag: string | string[];
 };
+
+/**
+ * The one body behind `queryCache` and `queryCacheRaw`: read the cached rows, else run the query and
+ * cache them. Both cache calls go through the cluster-cache guard (bounded, breaker-aware), so a
+ * cache that fails or never answers is a miss on the read and a skipped write-back — the query's
+ * rows are returned either way, never an error or a 15s wait for a cache.
+ */
+async function queryThroughCache<T extends object[]>(
+  run: () => Promise<T>,
+  key: string,
+  version: string | undefined,
+  query: Prisma.Sql,
+  options?: cachedQueryOptions
+): Promise<T> {
+  if (options?.ttl === 0) return run();
+
+  // this typing is not quite right, as we're creating redis keys on the fly here.
+  // These keys are minted from a free-form `key` rather than derived from REDIS_KEYS, so they
+  // don't inherit the environment prefix from the key table — apply it explicitly. Without
+  // this, previews would share these entries with production. No-op in production.
+  const cacheKey = prefixCacheKey(
+    [key, version, queryCacheKeyHash(query)].filter(isDefined).join(':')
+  ) as RedisKeyTemplateCache;
+  const cachedData = await clusterCacheGuard.readOr(
+    'cache-helpers.queryCache get',
+    () => redis.packed.get<T>(cacheKey),
+    null,
+    { logExtra: { cache: key } }
+  );
+  if (cachedData) {
+    cacheHitCounter.inc({ cache_name: key, cache_type: 'queryCache' });
+    return cachedData;
+  }
+
+  cacheMissCounter.inc({ cache_name: key, cache_type: 'queryCache' });
+  const result = await run();
+  await clusterCacheGuard.writeBestEffort(
+    'cache-helpers.queryCache set',
+    async () => {
+      await redis.packed.set(cacheKey, result, { EX: options?.ttl });
+      if (options?.tag) await tagCacheKey(cacheKey, options.tag);
+    },
+    { logExtra: { cache: key } }
+  );
+  return result;
+}
+
 export function queryCache(db: PrismaClient, key: string, version?: string) {
   return async function <T extends object[]>(query: Prisma.Sql, options?: cachedQueryOptions) {
-    if (options?.ttl === 0) return db.$queryRaw<T>(query);
-
-    // this typing is not quite right, as we're creating redis keys on the fly here.
-    // These keys are minted from a free-form `key` rather than derived from REDIS_KEYS, so they
-    // don't inherit the environment prefix from the key table — apply it explicitly. Without
-    // this, previews would share these entries with production. No-op in production.
-    const cacheKey = prefixCacheKey(
-      [key, version, queryCacheKeyHash(query)].filter(isDefined).join(':')
-    ) as RedisKeyTemplateCache;
-    const cachedData = await redis.packed.get<T>(cacheKey);
-    if (cachedData && options?.ttl !== 0) {
-      cacheHitCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-      return cachedData ?? ([] as unknown as T);
-    }
-
-    cacheMissCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-    const result = await db.$queryRaw<T>(query);
-    await redis.packed.set(cacheKey, result, { EX: options?.ttl });
-
-    if (options?.tag) await tagCacheKey(cacheKey, options?.tag);
-    return result;
+    return queryThroughCache(() => db.$queryRaw<T>(query), key, version, query, options);
   };
 }
 
@@ -135,25 +165,13 @@ export function queryCache(db: PrismaClient, key: string, version?: string) {
 type RawQueryExecutor = <Row>(query: Prisma.Sql) => Promise<Row[]>;
 export function queryCacheRaw(executor: RawQueryExecutor, key: string, version?: string) {
   return async function <T extends object[]>(query: Prisma.Sql, options?: cachedQueryOptions) {
-    if (options?.ttl === 0) return (await executor<T[number]>(query)) as unknown as T;
-
-    // this typing is not quite right, as we're creating redis keys on the fly here.
-    // Same on-the-fly minting as queryCache above — apply the environment prefix explicitly.
-    const cacheKey = prefixCacheKey(
-      [key, version, queryCacheKeyHash(query)].filter(isDefined).join(':')
-    ) as RedisKeyTemplateCache;
-    const cachedData = await redis.packed.get<T>(cacheKey);
-    if (cachedData && options?.ttl !== 0) {
-      cacheHitCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-      return cachedData ?? ([] as unknown as T);
-    }
-
-    cacheMissCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-    const result = (await executor<T[number]>(query)) as unknown as T;
-    await redis.packed.set(cacheKey, result, { EX: options?.ttl });
-
-    if (options?.tag) await tagCacheKey(cacheKey, options?.tag);
-    return result;
+    return queryThroughCache(
+      async () => (await executor<T[number]>(query)) as unknown as T,
+      key,
+      version,
+      query,
+      options
+    );
   };
 }
 
@@ -261,6 +279,11 @@ type FetchThroughCacheOptions = {
   // routinely `${prefix}:${id}`, so using it directly would be unbounded label cardinality.
   // Ignored entirely unless `compress` is on (nothing else records codec time).
   cacheName?: string;
+  // When FETCH_THROUGH_CACHE_SERVE_STALE is on, an origin error during a refresh is answered with
+  // the expired entry if one is still cached (entries live ttl*2). Pass `false` for a value a caller
+  // must never see expired — a balance, a permission, anything a decision is made on. Ignored while
+  // the switch is off.
+  serveStaleOnError?: boolean;
 };
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
 
@@ -321,14 +344,20 @@ export async function fetchThroughCache<T>(
   // rather than propagating a 500 on these ~18 hot read paths. This is strictly no
   // worse than today's behavior on the same paths (a Redis stall already meant a
   // failed request); it just turns the failure mode from 500/504 into a slow 200.
+  //
+  // The read is guarded (cluster-cache-guard): bounded by REDIS_CACHE_READ_DEADLINE_MS instead of
+  // the client's 15s backstop, short-circuited while the breaker is open, and logged there.
   let cachedData: FetchThroughCacheEntity<T> | null;
   try {
     // Thread `compress` to the READ so it's symmetric with the compressed write below:
     // only a compressed caller's get attempts brotli-decompress, and only that path
     // carries the sentinel invariant. Non-compress callers read via the general path.
-    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress, cacheName });
-  } catch (err) {
-    logSysRedisFailOpen('read-degraded', 'fetchThroughCache get (cache cluster)', err, { key });
+    cachedData = await clusterCacheGuard.call(
+      'fetchThroughCache get (cache cluster)',
+      () => redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress, cacheName }),
+      { logExtra: { key } }
+    );
+  } catch {
     return fetchThroughCacheFailOpen(key, fetchFn);
   }
 
@@ -351,13 +380,16 @@ export async function fetchThroughCache<T>(
     // Try to set lock. If already locked, do nothing...
     let gotLock: boolean;
     try {
-      gotLock = await redis.setNxKeepTtlWithEx(lockKey, '1', lockTTL);
-    } catch (err) {
-      // Lock acquisition itself hit a Redis error. We still have a fresh-enough
-      // intent to refresh, but the distributed lock is unavailable. Serve stale if we
-      // have it (cheapest, fully correct); otherwise fail open to a single-flighted
+      gotLock = await clusterCacheGuard.call(
+        'fetchThroughCache lock (cache cluster)',
+        () => redis.setNxKeepTtlWithEx(lockKey, '1', lockTTL),
+        { logExtra: { key } }
+      );
+    } catch {
+      // Lock acquisition itself hit a Redis error (or the guard's deadline/breaker). We still
+      // have a fresh-enough intent to refresh, but the distributed lock is unavailable. Serve
+      // stale if we have it (cheapest, fully correct); otherwise fail open to a single-flighted
       // origin fetch (per-pod bounded) instead of throwing a 500.
-      logSysRedisFailOpen('read-degraded', 'fetchThroughCache lock (cache cluster)', err, { key });
       if (cachedData) return cachedData.data;
       return fetchThroughCacheFailOpen(key, fetchFn);
     }
@@ -388,20 +420,33 @@ export async function fetchThroughCache<T>(
   // is a real error and must propagate as before. Only the best-effort Redis writes
   // (set result, release lock) are swallowed so a Redis stall on the WRITE side never
   // turns a successful origin fetch into a 500.
+  //
+  // Serve-stale (FETCH_THROUGH_CACHE_SERVE_STALE, dark): an origin error during a REFRESH — there
+  // is an expired entry, since a fresh one returned above — answers with that entry instead of the
+  // error, unless the caller opted out. Counted per cache name and logged. With no entry, or the
+  // switch off, the error propagates exactly as before.
   try {
     const data = await fetchFn();
     await writeFetchThroughEntry(key, data, { ttl, compress, cacheName }, 'fetchThroughCache');
     return data;
-  } finally {
-    // Best-effort lock release; a failure here just leaves the lock to expire via its
-    // TTL (lockTTL). Never let it mask the fetch result or throw.
-    try {
-      await redis.del(lockKey);
-    } catch (err) {
-      logSysRedisFailOpen('write-degraded', 'fetchThroughCache del-lock (cache cluster)', err, {
+  } catch (err) {
+    if (cachedData && env.FETCH_THROUGH_CACHE_SERVE_STALE && options.serveStaleOnError !== false) {
+      fetchThroughCacheStaleServedCounter.inc({ cache_name: cacheName ?? 'unnamed' });
+      logSysRedisFailOpen('read-degraded', 'fetchThroughCache origin (served stale)', err, {
         key,
+        cachedAt: cachedData.cachedAt,
       });
+      return cachedData.data;
     }
+    throw err;
+  } finally {
+    // Best-effort, bounded lock release; a failure here just leaves the lock to expire via its
+    // TTL (lockTTL). Never let it mask the fetch result or throw.
+    await clusterCacheGuard.writeBestEffort(
+      'fetchThroughCache del-lock (cache cluster)',
+      () => redis.del(lockKey),
+      { logExtra: { key } }
+    );
   }
 }
 
@@ -416,11 +461,11 @@ async function writeFetchThroughEntry<T>(
   caller: string
 ) {
   const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
-  try {
-    await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress, cacheName });
-  } catch (err) {
-    logSysRedisFailOpen('write-degraded', `${caller} set (cache cluster)`, err, { key });
-  }
+  await clusterCacheGuard.writeBestEffort(
+    `${caller} set (cache cluster)`,
+    () => redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress, cacheName }),
+    { logExtra: { key } }
+  );
 }
 
 /**

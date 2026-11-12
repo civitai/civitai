@@ -5,6 +5,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import type {
   ClearHiddenInput,
   GetHiddenModelsInput,
@@ -65,11 +66,17 @@ function createUserCache<T, TArgs extends { userId?: number }>({
   // per-key TTLs gave: if an invalidation is ever missed, the field can't go
   // stale indefinitely — the hash expires and is rebuilt. (Jitter on first
   // population still staggers expiry across users to avoid a herd.)
+  //
+  // The write-back is best-effort and bounded (cluster-cache guard): the value is already read from
+  // the source, so a cache that cannot take it must not fail or hold the caller — the next read just
+  // misses again.
   const get = async ({ userId = -1, ...rest }: TArgs) => {
     const data = await callback({ userId, ...rest } as TArgs);
     const hashKey = getUserPrefsHashKey(userId);
-    await redis.packed.hSet(hashKey, field, data);
-    await redis.expire(hashKey, getHiddenCacheExpiry(), 'NX');
+    await clusterCacheGuard.writeBestEffort('user-preferences.cache-fill', async () => {
+      await redis.packed.hSet(hashKey, field, data);
+      await redis.expire(hashKey, getHiddenCacheExpiry(), 'NX');
+    });
     return data;
   };
 
@@ -94,11 +101,16 @@ function createUserCache<T, TArgs extends { userId?: number }>({
 
   return {
     get,
+    /** Read from the source only: no cache write. */
+    fetch: (args: TArgs) => callback({ ...args, userId: args.userId ?? -1 } as TArgs),
     getCached,
     field,
     refreshCache: refresh,
   };
 }
+
+/** The hash read failed: what `getAllHiddenForUsersCached` reads every preference from instead. */
+const UNREADABLE_HASH = Symbol('hidden-prefs-hash-unreadable');
 
 // const getHiddenTagsOfHiddenTags = async (tagIds: number[]) => {
 //   const tagsOnTags = await dbWrite.tagsOnTags.findMany({
@@ -358,39 +370,62 @@ const getAllHiddenForUsersCached = async ({
   // contributor on the feed path), alongside the global moderated-tags blob.
   // Absent fields fall back per-pref to the DB via each cache's get() (see
   // createUserCache).
-  const [hashFields, cachedModeratedTags] = await withSpan(
+  //
+  // 🔴 Hidden content is a user-safety preference, so a cache that cannot answer must never read as
+  // "nothing hidden". Both reads are guarded (bounded, breaker-aware): a hash read that fails or
+  // times out reads every preference from the DATABASE, the source of truth, so what the user hid
+  // stays hidden — at the cost of the database read the cache normally saves. Nothing is written
+  // back on that path (the store just failed). A failed moderated-tags read falls to
+  // getModeratedTags, which reads the database the same way.
+  const [hashRead, cachedModeratedTags] = await withSpan(
     'user-preferences:getAllHidden:redisFetch',
     () =>
       Promise.all([
-        redis.packed.hGetAll<unknown>(getUserPrefsHashKey(userId)),
-        redis.packed.get<AsyncReturnType<typeof getModeratedTags>>(
-          REDIS_KEYS.SYSTEM.MODERATED_TAGS
+        clusterCacheGuard.readOr(
+          'user-preferences.getAllHidden hGetAll',
+          () => redis.packed.hGetAll<unknown>(getUserPrefsHashKey(userId)),
+          UNREADABLE_HASH
+        ),
+        clusterCacheGuard.readOr(
+          'user-preferences.getAllHidden moderated-tags',
+          () =>
+            redis.packed.get<AsyncReturnType<typeof getModeratedTags>>(
+              REDIS_KEYS.SYSTEM.MODERATED_TAGS
+            ),
+          null
         ),
       ])
   );
+  const hashUnreadable = hashRead === UNREADABLE_HASH;
+  const hashFields: Record<string, unknown> = hashUnreadable ? {} : hashRead;
+  // On an unreadable hash, read straight from the source and skip the write-back.
+  const fill = <T, A extends { userId?: number }>(
+    cache: { get: (args: A) => Promise<T>; fetch: (args: A) => Promise<T> },
+    args: A
+  ) => (hashUnreadable ? cache.fetch(args) : cache.get(args));
 
   const getModerationTags = async () =>
     (cachedModeratedTags as AsyncReturnType<typeof getModeratedTags>) ?? (await getModeratedTags());
 
   const getHiddenTags = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenTags.field] as AsyncReturnType<typeof HiddenTags.get>) ??
-    (await HiddenTags.get({ userId }));
+    (await fill(HiddenTags, { userId }));
 
   const getHiddenImages = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenImages.field] as AsyncReturnType<typeof HiddenImages.get>) ??
-    (await HiddenImages.get({ userId }));
+    (await fill(HiddenImages, { userId }));
 
   const getHiddenModels = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenModels.field] as AsyncReturnType<typeof HiddenModels.get>) ??
-    (await HiddenModels.get({ userId }));
+    (await fill(HiddenModels, { userId }));
 
   const getHiddenModel3Ds = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenModel3Ds.field] as AsyncReturnType<typeof HiddenModel3Ds.get>) ??
-    (await HiddenModel3Ds.get({ userId }));
+    (await fill(HiddenModel3Ds, { userId }));
 
   const getHiddenUsers = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenUsers.field] as AsyncReturnType<typeof HiddenUsers.get>) ??
-    (await HiddenUsers.get({ userId }));
+    (await fill(HiddenUsers, { userId }));
 
   const getHiddenImplicitImages = async ({
     userId,
@@ -402,15 +437,15 @@ const getAllHiddenForUsersCached = async ({
     moderatedTagIds: number[];
   }) =>
     (hashFields[ImplicitHiddenImages.field] as AsyncReturnType<typeof ImplicitHiddenImages.get>) ??
-    (await ImplicitHiddenImages.get({ userId, hiddenTagIds, moderatedTagIds }));
+    (await fill(ImplicitHiddenImages, { userId, hiddenTagIds, moderatedTagIds }));
 
   const getBlockedUsers = async ({ userId }: { userId: number }) =>
     (hashFields[BlockedUsers.field] as AsyncReturnType<typeof BlockedUsers.get>) ??
-    (await BlockedUsers.get({ userId }));
+    (await fill(BlockedUsers, { userId }));
 
   const getBlockedByUsers = async ({ userId }: { userId: number }) =>
     (hashFields[BlockedByUsers.field] as AsyncReturnType<typeof BlockedByUsers.get>) ??
-    (await BlockedByUsers.get({ userId }));
+    (await fill(BlockedByUsers, { userId }));
 
   // Resolve the 8 base preferences — each is a no-op if cached, otherwise
   // hits the DB. Wrapped so we can attribute the cache-miss DB fallback

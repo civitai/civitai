@@ -5,6 +5,7 @@ import { isDev, isPreview, isTest } from '~/env/other';
 import { CacheTTL } from '~/server/common/constants';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { noteRateLimitUsage } from '~/server/trpc/rate-limit-headers';
 import { markActiveLimit } from '~/server/utils/active-rate-limits';
@@ -48,9 +49,60 @@ export function rateLimitBucket(
   return { cacheKey, hashKey };
 }
 
-/** The recorded attempts (epoch ms) in a bucket. A store failure throws, as the limiter's read does. */
-export async function readRateLimitAttempts(bucket: ReturnType<typeof rateLimitBucket>) {
-  return (await redis.packed.hGet<number[]>(bucket.cacheKey, bucket.hashKey)) ?? [];
+type RateLimitBucket = ReturnType<typeof rateLimitBucket>;
+
+/**
+ * Attempts counted in THIS process while the store (the cluster cache) is unavailable — a read that
+ * fails, times out, or is short-circuited by the cluster-cache breaker. Abuse prevention must not
+ * switch off with the store, and failing every rate-limited call would turn a cache outage into an
+ * outage of every procedure that has a limit, so the limiter keeps counting here instead: each
+ * process enforces the full rule on the attempts it saw, a finite limit (at most the rule × the
+ * number of processes) rather than none.
+ *
+ * Only filled while degraded, and discarded in effect once the store answers again (the store's own
+ * history is authoritative then). Bounded: past LOCAL_BUCKETS_MAX buckets the oldest is dropped, so
+ * an outage under a flood of distinct callers costs bounded memory.
+ */
+const LOCAL_BUCKETS_MAX = 50_000;
+const localAttempts = new Map<string, number[]>();
+const localKeyOf = (bucket: RateLimitBucket) => `${bucket.cacheKey}|${bucket.hashKey}`;
+
+function recordLocalAttempt(bucket: RateLimitBucket, at: number, longestPeriodSec: number) {
+  const key = localKeyOf(bucket);
+  const kept = (localAttempts.get(key) ?? []).filter((x) => x > at - longestPeriodSec * 1000);
+  kept.push(at);
+  // Re-insert so Map order tracks recency; evict the least recently written past the cap.
+  localAttempts.delete(key);
+  localAttempts.set(key, kept);
+  if (localAttempts.size > LOCAL_BUCKETS_MAX) {
+    const oldest = localAttempts.keys().next().value;
+    if (oldest !== undefined) localAttempts.delete(oldest);
+  }
+}
+
+/** The bucket's attempts, from the store when it answers, else this process's local count. */
+async function readAttemptsOrLocal(
+  bucket: RateLimitBucket
+): Promise<{ attempts: number[]; degraded: boolean }> {
+  try {
+    const stored = await clusterCacheGuard.call(
+      'rate-limit-bucket.read',
+      () => redis.packed.hGet<number[]>(bucket.cacheKey, bucket.hashKey),
+      { logExtra: { cacheKey: bucket.cacheKey } }
+    );
+    return { attempts: stored ?? [], degraded: false };
+  } catch {
+    return { attempts: [...(localAttempts.get(localKeyOf(bucket)) ?? [])], degraded: true };
+  }
+}
+
+/**
+ * The recorded attempts (epoch ms) in a bucket. When the store cannot answer, the attempts this
+ * process counted locally while it was unavailable (see `localAttempts`), as the limiter itself
+ * reads them.
+ */
+export async function readRateLimitAttempts(bucket: RateLimitBucket) {
+  return (await readAttemptsOrLocal(bucket)).attempts;
 }
 
 /**
@@ -105,7 +157,7 @@ export async function claimRateLimitAttempt({
   if (validLimits.length === 0) return async () => undefined;
   const bucket = rateLimitBucket(keyName, user, req);
   const { cacheKey, hashKey } = bucket;
-  const attempts = await readRateLimitAttempts(bucket);
+  const { attempts, degraded } = await readAttemptsOrLocal(bucket);
 
   const now = Date.now();
   const usages = evaluateRateLimitWindow(validLimits, attempts, now);
@@ -114,7 +166,9 @@ export async function claimRateLimitAttempt({
     const message = refusal.rule.errorMessage ?? `You're doing that too much...`;
     // A gate (limit 0) never frees a slot, so no header can describe it.
     if (refusal.rule.kind === 'product' && refusal.nextAt !== null) noteRateLimitUsage(req, usages);
-    else if (user && refusal.nextAt !== null)
+    // The account banner lives in the same store; while it is unavailable, skip it rather than
+    // hold the refusal on a write that cannot land.
+    else if (user && refusal.nextAt !== null && !degraded)
       await markActiveLimit({ userId: user.id, keyName, retryAt: refusal.nextAt, now });
     const meta = rateLimitMetaForRefusal(usages, now);
     if (meta) throwRateLimited(meta, message);
@@ -125,6 +179,10 @@ export async function claimRateLimitAttempt({
     attempts.push(Date.now());
     noteRateLimitUsage(req, evaluateRateLimitWindow(validLimits, attempts, Date.now()));
     const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
+    if (degraded) {
+      recordLocalAttempt(bucket, attempts[attempts.length - 1], longestPeriod);
+      return;
+    }
     const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
     // Fail-open: a sysRedis failover would otherwise 500 every rate-limited call; the window
     // under-counts until the next good write. A sustained rate-limit-write-degraded spike means

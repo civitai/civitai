@@ -5,6 +5,7 @@ import { BlocklistType } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import type { UpsertBlocklistSchema } from '~/server/schema/blocklist.schema';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLruCache } from '~/server/utils/lru-cache';
@@ -39,11 +40,46 @@ function getBlocklistKey(type: string) {
  */
 const BLOCKLIST_CACHE_TTL = 5 * 60;
 
-// No in-process cache: pod-local copies can't be invalidated cross-pod on upsert.
+// No in-process cache on the normal path: pod-local copies can't be invalidated cross-pod on upsert.
+// (`lastKnown` below is read only while this cache is unreadable.) Best-effort and bounded: the
+// value is already read from the database, so a cache that cannot take it must not fail the read.
 async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
-  await redis.set(getBlocklistKey(type), JSON.stringify(data), {
-    EX: BLOCKLIST_CACHE_TTL,
-  });
+  const value = JSON.stringify(data);
+  await clusterCacheGuard.writeBestEffort('blocklist.setCache', () =>
+    redis.set(getBlocklistKey(type), value, { EX: BLOCKLIST_CACHE_TTL })
+  );
+}
+
+/**
+ * The copy of each list this process last read, and when. Read ONLY when the cache cannot be read
+ * (error, timeout, open cluster-cache breaker) — never on the normal path, so the cross-pod
+ * invalidation above is unaffected while the cache works.
+ *
+ * 🔴 A blocklist is enforcement: an unreadable cache must never read as an empty, allow-everything
+ * list. So, with the cache unreadable:
+ * 1. a copy younger than BLOCKLIST_CACHE_TTL — the staleness the cache itself already allows — is
+ *    served as is, sparing the database a read per check during the outage;
+ * 2. otherwise the row is read from the database;
+ * 3. if that fails too, the last copy of any age is served;
+ * 4. with no copy at all, the database error is thrown: the caller fails closed.
+ */
+const lastKnown = new Map<string, { dto: BlocklistDTO; at: number }>();
+
+function remember(type: string, dto: BlocklistDTO) {
+  lastKnown.set(type, { dto, at: Date.now() });
+}
+
+async function readBlocklistCacheUnavailable(type: BlocklistType): Promise<BlocklistDTO> {
+  const known = lastKnown.get(type);
+  if (known && Date.now() - known.at < BLOCKLIST_CACHE_TTL * 1000) return known.dto;
+  try {
+    const row = await readBlocklistRow(type);
+    remember(type, row);
+    return row;
+  } catch (error) {
+    if (known) return known.dto;
+    throw error;
+  }
 }
 
 /**
@@ -184,8 +220,8 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
  * has exactly one row, so the guard is currently inert. It is kept because nothing PREVENTS a
  * duplicate; see the first-insert race in `upsertBlocklist`.)
  *
- * No writer calls this any more. Its one caller is the cache-aside populate in `getBlocklistDTO` —
- * so this is what decides which row the whole system enforces, and a write busts the key, making
+ * No writer calls this any more. Its callers are the cache-aside populate in `getBlocklistDTO` and
+ * that function's cache-unavailable path — so this is what decides which row the whole system enforces, and a write busts the key, making
  * the next read a post-write read whose value then serves every pod until it expires.
  *
  * This picks the lowest id, always, and reports the duplicate. It deliberately does NOT
@@ -225,7 +261,14 @@ async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
 }
 
 export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
-  const cached = await redis.get(getBlocklistKey(type));
+  let cached: string | null;
+  try {
+    cached = await clusterCacheGuard.call('blocklist.getBlocklistDTO', () =>
+      redis.get(getBlocklistKey(type))
+    );
+  } catch {
+    return readBlocklistCacheUnavailable(type);
+  }
   if (cached) {
     // 🔴 `data ?? []` is load-bearing. A cached value with no `data` key is a shape three
     // separately-released apps can write into this key, and every consumer here calls `.some`,
@@ -234,10 +277,13 @@ export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
     // new BlocklistType consumer inherits it. The spread preserves the absent-`id` sentinel that
     // `getClientBenignLists` reads as "no moderator row yet".
     const parsed = JSON.parse(cached) as BlocklistDTO;
-    return { ...parsed, data: parsed.data ?? [] };
+    const dto = { ...parsed, data: parsed.data ?? [] };
+    remember(type, dto);
+    return dto;
   }
 
   const result = await readBlocklistRow(type);
+  remember(type, result);
 
   await setCache({ type: result.type, data: result });
   return result;
