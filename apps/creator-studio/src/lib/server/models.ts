@@ -45,8 +45,16 @@ function hasPublicVersionSql(alias: string) {
   return sql<boolean>`exists (select 1 from "ModelVersion" pv where pv."modelId" = ${sql.raw(alias)}."id" and pv."status" = 'Published' and pv."availability" = 'Public')`;
 }
 
+// The model shows a separate face to civitai.com viewers: `sfwName` turns it on, and a moderator removal
+// that has cleared the cover (`meta.comFaceRemoved`) turns it off until the owner sets a new one.
+export function hasComFaceSql(alias: string) {
+  const m = sql.raw(`${alias}.`);
+  return sql<boolean>`(${m}"sfwName" is not null and not (${m}"meta"->'comFaceRemoved' is not null and ${m}"sfwCoverImageId" is null))`;
+}
+
 // The SQL twin of `siteListing`: a change to one is a change to both.
 function siteFilterSql(alias: string, site: SiteFilter) {
+  if (site === 'com-face') return hasComFaceSql(alias);
   const m = sql.raw(`${alias}.`);
   const listed = sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${hasPublicVersionSql(alias)} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`;
   const onCom = sql`(${m}"nsfwLevel" & ${sql.lit(sfwBrowsingLevelsFlag)}) != 0`;
@@ -333,7 +341,6 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         'nsfw',
         'nsfwLevel',
         'poi',
-        'sfwName',
         'minor',
         'availability',
         'mode',
@@ -342,9 +349,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         hasPublicVersionSql('"Model"').as('hasPublicVersion'),
         hasTagSql('"Model"', peopleBrowsingTagIds).as('hasPeopleTag'),
         hasTagSql('"Model"', childBrowsingTagIds).as('hasChildTag'),
-        sql<boolean>`"Model".meta->'comFaceRemoved' IS NOT NULL AND "Model"."sfwCoverImageId" IS NULL`.as(
-          'comFaceRemoved'
-        ),
+        hasComFaceSql('"Model"').as('hasComFace'),
       ])
       .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
       .limit(perPage)
@@ -514,7 +519,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         hasPeopleTag: !!m.hasPeopleTag,
         hasChildTag: !!m.hasChildTag,
       }),
-      hasComFace: m.sfwName != null && !m.comFaceRemoved,
+      hasComFace: !!m.hasComFace,
       versions: byModel.get(m.id) ?? [],
     })),
     total,
