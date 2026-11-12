@@ -18,7 +18,9 @@ void redisMock;
  */
 
 let db: PGlite;
-const mockHold = vi.hoisted(() => vi.fn(async (byVersion: unknown) => byVersion));
+const mockHold = vi.hoisted(() =>
+  vi.fn(async (byVersion: unknown, _models: Map<number, unknown>) => byVersion)
+);
 
 vi.mock('~/server/services/model-visibility.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVisibility>()),
@@ -169,7 +171,7 @@ describe('GET /api/v1/model-versions/{id} — the raw SQL carries the model flag
     const { statusCode, body } = await getVersion();
     expect(statusCode).toBe(200);
     expect(mockHold).toHaveBeenCalledTimes(1);
-    const models = mockHold.mock.calls[0][1] as Map<number, unknown>;
+    const models = mockHold.mock.calls[0][1];
     expect(models.get(VERSION_ID)).toEqual({ modelId: 7, ...flags });
     expect(body.model).not.toHaveProperty('minor');
     expect(body.model).not.toHaveProperty('sfwOnly');
