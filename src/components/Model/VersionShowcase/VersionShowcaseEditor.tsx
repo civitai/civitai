@@ -10,8 +10,8 @@ import {
   Stack,
   Text,
   TextInput,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, arrayMove, rectSortingStrategy } from '@dnd-kit/sortable';
