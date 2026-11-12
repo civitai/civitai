@@ -175,137 +175,139 @@ export default Page(
           ) : isLoading ? (
             <PageLoader />
           ) : playerData ? (
-            <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-gray-2 p-4 @md:flex-row @md:p-0 dark:bg-dark-9">
+            <div className="-mt-3 flex h-[calc(100%-44px)] flex-col">
               <NewOrderSwitchoverBanner />
-              <NewOrderSidebar />
-              {anotherTabOpen ? (
-                <div className="mx-auto flex size-full max-w-sm items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
-                  <div className="flex flex-col items-center gap-4">
-                    <ThemeIcon size={96} radius={999} variant="light">
-                      <span className="text-4xl">👀</span>
-                    </ThemeIcon>
-                    <div className="text-center">
-                      <p className="text-lg">
-                        You have multiple tabs of Civitai open, which might affect the way the game
-                        plays.
-                      </p>
-                      <p className="text-lg">
-                        Please close the other tabs or refresh this page to continue playing.
-                      </p>
-                    </div>
-                    <Button radius="xl" onClick={() => window.location.reload()}>
-                      Refresh
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="relative flex size-full items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
-                  {isLevelingUp && <LevelUp className="absolute" />}
-                  {isRankingUp && <RankUp className="absolute" />}
-                  {currentUser?.isModerator && (
-                    <Select
-                      className="absolute right-2 top-2 z-10 w-[200px] max-w-full"
-                      placeholder="Select a queue"
-                      value={selectedQueue}
-                      data={Object.keys(NewOrderRankType)}
-                      onChange={(value) => setSelectedQueue(value as NewOrderRankType)}
-                    />
-                  )}
-                  {loadingImagesQueue || isRefetching ? (
-                    <Loader type="bars" size="xl" />
-                  ) : isCooldownLocked ? (
-                    <NewOrderCooldownLockout />
-                  ) : currentImage ? (
-                    <div className="relative flex size-full flex-col items-center justify-center gap-4 overflow-hidden">
-                      <ImageGuard2 image={currentImage} explain={false}>
-                        {() => (
-                          <div
-                            className={clsx(
-                              'relative my-auto flex max-h-[85%] min-h-0 max-w-full items-center justify-center @md:my-0'
-                            )}
-                          >
-                            {currentUser?.isModerator && (
-                              <ImageGuard2.BlurToggle
-                                className="absolute left-2 top-2"
-                                alwaysVisible
-                              />
-                            )}
-                            <EdgeMedia2
-                              src={currentImage.url}
-                              className={clsx('h-full max-w-full rounded-lg object-contain')}
-                              type="image"
-                              onLoadStart={() => setImageStatus('loading')}
-                              onLoad={() => setImageStatus('idle')}
-                              onError={() => setImageStatus('error')}
-                              contain
-                              width={KNIGHTS_IMAGE_WIDTH}
-                            />
-                            {currentUser?.isModerator && (
-                              <LegacyActionIcon
-                                component={Link}
-                                href={`/images/${currentImage.id}`}
-                                target="_blank"
-                                aria-label="Open image in new tab"
-                                size="sm"
-                                variant="light"
-                                color="dark"
-                                className="absolute bottom-2 right-2 text-white"
-                              >
-                                <IconExternalLink size={16} color="currentColor" />
-                              </LegacyActionIcon>
-                            )}
-                          </div>
-                        )}
-                      </ImageGuard2>
-                      <Card
-                        ref={levelNoticeRef}
-                        id="rating"
-                        shadow="sm"
-                        radius="sm"
-                        className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 p-4 text-5xl font-medium text-black dark:text-white"
-                        style={{ display: 'none' }}
-                        withBorder
-                      >
-                        PG
-                      </Card>
-                      <div className="flex w-full max-w-sm shrink-0 flex-col items-center justify-center gap-4">
-                        <NewOrderImageRater
-                          muted={muted}
-                          disabled={imageStatus === 'loading' || imageStatus === 'error'}
-                          onVolumeClick={() => setMuted((prev) => !prev)}
-                          onSkipClick={handleSkipRating}
-                          onRatingClick={({ rating, damnedReason }) =>
-                            damnedReason
-                              ? handleAddDamnedReason({ reason: damnedReason })
-                              : handleAddRating({ rating })
-                          }
-                        />
-                        {currentUser?.isModerator && (
-                          <NewOrderImageRatings
-                            imageId={currentImage.id}
-                            imageNsfwLevel={currentImage.nsfwLevel}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex max-w-sm flex-col items-center justify-center gap-4">
+              <div className="relative flex min-h-0 flex-1 flex-col gap-4 bg-gray-2 p-4 @md:flex-row @md:p-0 dark:bg-dark-9">
+                <NewOrderSidebar />
+                {anotherTabOpen ? (
+                  <div className="mx-auto flex size-full max-w-sm items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
+                    <div className="flex flex-col items-center gap-4">
                       <ThemeIcon size={96} radius={999} variant="light">
-                        <span className="text-4xl">🎉</span>
+                        <span className="text-4xl">👀</span>
                       </ThemeIcon>
                       <div className="text-center">
                         <p className="text-lg">
-                          Hooray! Looks like you have rated all images in the queue.
+                          You have multiple tabs of Civitai open, which might affect the way the
+                          game plays.
                         </p>
-                        <p className="text-lg">Come back later or refresh to get new ones!</p>
+                        <p className="text-lg">
+                          Please close the other tabs or refresh this page to continue playing.
+                        </p>
                       </div>
-                      <Button radius="xl" onClick={() => refetch()} loading={isRefetching}>
-                        Refresh now
+                      <Button radius="xl" onClick={() => window.location.reload()}>
+                        Refresh
                       </Button>
                     </div>
-                  )}
-                </div>
-              )}
+                  </div>
+                ) : (
+                  <div className="relative flex size-full items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
+                    {isLevelingUp && <LevelUp className="absolute" />}
+                    {isRankingUp && <RankUp className="absolute" />}
+                    {currentUser?.isModerator && (
+                      <Select
+                        className="absolute right-2 top-2 z-10 w-[200px] max-w-full"
+                        placeholder="Select a queue"
+                        value={selectedQueue}
+                        data={Object.keys(NewOrderRankType)}
+                        onChange={(value) => setSelectedQueue(value as NewOrderRankType)}
+                      />
+                    )}
+                    {loadingImagesQueue || isRefetching ? (
+                      <Loader type="bars" size="xl" />
+                    ) : isCooldownLocked ? (
+                      <NewOrderCooldownLockout />
+                    ) : currentImage ? (
+                      <div className="relative flex size-full flex-col items-center justify-center gap-4 overflow-hidden">
+                        <ImageGuard2 image={currentImage} explain={false}>
+                          {() => (
+                            <div
+                              className={clsx(
+                                'relative my-auto flex max-h-[85%] min-h-0 max-w-full items-center justify-center @md:my-0'
+                              )}
+                            >
+                              {currentUser?.isModerator && (
+                                <ImageGuard2.BlurToggle
+                                  className="absolute left-2 top-2"
+                                  alwaysVisible
+                                />
+                              )}
+                              <EdgeMedia2
+                                src={currentImage.url}
+                                className={clsx('h-full max-w-full rounded-lg object-contain')}
+                                type="image"
+                                onLoadStart={() => setImageStatus('loading')}
+                                onLoad={() => setImageStatus('idle')}
+                                onError={() => setImageStatus('error')}
+                                contain
+                                width={KNIGHTS_IMAGE_WIDTH}
+                              />
+                              {currentUser?.isModerator && (
+                                <LegacyActionIcon
+                                  component={Link}
+                                  href={`/images/${currentImage.id}`}
+                                  target="_blank"
+                                  aria-label="Open image in new tab"
+                                  size="sm"
+                                  variant="light"
+                                  color="dark"
+                                  className="absolute bottom-2 right-2 text-white"
+                                >
+                                  <IconExternalLink size={16} color="currentColor" />
+                                </LegacyActionIcon>
+                              )}
+                            </div>
+                          )}
+                        </ImageGuard2>
+                        <Card
+                          ref={levelNoticeRef}
+                          id="rating"
+                          shadow="sm"
+                          radius="sm"
+                          className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 p-4 text-5xl font-medium text-black dark:text-white"
+                          style={{ display: 'none' }}
+                          withBorder
+                        >
+                          PG
+                        </Card>
+                        <div className="flex w-full max-w-sm shrink-0 flex-col items-center justify-center gap-4">
+                          <NewOrderImageRater
+                            muted={muted}
+                            disabled={imageStatus === 'loading' || imageStatus === 'error'}
+                            onVolumeClick={() => setMuted((prev) => !prev)}
+                            onSkipClick={handleSkipRating}
+                            onRatingClick={({ rating, damnedReason }) =>
+                              damnedReason
+                                ? handleAddDamnedReason({ reason: damnedReason })
+                                : handleAddRating({ rating })
+                            }
+                          />
+                          {currentUser?.isModerator && (
+                            <NewOrderImageRatings
+                              imageId={currentImage.id}
+                              imageNsfwLevel={currentImage.nsfwLevel}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex max-w-sm flex-col items-center justify-center gap-4">
+                        <ThemeIcon size={96} radius={999} variant="light">
+                          <span className="text-4xl">🎉</span>
+                        </ThemeIcon>
+                        <div className="text-center">
+                          <p className="text-lg">
+                            Hooray! Looks like you have rated all images in the queue.
+                          </p>
+                          <p className="text-lg">Come back later or refresh to get new ones!</p>
+                        </div>
+                        <Button radius="xl" onClick={() => refetch()} loading={isRefetching}>
+                          Refresh now
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           ) : null}
         </IsClient>

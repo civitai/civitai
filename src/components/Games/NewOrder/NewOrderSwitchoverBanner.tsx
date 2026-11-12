@@ -1,43 +1,27 @@
-import { IconX } from '@tabler/icons-react';
-import { useState } from 'react';
+import { NavBannerStrip } from '~/components/AppLayout/NavAnnouncementSlot/NavAnnouncementSlot';
+import { useNavBannersDismissed } from '~/components/AppLayout/NavAnnouncementSlot/nav-banners-dismissed';
+import type { NavBanner } from '~/shared/constants/nav-banner.constants';
 
-// Left empty, the banner renders without a link so a placeholder URL never ships.
-export const KNIGHTS_V2_ARTICLE_URL = '';
+export const KNIGHTS_V2_ARTICLE_URL = '/articles/38647';
+
+const banner: NavBanner = {
+  id: 'knights-v2-switchover',
+  title: 'Knights v2 arrives',
+  accent: 'Tuesday 11/17.',
+  text: 'At knights.civitai.com. Your rank comes with you, and gold moves to a new shop.',
+  href: KNIGHTS_V2_ARTICLE_URL,
+  cta: "See what's changing",
+  image: '820ede9b-b96f-4d72-9983-8415f3dc044e',
+  // The cover art's left edge, so the strip runs on seamlessly into the image.
+  background: '#2b1542',
+  dismissible: true,
+  priority: 0,
+};
 
 export function NewOrderSwitchoverBanner() {
-  const [isVisible, setIsVisible] = useState(true);
+  const { dismissed, dismiss } = useNavBannersDismissed();
 
-  if (!isVisible) return null;
+  if (dismissed.includes(banner.id)) return null;
 
-  return (
-    <div className="absolute inset-x-0 top-0 z-50 flex items-start justify-between bg-gradient-to-r from-amber-600 to-amber-500 px-4 py-2 text-white shadow-md">
-      <div className="flex flex-col items-start gap-2 @md:flex-row">
-        <span className="rounded-md bg-white px-1.5 py-0.5 text-xs font-bold text-amber-600 sm:inline">
-          V2
-        </span>
-        <p className="text-sm font-medium sm:text-base">
-          Knights v2 is coming on Tuesday 11/17.{' '}
-          {KNIGHTS_V2_ARTICLE_URL ? (
-            <a
-              href={KNIGHTS_V2_ARTICLE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-bold text-white underline hover:no-underline"
-            >
-              Here&apos;s what changes
-            </a>
-          ) : (
-            <>Here&apos;s what changes</>
-          )}
-        </p>
-      </div>
-      <button
-        onClick={() => setIsVisible(false)}
-        className="ml-2 rounded-full p-1 transition-colors hover:bg-white/20"
-        aria-label="Dismiss Knights v2 notification"
-      >
-        <IconX className="size-4" />
-      </button>
-    </div>
-  );
+  return <NavBannerStrip banner={banner} onDismiss={() => dismiss(banner.id)} />;
 }
