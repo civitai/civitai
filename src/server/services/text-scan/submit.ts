@@ -35,6 +35,7 @@ import {
   recordTextScanSuccess,
 } from '~/server/services/text-scan/record';
 import { buildTextScanResponseFormat } from '~/server/services/text-scan/schema';
+import { submitTextCategoryScan } from '~/server/services/text-scan/category';
 import type {
   PromptIds,
   TextScanEntityType,
@@ -390,6 +391,27 @@ export async function scanEntity({
       })
     );
   }
+  // Fires with each new main-pass submit, so an unchanged text is not re-classified; the retry
+  // cron's resubmits are skipped, since the first call already ran. Its errors stay out of `result`.
+  if (profile.category && result.status === 'submitted' && !first.variant && !fromRetry)
+    await submitTextCategoryScan({
+      entityType,
+      entityId,
+      subject,
+      hook: profile.category,
+      model: config.model,
+      maxInputChars: config.maxInputChars,
+      scanCallbackUrl: textScanCallbackUrl(),
+    }).catch((e) =>
+      logToAxiom({
+        name: 'text-category',
+        type: 'error',
+        message: 'category submit threw',
+        entityType,
+        entityId,
+        error: (e as Error).message,
+      })
+    );
   return result;
 }
 

@@ -1964,6 +1964,7 @@ export interface Tag {
   tagsOnImageVotes?: TagsOnImageVote[];
   tagsOnPosts?: TagsOnPost[];
   tagsOnArticles?: TagsOnArticle[];
+  systemCategoryArticles?: Article[];
   tagsOnCollection?: TagsOnCollection[];
   tagsOnImageComposite?: ImageTag[];
   tagsOnModelComposite?: ModelTag[];
@@ -3740,6 +3741,8 @@ export interface Article {
   lockedProperties: string[];
   isOfficial: boolean;
   status: ArticleStatus;
+  systemCategoryId: number | null;
+  systemCategory?: Tag | null;
   reactions?: ArticleReaction[];
   tags?: TagsOnArticle[];
   reports?: ArticleReport[];
