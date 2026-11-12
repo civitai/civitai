@@ -5,7 +5,6 @@ import { dbRead, dbWrite } from './db';
 import {
   getManagerWorkflow,
   getOrchestratorClient,
-  isGoneStatus,
   probeOrchestratorBlob,
   type BlobProbe,
   releaseModerationGate,
@@ -390,8 +389,8 @@ const listedOnReviewQueue = (_row: TrainingReviewRow) => true;
  *
  * The orchestrator round-trip is NOT incidental. A paused version whose workflow has expired can never
  * be approved — the gate is gone — so listing it gives the moderator a row whose every button
- * errors. Reading the workflow through the consumer API also nudges the orchestrator into reaping
- * failed/expired jobs, which is the only thing in either app that moves those runs out of `Paused`.
+ * errors. The read is the manager read the gate section uses, not the consumer read, which nudges
+ * the orchestrator into reaping jobs: this build runs for the sidebar too, far more often than a page.
  *
  * A row that could not be read is kept, unchecked: dropping rows on a transport failure would render
  * as "nothing to review", which is the one answer this page must never give wrongly.
@@ -446,33 +445,18 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
     return { ...row, workflowId: results?.workflowId ?? null };
   });
 
-  const configured = !!env.ORCHESTRATOR_ENDPOINT && !!env.ORCHESTRATOR_ACCESS_TOKEN;
-  type Read = 'gone' | { underReview: boolean };
-  const reads = configured
-    ? await mapBounded(
-        withWorkflow,
-        async (row): Promise<Read | undefined> => {
-          if (!row.workflowId) return 'gone';
-          const { data, error, response } = await getWorkflow({
-            client: getOrchestratorClient(),
-            path: { workflowId: row.workflowId },
-          });
-          // HTTP failures arrive in `error`, not as a throw; only a 404/410 means the run is gone.
-          if (error || !data) return isGoneStatus(response?.status ?? 0) ? 'gone' : undefined;
-          const read = readTrainingWorkflow(row.workflowId, data);
-          return read.ok ? { underReview: read.reading.underReview } : undefined;
-        },
-        {
-          concurrency: PENDING_READ_CONCURRENCY,
-          budgetMs: PENDING_READ_BUDGET_MS,
-        }
-      )
-    : withWorkflow.map(() => undefined);
+  const reads = await mapBounded(
+    withWorkflow,
+    async (row): Promise<QueueRead | undefined> =>
+      row.workflowId ? readForQueue(row.workflowId) : { kind: 'gone' },
+    { concurrency: PENDING_READ_CONCURRENCY, budgetMs: PENDING_READ_BUDGET_MS }
+  );
 
   const classified = withWorkflow.flatMap((row, i): TrainingReviewRow[] => {
     const read = reads[i];
-    if (read === 'gone') return [];
-    return [{ ...row, underReview: read?.underReview ?? false, checked: read !== undefined }];
+    if (read?.kind === 'gone') return [];
+    const reading = read?.kind === 'read' ? read.reading : null;
+    return [{ ...row, underReview: reading?.underReview ?? false, checked: reading !== null }];
   });
   const listed = classified.filter(listedOnReviewQueue);
   return {
@@ -487,7 +471,10 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
  * half is partial, so the sidebar shows it as unknown rather than a short count.
  */
 export async function countTrainingDataReview(): Promise<number | null> {
-  const [queue, gates] = await Promise.all([getTrainingReviewQueue(), getPendingWorkflowGates()]);
+  const [queue, gates] = await Promise.all([
+    reviewQueueCache.get(BADGE_MAX_AGE_MS),
+    pendingCache.get(BADGE_MAX_AGE_MS),
+  ]);
   if (queue.workflowFilterUnavailable || queue.truncated) return null;
   if (gates.ledgerUnavailable || gates.workflowFilterUnavailable || gates.truncated) return null;
   return queue.items.filter((r) => r.underReview).length + gates.items.length;
@@ -1232,11 +1219,40 @@ const PENDING_READ_CONCURRENCY = 8;
 /** The whole fan-out of orchestrator reads gets this long; whatever has not answered is listed as
  *  unchecked rather than holding the page. */
 const PENDING_READ_BUDGET_MS = 20_000;
-/** How long one build of a queue serves every caller. A ruling clears it — in this process only;
- *  another replica can list a ruled run for up to this long, and the ruling itself then refuses it as
- *  no longer under review. The gate build is held longer: its ledger reads cost seconds. */
-const REVIEW_QUEUE_CACHE_MS = 30_000;
-const PENDING_CACHE_MS = 10 * 60_000;
+/** How long one build of either queue serves a page load. A ruling clears it in this process only, so
+ *  another replica can list a ruled run for up to this long. A partial build is never held. */
+const QUEUE_CACHE_MS = 30_000;
+/** The sidebar badge takes a build up to this old rather than start one on every refresh. */
+const BADGE_MAX_AGE_MS = 5 * 60_000;
+/** The ledger's candidate list. A just-submitted gate can take this long to appear. */
+const LEDGER_CACHE_MS = 2 * 60_000;
+/** A workflow the orchestrator answered 404/410 for is not asked again for this long. */
+const GONE_CACHE_MS = 60 * 60_000;
+const GONE_CACHE_MAX = 10_000;
+const goneWorkflows = new Map<string, number>();
+
+type QueueRead =
+  | { kind: 'gone' }
+  | { kind: 'read'; reading: WorkflowReading }
+  /** Answered, but not a training run this app can read. */
+  | { kind: 'unreadable' };
+
+/** One queue row's workflow, through the manager read. Undefined when the orchestrator did not answer. */
+async function readForQueue(workflowId: string): Promise<QueueRead | undefined> {
+  const goneUntil = goneWorkflows.get(workflowId);
+  if (goneUntil !== undefined && goneUntil > Date.now()) return { kind: 'gone' };
+  const loaded = await getManagerWorkflow(workflowId);
+  if (!loaded.ok) {
+    if (!loaded.gone) return undefined;
+    goneWorkflows.delete(workflowId);
+    if (goneWorkflows.size >= GONE_CACHE_MAX)
+      goneWorkflows.delete(goneWorkflows.keys().next().value!);
+    goneWorkflows.set(workflowId, Date.now() + GONE_CACHE_MS);
+    return { kind: 'gone' };
+  }
+  const read = readTrainingWorkflow(workflowId, loaded.workflow);
+  return read.ok ? { kind: 'read', reading: read.reading } : { kind: 'unreadable' };
+}
 
 export type PendingWorkflowGate = {
   workflowId: string;
@@ -1285,9 +1301,11 @@ export function getPendingWorkflowGates(
   return pendingCache.get();
 }
 
+type LedgerCandidates = { ok: true; ids: string[] } | { ok: false };
+
 /**
- * One build serves every caller for `ttlMs`, and concurrent callers share it. A build that failed, or
- * that `discard` rejects, is dropped so the next caller tries again.
+ * One build serves every caller for `ttlMs` (or a caller's own `maxAgeMs`), and concurrent callers
+ * share it. A build that failed, or that `discard` rejects, is dropped so the next caller tries again.
  */
 function sharedBuild<T>(
   ttlMs: number,
@@ -1296,9 +1314,9 @@ function sharedBuild<T>(
 ) {
   let cache: { at: number; result: Promise<T> } | null = null;
   return {
-    get(): Promise<T> {
+    get(maxAgeMs = ttlMs): Promise<T> {
       const now = Date.now();
-      if (cache && now - cache.at < ttlMs) return cache.result;
+      if (cache && now - cache.at < maxAgeMs) return cache.result;
       const entry = { at: now, result: build() };
       cache = entry;
       void entry.result.then(
@@ -1318,25 +1336,37 @@ function sharedBuild<T>(
 }
 
 const pendingCache = sharedBuild(
-  PENDING_CACHE_MS,
+  QUEUE_CACHE_MS,
   () => buildPendingWorkflowGates({}),
-  (r) => r.ledgerUnavailable
+  (r) => r.ledgerUnavailable || r.workflowFilterUnavailable
 );
-const reviewQueueCache = sharedBuild(REVIEW_QUEUE_CACHE_MS, buildTrainingReviewQueue);
+const reviewQueueCache = sharedBuild(
+  QUEUE_CACHE_MS,
+  buildTrainingReviewQueue,
+  (r) => r.workflowFilterUnavailable
+);
+// Rulings do not clear it: a ruled run is dropped by its re-read, not by the ledger.
+const ledgerCache = sharedBuild(
+  LEDGER_CACHE_MS,
+  () => readLedgerCandidates(Date.now()),
+  (r) => !r.ok
+);
+
+/** Tests only — the ledger and gone caches outlive a ruling. */
+export function resetTrainingQueueCaches(): void {
+  ledgerCache.clear();
+  goneWorkflows.clear();
+}
 
 /** Called after any accepted ruling, and by tests. */
 export function invalidatePendingWorkflowGates(): void {
   pendingCache.clear();
 }
 
-async function buildPendingWorkflowGates(options: {
-  now?: number;
-  readBudgetMs?: number;
-}): Promise<PendingWorkflowGates> {
-  const since = ymdhms((options.now ?? Date.now()) - PENDING_WINDOW_MS);
+async function readLedgerCandidates(now: number): Promise<LedgerCandidates> {
+  const since = ymdhms(now - PENDING_WINDOW_MS);
   // Three queries, not one: the same anti-join written as `NOT IN (subquery)` measured over 20s against
   // under 1s for the three run separately.
-  let candidates: string[];
   try {
     const ch = getClickhouse();
     const [charges, refunds, ended] = await Promise.all([
@@ -1360,18 +1390,30 @@ async function buildPendingWorkflowGates(options: {
       `),
     ]);
     const done = new Set([...refunds, ...ended].map((r) => r.workflowId));
-    candidates = charges
-      .map((c) => c.workflowId)
-      .filter((id) => !done.has(id) && parseWorkflowId(id));
+    return {
+      ok: true,
+      ids: charges.map((c) => c.workflowId).filter((id) => !done.has(id) && parseWorkflowId(id)),
+    };
   } catch (e) {
     console.error('[training-moderation] pending gate ledger read failed', e);
+    return { ok: false };
+  }
+}
+
+async function buildPendingWorkflowGates(options: {
+  now?: number;
+  readBudgetMs?: number;
+}): Promise<PendingWorkflowGates> {
+  const ledger =
+    options.now !== undefined ? await readLedgerCandidates(options.now) : await ledgerCache.get();
+  if (!ledger.ok)
     return {
       items: [],
       ledgerUnavailable: true,
       workflowFilterUnavailable: false,
       truncated: false,
     };
-  }
+  const candidates = ledger.ids;
 
   const truncated = candidates.length > MAX_PENDING_CANDIDATES;
   const page = candidates.slice(0, MAX_PENDING_CANDIDATES);
@@ -1380,10 +1422,9 @@ async function buildPendingWorkflowGates(options: {
   const checked = await mapBounded(
     page,
     async (workflowId): Promise<Checked | null> => {
-      const loaded = await getManagerWorkflow(workflowId);
-      if (!loaded.ok) return loaded.gone ? null : { workflowId, unknown: true };
-      const read = readTrainingWorkflow(workflowId, loaded.workflow);
-      return read.ok && read.reading.underReview
+      const read = await readForQueue(workflowId);
+      if (!read) return { workflowId, unknown: true };
+      return read.kind === 'read' && read.reading.underReview
         ? { workflowId, reading: read.reading, unknown: false }
         : null;
     },

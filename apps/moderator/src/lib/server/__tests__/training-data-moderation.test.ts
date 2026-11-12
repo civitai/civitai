@@ -30,7 +30,8 @@ vi.mock('$lib/server/users.service', () => ({ usersByIds: vi.fn(async () => new 
 vi.mock('$lib/server/search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 
-const { moderateTrainingData } = await import('../training-moderation.service');
+const { moderateTrainingData, getTrainingReviewQueue, invalidateTrainingReviewQueue } =
+  await import('../training-moderation.service');
 
 const VERSION = 42;
 const MODERATOR = 7;
@@ -48,6 +49,7 @@ function serve(gateStatus: number) {
 }
 
 beforeEach(() => {
+  invalidateTrainingReviewQueue();
   vi.unstubAllGlobals();
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
@@ -92,5 +94,27 @@ describe('moderateTrainingData', () => {
 
     expect(result.ok).toBe(false);
     expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('clears the review queue after the webhook, not only before it', async () => {
+    // An empty Paused list: one db read per build, and a whole build that is cached.
+    const emptyBuild = () => {
+      fileRows.mockResolvedValueOnce([]);
+      return getTrainingReviewQueue();
+    };
+    let midRuling: Promise<unknown> | undefined;
+    fetchMock.mockImplementation(async (input: string | URL) => {
+      const url = String(input);
+      if (url.endsWith('/moderation-gate')) return new Response(null, { status: 204 });
+      // The webhook: the version is still Paused while it is in flight.
+      if (url.startsWith('https://civitai.example')) midRuling ??= emptyBuild();
+      return new Response(null, { status: 200 });
+    });
+
+    await moderateTrainingData({ modelVersionId: VERSION, approve: true, moderatorId: MODERATOR });
+    await midRuling;
+    const before = fileRows.mock.calls.length;
+    await emptyBuild();
+    expect(fileRows.mock.calls.length).toBe(before + 1);
   });
 });
