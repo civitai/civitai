@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { resolveSearchTarget } from '~/components/Search/search-target';
+import {
+  legacyImageSearchDestination,
+  offersImageSearch,
+  resolveSearchTarget,
+  searchesImagesFeedInPlace,
+} from '~/components/Search/search-target';
 
 describe('resolveSearchTarget', () => {
   it('moves an Images default to Models while image search is off', () => {
@@ -24,5 +29,38 @@ describe('resolveSearchTarget', () => {
     // A caller limited to Images keeps its own target (and so its maintenance notice) rather
     // than being moved onto an index it never declared.
     expect(resolveSearchTarget('images', { imageSearch: false }, ['images'])).toBe('images');
+  });
+});
+
+describe('the feed search flag on its own', () => {
+  const feedOnly = { imageSearch: false, feedSearch: true };
+  const neither = { imageSearch: false, feedSearch: false };
+
+  it('offers image search with either flag, and not without both', () => {
+    expect(offersImageSearch(feedOnly)).toBe(true);
+    expect(offersImageSearch({ imageSearch: true, feedSearch: false })).toBe(true);
+    expect(offersImageSearch(neither)).toBe(false);
+  });
+
+  it('searches the images feed in place with feedSearch alone, and only on /images', () => {
+    expect(searchesImagesFeedInPlace(feedOnly, 'images', '/images')).toBe(true);
+    expect(
+      searchesImagesFeedInPlace({ imageSearch: true, feedSearch: false }, 'images', '/images')
+    ).toBe(false);
+    expect(searchesImagesFeedInPlace(feedOnly, 'images', '/models')).toBe(false);
+    expect(searchesImagesFeedInPlace(feedOnly, 'models', '/images')).toBe(false);
+  });
+
+  it('sends /search/images to the feed under feedSearch, even without imageSearch', () => {
+    expect(legacyImageSearchDestination(feedOnly)).toBe('images-feed');
+    expect(legacyImageSearchDestination({ imageSearch: true, feedSearch: false })).toBeUndefined();
+    expect(legacyImageSearchDestination(neither)).toBe('models-search');
+  });
+
+  it('keeps "more like this" on the search page, which the feed cannot answer yet', () => {
+    const both = { imageSearch: true, feedSearch: true };
+    expect(legacyImageSearchDestination(both, { similarTo: '42' })).toBeUndefined();
+    expect(legacyImageSearchDestination(both)).toBe('images-feed');
+    expect(legacyImageSearchDestination(feedOnly, { similarTo: '42' })).toBe('images-feed');
   });
 });

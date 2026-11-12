@@ -70,7 +70,7 @@ export default WebhookEndpoint(async (req, res) => {
       // window (scheduled posts publish up to a few days after creation).
       // Avoid MIN(id) over a createdAt filter (full aggregation -> timeout):
       // the createdAt index makes `ORDER BY createdAt LIMIT 1` instant, and
-      // MAX(id) is a PK lookup. Mirrors images.search-index prepareBatches.
+      // MAX(id) is a PK lookup.
       const [result] = await (
         await pgDbRead.cancellableQuery<{ start: number | null; end: number | null }>(
           `

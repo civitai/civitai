@@ -34,7 +34,7 @@ import {
   trainingModelInfo,
   type TrainingBaseModelType,
 } from '~/utils/training';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { type BaseModel, isHiddenBaseModel } from '~/shared/constants/basemodel.constants';
 import { truncateModelName } from '~/shared/constants/model-name.constants';
 import {
   ModelFileVisibility,
@@ -407,6 +407,10 @@ export async function createDraftModelFromWorkflow({
     trainingKey,
     info: trainingInfo,
   } = mapTrainingBaseModelToBaseModel(workflow);
+  if (!user.isModerator && isHiddenBaseModel(baseModel)) {
+    const message = `${baseModel} models can't be created from Training Studio yet.`;
+    throw throwBadRequestError(message, new PublishRefusalError('unsupported-base', message));
+  }
   const { step } = getTrainingStep(workflow);
   const input = ((step as { input?: TrainingStepInputLike }).input ?? {}) as TrainingStepInputLike;
   const meta = (workflow.metadata ?? {}) as TrainingStudioMeta;
