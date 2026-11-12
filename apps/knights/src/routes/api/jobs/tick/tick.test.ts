@@ -34,6 +34,8 @@ vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({}) }));
 vi.mock('$lib/server/hidden/settle', () => ({ settleHiddenChecks }));
 vi.mock('$lib/server/smites/smites.service', () => ({ expireSmites, resetPendingPlayers }));
 vi.mock('$lib/server/queue/queue.service', () => ({ escalateExpired, applyPendingResolutions }));
+const tickItemFailures = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/metrics', () => ({ metrics: { tickItemFailures } }));
 
 const { POST } = await import('./+server');
 
@@ -66,6 +68,7 @@ beforeEach(() => {
   closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 0 });
   runLabelPass.mockReset();
   runLabelPass.mockResolvedValue({ done: true, labelsWritten: 0, labelFailures: 0 });
+  tickItemFailures.mockReset();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
@@ -184,15 +187,16 @@ describe('POST /api/jobs/tick', () => {
     expect(response.status).toBe(500);
   });
 
-  it('answers 500 when an item could not be paid out, after sweeping the rest', async () => {
+  it('answers 200 and counts the failure when an item could not be paid out', async () => {
     escalateExpired.mockResolvedValue({ escalated: 0 });
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
     settleFinalItems.mockResolvedValue({ items: 2, votes: 1, failed: 1 });
 
-    expect((await run()).status).toBe(500);
+    expect((await run()).status).toBe(200);
+    expect(tickItemFailures).toHaveBeenCalledWith('payout', 1);
   });
 
-  it('retries career resets, and answers 500 while one still cannot be done', async () => {
+  it('retries career resets, and answers 200 while counting one that still cannot be done', async () => {
     escalateExpired.mockResolvedValue({ escalated: 0 });
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
     resetPendingPlayers.mockResolvedValue({ due: 1, failed: 1 });
@@ -200,7 +204,8 @@ describe('POST /api/jobs/tick', () => {
     const response = await run();
 
     expect(resetPendingPlayers).toHaveBeenCalled();
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(200);
+    expect(tickItemFailures).toHaveBeenCalledWith('reset', 1);
   });
 
   it('answers 500 when grading hidden checks fails, after running the other steps', async () => {
@@ -224,7 +229,7 @@ describe('POST /api/jobs/tick', () => {
     );
   });
 
-  it('sweeps stranded yes/no questions with the configured age, reports them, and fails the tick when one cannot be closed', async () => {
+  it('sweeps stranded yes/no questions with the configured age, reports them, and counts one that cannot be closed', async () => {
     escalateExpired.mockResolvedValue({ escalated: 0 });
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
     closeStrandedYesNo.mockResolvedValue({ unplayable: 2, stale: 1, failed: 0 });
@@ -236,36 +241,57 @@ describe('POST /api/jobs/tick', () => {
     expect(await ok.json()).toMatchObject({ yesNoClosed: 3 });
 
     closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 1 });
-    expect((await run()).status).toBe(500);
+    expect((await run()).status).toBe(200);
+    expect(tickItemFailures).toHaveBeenCalledWith('yesno', 1);
   });
 });
 
+// Per-item failures are counted (knights_tick_item_failures_total) and logged, not a failed tick: a 500 pages, and one bad
+// item would page for hours and hide a real tick outage. The tick fails only when a step itself throws.
 describe('POST /api/jobs/tick partial failures', () => {
   beforeEach(() => {
     escalateExpired.mockResolvedValue({ escalated: 0 });
   });
 
-  it('answers 500 when a rating write-back failed, after running the other steps', async () => {
-    applyPendingResolutions.mockResolvedValue({ applied: 1, failed: 1, rerouted: 0 });
+  it('answers 200 when a rating write-back failed, counts it and logs one warning', async () => {
+    applyPendingResolutions.mockResolvedValue({ applied: 1, failed: 2, rerouted: 0 });
 
     const response = await run();
 
+    expect(response.status).toBe(200);
     expect(runLabelPass).toHaveBeenCalledTimes(1);
-    expect(response.status).toBe(500);
+    expect(tickItemFailures).toHaveBeenCalledWith('writeback', 2);
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'warning',
+        name: 'knights-tick-item-failures',
+        details: expect.objectContaining({ writeback: 2 }),
+      })
+    );
   });
 
-  it('answers 500 when a shop Buzz grant retry failed', async () => {
+  it('answers 200 when a shop Buzz grant retry failed, and counts it', async () => {
     applyPendingResolutions.mockResolvedValue({ applied: 0, failed: 0, rerouted: 0 });
     retryPendingConversions.mockResolvedValue({ retried: 2, paid: 1, failed: 1 });
+
+    expect((await run()).status).toBe(200);
+    expect(tickItemFailures).toHaveBeenCalledWith('buzz_grant', 1);
+  });
+
+  it('answers 500 when the write-back step itself throws', async () => {
+    applyPendingResolutions.mockRejectedValue(new Error('db down'));
 
     expect((await run()).status).toBe(500);
   });
 
-  it('answers 200 when write-backs and Buzz grant retries report no failures', async () => {
+  it('counts and logs nothing when no item failed', async () => {
     applyPendingResolutions.mockResolvedValue({ applied: 2, failed: 0, rerouted: 1 });
     retryPendingConversions.mockResolvedValue({ retried: 2, paid: 2, failed: 0 });
 
     expect((await run()).status).toBe(200);
+    expect(tickItemFailures).not.toHaveBeenCalled();
+    expect(logToAxiom).not.toHaveBeenCalled();
   });
 });
 
