@@ -22,7 +22,7 @@ import {
 } from '~/server/services/hot-reads-6.reads';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
-import { getVaeFiles } from '~/server/services/model.service';
+import { getVaeFiles, holdShowcaseImages } from '~/server/services/model.service';
 import {
   getHiddenModelVersionIds,
   isPrivateModelVersion,
@@ -213,6 +213,12 @@ export async function prepareModelVersionResponse(
     include: ['meta'],
     imagesPerVersion: 10,
   });
+  images = (
+    await holdShowcaseImages(
+      { [version.id]: { images } },
+      new Map([[version.id, { modelId: version.modelId }]])
+    )
+  )[version.id].images;
   if (paidAccess === undefined)
     paidAccess = toPublicPaidAccessDto(
       (await getPaidAccess('ModelVersion', [version.id]))[version.id]

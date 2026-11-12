@@ -30,7 +30,10 @@ vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
 vi.mock('~/server/services/training-data-restricted.service', () => ({
   trainingDataListing: async () => () => true,
 }));
-vi.mock('~/server/services/model.service', () => ({ getVaeFiles: async () => [] }));
+vi.mock('~/server/services/model.service', () => ({
+  getVaeFiles: async () => [],
+  holdShowcaseImages: async (byVersion: unknown) => byVersion,
+}));
 vi.mock('~/server/services/image.service', () => ({ getImagesForModelVersion: async () => [] }));
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: async () => ({}),
