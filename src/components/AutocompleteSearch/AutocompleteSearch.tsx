@@ -59,18 +59,23 @@ import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
 import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
-import { resolveSearchTarget } from '~/components/Search/search-target';
 import {
+  offersImageSearch,
+  resolveSearchTarget,
+  searchesImagesFeedInPlace,
+} from '~/components/Search/search-target';
+import {
+  buildFeedSearchUrl,
   buildSearchPageUrl,
   checkAIR,
   parseQuery,
 } from '~/components/AutocompleteSearch/autocomplete-query';
+import { useFeedSearchSync } from '~/components/AutocompleteSearch/useFeedSearchSync';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
-import { includesInappropriate, includesPoi } from '~/utils/metadata/audit';
+import { getSearchRefusal } from '~/components/Search/search-refusal';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
@@ -150,9 +155,10 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   const pathname = usePathname();
   const currentSection = pathname.split('/')[1] || 'models';
   // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
+  const imageSearchOn = offersImageSearch(features);
   const searchTarget = resolveSearchTarget(
     targetData.find((t) => t.value === currentSection)?.value ?? 'models',
-    features
+    { imageSearch: imageSearchOn }
   );
   useEffect(() => {
     // A navigation is not the switch the carry exists for. The input's blur handler empties the
@@ -185,7 +191,7 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   // blanks the label when the target is not one of these.
   const enabledTargets = targetData.filter(
     ({ value }) =>
-      (features.imageSearch ? true : value !== 'images') &&
+      (imageSearchOn ? true : value !== 'images') &&
       (features.bounties ? true : value !== 'bounties') &&
       (features.articles ? true : value !== 'articles') &&
       (features.toolSearch ? true : value !== 'tools') &&
@@ -285,6 +291,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isMobile = useIsMobile();
   const inputRef = useRef<HTMLInputElement>(null);
   const domainColor = useDomainColor();
+  const features = useFeatureFlags();
 
   const { status } = useInstantSearch({
     catchError: true,
@@ -298,6 +305,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
+
+  // Search v3: on a feed that answers `?query=`, the bar filters that feed on Enter or blur.
+  const filtersFeedInPlace = searchesImagesFeedInPlace(features, indexNameProp, router.pathname);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
@@ -322,11 +332,16 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     [benignPhrases, debouncedSearch]
   );
 
-  const isIllegalSearch = useMemo(() => {
-    if (!debouncedSearch) return false;
-    const illegalSearch = includesInappropriate({ prompt: auditedSearch });
-    return illegalSearch === 'minor';
-  }, [debouncedSearch, auditedSearch]);
+  const refusal = useMemo(
+    () =>
+      getSearchRefusal({
+        text: debouncedSearch,
+        auditedText: auditedSearch,
+        disablePoi: !!browsingSettingsAddons.settings.disablePoi,
+      }),
+    [debouncedSearch, auditedSearch, browsingSettingsAddons.settings.disablePoi]
+  );
+  const isIllegalSearch = refusal === 'illegal';
 
   // Check profanity in search query (only if not illegal and domain is green)
   const profanityAnalysis = useCheckProfanity(debouncedSearch, {
@@ -336,17 +351,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isProfaneSearch = profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {
-    const isIllegalQuery = debouncedSearch
-      ? includesInappropriate({ prompt: auditedSearch }) === 'minor'
-      : false;
-    const canPerformQuery = debouncedSearch
-      ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(auditedSearch)
-      : true;
-    // Raw text on purpose: this reads a different list (blocked NSFW words) which the benign
-    // phrases do not carve out, and it blocks rather than flags.
-    const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
-
-    if (isIllegalQuery) {
+    if (refusal === 'illegal') {
       return [
         {
           key: 'blocked',
@@ -369,7 +374,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       ];
     }
 
-    if (!canPerformQuery) {
+    if (refusal === 'poi') {
       return [
         {
           key: 'disabled',
@@ -379,7 +384,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         },
       ];
     }
-    if (hasBlockedWords) {
+    if (refusal === 'blocked-words') {
       return [
         {
           key: 'blocked-words',
@@ -404,6 +409,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     if (status === 'stalled') {
       return []; // Wait it out
     }
+    if (filtersFeedInPlace) return [];
 
     const items = filtered.map((hit) => ({
       key: String(hit.id),
@@ -425,7 +431,27 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
 
     return items;
-  }, [status, searchErrorState, filtered, results?.nbHits, query, showSfwFace]);
+    // The refusal inputs are listed because in feed mode nothing else here changes as you type.
+  }, [
+    status,
+    searchErrorState,
+    filtered,
+    results?.nbHits,
+    query,
+    showSfwFace,
+    filtersFeedInPlace,
+    debouncedSearch,
+    refusal,
+    isProfaneSearch,
+    domainColor,
+  ]);
+  const blockedQuery = !!refusal || (isProfaneSearch && domainColor === 'green');
+  const feedSearch = useFeedSearchSync({
+    enabled: filtersFeedInPlace,
+    debouncedSearch,
+    setSearch,
+    blocked: blockedQuery,
+  });
 
   // Track profanity search separately to avoid side effects in useMemo
   useEffect(() => {
@@ -480,9 +506,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   }));
 
   // Not the refined `query`: `parseQuery` has already stripped the `#tag`/`@user` tokens out of it.
-  const searchPageUrl = () => buildSearchPageUrl(indexName, search);
+  const searchPageUrl = () =>
+    (features.feedSearch && buildFeedSearchUrl(indexName, search)) ||
+    buildSearchPageUrl(indexName, search);
 
   const handleSubmit = () => {
+    if (filtersFeedInPlace) {
+      feedSearch.commit(search);
+      blurAndDiscardCarriedText();
+      onSubmit?.();
+      return;
+    }
     if (search) {
       router.push(searchPageUrl(), undefined, { shallow: false });
 
@@ -500,16 +534,19 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // carrier goes with it.
   const handleClear = () => {
     setSearch('');
+    feedSearch.commit('');
     onClear?.();
   };
 
-  // Blur empties the input the same way it always has, but leaves the carried copy alone. Reaching
+  // Off a feed, blur empties the input as it always has but leaves the carried copy alone; on a feed
+  // it commits the text, which stays as the active filter. Reaching
   // the category selector REQUIRES blurring this input, so a blur that wrote through `setSearch`
   // emptied the carrier immediately before every selector-driven index switch — the one path the
   // carry exists for. `onClear?.()` still fires, unchanged: on mobile it is what closes the search
   // overlay (`AppHeader` passes `onSearchDone`), and that is not ours to change here.
   const handleBlur = () => {
-    clearDisplayedText();
+    if (filtersFeedInPlace) feedSearch.commit(search);
+    else clearDisplayedText();
     onClear?.();
   };
 
@@ -553,6 +590,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   useSearchFocusHotkeys(focusInput);
 
   useEffect(() => {
+    // The feed answers instead of the dropdown, so the dropdown's own search would only cost a
+    // second semantic search per keystroke.
+    if (filtersFeedInPlace) return;
     // Only set the query when the debounced search changes
     // and user didn't select from the list
     if (!shouldRefineSearchQuery(debouncedSearch, query, !!selectedItem || searchErrorState))
@@ -575,7 +615,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     // was unavailable restores the typed text, returns early, and then never refines when the
     // flag clears — the box reads as populated while the fresh helper's query is still empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query, indexName, searchErrorState]);
+  }, [debouncedSearch, query, indexName, searchErrorState, filtersFeedInPlace]);
 
   // Clear selected item after search changes
   useEffect(() => {
