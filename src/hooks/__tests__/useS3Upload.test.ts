@@ -764,9 +764,6 @@ describe('useS3Upload relay fallback', () => {
   );
 
   it('🔴 sends the abort to the abort endpoint when only endpointComplete is overridden', async () => {
-    // The abort URL used to fall back to `endpointComplete`, so overriding the complete
-    // endpoint silently re-routed every abort POST there and the multipart session was
-    // never closed. The fake records aborts only at `/api/upload/abort`.
     const fetchMock = makeFetch(1);
     vi.stubGlobal('fetch', fetchMock);
     backend = 'b2';
