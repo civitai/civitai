@@ -84,7 +84,13 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   const flagEvent = metadata.collection?.flagRace;
   const { data: flagSummary } = trpc.hatTurf.getFlags.useQuery(
     { event: flagEvent ?? '' },
-    { enabled: !!flagEvent, refetchInterval: 30_000, staleTime: 15_000 }
+    {
+      enabled: !!flagEvent,
+      refetchInterval: 30_000,
+      staleTime: 15_000,
+      // Unbatched, so the edge caches it: every viewer gets the same answer.
+      trpc: { context: { skipBatch: true } },
+    }
   );
   const flagRow = useMemo(
     () => (flagEvent && flagSummary ? { event: flagEvent, summary: flagSummary } : null),

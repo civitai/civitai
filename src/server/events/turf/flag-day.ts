@@ -1,8 +1,10 @@
 import { randomInt } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import type { FlagsConfig } from '~/server/events/scoring/award-results';
+import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
+import { imageVisible, ownerActive } from '~/server/events/turf/turf-sql';
 import { logToAxiom } from '~/server/logging/client';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 
@@ -81,8 +83,10 @@ export async function swapFlagDay(
     WHERE cr.status = 'Completed'::"CrucibleStatus"
       AND cr."eventTags" @> ARRAY[${flagCrucibleTag(event.name)}]::text[]
       AND cr."endAt" > ${new Date(now.getTime() - DAY_MS)} AND cr."endAt" <= ${now}
-      AND NOT EXISTS (SELECT 1 FROM "FlagDay" f WHERE f.event = ${event.name}
-        AND f."crucibleId" = cr.id)
+      -- Not one already swapped, and never back to a Crucible older than the one showing: a late or missed pass must not
+      -- replace a newer flag day.
+      AND NOT EXISTS (SELECT 1 FROM "FlagDay" f JOIN "Crucible" c2 ON c2.id = f."crucibleId"
+        WHERE f.event = ${event.name} AND c2."endAt" >= cr."endAt")
     ORDER BY cr."endAt" DESC LIMIT 1
   `;
   if (!crucible) return undefined;
@@ -93,10 +97,7 @@ export async function swapFlagDay(
     JOIN "Post" p ON p.id = i."postId"
     JOIN "User" o ON o.id = i."userId"
     WHERE ce."crucibleId" = ${crucible.id} AND ce.position BETWEEN 1 AND ${flags.size}
-      AND i."nsfwLevel" IN (1, 2)
-      AND p."publishedAt" <= now() AND p.availability <> 'Private'
-      AND i.ingestion = 'Scanned' AND NOT i."tosViolation" AND i."needsReview" IS NULL
-      AND i."blockedFor" IS NULL AND o."bannedAt" IS NULL AND o."deletedAt" IS NULL
+      AND i."nsfwLevel" IN (1, 2) AND ${imageVisible} AND ${ownerActive}
     ORDER BY ce.position
   `;
   const imageIds = [...new Set(top.map((r) => r.imageId))];
@@ -139,4 +140,42 @@ export async function swapFlagDay(
     flags: imageIds.length,
   }).catch(() => null);
   return day;
+}
+
+export type FlagTally = {
+  hats: Map<number, Record<string, number>>;
+  players: Map<number, number>;
+};
+
+/**
+ * Per flag, the hats each team placed before the cut and the distinct players who placed them,
+ * counting only players eligible for event points (no alts, banned or excluded accounts). The badge
+ * and the freeze both read this, so what the row shows is what gets paid.
+ */
+export async function flagTally(
+  event: { startDate: Date },
+  day: Pick<FlagDayRow, 'id' | 'cutAt'>,
+  db: typeof dbRead | typeof dbWrite = dbRead
+): Promise<FlagTally> {
+  const rows = await db.$queryRaw<
+    { imageId: number; team: string; hats: number; players: number }[]
+  >`
+    SELECT s."imageId", s.team, SUM(s.count)::int AS hats,
+      COUNT(DISTINCT s."userId")::int AS players
+    FROM "EventTurfFlagSticker" s JOIN "User" u ON u.id = s."userId"
+    WHERE s."flagDayId" = ${day.id} AND s."createdAt" < ${day.cutAt}
+      AND ${eventPlayerEligibleSql(event.startDate)}
+    GROUP BY GROUPING SETS ((s."imageId", s.team), (s."imageId"))
+  `;
+  const tally: FlagTally = { hats: new Map(), players: new Map() };
+  for (const r of rows) {
+    if (r.team === null) {
+      tally.players.set(r.imageId, r.players);
+      continue;
+    }
+    const byTeam = tally.hats.get(r.imageId) ?? {};
+    byTeam[r.team] = r.hats;
+    tally.hats.set(r.imageId, byTeam);
+  }
+  return tally;
 }

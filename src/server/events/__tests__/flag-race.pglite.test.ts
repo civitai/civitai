@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 /**
  * The Flag Race day: a finished flag Crucible's top places become the home row's flags (the swap),
@@ -17,9 +18,13 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 const homeBlockCacheBust = vi.fn(async () => undefined);
 vi.mock('~/server/services/home-block-cache.service', () => ({ homeBlockCacheBust }));
 const catchUp: Record<string, number> = {};
+const catchUpAt: Date[] = [];
 vi.mock('~/server/events/turf/turf.service', () => ({
   getTurfEvent: async () => ({ name: 'birthday2026' }),
-  turfCatchUpAt: async (_event: unknown, team: string) => catchUp[team] ?? 1,
+  turfCatchUpAt: async (_event: unknown, team: string, at: Date) => {
+    catchUpAt.push(at);
+    return catchUp[team] ?? 1;
+  },
 }));
 
 const { swapFlagDay, pickCutAt, flagPot } = await import('~/server/events/turf/flag-day');
@@ -27,6 +32,7 @@ const { freezeEventAwards, flagRaceConfigKey } = await import(
   '~/server/events/scoring/award-results'
 );
 const { loadTeamAwards } = await import('~/server/events/scoring/team-awards');
+const { freezeFlagDays } = await import('~/server/events/turf/flag-freeze');
 
 const EVENT = {
   name: 'birthday2026',
@@ -107,7 +113,11 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
     CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamptz, "deletedAt" timestamptz);
+    CREATE TABLE "User" (
+      id int PRIMARY KEY, "bannedAt" timestamptz, "deletedAt" timestamptz,
+      "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb, flags int NOT NULL DEFAULT 0
+    );
+    CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "postId" int DEFAULT 1, "userId" int DEFAULT 1, "nsfwLevel" int,
@@ -120,8 +130,8 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "collectionId" int, "imageId" int, status "CollectionItemStatus",
       "createdAt" timestamptz
     );
-    INSERT INTO "User" (id) VALUES (1), (201), (202), (203), (204);
-    INSERT INTO "Post" VALUES (1, '2026-11-01', 'Public');
+    INSERT INTO "User" (id) VALUES (1), (2), (201), (202), (203), (204), (205);
+    INSERT INTO "Post" VALUES (1, '2026-11-01', 'Public'), (2, NULL, 'Public'), (3, '2026-11-01', 'Private');
   `);
   for (const m of ['20270103120000_event_award_result', '20270104120000_flag_race_flags'])
     await db.exec(
@@ -140,10 +150,11 @@ beforeEach(async () => {
   vi.clearAllMocks();
   config = null;
   for (const k of Object.keys(catchUp)) delete catchUp[k];
+  catchUpAt.length = 0;
   await db.exec(`
     DELETE FROM "EventAwardResult"; DELETE FROM "EventTurfFlagSticker"; DELETE FROM "FlagDay";
     DELETE FROM "CollectionItem"; DELETE FROM "CrucibleEntry"; DELETE FROM "Crucible";
-    DELETE FROM "Image"; UPDATE "User" SET "bannedAt" = NULL;
+    DELETE FROM "Image"; UPDATE "User" SET "bannedAt" = NULL, "deletedAt" = NULL, flags = 0;
     INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "createdAt")
       VALUES (${HOME}, 999, 'ACCEPTED', '2026-11-13T16:00:00Z');
   `);
@@ -211,6 +222,78 @@ describe('the swap', () => {
     await crucible(3, 'Completed', [TAG], [[13, 1, 1]]);
     expect(await swapFlagDay(EVENT, { ...FLAGS, on: false }, SWAP)).toBeUndefined();
     expect(await homeItems()).toEqual([999]);
+  });
+});
+
+describe('what the swap may raise as a flag', () => {
+  it('only an image anyone may see, from an active owner; a failing place is left empty', async () => {
+    await crucible(
+      1,
+      'Completed',
+      [TAG],
+      [
+        [21, 1, 1],
+        [22, 2, 1],
+        [23, 3, 1],
+        [24, 4, 1],
+        [25, 5, 1],
+        [26, 6, 1],
+        [27, 7, 1],
+        [28, 8, 1],
+        [29, 9, 1],
+      ]
+    );
+    await db.exec(`
+      UPDATE "Image" SET "postId" = 2 WHERE id = 21;
+      UPDATE "Image" SET "postId" = 3 WHERE id = 22;
+      UPDATE "Image" SET ingestion = 'Pending' WHERE id = 23;
+      UPDATE "Image" SET "tosViolation" = true WHERE id = 24;
+      UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 25;
+      UPDATE "Image" SET "blockedFor" = 'tos' WHERE id = 26;
+      UPDATE "Image" SET "userId" = 2 WHERE id IN (27, 28);
+      UPDATE "User" SET "bannedAt" = now() WHERE id = 2;
+    `);
+    await db.exec(
+      `UPDATE "Image" SET "userId" = 205 WHERE id = 28; UPDATE "User" SET "deletedAt" = now() WHERE id = 205`
+    );
+    expect((await swapFlagDay(EVENT, { ...FLAGS, size: 10 }, SWAP))?.imageIds).toEqual([29]);
+  });
+
+  it('records the cut inside the hour before the day closes', async () => {
+    await crucible(1, 'Completed', [TAG], [[11, 1, 1]]);
+    const day = await swapFlagDay(EVENT, FLAGS, SWAP);
+    expect(day?.closesAt.toISOString()).toBe('2026-11-15T16:00:00.000Z');
+    expect(day!.cutAt < day!.closesAt).toBe(true);
+    expect(day!.cutAt.getTime()).toBeGreaterThanOrEqual(day!.closesAt.getTime() - 3_600_000);
+  });
+
+  it('takes no Crucible that ended over a day ago, none yet to end, and none after the event', async () => {
+    await db.query(`INSERT INTO "Crucible" VALUES (1, 'Completed', $1, $2)`, [
+      new Date(SWAP.getTime() - 25 * 3_600_000),
+      [TAG],
+    ]);
+    await db.query(`INSERT INTO "Crucible" VALUES (2, 'Completed', $1, $2)`, [
+      new Date(SWAP.getTime() + 60_000),
+      [TAG],
+    ]);
+    expect(await swapFlagDay(EVENT, FLAGS, SWAP)).toBeUndefined();
+    await crucible(3, 'Completed', [TAG], [[11, 1, 1]]);
+    expect(await swapFlagDay({ ...EVENT, endDate: SWAP }, FLAGS, SWAP)).toBeUndefined();
+  });
+
+  it('never goes back to an older Crucible once a newer one is showing', async () => {
+    await crucible(2, 'Completed', [TAG], [[12, 1, 1]]);
+    await db.query(`INSERT INTO "Crucible" VALUES (1, 'Completed', $1, $2)`, [
+      new Date(END.getTime() - 2 * 3_600_000),
+      [TAG],
+    ]);
+    await db.query(`INSERT INTO "Image" (id, "nsfwLevel") VALUES (11, 1)`);
+    await db.query(
+      `INSERT INTO "CrucibleEntry" ("crucibleId", "imageId", position) VALUES (1, 11, 1)`
+    );
+    expect((await swapFlagDay(EVENT, FLAGS, SWAP))?.crucibleId).toBe(2);
+    expect(await swapFlagDay(EVENT, FLAGS, new Date(SWAP.getTime() + 300_000))).toBeUndefined();
+    expect(await homeItems()).toEqual([12]);
   });
 });
 
@@ -307,6 +390,58 @@ describe('the flag freeze', () => {
     await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = 201`);
     expect(await freezeEventAwards(EVENT, new Date(SETTLE.getTime() + 3_600_000))).toBe(0);
     expect(await totals()).toEqual({ Blue: 200 });
+  });
+
+  it('pays each flag to its own winner, from its own players', async () => {
+    const day = await dayWithFlags();
+    const before = new Date(day.cutAt.getTime() - 60_000);
+    await hats(day.id, 11, 201, 'Blue', 5, before);
+    await hats(day.id, 12, 202, 'Pink', 1, before);
+    await hats(day.id, 12, 203, 'Pink', 1, before);
+    await hats(day.id, 12, 204, 'Pink', 1, before);
+    setFlags(FLAGS);
+    await freezeEventAwards(EVENT, SETTLE);
+    // Flag 11: 1 player, 100. Flag 12: 3 players, 2 at 100 and 1 at 50.
+    expect(await totals()).toEqual({ Blue: 100, Pink: 250 });
+  });
+
+  it.each([
+    ['none', 100],
+    ['sqrt', 200],
+    ['full', 400],
+  ] as const)('leans a winning share by catch-up when lean is %s', async (lean, points) => {
+    const day = await dayWithFlags();
+    await hats(day.id, 11, 201, 'Blue', 1, new Date(day.cutAt.getTime() - 60_000));
+    catchUp.Blue = 4;
+    setFlags({ ...FLAGS, lean });
+    await freezeEventAwards(EVENT, SETTLE);
+    expect(await totals()).toEqual({ Blue: points });
+    // The catch-up is read at the cut, not at whenever the settle ran.
+    expect(catchUpAt).toEqual([day.cutAt]);
+  });
+
+  it("counts an excluded or deleted player's hats for nobody", async () => {
+    const day = await dayWithFlags();
+    const before = new Date(day.cutAt.getTime() - 60_000);
+    await hats(day.id, 11, 201, 'Blue', 1, before);
+    await hats(day.id, 11, 202, 'Pink', 10, before);
+    await hats(day.id, 12, 203, 'Pink', 10, before);
+    await hats(day.id, 12, 201, 'Blue', 1, before);
+    await db.query(`UPDATE "User" SET flags = $1 WHERE id = 202`, [
+      UserFlag.ExcludeFromEventPoints,
+    ]);
+    await db.query(`UPDATE "User" SET "deletedAt" = now() WHERE id = 203`);
+    setFlags(FLAGS);
+    await freezeEventAwards(EVENT, SETTLE);
+    expect(await totals()).toEqual({ Blue: 200 });
+  });
+
+  it('inserts nothing on a rerun, without failing', async () => {
+    const day = await dayWithFlags();
+    await hats(day.id, 11, 201, 'Blue', 1, new Date(day.cutAt.getTime() - 60_000));
+    expect(await freezeFlagDays(EVENT, FLAGS, SETTLE)).toBeGreaterThan(0);
+    // Called directly: freezeEventAwards would turn a throw into 0.
+    await expect(freezeFlagDays(EVENT, FLAGS, SETTLE)).resolves.toBe(0);
   });
 
   it("counts a banned player's hats for nobody", async () => {

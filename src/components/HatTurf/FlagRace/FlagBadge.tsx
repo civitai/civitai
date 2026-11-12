@@ -138,8 +138,16 @@ function FlagDetails({ imageId }: { imageId: number }) {
   const utils = trpc.useUtils();
   const join = useJoin();
   const place = trpc.hatTurf.placeFlagHats.useMutation({
-    onSuccess: () => {
-      void utils.hatTurf.getFlags.invalidate();
+    onSuccess: (standing) => {
+      // The shared summary is cached for everyone; show the placer their flag's fresh counts now.
+      utils.hatTurf.getFlags.setData({ event: found?.event ?? '' }, (current) =>
+        current
+          ? {
+              ...current,
+              flags: current.flags.map((f) => (f.imageId === standing.imageId ? standing : f)),
+            }
+          : current
+      );
       void utils.hatTurf.getStock.invalidate();
     },
     onError: (error) => showErrorNotification({ title: "Couldn't add hats", error }),

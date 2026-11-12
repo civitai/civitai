@@ -37,12 +37,16 @@ import {
   type TurfStickerRow,
 } from '~/server/events/turf/turf-map';
 import { markTurfWatched, pushTurfCounts, type TurfPush } from '~/server/events/turf/turf-watch';
-import { readFlagRaceConfig } from '~/server/events/scoring/award-results';
+import { readFlagRaceConfig, type FlagsConfig } from '~/server/events/scoring/award-results';
+import { imageVisible, ownerActive } from '~/server/events/turf/turf-sql';
 import {
   currentFlagDay,
   flagCrucibleTag,
   flagPot,
+  flagTally,
+  flagWinners,
   swapFlagDay,
+  type FlagTally,
 } from '~/server/events/turf/flag-day';
 import { logToAxiom } from '~/server/logging/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -92,13 +96,6 @@ type LoadedEvents = Awaited<ReturnType<typeof loadEvents>>;
 type EventDef = LoadedEvents[number];
 export type TurfEvent = EventDef & { turf: EventTurfConfig };
 
-// An image anyone may see: in a published, non-private post, scanned and not held or blocked.
-// Placement and the sticker read both require it, so nothing is placed where it cannot be drawn.
-const imageVisible = Prisma.sql`p."publishedAt" <= now() AND p.availability <> 'Private'
-  AND i.ingestion = 'Scanned' AND NOT i."tosViolation" AND i."needsReview" IS NULL
-  AND i."blockedFor" IS NULL`;
-// Read apart from ownerAllowsTurf so a banned owner's image is not blamed on the owner's switch.
-const ownerActive = Prisma.sql`o."bannedAt" IS NULL AND o."deletedAt" IS NULL`;
 // A sticker's hat art, drawn as the sticker itself: the cosmetic's image and where its visible
 // pixels sit in it (the fit's canvas and bounds only; its outline is not needed to draw).
 const hatArt = (cosmeticId: Prisma.Sql) => Prisma.sql`(SELECT CASE WHEN hc.data ->> 'url' IS NULL
@@ -357,11 +354,12 @@ async function resolvePlacer(
 }
 
 /**
- * Takes `count` stickers from the player's stock inside `tx`, under the stock row's lock, so two
- * placements never both spend the same sticker. A first placement creates the bucket full, so there
- * is always a row to lock. Throws when the stock is short.
+ * Locks the player's stock row inside `tx` and checks it holds `count` stickers, so two placements
+ * never both spend the same sticker. A first placement creates the bucket full, so there is always a
+ * row to lock. Throws when the stock is short. Returns `spend`, to call once the placement is
+ * written: a placement refused on its insert has then spent nothing, whatever the transaction does.
  */
-async function spendStock(
+async function lockStock(
   tx: Prisma.TransactionClient,
   event: TurfEvent,
   userId: number,
@@ -383,16 +381,20 @@ async function spendStock(
   const { stock } = turfSupplyAt(event, row ?? null, now, multiplier);
   if (stock < 1) throw throwBadRequestError('Out of hat stickers. They refill over time');
   if (stock < count) throw throwBadRequestError(`You have ${Math.floor(stock)} hat stickers left`);
-  await tx.$executeRaw`
-    UPDATE "EventTurfStock" SET stock = ${stock - count}, "refilledAt" = ${now}
-    WHERE event = ${event.name} AND "userId" = ${userId}
-  `;
+  return {
+    spend: () => tx.$executeRaw`
+      UPDATE "EventTurfStock" SET stock = ${stock - count}, "refilledAt" = ${now}
+      WHERE event = ${event.name} AND "userId" = ${userId}
+    `,
+  };
 }
 
 export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new Date()) {
   const { event, team, multiplier } = await resolvePlacer(input, now);
   const { userId, imageId } = input;
-  const flagDay = await currentFlagDay(event.name, now);
+  // Only while the Flag Race runs, so a normal placement pays no flag lookup otherwise.
+  const { flags } = await readFlagRaceConfig(event.name);
+  const flagDay = flags?.on ? await currentFlagDay(event.name, now) : undefined;
   if (flagDay?.imageIds.includes(imageId))
     throw throwBadRequestError('This image is a flag today: add hats with its flag buttons');
 
@@ -430,7 +432,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
 
   try {
     await dbWrite.$transaction(async (tx) => {
-      await spendStock(tx, event, userId, multiplier, now);
+      const { spend } = await lockStock(tx, event, userId, multiplier, now);
       const data = input.source ? { ...input.data, source: input.source } : input.data;
       // One sticker per player per image: an expired one is placed again in its row. A live or
       // removed one is left, and the create below refuses on the unique key.
@@ -456,6 +458,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
             createdAt: now,
           },
         });
+      await spend();
     });
   } catch (error) {
     if (isPrismaUniqueViolation(error))
@@ -504,20 +507,34 @@ export async function placeFlagHats(
     });
 
   await dbWrite.$transaction(async (tx) => {
-    await spendStock(tx, event, userId, multiplier, now, count);
+    const { spend } = await lockStock(tx, event, userId, multiplier, now, count);
     await tx.$executeRaw`
       INSERT INTO "EventTurfFlagSticker"
         (event, "flagDayId", "imageId", "userId", team, "cosmeticId", count, "createdAt")
       VALUES (${event.name}, ${day.id}, ${imageId}, ${userId}, ${team}, ${input.cosmeticId},
         ${count}, ${now})
     `;
+    await spend();
   });
-  await bustFlagSummary(event.name);
+  // The placer's own view: fresh, where the shared summary may lag by its TTL.
+  const tally = await flagTally(event, day, dbWrite);
+  return flagStanding(imageId, tally, flags.pot, now, false);
 }
 
 const flagSummaryKey = (event: string) =>
   `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:flagRace:summary` as const;
-const FLAG_SUMMARY_TTL_S = 15;
+// Short: a placement doesn't clear it (on a busy flag it would never be warm), and the placer gets
+// their flag's fresh counts back from the placement itself.
+const FLAG_SUMMARY_TTL_S = 10;
+
+export type FlagStanding = {
+  imageId: number;
+  hatsByTeam: Record<string, number>;
+  players: number;
+  pot: number;
+  // Once closed: the team or tied teams with the most hats at the cut, which the freeze pays.
+  winners: string[];
+};
 
 export type FlagSummary = {
   flagDayId: number;
@@ -526,27 +543,34 @@ export type FlagSummary = {
   cutAt: Date | null;
   // The cut falls in the hour before this.
   closesAt: Date;
-  flags: {
-    imageId: number;
-    hatsByTeam: Record<string, number>;
-    players: number;
-    pot: number;
-    // The team or tied teams paid at the freeze; empty until the freeze, or when nobody placed.
-    winners: string[];
-  }[];
+  flags: FlagStanding[];
 };
 
-async function bustFlagSummary(event: string) {
-  await sysRedis
-    .del(flagSummaryKey(event))
-    .catch((error) =>
-      logSysRedisFailOpen('write-degraded', 'turf.bustFlagSummary', error, { event })
-    );
+// Cached with the cut beside it, so a hit is checked in memory: an open summary must not outlive
+// the cut, and a hit must not cost a database read.
+type CachedFlagSummary = { summary: FlagSummary; cutAtMs: number };
+
+function flagStanding(
+  imageId: number,
+  tally: FlagTally,
+  pot: FlagsConfig['pot'],
+  at: Date,
+  closed: boolean
+): FlagStanding {
+  const hatsByTeam = tally.hats.get(imageId) ?? {};
+  const players = tally.players.get(imageId) ?? 0;
+  return {
+    imageId,
+    hatsByTeam,
+    players,
+    pot: flagPot(pot, players, at).pot,
+    winners: closed ? flagWinners(hatsByTeam) : [],
+  };
 }
 
 /**
- * Today's flags with their live hat counts, for the home row's badges. Shared by every viewer and
- * cached briefly: the row is on the home page, and a placement clears it.
+ * Today's flags with their hat counts, for the home row's badges: the same for every viewer, so it
+ * is cached briefly here and at the edge. The counts are flagTally's, which the freeze pays from.
  */
 export async function getFlagSummary(
   eventName: string,
@@ -555,59 +579,29 @@ export async function getFlagSummary(
   const { flags: config } = await readFlagRaceConfig(eventName);
   if (!config?.on) return null;
   const key = flagSummaryKey(eventName);
-  const cached = await sysRedis.get(key).catch(() => null);
-  if (cached) {
-    const parsed = JSON.parse(cached) as FlagSummary;
-    // A cached open summary must not outlive the cut.
-    if (parsed.closed || !parsed.cutAt) {
-      const day = await currentFlagDay(eventName, now);
-      if (day?.id === parsed.flagDayId && parsed.closed === now >= day.cutAt) return parsed;
-    }
+  const raw = await sysRedis.get(key).catch(() => null);
+  if (raw) {
+    const cached = JSON.parse(raw) as CachedFlagSummary;
+    if (cached.summary.closed || now.getTime() < cached.cutAtMs) return cached.summary;
   }
-  const day = await currentFlagDay(eventName, now);
-  if (!day) return null;
+  const [event, day] = await Promise.all([
+    getTurfEvent(eventName, now),
+    currentFlagDay(eventName, now),
+  ]);
+  if (!event || !day) return null;
   const closed = now >= day.cutAt;
-  const counts = await dbRead.$queryRaw<{ imageId: number; team: string; hats: number }[]>`
-    SELECT "imageId", team, SUM(count)::int AS hats FROM "EventTurfFlagSticker"
-    WHERE "flagDayId" = ${day.id} AND "createdAt" < ${day.cutAt}
-    GROUP BY "imageId", team
-  `;
-  const players = await dbRead.$queryRaw<{ imageId: number; players: number }[]>`
-    SELECT "imageId", COUNT(DISTINCT "userId")::int AS players FROM "EventTurfFlagSticker"
-    WHERE "flagDayId" = ${day.id} AND "createdAt" < ${day.cutAt}
-    GROUP BY "imageId"
-  `;
-  const frozen = closed
-    ? await dbRead.$queryRaw<{ sourceId: string; team: string }[]>`
-        SELECT "sourceId", team FROM "EventAwardResult"
-        WHERE event = ${eventName} AND kind = 'flag' AND team IS NOT NULL
-          AND "sourceId" LIKE ${`flag:${day.id}:%`}
-      `
-    : [];
-  const playersOf = new Map(players.map((p) => [p.imageId, p.players]));
+  const tally = await flagTally(event, day);
+  const at = closed ? day.cutAt : now;
   const summary: FlagSummary = {
     flagDayId: day.id,
     closed,
     cutAt: closed ? day.cutAt : null,
     closesAt: day.closesAt,
-    flags: day.imageIds.map((imageId) => {
-      const n = playersOf.get(imageId) ?? 0;
-      return {
-        imageId,
-        hatsByTeam: Object.fromEntries(
-          counts.filter((c) => c.imageId === imageId).map((c) => [c.team, c.hats])
-        ),
-        players: n,
-        pot: flagPot(config.pot, n, closed ? day.cutAt : now).pot,
-        winners: frozen
-          .filter((f) => f.sourceId.startsWith(`flag:${day.id}:${imageId}:`))
-          .map((f) => f.team)
-          .sort(),
-      };
-    }),
+    flags: day.imageIds.map((imageId) => flagStanding(imageId, tally, config.pot, at, closed)),
   };
+  const value: CachedFlagSummary = { summary, cutAtMs: day.cutAt.getTime() };
   await sysRedis
-    .set(key, JSON.stringify(summary), { EX: FLAG_SUMMARY_TTL_S })
+    .set(key, JSON.stringify(value), { EX: FLAG_SUMMARY_TTL_S })
     .catch((error) =>
       logSysRedisFailOpen('write-degraded', 'turf.getFlagSummary', error, { event: eventName })
     );

@@ -90,6 +90,7 @@ export const hatTurfRouter = router({
   // Today's flags and their live counts for the home row. The same for every viewer.
   getFlags: publicProcedure
     .input(turfEventSchema)
+    .use(edgeCacheIt({ ttl: 10 }))
     .query(({ input }) => getFlagSummary(input.event)),
   // Whether the viewer reacting to an image would pay their team: asked for the reaction nudge after a
   // placement, so the placement itself never waits on it.
