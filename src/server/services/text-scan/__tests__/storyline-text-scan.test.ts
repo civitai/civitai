@@ -372,3 +372,26 @@ describe('applyStorylineTextScan', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 });
+
+// RESTRICT site of the minor content rule. Expected values are the rule as it stood before the
+// gates shared it.
+describe('applyStorylineTextScan minor content truth table', () => {
+  it.each([
+    [true, undefined, true],
+    [true, 0, false],
+    [false, 0, false],
+    [true, NsfwLevel.PG, false],
+    [true, NsfwLevel.PG13, false],
+    [true, NsfwLevel.R, true],
+    [true, NsfwLevel.X, true],
+    [true, NsfwLevel.XXX, true],
+    [false, undefined, false],
+    [false, NsfwLevel.PG, false],
+    [false, NsfwLevel.R, false],
+    [false, NsfwLevel.XXX, false],
+  ])('minor %s at title rating %s takes the storyline down: %s', async (minor, nsfw, down) => {
+    await applyStorylineTextScan(args({ nsfw, poi: false, minor }) as never);
+    if (down) expect(updates()).toContainEqual(takedownWrite);
+    else expect(updates()).not.toContainEqual(takedownWrite);
+  });
+});

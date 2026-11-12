@@ -1,4 +1,5 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
@@ -271,6 +272,7 @@ import {
 } from '~/server/utils/pagination-helpers';
 import {
   allBrowsingLevelsFlag,
+  modelBrowsingLevelLimit,
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -2960,7 +2962,7 @@ export async function setModelMinor({
           minor: true,
           nsfw: false,
           sfwOnly: true,
-          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+          gallerySettings: { ...prevGallerySettings, level: minorContentBrowsingLevelsFlag },
           lockedProperties,
         }
       : {
@@ -4094,7 +4096,10 @@ export const upsertModel = async (
     assertAllowedContentFlags(NO_CONTENT_FLAGS, data);
     const createGallerySettings =
       data.minor || data.sfwOnly
-        ? { ...gallerySettings, level: sfwBrowsingLevelsFlag }
+        ? {
+            ...gallerySettings,
+            level: modelBrowsingLevelLimit({ minor: !!data.minor, sfwOnly: !!data.sfwOnly }),
+          }
         : gallerySettings;
 
     const result = await dbWrite.$transaction(
@@ -4387,7 +4392,10 @@ export const upsertModel = async (
               ...lockedGallerySettings,
               level:
                 (flags ?? input).minor || (flags ?? input).sfwOnly
-                  ? sfwBrowsingLevelsFlag
+                  ? modelBrowsingLevelLimit({
+                      minor: !!(flags ?? input).minor,
+                      sfwOnly: !!(flags ?? input).sfwOnly,
+                    })
                   : lockedGallerySettings?.level,
             },
             tagsOnModels: tagsOnModels
@@ -6104,7 +6112,7 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
     const stored = (model.gallerySettings ?? {}) as ModelGallerySettingsSchema;
     const [preferences, creatorHiddenUserIds] = await Promise.all([
       getGalleryHiddenPreferences({
-        settings: sfwHeld ? { ...stored, level: heldGalleryLevel(stored.level) } : stored,
+        settings: sfwHeld ? { ...stored, level: heldGalleryLevel(stored.level, model) } : stored,
       }),
       getCreatorGalleryHiddenUserIds(model.userId, { fresh: true }),
     ]);
@@ -6338,10 +6346,15 @@ export async function getHeldLevelsByPost(postIds: number[]) {
 
 /**
  * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
- * SFW. A setting that allows no SFW level, or none at all, serves SFW: the gallery reads 0 as no cap.
+ * the model's limit. A setting that allows none of them, or none at all, serves the whole limit: the
+ * gallery reads 0 as no cap.
  */
-export function heldGalleryLevel(stored: number | undefined) {
-  return Flags.intersection(stored ?? 0, sfwBrowsingLevelsFlag) || sfwBrowsingLevelsFlag;
+export function heldGalleryLevel(
+  stored: number | undefined,
+  model: { minor: boolean; sfwOnly: boolean }
+) {
+  const limit = modelBrowsingLevelLimit(model);
+  return Flags.intersection(stored ?? 0, limit) || limit;
 }
 
 export const getGalleryHiddenPreferences = async ({
@@ -6704,9 +6717,8 @@ export async function copyGallerySettingsToAllModelsByUser({
     await tx.$executeRaw`
       UPDATE "Model"
       SET "gallerySettings" = ${asJsonbObjectSql('"gallerySettings"')} || jsonb_build_object(
-        'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${
-      settings.level
-    } END,
+        'level', CASE WHEN minor THEN ${minorContentBrowsingLevelsFlag}
+          WHEN "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${settings.level} END,
         'users', ${JSON.stringify(settings.users || [])}::jsonb,
         'tags', ${JSON.stringify(settings.tags || [])}::jsonb
                                                    )

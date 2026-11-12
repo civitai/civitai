@@ -1,4 +1,8 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
+import {
+  isMinorContentRestricted,
+  isMinorRestrictedLevel,
+} from '@civitai/shared/minor-content-gate';
 import { dbWrite } from '~/server/db/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
@@ -793,7 +797,9 @@ async function auditScanResults(args: {
   const tagReview = reviewTags.length > 0;
   let poiReview = poiTags.length > 0;
   let minorReview =
-    minorTags.length > 0 && adultTags.length === 0 && (cartoonTags.length === 0 || nsfw);
+    minorTags.length > 0 &&
+    adultTags.length === 0 &&
+    (cartoonTags.length === 0 || isMinorRestrictedLevel(nsfwLevel));
   let newUserReview = false;
 
   const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
@@ -805,7 +811,8 @@ async function auditScanResults(args: {
   // nsfw — a sfw image with a poi/minor resource is still flagged (below) but
   // not queued for moderator review.
   if (associatedEntities.poi && nsfw) poiReview = true;
-  if (associatedEntities.minor && nsfw) minorReview = true;
+  if (isMinorContentRestricted({ minor: !!associatedEntities.minor, nsfwLevel }))
+    minorReview = true;
 
   // The capture account is no one's new account: its captures get only the content keys.
   if (!minorReview && !poiReview && !tagReview && nsfw && !isFeedbackCaptureOwner(args.userId)) {

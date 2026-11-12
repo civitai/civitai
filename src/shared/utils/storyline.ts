@@ -1,3 +1,4 @@
+import { MINOR_CONTENT_MAX_LEVEL } from '@civitai/shared/minor-content-gate';
 import { NsfwLevel } from '~/server/common/enums';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 
@@ -15,9 +16,9 @@ export const isStorylineCeilingLevel = (value: number) =>
 
 /**
  * The highest a chapter may be rated in a storyline whose title the scan found to be about a
- * minor: safe for work, as for a minor-flagged model (`modelBrowsingLevelLimit`).
+ * minor: the minor content rule's ceiling, as for a minor-flagged model (`modelBrowsingLevelLimit`).
  */
-export const STORYLINE_MINOR_CEILING = NsfwLevel.PG13;
+export const STORYLINE_MINOR_CEILING = MINOR_CONTENT_MAX_LEVEL;
 
 /**
  * The ceiling every chapter is held to: the owner's, lowered to safe for work while the title
