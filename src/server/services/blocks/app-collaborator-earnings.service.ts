@@ -1,10 +1,20 @@
 import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   listingKindSupports,
   resolveListingAccess,
   resolveAccessibleAppBlockIds,
 } from '~/server/services/blocks/app-access.service';
-import type { RevenueSummary } from '~/server/services/blocks/buzz-attribution.service';
+import {
+  getAuthorFeeEarningsForApp,
+  type AuthorFeeEarnings,
+} from '~/server/services/blocks/author-fee-earnings.service';
+import {
+  getGoodsSalesForOwner,
+  isMissingGoodsTableError,
+  unreadableGoodsSales,
+  type GoodsSalesSummary,
+} from '~/server/services/blocks/buzz-attribution.service';
 
 /**
  * App Listing COLLABORATORS — the APP-SCOPED earnings read.
@@ -15,15 +25,13 @@ import type { RevenueSummary } from '~/server/services/blocks/buzz-attribution.s
  * Product decision: an editor is effectively a co-owner and DOES see earnings/payout
  * data — but only for the app they were seated on.
  *
- * Every pre-existing earnings read is keyed on `BlockBuzzAttribution.appOwnerUserId`,
- * a USER-WIDE filter:
+ * The owner earnings reads are keyed on the snapshotted `appOwnerUserId`, a USER-WIDE
+ * filter:
  *
- *   `blocks.getMyApps`  (blocks.router.ts:5488-5496)
- *       groupBy appBlockId WHERE appOwnerUserId = caller  — no app filter at all
- *   `getRevenueForOwner` / `getRecentAttributionsForOwner`  (buzz-attribution.service)
+ *   `blocks.getMyRevenue`  (`getAuthorFeeEarningsForOwner`, `getGoodsSalesForOwner`)
  *       WHERE appOwnerUserId = caller, with `appBlockId` an OPTIONAL narrowing filter
  *       that is never checked against what the caller may actually see
- *   `getOwnedAppBlocks`  (app-analytics.service.ts:252)
+ *   `getOwnedAppBlocks`  (app-analytics.service.ts)
  *       WHERE app.userId = caller
  *
  * The NAIVE way to serve an editor is to reuse one of those with the OWNER's id (the
@@ -44,7 +52,7 @@ import type { RevenueSummary } from '~/server/services/blocks/buzz-attribution.s
  *
  * ## The second scope: whose earnings, not just which app
  *
- * `appOwnerUserId` is SNAPSHOTTED at attribution time and is deliberately NOT rewritten
+ * `appOwnerUserId` is SNAPSHOTTED when a fee accrues or a sale settles, and is deliberately NOT rewritten
  * by an ownership transfer (Buzz stays with the old owner — see
  * `app-ownership-transfer.service`). So an app-scoped query on `appBlockId` ALONE would
  * show a new owner (and their editors) the PREVIOUS owner's pre-transfer earnings.
@@ -54,9 +62,8 @@ import type { RevenueSummary } from '~/server/services/blocks/buzz-attribution.s
  *
  * ## The third scope: KIND
  *
- * 🔴 EARNINGS ARE BLOCK-SCOPED AND THEREFORE ON-SITE ONLY. `BlockBuzzAttribution` keys
- * on `appBlockId`; an OFF-SITE listing has no AppBlock, so no attribution row can ever
- * belong to it. That is a structural fact, not a policy toggle, and it is the
+ * 🔴 EARNINGS ARE BLOCK-SCOPED AND THEREFORE ON-SITE ONLY. Author fees and goods sales key
+ * on `appBlockId`; an OFF-SITE listing has no AppBlock, so no row can ever belong to it. That is a structural fact, not a policy toggle, and it is the
  * `earnings: false` cell of `CAPABILITIES_BY_KIND`.
  *
  * The refusal is EXPLICIT (`unsupportedKind`), never a zeroed summary. A zero here
@@ -65,26 +72,14 @@ import type { RevenueSummary } from '~/server/services/blocks/buzz-attribution.s
  * their listing earns and simply has not yet.
  */
 
-export type AppScopedRevenue = {
-  appBlockId: string;
-  summary: RevenueSummary;
-};
-
-const EMPTY_BUCKET = { count: 0, grossCents: 0, shareCents: 0 };
-const EMPTY_SUMMARY: RevenueSummary = {
-  pending: EMPTY_BUCKET,
-  confirmed: EMPTY_BUCKET,
-  paidOut: EMPTY_BUCKET,
-  voided: { count: 0, grossCents: 0 },
-};
-
 export type AppEarningsResult =
   | {
       ok: true;
       appListingId: string;
       appBlockId: string;
       role: 'owner' | 'editor';
-      summary: RevenueSummary;
+      authorFees: AuthorFeeEarnings;
+      goods: GoodsSalesSummary;
     }
   /**
    * `notPermitted` is a REAL, reachable state (unlike revenue's deliberately-absent
@@ -139,67 +134,43 @@ export async function getAppEarnings(opts: {
   }
   const appBlockId = access.appBlockId;
 
-  const where = {
-    // 🔴 BOTH scopes. See the module header — dropping either one is the leak.
-    appBlockId,
-    appOwnerUserId: access.ownerUserId,
-    ...(opts.from || opts.to
-      ? {
-          attributedAt: {
-            ...(opts.from ? { gte: opts.from } : {}),
-            ...(opts.to ? { lte: opts.to } : {}),
+  // 🔴 BOTH scopes for both reads: this app, and rows owed to its CURRENT owner — never the
+  // caller's id. See the module header; dropping either one is the leak.
+  const ownerUserId = access.ownerUserId;
+  const [authorFees, goods] = await Promise.all([
+    getAuthorFeeEarningsForApp({
+      appBlockId,
+      currentOwnerUserId: ownerUserId,
+      from: opts.from,
+      to: opts.to,
+    }),
+    // Same narrow degradation as `blocks.getMyRevenue`: only the missing table is reported as
+    // unreadable; any other failure rethrows.
+    getGoodsSalesForOwner({ ownerUserId, appBlockId, from: opts.from, to: opts.to }).catch(
+      (error) => {
+        if (!isMissingGoodsTableError(error)) throw error;
+        logToAxiom(
+          {
+            name: 'block-goods-earnings',
+            type: 'error',
+            message: 'block_good_purchase is absent; reporting the goods bucket as unreadable',
+            appBlockId,
+            error: error instanceof Error ? error.message : String(error),
           },
-        }
-      : {}),
-  };
-
-  const [pending, confirmed, paidOut, voided] = await Promise.all([
-    dbRead.blockBuzzAttribution.aggregate({
-      where: { ...where, status: 'pending' },
-      _sum: { usdAmountCents: true, appOwnerShareCents: true },
-      _count: true,
-    }),
-    dbRead.blockBuzzAttribution.aggregate({
-      where: { ...where, status: 'confirmed' },
-      _sum: { usdAmountCents: true, appOwnerShareCents: true },
-      _count: true,
-    }),
-    dbRead.blockBuzzAttribution.aggregate({
-      where: { ...where, status: 'paid_out' },
-      _sum: { usdAmountCents: true, appOwnerShareCents: true },
-      _count: true,
-    }),
-    dbRead.blockBuzzAttribution.aggregate({
-      where: { ...where, status: 'voided' },
-      _sum: { usdAmountCents: true },
-      _count: true,
-    }),
+          'civitai-prod'
+        ).catch(() => undefined);
+        return unreadableGoodsSales();
+      }
+    ),
   ]);
-
-  type Agg = {
-    _count?: number;
-    _sum: { usdAmountCents?: number | null; appOwnerShareCents?: number | null };
-  };
-  const bucket = (a: Agg) => ({
-    count: a._count ?? 0,
-    grossCents: a._sum.usdAmountCents ?? 0,
-    shareCents: a._sum.appOwnerShareCents ?? 0,
-  });
 
   return {
     ok: true,
     appListingId: opts.appListingId,
     appBlockId,
     role: access.role,
-    summary: {
-      pending: bucket(pending as Agg),
-      confirmed: bucket(confirmed as Agg),
-      paidOut: bucket(paidOut as Agg),
-      voided: {
-        count: (voided as Agg)._count ?? 0,
-        grossCents: (voided as Agg)._sum.usdAmountCents ?? 0,
-      },
-    },
+    authorFees,
+    goods,
   };
 }
 
@@ -277,6 +248,3 @@ export async function getMyAppsEarnings(opts: { userId: number }): Promise<MyApp
     lifetimeCount: totals.get(id)?.count ?? 0,
   }));
 }
-
-/** Exposed for the empty/unavailable render path so a caller never invents a shape. */
-export const emptyAppRevenueSummary = EMPTY_SUMMARY;

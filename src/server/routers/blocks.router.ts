@@ -8578,13 +8578,14 @@ export const blocksRouter = router({
    *     (`app-ownership-transfer.service` deliberately does not rewrite the column).
    * Widening it — or app-scoping it — would break that second property.
    *
-   * The collaborator surface is the SEPARATE app-scoped `getAppEarnings` below. Note
-   * the one rough edge left alone on purpose: an editor who calls THIS proc with the
-   * shared `appBlockId` gets zeros, because none of those rows are attributed to them.
-   * Making that case throw would create the ownership oracle this proc deliberately
-   * does not have (see `RevenueUnavailableReason`'s note on why there is no `notOwned`
-   * value). The client routes editors to `getAppEarnings`, which answers the question
-   * they actually mean and returns an explicit `notPermitted` rather than a zero.
+   * The collaborator surface is the SEPARATE app-scoped `appCollaborators.getAppEarnings`,
+   * read by the listing editor's Earnings tab, which accepted editors can open. It answers
+   * the question an editor means (the whole app's figures) and returns an explicit
+   * `notPermitted` rather than a zero. The one rough edge left alone on purpose: an editor
+   * who opens `/apps/<appBlockId>/revenue` reaches THIS proc and sees zeros, because none
+   * of those rows are attributed to them. Making that case throw would create the
+   * ownership oracle this proc deliberately does not have (see `RevenueUnavailableReason`'s
+   * note on why there is no `notOwned` value).
    */
   getMyRevenue: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
@@ -15315,7 +15316,7 @@ function buildWorkflowTags(
   // recipe id here (with `baseModel` also the recipe id) so a customComfy job is
   // NOT mislabeled 'txt2img' — while the `app-block:*` provenance tags below are
   // preserved verbatim, so the per-app subqueue read (appBlockTag) is unaffected.
-  workflowType = 'txt2img'
+  workflowType: string = 'txt2img'
 ): string[] {
   return [
     WORKFLOW_TAGS.GENERATION,

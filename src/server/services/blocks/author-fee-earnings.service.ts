@@ -129,3 +129,24 @@ export async function getAuthorFeeEarningsForOwner({
   result.recent = recent;
   return result;
 }
+
+/**
+ * One app's author-fee earnings, for the collaborator surface (`appCollaborators.getAppEarnings`).
+ *
+ * Scoped to the app AND to its CURRENT owner, never to the caller, so the owner and every accepted
+ * editor see the same whole-app figure, and a transferred app shows only what accrued to the owner
+ * now holding it (the previous owner keeps theirs on their own revenue page).
+ */
+export function getAuthorFeeEarningsForApp({
+  appBlockId,
+  currentOwnerUserId,
+  from,
+  to,
+}: {
+  appBlockId: string;
+  currentOwnerUserId: number;
+  from?: Date;
+  to?: Date;
+}): Promise<AuthorFeeEarnings> {
+  return getAuthorFeeEarningsForOwner({ ownerUserId: currentOwnerUserId, appBlockId, from, to });
+}

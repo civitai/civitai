@@ -44,7 +44,27 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
         status: 'approved',
         capabilities: onsite,
       })
-    ).toEqual(['details', 'media', 'manifest', 'collaborators', 'publishing', 'history']);
+    ).toEqual([
+      'details',
+      'media',
+      'manifest',
+      'earnings',
+      'collaborators',
+      'publishing',
+      'history',
+    ]);
+  });
+
+  it('ON-SITE accepted EDITOR on a LIVE listing: Earnings too, as the invite disclosure says', () => {
+    expect(
+      editorTabsFor({
+        kind: 'onsite',
+        appBlockId: 'ab_1',
+        role: 'editor',
+        status: 'approved',
+        capabilities: onsite,
+      })
+    ).toEqual(['details', 'media', 'manifest', 'earnings', 'collaborators', 'history']);
   });
 
   it('OFF-SITE owner: NO Manifest and NO Media — only Details + Collaborators', () => {
@@ -129,6 +149,11 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
     });
     expect(tabs).not.toContain('manifest');
     expect(tabs).not.toContain('media');
+    // 🔴 And no EARNINGS: `BlockBuzzAttribution` is keyed on `appBlockId` + a snapshotted
+    // owner, so an off-site listing has no row that could ever be attributed to it and
+    // `getAppEarnings` refuses it with `unsupportedKind`. Rendering the tab would be
+    // rendering a guaranteed refusal.
+    expect(tabs).not.toContain('earnings');
     expect(tabs).toEqual(['details', 'collaborators', 'publishing', 'history']);
   });
 
@@ -223,8 +248,12 @@ describe('🔴 a NON-AUTHORABLE listing gets the narrowed set — one case per w
     expect(editorTabsFor(removedOwner)).not.toContain('manifest');
   });
 
+  it('🔴 NEVER Earnings on a delisted app', () => {
+    expect(editorTabsFor(removedOwner)).not.toContain('earnings');
+  });
+
   it('🔴 the OWNER set is EXACTLY Publishing + History — nothing else may creep in', () => {
-    // The aggregate, AFTER the four named absences rather than instead of them. It is what
+    // The aggregate, AFTER the five named absences rather than instead of them. It is what
     // catches a tab added in future that none of the cases above happens to name.
     expect(editorTabsFor(removedOwner)).toEqual(['publishing', 'history']);
   });
@@ -640,10 +669,11 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
     expect(editorTabsFor(ownerUnpublished)).not.toContain('collaborators');
   });
 
-  it('🔴 NEVER Manifest — nothing in this change opens it', () => {
-    // Same construction as the media case: `submitVersion` is true for on-site and the block
-    // id is present, so its absence is the branch split alone.
+  it('🔴 NEVER Manifest or Earnings — nothing in this change opens either', () => {
+    // Same construction as the media case: `submitVersion` and `earnings` are both true for
+    // on-site and the block id is present, so their absence is the branch split alone.
     expect(editorTabsFor(ownerUnpublished)).not.toContain('manifest');
+    expect(editorTabsFor(ownerUnpublished)).not.toContain('earnings');
   });
 
   it('🔴 the OWNER set is EXACTLY Details, Media, Publishing, History — in that order', () => {
@@ -707,6 +737,7 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
       'details',
       'media',
       'manifest',
+      'earnings',
       'collaborators',
       'publishing',
       'history',

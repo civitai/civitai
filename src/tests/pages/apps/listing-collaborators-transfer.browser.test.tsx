@@ -170,6 +170,9 @@ vi.mock('~/components/Apps/ListingMediaEditor', () => ({
 vi.mock('~/components/Apps/ManifestEditForm', () => ({
   ManifestEditForm: () => <div data-testid="stub-manifest" />,
 }));
+vi.mock('~/components/Apps/AppEarningsPanel', () => ({
+  AppEarningsPanel: () => <div data-testid="stub-earnings" />,
+}));
 
 // Spread the REAL module and override only `trpc` (per `local-rules/no-wholesale-module-mock`):
 // a hand-written replacement silently drops any export a transitive importer needs, and the

@@ -30,6 +30,7 @@ export type EditorTab =
   | 'details'
   | 'media'
   | 'manifest'
+  | 'earnings'
   | 'collaborators'
   | 'publishing'
   | 'history'
@@ -51,6 +52,7 @@ export const ALL_EDITOR_TABS: EditorTab[] = [
   'details',
   'media',
   'manifest',
+  'earnings',
   'collaborators',
   'publishing',
   'history',
@@ -62,6 +64,7 @@ export const EDITOR_TAB_LABELS: Readonly<Record<EditorTab, string>> = Object.fre
   details: 'Details',
   media: 'Media',
   manifest: 'Manifest',
+  earnings: 'Earnings',
   collaborators: 'Collaborators',
   publishing: 'Publishing',
   history: 'History',
@@ -183,7 +186,7 @@ export function isOwnerUnpublishedTabContext(
  * 🔴 FIRST, THE STATUS BRANCH — AND IT IS THE ONE SECURITY-CRITICAL CLAUSE IN THIS FILE.
  * On a NON-AUTHORABLE status (`removed`, `rejected`) the set collapses to at most
  * `publishing` + `history`, and EVERY content tab is withheld — `details`, `media`,
- * `manifest` and, above all, `collaborators`. `details` and `collaborators`
+ * `manifest`, `earnings` and, above all, `collaborators`. `details` and `collaborators`
  * used to be pushed UNCONDITIONALLY, which is precisely why the route was previously
  * forbidden outright on those statuses: leaving the page open on a delisted app left a
  * LIVE Collaborators tab, where accepting an invite still mints Forgejo `write` on the
@@ -216,8 +219,8 @@ export function isOwnerUnpublishedTabContext(
  *
  *   🔴 AND THE REPAIR BRANCH GRANTS `details` + `media` ONLY. `collaborators` stays
  *   withheld (its server gate refuses this status, so the tab would 403 — and it is the
- *   Forgejo surface). `manifest` stays withheld too: nothing in this change
- *   opens a version-submit on an unpublished app, and withholding a
+ *   Forgejo surface). `manifest` and `earnings` stay withheld too: nothing in this change
+ *   opens a version-submit or an earnings read on an unpublished app, and withholding a
  *   tab is always safe — a tab set is a UI narrowing, never a gate.
  *
  * 🔴 AND THE TAB SET IS A UI NARROWING, NEVER A GATE. Measured on this tree:
@@ -266,8 +269,13 @@ export function isOwnerUnpublishedTabContext(
  *
  *   - `manifest`      — BOTH `capabilities.submitVersion` AND a backing block.
  *
- *   - no Earnings tab — it showed only the card-purchase revenue share, which is recorded
- *                       but never paid out. Author earnings live on `/apps/revenue`.
+ *   - `earnings`      — BOTH `capabilities.earnings` AND a backing block, MIRRORING the
+ *                       proc's own refusal exactly: `getAppEarnings` returns
+ *                       `unsupportedKind` when `!listingKindSupports(kind,'earnings') ||
+ *                       !appBlockId`, so any other predicate here would render a tab whose
+ *                       query is guaranteed to refuse. Visible to an accepted EDITOR as
+ *                       well as the owner — that is the capability the invite disclosure
+ *                       promises, and this panel is what makes the promise true.
  *
  * 🔴 NEITHER TWO-CLAUSE ARM IS REDUNDANT, and the reason is the same for both: the
  * capability and the block-presence check disagree in OPPOSITE directions, so each clause
@@ -334,10 +342,11 @@ export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
     tabs.push('details');
     if (ctx.capabilities.listingMedia === true && ctx.appBlockId != null) tabs.push('media');
   }
-  // A moderator gets content tabs only: no manifest, collaborators or feedback.
+  // A moderator gets content tabs only: no manifest, earnings, collaborators or feedback.
   const moderator = ctx.role === 'moderator';
   if (authorable && !moderator) {
     if (ctx.capabilities.submitVersion === true && ctx.appBlockId != null) tabs.push('manifest');
+    if (ctx.capabilities.earnings === true && ctx.appBlockId != null) tabs.push('earnings');
     tabs.push('collaborators');
   }
   /**

@@ -344,9 +344,6 @@ export const appCollaboratorsRouter = router({
   /**
    * APP-SCOPED earnings — the collaborator money surface.
    *
-   * No client today: it returns only the card-purchase revenue share, which is recorded but
-   * never paid out, so the listing editor's Earnings tab was removed until a payout exists.
-   *
    * 🔴 NOT a widening of `blocks.getMyRevenue`. That proc is keyed on the snapshotted
    * `appOwnerUserId` and is USER-WIDE; reusing it for an editor (by passing the
    * owner's id) would return the owner's ENTIRE PORTFOLIO. This one resolves the
@@ -354,9 +351,12 @@ export const appCollaboratorsRouter = router({
    * owner. Returns an explicit `notPermitted` rather than a zero, so a caller can never
    * read "no access" as "earned nothing".
    *
-   * 🔴 ON-SITE ONLY, returning `unsupportedKind` for an off-site listing.
-   * `BlockBuzzAttribution` is keyed on `appBlockId`, which an off-site listing does not
-   * have — so there is nothing to sum, and a zeroed summary would be a lie.
+   * Returns the app's author-fee earnings and digital-goods sales. The card-purchase
+   * revenue share is recorded but never paid out, so it is not returned.
+   *
+   * 🔴 ON-SITE ONLY, returning `unsupportedKind` for an off-site listing. Both rails are
+   * keyed on `appBlockId`, which an off-site listing does not have — so there is nothing
+   * to sum, and a zeroed summary would be a lie.
    */
   getAppEarnings: appDeveloperProcedure
     .input(getAppEarningsSchema)

@@ -254,12 +254,15 @@ function AuthorFeeTile({
   );
 }
 
-function AuthorFeeCard({
+export function AuthorFeeCard({
   authorFees,
   scoped,
+  emptyText,
 }: {
   authorFees: AuthorFeeEarnings | undefined;
   scoped: boolean;
+  /** Replaces the "attributed to you" empty copy, for a surface showing a whole app's figures. */
+  emptyText?: string;
 }) {
   const empty = !!authorFees && authorFees.accrued.count === 0 && authorFees.settled.count === 0;
   const hasBlue =
@@ -279,9 +282,10 @@ function AuthorFeeCard({
         </Text>
       ) : empty ? (
         <Text c="dimmed" size="sm" mt="sm" data-testid="author-fees-empty">
-          {scoped
-            ? 'No author fees attributed to you for this app yet.'
-            : 'No author fees attributed to you on your apps yet.'}
+          {emptyText ??
+            (scoped
+              ? 'No author fees attributed to you for this app yet.'
+              : 'No author fees attributed to you on your apps yet.')}
         </Text>
       ) : (
         <>
@@ -448,7 +452,16 @@ const GOODS_TIMING_TOOLTIP =
 const GOODS_BLUE_CAVEAT =
   'Some of these sales were paid with Blue Buzz, so part of your share may be Blue and cannot be withdrawn. The dollar figures are an upper bound.';
 
-function GoodsSalesCard({ goods, scoped }: { goods: GoodsShape; scoped: boolean }) {
+export function GoodsSalesCard({
+  goods,
+  scoped,
+  emptyText,
+}: {
+  goods: GoodsShape;
+  scoped: boolean;
+  /** Replaces the "attributed to you" empty copy, for a surface showing a whole app's figures. */
+  emptyText?: string;
+}) {
   const { sales, refunded, unavailable } = goods;
   return (
     <Card padding="md" radius="md" withBorder>
@@ -482,9 +495,10 @@ function GoodsSalesCard({ goods, scoped }: { goods: GoodsShape; scoped: boolean 
         // "attributed to you" is the hedge the attribution rail's own copy uses,
         // and it is true for owner and editor alike.
         <Text c="dimmed" size="sm" mt="sm">
-          {scoped
-            ? 'No digital goods sales attributed to you for this app yet.'
-            : 'No digital goods sales attributed to you on your apps yet.'}
+          {emptyText ??
+            (scoped
+              ? 'No digital goods sales attributed to you for this app yet.'
+              : 'No digital goods sales attributed to you on your apps yet.')}
         </Text>
       ) : (
         // Each money figure carries a testid, and so does its enclosing tile. The

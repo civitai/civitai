@@ -513,10 +513,10 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // all, which this does catch.
   });
 
-  it('the deferred earnings proc keeps the developer gate', () => {
-    // `getAppEarnings` has no client while the card-purchase share is hidden, but the invite
-    // disclosure still describes what an accepted editor may read through it — so if someone
-    // widens the proc to `protectedProcedure`, this fails and the disclosure must be re-read.
+  it('the earnings proc keeps the developer gate', () => {
+    // The invite disclosure describes what an accepted editor may read through
+    // `getAppEarnings`, so if someone widens the proc to `protectedProcedure`, this fails and
+    // the disclosure must be re-read.
     const router = stripComments(read(EARNINGS_ROUTER));
     expect(router).toMatch(/getAppEarnings:\s*appDeveloperProcedure/);
     const trpc = stripComments(read('src/server/trpc.ts'));

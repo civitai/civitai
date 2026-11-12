@@ -1546,31 +1546,13 @@ export const REFUND_WINDOWS_DAYS: Record<AttributionPaymentProvider, number> = {
 export { ACTIVE_RATE_CARD };
 
 // ---------------------------------------------------------------
-// Publisher reporting queries
-// ---------------------------------------------------------------
-
-export type RevenueSummaryBucket = {
-  count: number;
-  grossCents: number;
-  shareCents: number;
-};
-
-export type RevenueSummary = {
-  pending: RevenueSummaryBucket;
-  confirmed: RevenueSummaryBucket;
-  paidOut: RevenueSummaryBucket;
-  voided: { count: number; grossCents: number };
-};
-
-// ---------------------------------------------------------------
 // DIGITAL GOODS sales — the read-side bridge onto the owner's revenue page
 // ---------------------------------------------------------------
 
 /**
  * One bucket of an owner's digital-goods sales.
  *
- * 🔴 BUZZ IS THE PRIMARY UNIT HERE AND USD IS DERIVED, which is the opposite of
- * every bucket above. It is not a style choice — cents CANNOT REPRESENT a small
+ * 🔴 BUZZ IS THE PRIMARY UNIT HERE AND USD IS DERIVED. It is not a style choice — cents CANNOT REPRESENT a small
  * sale. 1,000 Buzz = $1, so one cent is 10 Buzz, and the minimum priced good
  * (`BLOCK_GOOD_MIN_PRICE_BUZZ`) is 2 Buzz. A 10-Buzz good pays its owner 7 Buzz,
  * and `buzzSpendToUsdCents(7)` is **0** — so a cents-only line renders `$0.00`
@@ -1773,9 +1755,8 @@ export function isMissingGoodsTableError(error: unknown): boolean {
  * whose ledger leg failed leaves the row `paid` with `payouts` short of that
  * figure (`owesOwnerPayout`), and this aggregate cannot see the shortfall — a
  * JSONB sum is not expressible in a Prisma aggregate, and there is no re-runner
- * for those rows anyway. So `shareBuzz` is "earned", on the same reading as the
- * `confirmed` bucket above, which is also an accrual rather than a delivery. Do
- * not relabel it as "received" without measuring `payouts`.
+ * for those rows anyway. So `shareBuzz` is "earned", an accrual rather than a
+ * delivery. Do not relabel it as "received" without measuring `payouts`.
  *
  * The date range filters `created_at` — the sale's own timestamp. There is no
  * `attributed_at` on this table because there is no attribution row.
