@@ -1451,11 +1451,13 @@ export const upsertCollection = async ({
     write,
     type,
     nsfw,
-    mode,
+    mode: requestedMode,
     metadata,
     tags,
     ...collectionItem
   } = input;
+  // Moderator-only on create and update. System writers that need a mode create the row directly.
+  const mode = isModerator ? requestedMode : undefined;
 
   // `collectionItem.note` is NOT dead. `upsertCollectionInput` merges `collectionItemSchema`, so
   // `note` arrives from the client and reaches `items: { create: { ...collectionItem } }` below.
@@ -1533,7 +1535,6 @@ export const upsertCollection = async ({
     const canConfigure = permission.isOwner || !!isModerator;
     const nextRead = canConfigure ? read : undefined;
     const nextWrite = canConfigure ? write : undefined;
-    const nextMode = canConfigure ? mode : undefined;
 
     const opensSubmissions =
       !!nextWrite &&
@@ -1615,7 +1616,7 @@ export const upsertCollection = async ({
           nsfw,
           read: nextRead,
           write: nextWrite,
-          mode: nextMode,
+          mode,
           metadata: pinnedMetadata(
             currentCollection.metadata as CollectionMetadataSchema | null
           ) as Prisma.JsonObject,
