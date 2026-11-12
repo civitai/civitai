@@ -618,16 +618,12 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 1,
   },
-  'src/server/services/collection.service.ts#queueNeverScannedImages': {
+  'src/server/services/judge-collection-rescan.service.ts#queueNeverScannedRescan': {
     decision: 'raw-legacy-judge-rating-seed',
     sites: 1,
   },
   'src/server/services/collection.service.ts#setCollectionItemNsfwLevel': {
     decision: 'raw-server-keys',
-    sites: 1,
-  },
-  'src/pages/api/admin/temp/rescan-judge-collection-images.ts#queueBatch': {
-    decision: 'raw-legacy-judge-rating-seed',
     sites: 1,
   },
   'src/server/services/image-scan-pipeline.ts#resolveScanOutcome': {

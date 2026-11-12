@@ -314,8 +314,9 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     scanTagLevel = R;
     const image = await arrange({ nsfwLevel: X });
     // The legacy rating is the one the self-heal and the backfill write, built by their shared
-    // helper against this row, so the fixture can't drift from the seed. The collection-rating
-    // test's "a rescan that rates lower…" case reproduces the floor SQL against the same seed.
+    // helper against this row, so the fixture can't drift from the seed.
+    // judge-collection-rating.pglite.test.ts, "a rescan that rates lower ends at the level the
+    // judges applied, still unapproved", reproduces the floor SQL against the same seed.
     await pgliteRaw(db).executeRaw`
       UPDATE "Image" SET metadata = ${legacyJudgeRatingSeedSql('Image', Prisma.sql`10`)}
       WHERE id = ${ID}

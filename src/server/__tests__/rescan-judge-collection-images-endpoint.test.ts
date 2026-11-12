@@ -281,6 +281,27 @@ describe('rescan-judge-collection-images: a run', () => {
     expect(row.metadata.judgeRating).toMatchObject({ legacy: true, nsfwLevel: X });
   });
 
+  it.each([
+    ['a block reason', `"blockedFor" = 'tos'`],
+    ['the Blocked level', `"nsfwLevel" = 32`],
+  ])('leaves a never-scanned image with %s alone, and does not count it', async (_, block) => {
+    await db.exec(`UPDATE "Image" SET ${block} WHERE id = 101`);
+    const before = (await snapshot()).find((r) => r.id === 101);
+
+    const dry = (await call({})).body;
+    expect(dry.cohorts).toMatchObject({ scannedNoJobs: 0, pendingManual: 1 });
+    expect(dry.controls).toEqual({
+      inScopeWithScannerTags: 0,
+      outOfScopeScannedWithoutScannerTags: 0,
+    });
+    expect((await call({ dryRun: 'false', ids: '101' })).statusCode).toBe(400);
+    const { body } = await call({ dryRun: 'false' });
+
+    expect(body).toMatchObject({ queued: 1 });
+    expect(await rescanned()).toEqual([102]);
+    expect((await snapshot()).find((r) => r.id === 101)).toEqual(before);
+  });
+
   it('refuses to start, writing nothing, until the tag recompute carries the judge floor', async () => {
     await installTagRecompute({ withFloor: false });
     const before = await snapshot();
