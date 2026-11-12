@@ -83,13 +83,14 @@ export async function searchSemanticImages({
     .filter((x) => !x.tagId || hiddenTagIds.includes(x.tagId))
     .map((x) => x.id);
 
+  // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
+  // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
   const filter: CandidateFilter = {
     gate: {
       kind: 'level',
       nsfwLevels: Flags.instanceToArray(input.browsingLevel || publicBrowsingLevelsFlag),
     },
     tagIds,
-    excludedTagIds,
     anyOf: { baseModels: input.baseModels, type: input.types },
     userIds,
     range: {
@@ -97,8 +98,6 @@ export async function searchSemanticImages({
       gte: input.postedAfter?.toISOString(),
       lte: input.postedBefore?.toISOString(),
     },
-    excludedUserIds,
-    excludedIds: excludedImageIds,
     // As the image search index: no NSFW images made with a base model whose license forbids it.
     mustNot: [
       {
