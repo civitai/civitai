@@ -11,7 +11,9 @@
   const underReview = $derived(
     data.items.filter((item: TrainingReviewRow) => item.underReview).length
   );
-  const partial = $derived(data.workflowFilterUnavailable || data.truncated);
+  // An unreadable run answered and is not under review; only a read with no answer leaves the
+  // count short.
+  const partial = $derived(data.unanswered || data.truncated);
 </script>
 
 <header class="page-header">
@@ -26,8 +28,10 @@
 
 {#if data.workflowFilterUnavailable}
   <p class="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-    Some workflows could not be read from the orchestrator, so those rows are listed unchecked — they
-    may have no workflow left, or be under review, and are sorted with the rest.
+    Some rows are listed unchecked, sorted with the rest: the orchestrator did not answer for them, or
+    answered with a run this page cannot read.{data.unanswered
+      ? ' The ones it did not answer for may have no workflow left, or be under review.'
+      : ''}
   </p>
 {/if}
 {#if data.truncated}
