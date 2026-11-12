@@ -178,6 +178,23 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     expect(outcome.nsfwLevel).toBe(R);
   });
 
+  it('keeps a legacy rating (no judge recorded) as the floor', async () => {
+    scanTagLevel = R;
+    const legacy = {
+      judgeRating: {
+        userId: null,
+        nsfwLevel: X,
+        ratedAt: '2025-01-02T03:04:05',
+        legacy: true,
+        collectionId: 10,
+      },
+    };
+    const { outcome, row } = await scan(await arrange({ nsfwLevel: X, metadata: legacy }));
+
+    expect(row.nsfwLevel).toBe(X);
+    expect(outcome.nsfwLevel).toBe(X);
+  });
+
   it('keeps a moderator lock over both the scan and the judge', async () => {
     scanTagLevel = X;
     const locked = { nsfwLevel: PG13, nsfwLevelLocked: true, metadata: judgeRated(R) };
