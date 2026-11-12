@@ -6591,7 +6591,10 @@ export const getImagesForModelVersion = async ({
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
 
-  const imageWhere: Prisma.Sql[] = [Prisma.sql`p."publishedAt" IS NOT NULL`];
+  const imageWhere: Prisma.Sql[] = [
+    Prisma.sql`p."publishedAt" IS NOT NULL`,
+    Prisma.sql`i."tosViolation" = FALSE`,
+  ];
 
   if (!!excludedTagIds?.length) {
     const excludedTagsOr: Prisma.Sql[] = [
@@ -8358,6 +8361,8 @@ export async function updateImageNsfwLevel({
       imageMetadataCache.refresh(id),
       refreshThumbnailCache(id),
       refreshProfilePicturesForImages([id]),
+      // The version showcase is cached for a day and filtered by level when it is built.
+      image.postId ? bustCachesForPosts(image.postId) : undefined,
     ]);
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.

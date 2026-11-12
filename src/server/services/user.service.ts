@@ -129,6 +129,7 @@ import {
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { queueOwnedContentUpdate } from '~/server/search-index/user-content-reindex';
 import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -599,6 +600,12 @@ export async function forceUpdateUserIdentity({
   if (name !== undefined) data.name = name;
   if (Object.keys(data).length === 0) return { updated: false };
 
+  const previousUsername =
+    username !== undefined
+      ? (await dbWrite.user.findUnique({ where: { id: userId }, select: { username: true } }))
+          ?.username
+      : undefined;
+
   let user;
   try {
     user = await dbWrite.user.update({
@@ -645,6 +652,8 @@ export async function forceUpdateUserIdentity({
         })
       );
   }
+  // Not awaited: it reads every owned id, and it never throws.
+  if (username !== undefined && username !== previousUsername) void queueOwnedContentUpdate(userId);
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
   await invalidateSession(userId, 'moderation');
@@ -690,12 +699,15 @@ export const updateUserById = async ({
   let location = 'user.service:updateUserById';
   if (updateSource) location += `:${updateSource}`;
   userUpdateCounter?.inc({ location });
-  if (typeof data.username === 'string' && data.username !== previousUsername)
-    queueScamScan({ entityType: 'User', entityId: id });
+  const renamed = typeof data.username === 'string' && data.username !== previousUsername;
+  if (renamed) queueScamScan({ entityType: 'User', entityId: id });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
   }
+
+  // Not awaited: it reads every owned id, and it never throws.
+  if (renamed) void queueOwnedContentUpdate(id);
 
   if (
     data.showNsfw !== undefined ||
