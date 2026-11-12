@@ -12,10 +12,13 @@ import { MetricTimeframe } from '~/shared/utils/prisma/enums';
  * for every recent article; this seeds that shape.
  */
 
-// Ids deliberately disagree with the counts, so an id-ordered feed cannot pass.
-const FOUR_BOOKMARKS = 1;
-const TEN_BOOKMARKS = 2;
-const NO_BOOKMARKS = 3;
+// Articles 1-4. Each count orders them differently, and none matches id order, so a sort that
+// reads the wrong column, or falls back to ids, cannot pass. Article 4 has no metric row yet.
+//              bookmarks  comments  reactions
+//   article 1      4          1     5 (one of each kind: dropping any kind ties it with 3)
+//   article 2     10          7     1
+//   article 3      0          3     4
+//   article 4      -          -     -
 
 let pg: PGlite;
 
@@ -51,18 +54,18 @@ beforeAll(async () => {
     INSERT INTO "User" (id, username) VALUES (1, 'author');
     INSERT INTO "Article" (id, title, "publishedAt", "nsfwLevel", "userId", status, ingestion)
     SELECT id, 'a' || id, now() - interval '1 day', 1, 1, 'Published', 'Scanned'
-    FROM generate_series(1, 3) id;
+    FROM generate_series(1, 4) id;
 
-    INSERT INTO "ArticleMetric"
-      ("articleId", timeframe, "collectedCount", "commentCount", "likeCount", "heartCount") VALUES
-      (${FOUR_BOOKMARKS}, 'AllTime', 4, 4, 2, 2),
-      (${TEN_BOOKMARKS}, 'AllTime', 10, 10, 5, 5),
-      (${NO_BOOKMARKS}, 'AllTime', 0, 0, 0, 0);
-    -- The rank rows the hourly refresh writes: Month columns NULL. The AllTime ranks are
-    -- deliberately stale (they predate the latest bookmarks) to show AllTime still reads them.
+    INSERT INTO "ArticleMetric" ("articleId", timeframe, "collectedCount", "commentCount",
+      "heartCount", "likeCount", "dislikeCount", "laughCount", "cryCount") VALUES
+      (1, 'AllTime', 4, 1, 1, 1, 1, 1, 1),
+      (2, 'AllTime', 10, 7, 1, 0, 0, 0, 0),
+      (3, 'AllTime', 0, 3, 0, 4, 0, 0, 0);
+    -- The rank rows the hourly refresh writes: period columns NULL. The AllTime ranks disagree
+    -- with the live counts on purpose, a control showing AllTime still reads the rank.
     INSERT INTO "ArticleRank" ("articleId", "collectedCountAllTimeRank", "commentCountAllTimeRank",
       "reactionCountAllTimeRank") VALUES
-      (${NO_BOOKMARKS}, 1, 1, 1), (${FOUR_BOOKMARKS}, 2, 2, 2), (${TEN_BOOKMARKS}, 3, 3, 3);
+      (3, 1, 1, 1), (1, 2, 2, 2), (2, 3, 3, 3);
   `);
 });
 afterAll(() => pg.close());
@@ -122,33 +125,18 @@ async function feed(sort: ArticleSort, period: MetricTimeframe) {
 }
 
 describe('article feed "Most ..." sorts within a period', () => {
-  it.each([ArticleSort.MostBookmarks, ArticleSort.MostCollected])(
-    '%s orders the month by bookmark count, across pages',
-    async (sort) => {
-      expect(await feed(sort, MetricTimeframe.Month)).toEqual([
-        TEN_BOOKMARKS,
-        FOUR_BOOKMARKS,
-        NO_BOOKMARKS,
-      ]);
-    }
-  );
-
-  it.each([ArticleSort.MostComments, ArticleSort.MostReactions])(
-    '%s orders the month by its count',
-    async (sort) => {
-      expect(await feed(sort, MetricTimeframe.Month)).toEqual([
-        TEN_BOOKMARKS,
-        FOUR_BOOKMARKS,
-        NO_BOOKMARKS,
-      ]);
-    }
-  );
+  it.each([
+    // Articles 3 and 4 tie at zero bookmarks (4 has no metric row): id DESC breaks the tie.
+    [ArticleSort.MostBookmarks, [2, 1, 4, 3]],
+    [ArticleSort.MostCollected, [2, 1, 4, 3]],
+    [ArticleSort.MostComments, [2, 3, 1, 4]],
+    [ArticleSort.MostReactions, [1, 3, 2, 4]],
+  ])('%s orders the month by its count, across pages', async (sort, expected) => {
+    expect(await feed(sort, MetricTimeframe.Month)).toEqual(expected);
+  });
 
   it('All Time keeps the precomputed rank', async () => {
-    expect(await feed(ArticleSort.MostBookmarks, MetricTimeframe.AllTime)).toEqual([
-      NO_BOOKMARKS,
-      FOUR_BOOKMARKS,
-      TEN_BOOKMARKS,
-    ]);
+    // Article 4 has no rank row, so it sorts last.
+    expect(await feed(ArticleSort.MostBookmarks, MetricTimeframe.AllTime)).toEqual([3, 1, 2, 4]);
   });
 });

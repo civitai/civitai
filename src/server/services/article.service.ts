@@ -440,9 +440,7 @@ export const getArticles = async ({
       commentCount: `am."commentCount"`,
       reactionCount: `am."heartCount" + am."likeCount" + am."dislikeCount" + am."laughCount" + am."cryCount"`,
     };
-    // Only AllTime metric rows are maintained, so the shorter periods' rank columns are NULL.
-    // Those periods sort by the live AllTime counts instead; in 'stats' mode that ranks by
-    // all-time rather than in-period counts.
+    // Period rank columns are never filled (only AllTime metrics are kept), so shorter periods sort by live AllTime counts; 'stats' mode ranks by all-time counts.
     const useLiveCounts = period !== MetricTimeframe.AllTime;
     const metricSort = (col: keyof typeof liveCounts): [string, 'ASC' | 'DESC'] =>
       useLiveCounts
