@@ -17,13 +17,15 @@
  * Options:
  *   --ids <file>              Image ids, one per line.
  *   --log <file>              Run log (append-only JSON lines). Off-repo.
- *   --apply                   Write. Without it nothing is written.
+ *   --apply                   Write. Without it nothing is written (--rebust is the exception: it
+ *                             writes search and caches only).
  *   --limit <n>               Hide at most n rows this run.
  *   --chunk <n>               Ids per step, 1-500 (default 200).
  *   --concurrency <n>         HEADs in flight, 1-20 (default 10).
  *   --pause-ms <n>            Pause between chunks (default 1000).
  *   --rebust hide|undo        Catch search and caches up for the log's rows (after a stop that
- *                             said "run --rebust"). Writes nothing to Image.
+ *                             said "run --rebust"). Writes search and caches, not Image.
+ *   --include-unconfirmed     Undo and rebust also act on log rows never confirmed hidden.
  *   --cross-check-rerun       Required to --apply after CROSS_CHECK_EXPIRES: the Moderation Lead's
  *                             full cross-check was re-run first.
  */
@@ -50,6 +52,8 @@ export type RunOptions = {
   concurrency: number;
   pauseMs: number;
   crossCheckRerun: boolean;
+  /** Undo and rebust also act on rows only intended, never confirmed hidden. */
+  includeUnconfirmed: boolean;
   /** Catch search and caches up for the log's rows; writes nothing to Image. */
   rebust: 'hide' | 'undo' | null;
 };
@@ -81,6 +85,7 @@ export function parseArgs(argv: string[]): RunOptions {
     pauseMs: int('pause-ms', 1000, 0, 600_000),
     crossCheckRerun: argv.includes('--cross-check-rerun'),
     rebust: null,
+    includeUnconfirmed: argv.includes('--include-unconfirmed'),
   };
   const rebustArg = value('rebust');
   if (rebustArg !== undefined) {
@@ -109,6 +114,11 @@ const holdReasonSql = Prisma.sql`(CASE
   WHEN EXISTS (
     SELECT 1 FROM "CollectionItem" ci WHERE ci."imageId" = i.id AND ci.status = 'REVIEW'
   ) THEN 'pending-collection-item'
+  -- A crucible is listed only while its cover is Scanned; hiding the cover hides the contest.
+  WHEN EXISTS (
+    SELECT 1 FROM "Crucible" cr WHERE cr."imageId" = i.id OR cr."heroImageId" = i.id
+  ) OR EXISTS (SELECT 1 FROM "CrucibleEntry" ce WHERE ce."imageId" = i.id)
+  THEN 'crucible-image'
 END)`;
 
 /** Why a row is left alone, or NULL when it may be hidden. Over `"Image" i`. */
@@ -195,6 +205,9 @@ export function isMissingHead(e: unknown) {
   );
 }
 
+/** `hidden` marks a row the UPDATE returned; a line without it is only the intent to hide. */
+export type LogEntry = { id: number; prior: string; hidden?: true };
+
 export type HeadResult = 'present' | 'missing';
 export type Touched = { id: number; postId: number | null };
 
@@ -206,7 +219,7 @@ export type Deps = {
   isExternal: (url: string) => boolean;
   /** Search-index Delete (hide) or Update (undo), existence cache, post caches. */
   propagate: (touched: Touched[], action: 'hide' | 'undo') => Promise<void>;
-  appendLog: (entries: { id: number; prior: string }[]) => void;
+  appendLog: (entries: LogEntry[]) => void;
   sleep: (ms: number) => Promise<void>;
   log: (line: string) => void;
   now: () => number;
@@ -326,6 +339,11 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
     if (options.apply && batch.length) {
       deps.appendLog(batch.map((r) => ({ id: r.id, prior: r.prior })));
       const touched = await deps.query<Touched>(hideSql(batch.map((r) => r.id)));
+      const prior = new Map(batch.map((r) => [r.id, r.prior]));
+      if (touched.length)
+        deps.appendLog(
+          touched.map((t) => ({ id: t.id, prior: prior.get(t.id) as string, hidden: true }))
+        );
       bump(counts, 'raced-out', batch.length - touched.length);
       hidden += touched.length;
       if (touched.length) await propagateOrStop(touched, 'hide', deps);
@@ -368,8 +386,31 @@ export async function undo(
   return restored;
 }
 
-/** Appends and fsyncs: a hide that outlives its log line cannot be told from an organic NotFound. */
+/**
+ * The rows undo and rebust may touch: those an UPDATE returned. A row that was only intended (the
+ * UPDATE refused it, or the run died before the confirmation line) is left alone unless asked for,
+ * because it may have gone NotFound by itself.
+ */
+export function actedOn(entries: LogEntry[], includeUnconfirmed: boolean) {
+  const confirmed = new Set(entries.filter((e) => e.hidden).map((e) => e.id));
+  const seen = new Set<number>();
+  return entries.filter((e) => {
+    if (seen.has(e.id) || !(includeUnconfirmed || confirmed.has(e.id))) return false;
+    seen.add(e.id);
+    return true;
+  });
+}
+
+/**
+ * Appends and fsyncs: a hide that outlives its log line cannot be told from an organic NotFound.
+ * A torn tail (a crash mid-write) is cut off first: its UPDATE never ran, and left in place it
+ * would swallow or poison the lines appended after it.
+ */
 export function appendDurable(file: string, text: string) {
+  if (fs.existsSync(file)) {
+    const body = fs.readFileSync(file, 'utf8');
+    if (body && !body.endsWith('\n')) fs.truncateSync(file, body.lastIndexOf('\n') + 1);
+  }
   const fd = fs.openSync(file, 'a');
   try {
     fs.writeSync(fd, text);
@@ -380,12 +421,12 @@ export function appendDurable(file: string, text: string) {
 }
 
 /** A torn last line (a crash mid-write) is dropped; a bad line anywhere else is an error. */
-export function readLog(file: string) {
+export function readLog(file: string): LogEntry[] {
   if (!fs.existsSync(file)) return [];
   const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
   return lines.flatMap((l, n) => {
     try {
-      return [JSON.parse(l) as { id: number; prior: string }];
+      return [JSON.parse(l) as LogEntry];
     } catch (e) {
       if (n === lines.length - 1) return [];
       throw e;
@@ -413,6 +454,9 @@ export function readIds(file: string) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  // Prisma query logging would print the id arrays this script sends.
+  if (/prisma/.test(process.env.LOGGING ?? ''))
+    throw new Error('unset LOGGING (prisma query logging prints the target ids)');
   const { dbWrite } = await import('~/server/db/client');
   const { HeadObjectCommand } = await import('@aws-sdk/client-s3');
   const { getImageUploadBackend } = await import('~/utils/s3-utils');
@@ -462,8 +506,9 @@ async function main() {
     now: () => Date.now(),
   };
 
-  if (options.rebust) await rebust(readLog(logFile), options.rebust, options, deps);
-  else if (options.undo) await undo(readLog(logFile), options, deps);
+  const acted = () => actedOn(readLog(logFile), options.includeUnconfirmed);
+  if (options.rebust) await rebust(acted(), options.rebust, options, deps);
+  else if (options.undo) await undo(acted(), options, deps);
   else await run(options, readIds(options.idsFile as string), deps);
   if (!options.apply && !options.rebust)
     deps.log('dry run: nothing written (pass --apply to write)');

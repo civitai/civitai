@@ -14,6 +14,7 @@ vi.mock('~/server/services/legal-hold.service', () => ({
 }));
 
 import {
+  actedOn,
   appendDurable,
   CROSS_CHECK_EXPIRES,
   isMissingHead,
@@ -44,6 +45,8 @@ beforeAll(async () => {
       "scanJobs" jsonb, "scanRequestedAt" timestamp, "scannedAt" timestamp
     );
     CREATE TABLE "CollectionItem" ("imageId" int, status text NOT NULL);
+    CREATE TABLE "Crucible" ("imageId" int, "heroImageId" int);
+    CREATE TABLE "CrucibleEntry" ("imageId" int);
   `);
 });
 
@@ -51,7 +54,7 @@ const GONE = [1, 2, 3];
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem";
+    TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry";
     INSERT INTO "Image" (id, url, "userId", "postId") VALUES
       (1,'gone-1',10,100),(2,'gone-2',10,100),(3,'gone-3',11,101),
       (900,'live-900',12,102),(901,'live-901',12,102);
@@ -80,6 +83,7 @@ const options = (over: Partial<RunOptions> = {}): RunOptions => ({
   pauseMs: 0,
   crossCheckRerun: false,
   rebust: null,
+  includeUnconfirmed: false,
   ...over,
 });
 
@@ -121,6 +125,8 @@ describe('hide-lost-original-images', () => {
     expect(logged).toEqual([
       { id: 1, prior: 'Scanned' },
       { id: 3, prior: 'Scanned' },
+      { id: 1, prior: 'Scanned', hidden: true },
+      { id: 3, prior: 'Scanned', hidden: true },
     ]);
     expect(propagated).toEqual([{ ids: [1, 3], action: 'hide' }]);
     expect(counts['skipped:now-200']).toBe(1);
@@ -167,6 +173,35 @@ describe('hide-lost-original-images', () => {
     const counts = await run(options(), GONE, deps);
     expect(await ingestion(1)).toBe('Scanned');
     expect(counts['raced-out']).toBe(1);
+  });
+
+  it('logs a confirmation only for rows the UPDATE returned, and undo acts on those alone', async () => {
+    const { deps, logged } = makeDeps({
+      head: async (url) => {
+        if (url === 'gone-1') await db.exec(`INSERT INTO "ImageHeld" VALUES (1)`);
+        return url.startsWith('gone-') ? 'missing' : 'present';
+      },
+    });
+    await run(options(), GONE, deps);
+    expect(logged.filter((e) => e.hidden).map((e) => e.id)).toEqual([2, 3]);
+    expect(actedOn(logged, false).map((e) => e.id)).toEqual([2, 3]);
+    expect(actedOn(logged, true).map((e) => e.id)).toEqual([1, 2, 3]);
+  });
+
+  it('leaves a crucible cover, hero or entry image alone', async () => {
+    await db.exec(`
+      INSERT INTO "Crucible" VALUES (1, NULL);
+      INSERT INTO "Crucible" VALUES (NULL, 2);
+      INSERT INTO "CrucibleEntry" VALUES (3);
+    `);
+    const { deps } = makeDeps();
+    const counts = await run(options(), GONE, deps);
+    expect([await ingestion(1), await ingestion(2), await ingestion(3)]).toEqual([
+      'Scanned',
+      'Scanned',
+      'Scanned',
+    ]);
+    expect(counts['skipped:crucible-image']).toBe(3);
   });
 
   it('writes nothing on a dry run', async () => {
@@ -311,6 +346,9 @@ describe('hide-lost-original-images', () => {
     const log = path.join(dir, 'log');
     appendDurable(log, '{"id":1,"prior":"Scanned"}\n{"id":2,"prior":"Sca');
     expect(readLog(log)).toEqual([{ id: 1, prior: 'Scanned' }]);
+    // The next append must not be swallowed by the torn line.
+    appendDurable(log, '{"id":3,"prior":"Scanned"}\n{"id":4,"prior":"Scanned"}\n');
+    expect(readLog(log).map((e) => e.id)).toEqual([1, 3, 4]);
     fs.writeFileSync(log, '{"id":1\n{"id":2,"prior":"Scanned"}\n');
     expect(() => readLog(log)).toThrow();
     const ids = path.join(dir, 'ids');
