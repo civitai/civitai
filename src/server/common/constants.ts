@@ -913,10 +913,11 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   'bria fibo': {
     // Same as licence 56 in basemodel.constants.
-    url: 'https://creativecommons.org/licenses/by-nc/4.0/',
-    name: 'Bria Fibo License (CC BY-NC 4.0)',
+    url: 'https://civitai.com/content/licenses/fibo-2-platform-license',
+    name: 'FIBO 2.0 Platform License',
     poweredBy: 'Powered by Bria AI',
-    nonCommercial: true,
+    disableMature: true,
+    requiresSameLicense: true,
   },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend

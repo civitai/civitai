@@ -2929,11 +2929,12 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 56,
-    // Bria publishes the weights under CC BY-NC 4.0 and sells commercial use separately.
-    name: 'Bria Fibo License (CC BY-NC 4.0)',
-    url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+    // Civitai's own terms for Fibo on the platform, not the CC BY-NC licence of Bria's public weights.
+    name: 'FIBO 2.0 Platform License',
+    url: 'https://civitai.com/content/licenses/fibo-2-platform-license',
     poweredBy: 'Powered by Bria AI',
-    nonCommercial: true,
+    disableMature: true,
+    requiresSameLicense: true,
   },
 ];
 
@@ -4730,6 +4731,11 @@ export function getGenerationBaseModelRecords(): BaseModelRecord[] {
     if (m.hidden || m.disabled) return false;
     return isModelSupported(m.id, 'generation');
   });
+}
+
+/** Only moderators may put a version on a hidden base model; see `getActiveBaseModels`. */
+export function isHiddenBaseModel(baseModel: string): boolean {
+  return !!baseModelByName.get(baseModel)?.hidden;
 }
 
 let modelLockedBaseModelSet: Set<string> | undefined;
