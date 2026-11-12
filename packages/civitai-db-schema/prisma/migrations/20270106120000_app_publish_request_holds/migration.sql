@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS "app_publish_request_approve_claims" (
   "slug"               TEXT        PRIMARY KEY,
   "publish_request_id" TEXT        NOT NULL,
   "claimed_by_user_id" INTEGER     NOT NULL,
-  "claimed_at"         TIMESTAMPTZ NOT NULL DEFAULT now()
+  "claimed_at"         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "claim_token"        TEXT        NOT NULL
 );
 CREATE INDEX IF NOT EXISTS "app_publish_request_approve_claims_request_idx"
   ON "app_publish_request_approve_claims" ("publish_request_id");

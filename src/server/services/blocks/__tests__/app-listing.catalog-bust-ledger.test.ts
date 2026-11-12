@@ -547,7 +547,7 @@ const LEDGER = [
   'src/server/services/blocks/offsite-moderation.service.ts::resetOnsiteListingToPending',
   'src/server/services/blocks/offsite-moderation.service.ts::unpublishOwnListing',
   // Onsite approve mints/flips the AppListing to `approved`.
-  'src/server/services/blocks/publish-request.service.ts::approveRequest',
+  'src/server/services/blocks/publish-request.service.ts::approveRequestUnderClaim',
 ].sort();
 
 /**

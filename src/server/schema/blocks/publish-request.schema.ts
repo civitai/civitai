@@ -8,6 +8,7 @@ import {
   HOLD_REASON_MAX,
   HOLD_REASON_MIN,
   MAX_OPEN_HOLDS_PER_APP,
+  PUBLISH_REQUEST_HOLD_KINDS,
 } from '~/shared/constants/publish-request-holds.constants';
 
 export const holdReasonSchema = z.string().trim().min(HOLD_REASON_MIN).max(HOLD_REASON_MAX);
@@ -392,7 +393,7 @@ export type BackfillPublishRequestInput = z.infer<typeof backfillPublishRequestS
 
 export const placePublishRequestHoldSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
-  kind: z.enum(['onsite', 'listing']),
+  kind: z.enum(PUBLISH_REQUEST_HOLD_KINDS),
   reason: holdReasonSchema,
   label: z.string().trim().min(1).max(HOLD_LABEL_MAX),
 });

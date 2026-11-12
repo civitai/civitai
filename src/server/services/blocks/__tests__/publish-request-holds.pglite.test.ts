@@ -214,6 +214,40 @@ describe('approve', () => {
     ).rejects.toThrow(/override reason/);
   });
 
+  it('🔴 a hold on one app never blocks another, and an override leaves the other app’s hold open', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    await addRequest('pubreq_b', 'app-b');
+    await place('pubreq_a');
+    await expect(checkHoldsBeforeApprove(raw, { slug: 'app-b' })).resolves.toBeUndefined();
+    const hb = await place('pubreq_b');
+    await tx((t) =>
+      resolveHoldsAtApprove(t, {
+        slug: 'app-b',
+        actorUserId: HUMAN,
+        overrideReason: OVERRIDE,
+        shownHoldIds: [hb.id],
+      })
+    );
+    expect((await getOpenHoldCountsBySlug(raw, ['app-a', 'app-b'])).get('app-a')).toBe(1);
+  });
+
+  it('🔴 a cleared or overridden hold stops blocking', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    const h1 = await place('pubreq_a');
+    await clearHold(raw, { holdId: h1.id, actorUserId: HUMAN, reason: 'check finished, clean' });
+    await expect(checkHoldsBeforeApprove(raw, { slug: 'app-a' })).resolves.toBeUndefined();
+    const h2 = await place('pubreq_a');
+    await tx((t) =>
+      resolveHoldsAtApprove(t, {
+        slug: 'app-a',
+        actorUserId: HUMAN,
+        overrideReason: OVERRIDE,
+        shownHoldIds: [h2.id],
+      })
+    );
+    await expect(checkHoldsBeforeApprove(raw, { slug: 'app-a' })).resolves.toBeUndefined();
+  });
+
   it('holds on a listing request block by the same app slug', async () => {
     await addRequest('alpr_a', 'app-a', 'pending', 'listing');
     await place('alpr_a', 'listing');
@@ -252,10 +286,18 @@ describe('approve claim (on-site approves past their hold check)', () => {
 
   it('🔴 refuses a new hold while an approve holds the claim, and allows it once released', async () => {
     await addRequest('pubreq_a', 'app-a');
-    await claim();
+    const taken = await claim();
     await expect(place('pubreq_a')).rejects.toThrow(/approving this app right now/);
-    await releaseApproveClaim(raw, 'pubreq_a');
+    await releaseApproveClaim(raw, taken);
     await expect(place('pubreq_a')).resolves.toMatchObject({ slug: 'app-a' });
+  });
+
+  it('🔴 releasing an earlier claim never removes the one a later approve holds', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    const first = await claim();
+    await claim();
+    await releaseApproveClaim(raw, first);
+    await expect(place('pubreq_a')).rejects.toThrow(/approving this app right now/);
   });
 
   it('a claim left by a crashed approve stops blocking after it expires', async () => {
