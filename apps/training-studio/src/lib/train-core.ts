@@ -648,7 +648,7 @@ export interface MatureCount {
   failed: number;
   /** Images counted by a stored v2 rating; the rest were counted from X-NSFW-Level. */
   rated: number;
-  /** Blob keys the caller can read that have no stored v2 rating yet (always empty without a rating). */
+  /** Blob ids the caller can read that have no stored v2 rating yet (always empty without a rating). */
   unratedKeys: string[];
 }
 
@@ -681,7 +681,7 @@ async function countMatureBlobs(
           if (isMatureRating(v2, rating!.matureLevel)) mature++;
           continue;
         }
-        if (rating && response?.ok) unratedKeys.push(trainingBlobKey(air));
+        if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
         const level = response?.headers.get('x-nsfw-level')?.toLowerCase();
         if (level && MATURE_NSFW_LEVELS.has(level)) mature++;
       } catch {
@@ -709,14 +709,17 @@ function sourceMatureCount(
   client: OrchestratorClient,
   workflowId: string,
   airs: string[],
-  rating?: DatasetRating
+  rating?: DatasetRating,
+  onMatureCount?: (count: MatureCount) => void
 ): Promise<number> {
   const now = Date.now();
   const key = rating ? `${workflowId}\nv2:${rating.matureLevel}` : workflowId;
   const hit = probeCache.get(key);
   if (hit && now - hit.at < PROBE_TTL_MS) return hit.count;
   if (probeCache.size >= PROBE_CACHE_MAX) probeCache.delete(probeCache.keys().next().value!);
-  const count = countMatureBlobs(client, airs, rating).then(({ mature, failed, unratedKeys }) => {
+  const count = countMatureBlobs(client, airs, rating).then((counted) => {
+    onMatureCount?.(counted);
+    const { mature, failed, unratedKeys } = counted;
     // Unrated images may be rated by the next look, so that count isn't kept either.
     if ((failed > 0 || unratedKeys.length > 0) && probeCache.get(key)?.count === count)
       probeCache.delete(key);
@@ -732,7 +735,7 @@ function sourceMatureCount(
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  { callbacks, traceMode = 'events', status, datasetRating }: SubmitOptions
+  { callbacks, traceMode = 'events', status, datasetRating, onMatureCount }: SubmitOptions
 ): Promise<{
   body: WorkflowTemplate;
   steps: number | undefined;
@@ -796,7 +799,7 @@ async function buildContinuation(
   const matureCount =
     typeof srcMeta.matureCount === 'number' && srcMeta.matureCount > 0
       ? srcMeta.matureCount
-      : await sourceMatureCount(client, opts.workflowId, airs, datasetRating);
+      : await sourceMatureCount(client, opts.workflowId, airs, datasetRating, onMatureCount);
   const matureUnlock = matureCount > 0 && opts.matureAck === true;
   const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
   // Lineage always points at the IMMEDIATE parent — a copied-through sourceWorkflowId from the

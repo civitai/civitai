@@ -1251,10 +1251,71 @@ describe('dataset maturity under the v2 rating', () => {
     expect(lastBody().metadata.matureCount).toBe(0);
   });
 
+  it('a confirmed dataset v2 rates mature unlocks at submit', async () => {
+    uploadRatings({ 'nude-1': 'PG' });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-acked-v2' } });
+    await submitWith(ratingAt(1, { 'nude-1': { s: 4, r: false } }), {
+      items: items('nude-1'),
+      matureAck: true,
+    });
+    expect(lastBody().allowMatureContent).toBe(true);
+  });
+
+  describe('keep training quotes', () => {
+    const source = (id: string) => ({
+      data: {
+        id,
+        metadata: {},
+        steps: [
+          {
+            $type: 'training',
+            input: {
+              engine: 'ai-toolkit',
+              ecosystem: 'sdxl',
+              epochs: 10,
+              steps: 2000,
+              trainingData: { type: 'blobs', items: items('q-1') },
+            },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    const quote = async (workflowId: string, rating: DatasetRating | undefined) => {
+      getWorkflow.mockResolvedValueOnce(source(workflowId));
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
+      return (
+        await continueTrainingWhatIf(
+          client,
+          { workflowId, fromEpoch: 10, addEpochs: 1 },
+          { datasetRating: rating }
+        )
+      ).matureCount;
+    };
+
+    it('a count made at one setting, or without the rating, is not reused for another', async () => {
+      uploadRatings({ 'q-1': 'R' });
+      const stored = { 'q-1': { s: 2, r: false } };
+      expect(await quote('wf-q-set', undefined)).toBe(1);
+      expect(await quote('wf-q-set', ratingAt(4, stored))).toBe(0);
+      expect(await quote('wf-q-set', ratingAt(1, stored))).toBe(1);
+    });
+
+    it('a count with unrated images is made again once they are rated', async () => {
+      uploadRatings({ 'q-1': 'R' });
+      const stored: Record<string, StoredRating> = {};
+      const rating = ratingAt(4, stored);
+      expect(await quote('wf-q-warm', rating)).toBe(1);
+      stored['q-1'] = { s: 0, r: false };
+      expect(await quote('wf-q-warm', rating)).toBe(0);
+    });
+  });
+
   // Each refusal, with a dataset the v2 rating calls not mature: the rating must not clear any of them.
   describe('every refusal still applies to a dataset rated not mature', () => {
+    // Mature by its upload rating, not by v2: only the rating gets it past the mature check.
     const sfw = () => {
-      uploadRatings({ 'sfw-1': 'PG' });
+      uploadRatings({ 'sfw-1': 'R' });
       return ratingAt(1, { 'sfw-1': { s: 0, r: false } });
     };
 
@@ -1304,7 +1365,7 @@ describe('dataset maturity under the v2 rating', () => {
     });
 
     it('keep training checks the trigger word again', async () => {
-      uploadRatings({ 'sfw-1': 'PG' });
+      uploadRatings({ 'sfw-1': 'R' });
       getWorkflow.mockResolvedValueOnce({
         data: {
           id: 'wf-src-tw',

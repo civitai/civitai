@@ -9,6 +9,7 @@ import { getTrainingServiceStatus } from './service-status';
 import * as core from '$lib/train-core';
 import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 import type { DatasetRating } from '$lib/dataset-rating';
+import { warmDatasetRating } from './dataset-rating';
 
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
 export { MatureAckRequiredError } from '$lib/train-core';
@@ -90,6 +91,10 @@ export async function continueTrainingWhatIf(
   return core.continueTrainingWhatIf(orchestratorClient(token), opts, {
     status: await getTrainingServiceStatus(),
     datasetRating,
+    // The quote is the continuation's Review: rate the source's unrated images before the submit.
+    onMatureCount: datasetRating
+      ? ({ unratedKeys }) => warmDatasetRating(token, userId, unratedKeys)
+      : undefined,
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
   });

@@ -26,17 +26,18 @@ export interface DatasetRating {
 }
 
 const LEVEL = /^s([0-4])$/i;
+// The lowest level is not a setting: it would count every image as mature.
+const SETTING = /^s([1-4])$/i;
 
 /** The mature setting a flag variant key names, or null for anything else (unset, unknown, malformed),
  *  which callers treat as the v2 rating being off. */
 export function parseMatureLevel(variantKey: string | null | undefined): number | null {
-  const match = typeof variantKey === 'string' ? LEVEL.exec(variantKey.trim()) : null;
+  const match = typeof variantKey === 'string' ? SETTING.exec(variantKey.trim()) : null;
   return match ? Number(match[1]) : null;
 }
 
 /** The v2 rating in an imageScanning output, or null when there is none to trust: no `ratingV2` block,
- *  a status other than OK, or a sexual label or restricted flag that doesn't parse. Violence is not
- *  read. */
+ *  a status other than OK, or a sexual label or restricted flag that doesn't parse. */
 export function parseRatingV2(output: unknown): StoredRating | null {
   const block = (output as { ratingV2?: unknown } | null | undefined)?.ratingV2 as
     | { status?: unknown; sexual?: { label?: unknown }; restricted?: unknown }

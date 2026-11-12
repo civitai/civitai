@@ -23,11 +23,40 @@ export const DATASET_RATING_FLAG = 'trainingStudioDatasetRatingV2';
 
 /** How long one dataset's rating job may run. Images it doesn't reach stay unrated (upload rating). */
 export const DATASET_RATING_DEADLINE_MS = 30_000;
-/** Rating calls in flight per job. The rater's capacity and per-user in-flight limit are small. */
+/** Rating calls in flight per job. */
 export const DATASET_RATING_CONCURRENCY = 2;
+/** Per user per UTC day, across pods: images sent to the rater, and Review's count requests. */
+export const DATASET_RATING_DAILY_CALLS = 3000;
+export const DATASET_RATING_DAILY_LOOKUPS = 300;
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING;
-const cacheKey = (blobKey: string) => `${KEY}:${blobKey}` as const;
+const DAILY_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_DAILY;
+// By rater, so a different rater's results are never read as this one's. Blob ids are case-insensitive.
+const cacheKey = (blobId: string) =>
+  `${KEY}:${RATER_MODEL}:${blobId.trim().toLowerCase()}` as const;
+
+/** Take up to `want` units of today's `kind` allowance for this user; returns how many were granted.
+ *  A Redis failure grants none, which leaves images on their upload rating. */
+export async function claimDaily(
+  kind: 'calls' | 'lookups',
+  userId: number,
+  want: number
+): Promise<number> {
+  if (want <= 0) return 0;
+  const limit = kind === 'calls' ? DATASET_RATING_DAILY_CALLS : DATASET_RATING_DAILY_LOOKUPS;
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `${DAILY_KEY}:${kind}:${userId}:${day}` as const;
+  try {
+    const redis = getSysRedis();
+    const total = await redis.incrBy(key, want);
+    if (total === want) await redis.expire(key, 2 * 24 * 60 * 60);
+    const granted = Math.max(0, Math.min(want, limit - (total - want)));
+    if (granted < want) await redis.decrBy(key, want - granted).catch(() => undefined);
+    return granted;
+  } catch {
+    return 0;
+  }
+}
 
 /** The v2 rating for this user's datasets, or undefined when it is off for them. */
 export async function datasetRatingFor(user: SessionUser): Promise<DatasetRating | undefined> {
@@ -40,7 +69,7 @@ async function readRatings(blobKeys: string[]): Promise<Map<string, StoredRating
   const ratings = new Map<string, StoredRating>();
   if (blobKeys.length === 0) return ratings;
   try {
-    const values = await getSysRedis().packed.mGet<unknown>(blobKeys.map(cacheKey));
+    const values = await getSysRedis().packed.mGet<unknown>(blobKeys.map((k) => cacheKey(k)));
     values.forEach((value, i) => {
       if (isStoredRating(value)) ratings.set(blobKeys[i]!, value);
     });
@@ -155,7 +184,8 @@ const activeJobs = new Map<number, Promise<void>>();
  *  second call while one runs starts nothing; Review asks again). Never throws. */
 export function warmDatasetRating(token: string, userId: number, blobKeys: string[]): void {
   if (blobKeys.length === 0 || activeJobs.has(userId)) return;
-  const job = runRatingJob(orchestratorClient(token), blobKeys)
+  const job = claimDaily('calls', userId, blobKeys.length)
+    .then((granted) => runRatingJob(orchestratorClient(token), blobKeys.slice(0, granted)))
     .then((summary) => {
       void logToAxiom({
         name: 'training-studio-dataset-rating',
@@ -163,6 +193,7 @@ export function warmDatasetRating(token: string, userId: number, blobKeys: strin
         message: 'dataset rating job',
         userId,
         ...summary,
+        overDailyCap: blobKeys.length - summary.images,
       });
     })
     .catch((err) => {
