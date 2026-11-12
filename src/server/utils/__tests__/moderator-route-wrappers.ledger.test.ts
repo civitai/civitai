@@ -532,6 +532,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'blocks/submit-version',
   // Raw key download, moderators only.
   'download/[...key]',
+  // A training run's epoch file, owner or moderator only.
+  'download/training/[modelVersionId]',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
   'user/orchestrator-key',

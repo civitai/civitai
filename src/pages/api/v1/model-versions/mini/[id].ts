@@ -63,7 +63,13 @@ import {
   credentialKind,
   evaluateMiniEpochCaller,
   getMiniEpochGateMode,
+  hasVersionGrant,
 } from '~/server/utils/mini-epoch-caller';
+import { downloadCredentialGate, scopeRefusalMode } from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const MINI_ROUTE = '/api/v1/model-versions/mini/[id]';
+const MINI_SCOPES = { anyOfScopes: [TokenScope.ModelsRead, TokenScope.AIServicesRead] };
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -140,8 +146,22 @@ type FileRow = {
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
-  user: Session['user'] | undefined
+  sessionUser: Session['user'] | undefined
 ) {
+  // The orchestrator's service token carries no user and keeps its own path.
+  const orchestrator = matchesOrchestratorServiceToken(req);
+  const credential = orchestrator
+    ? { outcome: 'session' as const, effectiveUser: sessionUser }
+    : downloadCredentialGate(req, sessionUser, MINI_SCOPES);
+  const user = credential.effectiveUser;
+  // Read only where the answer depends on it, so the flag and its log see the epoch arm alone.
+  let scopeRefused: Promise<boolean> | undefined;
+  const isScopeRefused = () =>
+    (scopeRefused ??=
+      credential.outcome === 'refused'
+        ? scopeRefusalMode(req, MINI_ROUTE, MINI_SCOPES).then((mode) => mode === 'enforce')
+        : Promise.resolve(false));
+
   const results = schema.safeParse(req.query);
   if (!results.success)
     return res.status(400).json({ error: z.prettifyError(results.error) ?? 'Invalid id' });
@@ -327,6 +347,20 @@ export default MixedAuthEndpoint(async function handler(
   // `targetFile` still governs both on that arm.
   const filePreferences = { metadata: user?.filePreferences };
 
+  // A file id the caller may not see is answered as one that does not exist, decided before the
+  // file is looked up so the answer cannot tell the two apart.
+  if (modelFileId && !visibleFiles.some((f) => f.id === modelFileId)) {
+    const entitled =
+      orchestrator ||
+      (!(await isScopeRefused()) &&
+        (isOwner || isMod || (!!user?.id && (await hasVersionGrant(user.id, modelVersion.id)))));
+    res.setHeader('Cache-Control', 'private, no-store');
+    if (!entitled)
+      return res
+        .status(404)
+        .json({ error: `Model file ${modelFileId} not found in version ${id}` });
+  }
+
   // `getPrimaryFile` over the unfiltered files with default preferences, deliberately — see both
   // notes above; this only decides `useEpochUrl` and, on the epoch arm, names the training file.
   const requestedFile = modelFileId
@@ -351,6 +385,7 @@ export default MixedAuthEndpoint(async function handler(
         modelVersionId: modelVersion.id,
         ownerId: modelVersion.modelUserId,
         mode,
+        scopeRefused: await isScopeRefused(),
       });
       // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
       // 404 to a caller who would be served.
@@ -358,9 +393,9 @@ export default MixedAuthEndpoint(async function handler(
       mayResign = caller.callerClass !== 'anonymous' && caller.callerClass !== 'other';
     } else {
       mayResign =
-        matchesOrchestratorServiceToken(req) ||
-        user?.id === modelVersion.modelUserId ||
-        !!user?.isModerator;
+        orchestrator ||
+        (!(await isScopeRefused()) &&
+          (user?.id === modelVersion.modelUserId || !!user?.isModerator));
     }
   }
 
@@ -670,7 +705,8 @@ export default MixedAuthEndpoint(async function handler(
       }).catch(() => undefined);
   }
 
-  const includeModeration = receivesMiniModeration(req, user);
+  // Its own credential rule, which accepts a moderator's narrow-scope personal key.
+  const includeModeration = receivesMiniModeration(req, sessionUser);
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
@@ -704,7 +740,7 @@ export default MixedAuthEndpoint(async function handler(
     tipsEnabled,
     ...(includeModeration ? { moderation } : {}),
   };
-  logMiniModerationCaller(req, user, modelVersion, includeModeration);
+  logMiniModerationCaller(req, sessionUser, modelVersion, includeModeration);
   if (includeModeration) {
     res.setHeader('Cache-Control', 'private, no-store');
     // Read by the orchestrator as the absolute time its cached copy of this response expires.

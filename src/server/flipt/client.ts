@@ -332,6 +332,8 @@ export enum FLIPT_FEATURE_FLAGS {
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
   // Variant: `log` | `enforce` | `enforce-anon`; any other answer is off. Read by mini-epoch-caller.ts.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
+  // Variant: `log` | `enforce`; any other answer is off. Read by download-credential-gate.ts.
+  DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,

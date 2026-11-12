@@ -712,16 +712,18 @@ describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch pa
     expect(body.hashes.SHA256).toBe(TRAINING_FILE.hashes.SHA256);
   });
 
-  it('an authenticated non-owner still gets the epoch url', async () => {
+  // Asked for by id, a file the caller may not see is answered as one that does not exist.
+  it('an authenticated non-owner asking for the training file by id gets the unknown-file 404', async () => {
     currentUser.value = { id: OTHER_USER_ID };
     const { status, body } = await run(
       [TRAINING_FILE, SAFETENSOR],
       { modelFileId: String(TRAINING_FILE.id) },
       { availability: 'Private' }
     );
-    expect(status).toBe(200);
-    expect(body.downloadUrls[0]).toBe(EPOCH_URL);
-    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(status).toBe(404);
+    expect(body).toEqual({
+      error: `Model file ${TRAINING_FILE.id} not found in version ${VERSION_ID}`,
+    });
   });
 
   it('the epoch url is the orchestrator url, NOT a download-route url', async () => {
@@ -1521,12 +1523,13 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
   it.each([
     ['an anonymous caller', undefined],
     ['a signed-in stranger', { id: OTHER_USER_ID }],
-  ])('keeps the stored url for %s the gate does not check', async (_, user) => {
+  ])('neither serves nor signs it for %s asking by id', async (_, user) => {
     currentUser.value = user;
 
-    const { body } = await runPlaceholder(EXPIRED);
+    const { status, body } = await runPlaceholder(EXPIRED);
 
-    expect(body.downloadUrls).toEqual([EXPIRED]);
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('downloadUrls');
     expect(mockRefreshBlobs).not.toHaveBeenCalled();
   });
 
