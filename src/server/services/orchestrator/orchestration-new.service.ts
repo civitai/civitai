@@ -115,7 +115,6 @@ import {
   isActiveTrainingStepStatus,
   trainingWorkflowEpochBlobs,
 } from '~/server/services/orchestrator/training/training-epoch-blobs';
-import { isTrainingModerationApproved } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
@@ -525,7 +524,7 @@ function collectRawAirResources(data: GenerationData): RawAirResource[] {
  *
  * NSFW/POI/canGenerate gates deliberately don't apply here: there is no model
  * row to read flags from, and the content is the caller's own training output —
- * the ownership, ecosystem and dataset-approval checks replace the DB-side canGenerate derivation.
+ * the ownership + ecosystem checks replace the DB-side canGenerate derivation.
  */
 async function validateRawAirResources({
   resources,
@@ -601,18 +600,14 @@ async function validateRawAirResources({
       // NOT_FOUND for a deleted or not-owned workflow (the orchestrator scopes
       // the read to the caller's token) is re-checked every time.
       const cacheKey = `${REDIS_KEYS.CACHES.TRAINING_EPOCH_BLOBS}:${userId}:${workflowId}` as const;
-      const { blobKeys, completedAt, stepStatus, ecosystem, moderationApproved } =
-        await fetchThroughCache(
-          cacheKey,
-          async () => {
-            const workflow = await getWorkflow({ token: orchestratorToken, path: { workflowId } });
-            return {
-              ...trainingWorkflowEpochBlobs(workflow),
-              moderationApproved: isTrainingModerationApproved(workflow),
-            };
-          },
-          { ttl: CacheTTL.xs * 5 }
-        );
+      const { blobKeys, completedAt, stepStatus, ecosystem } = await fetchThroughCache(
+        cacheKey,
+        async () => {
+          const workflow = await getWorkflow({ token: orchestratorToken, path: { workflowId } });
+          return trainingWorkflowEpochBlobs(workflow);
+        },
+        { ttl: CacheTTL.xs * 5 }
+      );
       const availableBlobKeys = new Set(blobKeys);
       // The AIR's ecosystem segment is caller-supplied: without this, an owned blob could be
       // relabeled under a different ecosystem and routed through the wrong handler. Unknown
@@ -643,13 +638,6 @@ async function validateRawAirResources({
       if (epochExpired) {
         throw throwBadRequestError(
           'One of the epochs you are trying to generate with has expired. Make it a private model to continue using it.'
-        );
-      }
-      // Same rule as publishing a run's checkpoints: only an approved dataset's epochs are usable.
-      // A cache entry written before this field existed reads undefined and is refused until it expires.
-      if (moderationApproved !== true) {
-        throw throwBadRequestError(
-          'Epochs from this training run cannot be used for generation because its dataset has not been approved.'
         );
       }
     })

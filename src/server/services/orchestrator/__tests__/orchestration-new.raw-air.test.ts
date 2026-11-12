@@ -93,23 +93,19 @@ function workflowWithEpoch({
   status = 'succeeded',
   trainedEcosystem,
   epochAvailable,
-  moderationStatus = 'approved',
 }: {
   completedAt?: string;
   status?: string;
   trainedEcosystem?: string;
   epochAvailable?: boolean;
-  moderationStatus?: string;
 } = {}) {
   return {
     steps: [
       {
-        $type: 'training',
         completedAt,
         status,
         ...(trainedEcosystem ? { input: { ecosystem: trainedEcosystem } } : {}),
         output: {
-          moderationStatus,
           epochs: [
             { epochNumber: 3, model: { id: BLOB_KEY, url: null, available: epochAvailable } },
           ],
@@ -353,50 +349,10 @@ describe('epoch generation window (15-day parity with ModelVersion epochs)', () 
   });
 });
 
-describe('training-data moderation (same approval rule as publishing a run)', () => {
-  const NOT_APPROVED = /dataset has not been approved/;
-
-  it('CONTROL: an approved run is not refused on moderation grounds', async () => {
-    expect(await submit()).not.toMatch(NOT_APPROVED);
-  });
-
-  it.each(['underReview', 'evaluating', 'rejected'])(
-    'refuses an owned epoch from a run whose moderation status is %s',
-    async (moderationStatus) => {
-      mockGetWorkflow.mockResolvedValue(
-        workflowWithEpoch({ completedAt: daysAgo(1), moderationStatus })
-      );
-      expect(await submit()).toMatch(NOT_APPROVED);
-    }
-  );
-
-  it('refuses a run that reports no moderation status at all', async () => {
-    // Passing `undefined` would fall back to the fixture default, so strip the field instead.
-    const wf = workflowWithEpoch({ completedAt: daysAgo(1) });
-    delete (wf.steps[0].output as { moderationStatus?: string }).moderationStatus;
-    mockGetWorkflow.mockResolvedValue(wf);
-    expect(await submit()).toMatch(NOT_APPROVED);
-  });
-
-  it('refuses a cached derivation that predates the approval field', async () => {
-    redisMock.redis.packed.get.mockResolvedValue({
-      data: { blobKeys: [BLOB_KEY], completedAt: daysAgo(1), stepStatus: 'succeeded' },
-      cachedAt: Date.now(),
-    });
-    expect(await submit()).toMatch(NOT_APPROVED);
-    expect(mockGetWorkflow).not.toHaveBeenCalled();
-  });
-});
-
 describe('ownership-fetch caching', () => {
   it('serves a cached derivation without refetching the workflow', async () => {
     redisMock.redis.packed.get.mockResolvedValue({
-      data: {
-        blobKeys: [BLOB_KEY],
-        completedAt: daysAgo(1),
-        stepStatus: 'succeeded',
-        moderationApproved: true,
-      },
+      data: { blobKeys: [BLOB_KEY], completedAt: daysAgo(1), stepStatus: 'succeeded' },
       cachedAt: Date.now(),
     });
 
@@ -408,12 +364,7 @@ describe('ownership-fetch caching', () => {
 
   it('a cached derivation still enforces the expiry window', async () => {
     redisMock.redis.packed.get.mockResolvedValue({
-      data: {
-        blobKeys: [BLOB_KEY],
-        completedAt: daysAgo(16),
-        stepStatus: 'succeeded',
-        moderationApproved: true,
-      },
+      data: { blobKeys: [BLOB_KEY], completedAt: daysAgo(16), stepStatus: 'succeeded' },
       cachedAt: Date.now(),
     });
 
