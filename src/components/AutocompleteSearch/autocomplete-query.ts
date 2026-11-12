@@ -145,11 +145,20 @@ export function parseFeedSearch(search: string) {
  * The router query a header search on the feed produces: the feed's other filters kept, `query`
  * replaced, `username` set only by an `@user` token. Null when it would change nothing.
  */
-export function nextFeedSearchQuery(current: ParsedUrlQuery, search: string) {
+export function nextFeedSearchQuery(
+  current: ParsedUrlQuery,
+  search: string,
+  /** The user filter this bar's own `@user` token set last, if it is still on the URL. */
+  typedUsername?: string
+) {
   const { query, username } = parseFeedSearch(search);
   const currentQuery = typeof current.query === 'string' ? current.query : undefined;
-  if (query === currentQuery && (!username || username === current.username)) return null;
-  return removeEmpty({ ...current, query, ...(username && { username }) }) as ParsedUrlQuery;
+  const currentUsername = typeof current.username === 'string' ? current.username : undefined;
+  // A user filter the bar set goes when its token is deleted; one set anywhere else stays.
+  const nextUsername =
+    username ?? (typedUsername && currentUsername === typedUsername ? undefined : currentUsername);
+  if (query === currentQuery && nextUsername === currentUsername) return null;
+  return removeEmpty({ ...current, query, username: nextUsername }) as ParsedUrlQuery;
 }
 
 /**

@@ -262,3 +262,21 @@ describe('nextFeedSearchQuery', () => {
     expect(nextFeedSearchQuery({ query: 'red dragon' }, '  red   dragon ')).toBeNull();
   });
 });
+
+describe('nextFeedSearchQuery and the user filter', () => {
+  it('drops the user filter the bar set once its @user token is deleted', () => {
+    expect(nextFeedSearchQuery({ query: 'dragon', username: 'alice' }, 'dragon', 'alice')).toEqual({
+      query: 'dragon',
+    });
+    expect(nextFeedSearchQuery({ query: 'dragon', username: 'alice' }, 'castle', 'alice')).toEqual({
+      query: 'castle',
+    });
+  });
+
+  it('keeps a user filter the bar did not set', () => {
+    expect(nextFeedSearchQuery({ query: 'dragon', username: 'alice' }, 'castle')).toEqual({
+      query: 'castle',
+      username: 'alice',
+    });
+  });
+});

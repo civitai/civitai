@@ -101,5 +101,8 @@ export function parseImageQueryParams(
  * from (the index path's rows carry no `name`, so their URL differs).
  */
 export function hasImageDetailQueryFilters(filters: ImagesQueryParamSchema, postId?: number) {
-  return Object.keys(filters).length > 0 || !!postId;
+  // A search query is answered by the feed's search, which this page doesn't run; on its own it
+  // would load an unrelated carousel from the plain feed.
+  const { query: _query, ...feedFilters } = filters;
+  return Object.keys(feedFilters).length > 0 || !!postId;
 }

@@ -8,10 +8,11 @@ import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 const setImageFilters = vi.hoisted(() => vi.fn());
+const saved = vi.hoisted(() => ({ images: {} as Record<string, unknown> }));
 vi.mock('~/providers/FiltersProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof Filters>()),
-  useFiltersContext: (select: (state: { setImageFilters: typeof setImageFilters }) => unknown) =>
-    select({ setImageFilters }),
+  useFiltersContext: (select: (state: Record<string, unknown>) => unknown) =>
+    select({ setImageFilters, images: saved.images }),
 }));
 
 // The shared stub's singleton, the same object `useRouter()` returns.
@@ -44,6 +45,7 @@ describe('ImageFeedSearchSummary', () => {
     router.query = { query: 'red dragon', baseModels: 'Illustrious' };
     router.replace.mockClear();
     setImageFilters.mockClear();
+    saved.images = {};
   });
 
   test('removing a filter the URL set takes it off the URL, not the saved filters', async () => {
@@ -64,5 +66,13 @@ describe('ImageFeedSearchSummary', () => {
     renderSummary();
     await page.getByText('Clear search').click();
     expect(router.replace.mock.calls.at(-1)?.[0].query).toEqual({ baseModels: 'Illustrious' });
+  });
+
+  test('removing the last base model from the URL clears a saved one rather than uncovering it', async () => {
+    saved.images = { baseModels: ['Pony'] };
+    renderSummary();
+    await removeChip('Illustrious');
+    expect(router.replace.mock.calls.at(-1)?.[0].query).toEqual({ query: 'red dragon' });
+    expect(setImageFilters).toHaveBeenCalledWith({ baseModels: [] });
   });
 });

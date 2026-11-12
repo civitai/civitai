@@ -118,3 +118,22 @@ describe('useFeedSearchSync when the router lags its own writes', () => {
     expect(setSearch).not.toHaveBeenCalled();
   });
 });
+
+describe('useFeedSearchSync and the @user token', () => {
+  beforeEach(() => {
+    router.query = {};
+    router.replace.mockReset();
+    setSearch.mockReset();
+  });
+
+  it('removes the user filter it added when the token is deleted, and keeps the rest', () => {
+    router.query = { baseModels: 'Illustrious' };
+    const render = mount();
+    hook.markTyped();
+    render({ debouncedSearch: 'dragon @alice' });
+    router.query = { baseModels: 'Illustrious', query: 'dragon', username: 'alice' };
+    render({ debouncedSearch: 'dragon @alice' });
+    render({ debouncedSearch: 'dragon' });
+    expect(replacedQueries().at(-1)).toEqual({ baseModels: 'Illustrious', query: 'dragon' });
+  });
+});

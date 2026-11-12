@@ -24,7 +24,17 @@ export function ImageFeedFilters({
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
-      {currentUser && <FollowedFilter type="images" variant="button" />}
+      {currentUser &&
+        (searchQuery ? (
+          // The search doesn't narrow by audience, so the selector waits until it's cleared.
+          <Tooltip label="Clear the search to filter by who posted" withArrow>
+            <div>
+              <FollowedFilter type="images" variant="button" buttonProps={{ disabled: true }} />
+            </div>
+          </Tooltip>
+        ) : (
+          <FollowedFilter type="images" variant="button" />
+        ))}
       {searchQuery ? (
         // The search ranks by match only; a feed sort would be a promise it can't keep.
         <Tooltip label="Clear the search to sort the feed" withArrow>

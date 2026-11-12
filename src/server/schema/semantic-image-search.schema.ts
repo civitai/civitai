@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { baseQuerySchema } from '~/server/schema/base.schema';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 export const SEMANTIC_QUERY_MAX_LENGTH = 500;
@@ -11,11 +12,12 @@ export const semanticImageSearchSchema = baseQuerySchema
     query: z.string().trim().max(SEMANTIC_QUERY_MAX_LENGTH).optional(),
     // "More like this": the image whose vector is the query.
     imageId: z.number().int().positive().optional(),
-    tagIds: z.number().int().array().max(20).optional(),
+    // Room for whatever the images feed can select: its filters carry into the search unchanged.
+    tagIds: z.number().int().array().max(100).optional(),
     // By name, as the image search URLs and pickers carry them; resolved to ids on the server.
     tagNames: z.string().trim().min(1).array().max(20).optional(),
     excludedTagIds: z.number().int().array().max(50).optional(),
-    baseModels: z.string().array().max(20).optional(),
+    baseModels: z.string().array().max(baseModels.length).optional(),
     types: z.enum(MediaType).array().optional(),
     usernames: z.string().trim().min(1).array().max(20).optional(),
     // Bounds on `sortAt`, the publish time for a published image.

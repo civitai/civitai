@@ -61,14 +61,15 @@ describe('ignoredWhileSearching', () => {
         baseModels: ['SDXL 1.0'],
       })
     ).toEqual(['tools', 'followed']);
+    expect(ignoredWhileSearching({ newCreators: true })).toEqual(['newCreators']);
   });
 });
 
 describe('imageFeedUrlFromLegacySearch', () => {
   const parse = (url: string) => new URL(url, 'https://x');
   const tagIdsByName: Record<string, number> = { dragon: 12, castle: 40 };
-  const resolveTagIds = vi.fn(async (names: string[]) =>
-    names.map((name) => tagIdsByName[name]).filter(Boolean)
+  const resolveTags = vi.fn(async (names: string[]) =>
+    names.filter((name) => tagIdsByName[name]).map((name) => ({ id: tagIdsByName[name], name }))
   );
 
   it('carries the query, user, base model and tags to the feed, dropping the sort', async () => {
@@ -81,7 +82,7 @@ describe('imageFeedUrlFromLegacySearch', () => {
           tags: ['dragon', 'castle'],
           sortBy: 'images_v6:stats.reactionCountAllTime:desc',
         },
-        resolveTagIds
+        resolveTags
       )
     );
     expect(url.pathname).toBe('/images');
@@ -93,18 +94,26 @@ describe('imageFeedUrlFromLegacySearch', () => {
   });
 
   it('looks up at most 20 tag names', async () => {
-    resolveTagIds.mockClear();
+    resolveTags.mockClear();
     const tags = Array.from({ length: 30 }, (_, i) => `tag${i}`);
-    await imageFeedUrlFromLegacySearch({ query: 'x', tags }, resolveTagIds);
-    expect(resolveTagIds.mock.calls[0][0]).toHaveLength(20);
+    await imageFeedUrlFromLegacySearch({ query: 'x', tags }, resolveTags);
+    expect(resolveTags.mock.calls[0][0]).toHaveLength(20);
   });
 
   it('keeps a legacy sort as the feed sort when there is no query', async () => {
     const sortOf = async (sortBy: string) =>
-      parse(await imageFeedUrlFromLegacySearch({ sortBy }, resolveTagIds)).searchParams.get('sort');
+      parse(await imageFeedUrlFromLegacySearch({ sortBy }, resolveTags)).searchParams.get('sort');
     expect(await sortOf('images_v6:stats.reactionCountAllTime:desc')).toBe(ImageSort.MostReactions);
     expect(await sortOf('images_v6:createdAt:desc')).toBe(ImageSort.Newest);
     expect(await sortOf('images_v6:createdAt:asc')).toBe(ImageSort.Oldest);
-    expect(await imageFeedUrlFromLegacySearch({}, resolveTagIds)).toBe('/images');
+    expect(await imageFeedUrlFromLegacySearch({}, resolveTags)).toBe('/images');
+  });
+
+  it('keeps a tag name that matches no tag as a word in the query, rather than dropping it', async () => {
+    const url = parse(
+      await imageFeedUrlFromLegacySearch({ query: 'red', tags: ['dragon', 'wyvern'] }, resolveTags)
+    );
+    expect(url.searchParams.get('query')).toBe('red wyvern');
+    expect(url.searchParams.getAll('tags')).toEqual(['12']);
   });
 });

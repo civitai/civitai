@@ -11,7 +11,7 @@ import { IconCloudOff, IconPhotoSearch } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { resolveTagIds } from '~/server/services/semantic-search-client';
+import { resolveTags } from '~/server/services/semantic-search-client';
 import { imageFeedUrlFromLegacySearch } from '~/components/Image/Infinite/image-feed-search';
 import { legacyImageSearchDestination } from '~/components/Search/search-target';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
@@ -239,7 +239,7 @@ export const getServerSideProps = createServerSideProps({
     if (destination === 'images-feed')
       return {
         redirect: {
-          destination: await imageFeedUrlFromLegacySearch(ctx.query, resolveTagIds),
+          destination: await imageFeedUrlFromLegacySearch(ctx.query, resolveTags),
           permanent: false,
         },
       };

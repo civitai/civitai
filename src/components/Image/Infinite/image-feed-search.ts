@@ -41,7 +41,7 @@ export const IMAGE_FEED_SEARCH_UNAVAILABLE_REASON =
   'Search ranks images by what they show, so these filters only work on the feed without a query.';
 
 export const imageFeedFilterLabels: Record<
-  (typeof imageFeedSearchUnavailableKeys)[number] | 'followed',
+  (typeof imageFeedSearchUnavailableKeys)[number] | 'followed' | 'newCreators',
   string
 > = {
   // As the Filters menu and the Followed button word them, so a greyed control reads the same.
@@ -67,6 +67,7 @@ export const imageFeedFilterLabels: Record<
   hideTurfHats: 'Turf hats',
   hideWornHats: 'Worn hats',
   followed: 'Followed',
+  newCreators: 'New & Upcoming',
 };
 
 type FeedFilters = Partial<
@@ -86,7 +87,7 @@ const isActive = (value: unknown) =>
 
 /** The unavailable filters that are switched on, so the feed can say they are being ignored. */
 export function ignoredWhileSearching(filters: FeedFilters) {
-  const keys = [...imageFeedSearchUnavailableKeys, 'followed'] as const;
+  const keys = [...imageFeedSearchUnavailableKeys, 'followed', 'newCreators'] as const;
   return keys.filter((key) => isActive(filters[key]));
 }
 
@@ -144,22 +145,28 @@ const all = (value: string | string[] | undefined) =>
 
 /**
  * Where an old `/search/images` URL lands now: the images feed with the query applied. Tag names are
- * resolved to ids by `resolveTagIds` (at most 20, the search's own cap). A sort only survives without
- * a query; with one the feed ranks by match.
+ * resolved by `resolveTags` (at most 20, the search's own cap); a name that matches no tag stays in
+ * the query as a word, as `#tag` words do in the search bar, so the redirect never widens the search
+ * by dropping it. A sort only survives without a query; with one the feed ranks by match.
  */
 export async function imageFeedUrlFromLegacySearch(
   params: Record<string, string | string[] | undefined>,
-  resolveTagIds: (names: string[]) => Promise<number[]>
+  resolveTags: (names: string[]) => Promise<{ id: number; name: string }[]>
 ) {
-  const query = normalizeFeedQuery(first(params.query));
+  const tagNames = all(params.tags).filter(Boolean).slice(0, 20);
+  const tags = tagNames.length ? await resolveTags(tagNames) : [];
+  const known = new Set(tags.map((tag) => tag.name.toLowerCase()));
+  const unknownNames = tagNames.filter((name) => !known.has(name.toLowerCase()));
+  const query = normalizeFeedQuery(
+    [first(params.query), ...unknownNames].filter(Boolean).join(' ')
+  );
   const sortBy = first(params.sortBy);
   const sort = !query && sortBy ? legacyImageSorts.find(([re]) => re.test(sortBy))?.[1] : undefined;
-  const tagNames = all(params.tags).filter(Boolean).slice(0, 20);
   const queryString = QS.stringify({
     query,
     username: first(params.users),
     baseModels: all(params.baseModel ?? params.baseModels),
-    tags: tagNames.length ? await resolveTagIds(tagNames) : [],
+    tags: tags.map((tag) => tag.id),
     sort,
   });
   return queryString ? `/images?${queryString}` : '/images';

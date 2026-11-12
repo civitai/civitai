@@ -1,6 +1,9 @@
 import { useRouter } from 'next/router';
 import { useEffect, useRef } from 'react';
-import { nextFeedSearchQuery } from '~/components/AutocompleteSearch/autocomplete-query';
+import {
+  nextFeedSearchQuery,
+  parseFeedSearch,
+} from '~/components/AutocompleteSearch/autocomplete-query';
 
 const MIN_TYPED_QUERY_LENGTH = 2;
 
@@ -31,11 +34,13 @@ export function useFeedSearchSync({
   const inFlight = useRef<(string | undefined)[]>([]);
   const typedSinceSeed = useRef(false);
   const lastSeen = useRef<string | undefined>(undefined);
+  const typedUsername = useRef<string | undefined>(undefined);
 
   const apply = (text: string) => {
     if (!enabled || blocked) return;
-    const next = nextFeedSearchQuery(router.query, text);
+    const next = nextFeedSearchQuery(router.query, text, typedUsername.current);
     if (!next) return;
+    typedUsername.current = parseFeedSearch(text).username;
     inFlight.current.push(typeof next.query === 'string' ? next.query : undefined);
     void router.replace({ pathname: router.pathname, query: next }, undefined, { shallow: true });
   };
@@ -50,6 +55,7 @@ export function useFeedSearchSync({
     }
     inFlight.current = [];
     typedSinceSeed.current = false;
+    typedUsername.current = undefined;
     setSearch(feedQuery ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, feedQuery]);

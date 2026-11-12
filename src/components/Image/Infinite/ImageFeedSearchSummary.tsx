@@ -13,6 +13,9 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
+const isEmptyFilter = (value: unknown) =>
+  value === undefined || (Array.isArray(value) && value.length === 0);
+
 type Props = {
   query: string;
   correctedQuery?: string;
@@ -26,10 +29,18 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
   // The saved feed filters load in the browser, so the server can't render their chips.
   const isClient = useIsClient();
   const setStoreFilters = useFiltersContext((state) => state.setImageFilters);
+  const storeFilters = useFiltersContext((state) => state.images) as
+    | Record<string, unknown>
+    | undefined;
 
-  // A filter set by the URL is changed there, one from the saved feed filters in the store.
+  // A filter set by the URL is changed there, one from the saved feed filters in the store. Emptying
+  // a URL filter would uncover the saved one under it, so that is cleared too.
   const update = (patch: Partial<ImagesQueryParamSchema>) => {
     const inUrl = Object.keys(patch).filter((key) => key in router.query || key === 'query');
+    const uncovered = inUrl.filter(
+      (key) =>
+        isEmptyFilter(patch[key as keyof typeof patch]) && !isEmptyFilter(storeFilters?.[key])
+    );
     if (inUrl.length)
       void router.replace(
         {
@@ -43,7 +54,7 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
         { shallow: true }
       );
     const inStore = Object.fromEntries(
-      Object.entries(patch).filter(([key]) => !inUrl.includes(key))
+      Object.entries(patch).filter(([key]) => !inUrl.includes(key) || uncovered.includes(key))
     );
     if (Object.keys(inStore).length) setStoreFilters(inStore);
   };
