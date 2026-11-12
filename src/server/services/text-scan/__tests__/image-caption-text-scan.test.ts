@@ -116,8 +116,8 @@ describe('applyImageCaptionTextScan', () => {
   });
 });
 
-// RESTRICT site of the minor content rule. Expected values are the rule as it stood before the
-// gates shared it; the un-refuse branch must stay its exact complement on a current verdict.
+// RESTRICT site of the minor content rule: a minor at a missing, unrated or mature rating is
+// refused. The un-refuse branch must stay its exact complement on a current verdict.
 describe('applyImageCaptionTextScan minor content truth table', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -127,7 +127,7 @@ describe('applyImageCaptionTextScan minor content truth table', () => {
 
   it.each([
     [true, undefined, true],
-    [true, 0, false],
+    [true, 0, true],
     [false, 0, false],
     [true, NsfwLevel.PG, false],
     [true, NsfwLevel.PG13, false],
