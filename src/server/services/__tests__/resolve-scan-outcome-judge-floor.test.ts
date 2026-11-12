@@ -151,7 +151,11 @@ const scan = async (image: ScanImage) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(auditPostImageMeta).mockReturnValue({ success: true });
+  vi.mocked(auditPostImageMeta).mockReturnValue({
+    success: true,
+    blockedFor: [],
+    softBlockedFor: [],
+  });
   holder.holdRule = false;
   scanTagLevel = X;
   const raw = pgliteRaw(db);
@@ -203,7 +207,11 @@ describe('resolveScanOutcome with a collection judge rating', () => {
   it('runs the checks at the judge level when the tags rate lower', async () => {
     scanTagLevel = PG13;
     // The prompt fails the audit, which only runs for an NSFW level.
-    vi.mocked(auditPostImageMeta).mockReturnValue({ success: false, blockedFor: ['prompt'] });
+    vi.mocked(auditPostImageMeta).mockReturnValue({
+      success: false,
+      blockedFor: ['prompt'],
+      softBlockedFor: [],
+    });
     const { outcome, row } = await scan(await arrange({ nsfwLevel: X, metadata: judgeRated(X) }));
 
     expect(row).toMatchObject({ ingestion: 'Blocked', nsfwLevel: BLOCKED });
@@ -212,7 +220,11 @@ describe('resolveScanOutcome with a collection judge rating', () => {
 
   it('runs the checks at the tag level when there is no judge rating', async () => {
     scanTagLevel = PG13;
-    vi.mocked(auditPostImageMeta).mockReturnValue({ success: false, blockedFor: ['prompt'] });
+    vi.mocked(auditPostImageMeta).mockReturnValue({
+      success: false,
+      blockedFor: ['prompt'],
+      softBlockedFor: [],
+    });
     const { row } = await scan(await arrange({ nsfwLevel: PG13 }));
 
     expect(row).toMatchObject({ ingestion: 'Scanned', nsfwLevel: PG13 });
@@ -256,7 +268,10 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     holder.holdRule = true;
     holder.beforeVerdict = () =>
       db.query(`UPDATE "Image" SET metadata = $1 WHERE id = $2`, [judgeRated(X), ID]);
-    const passthrough = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    const passthrough = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as unknown as (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => Promise<unknown>;
     vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
@@ -274,7 +289,10 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     scanTagLevel = PG13;
     holder.beforeVerdict = () =>
       db.query(`UPDATE "Image" SET metadata = $1 WHERE id = $2`, [judgeRated(X), ID]);
-    const passthrough = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    const passthrough = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as unknown as (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => Promise<unknown>;
     vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
@@ -316,7 +334,11 @@ describe('resolveScanOutcome with a collection judge rating', () => {
   });
 
   it('blocks on an audit block, whatever the judge rated', async () => {
-    vi.mocked(auditPostImageMeta).mockReturnValueOnce({ success: false, blockedFor: ['prompt'] });
+    vi.mocked(auditPostImageMeta).mockReturnValueOnce({
+      success: false,
+      blockedFor: ['prompt'],
+      softBlockedFor: [],
+    });
     const { outcome, row } = await scan(await arrange({ nsfwLevel: R, metadata: judgeRated(X) }));
 
     expect(row).toMatchObject({ ingestion: 'Blocked', nsfwLevel: BLOCKED });
@@ -373,7 +395,10 @@ describe('resolveScanOutcome with a collection judge rating', () => {
 
   it('keeps the landed verdict when the floor write fails', async () => {
     scanTagLevel = PG13;
-    const passthrough = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    const passthrough = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as unknown as (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => Promise<unknown>;
     vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
