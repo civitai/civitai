@@ -34,6 +34,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // the search index (an empty page, a retryable 503, or a 400 for a sort it does not have) instead
   // of falling back. Off or missing, the flags above decide as before.
   FEED_SERVICE_MEILI_OFF = 'feed-service-meili-off',
+  // On: the image feed's feed-service call runs behind a circuit breaker, and an anonymous first
+  // page the feed fails to answer is served from that pod's last good copy (10 min) instead of a
+  // 503 (`~/server/services/feed-primary-degrade`). DEFAULT-OFF: `isFliptSync` returns null for an
+  // unknown flag or an uninitialised client, which keeps every call going to the feed, as before.
+  // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
+  FEED_SERVICE_DEGRADE = 'feed-service-degrade',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.

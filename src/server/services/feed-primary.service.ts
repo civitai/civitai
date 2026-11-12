@@ -4,6 +4,14 @@ import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
+import {
+  admitFeedCall,
+  feedDegradeEnabled,
+  lastGoodKey,
+  readLastGood,
+  recordFeedCall,
+  writeLastGood,
+} from '~/server/services/feed-primary-degrade';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -15,7 +23,10 @@ import {
   type FeedAnswer,
 } from '~/server/services/feed-shadow.service';
 
-export const FEED_PRIMARY_TIMEOUT_MS = 5_000;
+// The feed service's own query time over 7 days (2026-11, feed_query_duration_milliseconds):
+// 0.09% of queries over 2.5s, 0.04% over 5s. A failing call holds a heavy-route slot for the whole
+// budget, so 2.5s frees it twice as fast for about 0.05% more slow pages turned away.
+export const FEED_PRIMARY_TIMEOUT_MS = 2_500;
 const HUB_ROUTES = new Set(['union-walk', 'union-gather', 'empty']);
 
 const requestCounter = registerCounterWithLabels({
@@ -99,6 +110,8 @@ export type FeedPrimaryPage<T> = {
   nextCursor: string | undefined;
   feedMs: number;
   route?: string;
+  /** The feed failed and this is the pod's last good copy of the page (feed-primary-degrade). */
+  stale?: true;
 };
 export type FeedPrimaryResult<T> =
   | { ok: true; page: FeedPrimaryPage<T> }
@@ -236,14 +249,43 @@ export async function serveFromFeed<T extends { id: number }>(
     if (mapping.reason !== DEEP_OFFSET) logUnmapped(reasonLabel(mapping.reason), input);
     return { ok: false, reason: mapping.reason };
   }
+  // Behind feed-service-degrade: a circuit breaker on the call, and an anonymous first page the
+  // feed fails to answer is served from the last good copy (see feed-primary-degrade).
+  const degrade = feedDegradeEnabled();
+  const cacheKey = degrade ? lastGoodKey(input, mapping.query) : undefined;
+  let stale = false;
   let answer: FeedAnswer;
-  try {
-    answer = await deps.fetchFeed(mapping.query, deps.timeoutMs ?? FEED_PRIMARY_TIMEOUT_MS);
-  } catch (e) {
-    const name = (e as Error)?.name;
-    const reason = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error';
-    count(reason, reason === 'error' ? 'fetch' : '');
-    return { ok: false, reason };
+  const admission = degrade ? admitFeedCall() : undefined;
+  if (admission && !admission.admitted) {
+    const cached = readLastGood(cacheKey, 'breaker');
+    if (!cached) {
+      count('breaker');
+      return { ok: false, reason: 'breaker' };
+    }
+    answer = cached;
+    stale = true;
+  } else {
+    let failure: string | undefined;
+    try {
+      answer = await deps.fetchFeed(mapping.query, deps.timeoutMs ?? FEED_PRIMARY_TIMEOUT_MS);
+      if (answer.status >= 500) failure = `status:${answer.status}`;
+    } catch (e) {
+      const name = (e as Error)?.name;
+      const reason = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error';
+      failure = reason;
+      answer = { status: 0, ms: 0, ids: [] };
+    }
+    if (admission) recordFeedCall(admission, failure !== undefined);
+    const cached = failure && degrade ? readLastGood(cacheKey, reasonLabel(failure)) : undefined;
+    if (cached) {
+      answer = cached;
+      stale = true;
+    } else if (failure === 'timeout' || failure === 'error') {
+      count(failure, failure === 'error' ? 'fetch' : '');
+      return { ok: false, reason: failure };
+    } else if (cacheKey && answer.status === 200) {
+      writeLastGood(cacheKey, answer);
+    }
   }
   if (answer.status !== 200) {
     count('error', `status:${answer.status}`);
@@ -257,10 +299,12 @@ export async function serveFromFeed<T extends { id: number }>(
     return { ok: false, reason: 'hub:route' };
   }
   const nextCursor = answer.nextCursor ? encodeFeedCursor(answer.nextCursor) : undefined;
-  if (!answer.ids.length) {
-    count('served');
-    return { ok: true, page: { data: [], nextCursor, feedMs: answer.ms, route: answer.route } };
-  }
+  const served = (data: T[]): FeedPrimaryResult<T> => {
+    count(stale ? 'stale' : 'served');
+    const page: FeedPrimaryPage<T> = { data, nextCursor, feedMs: answer.ms, route: answer.route };
+    return { ok: true, page: stale ? { ...page, stale: true } : page };
+  };
+  if (!answer.ids.length) return served([]);
   let rows: T[];
   const endHydrate = hydrateDuration.startTimer();
   try {
@@ -282,8 +326,7 @@ export async function serveFromFeed<T extends { id: number }>(
     const row = byId.get(id);
     return row ? [row] : [];
   });
-  count('served');
-  return { ok: true, page: { data, nextCursor, feedMs: answer.ms, route: answer.route } };
+  return served(data);
 }
 
 export function feedPrimaryAvailable() {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEED_PRIMARY_TIMEOUT_MS, serveFromFeed } from '../feed-primary.service';
 import type { FeedAnswer } from '../feed-shadow.service';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * The feed service is the image feed's only source once the search index is retired, so its
@@ -11,7 +12,7 @@ import type { FeedAnswer } from '../feed-shadow.service';
 
 const flag = vi.hoisted(() => ({ on: true }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
     isFliptSync: (key: string) =>
