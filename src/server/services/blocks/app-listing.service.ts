@@ -80,6 +80,8 @@ import {
   isMissingColumnError,
   readListingSourceRepoUrl,
 } from '~/server/services/blocks/app-listing-source-repo.service';
+// The no-type `issue_tracker_url` column, raw SQL only — see its module header.
+import { readListingIssueTrackerUrlForRender } from '~/server/services/blocks/app-listing-issue-tracker.service';
 // The MANUAL-APPLY `is_beta` / `beta_message` columns are read ONLY through this guard —
 // never via `listingHydrateSelect` or `moderationListingSelect`, for the same reason. See
 // its module header.
@@ -782,12 +784,15 @@ export async function getListingPreviewForReview(args: { listingId: string }): P
   // shows what the approve will apply.
   // The Official flag is keyed on the PARENT too: the moderator write targets the live listing
   // only (`revision_of_id IS NULL`), so a shadow's own column is never the source of truth.
-  const [sourceRepo, beta, levels, red, isOfficial] = await Promise.all([
+  const [sourceRepo, beta, levels, red, isOfficial, issueTracker] = await Promise.all([
     readListingSourceRepoUrl(args.listingId, dbRead),
     readListingBetaForRender(betaSourceId, dbRead),
     readListingVisibilityManyForRender([betaSourceId], dbRead),
     readListingRedMediaManyForRender(dbWrite, [args.listingId]),
     readListingOfficialForRender(betaSourceId, dbRead),
+    // THIS row's link (the shadow's, for a revision): it is staged on the shadow and is exactly
+    // what approving publishes, so the moderator must see it.
+    readListingIssueTrackerUrlForRender(args.listingId, dbRead),
   ]);
   // The caller is `moderatorProcedure`, so the viewer IS a moderator — who may always know
   // the level. Stated through the shared rule rather than by passing the raw level through.
@@ -802,16 +807,19 @@ export async function getListingPreviewForReview(args: { listingId: string }): P
     // 🔴 MODERATOR_REVIEW_MEDIA: the reviewer sees what is attached — including media the
     // public gate would hide (still scanning, flagged, above the rating) — so it can be rejected.
     card: projectListingCard(row, beta, restrictedAudience, MODERATOR_REVIEW_MEDIA, isOfficial),
-    detail: projectListingDetail(
-      row,
-      [],
-      sourceRepo.value,
-      beta,
-      row.connectRequestedScopes,
-      restrictedAudience,
-      MODERATOR_REVIEW_MEDIA,
-      isOfficial
-    ),
+    detail: {
+      ...projectListingDetail(
+        row,
+        [],
+        sourceRepo.value,
+        beta,
+        row.connectRequestedScopes,
+        restrictedAudience,
+        MODERATOR_REVIEW_MEDIA,
+        isOfficial
+      ),
+      issueTrackerUrl: issueTracker.value,
+    },
     media: {
       ...listingReviewMedia(row, red.get(args.listingId)),
       screenshots: row.screenshots.flatMap((s) => {
@@ -922,6 +930,9 @@ export function projectListingDetail(
     // (`validateRepositoryUrl`), so what reaches the wire is always
     // `https://<allowlisted-host>/<owner>/<repo>`.
     sourceRepoUrl: sourceRepoUrl ?? null,
+    // Issue-tracker / support link. A no-type column (raw SQL only), so this projection carries
+    // `null` and the callers that read it (`getListingDetail`, the moderator preview) override it.
+    issueTrackerUrl: null,
     screenshots: gallery.screenshots,
     kindData: detailKindData(row),
     // Fork opt-in + provenance. Not on `row` (manual-apply, no-type columns — raw SQL only), so
@@ -1886,18 +1897,21 @@ export async function getListingDetail(
   // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
   // The civitai.red overrides are a fourth, read ONLY for a red-capable request (and degrading
   // to "none" on any error, like beta).
-  const [collaborators, sourceRepo, beta, red, forkProvenance, isOfficial] = await Promise.all([
-    loadDisplayedCollaboratorChips(row.id),
-    readListingSourceRepoUrl(row.id, dbRead),
-    readListingBetaForRender(row.id, dbRead),
-    redCapable
-      ? readListingRedMediaManyForRender(dbRead, [row.id])
-      : Promise.resolve(new Map<string, ListingRedMediaImages>()),
-    // Fork opt-in + provenance (manual-apply columns; degrades to "not a fork" on any error).
-    readListingForkProvenanceForRender(row.id, dbRead),
-    // The Official badge (no-type column; degrades to "not official" on any error).
-    readListingOfficialForRender(row.id, dbRead),
-  ]);
+  const [collaborators, sourceRepo, beta, red, forkProvenance, isOfficial, issueTracker] =
+    await Promise.all([
+      loadDisplayedCollaboratorChips(row.id),
+      readListingSourceRepoUrl(row.id, dbRead),
+      readListingBetaForRender(row.id, dbRead),
+      redCapable
+        ? readListingRedMediaManyForRender(dbRead, [row.id])
+        : Promise.resolve(new Map<string, ListingRedMediaImages>()),
+      // Fork opt-in + provenance (manual-apply columns; degrades to "not a fork" on any error).
+      readListingForkProvenanceForRender(row.id, dbRead),
+      // The Official badge (no-type column; degrades to "not official" on any error).
+      readListingOfficialForRender(row.id, dbRead),
+      // The Support link (no-type column; degrades to "no link" on any error).
+      readListingIssueTrackerUrlForRender(row.id, dbRead),
+    ]);
   // "Forked from …". The parent is resolved through THE SAME gate this read applies to its own
   // row, with this viewer's scope / floor / host — so a parent this viewer could not open in the
   // store yields `{ visible: false }`, indistinguishable from a deleted one, and its name never
@@ -1928,7 +1942,12 @@ export async function getListingDetail(
   );
   // The opt-in is only meaningful for an app whose source is hosted here; an off-site listing
   // never offers a Fork action whatever its column says.
-  return { ...detail, forkable: row.kind === 'onsite' && forkProvenance.forkable, forkOf };
+  return {
+    ...detail,
+    issueTrackerUrl: issueTracker.value,
+    forkable: row.kind === 'onsite' && forkProvenance.forkable,
+    forkOf,
+  };
 }
 
 /**

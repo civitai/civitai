@@ -197,6 +197,8 @@ export async function buildForkSeedZip(
   // The parent's source-repository link is the PARENT's, not the fork's: left in, the fork's store
   // page would show the parent author's repository as its "Source".
   delete manifest.repository;
+  // Same for the issue-tracker / support link: the parent author's tracker is not the fork's.
+  delete manifest.bugs;
   // `iframe.src` is PLATFORM-OWNED: the parent's is its own stamped URL, which the server
   // re-stamps for the fork on submit anyway, and `civitai app validate` refuses an authored one.
   // Only `src` goes; the rest of `iframe` (heights, resizable, sandbox) is the author's to keep.

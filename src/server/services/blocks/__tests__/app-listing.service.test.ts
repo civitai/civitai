@@ -555,6 +555,9 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'forkable',
         'iconUrl',
         'id',
+        // 🔴 DETAIL-ONLY, like `sourceRepoUrl`: the issue-tracker / support link. Present as
+        // `null` from the projection (the no-type column is read by the callers, not on `row`).
+        'issueTrackerUrl',
         // 🔴 The two fields added for the store-detail header. Both are in the
         // ALLOWLIST deliberately (see their docstrings on `ListingDetail`):
         // `installCount` is the very column the public `popular` sort already orders
@@ -597,6 +600,7 @@ describe('projectListingDetail — public allowlist + gallery', () => {
       ].sort()
     );
     expect(detail).not.toHaveProperty('status');
+    expect(detail.issueTrackerUrl).toBeNull();
     expect(detail.description).toBe('# Cool app\n\nbody');
     // The integer surrogate is surfaced for the CommentsV2 thread key.
     expect(detail.serialId).toBe(101);

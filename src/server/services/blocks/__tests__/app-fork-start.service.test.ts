@@ -806,3 +806,45 @@ describe('the fork seed drops the parent’s server-owned iframe.src', () => {
     expect(manifest).toEqual({ blockId: 'notes-app-fork-cd34', name: 'Notes App', scopes: [] });
   });
 });
+
+describe('the fork seed drops the parent’s issue-tracker link (`bugs`)', () => {
+  // The PARENT author's tracker. Left in, the fork's store page would send the fork's users to
+  // report problems to someone else's project.
+  const PARENT_TRACKER = 'https://parent-tracker-5521.example.test/issues';
+  const seedManifest = async (parent: Record<string, unknown>) => {
+    const zip = await buildForkSeedZip(
+      [{ path: 'block.manifest.json', content: Buffer.from(JSON.stringify(parent)) }],
+      'notes-app-fork-ef56'
+    );
+    const loaded = await JSZip.loadAsync(zip.buffer);
+    return JSON.parse(await loaded.file('block.manifest.json')!.async('string'));
+  };
+
+  it('removes a string `bugs` and keeps every other key', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      tagline: 'kept',
+      bugs: PARENT_TRACKER,
+    });
+    expect(manifest).toEqual({
+      blockId: 'notes-app-fork-ef56',
+      name: 'Notes App',
+      scopes: [],
+      tagline: 'kept',
+    });
+    expect(JSON.stringify(manifest)).not.toContain(PARENT_TRACKER);
+  });
+
+  it('removes an object `bugs` (url + email) entirely', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      bugs: { url: PARENT_TRACKER, email: 'parent-author-5521@example.test' },
+    });
+    expect('bugs' in manifest).toBe(false);
+    expect(JSON.stringify(manifest)).not.toContain('parent-author-5521');
+  });
+});

@@ -332,6 +332,19 @@ describe('git-push webhook — no-trust-on-push gate', () => {
 
   // ---- the core fix --------------------------------------------------------
 
+  it('🔴 git-push re-validates with the issue-tracker link LENIENT (a stored legacy `bugs` warns, never refuses)', async () => {
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(mockValidate).toHaveBeenCalled();
+    expect(
+      mockValidate.mock.calls.some(
+        (c: unknown[]) =>
+          (c[2] as { strictIssueTrackerLink?: boolean } | undefined)?.strictIssueTrackerLink ===
+          false
+      )
+    ).toBe(true);
+  });
+
   it('a NEW signed push to an existing approved block does NOT approve or deploy — it parks a PENDING review request', async () => {
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);

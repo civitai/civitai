@@ -165,6 +165,8 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/services/blocks/app-listing-mapper', () => ({
   mapAppBlockToListing: () => ({ id: 'apl_mapped' }),
+  // The approve path resolves the manifest `bugs` link beside the two builders; inert here.
+  buildListingIssueTrackerSync: () => ({ write: false }),
   buildListingScalarSync: () => ({
     name: 'Cool App',
     description: null,

@@ -159,6 +159,7 @@ const LISTING_PREVIEW = {
     // the `satisfies` below reachable, not because this modal reads them.
     collaborators: [],
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     isBeta: false,
     betaMessage: null,
     forkable: false,
