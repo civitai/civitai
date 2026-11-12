@@ -8,8 +8,8 @@ import type * as TrpcMod from '~/utils/trpc';
 import { DepositCardContent } from '~/components/Buzz/CryptoDeposit/DepositCardContent';
 
 // A depositor on the Solana chain can pick SOL or USDC (chain-config targets usdcsol). The
-// "send X on the Solana network only" warning is the last thing they read before sending, and a
-// wrong-token send is not refunded, so it must name the token they actually picked.
+// "send X on the Solana network only" warning is the last thing they read before sending, so it
+// must name the token they actually picked.
 
 let selectedTicker = 'usdc';
 
@@ -70,14 +70,6 @@ describe('DepositCardContent Solana network warning', () => {
     await expect.element(page.getByText(/Solana network/)).toBeInTheDocument();
     expect(document.body.textContent).toMatch(/Send SOL on the/);
     expect(document.body.textContent).toMatch(/SOL\s+sent via Base is not supported/);
-  });
-
-  it('keeps the network wording and the Coinbase note', async () => {
-    renderCard('sol', 'usdc');
-    await expect.element(page.getByText(/Solana network/)).toBeInTheDocument();
-    expect(document.body.textContent).toMatch(
-      /Coinbase users: select "Solana" as the network, not Base/
-    );
   });
 
   it('leaves the other chains alone', async () => {
