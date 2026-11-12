@@ -17,13 +17,14 @@
 -- column (reports are still created and listed; the source commit is just not
 -- kept or shown). Reports written before the apply carry no source commit.
 --
--- One transaction, run as written including the `BEGIN`: `SET LOCAL lock_timeout`
--- only takes effect inside a transaction block.
---
--- `ADD COLUMN ... NULL` with no default is metadata-only (Postgres 11+). The CHECK
--- takes ACCESS EXCLUSIVE on "Feedback" and scans it once to validate; every
--- existing row passes because both columns are created NULL. On
--- `canceling statement due to lock timeout` nothing was applied: re-run it.
+-- TWO PARTS. Part 1 is one transaction, run as written including the `BEGIN`:
+-- `SET LOCAL lock_timeout` only takes effect inside a transaction block. It holds
+-- ACCESS EXCLUSIVE on "Feedback" only briefly: `ADD COLUMN ... NULL` with no
+-- default is metadata-only (Postgres 11+), and the CHECK is added NOT VALID, so it
+-- does not scan the table. On `canceling statement due to lock timeout` nothing was
+-- applied: re-run it. Part 2 validates the CHECK against existing rows under SHARE
+-- UPDATE EXCLUSIVE, which does not block reads or writes; every existing row passes
+-- because both columns are created NULL.
 --
 -- Idempotent: `IF NOT EXISTS` on the columns, a `pg_constraint` guard on the CHECK.
 
@@ -40,20 +41,24 @@ BEGIN
   -- "area" = 'app-block'. A separate constraint so that one is left untouched.
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Feedback_app_source_columns_check') THEN
     ALTER TABLE "Feedback" ADD CONSTRAINT "Feedback_app_source_columns_check"
-      CHECK ("area" = 'app-block' OR ("appSourceCommit" IS NULL AND "appSourceDirty" IS NULL));
+      CHECK ("area" = 'app-block' OR ("appSourceCommit" IS NULL AND "appSourceDirty" IS NULL))
+      NOT VALID;
   END IF;
 END $$;
 
 COMMIT;
 
+-- Part 2 — after Part 1 has committed. Idempotent: validating a valid constraint is a no-op.
+ALTER TABLE "Feedback" VALIDATE CONSTRAINT "Feedback_app_source_columns_check";
+
 -- ------------------------------------------------------------
--- Verification (read-only). Expect columns = 2, constraints = 1.
+-- Verification (read-only). Expect columns = 2, and one constraint with convalidated = t.
 -- ------------------------------------------------------------
 -- SELECT count(*) AS columns
 --   FROM information_schema.columns
 --  WHERE table_schema = current_schema() AND table_name = 'Feedback'
 --    AND column_name IN ('appSourceCommit', 'appSourceDirty');
--- SELECT count(*) AS constraints
+-- SELECT conname, convalidated
 --   FROM pg_constraint
 --  WHERE conrelid = '"Feedback"'::regclass
 --    AND conname = 'Feedback_app_source_columns_check';

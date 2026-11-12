@@ -46,6 +46,14 @@ describe('Feedback_app_source_columns_check', () => {
     });
   });
 
+  it('ends VALIDATED, though Part 1 adds it NOT VALID', async () => {
+    const res = await db.query<{ convalidated: boolean }>(
+      `SELECT convalidated FROM pg_constraint
+        WHERE conrelid = '"Feedback"'::regclass AND conname = 'Feedback_app_source_columns_check'`
+    );
+    expect(res.rows).toEqual([{ convalidated: true }]);
+  });
+
   it('accepts both on an app-block row, and keeps a NULL dirty flag NULL', async () => {
     const clean = await insertFeedback('app-block', {
       appSourceCommit: COMMIT,
