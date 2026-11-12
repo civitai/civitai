@@ -1,6 +1,6 @@
 import { useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import type * as IsMobileMod from '~/hooks/useIsMobile';
 import type * as TrpcMod from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -462,6 +462,28 @@ describe('CrucibleJudgingUI — skipping', () => {
     skipPairButton()!.click();
 
     expect(onSkip).toHaveBeenCalledWith({ unavailable: true });
+  });
+
+  test('Space on a focused image card votes and does not also skip', async () => {
+    const onVote = vi.fn();
+    const onSkip = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={{ left: entry(1, 'image'), right: entry(2, 'image') } as never}
+        onVote={onVote}
+        onSkip={onSkip}
+      />
+    );
+    const imageCard = () =>
+      document.querySelector<HTMLElement>('[aria-label="Vote for left image"]');
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+
+    imageCard()!.focus();
+    await userEvent.keyboard(' ');
+
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    expect(onVote.mock.calls[0][0]).toBe(1);
+    expect(onSkip).not.toHaveBeenCalled();
   });
 });
 

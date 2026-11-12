@@ -20,6 +20,7 @@ import {
   deriveSeverity,
   emitOtelLog,
   OTEL_LOG_ATTRIBUTE_KEYS,
+  OTEL_SHUTDOWN_EXIT_HOLD_MS,
   OTEL_SHUTDOWN_SIGNALS,
   otelLogRecordsEmittedCounter,
   otelLogRecordsSkippedCounter,
@@ -537,15 +538,19 @@ describe('registerOtelShutdown', () => {
     // completed, and that difference is invisible to a `shutdown()` spy.
     const listener = process.listeners('SIGTERM').at(-1) as () => void;
     listener();
-    await ctl.settled();
+    await ctl.flushed();
 
     expect(records).toHaveLength(1);
     expect(records[0].body).toBe('{"type":"error"}');
   });
 
-  it('is IDEMPOTENT across a second signal — SIGINT after SIGTERM joins, it does not re-run', async () => {
+  it('is IDEMPOTENT — SIGINT after SIGTERM joins the flush, a second shutdown joins the first', async () => {
+    let flushCalls = 0;
     let shutdownCalls = 0;
     const target = {
+      forceFlush: async () => {
+        flushCalls += 1;
+      },
       shutdown: async () => {
         shutdownCalls += 1;
       },
@@ -558,9 +563,12 @@ describe('registerOtelShutdown', () => {
     const sigint = process.listeners('SIGINT').at(-1) as () => void;
     sigterm();
     sigint();
-    await ctl.settled();
+    await ctl.flushed();
+    // The signal only flushes; shutting down here would drop what the drain logs.
+    expect([flushCalls, shutdownCalls]).toEqual([1, 0]);
 
-    expect(shutdownCalls).toBe(1);
+    await Promise.all([ctl.shutdown('a'), ctl.shutdown('b')]);
+    expect([flushCalls, shutdownCalls]).toEqual([1, 1]);
   });
 
   it('a failing target does not prevent the other flush, and does not reject', async () => {
@@ -582,5 +590,209 @@ describe('registerOtelShutdown', () => {
     await expect(ctl.shutdown('test')).resolves.toBeUndefined();
     expect(otherRan).toBe(true);
     expect(errors).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('registerOtelShutdown — holds the framework exit for the flush', () => {
+  // REGRESSION. Next's start-server and the standalone tRPC server each install their own
+  // SIGTERM/SIGINT handler that ends in `process.exit()`. Nothing made that exit wait for
+  // the telemetry flush this module starts on the same signal, so the batch the processor
+  // was still holding was lost on every termination that closed faster than the export.
+  //
+  // `process.exit` is replaced with a recording stub for each test (so no test can end
+  // the worker), and the stub is what the code under test sees as "the real exit".
+  let registered: { unregister: () => void } | undefined;
+  let originalExit: typeof process.exit;
+  let exitCalls: Array<Parameters<typeof process.exit>[0]>;
+  let onExit: (() => void) | undefined;
+
+  beforeEach(() => {
+    originalExit = process.exit;
+    exitCalls = [];
+    onExit = undefined;
+    process.exit = ((code?: Parameters<typeof process.exit>[0]) => {
+      exitCalls.push(code);
+      onExit?.();
+      return undefined as never;
+    }) as typeof process.exit;
+  });
+
+  afterEach(() => {
+    registered?.unregister();
+    registered = undefined;
+    process.exit = originalExit;
+    vi.useRealTimers();
+  });
+
+  /** A shutdown target whose shutdown settles only when the test says so. */
+  function deferredTarget() {
+    let finish!: () => void;
+    let calls = 0;
+    const done = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return {
+      target: {
+        shutdown: () => {
+          calls += 1;
+          return done;
+        },
+      },
+      finish,
+      calls: () => calls,
+    };
+  }
+
+  /** Let the promise chain between the flush settling and the real exit run out. */
+  async function drainMicrotasks(): Promise<void> {
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+  }
+
+  function lastListener(signal: NodeJS.Signals): () => void {
+    return process.listeners(signal).at(-1) as () => void;
+  }
+
+  it('caps the hold at 2000 ms', () => {
+    expect(OTEL_SHUTDOWN_EXIT_HOLD_MS).toBe(2000);
+  });
+
+  it('a record the batch is still holding reaches the exporter BEFORE the framework exit runs', async () => {
+    const { exporter, records } = collectingExporter();
+    const provider = new LoggerProvider({
+      processors: [new BatchLogRecordProcessor(exporter, { scheduledDelayMillis: 60_000 })],
+    });
+    logs.setGlobalLoggerProvider(provider);
+    registered = registerOtelShutdown([provider], { log: () => {} });
+
+    emitOtelLog('{"type":"error","last":"before-exit"}', { type: 'error' });
+    expect(records).toHaveLength(0); // NEGATIVE CONTROL: the timer is holding it.
+
+    let recordsAtExit = -1;
+    onExit = () => {
+      recordsAtExit = records.length;
+    };
+    // What the framework's handler does: SIGTERM, then (here, at once) process.exit(143).
+    lastListener('SIGTERM')();
+    process.exit(143);
+
+    await vi.waitFor(() => expect(exitCalls).toHaveLength(1));
+    expect(exitCalls).toEqual([143]);
+    expect(recordsAtExit).toBe(1);
+    expect(records[0].body).toBe('{"type":"error","last":"before-exit"}');
+  });
+
+  it('a record logged DURING the drain (after the signal, before the exit) is still exported', async () => {
+    const { exporter, records } = collectingExporter();
+    const provider = new LoggerProvider({
+      processors: [new BatchLogRecordProcessor(exporter, { scheduledDelayMillis: 60_000 })],
+    });
+    logs.setGlobalLoggerProvider(provider);
+    registered = registerOtelShutdown([provider], { log: () => {} });
+
+    let bodiesAtExit: unknown[] = [];
+    onExit = () => {
+      bodiesAtExit = records.map((r) => r.body);
+    };
+    lastListener('SIGTERM')();
+    // A request that finishes while the framework drains logs this.
+    emitOtelLog('{"type":"error","during":"drain"}', { type: 'error' });
+    process.exit(143);
+
+    await vi.waitFor(() => expect(exitCalls).toHaveLength(1));
+    expect(bodiesAtExit).toEqual(['{"type":"error","during":"drain"}']);
+  });
+
+  it('still exits, with the framework code, when a target throws synchronously', async () => {
+    vi.useFakeTimers();
+    const errors: unknown[] = [];
+    const throwing = {
+      shutdown: (): Promise<unknown> => {
+        throw new Error('sync boom');
+      },
+    };
+    registered = registerOtelShutdown([throwing], {
+      log: () => {},
+      onError: (reason) => errors.push(reason),
+    });
+
+    lastListener('SIGTERM')();
+    process.exit(143);
+    await drainMicrotasks();
+
+    expect(exitCalls).toEqual([143]);
+    expect(errors.map((e) => (e as Error).message)).toEqual(['sync boom']);
+  });
+
+  it('exits with the framework code as soon as the flush settles, without waiting out the cap', async () => {
+    vi.useFakeTimers();
+    const d = deferredTarget();
+    registered = registerOtelShutdown([d.target], { log: () => {} });
+
+    lastListener('SIGINT')();
+    process.exit(130);
+    await vi.advanceTimersByTimeAsync(10);
+    await drainMicrotasks();
+    expect(exitCalls).toEqual([]); // held: the flush has not settled
+
+    d.finish();
+    await drainMicrotasks();
+    expect(exitCalls).toEqual([130]);
+    expect(d.calls()).toBe(1);
+  });
+
+  it('exits anyway after 2000 ms when the flush hangs (no hang on a stuck exporter)', async () => {
+    vi.useFakeTimers();
+    const d = deferredTarget(); // never finished
+    const logged: string[] = [];
+    registered = registerOtelShutdown([d.target], { log: (m) => logged.push(m) });
+
+    lastListener('SIGTERM')();
+    process.exit(143);
+
+    await vi.advanceTimersByTimeAsync(1999);
+    await drainMicrotasks();
+    expect(exitCalls).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await drainMicrotasks();
+    expect(exitCalls).toEqual([143]);
+    expect(logged.at(-1)).toBe('[otel] telemetry flush still running after 2000ms; exiting');
+  });
+
+  it('a second exit while one is held joins it: the real exit runs once, with the first code', async () => {
+    vi.useFakeTimers();
+    const d = deferredTarget();
+    registered = registerOtelShutdown([d.target], { log: () => {} });
+
+    lastListener('SIGTERM')();
+    process.exit(143);
+    process.exit(7);
+    d.finish();
+    await drainMicrotasks();
+
+    expect(exitCalls).toEqual([143]);
+  });
+
+  // INVARIANT GUARD, not regression coverage: before the fix nothing wrapped
+  // `process.exit`, so this held then too. It pins that the hold is armed only by a
+  // shutdown signal, so a boot-time `process.exit(1)` is never delayed.
+  it('does not touch an exit that happens before any shutdown signal', () => {
+    const d = deferredTarget();
+    registered = registerOtelShutdown([d.target], { log: () => {} });
+
+    process.exit(1);
+
+    expect(exitCalls).toEqual([1]);
+    expect(d.calls()).toBe(0);
+  });
+
+  it('unregister puts the original process.exit back', () => {
+    const stub = process.exit;
+    const ctl = registerOtelShutdown([deferredTarget().target], { log: () => {} });
+    lastListener('SIGTERM')();
+    expect(process.exit).not.toBe(stub);
+
+    ctl.unregister();
+    expect(process.exit).toBe(stub);
   });
 });
