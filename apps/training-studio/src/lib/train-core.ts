@@ -703,8 +703,9 @@ export function countDatasetMature(
 }
 
 /** Called only after the caller's own token read the workflow, so a cached count never leaks across
- *  users. Blobs are immutable, so the quote and the submit share one probe; a probe with a failed HEAD
- *  isn't kept, so the next quote or the submit rates the dataset again. */
+ *  users. Blobs are immutable, so the quote and the submit share one probe; a probe with a failed HEAD,
+ *  or (under the v2 rating) with images not yet rated, isn't kept, so the next quote or the submit counts
+ *  the dataset again. Counts with and without the v2 rating, and at each setting, are kept apart. */
 function sourceMatureCount(
   client: OrchestratorClient,
   workflowId: string,

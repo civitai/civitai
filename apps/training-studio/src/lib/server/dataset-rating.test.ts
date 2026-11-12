@@ -266,3 +266,24 @@ it('gives back the allowance for images a job did not reach', async () => {
   const day = new Date().toISOString().slice(0, 10);
   await vi.waitFor(() => expect(store.get(`daily:calls:12:${day}`)).toBe(2));
 });
+
+it('gives the allowance back to the day it was claimed on, across UTC midnight', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    vi.setSystemTime(new Date('2026-11-12T23:59:59.900Z'));
+    // The first call lands after midnight; every call is rate-limited past the deadline.
+    invokeScan.mockImplementation(async () => {
+      await Promise.resolve(); // both workers have made their call by now
+      vi.setSystemTime(new Date('2026-11-13T00:00:00.100Z'));
+      return {
+        data: undefined,
+        response: new Response(null, { status: 429, headers: { 'retry-after': '60' } }),
+      };
+    });
+    warmDatasetRating('t', 13, ['a', 'b', 'c', 'd', 'e', 'f'], 30);
+    await vi.waitFor(() => expect(store.get('daily:calls:13:2026-11-12')).toBe(2));
+    expect(store.has('daily:calls:13:2026-11-13')).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});

@@ -38,32 +38,41 @@ const cacheKey = (blobId: string) =>
 const dailyKey = (kind: 'calls' | 'lookups', userId: number) =>
   `${DAILY_KEY}:${kind}:${userId}:${new Date().toISOString().slice(0, 10)}` as const;
 
-/** Take up to `want` units of today's `kind` allowance for this user; returns how many were granted.
- *  A Redis failure grants none, which leaves images on their upload rating. */
-export async function claimDaily(
+/** Take up to `want` units of today's `kind` allowance for this user: how many were granted, and the
+ *  day's key they were taken from (a give-back must go to that day, not the day it finishes on). A
+ *  Redis failure grants none, which leaves images on their upload rating. */
+async function claimAllowance(
   kind: 'calls' | 'lookups',
   userId: number,
   want: number
-): Promise<number> {
-  if (want <= 0) return 0;
-  const limit = kind === 'calls' ? DATASET_RATING_DAILY_CALLS : DATASET_RATING_DAILY_LOOKUPS;
+): Promise<{ granted: number; key: ReturnType<typeof dailyKey> }> {
   const key = dailyKey(kind, userId);
+  if (want <= 0) return { granted: 0, key };
+  const limit = kind === 'calls' ? DATASET_RATING_DAILY_CALLS : DATASET_RATING_DAILY_LOOKUPS;
   try {
     const redis = getSysRedis();
     const total = await redis.incrBy(key, want);
     if (total === want) await redis.expire(key, 2 * 24 * 60 * 60);
     const granted = Math.max(0, Math.min(want, limit - (total - want)));
     if (granted < want) await redis.decrBy(key, want - granted).catch(() => undefined);
-    return granted;
+    return { granted, key };
   } catch {
-    return 0;
+    return { granted: 0, key };
   }
 }
 
-async function returnDaily(kind: 'calls' | 'lookups', userId: number, n: number): Promise<void> {
+export async function claimDaily(
+  kind: 'calls' | 'lookups',
+  userId: number,
+  want: number
+): Promise<number> {
+  return (await claimAllowance(kind, userId, want)).granted;
+}
+
+async function returnDaily(key: ReturnType<typeof dailyKey>, n: number): Promise<void> {
   if (n <= 0) return;
   try {
-    await getSysRedis().decrBy(dailyKey(kind, userId), n);
+    await getSysRedis().decrBy(key, n);
   } catch {
     // best-effort: the allowance is just smaller for the rest of the day
   }
@@ -207,8 +216,8 @@ export function warmDatasetRating(
   deadlineMs: number = DATASET_RATING_DEADLINE_MS
 ): void {
   if (blobKeys.length === 0 || activeJobs.has(userId)) return;
-  const job = claimDaily('calls', userId, blobKeys.length)
-    .then(async (granted) => {
+  const job = claimAllowance('calls', userId, blobKeys.length)
+    .then(async ({ granted, key }) => {
       const summary = await runRatingJob(
         orchestratorClient(token),
         blobKeys.slice(0, granted),
@@ -216,7 +225,7 @@ export function warmDatasetRating(
         deadlineMs
       );
       // Images the job didn't reach go back to today's allowance, for the next look.
-      await returnDaily('calls', userId, granted - summary.calls);
+      await returnDaily(key, granted - summary.calls);
       void logToAxiom({
         name: 'training-studio-dataset-rating',
         type: 'info',
