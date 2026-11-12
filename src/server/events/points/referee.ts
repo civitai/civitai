@@ -31,6 +31,10 @@ import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
 import { freezeEventAwards } from '~/server/events/scoring/award-results';
+import {
+  clientAbortAfter,
+  LONG_QUERY_PROGRESS_SETTINGS,
+} from '~/server/events/points/clickhouse-limits';
 import { loadTeamAwards } from '~/server/events/scoring/team-awards';
 import type { TeamAward } from '~/server/events/base.event';
 
@@ -48,18 +52,8 @@ export const REFEREE_CLICKHOUSE_BUDGET_S = 35 * 60;
 // The settle job's lock, shared with the self-heal so the two never settle at once. Keep it under the
 // hourly cron, or a run is skipped while the last still holds it.
 export const SETTLE_LOCK_S = 45 * 60;
-// The client's 300 s request_timeout is a socket idle timer; progress headers keep bytes flowing so
-// a query the budget still allows is not dropped by the client while the server runs on.
-export const REFEREE_PROGRESS_SETTINGS = {
-  send_progress_in_http_headers: 1,
-  http_headers_progress_interval_ms: '60000',
-} as const;
 // One missed hourly settle is normal lag; two means settles are failing.
 export const STALE_CUT_ALERT_MS = 2 * 60 * 60 * 1000;
-
-// Past the server's cap the client gives up too: max_execution_time is checked between blocks, so a
-// query can overrun it, and progress headers keep the idle timer from ever firing.
-const CLIENT_GRACE_S = 30;
 
 // Named in a failure's message, so the job's log can be joined to system.query_log on the node that ran it.
 const refereeQueryId = (event: RefereeEvent, step: 'users' | 'settle') =>
@@ -77,7 +71,7 @@ async function withQueryId<T>(queryId: string, run: () => Promise<T>) {
 function queryLimit(deadline: number) {
   const seconds = Math.floor((deadline - Date.now()) / 1000);
   if (seconds < 1) throw new Error('Referee ClickHouse budget spent');
-  return { seconds, signal: AbortSignal.timeout((seconds + CLIENT_GRACE_S) * 1000) };
+  return { seconds, signal: clientAbortAfter(seconds) };
 }
 
 export type RefereeEvent = {
@@ -246,7 +240,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window, deadline: nu
       abort_signal: limit.signal,
       clickhouse_settings: {
         max_execution_time: limit.seconds,
-        ...REFEREE_PROGRESS_SETTINGS,
+        ...LONG_QUERY_PROGRESS_SETTINGS,
       },
       query_params: params,
     })
@@ -302,7 +296,7 @@ export async function queryReferee(
       // than fail on memory, and allow it the time.
       clickhouse_settings: {
         max_execution_time: limit.seconds,
-        ...REFEREE_PROGRESS_SETTINGS,
+        ...LONG_QUERY_PROGRESS_SETTINGS,
         max_bytes_before_external_group_by: '8000000000',
         max_bytes_before_external_sort: '8000000000',
       },
@@ -524,7 +518,7 @@ export async function runEventPointsReferee(
   const rows = await queryReferee(event, window, deadline);
   // Before the snapshot: if an award source can't be read, the settle stops here and the last good
   // base stands, rather than publishing totals that are missing awards.
-  await freezeEventAwards(event);
+  await freezeEventAwards(event, now);
   // A preview's cut never passes the start, so no award reaches its base.
   const awards = await loadTeamAwards(event, window.cut);
   await writeDailySnapshot(event, window, rows);

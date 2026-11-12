@@ -330,8 +330,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
-  // Variant: `log` | `enforce` | `enforce-anon`; any other answer is off. Read by mini-epoch-caller.ts.
+  // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts, which also
+  // still handles an `enforce-anon` variant should the flag define one.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
+  // Variant: `log` | `enforce`; any other answer is off. Read by download-credential-gate.ts.
+  DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
@@ -400,6 +403,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Records image-scan flags in the moderator label queue. DEFAULT-OFF: leave it off until the queue's
   // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
   SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',
+
+  // Stores the rating axes an imageScanning result already carries in ImageAxisRating. DEFAULT-OFF:
+  // leave it off until the ImageAxisRating migration is applied. Shadow only: never changes the
+  // verdict. Evaluated with the imageId, so ramp by percentage or boolean.
+  IMAGE_AXIS_SHADOW_WRITE = 'image-axis-shadow-write',
 
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.

@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
+import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { reviewQueueVisibleTargetSql } from '~/server/services/collection-review.sql';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -19,6 +21,7 @@ import {
   PostSort,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   bustContestCollectionItemsCache,
@@ -105,6 +108,7 @@ import {
   allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   parseBitwiseBrowsingLevel,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
   DETAIL_BACKED_REASONS,
@@ -142,7 +146,10 @@ import {
   assertImagesVisibleToViewer,
   assertImageVisibleToViewer,
 } from '~/server/services/image-visibility.service';
-import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import {
+  JUDGE_RATING_METADATA_KEY,
+  stripBlockProvenanceMetadata,
+} from '~/shared/utils/block-provenance-metadata';
 import {
   collectionSupportsCollaborators,
   freeGrantBaseline,
@@ -2872,19 +2879,54 @@ export const updateCollectionItemsStatus = async ({
       }
     }
 
-    if (collectionMetadata?.judgesApplyBrowsingLevel && collection.type === CollectionType.Image) {
-      const exists = await dbRead.collectionItem.findFirst({
-        where: {
-          id: { in: collectionItemIds },
-          image: {
-            nsfwLevel: {
-              in: [0, -1],
-            },
-          },
-        },
-      });
+    // Approval needs a judge's rating, not only a level: a scan sets the level on its own.
+    if (
+      collectionMetadata?.judgesApplyBrowsingLevel &&
+      collection.type === CollectionType.Image &&
+      collectionItemIds.length > 0
+    ) {
+      // Why an unblocked item can't be approved yet, held first: `held` (for moderator review),
+      // `failed` (its scan), `scanning` (waiting on a verdict, or never scanned: queued below).
+      const unrated = await dbWrite.$queryRaw<
+        { imageId: number; state: 'held' | 'failed' | 'scanning' | null }[]
+      >`
+        SELECT i.id AS "imageId", CASE
+          WHEN i."blockedFor" IS NOT NULL OR i."nsfwLevel" = ${NsfwLevel.Blocked} THEN NULL
+          WHEN i."needsReview" IS NOT NULL THEN 'held'
+          WHEN i.ingestion IN (
+            ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus"
+          ) THEN 'failed'
+          WHEN i.ingestion IN (
+            ${ImageIngestionStatus.Pending}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.PendingManualAssignment}::"ImageIngestionStatus"
+          ) OR NOT COALESCE(i."scanJobs" ? 'workflowId', false) THEN 'scanning'
+        END AS state
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        WHERE ci."collectionId" = ${collectionId}
+          AND ci.id IN (${Prisma.join(collectionItemIds)})
+          AND NOT ${judgeRatedSql('i', collectionId)}
+      `;
 
-      if (exists) {
+      if (unrated.length) {
+        const { failed } = await queueNeverScannedImages(
+          unrated.filter((r) => r.state === 'scanning').map((r) => r.imageId),
+          collectionId
+        );
+        if (unrated.some((r) => r.state === 'held'))
+          throw throwBadRequestError(
+            'Some of the items selected are waiting for moderator review.'
+          );
+        if (failed.length || unrated.some((r) => r.state === 'failed'))
+          throw throwBadRequestError(
+            'The scan failed for some of the items selected; ask a moderator.'
+          );
+        if (unrated.some((r) => r.state === 'scanning'))
+          throw throwBadRequestError(
+            'Some of the items selected are still being scanned. Try again shortly.'
+          );
         throw throwBadRequestError(
           'Some of the items selected have not been given a NSFW rating. Please ensure all items have a NSFW rating before approving them.'
         );
@@ -4182,10 +4224,81 @@ export async function getCollectionEntryCount({
   return result;
 }
 
+/**
+ * A scanned, unblocked image a judge of this collection rated, over `Image` aliased `alias`. A row
+ * that carries no scan workflow was never scanned, whatever its `ingestion` says. A legacy rating
+ * (seeded from a level applied before ratings were recorded) is a floor, never an approval. An
+ * image held for moderator review (`needsReview`) is not rated for approval until the hold clears.
+ */
+export const judgeRatedSql = (alias: string, collectionId: number) => {
+  const i = Prisma.raw(`"${alias}"`);
+  // COALESCE: a missing key or NULL column is "not rated", never an unknown that NOT keeps out.
+  return Prisma.sql`COALESCE((
+    ${i}."metadata" -> ${JUDGE_RATING_METADATA_KEY}::text ->> 'collectionId' = ${collectionId}::text
+    AND ${i}.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+    AND ${i}."blockedFor" IS NULL
+    AND ${i}."nsfwLevel" != ${NsfwLevel.Blocked}
+    AND ${i}."scanJobs" ? 'workflowId'
+    AND ${i}."needsReview" IS NULL
+    AND COALESCE(${i}."metadata" -> ${JUDGE_RATING_METADATA_KEY}::text ->> 'legacy', '') != 'true'
+  ), false)`;
+};
+
+/**
+ * Sends never-scanned images posted to this collection to the scan, once: `Scanned` with no scan
+ * workflow, or `PendingManualAssignment` (uploads from before these images were scanned). The level
+ * the judges applied is seeded as a legacy floor in the same statement. An image already queued,
+ * scanning, blocked or held for review is left alone; one out of rescan retries is marked `Error`
+ * rather than left in a `Rescan` the scan would never pick up. Returns the ids it queued and failed.
+ */
+async function queueNeverScannedImages(imageIds: number[], collectionId: number) {
+  if (!imageIds.length) return { queued: [], failed: [] };
+  const outOfRetries = Prisma.sql`COALESCE((i."scanJobs"->>'retryCount')::int, 0) >= ${IMAGE_RESCAN_RETRY_LIMIT}`;
+  const rows = await dbWrite.$queryRaw<{ id: number; ingestion: ImageIngestionStatus }[]>`
+    UPDATE "Image" i
+    SET
+      ingestion = CASE WHEN ${outOfRetries}
+        THEN ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
+        ELSE ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+      END,
+      "metadata" = ${legacyJudgeRatingSeedSql('i', Prisma.sql`p."collectionId"`)},
+      "updatedAt" = NOW()
+    FROM "Post" p
+    WHERE p.id = i."postId"
+      AND p."collectionId" = ${collectionId}
+      AND i.id IN (${Prisma.join(imageIds)})
+      AND i.ingestion IN (
+        ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus",
+        ${ImageIngestionStatus.PendingManualAssignment}::"ImageIngestionStatus"
+      )
+      AND NOT COALESCE(i."scanJobs" ? 'workflowId', false)
+      AND i."blockedFor" IS NULL
+      AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+      AND i."needsReview" IS NULL
+    RETURNING i.id, i.ingestion
+  `;
+  const queued = rows.filter((r) => r.ingestion === ImageIngestionStatus.Rescan).map((r) => r.id);
+  const failed = rows.filter((r) => r.ingestion === ImageIngestionStatus.Error).map((r) => r.id);
+  if (queued.length) {
+    await dbWrite.$executeRaw`
+      INSERT INTO "JobQueue" (type, "entityType", "entityId")
+      SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", id
+      FROM unnest(ARRAY[${Prisma.join(queued)}]::int[]) AS id
+      ON CONFLICT DO NOTHING
+    `;
+  }
+  return { queued, failed };
+}
+
+const SCAN_FAILED_ERROR = 'The scan failed for this image; ask a moderator.';
+const scanFailed = (ingestion: ImageIngestionStatus) =>
+  ingestion === ImageIngestionStatus.Error || ingestion === ImageIngestionStatus.NotFound;
+
 export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
   nsfwLevel,
-}: SetCollectionItemNsfwLevelInput) => {
+  userId,
+}: SetCollectionItemNsfwLevelInput & { userId: number }) => {
   const collectionItem = await getCollectionItemById({ id: collectionItemId });
 
   if (!collectionItem) {
@@ -4204,47 +4317,107 @@ export const setCollectionItemNsfwLevel = async ({
     throw throwBadRequestError('This collection does not support NSFW level assignment.');
   }
 
-  const image = await dbRead.image.findUnique({
-    where: { id: collectionItem.imageId as number },
-    select: {
-      post: {
-        select: {
-          collectionId: true,
-        },
-      },
-    },
-  });
+  if (!nsfwLevel || nsfwLevel === NsfwLevel.Blocked) throw throwBadRequestError();
+
+  const imageId = collectionItem.imageId;
+  const [image] = await dbWrite.$queryRaw<
+    {
+      postCollectionId: number | null;
+      ingestion: ImageIngestionStatus;
+      nsfwLevel: number;
+      blockedFor: string | null;
+      needsReview: string | null;
+      scanned: boolean;
+    }[]
+  >`
+    SELECT p."collectionId" AS "postCollectionId", i.ingestion, i."nsfwLevel", i."blockedFor",
+      i."needsReview", COALESCE(i."scanJobs" ? 'workflowId', false) AS scanned
+    FROM "Image" i
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId}
+  `;
 
   if (!image) {
     throw throwNotFoundError('Image not found');
   }
 
-  if (image.post?.collectionId !== collectionItem.collectionId) {
+  if (image.postCollectionId !== collectionItem.collectionId) {
     throw throwBadRequestError(
       'The image you are trying to apply an NSFW level to was not created for this collection. NSFW level assignment is only available for images created for this collection.'
     );
   }
 
-  if (!nsfwLevel) throw throwBadRequestError();
+  if (hasBlockMarker(image))
+    throw throwBadRequestError('This image is blocked and cannot be rated.');
+  // A rating can send the image back through the scan, whose verdict replaces a moderation hold.
+  if (image.needsReview != null)
+    throw throwBadRequestError('This image is waiting for moderator review.');
+  if (scanFailed(image.ingestion)) throw throwBadRequestError(SCAN_FAILED_ERROR);
+  if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned) {
+    const { failed } = await queueNeverScannedImages([imageId], collectionItem.collectionId);
+    if (failed.length) throw throwBadRequestError(SCAN_FAILED_ERROR);
+    throw throwBadRequestError('This image is still being scanned. Try again shortly.');
+  }
 
-  // A rating must not lift a block, so a Blocked image is never written.
-  const { count } = await dbWrite.image.updateMany({
-    where: {
-      id: collectionItem.imageId as number,
-      ingestion: { not: ImageIngestionStatus.Blocked },
-    },
-    data: {
-      nsfwLevel,
-      scannedAt: new Date(),
-      ingestion: ImageIngestionStatus.Scanned,
-      blockedFor: null,
-    },
-  });
-  if (count === 0) throw throwBadRequestError('This image is blocked and cannot be rated.');
+  // The judge may raise the scan's level, never lower it; a later scan keeps the judge's level as a
+  // floor (resolveScanOutcome). The WHERE repeats the checks above for a scan or block in between.
+  const raisesIntoNsfw = Prisma.sql`(${nsfwLevel}::int > "nsfwLevel" AND ${nsfwLevel}::int > ${sfwBrowsingLevelsFlag}::int)`;
+  const [updated] = await dbWrite.$queryRaw<
+    { nsfwLevel: number; ingestion: ImageIngestionStatus }[]
+  >`
+    UPDATE "Image"
+    SET
+      -- A raise into an NSFW level sends the image back through the scan, since its checks ran at the
+      -- lower level, and keeps that level until they have run at the judge's: the rescan applies the
+      -- floor. Approval waits for that verdict.
+      "nsfwLevel" = CASE WHEN ${raisesIntoNsfw} THEN "nsfwLevel"
+        ELSE GREATEST("nsfwLevel", ${nsfwLevel}::int) END,
+      ingestion = CASE WHEN ${raisesIntoNsfw}
+        THEN ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+        ELSE ingestion
+      END,
+      "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+        ${JUDGE_RATING_METADATA_KEY}::text,
+        jsonb_build_object(
+          'userId', ${userId}::int,
+          'nsfwLevel', ${nsfwLevel}::int,
+          'collectionId', ${collectionItem.collectionId}::int,
+          'ratedAt', NOW()
+        )
+      ),
+      "updatedAt" = NOW()
+    WHERE id = ${imageId}
+      AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+      AND "blockedFor" IS NULL
+      AND "nsfwLevel" != ${NsfwLevel.Blocked}
+      AND "scanJobs" ? 'workflowId'
+      AND "needsReview" IS NULL
+    RETURNING "nsfwLevel", ingestion
+  `;
+  if (!updated)
+    throw throwBadRequestError('This image changed while it was being rated. Try again.');
+
+  logToAxiom({
+    type: 'info',
+    name: 'collection-judge-rating',
+    userId,
+    collectionId: collectionItem.collectionId,
+    collectionItemId,
+    imageId,
+    judgeLevel: nsfwLevel,
+    scanLevel: image.nsfwLevel,
+    finalLevel: updated.nsfwLevel,
+  }).catch();
 
   await imagesSearchIndex.queueUpdate([
-    { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
+    { id: imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
+
+  // `rescanning`: the judge's level applies once the rescan's checks have run at it.
+  return {
+    nsfwLevel: updated.nsfwLevel,
+    rescanning: updated.ingestion === ImageIngestionStatus.Rescan,
+  };
 };
 
 export type CollectionEntityType = 'image' | 'model' | 'post' | 'article';

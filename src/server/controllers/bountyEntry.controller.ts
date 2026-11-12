@@ -17,6 +17,7 @@ import {
   getBountyEntryFilteredFiles,
   getEntryById,
   upsertBountyEntry,
+  BOUNTY_ENTRY_LIMIT_REACHED,
 } from '../services/bountyEntry.service';
 import type {
   SubmitBountyEntryInput,
@@ -140,7 +141,7 @@ export const upsertBountyEntryHandler = async ({
       bounty.entryLimit &&
       bounty.entries.filter((entry) => entry.userId === userId).length >= bounty.entryLimit
     ) {
-      throw throwBadRequestError('You have reached the maximum number of entries for this bounty');
+      throw throwBadRequestError(BOUNTY_ENTRY_LIMIT_REACHED);
     }
 
     const entry = await upsertBountyEntry({

@@ -1,6 +1,10 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import {
+  BLOCK_PROVENANCE_METADATA_KEYS,
+  OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS,
+} from '~/shared/utils/block-provenance-metadata';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { scanSource } from '../../../../../test/source-scan';
@@ -542,8 +546,18 @@ type UpdateDecision =
   | 'stored-merge-server-keys'
   /** Raw SET building `metadata` from SQL literals, fixed keys and scalar-cast parameters. */
   | 'raw-server-keys'
+  /**
+   * Raw SET merging exactly one literal, non-provenance key whose value is a `::text` parameter: a
+   * string under a fixed key cannot add or replace any other key.
+   */
+  | 'raw-literal-key-text-value'
   /** Raw SET from the moderation-rule result, which merges the stored row with rule keys. */
   | 'raw-mod-rule-metadata'
+  /**
+   * Raw SET to exactly `legacyJudgeRatingSeedSql(<alias>, Prisma.sql\`<column>\`)`, which keeps
+   * the stored value and only adds a server-built legacy `judgeRating` from the row's own columns.
+   */
+  | 'raw-legacy-judge-rating-seed'
   /** `data` is `cond ? { … } : { … }`: two object literals, neither naming metadata. */
   | 'literal-branches'
   /** `data: { [flag]: <boolean> }`, `flag` being the schema's closed enum of boolean columns. */
@@ -556,16 +570,16 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     sites: 1,
   },
   'src/pages/api/webhooks/youtube-upload.ts#handler': {
-    decision: 'stored-merge-server-keys',
+    decision: 'raw-literal-key-text-value',
     sites: 1,
   },
   // Module-level job body: the enclosing-function rule attributes it to `<module>`.
   'src/server/jobs/collection-contest-youtube-upload.ts#<module>': {
-    decision: 'stored-merge-server-keys',
+    decision: 'raw-server-keys',
     sites: 2,
   },
   'src/server/services/image.service.ts#resolveIngestionError': {
-    decision: 'stored-merge-server-keys',
+    decision: 'raw-server-keys',
     sites: 1,
   },
   'src/server/services/image.service.ts#setVideoThumbnail': {
@@ -601,6 +615,14 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     sites: 1,
   },
   'src/server/services/image.service.ts#markRemixSourceReviewed': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
+  'src/server/services/collection.service.ts#queueNeverScannedImages': {
+    decision: 'raw-legacy-judge-rating-seed',
+    sites: 1,
+  },
+  'src/server/services/collection.service.ts#setCollectionItemNsfwLevel': {
     decision: 'raw-server-keys',
     sites: 1,
   },
@@ -666,19 +688,43 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       }
       return null;
     }
+    case 'raw-literal-key-text-value': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      const match =
+        /^COALESCE\("metadata", '\{\}'::jsonb\) \|\| jsonb_build_object\('(\w+)', \$\{[\w.]+\}::text\)$/.exec(
+          expr
+        );
+      if (!match) return 'metadata is no longer one literal key with a text value';
+      const serverOwned: readonly string[] = [
+        ...BLOCK_PROVENANCE_METADATA_KEYS,
+        ...OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS,
+      ];
+      if (serverOwned.includes(match[1]) || PROVENANCE_TOKEN.test(match[1]))
+        return 'names a server-owned key';
+      return null;
+    }
     case 'raw-mod-rule-metadata': {
       const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
       if (
         expr !==
-        'COALESCE(${ metadataUpdate ? JSON.stringify(metadataUpdate) : null }::jsonb, "metadata")'
+        `CASE WHEN \${metadataJson}::jsonb IS NULL THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
       )
         return 'metadata is no longer the moderation-rule result or the stored value';
       if (
         !/let metadataUpdate[^;]*;\s*if \(modRule\) \{\s*metadataUpdate = modRule\.metadata;/.test(
           body
+        ) ||
+        !/const metadataJson = metadataUpdate \? JSON\.stringify\(metadataUpdate\) : null;/.test(
+          body
         )
       )
         return 'metadataUpdate is no longer taken from the moderation-rule result';
+      return null;
+    }
+    case 'raw-legacy-judge-rating-seed': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      if (!/^\$\{legacyJudgeRatingSeedSql\('\w+', Prisma\.sql`[\w."]+`\)\}$/.test(expr))
+        return 'metadata is no longer the legacy judge-rating seed';
       return null;
     }
     case 'literal-branches': {
@@ -1205,6 +1251,12 @@ describe('detector controls', () => {
       'UPDATE "Image" SET "metadata" = COALESCE(${JSON.stringify(input)}::jsonb, "metadata") WHERE id = 1',
       '',
       'no longer the moderation-rule result',
+    ],
+    [
+      'raw-legacy-judge-rating-seed',
+      'UPDATE "Image" i SET "metadata" = ${legacyJudgeRatingSeedSql(\'i\', input)} WHERE id = 1',
+      '',
+      'no longer the legacy judge-rating seed',
     ],
     [
       'literal-branches',

@@ -30,6 +30,12 @@ import type { SessionUser } from '~/types/session';
 import type { ProviderServed } from '~/server/services/provider-download/provider-download.service';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 import { logUrlExpiry } from '~/server/utils/url-expiry-log';
+import {
+  checkDownloadCredential,
+  DOWNLOAD_SCOPE_REFUSED,
+  type DownloadRoute,
+} from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -155,7 +161,8 @@ function parseVersionRequest(req: NextApiRequest, repaired: boolean): DownloadRe
  * `providerPick`, never as an anonymous download.
  */
 export function createModelDownloadHandler(
-  parseRequest: (req: NextApiRequest, repaired: boolean) => DownloadRequest
+  parseRequest: (req: NextApiRequest, repaired: boolean) => DownloadRequest,
+  route: DownloadRoute
 ) {
   return PublicEndpoint(
     async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
@@ -224,12 +231,17 @@ export function createModelDownloadHandler(
 
         // Check if user is blacklisted
         const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
-        if (!!session?.user) {
+        const credential = await checkDownloadCredential(req, session?.user, {
+          route,
+          requiredScope: TokenScope.ModelsRead,
+        });
+        if (credential.refuse) return res.status(403).json(DOWNLOAD_SCOPE_REFUSED);
+        const user = credential.effectiveUser;
+        if (!!user) {
           const userBlacklist = parseUserBlocklist(
             await getDownloadBlocklistValue('user-blacklist')
           );
-          if (userBlacklist.includes(session.user.id.toString()))
-            return errorResponse(403, 'Forbidden');
+          if (userBlacklist.includes(user.id.toString())) return errorResponse(403, 'Forbidden');
         }
 
         // Check if user has a concerning number of downloads
@@ -260,8 +272,8 @@ export function createModelDownloadHandler(
         // Before setting a threshold for the anonymous bucket, give this surface
         // a key that does not collapse, or scope the limit to edge-attested
         // requests.
-        const isAuthed = !!session?.user;
-        const userKey = session?.user?.id?.toString() ?? ip;
+        const isAuthed = !!user;
+        const userKey = user?.id?.toString() ?? ip;
         if (!userKey) return errorResponse(403, 'Forbidden');
         const fallbackKey = isAuthed ? 'authed' : 'anon';
         if (await downloadLimiter.hasExceededLimit(userKey, fallbackKey)) {
@@ -282,12 +294,12 @@ export function createModelDownloadHandler(
         const gate: DownloadGate = (args) =>
           getFileForModelVersion({
             ...args,
-            user: session?.user,
+            user: user,
             direct,
-            attribution: { caller: 'download-route', actor: resolveActorFor(session?.user) },
+            attribution: { caller: 'download-route', actor: resolveActorFor(user) },
             redCapable: isRedCapableHost(req.headers.host),
           });
-        const { fileResult, modelVersionId } = await request.pick(gate, session?.user);
+        const { fileResult, modelVersionId } = await request.pick(gate, user);
 
         if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
         if (fileResult.status === 'resolve-failed') {
@@ -369,7 +381,7 @@ export function createModelDownloadHandler(
           // fetches the file minutes after upload, which was landing a Download event and leaving every
           // draft showing 1 download before it went live.
           const tracker = new Tracker(req, res, session);
-          if (fileResult.published && countsAsPublicDownload(session?.user))
+          if (fileResult.published && countsAsPublicDownload(user))
             await tracker.modelVersionEvent({
               type: 'Download',
               modelId: fileResult.modelId,
@@ -381,8 +393,8 @@ export function createModelDownloadHandler(
             });
 
           // Bust the downloads cache so the user sees their download immediately
-          if (session?.user?.id) {
-            bustUserDownloadsCache(session.user.id).catch(() => {
+          if (user?.id) {
+            bustUserDownloadsCache(user.id).catch(() => {
               // ignore
             });
           }
@@ -438,4 +450,7 @@ export function createModelDownloadHandler(
   );
 }
 
-export default createModelDownloadHandler(parseVersionRequest);
+export default createModelDownloadHandler(
+  parseVersionRequest,
+  '/api/download/models/[modelVersionId]'
+);

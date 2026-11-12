@@ -2402,6 +2402,13 @@ export const REDIS_SYS_KEYS = {
      */
     FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
     /**
+     * SOURCE REPOS — one writer at a time per source repo, keyed
+     * `system:blocks:source-repo-lock:${slug}`. `SET NX EX` (60 s) around an App Assistant save or
+     * a backfill seed, so two saves of one app never race each other into a spurious conflict
+     * (`app-source-repo.service.ts`). Released by its holder; the TTL frees a dead holder's lock.
+     */
+    SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -2587,6 +2594,11 @@ export const REDIS_SYS_KEYS = {
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
     // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
     STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
+    // Training Studio's v2 image rating per dataset blob (packed), key :<raterModel>:<blobId lowercased>.
+    // Blobs are immutable.
+    STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
+    // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
+    STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
   },
   CLIENT: 'client',
   SITE_ALERTS: {

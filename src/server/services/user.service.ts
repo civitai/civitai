@@ -2962,6 +2962,20 @@ export const toggleBan = async ({
           })
         ),
 
+      // Take away their git access to App Blocks SOURCE repos (`civitai-apps-src/<slug>`): the
+      // collaborator rows of every repo they own or hold a seat on. Credential hand-outs already
+      // refuse a banned account; this removes the rows a token they already hold would use.
+      // Isolated like every other leg: it must never fail the ban.
+      import('~/server/services/blocks/app-source-repo.service')
+        .then(({ revokeSourceRepoAccessForUser }) => revokeSourceRepoAccessForUser(id))
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-revoke-source-repos',
+            message: (error as Error).message,
+          })
+        ),
+
       // Group B: External operations (subscription + search indexes)
       Promise.all([
         // Stop the recurring membership from auto-renewing while banned. Cancel

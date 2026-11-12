@@ -18,7 +18,7 @@ export const semanticArticleSearchRouter = router({
     .input(semanticArticleSearchSchema)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
-      const result = await searchSemanticArticles({ input, user: ctx.user });
+      const result = await searchSemanticArticles({ input, user: ctx.user, track: ctx.track });
       const latencyMs = Date.now() - started;
 
       if (!input.cursor) {
