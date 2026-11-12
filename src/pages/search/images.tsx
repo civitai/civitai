@@ -94,8 +94,8 @@ function ImagesHitList() {
 
   const query = indexUiState.query?.trim();
   const similar = useSimilarImage();
-  // A typed query replaces "more like this" (the search client already ignores it), so drop it
-  // from the URL too, or clearing the query would bring it back.
+  // A typed query replaces "more like this": drop it from the URL too, or clearing the query would
+  // bring it back.
   const clearSimilar = similar.refine;
   const similarTo = query ? undefined : similar.imageId;
   useEffect(() => {
@@ -273,7 +273,7 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, ctx }) => {
-    const destination = legacyImageSearchDestination(features ?? {});
+    const destination = legacyImageSearchDestination(features ?? {}, ctx.query);
     if (destination === 'images-feed')
       return {
         redirect: {

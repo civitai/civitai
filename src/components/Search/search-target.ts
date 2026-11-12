@@ -45,8 +45,11 @@ export const searchesImagesFeedInPlace = (
 
 /** Where /search/images sends a viewer: the images feed, the models search, or nowhere (it stays). */
 export function legacyImageSearchDestination(
-  features: ImageSearchFlags
+  features: ImageSearchFlags,
+  { similarTo }: { similarTo?: unknown } = {}
 ): 'images-feed' | 'models-search' | undefined {
+  // The feed can't answer "more like this" yet, so that search stays on this page.
+  if (features.imageSearch && similarTo) return undefined;
   if (features.feedSearch) return 'images-feed';
   if (!features.imageSearch) return 'models-search';
   return undefined;

@@ -19,7 +19,6 @@ const defaultSortBy = ImagesSearchIndexSortBy[0];
 
 const imageSearchParamsSchema = searchParamsSchema
   .extend({
-    // "More like this": the image whose vector is the query.
     similarTo: z.coerce.number().int().positive(),
     index: z.literal('images'),
     createdAt: z.string(),
