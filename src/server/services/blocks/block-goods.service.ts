@@ -1222,8 +1222,6 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
  *   `getGoodsSalesForOwner` (`src/server/services/blocks/buzz-attribution.service.ts`), an
  *   aggregate over `block_good_purchase` scoped by `app_owner_user_id`. This rail writes NO
  *   attribution row, so it commits to nothing about whether a sale "is an attribution".
- * - Still not bridged: `blocks.getMyApps`' `lifetimeShareCents`, a cents field a Buzz total
- *   cannot simply be added to.
  *
  * `recordSpendAttribution` is workflow-anchored, so it was never a drop-in and
  * still is not.

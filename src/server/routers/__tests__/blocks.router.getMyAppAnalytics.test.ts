@@ -19,6 +19,7 @@ const {
   mockIsAppBlocksEnabled,
   mockGetMyAppAnalytics,
   mockGetAuthorFeeEarningsForOwner,
+  mockGetMyAppsEarnings,
   mockGetGoodsSalesForOwner,
   mockVerifyBlockToken,
   mockParseSubjectUserId,
@@ -28,6 +29,7 @@ const {
   mockIsAppBlocksEnabled: vi.fn(),
   mockGetMyAppAnalytics: vi.fn(),
   mockGetAuthorFeeEarningsForOwner: vi.fn(),
+  mockGetMyAppsEarnings: vi.fn(),
   mockGetGoodsSalesForOwner: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -71,6 +73,10 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
 vi.mock('~/server/services/blocks/buzz-attribution.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   getGoodsSalesForOwner: (...a: unknown[]) => mockGetGoodsSalesForOwner(...a),
+}));
+vi.mock('~/server/services/blocks/app-collaborator-earnings.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  getMyAppsEarnings: (...a: unknown[]) => mockGetMyAppsEarnings(...a),
 }));
 vi.mock('~/server/services/blocks/author-fee-earnings.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -327,6 +333,38 @@ describe('getMyAppAnalytics — input validation & delegation', () => {
       TRPCError
     );
     expect(mockGetMyAppAnalytics).not.toHaveBeenCalled();
+  });
+});
+
+describe('getMyApps — the card-purchase share is not returned', () => {
+  it('rows carry the app and the caller’s role, but no lifetime share', async () => {
+    mockGetMyAppsEarnings.mockResolvedValue([
+      { appBlockId: 'apb_1', role: 'editor', lifetimeShareCents: 4321, lifetimeCount: 9 },
+    ]);
+    mockDbRead.appBlock.findMany.mockResolvedValue([
+      {
+        id: 'apb_1',
+        blockId: 'blk_1',
+        appId: 'app_1',
+        status: 'approved',
+        manifest: {},
+        app: { name: 'One' },
+      },
+    ]);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const rows = await caller.getMyApps();
+
+    expect(rows).toEqual([
+      {
+        id: 'apb_1',
+        blockId: 'blk_1',
+        appId: 'app_1',
+        status: 'approved',
+        appName: 'One',
+        manifest: {},
+        role: 'editor',
+      },
+    ]);
   });
 });
 

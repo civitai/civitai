@@ -8815,7 +8815,8 @@ export const blocksRouter = router({
 
   /**
    * The apps the caller can act on (OWNED + apps they hold an ACCEPTED collaborator
-   * seat on) + lifetime revenue per app. Drives the per-app dropdown on /apps/revenue.
+   * seat on). Drives the per-app dropdown on /apps/revenue. The per-app lifetime
+   * card-purchase share is NOT returned: that share is recorded but never paid out.
    *
    * 🔴 THE LIFETIME GROUPBY IS THE PORTFOLIO-LEAK SITE, so read this before editing it.
    * It used to be `where: { appOwnerUserId: user.id }` with NO app filter — a
@@ -8840,11 +8841,6 @@ export const blocksRouter = router({
     const earnings = await getMyAppsEarnings({ userId: user.id });
     if (earnings.length === 0) return [];
     const roleByApp = new Map(earnings.map((e) => [e.appBlockId, e.role] as const));
-    const lifetimeMap = new Map(
-      earnings.map(
-        (e) => [e.appBlockId, { shareCents: e.lifetimeShareCents, count: e.lifetimeCount }] as const
-      )
-    );
 
     const apps = await dbRead.appBlock.findMany({
       // The permitted set, not `app: { userId }` — that would drop every seated app.
@@ -8876,8 +8872,6 @@ export const blocksRouter = router({
       appName: a.app?.name ?? null,
       manifest: a.manifest as Record<string, unknown>,
       role: roleByApp.get(a.id) ?? ('owner' as const),
-      lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
-      lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
     }));
   }),
 
@@ -15316,7 +15310,7 @@ function buildWorkflowTags(
   // recipe id here (with `baseModel` also the recipe id) so a customComfy job is
   // NOT mislabeled 'txt2img' — while the `app-block:*` provenance tags below are
   // preserved verbatim, so the per-app subqueue read (appBlockTag) is unaffected.
-  workflowType: string = 'txt2img'
+  workflowType = 'txt2img'
 ): string[] {
   return [
     WORKFLOW_TAGS.GENERATION,

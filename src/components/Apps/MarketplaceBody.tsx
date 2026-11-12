@@ -176,27 +176,6 @@ export function MarketplaceBody() {
   const { data: mySubs } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
     enabled: !!features.appBlocks && !!currentUser,
   });
-  // Lifetime earnings per owned app — feeds the "Earning $X" chip on
-  // marketplace cards owned by the viewer. Visible only to the owner;
-  // the trPC procedure is guarded so other users get nothing back.
-  const { data: myAppsRaw } = trpc.blocks.getMyApps.useQuery(undefined, {
-    // getMyApps is an appDeveloperProcedure — gate on the same developer predicate
-    // as the rest of the funnel so a non-developer never fires it. Threads the
-    // `appBlocksAuthor` capability so the curated non-mod author cohort (not every
-    // logged-in marketplace viewer) fires it too.
-    enabled:
-      !!features.appBlocks &&
-      isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor }),
-  });
-  const earningsByAppBlockId = useMemo(() => {
-    type AppRow = { id: string; lifetimeShareCents: number };
-    const map = new Map<string, number>();
-    for (const a of (myAppsRaw ?? []) as AppRow[]) {
-      map.set(a.id, a.lifetimeShareCents ?? 0);
-    }
-    return map;
-  }, [myAppsRaw]);
-
   // Index existing subscriptions by appBlockId so we know whether to show
   // Install vs Manage on each card.
   const subsByBlock = useMemo(() => {
@@ -323,7 +302,6 @@ export function MarketplaceBody() {
           subsByBlock={subsByBlock}
           onOpen={handleOpen}
           onRecentOpen={recordRecent}
-          earningsByAppBlockId={earningsByAppBlockId}
           canOpenPage={!!features.appBlocksPages}
         />
       )}
@@ -334,7 +312,6 @@ export function MarketplaceBody() {
           subsByBlock={subsByBlock}
           onOpen={handleOpen}
           onRecentOpen={recordRecent}
-          earningsByAppBlockId={earningsByAppBlockId}
           canOpenPage={!!features.appBlocksPages}
         />
       )}
@@ -367,7 +344,6 @@ export function MarketplaceBody() {
                   alreadySubscribed={subsByBlock.has(block.id)}
                   onOpen={handleOpen}
                   onRecentOpen={recordRecent}
-                  ownedEarningCents={earningsByAppBlockId.get(block.id)}
                   canOpenPage={!!features.appBlocksPages}
                 />
               </Grid.Col>
@@ -395,7 +371,6 @@ export function MarketplaceBody() {
         subsByBlock={subsByBlock}
         onOpen={handleOpen}
         onRecentOpen={recordRecent}
-        earningsByAppBlockId={earningsByAppBlockId}
         canOpenPage={!!features.appBlocksPages}
       />
 
@@ -519,7 +494,7 @@ function MarketplaceEmptyState({
  * F-E E4 discovery rail — a titled horizontal strip of marketplace cards
  * (Featured / New) shown above the grid on the unfiltered view. Reuses
  * AppBlockCard so each card behaves identically to the grid (detail link +
- * install handler + owner-earnings chip).
+ * install handler).
  */
 function MarketplaceRail({
   title,
@@ -527,7 +502,6 @@ function MarketplaceRail({
   subsByBlock,
   onOpen,
   onRecentOpen,
-  earningsByAppBlockId,
   canOpenPage,
 }: {
   title: string;
@@ -535,7 +509,6 @@ function MarketplaceRail({
   subsByBlock: Map<string, Partial<Record<SubscriptionScope, SubscriptionRecord>>>;
   onOpen: (block: AvailableBlock) => void;
   onRecentOpen: (block: AvailableBlock) => void;
-  earningsByAppBlockId: Map<string, number>;
   canOpenPage: boolean;
 }) {
   return (
@@ -549,7 +522,6 @@ function MarketplaceRail({
               alreadySubscribed={subsByBlock.has(block.id)}
               onOpen={onOpen}
               onRecentOpen={onRecentOpen}
-              ownedEarningCents={earningsByAppBlockId.get(block.id)}
               canOpenPage={canOpenPage}
             />
           </Grid.Col>

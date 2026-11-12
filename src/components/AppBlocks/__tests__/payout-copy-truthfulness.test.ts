@@ -218,8 +218,20 @@ const AUTHOR_FEE_PAYOUT_COPY =
 const AUTHOR_FEE_JOB_MODULE = 'src/server/jobs/settle-block-author-fees.ts';
 const AUTHOR_FEE_JOB_EXPORT = 'settleBlockAuthorFeesJob';
 const AUTHOR_FEE_EARNINGS_SERVICE = 'src/server/services/blocks/author-fee-earnings.service.ts';
-/** The card-purchase share's bucket labels. That share is recorded but never paid out. */
-const CARD_SHARE_LABELS = ['Confirmed (unpaid)', 'Paid out'];
+/**
+ * What renders the card-purchase share, which is recorded but never paid out: the revenue
+ * buckets' labels, and the marketplace cards' "Earning $X" chip with the `getMyApps` field and
+ * card prop that fed it.
+ */
+const CARD_SHARE_MARKERS = [
+  'Confirmed (unpaid)',
+  'Paid out',
+  'Earning $',
+  'lifetimeShareCents',
+  'ownedEarningCents',
+];
+/** The rate card advertises that share. Its component may exist; no page may render it. */
+const RATE_CARD_FILE = 'src/components/Apps/AppDeveloperTerms/DeveloperRateCard.tsx';
 
 /**
  * The digital-goods card's timing disclosure, pinned whole for the same reason the two
@@ -429,15 +441,30 @@ describe('app earnings copy does not promise a payout pipeline that does not run
   });
 
   it('no author surface renders the card-purchase share, which is never paid out', () => {
-    // Removed from both author pages until a payout exists. A surface that brings the bucket
-    // labels back fails here and has to decide whether that share now has a payout.
+    // Hidden on every author surface until a payout exists: the revenue pages, the listing
+    // editor's Earnings tab, the marketplace cards' earning chip and the rate card. A surface
+    // that brings one back fails here and has to decide whether that share now has a payout.
     const files = MONEY_COPY_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
     expect(files.map(rel)).toContain(REVENUE_PANEL); // walk control
+    const nonTest = (f: string) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/');
     const surfaces = files
-      .filter((f) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/'))
-      .filter((f) => CARD_SHARE_LABELS.some((l) => readFileSync(f, 'utf8').includes(l)))
+      .filter(nonTest)
+      .filter((f) => CARD_SHARE_MARKERS.some((m) => readFileSync(f, 'utf8').includes(m)))
       .map(rel);
     expect(surfaces).toEqual([]);
+    // Marker control: the field still exists server-side, so the marker can match real code.
+    expect(read('src/server/services/blocks/app-collaborator-earnings.service.ts')).toContain(
+      'lifetimeShareCents'
+    );
+
+    // The rate card: no file renders the component.
+    const tsx = walk(join(REPO_ROOT, 'src')).filter((f) => f.endsWith('.tsx') && nonTest(f));
+    expect(tsx.map(rel)).toContain(RATE_CARD_FILE); // walk control
+    const renders = (re: RegExp) =>
+      tsx.filter((f) => re.test(stripComments(readFileSync(f, 'utf8')))).map(rel);
+    expect(renders(/<DeveloperRateCard[\s/>]/)).toEqual([]);
+    // Pattern control: the same scan finds the view the component itself renders.
+    expect(renders(/<DeveloperRateCardView[\s/>]/)).toEqual([RATE_CARD_FILE]);
   });
 
   it('the digital-goods timing disclosure is pinned whole', () => {
