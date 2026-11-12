@@ -90,7 +90,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, name text, url text NOT NULL DEFAULT 'u',
       "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type text DEFAULT 'image',
       poi boolean DEFAULT false, minor boolean DEFAULT false, index int,
-      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text
+      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int, "modelVersionId" int, "publishedAt" timestamp,

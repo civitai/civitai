@@ -25,6 +25,9 @@ const MODEL_TAKEN_DOWN = 105;
 const IMAGE_ON_NO_MODEL = 106;
 const POST_ON_NO_MODEL = 107;
 const TAKEN_DOWN_THEN_LIVE = 108;
+const IMAGE_RESTRICTED_R = 109;
+const POST_RESTRICTED_R = 110;
+const IMAGE_RESTRICTED_PG = 111;
 
 let db: PGlite;
 
@@ -49,7 +52,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
       ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
-      "nsfwLevel" int NOT NULL DEFAULT 1
+      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "bannerId" int, cover text, status text,
@@ -71,6 +74,10 @@ beforeAll(async () => {
       (30, ${OWNER}, 20), (31, ${OWNER}, 21), (32, ${STRANGER}, 21), (33, ${STRANGER}, NULL);
     INSERT INTO "Image" (id, "userId", "postId") VALUES
       (40, ${OWNER}, 30), (41, ${OWNER}, 31), (42, ${STRANGER}, 32), (43, ${STRANGER}, 33);
+    -- On a restricted base model: an R image alone on its post, and a PG image.
+    INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (34, ${STRANGER}, NULL);
+    INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", "modelRestricted") VALUES
+      (44, ${STRANGER}, 34, 4, true), (45, ${STRANGER}, 33, 1, true);
     INSERT INTO "CollectionItem" ("collectionId", "addedById", "imageId", "postId", "modelId") VALUES
       (${IMAGE_ON_LIVE}, ${OWNER}, 40, NULL, NULL),
       (${IMAGE_ON_TAKEN_DOWN}, ${STRANGER}, 42, NULL, NULL),
@@ -81,7 +88,10 @@ beforeAll(async () => {
       (${IMAGE_ON_NO_MODEL}, ${STRANGER}, 43, NULL, NULL),
       (${POST_ON_NO_MODEL}, ${STRANGER}, NULL, 33, NULL),
       (${TAKEN_DOWN_THEN_LIVE}, ${STRANGER}, NULL, 32, NULL),
-      (${TAKEN_DOWN_THEN_LIVE}, ${OWNER}, 40, NULL, NULL);
+      (${TAKEN_DOWN_THEN_LIVE}, ${OWNER}, 40, NULL, NULL),
+      (${IMAGE_RESTRICTED_R}, ${STRANGER}, 44, NULL, NULL),
+      (${POST_RESTRICTED_R}, ${STRANGER}, NULL, 34, NULL),
+      (${IMAGE_RESTRICTED_PG}, ${STRANGER}, 45, NULL, NULL);
   `);
 });
 
@@ -102,6 +112,7 @@ describe('collection item covers', () => {
     ['a model item for a live model', MODEL_LIVE, 40],
     ['an image item on no model', IMAGE_ON_NO_MODEL, 43],
     ['a post item on no model', POST_ON_NO_MODEL, 43],
+    ['a PG image item on a restricted base model', IMAGE_RESTRICTED_PG, 45],
   ])('takes the cover from %s', async (_, collectionId, imageId) => {
     expect(await coverOf(collectionId)).toEqual([imageId]);
   });
@@ -110,6 +121,8 @@ describe('collection item covers', () => {
     ['an image item on a taken-down model', IMAGE_ON_TAKEN_DOWN],
     ['a post item on a taken-down model', POST_ON_TAKEN_DOWN],
     ['a model item for a taken-down model', MODEL_TAKEN_DOWN],
+    ['an R image item on a restricted base model', IMAGE_RESTRICTED_R],
+    ['a post item whose image is R on a restricted base model', POST_RESTRICTED_R],
   ])('takes no cover from %s', async (_, collectionId) => {
     expect(await coverOf(collectionId)).toEqual([null]);
   });
