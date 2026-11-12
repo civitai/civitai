@@ -1,5 +1,5 @@
-import { createServer, type Server, type Socket } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo, Socket } from 'node:net';
 
 /**
  * A real HTTP server on loopback that accepts every connection and request and never writes a
