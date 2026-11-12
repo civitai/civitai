@@ -106,8 +106,8 @@ export function feedbackSourceLabel(row: {
 /**
  * Version, platform commit, reported source commit and surface, e.g.
  * ["v1.4.0 (platform commit 3f9c2ab)", "reported source 05c2d58 (unverified)", "App page"]; the
- * caller appends the date. The platform commit is the release commit in the app's platform repo,
- * which the owner can check out from a `civitai app pull` clone.
+ * caller appends the date. The platform commit is the release commit in the app's build repo
+ * (civitai-apps/<slug>), not in its source repo (see INBOX_COMMITS_NOTE).
  */
 export function feedbackRowMeta(row: {
   appBlockVersion: string | null;
@@ -173,7 +173,7 @@ export function feedbackEnvironmentLine(env: AppFeedbackEnvironment | null): str
 
 /** Under the inbox: where the two commits on a row come from. */
 export const INBOX_COMMITS_NOTE =
-  "The platform commit is this release's commit in the app's platform repo: clone it with `civitai app pull <slug>`, then `git checkout <sha>`. The reported source commit is what the developer's CLI said at submit; nothing verifies it.";
+  "The platform commit is this release's commit in the app's build repository (civitai-apps/<slug>). For an app with no source repository, `civitai app pull <dir> --app <slug>` clones it; a clone of the source repository has to fetch it first: `git fetch` its origin URL with `civitai-apps-src` swapped for `civitai-apps`. Then `git checkout <sha>`. The reported source commit is what the developer's CLI said at submit; nothing verifies it.";
 
 /** A fork's upstream, e.g. "Forked from cool-app v1.2.0 (at 3f9c2ab)"; `null` for no fork. */
 export function feedbackForkLabel(
