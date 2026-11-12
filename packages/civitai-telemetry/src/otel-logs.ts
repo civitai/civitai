@@ -396,18 +396,32 @@ export function createOtelLoggerProvider(opts: OtelLoggerProviderOptions): Logge
 // ---------------------------------------------------------------------------
 // Shutdown
 // ---------------------------------------------------------------------------
-export type OtelShutdownTarget = { shutdown: () => Promise<unknown> };
+/** `forceFlush` is optional: the NodeSDK has none, the LoggerProvider does. */
+export type OtelShutdownTarget = {
+  shutdown: () => Promise<unknown>;
+  forceFlush?: () => Promise<unknown>;
+};
 
 export type OtelShutdownController = {
   /** Run the shutdown (or return the already-running one). */
   shutdown: (reason?: string) => Promise<void>;
   /** The in-flight/settled shutdown promise, or undefined if nothing started it yet. */
   settled: () => Promise<void> | undefined;
+  /** The flush a shutdown signal started, or undefined if no signal arrived yet. */
+  flushed: () => Promise<void> | undefined;
   /** Remove the signal listeners this registration installed. */
   unregister: () => void;
 };
 
 export const OTEL_SHUTDOWN_SIGNALS: readonly NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];
+
+/**
+ * The longest a framework's `process.exit()` is held, after a shutdown signal, waiting for
+ * the telemetry flush. Short on purpose: it is added to every pod's termination, and it
+ * must stay well inside the termination grace period that is left after the pre-stop
+ * drain. A flush that has not finished by then is abandoned and the process exits.
+ */
+export const OTEL_SHUTDOWN_EXIT_HOLD_MS = 2000;
 
 /**
  * Flush telemetry on termination.
@@ -416,8 +430,29 @@ export const OTEL_SHUTDOWN_SIGNALS: readonly NodeJS.Signals[] = ['SIGTERM', 'SIG
  * so the final batch raced pod termination — immaterial while the pipeline carried one
  * record per boot, a real loss path the moment it carries traffic.
  *
- * We only FLUSH here; we never `process.exit()`. The framework owns process lifecycle,
- * and exiting would kill in-flight requests during the drain.
+ * Awaiting the shutdown here is not enough on its own. Both servers that load this (Next's
+ * `start-server` and the standalone tRPC server) install their own SIGTERM/SIGINT handler,
+ * which stops accepting, lets in-flight requests finish, and then calls `process.exit()`.
+ * That exit does not wait for anything, so whatever the batch processor still held (up to
+ * its scheduled delay's worth of records) was lost whenever the server closed before the
+ * export finished.
+ *
+ * So on the signal the targets are only FLUSHED (`forceFlush`, which exports the batch
+ * and leaves the providers live), and the next `process.exit(code)` is HELD: it runs the
+ * SHUTDOWN, waits until that settles or `exitHoldMs` passes, whichever is first, and then
+ * the real exit runs with the same code. That keeps the framework's own graceful shutdown
+ * exactly as it was (it still decides WHEN to exit, after its drain), adds at most
+ * `exitHoldMs`, and keeps the records and spans of requests that finish DURING the drain,
+ * which a shutdown at signal time would have dropped.
+ *   - Not `NEXT_MANUAL_SIG_HANDLE`: that stops Next registering its handler at all, and
+ *     the handler (`server.close()` and `nextServer.close()`) is not exported, so the app
+ *     would have to exit without Next's drain, killing in-flight requests.
+ *   - Only after a signal. A `process.exit()` before any signal (a boot failure) is never
+ *     touched.
+ *   - A held `process.exit()` RETURNS to its caller instead of ending the process. Both
+ *     callers call it last, so nothing runs after it.
+ *
+ * We still never call `process.exit()` on our own. Exiting is the framework's decision.
  */
 export function registerOtelShutdown(
   targets: OtelShutdownTarget[],
@@ -425,34 +460,97 @@ export function registerOtelShutdown(
     signals?: readonly NodeJS.Signals[];
     log?: (message: string) => void;
     onError?: (reason: unknown) => void;
+    exitHoldMs?: number;
   } = {}
 ): OtelShutdownController {
   const signals = opts.signals ?? OTEL_SHUTDOWN_SIGNALS;
   const log = opts.log ?? ((m: string) => console.log(m));
   const onError =
     opts.onError ?? ((reason: unknown) => console.error('[otel] shutdown error:', reason));
+  const exitHoldMs = opts.exitHoldMs ?? OTEL_SHUTDOWN_EXIT_HOLD_MS;
 
   let inflight: Promise<void> | undefined;
 
-  const run = async (reason: string): Promise<void> => {
-    log(`[otel] flushing telemetry on ${reason}`);
-    // allSettled, not all: a failing exporter must not prevent the other flush, and a
-    // rejection here must not surface as an unhandled rejection during termination.
-    const results = await Promise.allSettled(targets.map((t) => t.shutdown()));
+  // allSettled, not all: a failing exporter must not prevent the other flush, and a
+  // rejection here must not surface as an unhandled rejection during termination. Each
+  // call is made inside a `.then` so a target that throws SYNCHRONOUSLY becomes a
+  // rejection too, instead of escaping `map` and rejecting the whole run.
+  const settleAll = async (calls: Array<() => unknown>): Promise<void> => {
+    const results = await Promise.allSettled(calls.map((c) => Promise.resolve().then(c)));
     for (const r of results) if (r.status === 'rejected') onError(r.reason);
   };
 
-  // `??=` is the idempotence guard AND the await seam. A second signal (SIGINT after
-  // SIGTERM) joins the first shutdown instead of starting a second one against
-  // already-shut providers.
+  let signalFlush: Promise<void> | undefined;
+
+  const run = async (reason: string): Promise<void> => {
+    log(`[otel] shutting down telemetry on ${reason}`);
+    // Wait for the signal's flush FIRST. It took the batch out of the processor's buffer,
+    // and a shutdown started while that export is in flight finds the buffer empty and
+    // can resolve before the export does. (settleAll never rejects.)
+    if (signalFlush) await signalFlush;
+    await settleAll(targets.map((t) => () => t.shutdown()));
+  };
+
+  const flushOnSignal = (signal: string): Promise<void> =>
+    (signalFlush ??= (async () => {
+      log(`[otel] flushing telemetry on ${signal}`);
+      await settleAll(targets.filter((t) => t.forceFlush).map((t) => () => t.forceFlush?.()));
+    })());
+
+  // `??=` is the idempotence guard AND the await seam. A second exit or a manual call
+  // joins the first shutdown instead of starting a second one against already-shut
+  // providers.
   const start = (reason: string): Promise<void> => (inflight ??= run(reason));
+
+  // The exit hold. `originalExit` is set while our wrapper is installed.
+  let originalExit: typeof process.exit | undefined;
+  let heldExit: typeof process.exit | undefined;
+
+  const holdThenExit = async (
+    realExit: typeof process.exit,
+    code: Parameters<typeof process.exit>[0]
+  ) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // NOT unref'd: an unref'd timer lets the process end on its own with exit code 0 when
+    // nothing else is pending, instead of the code the framework asked for.
+    const timedOut = new Promise<true>((resolve) => {
+      timer = setTimeout(() => resolve(true), exitHoldMs);
+    });
+    // try/finally: whatever happens in here, the real exit runs.
+    try {
+      const outcome = await Promise.race([start('exit').then(() => false as const), timedOut]);
+      if (outcome === true)
+        log(`[otel] telemetry flush still running after ${exitHoldMs}ms; exiting`);
+    } catch (err) {
+      onError(err);
+    } finally {
+      clearTimeout(timer);
+      realExit.call(process, code);
+    }
+  };
+
+  const armExitHold = () => {
+    if (originalExit) return;
+    const realExit = process.exit;
+    originalExit = realExit;
+    let exiting = false;
+    heldExit = ((code?: Parameters<typeof process.exit>[0]) => {
+      // A second exit while one is held (two signals, two handlers) joins it.
+      if (exiting) return undefined as never;
+      exiting = true;
+      void holdThenExit(realExit, code);
+      return undefined as never;
+    }) as typeof process.exit;
+    process.exit = heldExit;
+  };
 
   const listeners = signals.map((signal) => {
     const listener = () => {
-      void start(signal);
+      armExitHold();
+      void flushOnSignal(signal);
     };
     // `once` alone is not enough — it is per-signal, so SIGINT after SIGTERM would still
-    // start a second shutdown. The `??=` above is what actually makes it idempotent.
+    // start a second flush. The `??=` guards above are what make it idempotent.
     process.once(signal, listener);
     return { signal, listener };
   });
@@ -460,8 +558,13 @@ export function registerOtelShutdown(
   return {
     shutdown: (reason = 'manual') => start(reason),
     settled: () => inflight,
+    flushed: () => signalFlush,
     unregister: () => {
       for (const { signal, listener } of listeners) process.removeListener(signal, listener);
+      // Put back the exit we replaced, unless something has replaced ours since.
+      if (originalExit && process.exit === heldExit) process.exit = originalExit;
+      originalExit = undefined;
+      heldExit = undefined;
     },
   };
 }

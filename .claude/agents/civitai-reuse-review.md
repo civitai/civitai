@@ -104,10 +104,9 @@ instead of picking the right rung is a reuse finding. `src/server/middleware.trp
 - `UserAvatar/`, `CreatorCard/`, `Cards/`, `CardTemplates/`, `IconBadge/`, `UserStatBadges/`.
 - `LoginRedirect/`, `LoginPopover/`, `JoinPopover/`, `RequireMembership/`, `Gated/` — gating an action
   behind sign-in or membership.
-- `NoContent/`, `PageLoader/`, `TwLoader/`, `SkeletonSwitch/` — empty and loading states.
+- `NoContent/`, `PageLoader/`, `SkeletonSwitch/` — empty and loading states.
 - `ContentClamp/`, `LineClamp/`, `RenderHtml/`, `Markdown/`, `TypographyStylesWrapper/` — user text.
-- `ConfirmButton/`, `PopConfirm/`, `CopyButton/`, `ShareButton/`, `MultiActionButton/`,
-  `LegacyActionIcon/`.
+- `PopConfirm/`, `CopyButton/`, `ShareButton/`, `LegacyActionIcon/`.
 - `Dates/`, `LocalTimestamp/`, `Countdown/`, `Currency/`, `DurationBadge/` — formatting.
 
 **Hooks** (`src/hooks/`). `useCurrentUser`, `useIsClient`, `useIsMounted`, `useIsMobile`, `useInView`,
