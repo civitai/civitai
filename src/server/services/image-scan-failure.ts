@@ -34,6 +34,8 @@ export const IMAGE_SCAN_UNKNOWN_RETRY_LIMIT = 9; // historical flood-protection 
 // Give up on the first failure: markImageScanError already bumped retryCount to 1, so
 // `retryCount < 1` is false on the next cron pass and the image is never re-queued.
 export const IMAGE_SCAN_PERMANENT_RETRY_LIMIT = 1;
+/** A `Rescan` image is re-sent only while its retryCount is below this. */
+export const IMAGE_RESCAN_RETRY_LIMIT = 9;
 
 // Reason substrings that mark infra-transient failures. Matched case-insensitively.
 const TRANSIENT_REASON_PATTERNS = [

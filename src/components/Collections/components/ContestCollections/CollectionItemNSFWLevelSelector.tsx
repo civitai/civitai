@@ -20,7 +20,15 @@ export const CollectionItemNSFWLevelSelector = ({
     updatingCollectionItemNsfwLevel,
     updateCollectionItemNsfwLevelPayload,
   } = useMutateCollection();
-  const [rescanning, setRescanning] = useState(false);
+  // The item and level a rescan was started at: the note clears once either changes, e.g. when the
+  // item refetches with the rescan's level.
+  const [rescanStartedAt, setRescanStartedAt] = useState<{
+    collectionItemId: number;
+    nsfwLevel?: number;
+  }>();
+  const rescanning =
+    rescanStartedAt?.collectionItemId === collectionItemId &&
+    rescanStartedAt.nsfwLevel === nsfwLevel;
 
   const handleNSFWLevelChange = (value: string) => {
     updateCollectionItemNsfwLevel(
@@ -32,7 +40,9 @@ export const CollectionItemNSFWLevelSelector = ({
         // The saved level is the higher of the pick and the scan's level. A raise into an NSFW level
         // is saved once the rescan's checks have run at it, so until then the old level shows.
         onSuccess: async (res) => {
-          setRescanning(!!res?.rescanning);
+          setRescanStartedAt(
+            res?.rescanning ? { collectionItemId, nsfwLevel: res.nsfwLevel } : undefined
+          );
           onNsfwLevelUpdated?.(String(res?.nsfwLevel ?? value));
         },
       }

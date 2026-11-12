@@ -553,6 +553,11 @@ type UpdateDecision =
   | 'raw-literal-key-text-value'
   /** Raw SET from the moderation-rule result, which merges the stored row with rule keys. */
   | 'raw-mod-rule-metadata'
+  /**
+   * Raw SET to exactly `legacyJudgeRatingSeedSql(<alias>, Prisma.sql\`<column>\`)`, which keeps
+   * the stored value and only adds a server-built legacy `judgeRating` from the row's own columns.
+   */
+  | 'raw-legacy-judge-rating-seed'
   /** `data` is `cond ? { … } : { … }`: two object literals, neither naming metadata. */
   | 'literal-branches'
   /** `data: { [flag]: <boolean> }`, `flag` being the schema's closed enum of boolean columns. */
@@ -611,6 +616,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
   },
   'src/server/services/image.service.ts#markRemixSourceReviewed': {
     decision: 'raw-server-keys',
+    sites: 1,
+  },
+  'src/server/services/collection.service.ts#queueNeverScannedImages': {
+    decision: 'raw-legacy-judge-rating-seed',
     sites: 1,
   },
   'src/server/services/collection.service.ts#setCollectionItemNsfwLevel': {
@@ -710,6 +719,12 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         )
       )
         return 'metadataUpdate is no longer taken from the moderation-rule result';
+      return null;
+    }
+    case 'raw-legacy-judge-rating-seed': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      if (!/^\$\{legacyJudgeRatingSeedSql\('\w+', Prisma\.sql`[\w."]+`\)\}$/.test(expr))
+        return 'metadata is no longer the legacy judge-rating seed';
       return null;
     }
     case 'literal-branches': {
@@ -1236,6 +1251,12 @@ describe('detector controls', () => {
       'UPDATE "Image" SET "metadata" = COALESCE(${JSON.stringify(input)}::jsonb, "metadata") WHERE id = 1',
       '',
       'no longer the moderation-rule result',
+    ],
+    [
+      'raw-legacy-judge-rating-seed',
+      'UPDATE "Image" i SET "metadata" = ${legacyJudgeRatingSeedSql(\'i\', input)} WHERE id = 1',
+      '',
+      'no longer the legacy judge-rating seed',
     ],
     [
       'literal-branches',

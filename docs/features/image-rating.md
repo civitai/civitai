@@ -36,8 +36,10 @@ For the `nsfwLevel` bitflag itself and browsing-level filtering, see [nsfw-filte
    through the scan (`Rescan`). Approval in such a collection requires that collection's rating,
    not a `legacy` one, on a scanned (`scanJobs` has a `workflowId`), unblocked image. An older
    upload that was never scanned (`PendingManualAssignment`, or `Scanned` with no `workflowId`) is
-   sent to the scan (`Rescan`) the first time a judge rates or approves it, and refused until the
-   verdict lands.
+   sent to the scan (`Rescan`) the first time a judge rates or approves it, with its current level
+   seeded as a `legacy` rating (`legacyJudgeRatingSeedSql`) so the rescan can't drop below it, and
+   refused until the verdict lands. A held image is refused as waiting for moderator review first,
+   and one whose scan failed (`Error`, `NotFound`, or out of rescan retries) as failed.
 2. It calls `ingestImage`, which submits the scan and stamps `scanRequestedAt` and `scanJobs.workflowId`.
 3. A database trigger also queues the image in `JobQueue(ImageScan)` whenever `ingestion` becomes `Pending`,
    `Rescan` or `Error`, so a lost submit is retried by the cron (step 3).

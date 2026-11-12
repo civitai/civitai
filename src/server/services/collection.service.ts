@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
+import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { reviewQueueVisibleTargetSql } from '~/server/services/collection-review.sql';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -2883,21 +2885,24 @@ export const updateCollectionItemsStatus = async ({
       collection.type === CollectionType.Image &&
       collectionItemIds.length > 0
     ) {
-      // "Scanning": waiting on a scan verdict, or never scanned (queued below), and not blocked.
-      const unrated = await dbWrite.$queryRaw<{ imageId: number; scanning: boolean }[]>`
-        SELECT i.id AS "imageId", (
-          i."blockedFor" IS NULL AND i."nsfwLevel" != ${NsfwLevel.Blocked} AND (
-            i.ingestion IN (
-              ${ImageIngestionStatus.Pending}::"ImageIngestionStatus",
-              ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus",
-              ${ImageIngestionStatus.PendingManualAssignment}::"ImageIngestionStatus"
-            )
-            OR (
-              i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
-              AND NOT COALESCE(i."scanJobs" ? 'workflowId', false)
-            )
-          )
-        ) AS scanning
+      // Why an unblocked item can't be approved yet, held first: `held` (for moderator review),
+      // `failed` (its scan), `scanning` (waiting on a verdict, or never scanned: queued below).
+      const unrated = await dbWrite.$queryRaw<
+        { imageId: number; state: 'held' | 'failed' | 'scanning' | null }[]
+      >`
+        SELECT i.id AS "imageId", CASE
+          WHEN i."blockedFor" IS NOT NULL OR i."nsfwLevel" = ${NsfwLevel.Blocked} THEN NULL
+          WHEN i."needsReview" IS NOT NULL THEN 'held'
+          WHEN i.ingestion IN (
+            ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus"
+          ) THEN 'failed'
+          WHEN i.ingestion IN (
+            ${ImageIngestionStatus.Pending}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.PendingManualAssignment}::"ImageIngestionStatus"
+          ) OR NOT COALESCE(i."scanJobs" ? 'workflowId', false) THEN 'scanning'
+        END AS state
         FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
         WHERE ci."collectionId" = ${collectionId}
@@ -2906,11 +2911,19 @@ export const updateCollectionItemsStatus = async ({
       `;
 
       if (unrated.length) {
-        await queueNeverScannedImages(
-          unrated.filter((r) => r.scanning).map((r) => r.imageId),
+        const { failed } = await queueNeverScannedImages(
+          unrated.filter((r) => r.state === 'scanning').map((r) => r.imageId),
           collectionId
         );
-        if (unrated.some((r) => r.scanning))
+        if (unrated.some((r) => r.state === 'held'))
+          throw throwBadRequestError(
+            'Some of the items selected are waiting for moderator review.'
+          );
+        if (failed.length || unrated.some((r) => r.state === 'failed'))
+          throw throwBadRequestError(
+            'The scan failed for some of the items selected; ask a moderator.'
+          );
+        if (unrated.some((r) => r.state === 'scanning'))
           throw throwBadRequestError(
             'Some of the items selected are still being scanned. Try again shortly.'
           );
@@ -4231,14 +4244,23 @@ export const judgeRatedSql = (alias: string, collectionId: number) => {
 
 /**
  * Sends never-scanned images posted to this collection to the scan, once: `Scanned` with no scan
- * workflow, or `PendingManualAssignment` (uploads from before these images were scanned). An image
- * already queued, scanning, blocked or held for review is left alone. Returns the ids it queued.
+ * workflow, or `PendingManualAssignment` (uploads from before these images were scanned). The level
+ * the judges applied is seeded as a legacy floor in the same statement. An image already queued,
+ * scanning, blocked or held for review is left alone; one out of rescan retries is marked `Error`
+ * rather than left in a `Rescan` the scan would never pick up. Returns the ids it queued and failed.
  */
 async function queueNeverScannedImages(imageIds: number[], collectionId: number) {
-  if (!imageIds.length) return [];
-  const queued = await dbWrite.$queryRaw<{ id: number }[]>`
+  if (!imageIds.length) return { queued: [], failed: [] };
+  const outOfRetries = Prisma.sql`COALESCE((i."scanJobs"->>'retryCount')::int, 0) >= ${IMAGE_RESCAN_RETRY_LIMIT}`;
+  const rows = await dbWrite.$queryRaw<{ id: number; ingestion: ImageIngestionStatus }[]>`
     UPDATE "Image" i
-    SET ingestion = ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus", "updatedAt" = NOW()
+    SET
+      ingestion = CASE WHEN ${outOfRetries}
+        THEN ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
+        ELSE ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+      END,
+      "metadata" = ${legacyJudgeRatingSeedSql('i', Prisma.sql`p."collectionId"`)},
+      "updatedAt" = NOW()
     FROM "Post" p
     WHERE p.id = i."postId"
       AND p."collectionId" = ${collectionId}
@@ -4251,18 +4273,24 @@ async function queueNeverScannedImages(imageIds: number[], collectionId: number)
       AND i."blockedFor" IS NULL
       AND i."nsfwLevel" != ${NsfwLevel.Blocked}
       AND i."needsReview" IS NULL
-    RETURNING i.id
+    RETURNING i.id, i.ingestion
   `;
+  const queued = rows.filter((r) => r.ingestion === ImageIngestionStatus.Rescan).map((r) => r.id);
+  const failed = rows.filter((r) => r.ingestion === ImageIngestionStatus.Error).map((r) => r.id);
   if (queued.length) {
     await dbWrite.$executeRaw`
       INSERT INTO "JobQueue" (type, "entityType", "entityId")
       SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", id
-      FROM unnest(ARRAY[${Prisma.join(queued.map((r) => r.id))}]::int[]) AS id
+      FROM unnest(ARRAY[${Prisma.join(queued)}]::int[]) AS id
       ON CONFLICT DO NOTHING
     `;
   }
-  return queued.map((r) => r.id);
+  return { queued, failed };
 }
+
+const SCAN_FAILED_ERROR = 'The scan failed for this image; ask a moderator.';
+const scanFailed = (ingestion: ImageIngestionStatus) =>
+  ingestion === ImageIngestionStatus.Error || ingestion === ImageIngestionStatus.NotFound;
 
 export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
@@ -4319,13 +4347,15 @@ export const setCollectionItemNsfwLevel = async ({
 
   if (hasBlockMarker(image))
     throw throwBadRequestError('This image is blocked and cannot be rated.');
-  if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned) {
-    await queueNeverScannedImages([imageId], collectionItem.collectionId);
-    throw throwBadRequestError('This image is still being scanned. Try again shortly.');
-  }
   // A rating can send the image back through the scan, whose verdict replaces a moderation hold.
   if (image.needsReview != null)
     throw throwBadRequestError('This image is waiting for moderator review.');
+  if (scanFailed(image.ingestion)) throw throwBadRequestError(SCAN_FAILED_ERROR);
+  if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned) {
+    const { failed } = await queueNeverScannedImages([imageId], collectionItem.collectionId);
+    if (failed.length) throw throwBadRequestError(SCAN_FAILED_ERROR);
+    throw throwBadRequestError('This image is still being scanned. Try again shortly.');
+  }
 
   // The judge may raise the scan's level, never lower it; a later scan keeps the judge's level as a
   // floor (resolveScanOutcome). The WHERE repeats the checks above for a scan or block in between.
