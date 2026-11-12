@@ -152,9 +152,6 @@ export const ENTITY_JOINS = [
   ['ModelReport', 'modelId', 'model'],
   ['PostReport', 'postId', 'post'],
   ['ArticleReport', 'articleId', 'article'],
-  ['CommentReport', 'commentId', 'comment'],
-  ['CommentV2Report', 'commentV2Id', 'commentV2'],
-  // After both old comment tables: the CASE takes the first match, so a mirror keeps its old type.
   ['CommentV3Report', 'commentId', 'commentV3'],
   ['BountyReport', 'bountyId', 'bounty'],
   ['BountyEntryReport', 'bountyEntryId', 'bountyEntry'],

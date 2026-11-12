@@ -401,6 +401,12 @@ export interface RunParams {
  *  decimal being typed (`0.0`) collapses to `0` before the next digit lands. */
 export type NumericInput = string | number;
 
+/** A `NumericInput` as a `type="number"` binding's getter: blank reads as `null`, which is what Svelte
+ *  reads back from the element while it holds text that isn't a number yet (`1e`, `1e-` on the way to
+ *  `1e-4`). Returning `''` there makes Svelte think the value changed and clear what is being typed. */
+export const numberInputValue = (value: NumericInput): number | string | null =>
+  value === '' ? null : value;
+
 /** Human label per param — typed against `RunParams` so a new field without one fails typecheck
  *  instead of rendering its key. */
 export const PARAM_LABELS: Record<keyof RunParams, string> = {
@@ -580,10 +586,12 @@ export function defaultStepsForRun(run: Run): number {
 }
 
 /** A run's Review-step params from its chosen model's defaults — per run, since a sweep can mix models. */
-export function defaultRunParams(run: Run, trigger = ''): RunParams {
+export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunParams {
   const kohya = runEngine(run) === 'kohya';
   const version = runVersion(run);
-  const d = kohya ? kohyaDefaults(version) : paramsForVersion(runCard(run), run.versionKey);
+  const d = kohya
+    ? kohyaDefaults(version)
+    : paramsForVersion(runCard(run), run.versionKey, loraType);
   const x = extraParamDefaults(runCard(run), run.versionKey, !!trigger.trim());
   return {
     negativePrompt: '',
@@ -633,7 +641,22 @@ export const teLockReason = (run: Run): string | undefined =>
     : teTrainingUnsupportedReason(runVersion(run).ecosystem, runCard(run).name);
 export const teLocked = (run: Run): boolean => teLockReason(run) !== undefined;
 
-/** Prodigy expects LR 1; switching away resets rates of 0.1 or higher to non-Prodigy defaults. */
+// The orchestrator's AI-Toolkit input has no `resolution` and drops the one we send.
+const RESOLUTION_LOCK_REASON =
+  "AI-Toolkit doesn't accept a training resolution, so this setting has no effect.";
+
+/** Why a param can't be edited for a run, or undefined when it can. */
+export const paramLockReason = (run: Run, field: keyof RunParams): string | undefined =>
+  field === 'textEncoderLr'
+    ? teLockReason(run)
+    : field === 'resolution' && runEngine(run) !== 'kohya'
+    ? RESOLUTION_LOCK_REASON
+    : undefined;
+
+/** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
+ *  1, and so does a text encoder rate that is on; a locked one goes to 0 and an off (0) one stays off,
+ *  so a model that defaults TE off doesn't start training it. Switching away puts a Prodigy-level rate back to the
+ *  model's recommendation and leaves a rate the user picked alone. */
 export function optimizerLrParams(
   run: Run,
   params: RunParams
@@ -679,14 +702,15 @@ function paramEquals(a: NumericInput | boolean, b: NumericInput | boolean): bool
 }
 
 /** Fields where the run's params differ from the model's recommendation, in form order. Fields the
- *  run can't use (a locked TE rate, an unsupported extra) never count. */
+ *  run can't use (a locked param, an unsupported extra) never count. */
 export function paramDeviations(
   run: Run,
   params: RunParams,
   labelMode: LabelType,
-  trigger = ''
+  trigger = '',
+  loraType = ''
 ): ParamDeviation[] {
-  const defaults = defaultRunParams(run, trigger);
+  const defaults = defaultRunParams(run, trigger, loraType);
   const caps = runExtraCapabilities(run, labelMode);
   const out: ParamDeviation[] = [];
   for (const field of Object.keys(defaults) as (keyof RunParams)[]) {
@@ -695,7 +719,7 @@ export function paramDeviations(
       (runEngine(run) !== 'kohya' || !kohyaFieldSupported(field, runVersion(run).ecosystem))
     )
       continue;
-    if (field === 'textEncoderLr' && teLocked(run)) continue;
+    if (paramLockReason(run, field)) continue;
     if (
       EXTRA_PARAM_FIELDS.includes(field as ExtraParamField) &&
       !caps[field as ExtraParamField].supported
@@ -849,6 +873,29 @@ export function splitTags(text: string): string[] {
   ];
 }
 
+/** The Data step's tag filter: an image matches when it carries every `include` tag and none of the
+ *  `exclude` tags, compared case-insensitively so a typed `Dress` finds the tagger's `dress`. */
+export type TagFilter = { include: string[]; exclude: string[] };
+export function matchesTagFilter(tags: string[], { include, exclude }: TagFilter): boolean {
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  return (
+    include.every((t) => have.has(t.toLowerCase())) &&
+    !exclude.some((t) => have.has(t.toLowerCase()))
+  );
+}
+/** `filter` with the tags in `text` added to one side. A tag lives on one side only, so adding it to
+ *  one takes it off the other. */
+export function withFilterTags(filter: TagFilter, text: string, side: keyof TagFilter): TagFilter {
+  const added = splitTags(text);
+  const keys = new Set(added.map((t) => t.toLowerCase()));
+  const other = side === 'include' ? 'exclude' : 'include';
+  const kept = filter[side].filter((t) => !keys.has(t.toLowerCase()));
+  return {
+    [side]: [...kept, ...added],
+    [other]: filter[other].filter((t) => !keys.has(t.toLowerCase())),
+  } as TagFilter;
+}
+
 /** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present. */
 export function withTags(tags: string[], text: string): string[] {
   const additions = splitTags(text).filter((t) => !tags.includes(t));
@@ -897,12 +944,10 @@ export function mergeAutoLabel(
   return { tags: img.tags, caption };
 }
 
-// Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is
-// NaN, which JSON-serializes to null, and the orchestrator rejects a null `lr`. The seeds are per-model
-// (PARAM_DEFAULTS); this is only the last-resort fallback if a field is cleared.
-function num(value: NumericInput, fallback: number): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
+// Number('') is 0, not NaN, so a cleared field needs its own check or a cleared LR would train at 0.
+function num(value: NumericInput, fallback: NumericInput): number {
+  const n = typeof value === 'string' && !value.trim() ? NaN : Number(value);
+  return Number.isFinite(n) ? n : Number(fallback);
 }
 
 /** One confirm covers every run of a sweep: they train on the same dataset. */
@@ -918,10 +963,21 @@ export function stampMature(
   }));
 }
 
-export function runTrainingParams(run: Run, params: RunParams, labelMode: LabelType) {
+export function runTrainingParams(
+  run: Run,
+  params: RunParams,
+  labelMode: LabelType,
+  trigger = '',
+  loraType = ''
+) {
   const version = runVersion(run);
   const caps = runExtraCapabilities(run, labelMode);
   const tags = caps.shuffleTokens.supported;
+  const defaults = defaultRunParams(run, trigger, loraType);
+  const d = {
+    ...defaults,
+    ...optimizerLrParams(run, { ...defaults, optimizer: params.optimizer }),
+  };
   return {
     ecosystem: version.ecosystem,
     modelVariant: version.modelVariant,
@@ -931,18 +987,18 @@ export function runTrainingParams(run: Run, params: RunParams, labelMode: LabelT
     customModel: isCustom(run) ? run.customAir?.trim() : undefined,
     steps: params.steps,
     epochs: params.epochs,
-    unetLr: num(params.unetLr, 0.0004),
-    textEncoderLr: teLocked(run) ? 0 : num(params.textEncoderLr, 0.00005),
-    networkDim: num(params.networkDim, 32),
-    networkAlpha: num(params.networkAlpha, 16),
-    resolution: num(params.resolution, 1024),
-    batchSize: num(params.batchSize, 2),
+    unetLr: num(params.unetLr, d.unetLr),
+    textEncoderLr: teLocked(run) ? 0 : num(params.textEncoderLr, d.textEncoderLr),
+    networkDim: num(params.networkDim, d.networkDim),
+    networkAlpha: num(params.networkAlpha, d.networkAlpha),
+    resolution: num(params.resolution, d.resolution),
+    batchSize: num(params.batchSize, d.batchSize),
     lrScheduler: params.lrScheduler,
     optimizer: params.optimizer,
     shuffleTokens: tags && params.shuffleTokens,
-    keepTokens: tags ? Math.max(0, Math.round(num(params.keepTokens, 0))) : 0,
-    minSnrGamma: caps.minSnrGamma.supported ? num(params.minSnrGamma, 0) : undefined,
-    noiseOffset: caps.noiseOffset.supported ? num(params.noiseOffset, 0) : 0,
+    keepTokens: tags ? Math.max(0, Math.round(num(params.keepTokens, d.keepTokens))) : 0,
+    minSnrGamma: caps.minSnrGamma.supported ? num(params.minSnrGamma, d.minSnrGamma) : undefined,
+    noiseOffset: caps.noiseOffset.supported ? num(params.noiseOffset, d.noiseOffset) : 0,
     flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
     ...(runEngine(run) === 'kohya'
       ? {
@@ -950,13 +1006,13 @@ export function runTrainingParams(run: Run, params: RunParams, labelMode: LabelT
             ? params.negativePrompt
             : undefined,
           kohya: {
-            numRepeats: num(params.numRepeats, 1),
+            numRepeats: num(params.numRepeats, d.numRepeats),
             enableBucket: params.enableBucket,
-            clipSkip: num(params.clipSkip, 1),
-            lrSchedulerNumCycles: num(params.lrSchedulerNumCycles, 3),
-            seed: num(params.seed, 42),
+            clipSkip: num(params.clipSkip, d.clipSkip),
+            lrSchedulerNumCycles: num(params.lrSchedulerNumCycles, d.lrSchedulerNumCycles),
+            seed: num(params.seed, d.seed),
             fp8Base: params.fp8Base,
-            blocksToSwap: num(params.blocksToSwap, 18),
+            blocksToSwap: num(params.blocksToSwap, d.blocksToSwap),
             vParameterization:
               params.vParameterization === 'auto' ? undefined : params.vParameterization === 'true',
             zeroTerminalSnr:
@@ -988,7 +1044,7 @@ export function buildTrainingRuns(
 
   return launched.map(({ run, params }) => {
     return {
-      ...runTrainingParams(run, params, labelMode),
+      ...runTrainingParams(run, params, labelMode, t, selection.loraType),
       trigger: t,
       items,
       ...(edit ? { editTraining: true } : {}),

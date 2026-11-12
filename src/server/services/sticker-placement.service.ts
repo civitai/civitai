@@ -229,7 +229,7 @@ export type CreateStickerPlacement = {
 /**
  * A placer's optional note travels with the placement it belongs to.
  *
- * Not a `CommentV2` thread: this is one immutable line bought with the
+ * Not a comment: this is one immutable line bought with the
  * placement, and giving it the comment system's identity would give it that
  * system's edit, reply and notification behaviour — none of which anyone asked
  * for, all of which would then need their own answer to "the owner accepted the
@@ -936,15 +936,18 @@ function isPlayableTrack(track: unknown) {
 /** For the detail view of one video; the listing never carries tracks. */
 export async function getStickerPlacementTracks({
   imageId,
+  viewerId,
   isModerator = false,
 }: {
   imageId: number;
+  viewerId?: number;
   isModerator?: boolean;
 }) {
   const rows = (await listPlacementTrackRows((await loadKyselyDb()).kyselyRead, {
     surface: SURFACE,
     targetType: TARGET_TYPE,
     targetId: imageId,
+    viewerId,
   })) as { id: number; targetId: number; data: Prisma.JsonValue; track: unknown }[];
   // Same withholding as the listing: only a moderator gets kept-off placements.
   const keptOff = isModerator

@@ -21,8 +21,6 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'BountyEntry',
   'Challenge',
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'ResourceReview',
   'User',
@@ -41,13 +39,6 @@ export const TEXT_SCAN_ENTITY_TYPES = [
  */
 export type TextScanRollout = { shadow: number; active: number };
 export type TextScanRollouts = Partial<Record<TextScanEntityType, TextScanRollout>>;
-
-/**
- * An entity type's rollout. CommentV3 follows CommentV2's until it is given its own: a surface's
- * comments move from one type to the other when its writes flip, and their scanning must not lapse.
- */
-export const rolloutFor = (rollouts: TextScanRollouts, entityType: TextScanEntityType) =>
-  rollouts[entityType] ?? (entityType === 'CommentV3' ? rollouts.CommentV2 : undefined);
 
 export const ROLLOUT_CACHE_MS = 15_000;
 
@@ -118,7 +109,7 @@ export async function getTextScanMode(
   try {
     if (!(await isTextScanEnabled())) return 'off';
     const rollouts = await getTextScanRollouts();
-    return modeForBucket(rolloutFor(rollouts, entityType), textScanBucket(entityType, entityId));
+    return modeForBucket(rollouts[entityType], textScanBucket(entityType, entityId));
   } catch {
     return 'off';
   }

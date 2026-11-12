@@ -342,8 +342,10 @@ export const pullData = async (
 
   logger(`PullData :: Pulled collection images.`);
 
-  // Use Redis cache for tag lookups (much faster than direct DB query)
-  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
+  // Use Redis cache for tag lookups (much faster than direct DB query).
+  // Past this process's L1: a document written here keeps these tag ids until its next reindex, so an
+  // L1 entry from before a tag edit would outlive the L1 window by that much.
+  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds, { bypassLocal: true });
   const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
     cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
   );

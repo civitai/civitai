@@ -37,7 +37,7 @@ describe('xguardVerdict', () => {
 });
 
 describe('clavataVerdict', () => {
-  const base = { entityType: 'Comment', entityId: 2, matches: ['Spam'] };
+  const base = { entityType: 'CommentV3', entityId: 2, matches: ['Spam'] };
 
   it('logs a clean result as unflagged and not acted', () => {
     expect(clavataVerdict({ ...base, userId: 5, result: 'FALSE', skipped: true })).toMatchObject({

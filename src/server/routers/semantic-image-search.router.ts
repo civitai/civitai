@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   semanticImageSearchSchema,
@@ -14,7 +15,11 @@ import { guardedProcedure, isFlagProtected, publicProcedure, router } from '~/se
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 
-const semanticSearchProcedure = publicProcedure.use(isFlagProtected('imageSearch'));
+// Timed first, so flag and rate-limit refusals land on the dashboard too.
+// `feedSearch` alone opens it too: the images feed answers its ?query= from this procedure.
+const semanticSearchProcedure = publicProcedure
+  .use(timeSemanticSearch('images'))
+  .use(isFlagProtected('imageSearch', 'feedSearch'));
 
 export const semanticImageSearchRouter = router({
   search: semanticSearchProcedure
@@ -32,6 +37,7 @@ export const semanticImageSearchRouter = router({
         input,
         user: ctx.user,
         domain: getRequestBoardDomainColor(ctx.req),
+        track: ctx.track,
       });
       const latencyMs = Date.now() - started;
 

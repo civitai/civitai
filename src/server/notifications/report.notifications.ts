@@ -2,6 +2,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { EntityType } from '~/shared/utils/prisma/enums';
 import type { OrphanedAppealOutcome } from '~/shared/utils/appeal';
+import { LOCK_REVIEW_KIND, lockReviewRulingMessage } from '@civitai/shared/lock-review';
 import {
   isSiteAppealCategory,
   siteAppealDecisionText,
@@ -58,8 +59,6 @@ export const reportNotifications = createNotificationProcessor({
                 WHEN jsonb_typeof(r.details->'reportType') = 'string' THEN r.details->>'reportType'
                 WHEN EXISTS (SELECT 1 FROM "ResourceReviewReport" WHERE "reportId" = r.id) THEN 'review'
                 WHEN EXISTS (SELECT 1 FROM "ModelReport" WHERE "reportId" = r.id) THEN 'resource'
-                WHEN EXISTS (SELECT 1 FROM "CommentReport" WHERE "reportId" = r.id) THEN 'comment'
-                WHEN EXISTS (SELECT 1 FROM "CommentV2Report" WHERE "reportId" = r.id) THEN 'comment'
                 WHEN EXISTS (SELECT 1 FROM "CommentV3Report" WHERE "reportId" = r.id) THEN 'comment'
                 WHEN EXISTS (SELECT 1 FROM "ImageReport" WHERE "reportId" = r.id) THEN 'image'
                 WHEN EXISTS (SELECT 1 FROM "ArticleReport" WHERE "reportId" = r.id) THEN 'article'
@@ -106,6 +105,14 @@ export const reportNotifications = createNotificationProcessor({
           restored: details.restored,
           resolvedMessage: details.resolvedMessage,
         });
+      if (details.kind === LOCK_REVIEW_KIND)
+        return {
+          message: lockReviewRulingMessage(
+            details.status === 'Approved',
+            Array.isArray(details.unlocked) ? details.unlocked : []
+          ),
+          url: `/models/${details.entityId}`,
+        };
       return {
         message: `Your appeal regarding your ${
           details.entityType

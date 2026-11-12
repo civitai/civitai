@@ -22,6 +22,7 @@ export function RemixAppPicker({ apps, imageId, onRun }: RemixAppPickerProps) {
   const dialog = useDialogContext();
   const { loading, priceOf } = useRemixAppPrices(imageId, true);
   const { pins, toggle, canEdit } = useRemixAppPins();
+  const offered = apps.map((app) => app.slug);
 
   return (
     <Modal {...dialog} title="Remix apps" size="md" centered>
@@ -69,7 +70,7 @@ export function RemixAppPicker({ apps, imageId, onRun }: RemixAppPickerProps) {
                 disabled={!canEdit}
                 aria-label={`${pinned ? 'Unpin' : 'Pin'} ${app.name}`}
                 aria-pressed={pinned}
-                onClick={() => toggle(app.slug)}
+                onClick={() => toggle(app.slug, offered)}
               >
                 {pinned ? <IconPinFilled size={16} /> : <IconPin size={16} />}
               </ActionIcon>

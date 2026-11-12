@@ -61,8 +61,7 @@ beforeAll(async () => {
       (3, 'Actioned', '2026-09-15T10:00:00Z', NULL);
     INSERT INTO "ModelReport" VALUES (1, 11), (2, 12), (3, 13);
     INSERT INTO "PostReport" VALUES (1, 21), (2, 22), (3, 23);
-    -- Report 1 is a CommentV2 report the trigger mirrored; report 3 was filed against CommentV3 alone.
-    INSERT INTO "CommentV2Report" VALUES (1, 31);
+    -- Report 1 was filed on a CommentV2 comment and mirrored; report 3 was filed on CommentV3 alone.
     INSERT INTO "CommentV3Report" VALUES (1, 31), (3, 33);
   `);
   holder.dbRead = new Kysely({ dialect: pgliteDialect(pg) });
@@ -94,13 +93,10 @@ describe('getReportHistory', () => {
     ]);
   });
 
-  it('lists a comment report once: a mirrored one stays under its old type', async () => {
-    const [v2, v3] = await Promise.all([
-      getReportHistory(ReportEntity.CommentV2),
-      getReportHistory(ReportEntity.CommentV3),
-    ]);
+  // The old comment queues are gone, so a report filed before the tables merged must list here.
+  it('lists every comment report under the one comment type, mirrored or not', async () => {
+    const { items } = await getReportHistory(ReportEntity.CommentV3);
 
-    expect(v2.items.map((r) => r.id)).toEqual([1]);
-    expect(v3.items.map((r) => r.id)).toEqual([3]);
+    expect(items.map((r) => r.id)).toEqual([3, 1]);
   });
 });

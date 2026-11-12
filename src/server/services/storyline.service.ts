@@ -883,6 +883,29 @@ export const createRootChapter = (
   });
 
 /**
+ * The user's own storyline from this spark that has no chapter 1 yet and is not taken down.
+ */
+export async function findUnwrittenSparkStoryline({
+  userId,
+  sparkImageId,
+}: {
+  userId: number;
+  sparkImageId: number;
+}) {
+  const [row] = await dbWrite.$queryRaw<{ id: number; title: string }[]>`
+    SELECT s.id, s.title FROM "Storyline" s
+    WHERE s."userId" = ${userId} AND s."sparkImageId" = ${sparkImageId}
+      AND s."tosViolation" = false
+      AND NOT EXISTS (
+        SELECT 1 FROM "StorylineChapter" c WHERE c."storylineId" = s.id AND c.depth = 0
+      )
+    ORDER BY s.id DESC
+    LIMIT 1
+  `;
+  return row ?? null;
+}
+
+/**
  * Without `postId` the storyline starts empty: its chapter 1 is a post written afterwards (see
  * `linkPendingChapter`), and until that is written only its owner and moderators see it.
  */
@@ -912,6 +935,19 @@ export async function createStoryline({
   if (!isStorylineCeilingLevel(maxNsfwLevel)) throw throwBadRequestError('Invalid maximum rating');
   await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
   if (sparkImageId) await assertStorylineSpark({ imageId: sparkImageId, userId, maxNsfwLevel });
+  if (sparkImageId && !postId) {
+    const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId });
+    if (unwritten) {
+      // With no chapter yet, nothing depends on the old terms, so the ones just chosen win.
+      await dbWrite.storyline.update({
+        where: { id: unwritten.id },
+        data: { title, maxNsfwLevel, whoCanContinue: whoCanContinue ?? 'Anyone' },
+      });
+      if (title !== unwritten.title)
+        scanEntityInBackground({ entityType: 'Storyline', entityId: unwritten.id });
+      return { id: unwritten.id, rootChapterId: null };
+    }
+  }
 
   let created: { id: number; rootChapterId: number | null };
   try {
@@ -1128,24 +1164,9 @@ export async function updateStoryline({
   return updated;
 }
 
-/** Every author of a comment on storyline `id`'s threads or CommentV3 topic; recorded in the held copy only. */
+/** Every author of a comment on storyline `id`; recorded in the held copy only. */
 function storylineCommentersSql(id: number) {
-  return Prisma.sql`WITH RECURSIVE below AS (
-      SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
-      UNION
-      -- One indexed lookup per link: an OR across them scans the whole Thread table every step.
-      SELECT x.id FROM below b CROSS JOIN LATERAL (
-        SELECT t.id FROM "Thread" t WHERE t."parentThreadId" = b.id
-        UNION ALL
-        SELECT t.id FROM "Thread" t WHERE t."rootThreadId" = b.id
-        UNION ALL
-        SELECT t.id FROM "CommentV2" k JOIN "Thread" t ON t."commentId" = k.id
-        WHERE k."threadId" = b.id
-      ) x
-    )
-    SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
-    UNION
-    SELECT c."userId" FROM "CommentV3" c
+  return Prisma.sql`SELECT c."userId" FROM "CommentV3" c
     WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}`;
 }
 

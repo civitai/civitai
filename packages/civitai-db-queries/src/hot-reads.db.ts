@@ -286,6 +286,7 @@ export function getUserCreatorRow(
       'ProfilePicture.hash as profilePictureHash',
       'ProfilePicture.userId as profilePictureUserId',
       'ProfilePicture.ingestion as profilePictureIngestion',
+      'ProfilePicture.needsReview as profilePictureNeedsReview',
       'ProfilePicture.type as profilePictureType',
       'ProfilePicture.width as profilePictureWidth',
       'ProfilePicture.height as profilePictureHeight',
@@ -356,16 +357,6 @@ export async function listImageTagsForImages(db: Kysely<DB>, imageIds: number[])
     .orderBy('ImageTag.score', 'desc')
     .orderBy('ImageTag.tagId', 'asc')
     .execute();
-}
-
-/** An image's comment thread (`Thread.imageId` is unique): its id, and `locked`. `undefined` if none. */
-export function getImageThread(db: Kysely<DB>, imageId: number) {
-  return db
-    .selectFrom('Thread')
-    .select(['Thread.id', 'Thread.locked'])
-    .where('Thread.imageId', '=', imageId)
-    .limit(1)
-    .executeTakeFirst();
 }
 
 /**

@@ -97,21 +97,23 @@ const VERSION_ID = 3364560;
 const MODEL_ID = 2503012;
 const OWNER_ID = 131273;
 
+const storedVersion = {
+  id: VERSION_ID,
+  name: 'H3',
+  baseModel: 'Illustrious',
+  model: {
+    userId: OWNER_ID,
+    name: 'model',
+    availability: 'Public',
+    publishedAt: new Date('2026-04-11'),
+    nsfw: false,
+    meta: {},
+  },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.modelVersion.findUniqueOrThrow.mockResolvedValue({
-    id: VERSION_ID,
-    name: 'H3',
-    baseModel: 'Illustrious',
-    model: {
-      userId: OWNER_ID,
-      name: 'model',
-      availability: 'Public',
-      publishedAt: new Date('2026-04-11'),
-      nsfw: false,
-      meta: {},
-    },
-  });
+  dbMock.dbRead.modelVersion.findUniqueOrThrow.mockResolvedValue(storedVersion as never);
   dbMock.dbWrite.modelVersion.update.mockResolvedValue({
     id: VERSION_ID,
     modelId: MODEL_ID,
@@ -163,6 +165,41 @@ describe('Model.lastVersionAt across a version publish lifecycle', () => {
       .map(([strings]) => (strings as TemplateStringsArray).join('?'))
       .find((sql) => /UPDATE "ModelVersion"\s+SET "publishedAt"/.test(sql));
     expect(publishedAtWrite).toMatch(/"publishedAt" IS NULL OR "publishedAt" > NOW\(\)/);
+  });
+});
+
+describe('a future-dated publish of a version', () => {
+  const future = () => new Date(Date.now() + 86_400_000);
+  const writtenStatus = () =>
+    (dbMock.dbWrite.modelVersion.update.mock.calls[0][0] as { data: { status: string } }).data
+      .status;
+
+  it('schedules a draft version', async () => {
+    await publishModelVersionById({
+      id: VERSION_ID,
+      publishedAt: future(),
+      enforceTakedown: false,
+    });
+    expect(writtenStatus()).toBe('Scheduled');
+  });
+
+  // The replica still reads the version as a Draft; the read under the lock says it is live.
+  it('leaves a live version live', async () => {
+    const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('SELECT status FROM "ModelVersion"')
+        ? [{ status: 'Published' }]
+        : []) as never);
+    try {
+      await publishModelVersionById({
+        id: VERSION_ID,
+        publishedAt: future(),
+        enforceTakedown: false,
+      });
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
+    }
+    expect(writtenStatus()).toBe('Published');
   });
 });
 

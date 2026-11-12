@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { dbWrite } from '~/server/db/client';
 import { sysRedis } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -318,7 +319,7 @@ function toSharedArticle(article: NonNullable<Awaited<ReturnType<typeof readShar
   // The banner stands in for a missing cover.
   const coverImage = article.coverImage ?? article.bannerImage;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
-  const showCover = coverImage?.ingestion === 'Scanned' && !coverImage.needsReview;
+  const showCover = servableArticleImage(coverImage) !== null;
   return {
     id,
     title,

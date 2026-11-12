@@ -11,6 +11,9 @@ import { IconCloudOff, IconPhotoSearch } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { resolveTags } from '~/server/services/semantic-search-client';
+import { imageFeedUrlFromLegacySearch } from '~/components/Image/Infinite/image-feed-search';
+import { legacyImageSearchDestination } from '~/components/Search/search-target';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
@@ -231,8 +234,16 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features }) => {
-    if (!features?.imageSearch)
+  resolver: async ({ features, ctx }) => {
+    const destination = legacyImageSearchDestination(features ?? {});
+    if (destination === 'images-feed')
+      return {
+        redirect: {
+          destination: await imageFeedUrlFromLegacySearch(ctx.query, resolveTags),
+          permanent: false,
+        },
+      };
+    if (destination === 'models-search')
       return { redirect: { destination: '/search/models', permanent: false } };
   },
 });

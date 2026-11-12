@@ -16,6 +16,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 }));
 
 const { pullData } = await import('~/server/search-index/collections.search-index');
+const { tagIdsForImagesCache } = await import('~/server/redis/caches');
 
 let pg: PGlite;
 const db = {
@@ -62,6 +63,8 @@ const MODEL_ITEM_DRAFT_VERSION = 44;
 const MODEL_ITEM_SCHEDULED_VERSION = 45;
 const MODEL_ITEM_PRIVATE_POST = 46;
 const POST_ITEM_REMOVAL_REASON = 47;
+const OWN_RESTRICTED_R = 48;
+const OWN_RESTRICTED_PG = 49;
 
 beforeAll(async () => {
   pg = new PGlite();
@@ -89,7 +92,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, name text, url text NOT NULL DEFAULT 'u',
       "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type text DEFAULT 'image',
       poi boolean DEFAULT false, minor boolean DEFAULT false, index int,
-      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text
+      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int, "modelVersionId" int, "publishedAt" timestamp,
@@ -270,6 +274,12 @@ beforeAll(async () => {
       (17, ${MODEL3D_ITEM_PUBLISHED}, NULL, 36, ${OWNER}),
       (21, ${SHARED_UPLOAD_OWNER_ADDED}, 111, NULL, ${OWNER}),
       (22, ${SHARED_UPLOAD_STRANGER_ADDED}, 111, NULL, ${STRANGER});
+    INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", "modelRestricted") VALUES
+      (126, ${STRANGER}, 1, 4, true), (127, ${STRANGER}, 1, 1, true);
+    INSERT INTO "Collection" (id, "userId", "imageId") VALUES
+      (${OWN_RESTRICTED_R}, ${OWNER}, 126), (${OWN_RESTRICTED_PG}, ${OWNER}, 127);
+    INSERT INTO "CollectionItem" (id, "collectionId", "imageId") VALUES
+      (900, ${OWN_RESTRICTED_R}, 126), (901, ${OWN_RESTRICTED_PG}, 127);
   `);
 });
 afterAll(() => pg.close());
@@ -294,6 +304,11 @@ describe('collections search index covers', () => {
     expect((await pull(OWN_PUBLISHED)).cover).toBe(100);
   });
 
+  it('indexes no own R cover on a restricted base model, and keeps a PG one (control)', async () => {
+    expect(await pull(OWN_RESTRICTED_R)).toMatchObject({ cover: null, itemCovers: [] });
+    expect((await pull(OWN_RESTRICTED_PG)).cover).toBe(127);
+  });
+
   it.each([
     ['sits on a Private post', OWN_PRIVATE_POST],
     ['carries a removal reason', OWN_REMOVAL_REASON],
@@ -303,6 +318,18 @@ describe('collections search index covers', () => {
     expect(cover).toBeNull();
     // Its only item is the same image, so the fallback finds nothing either.
     expect(itemCovers).toEqual([]);
+  });
+
+  // The document keeps these tag ids until the next reindex, so they must not come from an L1 entry
+  // this process may hold from before a tag edit.
+  it("reads the cover images' tag ids past this process's L1", async () => {
+    const fetch = vi.mocked(tagIdsForImagesCache.fetch);
+    fetch.mockClear();
+    await pull(OWN_PUBLISHED);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [ids, options] = fetch.mock.calls[0];
+    expect(ids).toContain(100);
+    expect(options).toEqual({ bypassLocal: true });
   });
 
   it('uses an Image item a stranger could see as the fallback cover (control)', async () => {

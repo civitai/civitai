@@ -54,7 +54,13 @@ import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
-import { basicTagsLocalTtl, cosmeticsLocalTtl } from '~/server/redis/l1-switches';
+import {
+  basicTagsLocalTtl,
+  cosmeticsLocalTtl,
+  TAG_IDS_FOR_IMAGES_L1,
+  tagIdsForImagesLocalLimits,
+  tagIdsForImagesLocalTtl,
+} from '~/server/redis/l1-switches';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -95,16 +101,27 @@ export const tagIdsForImagesCache = createCachedObject<{
   staleWhileRevalidateTtl: CacheTTL.hour,
   // L1: image tag-ids are near-static display metadata (busted on scan/tag edits);
   // an 8h Redis TTL dwarfs the per-pod L1, which only delays a cross-pod tag edit by
-  // ≤localTtl. Not a visibility gate (feed SQL enforces that). This is the single
+  // ≤localTtl. Not a browsing-level gate (feed SQL enforces that). This is the single
   // largest driver of api-heavy's per-id Redis GET volume (feed streams distinct
   // imageIds), so the L1 was starved at localTtl=15s/localMax=10k. Enlarged to a
   // ~3min window + 50k hot entries so cross-user popular-image overlap + scroll-back
   // land as L1 hits. Strictly byte-bounded (see l1-cache-budget) — the byte cap, not
-  // the entry cap, is the binding heap guard. The longer localTtl is safe here BECAUSE
-  // this value gates nothing (only delays a busted tag-list edit by ≤localTtl).
-  localTtl: 180,
-  localMax: 50000,
-  localMaxBytes: L1_CACHE_BYTE_BUDGETS.tagIdsForImages,
+  // the entry cap, is the binding heap guard. The longer localTtl is acceptable for display and
+  // viewer-preference reads: the feed SQL never reads this value, and a busted tag-list edit reaches
+  // another process's L1 only after ≤localTtl, so the client's hidden-tag filter and the server-side
+  // `excludedTagIds` filter on model-feed images (model.service) can lag a tag edit by as much.
+  // 🔴 A caller that makes an access, moderation or payment decision from these ids must read past
+  // the L1 (`{ bypassLocal: true }`), as the gallery-promotion refusal (promotion.service) does. So
+  // must a caller that persists them: the search-index builders (collections, images, metrics-images,
+  // and models through imagesForModelVersionsCache's appendFn) bake them into documents kept until
+  // the next reindex, so an L1 entry from before a tag edit would outlive the L1 window by that much.
+  // `tag-ids-for-images-l1-large` switches to a larger tier (TTL and caps in l1-switches); off is the
+  // tier above. When a process inserts more distinct ids per TTL window than the off tier's entry
+  // cap, its caps, not its TTL, bound its hit ratio.
+  localTtl: tagIdsForImagesLocalTtl,
+  localLimits: tagIdsForImagesLocalLimits,
+  localMax: TAG_IDS_FOR_IMAGES_L1.max,
+  localMaxBytes: TAG_IDS_FOR_IMAGES_L1.maxBytes,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;

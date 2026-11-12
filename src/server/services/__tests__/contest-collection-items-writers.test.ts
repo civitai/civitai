@@ -82,10 +82,19 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
     busts: 0,
     why: 'updatedAt only, which is not cached',
   },
-  'src/server/games/daily-challenge/challenge-rewards.ts': {
-    writes: 1,
+  'src/server/events/turf/flag-day.ts': {
+    writes: 2,
     busts: 0,
-    why: `collection-wide REVIEW -> ACCEPTED/REJECTED at challenge end, by predicate: ${TTL}`,
+    why:
+      "the Flag Race swap replaces the home block's Collection, which is plain mode, not a contest, " +
+      'so its rows are not in the cached value; it busts the home block cache instead',
+  },
+  'src/server/games/daily-challenge/challenge-rewards.ts': {
+    writes: 2,
+    busts: 1,
+    why:
+      `collection-wide REVIEW -> ACCEPTED/REJECTED at challenge end, by predicate: ${TTL}; ` +
+      'refundBannedEntrantReviews clears the tag of the entries it refunded and busts them',
   },
   'src/server/jobs/daily-challenge-processing.ts': {
     writes: 3,

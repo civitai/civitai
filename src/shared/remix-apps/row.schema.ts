@@ -211,7 +211,8 @@ export const remixAppInputSchema = z.object({
   slug: remixAppSlugSchema,
   name: text(40),
   description: z.string().trim().max(200).optional(),
-  target: z.enum(REMIX_SAVABLE_SLOT_IDS),
+  /** A new app takes a savable slot; a save may keep a stored row's other slot. */
+  target: z.enum(REMIX_SLOT_IDS),
   spec: remixAppSpecSchema,
 });
 export type RemixAppInput = z.infer<typeof remixAppInputSchema>;

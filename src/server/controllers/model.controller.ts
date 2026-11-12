@@ -50,6 +50,7 @@ import {
   emptyTrainingOverlay,
 } from '~/server/services/orchestrator/training/workflow-state';
 import { eventEngine } from '~/server/events';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import {
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
@@ -208,7 +209,7 @@ import {
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
-  sfwBrowsingLevelsFlag,
+  modelBrowsingLevelLimit,
 } from '~/shared/constants/browsingLevel.constants';
 import {
   Availability,
@@ -691,7 +692,7 @@ export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
       biasImageSlice: slim,
       metricPrivacyEnabled,
       // model.getAll never edge-caches a signed-in response (skipEdgeCache).
-      eventDecorationViewer: ctx.user,
+      eventDecorationViewer: eventViewerOf(ctx),
       coverage: await coverageAudience(ctx.user ?? undefined),
     };
 
@@ -755,13 +756,14 @@ export const getModelsPagedSimpleHandler = async ({
       name: true,
       nsfw: true,
       meta: true,
-      modelVersions: input.needsReview
-        ? {
-            select: { id: true, name: true, meta: true },
-            where: { meta: { path: ['needsReview'], equals: true } },
-            take: 1,
-          }
-        : false,
+      modelVersions:
+        input.needsReview && ctx.user?.isModerator
+          ? {
+              select: { id: true, name: true, meta: true },
+              where: { meta: { path: ['needsReview'], equals: true } },
+              take: 1,
+            }
+          : false,
     },
   });
 
@@ -874,7 +876,10 @@ export const upsertModelHandler = async ({
       isModerator: ctx.user.isModerator,
       gallerySettings: {
         ...gallerySettings,
-        level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : gallerySettings?.level,
+        level:
+          input.minor || input.sfwOnly
+            ? modelBrowsingLevelLimit({ minor: !!input.minor, sfwOnly: !!input.sfwOnly })
+            : gallerySettings?.level,
       },
       tracker: ctx.track,
     });
@@ -1315,7 +1320,9 @@ export const getDownloadCommandHandler = async ({
       throw throwAuthorizationError();
     }
 
-    const { model, files } = modelVersion;
+    const { model } = modelVersion;
+    // The command hands out model files only, to everyone.
+    const files = modelVersion.files.filter((f) => f.type !== 'Training Data');
     const castedFiles = files as Array<
       Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
     >;
@@ -2369,11 +2376,11 @@ export const updateGallerySettingsHandler = async ({
               hiddenImages: gallerySettings.hiddenImages,
               users: gallerySettings.hiddenUsers.map(({ id }) => id),
               tags: gallerySettings.hiddenTags.map(({ id }) => id),
-              level: sfwLocked ? sfwBrowsingLevelsFlag : gallerySettings.level,
+              level: sfwLocked ? modelBrowsingLevelLimit(model) : gallerySettings.level,
               pinnedPosts: gallerySettings.pinnedPosts,
             }
           : sfwLocked
-          ? { level: sfwBrowsingLevelsFlag }
+          ? { level: modelBrowsingLevelLimit(model) }
           : null;
         return { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull };
       },

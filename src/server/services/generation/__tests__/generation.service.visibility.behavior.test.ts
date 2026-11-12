@@ -40,6 +40,17 @@ import { getGenerationData } from '~/server/services/generation/generation.servi
 import type { MediaViewer } from '~/server/utils/image-media-visibility';
 import type { SessionUser } from '~/types/session';
 
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
+
 const OWNER = 10;
 const STRANGER = 20;
 const SOURCE = 'https://orchestration-new.civitai.com/source.png';

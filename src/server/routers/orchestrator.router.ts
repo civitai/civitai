@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { acceptGenerationLicense } from '~/server/services/generation-license.service';
 import { generatorAcceptsBoostRequired } from '~/server/services/generation/coverage-source';
 import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
 import { assertGenerationInputsUsable } from '~/server/services/generation-input-urls';
@@ -68,9 +69,11 @@ import {
   protectedProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
+import { rewriteProxyUrlToOrchestrator } from '~/server/orchestrator/region-proxy';
+import { isCivitaiMediaUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import {
   getPresetModelConfig,
@@ -206,7 +209,16 @@ export const orchestratorRouter = router({
   getVideoMetadata: orchestratorProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ videoUrl: z.string() }))
-    .query(({ ctx, input }) => getVideoMetadata(input)),
+    .query(({ input }) => {
+      // The step runs on the system token, so like the other system-run steps it only takes
+      // media on Civitai's orchestrator. A region-proxy url is read from the orchestrator host.
+      const videoUrl = rewriteProxyUrlToOrchestrator(input.videoUrl);
+      if (!isCivitaiMediaUrl(videoUrl))
+        throw throwBadRequestError(
+          'Video metadata is only available for videos uploaded to Civitai. Upload the file, then try again.'
+        );
+      return getVideoMetadata({ videoUrl });
+    }),
 
   // #region [prompt enhancement]
   enhancePrompt: orchestratorGuardedProcedure
@@ -392,6 +404,12 @@ export const orchestratorRouter = router({
       })
     ),
   // #region [Generation Graph V2 endpoints]
+  acceptGenerationLicense: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(z.object({ ecosystem: z.string() }))
+    .mutation(({ ctx, input }) =>
+      acceptGenerationLicense({ userId: ctx.user.id, ecosystem: input.ecosystem })
+    ),
   /**
    * Generate from graph - unified endpoint for all generation types
    */

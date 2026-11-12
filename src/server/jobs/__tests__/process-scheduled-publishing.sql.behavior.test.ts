@@ -8,9 +8,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 // The job's own SQL, run against an in-process Postgres: what a run publishes, and what it engages.
 
-const { mockProcessEngagement, mockSparkRestored } = vi.hoisted(() => ({
+const { mockProcessEngagement, mockSparkRestored, jobDate } = vi.hoisted(() => ({
   mockProcessEngagement: vi.fn(),
   mockSparkRestored: vi.fn(),
+  jobDate: { lastRun: new Date(0) },
 }));
 
 // Hand-listed rather than spread via importOriginal, as in process-scheduled-publishing.rewards.test:
@@ -46,7 +47,7 @@ vi.mock('~/server/services/article-schedule.service', () => ({
 vi.mock('~/server/services/text-scan/submit', () => ({ scanEntitiesInBackground: vi.fn() }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
-  getJobDate: async () => [new Date(0), vi.fn()] as const,
+  getJobDate: async () => [jobDate.lastRun, vi.fn()] as const,
 }));
 
 const { processScheduledPublishing } = await import('~/server/jobs/process-scheduled-publishing');
@@ -128,6 +129,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  jobDate.lastRun = new Date(0);
   mockProcessEngagement.mockReset();
   mockSparkRestored.mockReset();
   beforeTx = undefined;
@@ -327,5 +329,69 @@ describe('processScheduledPublishing :: story spark', () => {
     await scheduled({ withFile: false });
     await runJob();
     expect(mockSparkRestored).not.toHaveBeenCalled();
+  });
+});
+
+describe('processScheduledPublishing :: a model dated after its first version', () => {
+  const FUTURE = new Date(Date.now() + 2 * 24 * 60 * 60_000);
+
+  // The model is dated at its second version; the first is either due on its schedule or was
+  // published at once by the owner.
+  async function modelDatedAfterFirstVersion({ v1Status }: { v1Status: string }) {
+    await pg.db.query(`INSERT INTO "Model" VALUES (1, $1, 'Scheduled', $2, NULL, NULL)`, [
+      OWNER,
+      FUTURE,
+    ]);
+    await pg.db.query(
+      `INSERT INTO "ModelVersion" VALUES (10, 1, $1, $2, 'Public'), (11, 1, 'Scheduled', $3, 'Private')`,
+      [v1Status, PAST, FUTURE]
+    );
+    await addFile();
+  }
+  const model = async () =>
+    (
+      await pg.db.query<{ status: string; publishedAt: Date }>(
+        `SELECT status, "publishedAt" FROM "Model" WHERE id = 1`
+      )
+    ).rows[0];
+
+  it('publishes the model with its first version, no longer dated in the future', async () => {
+    await modelDatedAfterFirstVersion({ v1Status: 'Scheduled' });
+    await runJob();
+    const after = await model();
+    expect(after.status).toBe('Published');
+    expect(after.publishedAt.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(engaged('model')).toEqual([1]);
+    expect(mockProcessEngagement).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'model', entityId: 1, userId: OWNER })
+    );
+  });
+
+  it('keeps the model Scheduled to its date when its first version was published at once', async () => {
+    await modelDatedAfterFirstVersion({ v1Status: 'Published' });
+    await runJob();
+    expect(await model()).toEqual({ status: 'Scheduled', publishedAt: FUTURE });
+    expect(engaged('model')).toEqual([]);
+  });
+
+  // Selected as due but taken down before its UPDATE: it did not go live, so it releases nothing.
+  it('keeps the model Scheduled when its due version is taken down after the selects', async () => {
+    await modelDatedAfterFirstVersion({ v1Status: 'Published' });
+    await pg.db.query(`UPDATE "ModelVersion" SET "publishedAt" = $1 WHERE id = 11`, [PAST]);
+    await pg.db.query(`INSERT INTO "ModelFile" ("modelVersionId") VALUES (11)`);
+    beforeTx = () =>
+      pg.db.exec(`UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE id = 11`);
+    await runJob();
+    expect(await model()).toEqual({ status: 'Scheduled', publishedAt: FUTURE });
+    expect(engaged('model')).toEqual([]);
+  });
+
+  // Put back to Scheduled with the date it already went live on (unpublished, then rescheduled).
+  it('keeps the model Scheduled when its version is due only by an old date', async () => {
+    await modelDatedAfterFirstVersion({ v1Status: 'Scheduled' });
+    jobDate.lastRun = new Date(PAST.getTime() + 60_000);
+    await runJob();
+    expect(await model()).toEqual({ status: 'Scheduled', publishedAt: FUTURE });
+    expect(engaged('model')).toEqual([]);
   });
 });

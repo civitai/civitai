@@ -36,6 +36,7 @@ const {
   generatedFile,
   getFileForModelVersion,
   cyberTipXmlProblem,
+  escape,
   spoolCap,
 } = vi.hoisted(() => ({
   submitReport: vi.fn(),
@@ -48,6 +49,7 @@ const {
   generatedFile: vi.fn(),
   getFileForModelVersion: vi.fn(),
   cyberTipXmlProblem: vi.fn(),
+  escape: { off: false },
   // The bytes one report's send may write to disk, when a test sets it.
   spoolCap: { bytes: undefined as number | undefined },
 }));
@@ -79,7 +81,9 @@ vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
 vi.mock('~/server/services/ncmec-xml', async (importOriginal) => {
   const actual = await importOriginal<typeof NcmecXml>();
   cyberTipXmlProblem.mockImplementation(actual.cyberTipXmlProblem);
-  return { ...actual, cyberTipXmlProblem };
+  // The positive control: with escaping off (illegal characters still scrubbed), nothing may open.
+  const xmlText = (text: string) => (escape.off ? actual.xmlSafe(text) : actual.xmlText(text));
+  return { ...actual, cyberTipXmlProblem, xmlText };
 });
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -240,6 +244,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  escape.off = false;
   vi.mocked(logToAxiom).mockClear();
   cyberTipXmlProblem.mockClear();
   submitReport.mockReset().mockImplementation(async (report) => {
@@ -805,5 +810,161 @@ describe('a downloaded archive', () => {
     expect(markedSent()).toBe(true);
     expect(during).toEqual([[expect.stringMatching(/^1-[0-9a-f-]{36}\/\w+_training-data\.zip$/)]]);
     expect(seen).toEqual([[]]);
+  });
+});
+
+describe('prompts sent with each file', () => {
+  const HOSTILE = [
+    '<lora:style_v2:0.8> R&D > less',
+    ']]> <![CDATA[ x ]]> <script>alert(1)</script> &amp;',
+    'nul\u0000 bell\u0007 lone\uD800 surrogate',
+    'emoji 😀 "quotes"',
+  ].join('\n');
+  const scrubbed = HOSTILE.replace(/[\u0000\u0007\uD800]/g, '\uFFFD');
+
+  /** Each sent file's details as NCMEC reads them, from the XML the real builder writes. */
+  async function sentAsParsed() {
+    return Promise.all(
+      submitFileDetails.mock.calls.map(async ([details]) => {
+        const doc = await new Parser({ strict: true, explicitArray: true }).parseStringPromise(
+          buildSubmitFileDetails(details)
+        );
+        const root = doc.fileDetails;
+        const pairs = (root.details?.[0]?.nameValuePair ?? []) as {
+          name: string[];
+          value: string[];
+        }[];
+        return {
+          additionalInfo: (root.additionalInfo ?? []) as string[],
+          pairs: Object.fromEntries(pairs.map((p) => [p.name[0], p.value[0]])),
+        };
+      })
+    );
+  }
+
+  const generated = () =>
+    report('GeneratedImage', {
+      generatedImages: [
+        {
+          jobId: 'job-1',
+          prompt: HOSTILE,
+          negativePrompt: 'blurry & <bad>',
+          resources: ['urn:air:x&y'],
+          blobs: [{ url: 'blob-1' }],
+        },
+      ],
+    });
+
+  it('on an image report: read back as stored on the image, checked before the CyberTip opens', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      imageRow(501, { meta: { prompt: HOSTILE, negativePrompt: 'blurry & <bad>' } }),
+    ]);
+
+    await processCsamReport(report('Image', {}, [{ id: 501 }]));
+
+    expect(markedSent()).toBe(true);
+    expectSentDetailsChecked();
+    const [file] = await sentAsParsed();
+    expect(file.additionalInfo).toEqual([
+      `Prompt, as stored on the image: ${scrubbed}\nNegative prompt, as stored on the image: blurry & <bad>`,
+    ]);
+    // The EXIF pair is trimmed of leading and trailing symbols, as on the preserved-evidence send.
+    expect(file.pairs.prompt).toBe(scrubbed.slice(1, -1));
+    expect(file.pairs.negativePrompt).toBe('blurry & <bad');
+  });
+
+  it('on an image report: a meta prompt that is not text, and meta resources, are not sent', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      imageRow(501, {
+        meta: { prompt: { nested: '<x>' }, negativePrompt: 7, resources: ['urn:air:x'] },
+      }),
+    ]);
+
+    await processCsamReport(report('Image', {}, [{ id: 501 }]));
+
+    expect(markedSent()).toBe(true);
+    const [file] = await sentAsParsed();
+    expect(file).toEqual({ additionalInfo: [], pairs: {} });
+  });
+
+  it.each([
+    ['an image report', 'Image', '[truncated]'],
+    ['a generated-image report', 'GeneratedImage', '[truncated; full text preserved]'],
+  ])('on %s: a long prompt is cut with its marker', async (_, type, marker) => {
+    const long = 'p'.repeat(5_000);
+    dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501, { meta: { prompt: long } })]);
+    const filing =
+      type === 'Image'
+        ? report('Image', {}, [{ id: 501 }])
+        : report('GeneratedImage', {
+            generatedImages: [{ jobId: 'job-1', prompt: long, blobs: [{ url: 'blob-1' }] }],
+          });
+
+    await processCsamReport(filing);
+
+    const [file] = await sentAsParsed();
+    expect(file.additionalInfo[0].endsWith(`… ${marker}`)).toBe(true);
+    if (type === 'Image') expect(file.additionalInfo[0]).not.toContain('preserved');
+  });
+
+  it('on a generated-image report: read back as the generation stored them, checked before the CyberTip opens', async () => {
+    await processCsamReport(generated());
+
+    expect(markedSent()).toBe(true);
+    expectSentDetailsChecked();
+    const [file] = await sentAsParsed();
+    expect(file.additionalInfo).toEqual([
+      `Prompt: ${scrubbed}\nNegative prompt: blurry & <bad>\nResources: urn:air:x&y`,
+    ]);
+    expect(file.pairs.resources).toBe('urn:air:x&y');
+    expect(file.pairs.prompt).toBe(scrubbed.slice(1, -1));
+  });
+
+  it.each([
+    [
+      'an image report',
+      () => {
+        dbMock.dbRead.image.findMany.mockResolvedValue([
+          imageRow(501, { meta: { prompt: 'R&D <b>bold</b> > less' } }),
+        ]);
+        return report('Image', {}, [{ id: 501 }]);
+      },
+    ],
+    ['a generated-image report', generated],
+  ])('with escaping off, opens no CyberTip for %s', async (_, filing) => {
+    escape.off = true;
+
+    await processCsamReport(filing());
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(lines('send-xml')).toHaveLength(1);
+  });
+
+  it('on a generated-image report: only text resources are sent', async () => {
+    await processCsamReport(
+      report('GeneratedImage', {
+        generatedImages: [
+          { jobId: 'job-1', resources: [{ a: 1 }, '', 'ok'], blobs: [{ url: 'blob-1' }] },
+        ],
+      })
+    );
+
+    const [file] = await sentAsParsed();
+    expect(file.pairs).toEqual({ resources: 'ok' });
+  });
+
+  it('on an image report: a very long meta prompt is cut before it is trimmed, and sent', async () => {
+    const long = `a${'!'.repeat(200_000)}b`;
+    dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501, { meta: { prompt: long } })]);
+
+    const started = Date.now();
+    await processCsamReport(report('Image', {}, [{ id: 501 }]));
+
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(markedSent()).toBe(true);
+    const [file] = await sentAsParsed();
+    // The cut leaves 'a' and a run of symbols, which the trim removes.
+    expect(file.pairs.prompt).toBe('a… [truncated]');
+    expect(file.additionalInfo[0].endsWith('… [truncated]')).toBe(true);
   });
 });

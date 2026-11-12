@@ -12,11 +12,7 @@ import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/ac
 import { unpublishArticleById } from '~/server/services/article.service';
 import { violationMetadata } from '~/server/services/text-scan/public-content';
 import { deleteChatMessage } from '~/server/services/chat.service';
-import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
-import {
-  bulkSetCommentV3TosViolation,
-  commentV3IdsByOldId,
-} from '~/server/services/commentv3/moderation.service';
+import { bulkSetCommentV3TosViolation } from '~/server/services/commentv3/moderation.service';
 import {
   CSAM_HOLD_POST_UNPUBLISH_REASON,
   MATURE_UNDERAGE_REASON,
@@ -54,8 +50,6 @@ const PLAN: Record<CsamHoldDecision, { remove: boolean; strike: boolean; ban: bo
  */
 const REMOVABLE_ENTITY_TYPES = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'UserProfile',
   'Post',
@@ -112,13 +106,6 @@ type HeldRow = {
 async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
   const { entityType, entityId } = hold;
   switch (entityType) {
-    case 'Comment':
-      // A hold from before the model flip names the comment by its old id.
-      await bulkSetCommentV3TosViolation({ ids: await commentV3IdsByOldId([entityId]), actor });
-      return;
-    case 'CommentV2':
-      await bulkSetCommentV2TosViolation({ ids: [entityId], actor });
-      return;
     case 'CommentV3':
       await bulkSetCommentV3TosViolation({ ids: [entityId], actor });
       return;

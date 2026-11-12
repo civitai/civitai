@@ -4,6 +4,7 @@ import { assertVectorSyncConfig, config, domainEmbedEnabled } from '@/config';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { logger } from '@/utils/logger';
 import { Embedder } from '../embedder';
+import { serveMetrics } from '../metrics';
 import { connectorBlock } from '../sync';
 import { DomainSyncQueue } from './queue';
 import type { Domain, DomainRef } from './sync';
@@ -84,7 +85,8 @@ export async function runSyncConsumer(opts: {
   }, vs.debounceMs);
 
   http
-    .createServer((_req, res) => {
+    .createServer(async (req, res) => {
+      if (req.url === '/metrics') return serveMetrics(res);
       const healthy = queue.isHealthy();
       const byDomain = Object.fromEntries(
         [...queue.lanes].map(([name, lane]) => [

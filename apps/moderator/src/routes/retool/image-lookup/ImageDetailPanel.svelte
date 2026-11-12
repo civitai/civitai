@@ -8,6 +8,10 @@
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { PageData } from './$types';
+  import {
+    FEEDBACK_CAPTURE_ACCOUNT_NOTE,
+    isFeedbackCaptureOwner,
+  } from '@civitai/shared/feedback-capture';
 
   type Result = NonNullable<PageData['result']>;
 
@@ -128,6 +132,9 @@
     </a>
     {#if image.userBannedAt}
       <Badge variant="destructive">uploader banned</Badge>
+    {/if}
+    {#if isFeedbackCaptureOwner(image.userId)}
+      <span class="basis-full text-xs text-sky-300" role="note">{FEEDBACK_CAPTURE_ACCOUNT_NOTE}</span>
     {/if}
     <!-- Also into the app: the post's other images are the usual reason an image lookup is not the end
          of the investigation, and the panel it lands on carries its own way out to the site. -->

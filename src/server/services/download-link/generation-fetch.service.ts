@@ -8,6 +8,7 @@ import { getDownloadFilename } from '~/server/services/file.service';
 import { readModelVersionForFileViaKysely } from '~/server/services/hot-reads-5.reads';
 import { readDownloadFilesViaKysely } from '~/server/services/hot-reads-6.reads';
 import { readModeratorFlags } from '~/server/services/download-link/moderator-review.reads';
+import { PROVIDER_FETCHABLE_STATUSES } from '~/server/services/download-link/provider-fetchable';
 import { hasFailedScan } from '~/server/utils/failed-scan';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import {
@@ -40,14 +41,6 @@ export type GenerationFetchSelectors = {
   fp?: string;
   quantType?: string;
 };
-
-/** Statuses a provider may fetch, on both the model and the version. Anything else is refused. */
-const PROVIDER_FETCHABLE_STATUSES: ReadonlySet<string> = new Set([
-  ModelStatus.Published,
-  ModelStatus.Unpublished,
-  ModelStatus.Draft,
-  ModelStatus.Scheduled,
-]);
 
 export const GENERATION_FETCH_REFUSALS = [
   'not-found',
@@ -160,8 +153,8 @@ export async function checkGenerationFetch({
   let allFiles: boolean;
   if (isProvider) {
     if (
-      !PROVIDER_FETCHABLE_STATUSES.has(version.status) ||
-      !PROVIDER_FETCHABLE_STATUSES.has(version.model.status)
+      !PROVIDER_FETCHABLE_STATUSES.includes(version.status) ||
+      !PROVIDER_FETCHABLE_STATUSES.includes(version.model.status)
     )
       return refuse('not-found');
     const flags = await read('flags', () => readModeratorFlags(kyselyRead, modelVersionId));

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { StickerMotionEditor } from '~/components/Sticker/StickerMotionEditor';
 import { useStickerPlacementDraftStore as store } from '~/store/sticker-placement-draft.store';
@@ -207,5 +207,69 @@ describe('the sticker timeline', () => {
     // Opening the tray closes the timeline while the video is still playing.
     store.setState({ trayOpen: true });
     await expect.poll(() => store.getState().videoPlaying).toBe(false);
+  });
+});
+
+describe('the timeline inside the image detail dialog', () => {
+  test('its keys step the video, not the carousel the dialog holds', async () => {
+    // The detail view opened from a feed is a modal: the video and the editor sit inside it.
+    const host = page
+      .getByRole('radiogroup', { name: 'Sticker mode' })
+      .element()
+      .closest<HTMLElement>('[style*="600px"]')!;
+    host.setAttribute('role', 'dialog');
+    host.append(video);
+    const carousel = vi.fn();
+    const onCarouselKey = (event: KeyboardEvent) => {
+      if (!event.defaultPrevented && event.key === 'ArrowRight') carousel();
+    };
+    document.addEventListener('keydown', onCarouselKey, true);
+    onTestFinished(() => document.removeEventListener('keydown', onCarouselKey, true));
+
+    await page.getByText('Movement').click();
+    await userEvent.keyboard('{ArrowRight}');
+
+    expect(video.currentTime).toBeCloseTo(0.1);
+    expect(carousel).not.toHaveBeenCalled();
+  });
+});
+
+describe('the mode choice while the tray is open', () => {
+  let tray: HTMLDivElement | undefined;
+  afterEach(() => tray?.remove());
+
+  const openTray = () => {
+    tray = document.createElement('div');
+    Object.assign(tray.style, {
+      position: 'fixed',
+      left: '0',
+      right: '0',
+      bottom: '0',
+      height: '160px',
+    });
+    document.body.appendChild(tray);
+    store.setState({ trayOpen: true, tray });
+    return tray;
+  };
+
+  test('sits on top of the tray rather than under it', async () => {
+    const trayTop = openTray().getBoundingClientRect().top;
+    const control = () =>
+      page.getByRole('radiogroup', { name: 'Sticker mode' }).element().getBoundingClientRect();
+
+    await expect.poll(() => Math.round(control().bottom)).toBe(Math.round(trayTop));
+    expect(control().height).toBeGreaterThan(0);
+  });
+
+  test('Movement puts the tray away and opens the timeline at the video frame', async () => {
+    openTray();
+    video.currentTime = 1.5;
+
+    await page.getByText('Movement').click();
+
+    expect(store.getState().trayOpen).toBe(false);
+    expect(video.pause).toHaveBeenCalled();
+    await expect.element(page.getByRole('group', { name: 'Sticker timeline' })).toBeVisible();
+    expect(selected().motion?.keys.map((key) => key.t)).toEqual([1500]);
   });
 });

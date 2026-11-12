@@ -5,6 +5,17 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 import type * as UserService from '~/server/services/user.service';
 
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
+
 /**
  * A collection's cover is shown only to someone who could see the image itself, and a cover can
  * only be set to an image the caller could see. Covers stored before that rule existed stay in
@@ -98,6 +109,12 @@ const OWNER_REMOVED = 215; // the collection owner's own removed upload
 const REMOVED_LEVEL = 213; // stranger's image, Scanned with no reason but rated at the removed level
 const TAKEN_DOWN_MODEL = 216; // stranger's image on a published post on a taken-down model
 const LIVE_MODEL = 217; // stranger's image on a published post on a model that is not taken down
+const RESTRICTED_R = 218; // stranger's R image on a restricted base model
+const RESTRICTED_PG = 219; // stranger's PG image on a restricted base model
+const UNRESTRICTED_R = 220; // stranger's R image on an unrestricted base model
+const VIEWER_RESTRICTED_R = 221; // the viewer's own R image on a restricted base model
+const RESTRICTED_X = 222; // stranger's X image on a restricted base model
+const RESTRICTED_XXX = 223; // stranger's XXX image on a restricted base model
 
 beforeAll(async () => {
   const schema = `
@@ -112,6 +129,7 @@ beforeAll(async () => {
       "ingestion"       "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "blockedFor"      text,
       "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false,
       "needsReview"     text,
       "metadata"        jsonb,
       "scanJobs"        jsonb
@@ -173,6 +191,13 @@ beforeAll(async () => {
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${REMOVED_LEVEL}, ${STRANGER}, 1, 32);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion") VALUES (${PENDING_SCAN}, ${STRANGER}, 1, 'Pending');
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion", "blockedFor") VALUES (${OWNER_REMOVED}, ${OWNER}, NULL, 'Blocked', 'Moderated');
+    INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel", "modelRestricted") VALUES
+      (${RESTRICTED_R},        ${STRANGER}, 1, 4, true),
+      (${RESTRICTED_PG},       ${STRANGER}, 1, 1, true),
+      (${UNRESTRICTED_R},      ${STRANGER}, 1, 4, false),
+      (${VIEWER_RESTRICTED_R}, ${VIEWER},   5, 4, true),
+      (${RESTRICTED_X},        ${STRANGER}, 1, 8, true),
+      (${RESTRICTED_XXX},      ${STRANGER}, 1, 16, true);
     INSERT INTO "CollectionContributor" ("collectionId", "userId", "permissions") VALUES
       (${COLLECTION}, ${MANAGER}, ARRAY['VIEW', 'MANAGE']::"CollectionContributorPermission"[]),
       (${COLLECTION}, ${VIEW_ONLY}, ARRAY['VIEW', 'ADD']::"CollectionContributorPermission"[]),
@@ -198,6 +223,8 @@ describe('which covers a stranger is shown', () => {
     ["the collection owner's own upload", OWNER_UPLOAD],
     ["a collection manager's upload", MANAGER_UPLOAD],
     ['an image on a model that is not taken down', LIVE_MODEL],
+    ['a PG image on a restricted base model', RESTRICTED_PG],
+    ['an R image on an unrestricted base model', UNRESTRICTED_R],
   ])('shows %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(true);
   });
@@ -215,6 +242,9 @@ describe('which covers a stranger is shown', () => {
     ['an image rated at the removed level', REMOVED_LEVEL],
     ['an image still being scanned', PENDING_SCAN],
     ['an image on a taken-down model', TAKEN_DOWN_MODEL],
+    ['an R image on a restricted base model', RESTRICTED_R],
+    ['an X image on a restricted base model', RESTRICTED_X],
+    ['an XXX image on a restricted base model', RESTRICTED_XXX],
   ])('hides %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(false);
   });
@@ -227,6 +257,11 @@ describe('which covers a stranger is shown', () => {
   it('shows staff any cover', async () => {
     expect(await servable(REMOVED, { id: 99, isModerator: true })).toBe(true);
   });
+
+  it('follows the base-model rules for the image owner too, and not for staff', async () => {
+    expect(await servable(VIEWER_RESTRICTED_R, { id: VIEWER })).toBe(false);
+    expect(await servable(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBe(true);
+  });
 });
 
 describe('withServableCovers', () => {
@@ -236,12 +271,16 @@ describe('withServableCovers', () => {
       { id: 2, userId: OWNER, name: 'b', image: { id: REMOVED } },
       { id: 3, userId: OWNER, name: 'c', image: null },
       { id: 4, userId: OWNER, name: 'd', image: { id: PRIVATE_POST } },
+      { id: 5, userId: OWNER, name: 'e', image: { id: RESTRICTED_R } },
+      { id: 6, userId: OWNER, name: 'f', image: { id: RESTRICTED_PG } },
     ];
     expect(await withServableCovers(rows)).toEqual([
       rows[0],
       { ...rows[1], image: null },
       rows[2],
       { ...rows[3], image: null },
+      { ...rows[4], image: null },
+      rows[5],
     ]);
   });
 });
@@ -285,12 +324,24 @@ describe('getCollectionById', () => {
     ['a removed image', REMOVED],
     ['an image on a Private post', PRIVATE_POST],
     ['an image on a draft post', UNPUBLISHED_POST],
+    ['an R image on a restricted base model', RESTRICTED_R],
   ])('returns no cover when the stored cover is %s', async (_, imageId) => {
     expect(await coverOf(imageId)).toBeNull();
   });
 
   it("returns the viewer's own image to them", async () => {
     expect(await coverOf(VIEWER_REMOVED, { id: VIEWER })).toBe(VIEWER_REMOVED);
+  });
+
+  it('returns a PG cover on a restricted base model (control)', async () => {
+    expect(await coverOf(RESTRICTED_PG)).toBe(RESTRICTED_PG);
+  });
+
+  it("withholds the owner's own R cover on a restricted base model, but not from staff", async () => {
+    expect(await coverOf(VIEWER_RESTRICTED_R, { id: VIEWER })).toBeNull();
+    expect(await coverOf(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBe(
+      VIEWER_RESTRICTED_R
+    );
   });
 });
 

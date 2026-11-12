@@ -38,7 +38,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => null),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: h.getSessionUserById },
 }));
 // See listing-media-split.approve-request.test.ts: approve lazily loads a module whose body

@@ -463,8 +463,9 @@ describe('article text scan — public content only', () => {
         ...state,
       });
 
-    // A verdict for the text before this save would otherwise count, and take the article live.
+    // A verdict for the text before this save would otherwise count, and take or keep it live.
     it.each([
+      ['published', { status: 'Published', scheduledAt: null }],
       ['processing', { status: 'Processing', scheduledAt: null }],
       ['scheduled', { status: 'Draft', scheduledAt: new Date('2099-01-01') }],
     ])('records the submit before recomputing a %s article', async (_name, state) => {
@@ -475,12 +476,11 @@ describe('article text scan — public content only', () => {
       expect(events).toEqual(['submitted', 'recompute']);
     });
 
-    it('does not hold a published article save on the submit', async () => {
+    it('re-arms retries on a published article content change', async () => {
       storeAs({ status: 'Published', scheduledAt: null });
 
       await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
 
-      expect(events).toEqual(['recompute']);
       expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ entityId: ARTICLE_ID, rearmRetries: true })
       );
@@ -508,6 +508,32 @@ describe('article text scan — public content only', () => {
     await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
 
     expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+  });
+});
+
+describe('upsertArticle — a live article leaves Scanned with its new text', () => {
+  const stored = (state: Record<string, unknown>) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ ...storedArticle, ...state });
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ ...storedArticle, ...state });
+  };
+  const live = { status: 'Published', publishedAt: new Date('2026-11-01') };
+
+  it('in the same write, when the text changes', async () => {
+    stored(live);
+    await upsert({ status: 'Published' });
+    expect(contentWrites()[0]).toMatchObject({ ingestion: 'Rescan' });
+  });
+
+  it('not when the text is unchanged', async () => {
+    stored({ ...live, title: 'A title', content: EXPANDED_HTML });
+    await upsert({ status: 'Published' });
+    expect(contentWrites()[0]).not.toHaveProperty('ingestion');
+  });
+
+  it('not for a draft, which is not live', async () => {
+    stored({ status: 'Draft' });
+    await upsert({ status: 'Draft' });
+    expect(contentWrites()[0]).not.toHaveProperty('ingestion');
   });
 });
 

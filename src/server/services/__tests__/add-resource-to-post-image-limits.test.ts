@@ -96,7 +96,9 @@ vi.mock('~/server/services/common.service', async (importOriginal) => ({
   hasEntityAccess,
 }));
 
-const { addResourceToPostImage, createPost } = await import('~/server/services/post.service');
+const { addResourceToPostImage, createPost, creditResourcesToImages } = await import(
+  '~/server/services/post.service'
+);
 
 const IMAGE_ID = 101;
 const OTHER_IMAGE_ID = 102;
@@ -306,6 +308,55 @@ describe('addResourceToPostImage on-site generations', () => {
     arrange({ adding: ModelType.LORA, existing: [] });
     mockImageFindMany.mockResolvedValue([{ postId: null, meta: onSiteMeta, type: 'video' }]);
     await expect(add()).resolves.toBeDefined();
+  });
+});
+
+describe('creditResourcesToImages, as a batch credits a post', () => {
+  const onSiteMeta = { civitaiResources: [{ modelVersionId: 1 }] };
+  const version = (id: number, type: ModelType) =>
+    ({ id, model: { id: id + 1, type } } as Parameters<
+      typeof creditResourcesToImages
+    >[0]['modelVersions'][number]);
+
+  it('skips on-site generations by their stored meta and credits the rest in one insert', async () => {
+    arrange({ adding: ModelType.LORA, existing: [], imageIds: [IMAGE_ID, OTHER_IMAGE_ID] });
+    mockImageFindMany.mockResolvedValue([
+      { id: IMAGE_ID, postId: null, meta: null, type: 'image' },
+      { id: OTHER_IMAGE_ID, postId: null, meta: onSiteMeta, type: 'image' },
+    ]);
+
+    await creditResourcesToImages({
+      imageIds: [IMAGE_ID, OTHER_IMAGE_ID],
+      modelVersions: [version(40, ModelType.LORA), version(41, ModelType.Checkpoint)],
+      user,
+      skipOnSite: true,
+    });
+
+    expect(tx.imageResourceNew.createManyAndReturn).toHaveBeenCalledTimes(1);
+    expect(tx.imageResourceNew.createManyAndReturn.mock.calls[0][0].data).toEqual([
+      { imageId: IMAGE_ID, modelVersionId: 40, detected: false },
+      { imageId: IMAGE_ID, modelVersionId: 41, detected: false },
+    ]);
+  });
+
+  it('checks the limits against every version being added together', async () => {
+    arrange({
+      adding: ModelType.Checkpoint,
+      existing: rows(MAX_MANUAL_CHECKPOINTS_PER_IMAGE - 1, ModelType.Checkpoint, false),
+    });
+    mockImageFindMany.mockResolvedValue([
+      { id: IMAGE_ID, postId: null, meta: null, type: 'image' },
+    ]);
+
+    await expect(
+      creditResourcesToImages({
+        imageIds: [IMAGE_ID],
+        modelVersions: [version(40, ModelType.Checkpoint), version(41, ModelType.Checkpoint)],
+        user,
+        skipOnSite: true,
+      })
+    ).rejects.toThrow(manualResourceLimitMessages.checkpoints);
+    expectNothingWritten();
   });
 });
 

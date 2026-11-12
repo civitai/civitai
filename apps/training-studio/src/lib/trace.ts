@@ -297,3 +297,12 @@ export function traceLossPoints(line: string): LossPoint[] {
   if (step !== null && Object.keys(losses).length) return [{ step, losses, lr: finite(e.lr) }];
   return typeof e.message === 'string' ? lossPointsFromText(e.message) : [];
 }
+
+/** A run's log as one text file: each epoch's lines, every one (loss readings included) in its
+ *  readable form, under an `=== Epoch N ===` header. */
+export function traceLogText(sections: { epoch: number; lines: string[] }[]): string {
+  return sections
+    .map(({ epoch, lines }) => [`=== Epoch ${epoch} ===`, ...lines.map(traceLineText)].join('\n'))
+    .join('\n\n')
+    .concat('\n');
+}

@@ -452,7 +452,6 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
         }
 
         const clone = cloneDeep(metadata) as Record<string, unknown>;
-        // The SDK's broad operation type loses the add/remove discrimination of these factory entries.
         applyPatch(clone, jsonPatch.operations as Parameters<typeof applyPatch>[1]);
         const patchedOutput =
           (clone.output as Record<string, TextToImageStepImageMetadata> | undefined) ?? {};

@@ -84,7 +84,6 @@ const ENDPOINT_ROUTES = [
   '/api/auth/oauth/device-info',
   '/api/auth/oauth/device-token',
   '/api/auth/oauth/introspect',
-  '/api/auth/oauth/legacy-exchange',
   '/api/auth/oauth/revoke',
   '/api/auth/oauth/session',
   '/api/auth/oauth/token',

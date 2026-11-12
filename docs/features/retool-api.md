@@ -74,6 +74,10 @@ Params are validated by the action's Zod schema. Validation errors return `400` 
 
 Read the source file for the authoritative schema of each action — every file leads with a doc comment that lists actions + params.
 
+The comment actions live on as `/api/mod/comment/bulk-delete` and `remove-as-tos`, which take
+`{ commentIds }` (CommentV3 ids) since CommentV3 Phase 5; the `commentV2Ids` list in the example
+below is gone.
+
 ## Examples
 
 ```bash

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { onStorySparked } from '~/server/events/points/hooks';
@@ -21,12 +22,9 @@ import {
   writeOwnerChapter,
 } from '~/server/services/storyline.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { minorContentRestrictedSql } from '~/server/utils/minor-content-gate.sql';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import {
-  STORYLINE_MINOR_CEILING,
-  storylineCeiling,
-  storylineLevelAllowed,
-} from '~/shared/utils/storyline';
+import { storylineCeiling, storylineLevelAllowed } from '~/shared/utils/storyline';
 import {
   STORYLINE_REFUSALS,
   storylineRatingGap,
@@ -446,8 +444,11 @@ export function selectReadyPendingChapters(limit: number) {
           AND NOT EXISTS (
             SELECT 1 FROM "StorylineChapter" r WHERE r."storylineId" = st.id AND r.depth = 0
           )
-          AND p."nsfwLevel" < 2 * (CASE WHEN st."minorByScan" THEN ${STORYLINE_MINOR_CEILING}::int
-            ELSE ${NsfwLevel.XXX}::int END)
+          AND NOT ${minorContentRestrictedSql({
+            minor: Prisma.sql`st."minorByScan"`,
+            nsfwLevel: Prisma.sql`p."nsfwLevel"`,
+          })}
+          AND p."nsfwLevel" < 2 * ${NsfwLevel.XXX}::int
         )
         OR (
           pc."parentChapterId" IS NOT NULL

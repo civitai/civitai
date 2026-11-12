@@ -269,19 +269,6 @@ describe('deleteArticleById', () => {
     }
   );
 
-  it('removes the comment topic before the article, in the same transaction', async () => {
-    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
-
-    const topicDelete = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings]) =>
-      (strings as unknown as string[]).join('?').includes('DELETE FROM "CommentTopic"')
-    );
-    expect(topicDelete).toBeGreaterThanOrEqual(0);
-    expect(dbMock.dbWrite.$executeRaw.mock.calls[topicDelete].slice(1)).toEqual([ARTICLE_ID]);
-    expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[topicDelete]).toBeLessThan(
-      dbMock.dbWrite.article.delete.mock.invocationCallOrder[0]
-    );
-  });
-
   // An article saved before shop keys were refused can hold one as the author's own image row.
   it('keeps an unused image of the author whose key shop artwork uses', async () => {
     const shopKey = '0a0b0c0d-0000-4000-8000-0000000000aa';
@@ -370,6 +357,7 @@ const PART_OF_THE_IMAGE: Record<string, string> = {
   imageResourceNew: 'resources detected in it',
   imageTagsForReview: 'tags queued for review on it',
   caption: 'its storyline caption',
+  axisRating: 'its rating axes',
 };
 
 describe('unusedAuthorImage', () => {

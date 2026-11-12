@@ -6,8 +6,7 @@ import type * as NotificationsMod from '~/utils/notifications';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
- * "Remove all" on the permissions list. Its own file because `ScopeRevoke.browser.test.tsx` is
- * quarantined from PR CI and these must run there.
+ * "Remove all" on the permissions list, kept apart from `ScopeRevoke.browser.test.tsx`.
  */
 const GRANT = {
   appBlockId: 'ab_seam',

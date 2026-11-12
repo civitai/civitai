@@ -13,12 +13,13 @@ import {
   toggleSectionLockHandler,
   getSectionMutedHandler,
   toggleSectionMuteHandler,
-  getThreadMutedHandler,
-  toggleThreadMuteHandler,
+  getCommentMutedHandler,
+  toggleCommentMuteHandler,
 } from '~/server/controllers/commentv3.controller';
 import { rateLimit } from '~/server/middleware.trpc';
-import { COMMENT_V3_RATE_LIMIT_KEY, commentRateLimits } from '~/server/schema/comment.schema';
 import {
+  COMMENT_V3_RATE_LIMIT_KEY,
+  commentRateLimits,
   commentV3IdSchema,
   getCommentRepliesSchema,
   getCommentSectionSchema,
@@ -74,17 +75,17 @@ export const commentv3Router = router({
   toggleSectionLock: moderatorProcedure
     .input(commentSectionSchema)
     .mutation(toggleSectionLockHandler),
-  getThreadMuted: protectedProcedure
+  getCommentMuted: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(commentMuteSchema)
-    .query(getThreadMutedHandler),
+    .query(getCommentMutedHandler),
   // `protectedProcedure`, not guarded: a muted or restricted account must still be able to
   // silence its notifications.
-  toggleThreadMute: protectedProcedure
+  toggleCommentMute: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(commentMuteSchema)
     .use(rateLimit(muteRateLimits, undefined, { sharedKey: 'commentv3:mute' }))
-    .mutation(toggleThreadMuteHandler),
+    .mutation(toggleCommentMuteHandler),
   getSectionMuted: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(commentSectionSchema)

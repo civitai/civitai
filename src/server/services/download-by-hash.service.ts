@@ -4,6 +4,11 @@ import type { DownloadRequest } from '~/pages/api/download/models/[modelVersionI
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { logToAxiom } from '~/server/logging/client';
 import type { getFileForModelVersion } from '~/server/services/file.service';
+import type {
+  GenerationFetchRefusal,
+  GenerationFetchResult,
+} from '~/server/services/download-link/generation-fetch.service';
+import { PROVIDER_FETCHABLE_STATUSES } from '~/server/services/download-link/provider-fetchable';
 
 /** The URL segment for each hash the scanner computes from a file's stored bytes. */
 export const DOWNLOAD_HASH_TYPES = { sha256: 'SHA256', blake3: 'BLAKE3' } as const;
@@ -25,6 +30,8 @@ type GateStatus = GateResult['status'];
 export type HashGate = (args: { modelVersionId: number; fileId: number }) => Promise<GateResult>;
 
 type Viewer = { id?: number; isModerator?: boolean | null };
+/** A per-provider download token's holder: offered what `checkGenerationFetch` serves a provider. */
+type ProviderViewer = { provider: string };
 
 export type HashCandidate = {
   fileId: number;
@@ -39,8 +46,8 @@ export type HashCandidate = {
 /**
  * Copies of the content the gate could pass for this viewer, likeliest first; the oldest copy wins
  * within a tier so a re-upload never takes the original's downloads. Private copies are left out
- * for everyone but their owner and moderators, so a refusal cannot confirm a private model holds
- * these bytes. The gate still decides every candidate.
+ * for everyone but their owner, moderators and providers, so a refusal cannot confirm a private
+ * model holds these bytes. The gate still decides every candidate.
  */
 export async function findHashCandidates({
   hash,
@@ -49,17 +56,19 @@ export async function findHashCandidates({
 }: {
   hash: string;
   kind: DownloadHashKind;
-  viewer?: Viewer;
+  viewer?: Viewer | ProviderViewer;
 }): Promise<HashCandidate[]> {
   const { kyselyRead } = await loadKyselyDb();
-  const userId = viewer?.id ?? null;
-  const isMod = !!viewer?.isModerator;
+  const isProvider = !!viewer && 'provider' in viewer;
+  const userId = (!isProvider && viewer?.id) || null;
+  const isMod = !isProvider && !!viewer?.isModerator;
   const { rows } = await sql<HashCandidate>`
     WITH copies AS (
       SELECT
         mf.id AS "fileId",
         mf."modelVersionId",
         mf."sizeKB",
+        mf.type AS "fileType",
         mf.visibility,
         mf."pickleScanResult",
         mf."virusScanResult",
@@ -70,6 +79,7 @@ export async function findHashCandidates({
         (mv.availability = 'Private' OR m.availability = 'Private') AS private,
         m."userId" AS "ownerId",
         m.status AS "modelStatus",
+        m."deletedAt" AS "modelDeletedAt",
         m.mode,
         m.poi,
         (pa."entityId" IS NOT NULL AND (pa."endsAt" IS NULL OR pa."endsAt" > now())) AS paid,
@@ -97,27 +107,38 @@ export async function findHashCandidates({
         max(v."sizeKB") OVER () - min(v."sizeKB") OVER () AS "liveSizeSpreadKB"
       FROM viewed v
       WHERE v.mode IS DISTINCT FROM 'Archived'
-        AND (
-          ${isMod}::boolean
-          OR (
-            v."modelStatus" <> 'Deleted'
-            AND v.mode IS DISTINCT FROM 'TakenDown'
+        AND CASE
+          -- Mirrors checkGenerationFetch's refusals for a provider principal.
+          WHEN ${isProvider}::boolean THEN
+            v.mode IS DISTINCT FROM 'TakenDown'
+            AND v."modelDeletedAt" IS NULL
+            AND v."modelStatus"::text IN (${sql.join([...PROVIDER_FETCHABLE_STATUSES])})
+            AND v."versionStatus"::text IN (${sql.join([...PROVIDER_FETCHABLE_STATUSES])})
+            AND NOT v.poi
             AND v."pickleScanResult" IS DISTINCT FROM 'Danger'
             AND v."virusScanResult" IS DISTINCT FROM 'Danger'
-            AND (
-              v.owner
-              OR (
-                -- Mirrors canViewPoiModel and isPrivateModelVersion (model-visibility.service).
-                NOT v.poi
-                AND NOT v.private
-                AND v."modelStatus" = 'Published'
-                AND v."versionStatus" = 'Published'
-                AND v."usageControl" = 'Download'
-                AND v.visibility = 'Public'
+            AND v."fileType" <> 'Training Data'
+          ELSE
+            ${isMod}::boolean
+            OR (
+              v."modelStatus" <> 'Deleted'
+              AND v.mode IS DISTINCT FROM 'TakenDown'
+              AND v."pickleScanResult" IS DISTINCT FROM 'Danger'
+              AND v."virusScanResult" IS DISTINCT FROM 'Danger'
+              AND (
+                v.owner
+                OR (
+                  -- Mirrors canViewPoiModel and isPrivateModelVersion (model-visibility.service).
+                  NOT v.poi
+                  AND NOT v.private
+                  AND v."modelStatus" = 'Published'
+                  AND v."versionStatus" = 'Published'
+                  AND v."usageControl" = 'Download'
+                  AND v.visibility = 'Public'
+                )
               )
             )
-          )
-        )
+        END
     )
     SELECT
       "fileId",
@@ -160,6 +181,20 @@ const REFUSAL_PRECEDENCE: GateStatus[] = [
   'not-found',
 ];
 
+/** A provider's refusals, most specific first, so a copy in review is not reported as missing. */
+const PROVIDER_REFUSAL_PRECEDENCE: GenerationFetchRefusal[] = [
+  'in-review',
+  'failed-scan',
+  'archived',
+  'poi',
+  'early-access',
+  'unauthorized',
+  'no-access',
+  'no-generation',
+  'unsupported-file',
+  'not-found',
+];
+
 function log(message: string, data: Record<string, unknown>) {
   logToAxiom({ name: 'download-by-hash', type: 'info', message, ...data }).catch(() => {
     // swallow logging failure
@@ -167,9 +202,71 @@ function log(message: string, data: Record<string, unknown>) {
 }
 
 /**
- * Serves the first candidate the per-file gate passes. A copy of the same bytes that was
- * taken down does not refuse the request; it is logged for review.
+ * Runs the candidates through `attempt` and returns the first it serves. A copy of the same bytes
+ * that was taken down does not refuse the request; it is logged for review.
  */
+async function firstServedCandidate<R>({
+  hash,
+  kind,
+  viewer,
+  attempt,
+  status,
+  precedence,
+  notFound,
+}: {
+  hash: string;
+  kind: DownloadHashKind;
+  viewer?: Viewer | ProviderViewer;
+  attempt: (candidate: HashCandidate) => Promise<R>;
+  /** `success`, or the refusal's name in `precedence`. */
+  status: (result: R) => string;
+  precedence: readonly string[];
+  notFound: R;
+}): Promise<{ result: R; modelVersionId?: number }> {
+  const candidates = await findHashCandidates({ hash, kind, viewer });
+  if (!candidates.length) return { result: notFound };
+
+  const group = candidates[0];
+  const context = {
+    urlKind: kind,
+    provider: viewer && 'provider' in viewer ? viewer.provider : undefined,
+    hash,
+    groupSize: group.groupSize,
+    liveCount: group.liveCount,
+  };
+  if (group.liveSizeSpreadKB > SIZE_MISMATCH_TOLERANCE_KB) {
+    log('hash_size_mismatch', { ...context, sizeSpreadKB: group.liveSizeSpreadKB });
+    return { result: notFound };
+  }
+
+  let refusal: { result: R; modelVersionId: number } | undefined;
+  for (const candidate of candidates) {
+    const result = await attempt(candidate);
+    if (status(result) === 'success') {
+      if (group.takenDownFileIds?.length)
+        log('served_with_taken_down_copy', {
+          ...context,
+          servedFileId: candidate.fileId,
+          takenDownFileIds: group.takenDownFileIds,
+          sizeMismatch: group.groupSizeSpreadKB > SIZE_MISMATCH_TOLERANCE_KB,
+        });
+      return { result, modelVersionId: candidate.modelVersionId };
+    }
+    const rank = precedence.indexOf(status(result));
+    if (!refusal || rank < precedence.indexOf(status(refusal.result)))
+      refusal = { result, modelVersionId: candidate.modelVersionId };
+  }
+
+  if (group.liveCount > candidates.length)
+    log('capped_refusal', {
+      ...context,
+      tried: candidates.length,
+      status: refusal && status(refusal.result),
+    });
+  return refusal ?? { result: notFound };
+}
+
+/** Serves the first candidate the per-file download gate passes for this viewer. */
 export async function pickFileByHash({
   hash,
   kind,
@@ -181,44 +278,45 @@ export async function pickFileByHash({
   viewer?: Viewer;
   gate: HashGate;
 }): Promise<{ fileResult: GateResult; modelVersionId?: number }> {
-  const candidates = await findHashCandidates({ hash, kind, viewer });
-  if (!candidates.length) return { fileResult: { status: 'not-found' } };
+  const { result, modelVersionId } = await firstServedCandidate<GateResult>({
+    hash,
+    kind,
+    viewer,
+    attempt: ({ modelVersionId, fileId }) => gate({ modelVersionId, fileId }),
+    status: (fileResult) => fileResult.status,
+    precedence: REFUSAL_PRECEDENCE,
+    notFound: { status: 'not-found' },
+  });
+  return { fileResult: result, modelVersionId };
+}
 
-  const group = candidates[0];
-  const context = { urlKind: kind, hash, groupSize: group.groupSize, liveCount: group.liveCount };
-  if (group.liveSizeSpreadKB > SIZE_MISMATCH_TOLERANCE_KB) {
-    log('hash_size_mismatch', { ...context, sizeSpreadKB: group.liveSizeSpreadKB });
-    return { fileResult: { status: 'not-found' } };
-  }
+export type ProviderHashGate = (args: {
+  modelVersionId: number;
+  fileId: number;
+}) => Promise<GenerationFetchResult>;
 
-  let refusal: { fileResult: GateResult; modelVersionId: number } | undefined;
-  for (const candidate of candidates) {
-    const fileResult = await gate({
-      modelVersionId: candidate.modelVersionId,
-      fileId: candidate.fileId,
-    });
-    if (fileResult.status === 'success') {
-      if (group.takenDownFileIds?.length)
-        log('served_with_taken_down_copy', {
-          ...context,
-          servedFileId: candidate.fileId,
-          takenDownFileIds: group.takenDownFileIds,
-          sizeMismatch: group.groupSizeSpreadKB > SIZE_MISMATCH_TOLERANCE_KB,
-        });
-      return { fileResult, modelVersionId: candidate.modelVersionId };
-    }
-    const rank = REFUSAL_PRECEDENCE.indexOf(fileResult.status);
-    if (!refusal || rank < REFUSAL_PRECEDENCE.indexOf(refusal.fileResult.status))
-      refusal = { fileResult, modelVersionId: candidate.modelVersionId };
-  }
-
-  if (group.liveCount > candidates.length)
-    log('capped_refusal', {
-      ...context,
-      tried: candidates.length,
-      status: refusal?.fileResult.status,
-    });
-  return refusal ?? { fileResult: { status: 'not-found' } };
+/** Serves a provider the first candidate `checkGenerationFetch` passes for it. */
+export async function pickProviderFileByHash({
+  hash,
+  kind,
+  provider,
+  gate,
+}: {
+  hash: string;
+  kind: DownloadHashKind;
+  provider: string;
+  gate: ProviderHashGate;
+}): Promise<GenerationFetchResult> {
+  const { result } = await firstServedCandidate<GenerationFetchResult>({
+    hash,
+    kind,
+    viewer: { provider },
+    attempt: ({ modelVersionId, fileId }) => gate({ modelVersionId, fileId }),
+    status: (check) => (check.ok ? 'success' : check.error),
+    precedence: PROVIDER_REFUSAL_PRECEDENCE,
+    notFound: { ok: false, error: 'not-found' },
+  });
+  return result;
 }
 
 /** Reads `/api/download/<kind>/<hash>` for the shared download handler. */
@@ -226,6 +324,28 @@ export function hashDownloadRequest(kind: DownloadHashKind) {
   return (req: NextApiRequest): DownloadRequest => {
     const hash = parseContentHash(req.query.hash);
     if (!hash) return { ok: false, reason: 'invalid-hash' };
-    return { ok: true, pick: (gate, viewer) => pickFileByHash({ hash, kind, viewer, gate }) };
+    return {
+      ok: true,
+      pick: (gate, viewer) => pickFileByHash({ hash, kind, viewer, gate }),
+      async providerPick({ req, res, provider }) {
+        // Loaded only for a provider token, as the handler loads the token check.
+        const [{ checkGenerationFetch }, { serveProviderFetch }] = await Promise.all([
+          import('~/server/services/download-link/generation-fetch.service'),
+          import('~/server/services/provider-download/provider-download.service'),
+        ]);
+        const check = await pickProviderFileByHash({
+          hash,
+          kind,
+          provider,
+          gate: ({ modelVersionId, fileId }) =>
+            checkGenerationFetch({
+              modelVersionId,
+              fileId,
+              principal: { kind: 'provider', provider },
+            }),
+        });
+        return serveProviderFetch({ req, res, provider, check });
+      },
+    };
   };
 }

@@ -2,6 +2,7 @@ import { createJob } from './job';
 import {
   autoCancelServiceDeals,
   autoCompleteServiceDeals,
+  cancelOverdueServiceDeals,
   expireServiceDeals,
 } from '~/server/services/creator-service-deal.service';
 import {
@@ -29,11 +30,12 @@ export const creatorServiceDealsJob = createJob(
     const expired = await expireServiceDeals({ limit: BATCH });
     const completed = await autoCompleteServiceDeals({ limit: BATCH });
     const cancelled = await autoCancelServiceDeals({ limit: BATCH });
+    const overdue = await cancelOverdueServiceDeals({ limit: BATCH });
     jobContext.checkIfCanceled();
     const releases = await sweepServiceDealReleases({ limit: BATCH });
     // Last: its gauge counts every exhausted leg, the releases' included.
     const refunds = await sweepServiceDealRefunds({ limit: BATCH });
-    return { holds, expired, completed, cancelled, releases, refunds };
+    return { holds, expired, completed, cancelled, overdue, releases, refunds };
   },
   { lockExpiration: 30 * 60 }
 );

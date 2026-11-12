@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { heldImageSql, SERVED_ACTIVITY } from '@civitai/shared/held-media';
 import { dbRead } from './db';
-import { recordModActivity } from './mod-activity';
+import { insertModActivity, recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 
 /** The page whose grant opens held media. */
@@ -33,13 +33,15 @@ export function recordHeldGridView(moderatorId: number, count: number) {
   void logToAxiom({ name: 'held-media-grid', type: 'info', moderatorId, count }).catch(() => null);
 }
 
-/** One image opened from byte 0, in the grid or the full view. Never throws. */
-export function recordHeldView(moderatorId: number, imageId: number) {
-  return recordModActivity({
+/** One image opened from byte 0, with the credential that fetched it. Throws when the row is not
+ *  written, so the bytes are not sent without it. */
+export function recordHeldView(moderatorId: number, imageId: number, credential: 'sheet' | 'web') {
+  return insertModActivity({
     userId: moderatorId,
     entityType: 'image',
     entityId: imageId,
     activity: SERVED_ACTIVITY,
+    credential,
   });
 }
 

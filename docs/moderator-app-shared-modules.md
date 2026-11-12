@@ -65,7 +65,7 @@ These are not moderator-specific — they're used everywhere in the main app —
 | Import | Pages |
 |---|---|
 | `~/components/NextLink/NextLink` | 16 |
-| `~/components/EdgeMedia/*` (EdgeMedia, EdgeVideo, EdgeVideoBase) | 8 |
+| `~/components/EdgeMedia/*` (EdgeMedia, EdgeVideo) | 8 |
 | `~/components/NoContent/NoContent` | 6 |
 | `~/components/LegacyActionIcon/LegacyActionIcon` | 6 |
 | `~/components/InView/InViewLoader` | 4 |

@@ -1,12 +1,6 @@
 import type { MantineColor } from '@mantine/core';
-import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
+import { TRAINING_REVIEW_EXPECTED_WAIT } from '@civitai/shared/training-review';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-
-// nb: these should be proper AIRs now
-export const blockedCustomModels = [
-  'civitai:53761@285757',
-  'urn:air:sd1:checkpoint:civitai:53761@285757',
-];
 
 export const trainingStatusFields: {
   [key in TrainingStatus]: { color: MantineColor; description: string };
@@ -23,7 +17,9 @@ export const trainingStatusFields: {
   },
   [TrainingStatus.Paused]: {
     color: 'orange',
-    description: TRAINING_REVIEW_COPY.pendingBody,
+    // Stage-neutral: the gate holds runs at submit and after their last epoch, and this map has
+    // no epoch count to tell which.
+    description: `This run is waiting for review. ${TRAINING_REVIEW_EXPECTED_WAIT}. No action is needed from you while it waits.`,
   },
   [TrainingStatus.Denied]: {
     color: 'red',

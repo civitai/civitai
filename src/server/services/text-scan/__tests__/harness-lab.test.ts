@@ -36,7 +36,7 @@ const { applyModelRuleOverrides, getEnabledModelRules } = await import(
 );
 
 registerTextScanProfile({
-  entityType: 'CommentV2',
+  entityType: 'CommentV3',
   labels: ['scam'],
   load: async () => new Map(),
 });
@@ -153,7 +153,7 @@ describe('literalModelRules', () => {
   it('drops ruleOverrides from every other action instead of acting on them', () => {
     const parsed = textScanHarnessSchema.parse({
       action: 'scanTexts',
-      entityType: 'CommentV2',
+      entityType: 'CommentV3',
       texts,
       ruleOverrides: [override(-1, 'Brand new')],
     });
@@ -180,7 +180,7 @@ describe('scanTexts', () => {
     );
     const { body } = (await run({
       action: 'scanTexts',
-      entityType: 'CommentV2',
+      entityType: 'CommentV3',
       texts: [{ key: 'c', fields: [{ heading: 'Comment', text: 'hello there' }] }],
     })) as { body: { system: string; results: Record<string, unknown>[] } };
     expect(body.system).toContain('BASE PROMPT');

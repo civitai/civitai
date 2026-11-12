@@ -97,13 +97,10 @@ const userFindFirst = dbMock.dbWrite.user.findFirst;
 // default for a write verb, so an undeclared one returns `undefined` and the fan-out throws.
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
-const commentV2Updates = () =>
+const oldCommentTableWrites = () =>
   dbMock.dbWrite.$executeRaw.mock.calls
-    .map(([strings, ...values]) => ({
-      sql: (strings as unknown as string[]).join('?').replace(/\s+/g, ' '),
-      values,
-    }))
-    .filter((c) => c.sql.includes('UPDATE "CommentV2"'));
+    .map(([strings]) => (strings as unknown as string[]).join('?'))
+    .filter((sql) => /"Comment(V2)?"/.test(sql));
 
 const call = () =>
   toggleBan({
@@ -185,10 +182,7 @@ describe('toggleBan -> user search index', () => {
   });
 });
 
-/**
- * A ban can flag the account's comments in both tables — the ToS flag, not `hidden`; see
- * `commentsv2.service.ts` for why the flag is what removes a comment and `hidden` is not.
- */
+/** A ban can flag the account's comments for ToS (`setUserCommentsV3Tos`), not hide them. */
 describe('toggleBan -> removeComments', () => {
   const ban = (removeComments?: boolean) =>
     toggleBan({
@@ -208,20 +202,11 @@ describe('toggleBan -> removeComments', () => {
     });
   });
 
-  it('flags the author’s comments when asked, and does not touch the author-owned hide', async () => {
+  it('flags the author’s comments when asked, in CommentV3 only', async () => {
     await ban(true);
 
-    const [v2] = commentV2Updates();
-    expect(v2.sql).toContain('SET "tosViolation" = true');
-    expect(v2.sql).not.toContain('hidden');
-    expect(v2.values[0]).toBe(USER_ID);
-    // A comment on a CommentV3-write surface is left to the CommentV3 pass, which locks that table
-    // first as every write there does.
-    expect(v2.sql).toContain('AND NOT ?');
     expect(v3Tos.mock.calls).toEqual([[USER_ID]]);
-    expect((v2.values[1] as { sql: string }).sql).toContain(
-      'EXISTS (SELECT 1 FROM "CommentV3" v WHERE v.id = c2.id'
-    );
+    expect(oldCommentTableWrites()).toEqual([]);
   });
 
   it('finishes the ban and logs it when flagging the CommentV3 comments fails', async () => {
@@ -236,7 +221,6 @@ describe('toggleBan -> removeComments', () => {
   it('leaves comments alone otherwise — it is opt-in, like removeMedia', async () => {
     await ban();
 
-    expect(commentV2Updates()).toEqual([]);
     expect(v3Tos).not.toHaveBeenCalled();
   });
 });

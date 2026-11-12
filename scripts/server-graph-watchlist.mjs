@@ -104,7 +104,7 @@ export const WATCHLIST = [
   {
     rule: 'SINGLETON',
     module: 'packages/civitai-telemetry/src/otel-logs.ts',
-    why: 'Holds the memoized OTel Logger and the bridge counters in module scope, and is loaded only from the instrumentation entry, which is also what registers the LoggerProvider. A second copy would be a second bridge that never sees that registration — and whose counters register into a registry nothing scrapes.',
+    why: 'Holds the memoized OTel Logger, the bridge counters and the log-timestamp sequence in module scope, and is loaded only from the instrumentation entry, which is also what registers the LoggerProvider. A second copy would be a second bridge that never sees that registration, whose counters register into a registry nothing scrapes, and whose own timestamp sequence would re-issue stamps the first copy already used. Records with the same line and timestamp are then deduplicated by the log store.',
   },
   {
     rule: 'SHARED_STATE',
@@ -117,5 +117,11 @@ export const WATCHLIST = [
     module: 'packages/civitai-telemetry/src/otel-helpers.ts',
     globalKey: '__civitaiWithSpanSkipUnsampledGate',
     why: "The one holder of the gate behind withSpan()'s unsampled-parent shortcut. `src/instrumentation.node.ts` installs the gate ONCE at boot (setWithSpanSkipUnsampledGate), while withSpan() is called from service, router and middleware modules that the bundler can inline into many emitted chunks. A copy holding a private gate never sees that registration, so its call sites keep opening spans while the flag reads ON — a dark, partial rollout with no error and no counter. Vitest cannot see this (it loads each module once), so this gate is the only check that can.",
+  },
+  {
+    rule: 'SHARED_STATE',
+    module: 'packages/civitai-telemetry/src/redis-command-metrics.ts',
+    globalKey: '__civitaiRedisCommandMetricsState',
+    why: "The one holder of the batch gate, the latched in-flight gauge mode (and its resolver) and the per-metric-instance accumulators behind the redis command metrics (`redis_commands_inflight`, `redis_command_duration_seconds`). `src/instrumentation.node.ts` installs the gate and the gauge-mode resolver ONCE at boot, and the bridge that `src/server/prom/client.ts` publishes (from whichever copy evaluates last) writes into the accumulators that the metric's collect() flushes. A copy holding private state never sees the gate or the resolver (so it latches the gauge to per-command for good while the flag reads on), and its accumulators are flushed only by a collect() that another copy may have replaced, so samples are lost with no error. Vitest cannot see this (it loads each module once), so this gate is the only check that can.",
   },
 ];

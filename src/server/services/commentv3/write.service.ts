@@ -1,52 +1,20 @@
 import type { Prisma } from '@prisma/client';
-import { constants } from '~/server/common/constants';
-import type { SqlRunner } from '~/server/services/comment-v3-backfill.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 /**
- * Comment writes on CommentV3 for the surfaces in `constants.comments.v3WriteSurfaces`
- * (`docs/plans/comments-v3-article-flip.md`, stage B). A new comment on one of them exists only here:
- * no `CommentV2` or `Thread` row is written. A comment written before its surface flipped keeps its
- * CommentV2 row, or for a model comment its v1 `Comment` row, which every write here keeps in step
- * (`syncOldRows`).
+ * Comment writes on CommentV3.
  *
  * Raw SQL over a `SqlRunner` (D8), so a caller can run these in the transaction that spends its
- * stickers or writes the old tables. Id lists travel as one comma-joined string, which pg and
+ * stickers. Id lists travel as one comma-joined string, which pg and
  * PGlite send alike.
  */
 
-/** Whether comments on `entityType` are written to CommentV3 directly. */
-export const isV3WriteSurface = (entityType: string) =>
-  constants.comments.v3WriteSurfaces.includes(entityType);
-
-/** SQL: CommentV2 row `alias` has a CommentV3 twin on a CommentV3-write surface. */
-export const hasV3SurfaceTwinSql = (alias: string) =>
-  `EXISTS (SELECT 1 FROM "CommentV3" v WHERE v.id = ${alias}.id AND ${v3WriteSurfaceSql(
-    'v."entityType"'
-  )})`;
-
-/** A user's live comments on CommentV3-write surfaces matching `condition`, optionally of `among`. */
-export async function v3SurfaceCommentIds(
-  db: SqlRunner,
-  userId: number,
-  condition: string,
-  among?: number[]
-) {
-  const { rows } = await db.query<{ id: number }>(
-    `SELECT id FROM "CommentV3"
-     WHERE "userId" = $1 AND "deletedAt" IS NULL AND ${condition}
-       AND ${v3WriteSurfaceSql('"entityType"')}
-       ${among ? `AND id = ANY(string_to_array($2, ',')::int[])` : ''}`,
-    among ? [userId, among.join(',')] : [userId]
-  );
-  return rows.map((r) => r.id);
-}
-
-/** `isV3WriteSurface` as SQL over a CommentEntityType column. */
-export const v3WriteSurfaceSql = (column: string) =>
-  constants.comments.v3WriteSurfaces.length
-    ? `${column}::text IN (${constants.comments.v3WriteSurfaces.map((t) => `'${t}'`).join(', ')})`
-    : 'false';
+export type SqlRunner = {
+  query: <R extends Record<string, unknown>>(
+    sql: string,
+    params?: unknown[]
+  ) => Promise<{ rows: R[] }>;
+};
 
 /** A Prisma transaction (or client) as a `SqlRunner`. */
 export const prismaRunner = (db: Pick<Prisma.TransactionClient, '$queryRawUnsafe'>): SqlRunner => ({
@@ -93,10 +61,10 @@ export function getStoredComment(db: SqlRunner, id: number, lock?: 'FOR KEY SHAR
   );
 }
 
-/** The live row when its surface writes CommentV3 directly; otherwise undefined. */
+/** The live row; undefined when the comment is gone or deleted. */
 export async function getV3WriteComment(db: SqlRunner, id: number) {
   const row = await getStoredComment(db, id);
-  return row && !row.deletedAt && isV3WriteSurface(row.entityType) ? row : undefined;
+  return row && !row.deletedAt ? row : undefined;
 }
 
 /**
@@ -194,58 +162,11 @@ export async function insertComment(
   return created;
 }
 
-/**
- * The old-table twins of a write, for the comments that have one: a CommentV2 row, or a model
- * comment's v1 `Comment` row (`legacyV1Id`). Left stale, a rollback would serve what was deleted or
- * removed, and an update to the row would make the mirror copy a deleted comment back.
- */
-const syncOldRows = {
-  /** `set` reads each table's own columns; v1 has every column it names. */
-  update: async (db: SqlRunner, ids: number[], set: string, params: unknown[] = []) => {
-    await db.query(
-      `UPDATE "CommentV2" SET ${set}, "updatedAt" = now()
-       WHERE id = ANY(string_to_array($1, ',')::int[])`,
-      [ids.join(','), ...params]
-    );
-    await db.query(
-      `UPDATE "Comment" SET ${set}, "updatedAt" = now()
-       WHERE id IN (SELECT "legacyV1Id" FROM "CommentV3"
-                     WHERE id = ANY(string_to_array($1, ',')::int[]) AND "legacyV1Id" IS NOT NULL)`,
-      [ids.join(','), ...params]
-    );
-  },
-  /**
-   * `v1Gone` are the v1 ids of rows deleted outright, `v1Blanked` those of new tombstones. A v1
-   * tombstone is only blanked: deleting it would cascade to its v1 replies, and through the mirror to
-   * their live CommentV3 rows.
-   */
-  delete: async (
-    db: SqlRunner,
-    ids: number[],
-    { v1Gone, v1Blanked }: { v1Gone: number[]; v1Blanked: number[] }
-  ) => {
-    await db.query(`DELETE FROM "CommentV2" WHERE id = ANY(string_to_array($1, ',')::int[])`, [
-      ids.join(','),
-    ]);
-    if (v1Blanked.length)
-      await db.query(
-        `UPDATE "Comment" SET content = '', "pinnedAt" = NULL, "updatedAt" = now()
-         WHERE id = ANY(string_to_array($1, ',')::int[])`,
-        [v1Blanked.join(',')]
-      );
-    if (v1Gone.length)
-      await db.query(`DELETE FROM "Comment" WHERE id = ANY(string_to_array($1, ',')::int[])`, [
-        v1Gone.join(','),
-      ]);
-  },
-};
-
 /** A content edit on a live comment; undefined when it is gone or deleted. */
 export async function updateCommentContent(
   db: SqlRunner,
   { id, content }: { id: number; content: string }
 ) {
-  // CommentV3 first, as every write here locks it, so an edit and a delete cannot deadlock.
   const row = await first<StoredCommentV3>(
     db,
     `UPDATE "CommentV3" SET content = $2, "updatedAt" = now()
@@ -253,7 +174,6 @@ export async function updateCommentContent(
      RETURNING ${COLUMNS}`,
     [id, content]
   );
-  if (row) await syncOldRows.update(db, [id], 'content = $2', [content]);
   return row;
 }
 
@@ -274,10 +194,6 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
   const list = (xs: number[]) => xs.join(',');
   const IDS = `string_to_array($1, ',')::int[]`;
   const removed: RemovedCommentV3[] = [];
-  const v1Gone: number[] = [];
-  const v1Blanked: number[] = [];
-  const legacy = (rows: { legacyV1Id: number | null }[]) =>
-    rows.flatMap((r) => (r.legacyV1Id ? [r.legacyV1Id] : []));
   const live = (rows: (RemovedCommentV3 & { deletedAt: Date | null })[]) =>
     rows
       .filter((r) => !r.deletedAt)
@@ -296,19 +212,17 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
         deletedAt: Date | null;
         parentId: number | null;
         replyToId: number | null;
-        legacyV1Id: number | null;
       }
     >(
       `DELETE FROM "CommentV3" c
        WHERE c.id = ANY(${IDS})
          AND NOT EXISTS (SELECT 1 FROM "CommentV3" k WHERE k."parentId" = c.id OR k."replyToId" = c.id)
        RETURNING c.id, c."userId", c."entityType"::text AS "entityType", c."entityId", c."deletedAt",
-                 c."parentId", c."replyToId", c."legacyV1Id"`,
+                 c."parentId", c."replyToId"`,
       [list(pending)]
     );
     if (!rows.length) break;
     removed.push(...live(rows));
-    v1Gone.push(...legacy(rows));
     const gone = new Set(rows.map((r) => r.id));
     const above = rows.flatMap((r) => [r.parentId, r.replyToId]).filter((x): x is number => !!x);
     const tombstones = above.length
@@ -324,38 +238,25 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
 
   const kept = pending.filter((id) => requested.has(id));
   if (kept.length) {
-    const { rows } = await db.query<
-      RemovedCommentV3 & { deletedAt: Date | null; legacyV1Id: number | null }
-    >(
+    const { rows } = await db.query<RemovedCommentV3 & { deletedAt: Date | null }>(
       `UPDATE "CommentV3" SET "deletedAt" = now(), content = '', "pinnedAt" = NULL, "updatedAt" = now()
        WHERE id = ANY(${IDS}) AND "deletedAt" IS NULL
-       RETURNING id, "userId", "entityType"::text AS "entityType", "entityId", NULL::timestamptz AS "deletedAt",
-                 "legacyV1Id"`,
+       RETURNING id, "userId", "entityType"::text AS "entityType", "entityId", NULL::timestamptz AS "deletedAt"`,
       [list(kept)]
     );
     removed.push(...live(rows));
-    v1Blanked.push(...legacy(rows));
     // As a hard delete's cascade does, so its reports leave the queue instead of linking to nothing.
     if (rows.length)
       await db.query(`DELETE FROM "CommentV3Report" WHERE "commentId" = ANY(${IDS})`, [
         list(rows.map((r) => r.id)),
       ]);
   }
-  if (removed.length || v1Gone.length)
-    await syncOldRows.delete(
-      db,
-      removed.map((r) => r.id),
-      { v1Gone, v1Blanked }
-    );
   return removed;
 }
 
 type Flags = { hidden?: boolean; tosViolation?: boolean; pinned?: boolean };
 
-/**
- * Sets moderation flags on live comments; returns the rows it changed. Run it in a transaction: the
- * row lock must cover the CommentV2 sync, or a racing toggle's sync is mirrored back over it.
- */
+/** Sets moderation flags on live comments; returns the rows it changed. */
 export async function setCommentFlags(db: SqlRunner, ids: number[], flags: Flags) {
   const sets: string[] = [];
   const params: unknown[] = [ids.join(',')];
@@ -378,15 +279,6 @@ export async function setCommentFlags(db: SqlRunner, ids: number[], flags: Flags
      RETURNING id, "userId"`,
     params
   );
-  // After the CommentV3 update, which decides what changed; the same expressions read CommentV2's own
-  // columns, under the same parameter numbers.
-  if (rows.length)
-    await syncOldRows.update(
-      db,
-      rows.map((r) => r.id),
-      sets.join(', '),
-      params.slice(1)
-    );
   return rows;
 }
 
@@ -398,15 +290,6 @@ export async function toggleCommentLock(db: SqlRunner, id: number) {
      WHERE id = $1 AND "deletedAt" IS NULL
      RETURNING id, locked`,
     [id]
-  );
-  if (!row) return row;
-  // The old tables keep a lock apart from the comment: a v2 comment's on its reply Thread, a v1
-  // comment's in its own column.
-  await db.query(`UPDATE "Thread" SET locked = $2 WHERE "commentId" = $1`, [id, row.locked]);
-  await db.query(
-    `UPDATE "Comment" SET locked = $2, "updatedAt" = now()
-     WHERE id = (SELECT "legacyV1Id" FROM "CommentV3" WHERE id = $1)`,
-    [id, row.locked]
   );
   return row;
 }

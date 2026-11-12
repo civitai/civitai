@@ -10,7 +10,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ReactionService from '~/server/services/reaction.service';
 import type * as ReportService from '~/server/services/report.service';
-import type * as BlockCheckService from '~/server/services/block-check.service';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
 /**
@@ -25,11 +24,6 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const { toggleReaction, createReport } = vi.hoisted(() => ({
   toggleReaction: vi.fn(async () => 'created'),
   createReport: vi.fn(async () => ({ status: 'Pending' })),
-}));
-// The viewer owns the content every comment here hangs off, so the owner check lets them through.
-vi.mock('~/server/services/block-check.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof BlockCheckService>()),
-  getContentOwnerIdForComment: vi.fn(async () => ({ hidden: false, ownerId: 9 })),
 }));
 vi.mock('~/server/services/reaction.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReactionService>()),
@@ -62,6 +56,14 @@ const unpaidAwardMigration = readFileSync(
   ),
   'utf8'
 );
+const TOPIC_ENTITY_TABLES = {
+  image: 'Image',
+  post: 'Post',
+  review: 'ResourceReview',
+  bounty: 'Bounty',
+  bountyEntry: 'BountyEntry',
+  article: 'Article',
+};
 const OWNER = 1;
 const HELD = 2; // named on a pending report
 const OTHER = 3;
@@ -74,7 +76,7 @@ const asSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
     : (first as Prisma.Sql);
 const commentIds = async () =>
-  (await db.query<{ id: number }>(`SELECT id FROM "CommentV2" ORDER BY id`)).rows.map((r) => r.id);
+  (await db.query<{ id: number }>(`SELECT id FROM "CommentV3" ORDER BY id`)).rows.map((r) => r.id);
 
 beforeAll(async () => {
   db = new PGlite();
@@ -123,36 +125,30 @@ beforeAll(async () => {
     ${unpaidAwardMigration}
     CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int NOT NULL, "coverId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
-    CREATE TABLE "Thread" (
-      id int PRIMARY KEY,
-      "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
-      "modelId" int UNIQUE REFERENCES "Model"(id) ON DELETE CASCADE,
-      "reviewId" int UNIQUE REFERENCES "ResourceReview"(id) ON DELETE CASCADE,
-      "imageId" int UNIQUE REFERENCES "Image"(id) ON DELETE CASCADE,
-      "bountyId" int UNIQUE REFERENCES "Bounty"(id) ON DELETE CASCADE,
-      "bountyEntryId" int UNIQUE REFERENCES "BountyEntry"(id) ON DELETE CASCADE,
-      "articleId" int UNIQUE REFERENCES "Article"(id) ON DELETE CASCADE,
-      "parentThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
-      "rootThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
-      "commentId" int,
-      "storylineId" int,
-      "crucibleId" int,
-      metadata jsonb NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE "CommentV2" (
-      id int PRIMARY KEY, "userId" int NOT NULL,
-      "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE,
-      "tosViolation" boolean NOT NULL DEFAULT false
-    );
-    -- An article's comments written to CommentV3 directly, which have no CommentV2 row. They go
-    -- with their topic, as the partitions' cascading keys make them.
+    -- As production: a topic partition per entity type, each going with its entity, and the
+    -- comments with their topic.
     CREATE TABLE "CommentTopic" (
-      "entityType" text NOT NULL, "entityId" int NOT NULL, PRIMARY KEY ("entityType", "entityId")
-    );
+      "entityType" text NOT NULL, "entityId" int NOT NULL, locked boolean NOT NULL DEFAULT false,
+      PRIMARY KEY ("entityId", "entityType")
+    ) PARTITION BY LIST ("entityType");
+    ${Object.entries(TOPIC_ENTITY_TABLES)
+      .map(
+        ([type, table]) => `
+    CREATE TABLE "CommentTopic_${type}" PARTITION OF "CommentTopic" FOR VALUES IN ('${type}');
+    ALTER TABLE "CommentTopic_${type}"
+      ADD FOREIGN KEY ("entityId") REFERENCES "${table}"(id) ON DELETE CASCADE;`
+      )
+      .join('')}
     CREATE TABLE "CommentV3" (
       id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL, "userId" int NOT NULL,
-      "deletedAt" timestamptz,
-      FOREIGN KEY ("entityType", "entityId") REFERENCES "CommentTopic" ON DELETE CASCADE
+      "parentId" int REFERENCES "CommentV3"(id) ON DELETE RESTRICT,
+      "replyToId" int REFERENCES "CommentV3"(id) ON DELETE SET NULL,
+      content text NOT NULL DEFAULT '', hidden boolean NOT NULL DEFAULT false,
+      "tosViolation" boolean NOT NULL DEFAULT false, locked boolean NOT NULL DEFAULT false,
+      "pinnedAt" timestamptz, "deletedAt" timestamptz, depth int NOT NULL DEFAULT 0,
+      path text NOT NULL DEFAULT '', "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ON DELETE CASCADE
     );
   `);
   await db.exec(heldCopiesSchemaSql());
@@ -163,8 +159,8 @@ afterAll(() => db.close());
 beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
-    TRUNCATE "CommentV2", "Thread", "ResourceReview", "Model", "Post", "Image", "CsamReport",
-      "EvidenceHold", "BountyEntry", "Bounty", "Article", "CommentTopic", "CommentV3",
+    TRUNCATE "CommentTopic", "CommentV3", "ResourceReview", "Model", "Post", "Image", "CsamReport",
+      "EvidenceHold", "BountyEntry", "Bounty", "Article",
       "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
@@ -200,13 +196,13 @@ beforeEach(async () => {
   })) as never);
 });
 
-/** A thread on `column` = `parentId`: OTHER comments, and `replier` answers in a reply thread. */
-async function seedThread(column: string, parentId: number, replier: number) {
+/** Comments on `entityType` `parentId`: OTHER comments, and `replier` answers it. */
+async function seedComments(entityType: string, parentId: number, replier: number) {
   await db.exec(`
-    INSERT INTO "Thread" (id, "${column}") VALUES (100, ${parentId});
-    INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (1, ${OTHER}, 100);
-    INSERT INTO "Thread" (id, "rootThreadId", "parentThreadId", "commentId") VALUES (101, 100, 100, 1);
-    INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (2, ${replier}, 101);
+    INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('${entityType}', ${parentId});
+    INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId", "parentId") VALUES
+      (1, '${entityType}', ${parentId}, ${OTHER}, NULL),
+      (2, '${entityType}', ${parentId}, ${replier}, 1);
   `);
 }
 
@@ -520,19 +516,17 @@ describe("a held author's comments go with their parent", () => {
   };
   const articleParent = async () => {
     await db.exec(`
-      INSERT INTO "Article" (id, "userId") VALUES (70, ${OWNER});
-      INSERT INTO "CommentTopic" VALUES ('article', 70);
-      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (2, 'article', 70, ${HELD});`);
+      INSERT INTO "Article" (id, "userId") VALUES (70, ${OWNER});`);
     vi.mocked(dbMock.dbWrite.article.findUnique).mockResolvedValue({ userId: OWNER } as never);
   };
 
-  // [site, parent table, thread column, parent id, seed the parent, delete it]
+  // [site, parent table, comment entity type, parent id, seed the parent, delete it]
   const sites: [string, string, string, number, () => Promise<unknown>, () => Promise<unknown>][] =
     [
       [
         'deleteImageById',
         'Image',
-        'imageId',
+        'image',
         50,
         imageParent,
         () => deleteImageById({ id: 50, updatePost: false }),
@@ -540,7 +534,7 @@ describe("a held author's comments go with their parent", () => {
       [
         'deleteImages',
         'Image',
-        'imageId',
+        'image',
         50,
         imageParent,
         () => deleteImages([50], false).catch(() => undefined),
@@ -548,7 +542,7 @@ describe("a held author's comments go with their parent", () => {
       [
         'deletePost',
         'Post',
-        'postId',
+        'post',
         10,
         () => db.exec(`INSERT INTO "Post" VALUES (10, ${OWNER})`),
         () => deletePost({ id: 10, isModerator: true }).catch(() => undefined),
@@ -556,7 +550,7 @@ describe("a held author's comments go with their parent", () => {
       [
         'deleteBountyById',
         'Bounty',
-        'bountyId',
+        'bounty',
         60,
         bountyParent,
         () => deleteBountyById({ id: 60, isModerator: true, userId: 1 }),
@@ -564,7 +558,7 @@ describe("a held author's comments go with their parent", () => {
       [
         'deleteBountyEntry',
         'BountyEntry',
-        'bountyEntryId',
+        'bountyEntry',
         61,
         bountyEntryParent,
         () => deleteBountyEntry({ id: 61, isModerator: true }),
@@ -572,7 +566,7 @@ describe("a held author's comments go with their parent", () => {
       [
         'deleteArticleById',
         'Article',
-        'articleId',
+        'article',
         70,
         articleParent,
         () => deleteArticleById({ id: 70, userId: OWNER }),
@@ -580,7 +574,7 @@ describe("a held author's comments go with their parent", () => {
       [
         'toggleReview',
         'ResourceReview',
-        'reviewId',
+        'review',
         30,
         reviewParent,
         () => toggleReview({ modelId: 20, userId: OWNER, setTo: false }).catch(() => undefined),
@@ -588,7 +582,7 @@ describe("a held author's comments go with their parent", () => {
       [
         'deleteResourceReview',
         'ResourceReview',
-        'reviewId',
+        'review',
         30,
         reviewParent,
         () => deleteResourceReview({ id: 30 }).catch(() => undefined),
@@ -596,7 +590,7 @@ describe("a held author's comments go with their parent", () => {
       [
         'deleteResourceReviews',
         'ResourceReview',
-        'reviewId',
+        'review',
         30,
         reviewParent,
         () => deleteResourceReviews({ ids: [30] }).catch(() => undefined),
@@ -604,23 +598,21 @@ describe("a held author's comments go with their parent", () => {
     ];
 
   it.each(sites)(
-    '%s takes a thread with a held reply in it, and keeps no detached copy',
-    async (_, table, column, parentId, seed, remove) => {
+    '%s takes its comments with a held reply among them, and keeps no detached copy',
+    async (_, table, entityType, parentId, seed, remove) => {
       await seed();
-      await seedThread(column, parentId, HELD);
+      await seedComments(entityType, parentId, HELD);
 
       await remove();
 
       expect(await rows(`SELECT id FROM "${table}"`)).toEqual([]);
       expect(await commentIds()).toEqual([]);
-      expect(await rows(`SELECT id FROM "Thread"`)).toEqual([]);
-      expect(await rows(`SELECT id FROM "CommentV3"`)).toEqual([]);
     }
   );
 
   it('leaves a held reply on a parent it does not delete (control)', async () => {
     await db.exec(`INSERT INTO "Post" VALUES (10, ${OWNER}), (11, ${OWNER})`);
-    await seedThread('postId', 11, HELD);
+    await seedComments('post', 11, HELD);
 
     await deletePost({ id: 10, isModerator: true }).catch(() => undefined);
 
@@ -650,21 +642,13 @@ describe('a member cannot act on a comment hidden for ToS', () => {
     await db.exec(`INSERT INTO "Post" VALUES (10, ${OWNER}), (11, ${OWNER})`);
     // 4 is hidden for ToS.
     await db.exec(`
-      INSERT INTO "Thread" (id, "postId") VALUES (200, 11);
-      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (3, ${OTHER}, 200);
-      INSERT INTO "CommentV2" (id, "userId", "threadId", "tosViolation") VALUES (4, ${OTHER}, 200, true);
+      INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('post', 11);
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId", "tosViolation") VALUES
+        (3, 'post', 11, ${OTHER}, false), (4, 'post', 11, ${OTHER}, true);
     `);
-    // Only the selected columns, as Prisma returns them: a gate that forgets to select its column
-    // reads it as undefined.
-    vi.mocked(dbMock.dbWrite.commentV2.findUnique).mockImplementation((async (args: {
-      where: { id: number };
-      select?: Record<string, boolean>;
-    }) => {
-      const query = `SELECT * FROM "CommentV2" WHERE id = $1`;
-      const row = (await db.query<Record<string, unknown>>(query, [args.where.id])).rows[0];
-      if (!row || !args.select) return row;
-      return Object.fromEntries(Object.keys(args.select).map((k) => [k, row[k]]));
-    }) as never);
+    vi.mocked(dbMock.dbWrite.$queryRawUnsafe).mockImplementation(
+      (async (sql: string, ...params: unknown[]) => (await db.query(sql, params)).rows) as never
+    );
   });
 
   const track = new Proxy({}, { get: () => async () => undefined });
@@ -683,7 +667,7 @@ describe('a member cannot act on a comment hidden for ToS', () => {
       handler: (id: number, mod: boolean) =>
         createReportHandler({
           ctx: ctx(mod),
-          input: { type: ReportEntity.CommentV2, id, reason: 'TOSViolation', details: {} } as never,
+          input: { type: ReportEntity.CommentV3, id, reason: 'TOSViolation', details: {} } as never,
         }),
       service: createReport,
     },

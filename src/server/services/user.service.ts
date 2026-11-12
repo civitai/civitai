@@ -2,6 +2,7 @@ import {
   FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
 } from '@civitai/shared/feedback-capture';
+import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -18,7 +19,6 @@ import {
   deleteCommentsV3,
   setUserCommentsV3Tos,
 } from '~/server/services/commentv3/moderation.service';
-import { hasV3SurfaceTwinSql, v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
 
 import {
   accountHoldSql,
@@ -80,7 +80,7 @@ import {
   readUserCosmeticsViaPrisma,
 } from '~/server/services/hot-reads-8.reads';
 
-import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { preventReplicationLag, preventReplicationLagBatch } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
@@ -96,6 +96,7 @@ import type { DetailsCanceledBid } from '~/server/notifications/auction.notifica
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 import {
   cosmeticCache,
+  dataForModelsCache,
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
@@ -128,6 +129,7 @@ import {
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { queueOwnedContentUpdate } from '~/server/search-index/user-content-reindex';
 import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -385,7 +387,7 @@ export const getUsers = async ({
   if (include?.includes('avatar'))
     select.push(
       'COALESCE(i.url, u.image) AS "avatarUrl"',
-      `COALESCE(i.nsfwLevel, 'None') AS "avatarNsfwLevel"`
+      'COALESCE(i."nsfwLevel", 0) AS "avatarNsfwLevel"'
     );
 
   if (contestBanned) {
@@ -410,9 +412,11 @@ export const getUsers = async ({
   const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
-      ${Prisma.raw(
-        include?.includes('avatar') ? 'LEFT JOIN "Image" i ON i.id = u."profilePictureId"' : ''
-      )}
+      ${
+        include?.includes('avatar')
+          ? Prisma.sql`LEFT JOIN "Image" i ON i.id = u."profilePictureId" AND ${servableProfilePictureSql}`
+          : Prisma.empty
+      }
     WHERE ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
@@ -596,6 +600,12 @@ export async function forceUpdateUserIdentity({
   if (name !== undefined) data.name = name;
   if (Object.keys(data).length === 0) return { updated: false };
 
+  const previousUsername =
+    username !== undefined
+      ? (await dbWrite.user.findUnique({ where: { id: userId }, select: { username: true } }))
+          ?.username
+      : undefined;
+
   let user;
   try {
     user = await dbWrite.user.update({
@@ -642,6 +652,8 @@ export async function forceUpdateUserIdentity({
         })
       );
   }
+  // Not awaited: it reads every owned id, and it never throws.
+  if (username !== undefined && username !== previousUsername) void queueOwnedContentUpdate(userId);
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
   await invalidateSession(userId, 'moderation');
@@ -687,12 +699,15 @@ export const updateUserById = async ({
   let location = 'user.service:updateUserById';
   if (updateSource) location += `:${updateSource}`;
   userUpdateCounter?.inc({ location });
-  if (typeof data.username === 'string' && data.username !== previousUsername)
-    queueScamScan({ entityType: 'User', entityId: id });
+  const renamed = typeof data.username === 'string' && data.username !== previousUsername;
+  if (renamed) queueScamScan({ entityType: 'User', entityId: id });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
   }
+
+  // Not awaited: it reads every owned id, and it never throws.
+  if (renamed) void queueOwnedContentUpdate(id);
 
   if (
     data.showNsfw !== undefined ||
@@ -1152,6 +1167,38 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   }
 };
 
+type DeletedVersionRow = { id: number };
+
+/** Busts the caches of the versions `deleteUser` deleted. Chunked: an account can have thousands. */
+async function dropDeletedVersionCaches(versionIds: number[]) {
+  // Imported here: a static import joins user.service to the model-version import cycle.
+  const { bustMvCache } = await import('~/server/services/model-version.service');
+  for (const ids of chunkIds(versionIds, DELETED_MODEL_CACHE_CHUNK)) {
+    await preventReplicationLagBatch('modelVersion', ids);
+    // No owner: the orchestrator's copy is dropped for every caller, not one user.
+    await bustMvCache(ids);
+  }
+}
+
+async function dropDeletedModelCaches(userId: number) {
+  const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
+  await dropDeletedModelIdCaches(models.map((m) => m.id));
+}
+
+/** The caches and search entries of models already set to Deleted. */
+export async function dropDeletedModelIdCaches(modelIds: number[]) {
+  const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
+  for (const ids of chunkIds(modelIds, DELETED_MODEL_CACHE_CHUNK)) {
+    await preventReplicationLagBatch('model', ids);
+    await dataForModelsCache.refresh(ids);
+    await bustPublicModelResponseCache(ids);
+    await modelsSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+    );
+  }
+}
+const DELETED_MODEL_CACHE_CHUNK = 500;
+
 export const deleteUser = async ({
   id,
   username,
@@ -1228,11 +1275,27 @@ export const deleteUser = async ({
       // The rest of the scrub is in `guardedAccountScrubSql`; meta is here because it carries the
       // account's own data, which the guarded statement cannot take as a parameter.
       dbWrite.user.update({ where: { id: user.id }, data: { meta } }),
+      // Last, so it can be taken off the result below. The status `deleteModelById` writes on the
+      // versions of a model it deletes; the version rows and their files stay.
+      ...(removeModels
+        ? [
+            dbWrite.$queryRaw<DeletedVersionRow[]>`
+              UPDATE "ModelVersion" mv
+              SET status = 'Deleted'::"ModelStatus", "updatedAt" = now()
+              FROM "Model" m
+              WHERE m.id = mv."modelId"
+                AND m."userId" = ${user.id}
+                AND mv.status IN ('Published'::"ModelStatus", 'Scheduled'::"ModelStatus")
+              RETURNING mv.id
+            `,
+          ]
+        : []),
     ])
     .catch((e) => {
       if (isLegalHoldAbort(e)) throw new LegalHoldError();
       throw e;
     });
+  const deletedVersions = removeModels ? (result.pop() as DeletedVersionRow[]) : [];
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
   void syncOwnerEventHats(user.id);
@@ -1275,6 +1338,13 @@ export const deleteUser = async ({
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)
   );
+
+  if (removeModels) {
+    await runStep('deleted-version-caches', () =>
+      dropDeletedVersionCaches(deletedVersions.map((v) => v.id))
+    );
+    await runStep('deleted-model-caches', () => dropDeletedModelCaches(user.id));
+  }
 
   // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
   await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
@@ -1781,9 +1851,6 @@ export const removeAllContent = async ({
   // sort deletes by least impactful to most impactful
   await dbWrite.imageReaction.deleteMany({ where: { userId: id } });
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
-  await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
-  await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  // A reaction on a comment written to CommentV3 directly has no CommentV2Reaction row to mirror.
   await dbWrite.$executeRaw`DELETE FROM "CommentV3Reaction" WHERE "userId" = ${id}`;
   // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from, so an
   // unsettled payout is settled first and an open bounty's supporters are refunded.
@@ -1885,30 +1952,12 @@ export const removeAllContent = async ({
     const v3Ids = (
       await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "CommentV3"
-        WHERE "userId" = ${id} AND "deletedAt" IS NULL
-          AND ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}`
+        WHERE "userId" = ${id} AND "deletedAt" IS NULL`
     ).map((r) => r.id);
     for (let i = 0; i < v3Ids.length; i += REMOVE_V3_COMMENTS_BATCH) {
       const batch = v3Ids.slice(i, i + REMOVE_V3_COMMENTS_BATCH);
       afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, batch)));
     }
-    // Not the rows the CommentV3 pass handled: deleting a CommentV2 placeholder blanks it, and deleting
-    // a v1 row cascades to its replies' live CommentV3 rows. A v1 row the mirror never copied is
-    // removed by nothing else when its author's content is removed.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CommentV2" c2
-      WHERE c2."userId" = ${id} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
-    await dbWrite.$executeRaw`
-      DELETE FROM "Comment" c
-      WHERE c."userId" = ${id}
-        AND NOT EXISTS (SELECT 1 FROM "CommentV3" v WHERE v."legacyV1Id" = c.id)`;
-    // CommentV3 first, as every write on a surface that writes it locks it, before the cascade
-    // reaches CommentV2.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CommentTopic"
-      WHERE ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}
-        AND (("entityType" = 'article' AND "entityId" IN (${owned('Article')}))
-          OR ("entityType" = 'post' AND "entityId" IN (${owned('Post')})))`;
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
     await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
     const formerOwnerHeld = heldModelIdsSql(
@@ -2442,12 +2491,38 @@ const leaderboardRankInsert = ({
   leaderboardFilter,
   userFilter,
   onConflict = Prisma.empty,
+  carriedBoardIds = [],
 }: {
   leaderboardFilter: Prisma.Sql;
   userFilter: Prisma.Sql;
   onConflict?: Prisma.Sql;
-}) => Prisma.sql`
-  WITH user_positions AS (
+  /**
+   * Boards not populated for today: read their latest day in the last week so their badges carry
+   * over. Older than that they drop out, so a long-dead board can't bring back stale ranks.
+   */
+  carriedBoardIds?: string[];
+}) => {
+  // Bound only when a board is carried: the plain rebuild binds nothing, which
+  // leaderboard-rank-showcase.test.ts relies on to catch a board list hiding in a parameter.
+  const carried = carriedBoardIds.length;
+  // One index-backed max per carried board, not per row: a board can miss more than one night.
+  const carriedDays = carried
+    ? Prisma.sql`carried_day AS (
+        SELECT c.id, (
+          SELECT max(r.date) FROM "LeaderboardResult" r
+          WHERE r."leaderboardId" = c.id AND r.date < current_date AND r.date >= current_date - 7
+        ) AS day
+        FROM unnest(${carriedBoardIds}::text[]) AS c(id)
+      ),`
+    : Prisma.empty;
+  const dayFilter = carried
+    ? Prisma.sql`(
+        (lr.date = current_date AND lr."leaderboardId" <> ALL(${carriedBoardIds}::text[]))
+        OR (lr."leaderboardId", lr.date) IN (SELECT id, day FROM carried_day)
+      )`
+    : Prisma.sql`lr.date = current_date`;
+  return Prisma.sql`
+  WITH ${carriedDays} user_positions AS (
     SELECT
       lr."userId",
       lr."leaderboardId",
@@ -2467,7 +2542,7 @@ const leaderboardRankInsert = ({
     FROM "User" u
     JOIN "LeaderboardResult" lr ON lr."userId" = u.id
     JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
-    WHERE lr.date = current_date
+    WHERE ${dayFilter}
       AND lr.position <= 100
       ${leaderboardFilter}
       ${userFilter}
@@ -2497,11 +2572,17 @@ const leaderboardRankInsert = ({
   FROM lowest_position
   ${onConflict};
 `;
+};
 
 export const updateLeaderboardRank = async ({
   leaderboardIds,
+  carriedBoardIds,
+  builtMarkerKey,
 }: {
   leaderboardIds?: string | string[];
+  carriedBoardIds?: string[];
+  /** KeyValue key set to Postgres `current_date` in the same transaction as the rebuild. */
+  builtMarkerKey?: string;
 } = {}) => {
   if (leaderboardIds && !Array.isArray(leaderboardIds)) leaderboardIds = [leaderboardIds];
 
@@ -2513,7 +2594,17 @@ export const updateLeaderboardRank = async ({
     // Truncate the table - much faster than DELETE and we're rebuilding anyway
     dbWrite.$executeRaw`TRUNCATE TABLE "UserRank";`,
     // Only insert users with top 100 ranks (position <= 100)
-    dbWrite.$executeRaw(leaderboardRankInsert({ leaderboardFilter, userFilter: Prisma.empty })),
+    dbWrite.$executeRaw(
+      leaderboardRankInsert({ leaderboardFilter, userFilter: Prisma.empty, carriedBoardIds })
+    ),
+    // current_date is fixed at transaction start, so the marker names the day the insert read.
+    ...(builtMarkerKey
+      ? [
+          dbWrite.$executeRaw`
+            INSERT INTO "KeyValue" (key, value) VALUES (${builtMarkerKey}, to_jsonb(current_date::text))
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        ]
+      : []),
   ]);
 };
 
@@ -2925,6 +3016,20 @@ export const toggleBan = async ({
           })
         ),
 
+      // Take away their git access to App Blocks SOURCE repos (`civitai-apps-src/<slug>`): the
+      // collaborator rows of every repo they own or hold a seat on. Credential hand-outs already
+      // refuse a banned account; this removes the rows a token they already hold would use.
+      // Isolated like every other leg: it must never fail the ban.
+      import('~/server/services/blocks/app-source-repo.service')
+        .then(({ revokeSourceRepoAccessForUser }) => revokeSourceRepoAccessForUser(id))
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-revoke-source-repos',
+            message: (error as Error).message,
+          })
+        ),
+
       // Group B: External operations (subscription + search indexes)
       Promise.all([
         // Stop the recurring membership from auto-renewing while banned. Cancel
@@ -3029,24 +3134,8 @@ export const toggleBan = async ({
     }
 
     // Flagged, not deleted, and the ToS flag rather than `hidden` — `hidden` is a fold any viewer can
-    // reopen. See `bulkSetCommentV2TosViolation`.
+    // reopen.
     if (removeComments) {
-      try {
-        // Not a comment on a CommentV3-write surface: `setUserCommentsV3Tos` flags those, locking
-        // CommentV3 first as every write there does, so the two cannot deadlock.
-        await dbWrite.$executeRaw`
-          UPDATE "CommentV2" c2 SET "tosViolation" = true, "updatedAt" = now()
-          WHERE c2."userId" = ${id} AND NOT c2."tosViolation"
-            AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-remove-comments',
-          message: (error as Error).message,
-          error,
-        });
-      }
-      // Its own try, so a failure above still leaves these flagged.
       await setUserCommentsV3Tos(id).catch((error: Error) =>
         logToAxiom({
           type: 'error',

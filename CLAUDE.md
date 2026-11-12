@@ -46,7 +46,7 @@ where it loads on demand:
   `pr-review` (the hosted review of your PR: intent, findings, fixes), etc.
 
 ## Commands
-- **Dev servers: always the `dev-server` skill**, never `pnpm run dev` directly. `start --app moderator|creator-studio`
+- **Dev servers: always the `dev-server` skill**, never `pnpm run dev` directly. `start --app moderator|creator-studio|training-studio`
   runs those from the current worktree with the auth hub; other `apps/*` use their own `pnpm dev:<name>`.
 - **Local env misbehaving** (override ignored, sign-in fails, onboarding wizard everywhere)? Read
   `docs/dev/local-setup.md` first.
@@ -127,8 +127,8 @@ anything committed counts as disclosed and must be fixed and rotated.
 4. Test the change locally
 5. Before merging, check the PR's CI and its `pr-review` round (the `pr-review` skill) — `main` has no
    required checks, so a red run doesn't block.
-6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, the lanes with no
-   automated gate. Required when you moved a file, renamed a script or command, retired an env var,
+6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, lanes that no build or test covers (`comment-review`
+   is also the hosted review's `comments` lane, and `civitai-review` runs it locally when recording). Required when you moved a file, renamed a script or command, retired an env var,
    completed a tracked item, or a pushback has turned up an overstatement.
 
 **Every change to `main` goes through a PR** — never push to `main` directly. The one exception is the

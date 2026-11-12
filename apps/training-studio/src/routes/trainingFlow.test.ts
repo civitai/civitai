@@ -24,9 +24,11 @@ import {
   networkDimSizeHint,
   newRun,
   nextImgId,
+  numberInputValue,
   optimizerLrParams,
   teLocked,
   paramDeviations,
+  paramLockReason,
   paramHelpText,
   promptHasTrigger,
   recommendedCardFor,
@@ -40,6 +42,8 @@ import {
   autoLabelTargets,
   handLabelOnlyCount,
   labelTextAfterSwitch,
+  matchesTagFilter,
+  withFilterTags,
   withTags,
   withTrigger,
   versionOptions,
@@ -156,6 +160,19 @@ describe('extra parameter capabilities', () => {
     });
     expect(defaultRunParams(run('sdxl'), '  ')).toMatchObject({ shuffleTokens: false });
   });
+
+  it('sizes an Anima network by LoRA type — 8 for characters, 16 otherwise, custom base too', () => {
+    const size = (r: Run, loraType: string) => {
+      const { networkDim, networkAlpha } = defaultRunParams(r, '', loraType);
+      return [networkDim, networkAlpha];
+    };
+    for (const r of [run('anima'), run('anima', CUSTOM_VERSION_KEY)]) {
+      expect(size(r, 'character')).toEqual(['8', '8']);
+      expect(size(r, 'style')).toEqual(['16', '16']);
+      expect(size(r, 'concept')).toEqual(['16', '16']);
+    }
+    expect(size(run('zimage'), 'character')).toEqual(['32', '32']);
+  });
 });
 
 describe('paramDeviations', () => {
@@ -176,6 +193,18 @@ describe('paramDeviations', () => {
     ]);
   });
 
+  it("measures network size against the LoRA type's recommendation", () => {
+    const r = run('anima');
+    expect(
+      paramDeviations(r, defaultRunParams(r, '', 'character'), 'tag', '', 'character')
+    ).toEqual([]);
+    const devs = paramDeviations(r, defaultRunParams(r, '', 'style'), 'tag', '', 'character');
+    expect(devs.map((d) => [d.field, d.recommended])).toEqual([
+      ['networkDim', '8'],
+      ['networkAlpha', '8'],
+    ]);
+  });
+
   it('names each changed field with its recommendation, in form order', () => {
     const r = run('sdxl');
     const params = { ...defaultRunParams(r), networkDim: '64', shuffleTokens: true, steps: 3000 };
@@ -185,11 +214,15 @@ describe('paramDeviations', () => {
     expect(devs[2]).toMatchObject({ label: 'Shuffle tags', value: 'On', recommended: 'Off' });
   });
 
-  it('ignores fields the run cannot use — a locked TE rate, tag fields on captions', () => {
+  it('ignores fields the run cannot use — a locked TE rate, resolution, tag fields on captions', () => {
     const krea = run('krea2');
     expect(
       paramDeviations(krea, { ...defaultRunParams(krea), textEncoderLr: '0.001' }, 'caption')
     ).toEqual([]);
+    const sdxl = run('sdxl');
+    expect(paramDeviations(sdxl, { ...defaultRunParams(sdxl), resolution: '2048' }, 'tag')).toEqual(
+      []
+    );
     const z = run('zimage');
     expect(
       paramDeviations(
@@ -248,6 +281,28 @@ describe('buildTrainingRuns extra fields', () => {
     });
     expect(video.noiseOffset).toBe(0);
     expect(video.flipAugmentation).toBe(false);
+  });
+
+  it('sends the fallback, not 0, for a cleared numeric field', () => {
+    const out = build(run('sdxl'), 'tag', { unetLr: '', networkDim: '  ' });
+    const d = defaultRunParams(run('sdxl'));
+    expect(out.unetLr).toBe(Number(d.unetLr));
+    expect(out.networkDim).toBe(Number(d.networkDim));
+    expect(out.unetLr).toBeGreaterThan(0);
+  });
+
+  it('falls back to the Prodigy rate for a cleared LR under Prodigy', () => {
+    const out = build(run('sdxl'), 'tag', { optimizer: 'Prodigy', unetLr: '' });
+    expect(out.unetLr).toBe(1);
+  });
+});
+
+describe('numberInputValue', () => {
+  // A blank field must read back as null, or Svelte clears a half-typed `1e` on the way to `1e-4`.
+  it('reads a blank field as null and passes values through', () => {
+    expect(numberInputValue('')).toBeNull();
+    expect(numberInputValue(0.0001)).toBe(0.0001);
+    expect(numberInputValue(0)).toBe(0);
   });
 });
 
@@ -607,6 +662,47 @@ describe('withTags', () => {
   });
 });
 
+describe('matchesTagFilter', () => {
+  const tags = ['1girl', 'dress', 'smile'];
+  it('keeps an image with every included tag and none of the excluded ones', () => {
+    expect(matchesTagFilter(tags, { include: ['dress'], exclude: ['crown'] })).toBe(true);
+    expect(matchesTagFilter([...tags, 'crown'], { include: ['dress'], exclude: ['crown'] })).toBe(
+      false
+    );
+    expect(matchesTagFilter(tags, { include: ['dress', 'crown'], exclude: [] })).toBe(false);
+  });
+  it('an exclude-only filter surfaces the images missing the tag, unlabeled ones included', () => {
+    expect(matchesTagFilter(['1girl'], { include: [], exclude: ['dress'] })).toBe(true);
+    expect(matchesTagFilter([], { include: [], exclude: ['dress'] })).toBe(true);
+    expect(matchesTagFilter(tags, { include: [], exclude: ['dress'] })).toBe(false);
+  });
+  it("ignores case, so a typed tag finds the tagger's", () => {
+    expect(matchesTagFilter(tags, { include: ['Dress'], exclude: [] })).toBe(true);
+    expect(matchesTagFilter(tags, { include: [], exclude: ['SMILE'] })).toBe(false);
+  });
+});
+
+describe('withFilterTags', () => {
+  it('adds a comma paste to one side and moves a tag already on the other side', () => {
+    expect(
+      withFilterTags({ include: ['dress'], exclude: ['crown'] }, 'Crown, hat', 'include')
+    ).toEqual({
+      include: ['dress', 'Crown', 'hat'],
+      exclude: [],
+    });
+    expect(withFilterTags({ include: ['dress'], exclude: [] }, 'dress', 'exclude')).toEqual({
+      include: [],
+      exclude: ['dress'],
+    });
+  });
+  it('does not list a tag twice on the same side', () => {
+    expect(withFilterTags({ include: ['dress'], exclude: [] }, 'DRESS', 'include')).toEqual({
+      include: ['DRESS'],
+      exclude: [],
+    });
+  });
+});
+
 describe('per-model flag gates', () => {
   const imageTypes = (flags: string[]) => cardsForMedia('image', new Set(flags)).map((c) => c.type);
 
@@ -712,6 +808,14 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
     ).toBe('This custom model is blocked from training. Pick another.');
   });
 
+  it('blocks a code-blocked custom base even when the ops list is empty or unread', () => {
+    const anima = { ...newRun(illustrious, on), versionKey: CUSTOM_VERSION_KEY };
+    const run = { ...anima, customAir: 'urn:air:anima:checkpoint:civitai:2855007@3224434' };
+    const message = 'This custom model is blocked from training. Pick another.';
+    expect(blockedSelectionMessage([run], parseServiceStatus(null))).toBe(message);
+    expect(blockedSelectionMessage([run], null)).toBe(message);
+  });
+
   it('starts a partly-down card on a version that is up', () => {
     const status = parseServiceStatus({ blockedModels: ['flux2klein_9b'] });
     expect(cardUnavailability(klein, on, status)).toBeNull();
@@ -744,6 +848,48 @@ describe('Kohya engine selection and options', () => {
     expect(versionOptions(card, undefined, 'kohya').some((v) => v.key === CUSTOM_VERSION_KEY)).toBe(
       true
     );
+  });
+
+  it('keeps Kohya resolution editable while AI Toolkit resolution is locked', () => {
+    const original = run('sdxl');
+    const kohya = { ...original, engine: 'kohya' };
+    expect(paramLockReason(original, 'resolution')).toBeDefined();
+    expect(paramLockReason(kohya, 'resolution')).toBeUndefined();
+    const params = { ...defaultRunParams(kohya), resolution: '768' };
+    expect(paramDeviations(kohya, params, 'tag')).toContainEqual(
+      expect.objectContaining({ field: 'resolution', value: '768' })
+    );
+    expect(runTrainingParams(kohya, params, 'tag').resolution).toBe(768);
+  });
+
+  it('uses Kohya model defaults for cleared fields in both quotes and submits', () => {
+    const kohya = { ...run('sd15', 'anime'), engine: 'kohya' };
+    const params = {
+      ...defaultRunParams(kohya, 'ohwx'),
+      unetLr: '',
+      batchSize: '',
+      clipSkip: '',
+      keepTokens: '',
+    };
+    const quoted = runTrainingParams(kohya, params, 'tag', 'ohwx', 'character');
+    const [submitted] = buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [kohya] },
+      [],
+      'ohwx',
+      'Example',
+      [{ run: kohya, params }],
+      [],
+      [],
+      'tag'
+    );
+    expect(quoted).toMatchObject({
+      engine: 'kohya',
+      unetLr: 0.0005,
+      batchSize: 6,
+      keepTokens: 1,
+      kohya: { clipSkip: 2 },
+    });
+    expect(submitted).toMatchObject(quoted);
   });
 
   it('restores safe learning rates when leaving the Pony Prodigy preset', () => {

@@ -24,6 +24,19 @@ const { TRIGGER_SECRET, mockEnv } = vi.hoisted(() => {
 });
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 
+// The two flags a direct publish needs (read by triggerReviewBuild through app-blocks-flag).
+const { mockFlags } = vi.hoisted(() => ({
+  mockFlags: { direct: false, shared: false, throws: false },
+}));
+vi.mock('~/server/flipt/client', () => ({
+  isFlipt: vi.fn(async (flag: string) => {
+    if (mockFlags.throws) throw new Error('flipt down');
+    if (flag === 'app-blocks-review-direct-publish') return mockFlags.direct;
+    if (flag === 'app-blocks-review-shared-server') return mockFlags.shared;
+    return false;
+  }),
+}));
+
 import {
   triggerReviewBuild,
   reviewHost,
@@ -144,5 +157,61 @@ describe('triggerReviewBuild', () => {
     expect(captured!.sig).not.toBe(
       createHmac('sha256', TRIGGER_SECRET).update(stripped).digest('hex')
     );
+  });
+});
+
+describe('triggerReviewBuild: directPublish', () => {
+  let sentBody = '';
+  beforeEach(() => {
+    sentBody = '';
+    mockEnv.APPS_TEKTON_REVIEW_TRIGGER_URL = undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sentBody = String(init.body);
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => JSON.stringify({ pipelineRun: 'review-pr-1' }),
+        } as unknown as Response;
+      })
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Object.assign(mockFlags, { direct: false, shared: false, throws: false });
+  });
+
+  const args = {
+    slug: 'generate-from-model',
+    sha: 'a'.repeat(40),
+    publishRequestId: 'pubreq_0123456789ABCDEFGHJKMNPQRS',
+    modUserId: 42,
+    callbackUrl: 'https://civitai.com/api/internal/blocks/review-build-callback',
+  };
+  // The body before the field existed, key for key (the receiver verifies these exact bytes).
+  const legacyKeys = ['mode', 'slug', 'sha', 'publishRequestId', 'modUserId', 'callbackUrl', 'ts'];
+
+  it('both flags on: the signed body asks for a direct publish', async () => {
+    Object.assign(mockFlags, { direct: true, shared: true });
+    await triggerReviewBuild(args);
+    const parsed = JSON.parse(sentBody);
+    expect(parsed.directPublish).toBe(true);
+    expect(Object.keys(parsed)).toEqual([...legacyKeys.slice(0, -1), 'directPublish', 'ts']);
+  });
+
+  // INVARIANT GUARDS (green before the change too): OFF is the old body, byte for byte.
+  it.each([
+    ['both off', { direct: false, shared: false }],
+    ['only direct-publish on (it needs the shared server)', { direct: true, shared: false }],
+    ['only shared-server on', { direct: false, shared: true }],
+    ['a flag read that throws', { direct: true, shared: true, throws: true }],
+  ])('%s: no directPublish field, the old keys in the old order', async (_name, flags) => {
+    Object.assign(mockFlags, flags);
+    await triggerReviewBuild(args);
+    const parsed = JSON.parse(sentBody);
+    expect(Object.keys(parsed)).toEqual(legacyKeys);
+    expect(sentBody).toBe(JSON.stringify({ mode: 'review', ...args, ts: parsed.ts }));
   });
 });
