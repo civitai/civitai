@@ -90,6 +90,7 @@
     trainsPairs = false,
     matureCount: scannedMature,
     readiness = { kind: 'off' },
+    readinessUnusableCount,
     onCheckReadinessAgain,
     onRemoveFiles,
     onStart,
@@ -117,8 +118,10 @@
     matureCount: number;
     /** Whether every dataset file is ready to train; `off` leaves Start to the other checks. */
     readiness?: ReadinessView;
-    onCheckReadinessAgain?: () => void;
-    onRemoveFiles?: (blobIds: string[]) => void;
+    /** How many images or pairs Remove takes out when files can't be used. */
+    readinessUnusableCount?: number;
+    onCheckReadinessAgain: () => void;
+    onRemoveFiles: (blobIds: string[]) => void;
     onStart: (
       launched: LaunchedRun[],
       prompts: SamplePrompt[],
@@ -473,7 +476,12 @@
       uploadingImage ||
       holdsStart(readiness)
   );
-  const readinessNote = $derived(readinessMessage(readiness));
+  const readinessNote = $derived(
+    readinessMessage(readiness, {
+      unusableCount: readinessUnusableCount,
+      noun: trainsPairs ? 'pair' : 'file',
+    })
+  );
 
   function start() {
     if (startBlocked) return;
@@ -1081,12 +1089,12 @@
     {:else if readinessNote}
       <div class="mt-2 flex flex-col items-center gap-2">
         <p class="text-center font-mono text-xs text-dark-2">{readinessNote}</p>
-        {#if readiness.kind === 'unusable' && onRemoveFiles}
+        {#if readiness.kind === 'unusable'}
           {@const blobIds = readiness.blobIds}
           <Button variant="outline" size="sm" onclick={() => onRemoveFiles(blobIds)}>
-            Remove {blobIds.length === 1 ? 'it' : 'them'}
+            Remove {(readinessUnusableCount ?? blobIds.length) === 1 ? 'it' : 'them'}
           </Button>
-        {:else if readiness.kind === 'slow' && onCheckReadinessAgain}
+        {:else if readiness.kind === 'slow'}
           <Button variant="outline" size="sm" onclick={onCheckReadinessAgain}>Check again</Button>
         {/if}
       </div>

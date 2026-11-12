@@ -19,15 +19,18 @@ export const READINESS_CHECKS = 3;
 export const holdsStart = (view: ReadinessView) =>
   view.kind === 'checking' || view.kind === 'unusable' || view.kind === 'slow';
 
-export function readinessMessage(view: ReadinessView): string | null {
+/** `unusableCount` and `noun` let an edit dataset say how many pairs Remove takes out. */
+export function readinessMessage(
+  view: ReadinessView,
+  { unusableCount, noun = 'file' }: { unusableCount?: number; noun?: 'file' | 'pair' } = {}
+): string | null {
   switch (view.kind) {
     case 'checking':
       return `Finishing your uploads (${view.ready} of ${view.total} ready)…`;
     case 'unusable': {
-      const n = view.blobIds.length;
-      return `${n} ${n === 1 ? "file can't" : "files can't"} be used for training. Remove ${
-        n === 1 ? 'it' : 'them'
-      } to continue.`;
+      const n = unusableCount ?? view.blobIds.length;
+      const what = n === 1 ? `1 ${noun} can't` : `${n} ${noun}s can't`;
+      return `${what} be used for training. Remove ${n === 1 ? 'it' : 'them'} to continue.`;
     }
     case 'slow':
       return 'Some files are taking longer than usual. Check again in a few minutes.';
@@ -93,6 +96,11 @@ export function watchReadiness(blobIds: string[], deps: ReadinessDeps): () => vo
         if (!res.enabled || res.ready !== false) return show({ kind: 'ready' });
         if (++checks >= READINESS_CHECKS) return show({ kind: 'slow' });
         states.clear();
+        if (now() - started >= READINESS_MAX_MS) return show({ kind: 'slow' });
+        show({ kind: 'checking', ready: 0, total: ids.length });
+        await sleep(READINESS_POLL_MS);
+        if (stopped) return;
+        continue;
       } else {
         const stuck = ids.every(
           (id) => states.get(id) === 'ready' || (failedReads.get(id) ?? 0) >= READINESS_FAILED_READS

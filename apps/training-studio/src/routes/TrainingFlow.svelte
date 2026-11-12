@@ -129,7 +129,8 @@
   const RATING_POLLS = 6;
   const RATING_POLL_MS = 5000;
   $effect(() => {
-    if (step !== 3) return;
+    // After the readiness wait, so Review never reads every file for both at once.
+    if (step !== 3 || !readinessSettled) return;
     const be = backend();
     if (!be.datasetRating) return;
     const ids = datasetBlobIds;
@@ -159,24 +160,48 @@
 
   // Review holds Start until the orchestrator would take every dataset file, for the dataset it was made for.
   let readiness = $state<{ key: string; view: ReadinessView } | null>(null);
+  // "Check again" bumps this to start a fresh wait.
   let readinessRound = $state(0);
+  const readinessSupported = !!backend().datasetReadiness && !!backend().datasetReadyToTrain;
   $effect(() => {
-    if (step !== 3) return;
+    if (step !== 3 || !readinessSupported) return;
     const be = backend();
-    if (!be.datasetReadiness || !be.datasetReadyToTrain) return;
-    const ids = datasetBlobIds;
+    // Keyed on the dataset, not the array: a re-derived array of the same files must not restart the wait.
     const key = datasetKey;
     void readinessRound;
-    return watchReadiness(ids, {
-      probe: (blobIds) => be.datasetReadiness!(blobIds),
-      check: (run) => be.datasetReadyToTrain!(run),
-      buildRun: () => untrack(readinessRun),
-      onView: (view) => (readiness = { key, view }),
-    });
+    const stop = watchReadiness(
+      untrack(() => datasetBlobIds),
+      {
+        probe: (blobIds) => be.datasetReadiness!(blobIds),
+        check: (run) => be.datasetReadyToTrain!(run),
+        buildRun: () => untrack(readinessRun),
+        onView: (view) => (readiness = { key, view }),
+      }
+    );
+    return () => {
+      stop();
+      readiness = null;
+    };
   });
+  // Until the wait reports for this dataset, Start is held.
   const readinessView = $derived<ReadinessView>(
-    readiness?.key === datasetKey ? readiness.view : { kind: 'off' }
+    readiness?.key === datasetKey
+      ? readiness.view
+      : readinessSupported
+        ? { kind: 'checking', ready: 0, total: datasetBlobIds.length }
+        : { kind: 'off' }
   );
+  const readinessSettled = $derived(
+    readinessView.kind === 'ready' || readinessView.kind === 'off'
+  );
+  // An edit pair goes as a whole, so Remove counts the pairs it takes out.
+  const readinessUnusableCount = $derived.by(() => {
+    if (readinessView.kind !== 'unusable') return undefined;
+    const gone = new Set(readinessView.blobIds);
+    if (!trainsPairs) return gone.size;
+    return pairs.filter((p) => gone.has(p.before.blobId ?? '') || gone.has(p.after?.blobId ?? ''))
+      .length;
+  });
 
   /** The first run as the submit would send it, for the readiness whatif. */
   function readinessRun(): TrainingRunPayload | undefined {
@@ -425,6 +450,7 @@
       {trainsPairs}
       matureCount={reviewMatureCount}
       readiness={readinessView}
+      {readinessUnusableCount}
       onCheckReadinessAgain={() => readinessRound++}
       onRemoveFiles={removeDatasetFiles}
       onStart={start}

@@ -12,7 +12,11 @@ const claims = vi.hoisted(() => ({
 // Empty: the client's dist imports a directory, which Node's ESM loader refuses; the route needs none of it.
 vi.mock('@civitai/orchestration-client', () => ({}));
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
-vi.mock('$lib/server/orchestrator', () => ({ orchestratorClient: () => ({}) }));
+const endpoint = vi.hoisted(() => ({ set: true }));
+vi.mock('$lib/server/orchestrator', () => ({
+  orchestratorClient: () => ({}),
+  blobHead: () => (endpoint.set ? async () => new Response(null, { status: 204 }) : undefined),
+}));
 vi.mock('$lib/server/axiom', () => ({ logToAxiom: vi.fn(), safeError: (e: unknown) => e }));
 vi.mock('$lib/server/flipt', () => ({ isUploadReadinessOn: async () => flag.on }));
 vi.mock('$lib/server/dataset-rating', () => ({
@@ -49,6 +53,7 @@ const post = async (body: unknown) =>
 
 beforeEach(() => {
   flag.on = true;
+  endpoint.set = true;
   claims.granted = Infinity;
   claims.calls = [];
   claims.givenBack = 0;
@@ -78,6 +83,13 @@ describe('POST /api/dataset-readiness', () => {
     expect(await post({ blobIds: ['a', 'b'] })).toEqual({ enabled: false });
     expect(probeBlobReadiness).not.toHaveBeenCalled();
     expect(claims.givenBack).toBe(1);
+  });
+
+  it('is off, keeping none of the allowance, with no orchestrator endpoint', async () => {
+    endpoint.set = false;
+    expect(await post({ blobIds: ['a', 'b'] })).toEqual({ enabled: false });
+    expect(probeBlobReadiness).not.toHaveBeenCalled();
+    expect(claims.givenBack).toBe(2);
   });
 
   it('answers the whatif for a run', async () => {

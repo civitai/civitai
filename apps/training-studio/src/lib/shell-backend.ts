@@ -86,11 +86,15 @@ async function postFor(path: string, body: unknown, fallback: string) {
   return (await res.json()) as { workflowId: string };
 }
 
+const READINESS_REQUEST_TIMEOUT_MS = 60_000;
+
 async function postReadiness<T>(body: unknown): Promise<T> {
   const res = await fetch('/api/dataset-readiness', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    // A hung request would hold Start with no way out; failing releases it.
+    signal: AbortSignal.timeout(READINESS_REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Dataset readiness failed (${res.status})`);
   return (await res.json()) as T;

@@ -3,6 +3,7 @@ import type { TrainingRunPayload } from '$lib/backend';
 import type { BlobReadiness, ReadinessCheck, ReadinessProbe } from '$lib/upload-readiness';
 import {
   holdsStart,
+  readinessMessage,
   READINESS_FAILED_READS,
   READINESS_MAX_MS,
   READINESS_POLL_MS,
@@ -93,7 +94,7 @@ describe('watchReadiness', () => {
 
   it('re-reads every file once after the orchestrator refuses a dataset that read ready', async () => {
     // An older file reads ready until the refusal starts its processing, which the next read shows.
-    const { probed, check, last } = await drive(
+    const { probed, check, last, views } = await drive(
       ['a', 'old'],
       (id, n) => (id === 'old' && n === 2 ? 'processing' : 'ready'),
       [{ enabled: true, ready: false }]
@@ -101,6 +102,9 @@ describe('watchReadiness', () => {
     expect(probed).toEqual([['a', 'old'], ['a', 'old'], ['old']]);
     expect(check).toHaveBeenCalledTimes(2);
     expect(last).toEqual({ kind: 'ready' });
+    // Not "2 of 2 ready" while every file is read again.
+    const afterRefusal = views.slice(views.findIndex((v, i) => i > 0 && v.kind === 'checking'));
+    expect(afterRefusal[0]).toEqual({ kind: 'checking', ready: 0, total: 2 });
   });
 
   it('shows the files that cannot be used, and holds Start', async () => {
@@ -157,5 +161,18 @@ describe('watchReadiness', () => {
       })
     );
     expect(views.at(-1)).toEqual({ kind: 'off' });
+  });
+});
+
+describe('readinessMessage', () => {
+  it('counts the pairs an edit dataset loses, not the files', () => {
+    // Both files of one pair: Remove takes out one pair.
+    const view: ReadinessView = { kind: 'unusable', blobIds: ['before-1', 'after-1'] };
+    expect(readinessMessage(view, { unusableCount: 1, noun: 'pair' })).toBe(
+      "1 pair can't be used for training. Remove it to continue."
+    );
+    expect(readinessMessage({ kind: 'unusable', blobIds: ['a', 'b'] })).toBe(
+      "2 files can't be used for training. Remove them to continue."
+    );
   });
 });
