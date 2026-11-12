@@ -37,6 +37,13 @@ const config = () => ({
   credentials: { accessKeyId: 'k', secretAccessKey: 's' },
 });
 
+/** The SDK's resolved HTTP handler config (populated once the handler has served a request). */
+function handlerConfig(client: { config: { requestHandler: unknown } }) {
+  return (
+    client.config.requestHandler as { httpHandlerConfigs(): Record<string, unknown> }
+  ).httpHandlerConfigs();
+}
+
 describe('newS3Client', () => {
   it('rejects within its bounds against an endpoint that never answers, after maxAttempts', async () => {
     const client = newS3Client(config(), {
@@ -68,7 +75,7 @@ describe('newS3Client', () => {
     await client.send(new HeadObjectCommand({ Bucket: 'b', Key: 'k' }));
 
     expect(await client.config.maxAttempts()).toBe(S3_CLIENT_BOUNDS.maxAttempts);
-    expect(client.config.requestHandler.httpHandlerConfigs()).toMatchObject({
+    expect(handlerConfig(client)).toMatchObject({
       connectionTimeout: S3_CLIENT_BOUNDS.connectionTimeoutMs,
       requestTimeout: S3_CLIENT_BOUNDS.requestTimeoutMs,
     });

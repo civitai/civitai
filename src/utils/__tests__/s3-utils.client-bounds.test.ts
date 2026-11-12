@@ -43,7 +43,7 @@ afterAll(async () => {
 
 async function boundsOf(client: S3Client) {
   await client.send(new HeadObjectCommand({ Bucket: 'bucket', Key: 'k' }));
-  const handler = client.config.requestHandler.httpHandlerConfigs() as {
+  const handler = handlerConfig(client) as {
     connectionTimeout?: number;
     requestTimeout?: number;
   };
@@ -55,6 +55,13 @@ async function boundsOf(client: S3Client) {
 }
 
 const bounded = { maxAttempts: 2, connectionTimeout: 3_000, requestTimeout: 30_000 };
+
+/** The SDK's resolved HTTP handler config (populated once the handler has served a request). */
+function handlerConfig(client: { config: { requestHandler: unknown } }) {
+  return (
+    client.config.requestHandler as { httpHandlerConfigs(): Record<string, unknown> }
+  ).httpHandlerConfigs();
+}
 
 describe('s3-utils clients', () => {
   it.each([
