@@ -11,7 +11,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const bustCachesForPosts = vi.fn(async (_postIds: number[]) => undefined);
-vi.mock('~/server/services/post.service', () => ({
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   bustCachesForPosts: (postIds: number[]) => bustCachesForPosts(postIds),
 }));
 

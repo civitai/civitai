@@ -25,7 +25,8 @@ import {
 const { CODE_LIST } = vi.hoisted(() => ({ CODE_LIST: ['Alpha', 'Beta', 'Gamma'] }));
 const TABLE_ROWS = ['Alpha', 'Beta'].map((baseModel) => ({ baseModel }));
 
-vi.mock('~/server/services/post.service', () => ({
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   bustCachesForPosts: (postIds: number[]) => bustCachesForPosts(postIds),
 }));
 
@@ -269,6 +270,22 @@ describe('reconcile-restricted-images', () => {
     await run();
 
     expect(bustCachesForPosts.mock.calls).toEqual([[[11, 12]], [[13]]]);
+  });
+
+  it('logs a failed cache refresh and goes on to the next chunk', async () => {
+    versionIds = Array.from({ length: 250 }, (_, i) => i + 1);
+    executeRaw.mockResolvedValue(1);
+    chunkPostIds = [[11], [], [13]];
+    bustCachesForPosts.mockRejectedValueOnce(new Error('redis down'));
+
+    const result = await run();
+
+    expect(result.flagged).toBe(3);
+    expect(bustCachesForPosts.mock.calls).toEqual([[[11]], [[13]]]);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ postIds: [11], error: 'redis down' }),
+      'webhooks'
+    );
   });
 
   it('logs drift for an operator, and stays quiet when there is none', async () => {

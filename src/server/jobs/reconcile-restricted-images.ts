@@ -105,7 +105,20 @@ export const reconcileRestrictedImages = createJob(
       `;
       flagged += chunkResult?.flagged ?? 0;
       // A newly restricted mature image would otherwise stay in a cached version showcase for a day.
-      if (chunkResult?.postIds.length) await bustCachesForPosts(chunkResult.postIds);
+      // Logged, not thrown: the flags are committed, so no later run selects these images again.
+      if (chunkResult?.postIds.length)
+        await bustCachesForPosts(chunkResult.postIds).catch((error: Error) =>
+          logToAxiom(
+            {
+              name: 'reconcile-restricted-images',
+              type: 'error',
+              message: 'Showcase cache refresh failed',
+              postIds: chunkResult.postIds,
+              error: error.message,
+            },
+            'webhooks'
+          )
+        );
     }
 
     // Reported, never acted on. This is also the recovery query if a model owner
