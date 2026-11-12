@@ -268,6 +268,12 @@ export function buildCases(ctx) {
       headers: {},
     },
     {
+      // No token: readyz is not token-gated (see src/pages/api/readyz.ts).
+      id: 'probe-readyz',
+      path: '/api/readyz',
+      headers: {},
+    },
+    {
       id: 'probe-live-trailing-slash',
       path: '/api/live/?token={WEBHOOK_TOKEN}',
       headers: {},

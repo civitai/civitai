@@ -5,6 +5,7 @@ import {
   resolveWatchdogHeartbeatMs,
   watchdogArmed,
 } from '~/server/eventloop-watchdog';
+import { recordHeartbeatTick } from '~/server/liveness-heartbeat-state';
 
 /**
  * Liveness heartbeat for an EXEC liveness probe.
@@ -33,9 +34,10 @@ import {
  * copy of it in a comment is a copy that goes stale without anything noticing.)
  *
  * The same tick also stores a MILLISECOND timestamp into the event-loop watchdog's
- * SharedArrayBuffer, which a worker thread reads to detect a wedge off-loop. One
- * timer, two consumers at their own resolutions: the shell probe is stuck at
- * seconds by busybox, the worker is not. When the watchdog is armed the tick rate
+ * SharedArrayBuffer, which a worker thread reads to detect a wedge off-loop, and
+ * records it in-process for /api/readyz (`liveness-heartbeat-state.ts`). One timer, several
+ * consumers at their own resolutions: the shell probe is stuck at seconds by
+ * busybox, the others are not. When the watchdog is armed the tick rate
  * drops to its heartbeat interval and the file write is throttled back to its own
  * 2s cadence, so the probe's contract is unchanged.
  *
@@ -89,6 +91,7 @@ export function registerLivenessHeartbeat() {
   // Write immediately so the file exists before the startup probe passes and
   // liveness (which gates behind startup) begins checking it.
   recordWatchdogHeartbeat();
+  recordHeartbeatTick();
   write();
 
   const tickMs = watchdogArmed
@@ -99,6 +102,7 @@ export function registerLivenessHeartbeat() {
   const timer = setInterval(() => {
     const now = Date.now();
     recordWatchdogHeartbeat(now);
+    recordHeartbeatTick(now);
     if (now - lastFileWrite >= HEARTBEAT_FILE_INTERVAL_MS) {
       lastFileWrite = now;
       write();
