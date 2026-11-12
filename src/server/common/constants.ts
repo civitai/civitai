@@ -911,6 +911,14 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy: 'MiniMax-H3-Image',
     requiresSameLicense: true,
   },
+  'bria fibo': {
+    // Same as licence 56 in basemodel.constants.
+    url: 'https://civitai.com/content/licenses/fibo-2-platform-license',
+    name: 'FIBO 2.0 Platform License',
+    poweredBy: 'Powered by Bria AI',
+    disableMature: true,
+    requiresSameLicense: true,
+  },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
     // the published text.
@@ -1052,6 +1060,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.3 Klein': baseLicenses['flux kommunity'],
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'MOSS Image': baseLicenses['apache 2.0'],
+  'Fibo 2.0': baseLicenses['bria fibo'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux2 dev nc'],
   'Flux.2 Klein 9B': baseLicenses['flux nc'],
@@ -1073,6 +1082,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Nano Banana': baseLicenses['imagen4'],
   Imagen4: baseLicenses['imagen4'],
   'Veo 3': baseLicenses['veo3'],
+  'Gemini Omni': baseLicenses['veo3'],
   'Wan Video': baseLicenses['apache 2.0'],
   'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
   'Wan Video 14B t2v': baseLicenses['apache 2.0'],

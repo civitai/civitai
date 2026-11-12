@@ -580,6 +580,18 @@ export const teLockReason = (run: Run): string | undefined =>
   teTrainingUnsupportedReason(runVersion(run).ecosystem, runCard(run).name);
 export const teLocked = (run: Run): boolean => teLockReason(run) !== undefined;
 
+// The orchestrator's AI-Toolkit input has no `resolution` and drops the one we send.
+const RESOLUTION_LOCK_REASON =
+  "AI-Toolkit doesn't accept a training resolution, so this setting has no effect.";
+
+/** Why a param can't be edited for a run, or undefined when it can. */
+export const paramLockReason = (run: Run, field: keyof RunParams): string | undefined =>
+  field === 'textEncoderLr'
+    ? teLockReason(run)
+    : field === 'resolution'
+    ? RESOLUTION_LOCK_REASON
+    : undefined;
+
 /** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
  *  1, and so does a text encoder rate that is on; a locked one goes to 0 and an off (0) one stays off,
  *  so a model that defaults TE off doesn't start training it. Switching away puts a Prodigy-level rate back to the
@@ -625,7 +637,7 @@ function paramEquals(a: NumericInput | boolean, b: NumericInput | boolean): bool
 }
 
 /** Fields where the run's params differ from the model's recommendation, in form order. Fields the
- *  run can't use (a locked TE rate, an unsupported extra) never count. */
+ *  run can't use (a locked param, an unsupported extra) never count. */
 export function paramDeviations(
   run: Run,
   params: RunParams,
@@ -637,7 +649,7 @@ export function paramDeviations(
   const caps = runExtraCapabilities(run, labelMode);
   const out: ParamDeviation[] = [];
   for (const field of Object.keys(defaults) as (keyof RunParams)[]) {
-    if (field === 'textEncoderLr' && teLocked(run)) continue;
+    if (paramLockReason(run, field)) continue;
     if (
       EXTRA_PARAM_FIELDS.includes(field as ExtraParamField) &&
       !caps[field as ExtraParamField].supported

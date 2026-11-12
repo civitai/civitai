@@ -1,7 +1,12 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { buildSearchPageUrl, parseQuery } from '~/components/AutocompleteSearch/autocomplete-query';
+import {
+  buildFeedSearchUrl,
+  buildSearchPageUrl,
+  nextFeedSearchQuery,
+  parseQuery,
+} from '~/components/AutocompleteSearch/autocomplete-query';
 import { buildBrowsingLevelFilters, joinFilterClauses } from '~/components/Search/search-filters';
 import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
@@ -221,5 +226,57 @@ describe('the AutocompleteSearch InstantSearch tree', () => {
   it('routes every /search push through buildSearchPageUrl', () => {
     expect(source.match(/router\.push\(`\/search\/[^`]*`/g) ?? []).toEqual([]);
     expect(source).toContain('buildSearchPageUrl');
+  });
+});
+
+describe('buildFeedSearchUrl', () => {
+  it('lands an images search on the feed, with @user as its user filter and #tag words kept', () => {
+    const url = buildFeedSearchUrl('images', 'red #dragon @someone -#blurry');
+    const params = new URL(url!, 'https://x').searchParams;
+    expect(params.get('query')).toBe('red dragon');
+    expect(params.get('username')).toBe('someone');
+  });
+
+  it('leaves other indexes on their search page', () => {
+    expect(buildFeedSearchUrl('models', 'flux')).toBeNull();
+  });
+});
+
+describe('nextFeedSearchQuery', () => {
+  it("keeps the feed's other filters when the search changes", () => {
+    expect(
+      nextFeedSearchQuery(
+        { baseModels: 'Illustrious', period: 'AllTime', query: 'cat' },
+        'red dragon'
+      )
+    ).toEqual({ baseModels: 'Illustrious', period: 'AllTime', query: 'red dragon' });
+  });
+
+  it('drops only the query when the bar is emptied', () => {
+    expect(nextFeedSearchQuery({ baseModels: 'Illustrious', query: 'cat' }, '')).toEqual({
+      baseModels: 'Illustrious',
+    });
+  });
+
+  it('changes nothing for the query already applied', () => {
+    expect(nextFeedSearchQuery({ query: 'red dragon' }, '  red   dragon ')).toBeNull();
+  });
+});
+
+describe('nextFeedSearchQuery and the user filter', () => {
+  it('drops the user filter the bar set once its @user token is deleted', () => {
+    expect(nextFeedSearchQuery({ query: 'dragon', username: 'alice' }, 'dragon', 'alice')).toEqual({
+      query: 'dragon',
+    });
+    expect(nextFeedSearchQuery({ query: 'dragon', username: 'alice' }, 'castle', 'alice')).toEqual({
+      query: 'castle',
+    });
+  });
+
+  it('keeps a user filter the bar did not set', () => {
+    expect(nextFeedSearchQuery({ query: 'dragon', username: 'alice' }, 'castle')).toEqual({
+      query: 'castle',
+      username: 'alice',
+    });
   });
 });

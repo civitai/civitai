@@ -253,3 +253,54 @@ describe('collectPassThroughAuditText on a training step', () => {
     expect(got.promptRefs).toEqual(['argument']);
   });
 });
+
+describe('reference matching', () => {
+  it('reads $ref, path and $arguments however they are cased', () => {
+    const got = collectPassThroughAuditText([
+      { $type: 'videoGen', input: { prompt: { $REF: '$ARGUMENTS', PATH: 'p' } } },
+      { $type: 'videoGen', input: { prompt: { $Ref: 'chat', Path: 'output.text' } } },
+    ]);
+    expect(got.promptRefs).toEqual(['argument', 'step']);
+  });
+
+  it('a $ref with no path is not a reference: its strings are read as literal text', () => {
+    const got = collectPassThroughAuditText([
+      { $type: 'videoGen', input: { prompt: { $ref: 'a literal' } } },
+    ]);
+    expect(got).toMatchObject({ prompt: 'a literal', promptRefs: [] });
+  });
+});
+
+describe('getPassThroughPromptAuditMode on a cold process', () => {
+  const variant = vi.fn<() => Promise<string | null>>();
+  const freshMode = async () => {
+    variant.mockReset();
+    vi.resetModules();
+    vi.doMock('~/server/flipt/client', async (importOriginal) => ({
+      ...(await importOriginal<object>()),
+      getFliptVariant: () => variant(),
+    }));
+    const audit = await import('~/server/services/blocks/pass-through-prompt-audit');
+    return audit.getPassThroughPromptAuditMode;
+  };
+
+  it('is off when the first read is unreadable', async () => {
+    const mode = await freshMode();
+    variant.mockResolvedValue(null);
+    expect(await mode()).toBe('off');
+  });
+
+  it('is off for a variant it does not know, and stays off when the next read fails', async () => {
+    const mode = await freshMode();
+    variant.mockResolvedValueOnce('shadow').mockResolvedValueOnce(null);
+    expect(await mode()).toBe('off');
+    expect(await mode()).toBe('off');
+  });
+
+  it('control: keeps a log read through a later unreadable one', async () => {
+    const mode = await freshMode();
+    variant.mockResolvedValueOnce('log').mockResolvedValueOnce(null);
+    expect(await mode()).toBe('log');
+    expect(await mode()).toBe('log');
+  });
+});

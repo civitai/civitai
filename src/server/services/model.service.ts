@@ -124,7 +124,6 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
-  imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
@@ -2087,6 +2086,7 @@ export const getModelVersionsMicro = async ({
       index: true,
       createdAt: true,
       publishedAt: true,
+      metrics: { select: { thumbsUpCount: true, thumbsDownCount: true } },
     },
   });
 
@@ -2094,9 +2094,16 @@ export const getModelVersionsMicro = async ({
     'ModelVersion',
     versions.map((v) => v.id)
   );
-  return versions.map((v) => {
+  return versions.map(({ metrics, ...v }) => {
     const row = paidAccess[v.id];
-    return { ...v, isEarlyAccess: !!row && isPaidAccessActive(row) };
+    return {
+      ...v,
+      isEarlyAccess: !!row && isPaidAccessActive(row),
+      rank: {
+        thumbsUpCountAllTime: metrics[0]?.thumbsUpCount ?? 0,
+        thumbsDownCountAllTime: metrics[0]?.thumbsDownCount ?? 0,
+      },
+    };
   });
 };
 
@@ -5168,9 +5175,6 @@ export const publishModelById = async ({
   // Update search index for model
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   // Update search index for all affected images
-  await imagesSearchIndex.queueUpdate(
-    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );

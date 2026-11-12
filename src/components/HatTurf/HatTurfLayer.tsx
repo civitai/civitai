@@ -291,6 +291,10 @@ function HatTurfLayerContent({
           : next
       );
     };
+    // The containers from the picture up to the layer's parent: padding on one moves a picture that
+    // keeps its size (the detail view's sticker timeline re-centres a width-limited video), and only
+    // that container's box changes, so they are watched too.
+    let between: HTMLElement[] = [];
     const bind = () => {
       const next = parent.querySelector<HTMLElement>('img, video');
       if (next === media) return;
@@ -298,9 +302,15 @@ function HatTurfLayerContent({
         observer.unobserve(media);
         for (const event of LOAD_EVENTS) media.removeEventListener(event, measure);
       }
+      for (const el of between) observer.unobserve(el);
+      between = [];
       media = next;
       if (!media) return;
       observer.observe(media);
+      for (let el = media.parentElement; el; el = el === parent ? null : el.parentElement) {
+        between.push(el);
+        observer.observe(el);
+      }
       for (const event of LOAD_EVENTS) media.addEventListener(event, measure);
       measure();
     };

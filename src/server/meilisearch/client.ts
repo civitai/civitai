@@ -1027,65 +1027,6 @@ export async function searchWithSignal<D extends Record<string, any>>(
   return res;
 }
 
-// Methods on a Meilisearch index that issue a network call to the backend and
-// therefore should run under withMeili(). Limited to read-side methods —
-// write operations (updateDocuments, etc.) are intentionally NOT wrapped
-// because they're driven by background indexing jobs which have their own
-// retry loops and aren't part of the user-facing hot path.
-const WRAPPED_INDEX_METHODS = new Set(['search', 'searchGet', 'getDocument', 'getDocuments']);
-
-/**
- * Wrap a MeiliSearch client so that read-side calls on returned indexes
- * (`search`, `getDocuments`, etc.) run under withMeili('search', ...).
- *
- * Why this exists: event-engine-common's feeds package takes an IMeilisearch
- * instance and calls `.search()` on it deep inside queryDocuments — alongside
- * Postgres / Redis / ClickHouse work in populateDocuments. We can't wrap
- * inside event-engine-common (that package is intentionally framework-free).
- * Wrapping at the client boundary scopes the limiter+timeout to JUST the
- * Meili SDK call, leaving DB/Redis/CH work outside the limiter.
- *
- * Implementation: Proxy `getIndex()` to return a Proxy over the index whose
- * read methods are wrapped with runWithLimiter.
- */
-export function wrapMeilisearchClientWithLimiter(client: MeiliSearch): MeiliSearch {
-  return new Proxy(client, {
-    get(target, prop, receiver) {
-      if (prop === 'getIndex') {
-        return async function wrappedGetIndex(indexName: string) {
-          const index = await (target as any).getIndex(indexName);
-          return wrapIndexWithLimiter(index);
-        };
-      }
-      if (prop === 'index') {
-        return function wrappedIndex(indexName: string) {
-          const index = (target as any).index(indexName);
-          return wrapIndexWithLimiter(index);
-        };
-      }
-      return Reflect.get(target, prop, receiver);
-    },
-  });
-}
-
-function wrapIndexWithLimiter<T extends object>(index: T): T {
-  return new Proxy(index, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (
-        typeof value === 'function' &&
-        typeof prop === 'string' &&
-        WRAPPED_INDEX_METHODS.has(prop)
-      ) {
-        return function wrappedMethod(this: unknown, ...args: unknown[]) {
-          return runWithLimiter('search', 'search', () => value.apply(target, args));
-        };
-      }
-      return value;
-    },
-  });
-}
-
 const RETRY_LIMIT = 5;
 export async function updateDocs({
   indexName,

@@ -6,6 +6,7 @@ import type { UserMeta } from '~/server/schema/user.schema';
 import type { ScrubOutcome } from '~/server/services/gdpr/stripe-account-scrub';
 import { CUSTOMER_ID_SHAPE, scrubStripeAccount } from '~/server/services/gdpr/stripe-account-scrub';
 import { createJob } from './job';
+import { backoffDelay } from '~/utils/backoff';
 
 /**
  * Brings deleted accounts to the same Stripe state as the one-time backfill of 2026-09-18:
@@ -44,7 +45,10 @@ export const isDue = (state: ScrubState | undefined, now: Date) => {
   if (!state) return true;
   const last = Date.parse(state.lastAttemptAt);
   if (!Number.isFinite(last)) return true;
-  const wait = Math.min(BASE_BACKOFF_MS * 2 ** Math.max(0, state.attempts - 1), MAX_BACKOFF_MS);
+  const wait = backoffDelay(Math.max(0, state.attempts - 1), {
+    baseMs: BASE_BACKOFF_MS,
+    maxMs: MAX_BACKOFF_MS,
+  });
   return now.getTime() - last >= wait;
 };
 

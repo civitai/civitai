@@ -216,6 +216,7 @@ export const ECO = {
   LTXV25: 81,
   Sora2: 43,
   Veo3: 44,
+  GeminiOmni: 98,
   SVD: 45,
   Vidu: 47,
   MiniMaxH3: 48,
@@ -239,6 +240,7 @@ export const ECO = {
   // MiniMax's image model. Its own ecosystem, not a MiniMaxH3 version: separate weights, and
   // H3 video LoRAs do not apply to it.
   MiniMaxH3Image: 97,
+  Fibo2: 99,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -625,6 +627,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 7,
     sortOrder: 72,
   },
+  {
+    id: ECO.GeminiOmni,
+    key: 'GeminiOmni',
+    displayName: 'Gemini Omni',
+    familyId: 7,
+    sortOrder: 73,
+  },
 
   // OpenAI Family (familyId: 8)
   {
@@ -958,6 +967,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 272,
   },
 
+  // Bria AI
+  {
+    id: ECO.Fibo2,
+    key: 'Fibo2',
+    displayName: 'Fibo 2.0',
+    familyId: 30,
+    sortOrder: 273,
+  },
+
   // Audio ecosystems
   {
     id: ECO.AceAudio,
@@ -1255,6 +1273,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Veo3 - checkpoint only
   { ecosystemId: ECO.Veo3, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // GeminiOmni - checkpoint only
+  { ecosystemId: ECO.GeminiOmni, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Grok - checkpoint only
   { ecosystemId: ECO.Grok, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1739,6 +1760,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
       model: { id: 2827945 },
       modelLocked: true,
       engine: 'veo3',
+    },
+  },
+  {
+    ecosystemId: ECO.GeminiOmni,
+    defaults: {
+      model: { id: 3465115 },
+      modelLocked: true,
+      engine: 'gemini-omni',
     },
   },
   {
@@ -2463,6 +2492,8 @@ export const BM = {
   Flux3Klein_base: 116,
   MossImage: 117,
   MiniMaxH3Image: 118,
+  GeminiOmni: 119,
+  Fibo2: 120,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2896,6 +2927,15 @@ export const licenses: LicenseRecord[] = [
     poweredBy: 'MiniMax-H3-Image',
     requiresSameLicense: true,
   },
+  {
+    id: 56,
+    // Civitai's own terms for Fibo on the platform, not the CC BY-NC licence of Bria's public weights.
+    name: 'FIBO 2.0 Platform License',
+    url: 'https://civitai.com/content/licenses/fibo-2-platform-license',
+    poweredBy: 'Powered by Bria AI',
+    disableMature: true,
+    requiresSameLicense: true,
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -3049,6 +3089,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 29,
     name: 'OpenMOSS',
     description: "OpenMOSS's image generation models",
+  },
+  {
+    id: 30,
+    name: 'Bria AI',
+    description: "Bria AI's image generation and editing models",
   },
 ];
 
@@ -3215,6 +3260,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.MossImage,
     licenseId: 13,
+  },
+  {
+    id: BM.Fibo2,
+    name: 'Fibo 2.0',
+    description: "Bria AI's Fibo 2.0 text-to-image and image editing model",
+    type: 'image',
+    ecosystemId: ECO.Fibo2,
+    // Remove at launch.
+    hidden: true,
+    licenseId: 56,
   },
   {
     id: BM.Flux3Video,
@@ -3877,6 +3932,17 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Latest video generation model from DeepMind',
     type: 'video',
     ecosystemId: ECO.Veo3,
+    hidden: true,
+    licenseId: 22,
+  },
+
+  // Gemini Omni
+  {
+    id: BM.GeminiOmni,
+    name: 'Gemini Omni',
+    description: "Google's Gemini Omni Flash video generation model",
+    type: 'video',
+    ecosystemId: ECO.GeminiOmni,
     hidden: true,
     licenseId: 22,
   },
@@ -4665,6 +4731,11 @@ export function getGenerationBaseModelRecords(): BaseModelRecord[] {
     if (m.hidden || m.disabled) return false;
     return isModelSupported(m.id, 'generation');
   });
+}
+
+/** Only moderators may put a version on a hidden base model; see `getActiveBaseModels`. */
+export function isHiddenBaseModel(baseModel: string): boolean {
+  return !!baseModelByName.get(baseModel)?.hidden;
 }
 
 let modelLockedBaseModelSet: Set<string> | undefined;
