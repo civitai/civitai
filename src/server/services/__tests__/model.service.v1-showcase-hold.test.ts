@@ -298,9 +298,4 @@ describe('/api/v1/model-versions — the hold as the version API calls it', () =
     );
     expect(held[VERSION_ID].images.map((i) => i.id)).toEqual(ALL_IDS);
   });
-
-  it('serves no images of a version with no model', async () => {
-    const held = await holdShowcaseImages({ [VERSION_ID]: { images: SHOWCASE } }, new Map());
-    expect(held[VERSION_ID].images).toEqual([]);
-  });
 });

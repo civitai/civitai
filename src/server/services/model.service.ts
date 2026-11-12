@@ -6649,11 +6649,11 @@ export function withinHeldLevel<T extends { nsfwLevel: number }>(images: T[], le
 
 /**
  * Showcase images by model version, leaving out those above the gallery level of each version's
- * minor or SFW-only model (see `getShowcaseHeldLevels`). `models` maps each version to its model,
- * with the model's flags and owner where the caller read the row. A `viewer` sees the whole
- * showcase when they moderate, or own a model whose `ownerId` is given; pass none where no one is
- * exempt (the public API, the search index, results shared between viewers). Never mutates
- * `byVersion`: its entries can be the shared cache's.
+ * minor or SFW-only model (see `getShowcaseHeldLevels`). `models` maps a version to its model, with
+ * the model's flags and owner where the caller read the row; a version it leaves out is resolved
+ * through the version cache. A `viewer` sees the whole showcase when they moderate or own the
+ * model; pass none where no one is exempt (the public API, the search index, results shared
+ * between viewers). Never mutates `byVersion`: its entries can be the shared cache's.
  */
 export async function holdShowcaseImages<E extends { images: { nsfwLevel: number }[] }>(
   byVersion: Record<number, E>,
@@ -6661,18 +6661,44 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
   viewer?: HeldGalleryViewer
 ): Promise<Record<number, E>> {
   if (viewer?.isModerator) return byVersion;
-  const exempt = new Set<number>();
-  for (const m of models.values()) if (viewer && m.ownerId === viewer.id) exempt.add(m.modelId);
+  const modelOf = new Map(models);
+  const unmapped = Object.keys(byVersion)
+    .map(Number)
+    .filter((id) => !modelOf.has(id));
+  if (unmapped.length) {
+    const versions = await versionModelCache().fetch(unmapped);
+    for (const version of Object.values(versions))
+      modelOf.set(version.id, { modelId: version.modelId });
+  }
+
   const levels = await getShowcaseHeldLevels(
-    [...models.values()].filter((m) => !exempt.has(m.modelId))
+    [...modelOf.values()].filter((m) => !viewer || m.ownerId !== viewer.id)
   );
+  // The owner of a held model the caller did not name an owner for.
+  const owners = new Map<number, number>();
+  if (viewer) {
+    const unknown = uniq(
+      [...modelOf.values()]
+        .filter((m) => m.ownerId === undefined && levels.has(m.modelId))
+        .map((m) => m.modelId)
+    );
+    if (unknown.length) {
+      const rows = await dbRead.model.findMany({
+        where: { id: { in: unknown } },
+        select: { id: true, userId: true },
+      });
+      for (const row of rows) owners.set(row.id, row.userId);
+    }
+  }
 
   const result: Record<number, E> = {};
   for (const [key, entry] of Object.entries(byVersion)) {
     const versionId = Number(key);
-    const modelId = models.get(versionId)?.modelId;
+    const model = modelOf.get(versionId);
+    const ownedByViewer =
+      !!viewer && !!model && (model.ownerId ?? owners.get(model.modelId)) === viewer.id;
     // A version with no model to clear it serves none of its images.
-    const level = modelId === undefined ? 0 : levels.get(modelId);
+    const level = !model ? 0 : ownedByViewer ? undefined : levels.get(model.modelId);
     result[versionId] =
       level === undefined ? entry : { ...entry, images: withinHeldLevel(entry.images, level) };
   }
