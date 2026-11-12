@@ -4078,6 +4078,31 @@ model AppReviewAgentReport {
   @@map("app_review_agent_reports")
 }
 
+// App review holds: a moderator or agent's open check on an app's pending publish requests;
+// approve is refused while one is open unless overridden with a reason. RAW SQL ONLY
+// (`publish-request-holds.service.ts`). Scoped by slug, so a withdraw + resubmit keeps the hold.
+// CHECKs and the partial index live in migration `20270106120000_app_publish_request_holds`,
+// applied by hand.
+// @no-type
+model AppPublishRequestHold {
+  id               Int       @id @default(autoincrement())
+  slug             String
+  publishRequestId String    @map("publish_request_id")
+  requestKind      String    @map("request_kind")
+  placedByUserId   Int       @map("placed_by_user_id")
+  placedByLabel    String    @map("placed_by_label")
+  reason           String
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  clearedAt        DateTime? @map("cleared_at") @db.Timestamptz(6)
+  clearedByUserId  Int?      @map("cleared_by_user_id")
+  clearedKind      String?   @map("cleared_kind")
+  clearedReason    String?   @map("cleared_reason")
+
+  @@index([publishRequestId], map: "app_publish_request_holds_request_idx")
+  @@index([slug, createdAt(sort: Desc)], map: "app_publish_request_holds_slug_created_idx")
+  @@map("app_publish_request_holds")
+}
+
 /// Per-block-instance, per-user settings (viewer preferences).
 /// FK CASCADE on subscription deletion and GDPR-user-delete.
 ///

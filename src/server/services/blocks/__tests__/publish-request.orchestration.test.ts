@@ -425,6 +425,16 @@ beforeEach(() => {
   mockProvision.mockResolvedValue(undefined);
   mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
   mockDbWrite.appBlock.update.mockResolvedValue(undefined);
+  // approveRequest finalises the request and the block in one transaction.
+  (mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+    async (cb: (tx: unknown) => Promise<unknown>) =>
+      cb({
+        ...mockDbWrite,
+        $queryRaw: async () => [],
+        $executeRaw: async () => 0,
+        $executeRawUnsafe: async () => 0,
+      })
+  );
   // W13 category-on-approve default: the no-clobber category `updateMany` is a
   // no-op unless a test opts in (the default manifest declares no category).
   mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
@@ -2764,6 +2774,100 @@ describe('approveRequest', () => {
     expect(ocArg.allowedScopes).toBe(5);
     expect(ocArg.allowedScopes).not.toBe(33554431);
     expect(ocArg.grants).toEqual([]);
+  });
+
+  it('🔴 a review hold placed while the approve ran refuses at the final transaction: nothing is approved and no build starts', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    const hold = {
+      id: 7,
+      slug: 'hello',
+      placedByUserId: 1,
+      placedByUsername: 'mod',
+      placedByLabel: 'code-check',
+      reason: 'security check still running',
+    };
+    // The early check (on dbWrite) sees no hold; the final one, inside the transaction, does.
+    (mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cb: (tx: unknown) => Promise<unknown>) =>
+        cb({
+          ...mockDbWrite,
+          $queryRaw: async (strings: unknown) =>
+            Array.isArray(strings) && strings.join('?').includes('FROM app_publish_request_holds')
+              ? [hold]
+              : [],
+          $executeRaw: async () => 0,
+          $executeRawUnsafe: async () => 0,
+        })
+    );
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/placed while this approve was running/);
+    expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+  });
+
+  it('an override approves, and its reason is never written to the developer-visible approval notes', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    const hold = {
+      id: 7,
+      slug: 'hello',
+      placedByUserId: 1,
+      placedByUsername: 'mod',
+      placedByLabel: 'code-check',
+      reason: 'security check still running',
+    };
+    const holdsRead = async (strings: unknown) =>
+      Array.isArray(strings) && strings.join('?').includes('FROM app_publish_request_holds')
+        ? [hold]
+        : [];
+    mockDbWrite.$queryRaw.mockImplementation(holdsRead as never);
+    const executed: string[] = [];
+    (mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cb: (tx: unknown) => Promise<unknown>) =>
+        cb({
+          ...mockDbWrite,
+          $queryRaw: holdsRead,
+          $executeRaw: async (strings: unknown) => {
+            if (Array.isArray(strings)) executed.push(strings.join('?'));
+            return 1;
+          },
+          $executeRawUnsafe: async () => 0,
+        })
+    );
+    const OVERRIDE = 'override text the developer must not see';
+
+    await approveRequest({
+      publishRequestId: 'pubreq_1',
+      reviewerUserId: 999,
+      approvalNotes: 'Reviewed.',
+      holdOverrideReason: OVERRIDE,
+    });
+
+    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ approvalNotes: 'Reviewed.' }) })
+    );
+    expect(JSON.stringify(mockDbWrite.appBlockPublishRequest.update.mock.calls)).not.toContain(
+      OVERRIDE
+    );
+    expect(executed.some((sql) => sql.includes("cleared_kind = 'overridden'"))).toBe(true);
+    expect(executed.some((sql) => sql.includes('INSERT INTO "ModActivity"'))).toBe(true);
   });
 
   it('subsequent-version happy path skips OauthClient + repo create', async () => {

@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   pending: false,
   assets: { data: undefined as unknown, isError: false },
   assetsQuery: vi.fn(),
+  holds: [] as unknown[],
 }));
 
 const showError = vi.fn();
@@ -67,7 +68,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       listPendingRequests: inert,
       listApprovedRequests: inert,
       listRejectedRequests: inert,
+      listPublishRequestHolds: inert,
     },
+    appListings: { listPendingRequests: inert },
   };
   return {
     ...(await importOriginal<typeof TrpcMod>()),
@@ -75,6 +78,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       {
         'blocks.approveRequest': { useMutation: mutation('approve') },
         'blocks.rejectRequest': { useMutation: mutation('reject') },
+        'blocks.listPublishRequestHolds': { useQuery: () => ({ data: mocks.holds }) },
+        'blocks.clearPublishRequestHold': { useMutation: mutation('clearHold') },
+        'blocks.placePublishRequestHold': { useMutation: mutation('placeHold') },
         'appListings.getAssets': {
           useQuery: (input: unknown, opts: unknown) => {
             mocks.assetsQuery(input, opts);
@@ -96,7 +102,78 @@ beforeEach(() => {
   mocks.pending = false;
   mocks.assets = { data: undefined, isError: false };
   mocks.assetsQuery.mockClear();
+  mocks.holds = [];
   showError.mockClear();
+});
+
+describe('ReviewActionBar — review holds', () => {
+  const HOLD = {
+    id: 7,
+    slug: 'my-block',
+    publishRequestId: 'req-1',
+    requestKind: 'onsite',
+    placedByUserId: 3,
+    placedByUsername: 'mod-agent',
+    placedByLabel: 'code-check',
+    reason: 'security check still running',
+    createdAt: new Date(),
+    clearedAt: null,
+    clearedByUserId: null,
+    clearedKind: null,
+    clearedReason: null,
+  };
+
+  test('an open hold is shown, and Approve stays disabled until an override reason is typed, which it then sends', async () => {
+    mocks.holds = [HOLD];
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByText('1 open review hold')).toBeInTheDocument();
+    await expect.element(page.getByText('code-check')).toBeInTheDocument();
+    await expect.element(page.getByText(/mod-agent/)).toBeInTheDocument();
+    await expect.element(page.getByText('security check still running')).toBeInTheDocument();
+
+    const approve = page.getByRole('button', { name: 'Approve + build' });
+    await expect.element(approve).toBeDisabled();
+    const reason = page.getByTestId('apps-review-hold-override-reason');
+    await reason.fill('too short');
+    await expect.element(approve).toBeDisabled();
+    await reason.fill('  checked by hand, a false alarm  ');
+    await expect.element(approve).toBeEnabled();
+    await approve.click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      holdOverrideReason: 'checked by hand, a false alarm',
+    });
+  });
+
+  test('with no open hold there is no override field and approve sends no override', async () => {
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    await expect
+      .element(page.getByTestId('apps-review-hold-override-reason'))
+      .not.toBeInTheDocument();
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', { publishRequestId: 'req-1' });
+  });
+
+  test('clearing a hold needs a reason', async () => {
+    mocks.holds = [HOLD];
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await page.getByRole('button', { name: 'Clear', exact: true }).click();
+    const confirm = page.getByTestId('apps-review-hold-clear-confirm-7');
+    await expect.element(confirm).toBeDisabled();
+    await page.getByTestId('apps-review-hold-clear-reason-7').fill('check finished, all clean');
+    await confirm.click();
+    expect(mocks.mutate).toHaveBeenCalledWith('clearHold', {
+      holdId: 7,
+      reason: 'check finished, all clean',
+    });
+  });
 });
 
 describe('ReviewActionBar — approve', () => {

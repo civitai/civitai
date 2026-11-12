@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconHandStop,
   IconCheck,
   IconChevronRight,
   IconClock,
@@ -421,14 +422,34 @@ function ListingEditCheckBadge({ row }: { row: UnifiedReviewRow }) {
   );
 }
 
+function HoldBadge({ row }: { row: UnifiedReviewRow }) {
+  const n = row.openHoldCount ?? 0;
+  if (n === 0) return null;
+  return (
+    <Badge
+      size="sm"
+      variant="filled"
+      color="orange"
+      styles={FULL_LABEL_BADGE_STYLES}
+      leftSection={<IconHandStop size={11} />}
+      data-signal="hold"
+      data-state={String(n)}
+      title="Approving needs an override reason while a review hold is open"
+    >
+      On hold · {n}
+    </Badge>
+  );
+}
+
 function RowSignals({ row }: { row: UnifiedReviewRow }) {
   const signals = row.signals;
   if (!signals) {
     // A listing-only row: no code signals, but an approved app's listing edit may carry an
     // impersonation-check badge. Nothing to show → the dash, exactly as before.
-    if (listingEditCheckBadge(row.listingEditCheck)) {
+    if (listingEditCheckBadge(row.listingEditCheck) || (row.openHoldCount ?? 0) > 0) {
       return (
         <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
+          <HoldBadge row={row} />
           <ListingEditCheckBadge row={row} />
         </Group>
       );
@@ -447,6 +468,7 @@ function RowSignals({ row }: { row: UnifiedReviewRow }) {
   const laneBadge = lane.lane === 'waiting' ? null : AGENT_REVIEW_LANE_BADGES[lane.lane];
   return (
     <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
+      <HoldBadge row={row} />
       {laneBadge && (
         <Badge
           size="sm"

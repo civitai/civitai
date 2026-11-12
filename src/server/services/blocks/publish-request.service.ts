@@ -3008,6 +3008,11 @@ export async function listPendingRequests(
       : Promise.resolve(null),
     opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
   ]);
+  const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
+  const holdCounts = await getOpenHoldCountsBySlug(
+    dbRead,
+    items.map((r) => r.slug)
+  );
   // The impersonation check is STALE when the listing changed after it ran (a new app's draft
   // or pending listing is edited in place); a stale check never fast-lanes the row.
   const withStaleness = (id: string) => {
@@ -3027,6 +3032,7 @@ export async function listPendingRequests(
       ({ deployState, deployDetail, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
         ...r,
         ...listingFacts(r.id),
+        openHoldCount: holdCounts.get(r.slug) ?? 0,
         // The SAME reported state `getReviewStatus` gives the review page (one rule, including
         // #8240's expiry from the build's start), so the queue chip and the page agree.
         previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
@@ -3233,6 +3239,8 @@ export type ApproveRequestParams = {
   approvalNotes?: string;
   /** The moderator's media-split decision for the listing this approve publishes; omitted means `rate-mature`. */
   mediaSplit?: ListingMediaSplitDecision | null;
+  /** Required to approve while the app has open review holds; recorded on each hold. */
+  holdOverrideReason?: string | null;
 };
 
 export type ApproveRequestResult = {
@@ -3312,6 +3320,13 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   if (request.status !== 'pending') {
     throw new Error(`cannot approve a request in status ${request.status}`);
   }
+  const { checkHoldsBeforeApprove, resolveHoldsAtApprove } = await import(
+    './publish-request-holds.service'
+  );
+  const seenHoldIds = await checkHoldsBeforeApprove(dbWrite, {
+    slug: request.slug,
+    overrideReason: params.holdOverrideReason,
+  });
   // Captured BEFORE markRequestDeployState below flips deploy_state to a
   // production 'building' value — drives the end-of-flow review teardown.
   const hadReviewPreview =
@@ -4475,28 +4490,38 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // from the `Publish-Request` trailer above and the pushing account. Any push
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
-  await dbWrite.appBlock.update({
-    where: { id: appBlockId },
-    data: {
-      currentVersionSha: forgejoCommitSha,
-      // F-E E5 — persist the validated, uploaded screenshot records. Replaces
-      // the prior set on a re-approve (the storeScreenshots keys are stable per
-      // appBlockId+index, so the objects are overwritten in place). An empty
-      // gallery is stored as [] so a re-submit that REMOVES all screenshots
-      // clears the old set rather than leaving stale entries.
-      screenshots: storedScreenshots as object,
-    },
-  });
-  await dbWrite.appBlockPublishRequest.update({
-    where: { id: request.id },
-    data: {
-      status: 'approved',
-      reviewedByUserId: params.reviewerUserId,
-      reviewedAt: new Date(),
-      approvalNotes: params.approvalNotes,
-      forgejoCommitSha,
-      appBlockId,
-    },
+  // A hold placed while the Forgejo calls above ran refuses here, leaving the request pending:
+  // the same state as any other mid-approve failure, which a re-approve recovers from.
+  await dbWrite.$transaction(async (tx) => {
+    await resolveHoldsAtApprove(tx, {
+      slug: request.slug,
+      actorUserId: params.reviewerUserId,
+      overrideReason: params.holdOverrideReason,
+      seenHoldIds,
+    });
+    await tx.appBlockPublishRequest.update({
+      where: { id: request.id },
+      data: {
+        status: 'approved',
+        reviewedByUserId: params.reviewerUserId,
+        reviewedAt: new Date(),
+        approvalNotes: params.approvalNotes,
+        forgejoCommitSha,
+        appBlockId,
+      },
+    });
+    await tx.appBlock.update({
+      where: { id: appBlockId },
+      data: {
+        currentVersionSha: forgejoCommitSha,
+        // F-E E5 — persist the validated, uploaded screenshot records. Replaces
+        // the prior set on a re-approve (the storeScreenshots keys are stable per
+        // appBlockId+index, so the objects are overwritten in place). An empty
+        // gallery is stored as [] so a re-submit that REMOVES all screenshots
+        // clears the old set rather than leaving stale entries.
+        screenshots: storedScreenshots as object,
+      },
+    });
   });
 
   // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag

@@ -3,6 +3,13 @@ import { BLOCK_SLUG } from '@civitai/app-assistant';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
 import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
+import {
+  HOLD_LABEL_MAX,
+  HOLD_REASON_MAX,
+  HOLD_REASON_MIN,
+} from '~/shared/constants/publish-request-holds.constants';
+
+export const holdReasonSchema = z.string().trim().min(HOLD_REASON_MIN).max(HOLD_REASON_MAX);
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -214,6 +221,7 @@ export const approveRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(2000).optional(),
   mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
+  holdOverrideReason: holdReasonSchema.optional(),
 });
 
 export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;
@@ -379,3 +387,20 @@ export const backfillPublishRequestSchema = z.object({
 });
 
 export type BackfillPublishRequestInput = z.infer<typeof backfillPublishRequestSchema>;
+
+export const placePublishRequestHoldSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  kind: z.enum(['onsite', 'listing']),
+  reason: holdReasonSchema,
+  label: z.string().trim().min(1).max(HOLD_LABEL_MAX),
+});
+
+export const clearPublishRequestHoldSchema = z.object({
+  holdId: z.number().int().positive(),
+  reason: holdReasonSchema,
+});
+
+export const listPublishRequestHoldsSchema = z.object({
+  slugs: z.array(z.string().min(1).max(128)).min(1).max(50),
+  includeCleared: z.boolean().optional(),
+});

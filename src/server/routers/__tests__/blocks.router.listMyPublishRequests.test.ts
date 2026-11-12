@@ -798,3 +798,51 @@ describe('listMyPublishRequests — the hidden-mature-rating advisory', () => {
     expect(rows[0].problems).toEqual([]);
   });
 });
+
+describe('listMyPublishRequests — review holds never reach the developer', () => {
+  it('a request with an open hold returns no hold reason, label or count', async () => {
+    const holdRow = {
+      id: 7,
+      slug: 'held-app',
+      placedByLabel: 'code-check-label',
+      reason: 'security check still running',
+      clearedReason: 'override reason text',
+    };
+    for (const c of [dbMock.dbRead, dbMock.dbWrite])
+      c.$queryRaw.mockImplementation((async (strings: unknown) =>
+        Array.isArray(strings) && strings.join('?').includes('app_publish_request_holds')
+          ? [holdRow]
+          : []) as never);
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'req-held',
+        appBlockId: null,
+        slug: 'held-app',
+        version: '1.0.0',
+        status: 'pending',
+        submittedAt: new Date('2026-01-01'),
+        reviewedAt: null,
+        rejectionReason: null,
+        approvalNotes: null,
+        deployState: null,
+        deployDetail: null,
+        deployUpdatedAt: null,
+        fileSummary: null,
+        manifestDiffSummary: null,
+        appBlock: null,
+      },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const body = JSON.stringify(await caller.listMyPublishRequests());
+
+    expect(body).toContain('req-held');
+    for (const secret of [
+      'code-check-label',
+      'security check still running',
+      'override reason text',
+    ])
+      expect(body).not.toContain(secret);
+    expect(body).not.toMatch(/hold/i);
+  });
+});
