@@ -94,6 +94,8 @@ type RateResult =
 /** The recipe's reference to an orchestrator blob: used as-is, with no import and no rescan. A bare id
  *  would be read as base64 image data and refused. */
 export const scanImageRef = (blobId: string) => `urn:air:other:other:orchestrator:blob@${blobId}`;
+/** Blob ids are base32 keys, optionally with a file extension; anything else is never put in an AIR. */
+const BLOB_ID = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9]+)?$/;
 
 /** One image through the v2 rater. Anything but a parsed OK rating is null. */
 export async function rateImage(
@@ -101,6 +103,7 @@ export async function rateImage(
   blobId: string,
   signal: AbortSignal
 ): Promise<RateResult> {
+  if (!BLOB_ID.test(blobId)) return { rating: null };
   const body: RatingV2ScanInput = { image: scanImageRef(blobId), 'rater-model': RATER_MODEL };
   try {
     const { data, response } = await invokeImageScanningStepTemplate({ client, body, signal });
@@ -147,7 +150,7 @@ export async function runRatingJob(
   let rateLimited = 0;
   let pausedUntil = 0;
   const worker = async () => {
-    while (next < blobKeys.length && Date.now() < deadline) {
+    while (next < blobKeys.length && Date.now() < deadline && !abort.signal.aborted) {
       if (pausedUntil > Date.now()) {
         await new Promise((r) => setTimeout(r, Math.min(pausedUntil, deadline) - Date.now()));
         continue;

@@ -126,6 +126,14 @@ describe('one rating call', () => {
     expect((await rateImage(client, 'b', new AbortController().signal)).rating).toBeNull();
   });
 
+  it.each(['x@other', 'urn:air:x', 'a/b', 'a b', ''])(
+    'an id that is not a plain blob key (%j) is never sent',
+    async (id) => {
+      expect((await rateImage(client, id, new AbortController().signal)).rating).toBeNull();
+      expect(invokeScan).not.toHaveBeenCalled();
+    }
+  );
+
   it('reads a label in either case', async () => {
     invokeScan.mockResolvedValueOnce(ok('s3'));
     expect((await rateImage(client, 'b', new AbortController().signal)).rating).toEqual({
