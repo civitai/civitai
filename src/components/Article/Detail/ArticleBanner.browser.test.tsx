@@ -45,26 +45,59 @@ async function measure(containerWidth: number) {
       <ArticleBanner image={image} articleId={1} title="Banner" />
     </div>
   );
-  const wrapper = screen.getByTestId('article-banner').element() as HTMLElement;
-  const img = wrapper.querySelector('img')!;
+  const wrapperEl = screen.getByTestId('article-banner').element() as HTMLElement;
+  // The sharp image is the one with alt text; the blurred backdrop is decorative.
+  const img = wrapperEl.querySelector<HTMLImageElement>('img[alt="Banner"]')!;
   await expect.poll(() => img.getBoundingClientRect().width).toBeGreaterThan(0);
-  return { wrapper: wrapper.getBoundingClientRect(), img: img.getBoundingClientRect() };
+  const box = img.getBoundingClientRect();
+  const wrapper = wrapperEl.getBoundingClientRect();
+  // The src is not decodable here (EdgeMedia suffixes a CDN transform), so the 4:1 shape comes from the row.
+  const natural = { width: image.width!, height: image.height! };
+  // Where the pixels land inside the element box, given its object-fit.
+  const fit = getComputedStyle(img).objectFit === 'cover' ? Math.max : Math.min;
+  const scale = fit(box.width / natural.width, box.height / natural.height);
+  const paintedWidth = natural.width * scale;
+  const paintedHeight = natural.height * scale;
+  // object-position decides where the content sits inside the box; the box itself always equals the wrapper.
+  const [posX, posY] = getComputedStyle(img)
+    .objectPosition.split(' ')
+    .map((v) => parseFloat(v) / 100);
+  return {
+    wrapper,
+    wrapperEl,
+    painted: {
+      width: paintedWidth,
+      height: paintedHeight,
+      centerX: box.left + (box.width - paintedWidth) * posX + paintedWidth / 2,
+      centerY: box.top + (box.height - paintedHeight) * posY + paintedHeight / 2,
+    },
+  };
 }
 
 afterEach(() => cleanup());
 
 describe('ArticleBanner', () => {
-  // EdgeImage caps an image at the width it was requested at (2400): past that the banner sat left.
-  test('fills a container wider than the requested image width', async () => {
-    const { wrapper, img } = await measure(3200);
+  // Past the 28rem cap a 4:1 band is wider than the image: it keeps its shape and sits in the middle.
+  test('centres the whole 4:1 image, uncropped, on a wide screen', async () => {
+    const { wrapper, painted } = await measure(3200);
     expect(wrapper.width).toBe(3200);
-    expect(img.width).toBe(wrapper.width);
     expect(wrapper.height).toBe(448);
+    expect(painted.height).toBeCloseTo(448, 0);
+    expect(painted.width).toBeCloseTo(1792, 0);
+    expect(Math.abs(painted.centerX - (wrapper.left + wrapper.width / 2))).toBeLessThan(2);
+    expect(Math.abs(painted.centerY - (wrapper.top + wrapper.height / 2))).toBeLessThan(2);
   });
 
   test('keeps the 4:1 ratio on a phone', async () => {
-    const { wrapper, img } = await measure(375);
-    expect(img.width).toBe(375);
+    const { wrapper, painted } = await measure(375);
+    expect(painted.width).toBeCloseTo(375, 0);
     expect(wrapper.height).toBeCloseTo(375 / 4, 1);
+  });
+
+  test('draws a blurred backdrop behind the image', async () => {
+    const { wrapperEl } = await measure(3200);
+    const backdrop = wrapperEl.querySelector<HTMLImageElement>('img[aria-hidden="true"]');
+    expect(backdrop).not.toBeNull();
+    expect(getComputedStyle(backdrop!).filter).toContain('blur');
   });
 });
