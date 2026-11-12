@@ -99,7 +99,7 @@ describe('the training data review page', () => {
     const page = header({ unanswered: false });
     expect(page).toContain('>1 model version under review.');
     expect(page).not.toContain('At least');
-    expect(page).not.toContain('may be under review');
+    expect(page).not.toContain('The ones it did not answer for');
   });
 
   it('says the count is a floor when a row did not answer', () => {
