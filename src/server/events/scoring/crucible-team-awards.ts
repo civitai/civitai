@@ -189,6 +189,8 @@ export async function loadCrucibleTeamAwards(
   // No ClickHouse, no ledger: the award writer skips its inserts the same way.
   if (!award || !clickhouse) return [];
   const days = crucibleAwardDays(event.startDate, until);
+  // A preview read before the season's first day: no row can exist, and no scan would be no query.
+  if (!days.length) return [];
   const result = await clickhouse.query({
     query: crucibleTeamAwardRowsSql(days.length),
     format: 'JSONEachRow',

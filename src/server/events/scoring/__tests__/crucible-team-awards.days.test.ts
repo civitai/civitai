@@ -64,6 +64,15 @@ describe('crucibleTeamAwardRowsSql', () => {
       expect(crucibleTeamAwardLedgerRow('e', op, entry, new Date(), 'Blue').ownerId).toBe(0);
   });
 
+  it('sends no query before the season has a day to read', async () => {
+    query.mockClear();
+    const start = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    expect(
+      await loadCrucibleTeamAwards({ name: 'birthday2026', startDate: start }, new Date())
+    ).toEqual([]);
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it('binds one day per scan, through until when until is ahead of now', async () => {
     query.mockClear();
     const until = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
