@@ -1,4 +1,5 @@
 import type { SessionUser } from '@civitai/auth';
+import type { FILES_PROCESSING_CODE } from '$lib/files-processing';
 
 // See https://svelte.dev/docs/kit/types#app.d.ts
 declare global {
@@ -7,9 +8,8 @@ declare global {
       message: string;
       /** A 409 from a training submit: how many mature images the server found. */
       matureCount?: number;
-      /** The auto-label stub's 503: our own refusal, before any orchestrator work. A training submit's
-       *  400 while dataset files are still processing (`FILES_PROCESSING_CODE`). */
-      code?: 'auto_label_unavailable' | 'filesProcessing';
+      /** `auto_label_unavailable`: the auto-label stub's 503, our own refusal before any orchestrator work. */
+      code?: 'auto_label_unavailable' | typeof FILES_PROCESSING_CODE;
     }
     interface Locals {
       // Non-optional: the hooks.server.ts guard redirects login/forbidden before any handler runs, so
