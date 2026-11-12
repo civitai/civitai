@@ -42,6 +42,13 @@
       "maxLength": 200,
       "pattern": "^https://(github\\.com|gitlab\\.com|codeberg\\.org)/[^/]+/[^/]+/?$"
     },
+    "bugs": {
+      "type": "string",
+      "description": "Optional PUBLIC ISSUE-TRACKER / SUPPORT link: a URL string, like `repository`. The npm-style object form (`{ \"url\": ..., \"email\": ... }`) is NOT supported and is refused. Rendered as a `Support` row on the app's `/apps` store DETAIL page. Manifest-governed like `repository`: it flows to the store listing on moderator-approve and is re-synced on every approved version; remove the key and the link is cleared. Must be an `https://` URL, carry no embedded credentials and no port, and be at most 200 characters (MAX_ISSUE_TRACKER_URL_LENGTH in src/server/schema/blocks/external-app.schema.ts). Any host is accepted. Treat passing local validation as necessary, not sufficient — `validateIssueTrackerUrl` in that file is authoritative.",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^https://"
+    },
     "type": {
       "type": "string",
       "description": "Free-form descriptor used by some examples (e.g. \"block\"). Not validated by the platform.",

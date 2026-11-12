@@ -168,6 +168,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     openCount: 2718,
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     betaMessage: null,
     forkable: false,
     forkOf: null,

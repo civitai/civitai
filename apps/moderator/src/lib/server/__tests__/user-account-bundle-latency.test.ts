@@ -49,7 +49,7 @@ describe('the /api/user-account bundle', () => {
     // The negative assertions above are satisfied by an empty file. This is what stops the guard
     // passing over an endpoint someone gutted.
     const source = bundleSource();
-    for (const fn of ['getReceivedReviews', 'getComments', 'getCosmetics', 'getShopPurchases'])
+    for (const fn of ['getReceivedReviews', 'getCosmetics', 'getShopPurchases'])
       expect(source).toContain(fn);
   });
 });
@@ -61,6 +61,7 @@ describe('the reads that were pulled out', () => {
     expect(read('routes/api/user-reactions/[userId]/+server.ts')).toContain('getReactionTargets');
     expect(read('routes/api/user-buzz-balance/[userId]/+server.ts')).toContain('getBuzzBalance');
     expect(read('routes/api/user-reviews/[userId]/+server.ts')).toContain('getReviews');
+    expect(read('routes/api/user-comments/[userId]/+server.ts')).toContain('getComments');
     expect(read('routes/api/user-review-image-counts/[userId]/+server.ts')).toContain(
       'getReviewImageCounts'
     );
@@ -72,6 +73,7 @@ describe('the reads that were pulled out', () => {
       'routes/api/user-buzz-balance/[userId]/+server.ts',
       'routes/api/user-review-image-counts/[userId]/+server.ts',
       'routes/api/user-reviews/[userId]/+server.ts',
+      'routes/api/user-comments/[userId]/+server.ts',
     ]) {
       const source = read(route);
       expect(source).toContain('requireUserIdParam');

@@ -178,8 +178,7 @@ export function resolveRejectionMessage(
 
 export const isAiReviewAvailable = () => !!openrouter;
 
-// The codebase treats both 0 and -1 as "not yet rated" (see updateCollectionItemsStatus's
-// judgesApplyBrowsingLevel guard), so neither is a level and neither is allowed here.
+// 0 (not yet scanned or rated) and -1 are not levels, so neither is allowed here.
 export const isUnratedNsfwLevel = (nsfwLevel: number) => nsfwLevel <= 0;
 
 export function isNsfwLevelAllowed(nsfwLevel: number, allowedNsfwLevels: number) {

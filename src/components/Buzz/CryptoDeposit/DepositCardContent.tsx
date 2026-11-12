@@ -369,10 +369,10 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send SOL on the <Text span fw={600} c="yellow">Solana network</Text>{' '}
+                      Send {currencyState.selectedTicker.toUpperCase()} on the <Text span fw={600} c="yellow">Solana network</Text>{' '}
                       only.
-                      Coinbase users: select &quot;Solana&quot; as the network, not Base. SOL
-                      sent via Base is not supported.
+                      Coinbase users: select &quot;Solana&quot; as the network, not Base.{' '}
+                      {currencyState.selectedTicker.toUpperCase()} sent via Base is not supported.
                     </Text>
                   </Group>
                 )}

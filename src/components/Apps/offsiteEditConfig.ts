@@ -83,6 +83,8 @@ export type ListingEditContext = {
      * absent reads exactly like "not set" — see {@link editContextToForm}.
      */
     sourceRepoUrl?: string | null;
+    /** The issue-tracker / support link. OPTIONAL for the reason `sourceRepoUrl` is. */
+    issueTrackerUrl?: string | null;
     /**
      * The author's beta declaration. OPTIONAL on this type so every pre-existing edit
      * context + fixture (all of which predate the field) still type-checks, and absent reads
@@ -178,8 +180,8 @@ export function materialEditBlockedReason(
 ): string | null {
   if (!isUnpublishedEdit(ctx)) return null;
   const fields = isOnsiteEdit(ctx)
-    ? 'name, source repository and content rating'
-    : 'name, App URL, source repository and content rating';
+    ? 'name, source repository, issue tracker and content rating'
+    : 'name, App URL, source repository, issue tracker and content rating';
 
   // 🔴 ROLE-AWARE, AND THE DEFAULT IS THE NEUTRAL ONE — see `ListingEditContext.role`.
   // `loadOwnedEditableListing` admits an accepted editor seat, so this copy is read by
@@ -301,6 +303,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     name: s.name ?? '',
     externalUrl: s.externalUrl ?? '',
     sourceRepoUrl: s.sourceRepoUrl ?? '',
+    issueTrackerUrl: s.issueTrackerUrl ?? '',
     isBeta: s.isBeta === true,
     // 🔴 `s.isBeta === true &&`, not just `?? ''`. This mirrors the rule the server
     // projections apply, so the form's baseline and the wire value agree — otherwise
@@ -449,6 +452,13 @@ export function buildScalarPatch(
   const originalSourceRepoUrl = original.sourceRepoUrl.trim();
   if (sourceRepoUrl !== originalSourceRepoUrl) {
     patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
+  }
+
+  // Issue tracker / support link — the same rule as the source link: only when retyped, cleared
+  // with `null`, and the canonical comparison is the server's.
+  const issueTrackerUrl = (current.issueTrackerUrl ?? '').trim();
+  if (issueTrackerUrl !== (original.issueTrackerUrl ?? '').trim()) {
+    patch.issueTrackerUrl = issueTrackerUrl.length > 0 ? issueTrackerUrl : null;
   }
 
   // Beta status + note. Emitted ONLY when the author actually changed them, which is what

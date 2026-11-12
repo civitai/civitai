@@ -4,7 +4,9 @@ import {
   getTurfStickers,
   getTurfStickersForImages,
   getTurfStock,
+  getFlagSummary,
   getTurfSummaries,
+  placeFlagHats,
   placeTurfSticker,
   removeTurfSticker,
   setTurfOptIn,
@@ -14,6 +16,7 @@ import {
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import {
+  placeFlagHatsSchema,
   placeTurfStickerSchema,
   removeTurfStickerSchema,
   setTurfOptInSchema,
@@ -78,6 +81,19 @@ export const hatTurfRouter = router({
     .input(placeTurfStickerSchema)
     .use(rateLimit({ limit: 60, period: 60 }))
     .mutation(({ ctx, input }) => placeTurfSticker({ ...input, userId: ctx.user.id })),
+  // Hats on one of today's flags, 1, 5 or 10 at a time. guarded, as place.
+  placeFlagHats: guardedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(placeFlagHatsSchema)
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .mutation(({ ctx, input }) =>
+      placeFlagHats({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  // Today's flags and their live counts for the home row. The same for every viewer.
+  getFlags: publicProcedure
+    .input(turfEventSchema)
+    .use(edgeCacheIt({ ttl: 10 }))
+    .query(({ input }) => getFlagSummary(input.event)),
   // Whether the viewer reacting to an image would pay their team: asked for the reaction nudge after a
   // placement, so the placement itself never waits on it.
   reactionEarns: protectedProcedure

@@ -379,7 +379,8 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
       a colour failing renders `—` beside a yellow figure that is still true.
       Not ported: `SubTierStatus` (a site-wide roll-up, not per-user), `CreatorClub`/`CreatorClubBuzz`
       (Stripe-Connect payouts — a different domain from moderation).
-- [x] **Reviews / comments** — `ComboComments` as a list in `/api/user-account/[userId]`. `ReviewList`
+- [x] **Reviews / comments** — `ComboComments` as a keyset-paged list on its own endpoint,
+      `/api/user-comments/[userId]` (50 a page plus the account total). `ReviewList`
       moved to its own paged endpoint (2026-10-26), `/api/user-reviews/[userId]`: Written / Received
       tabs, 50 rows a page, filters (owner, rating, flags, text) applied in the query, with
       ToS/excluded/nsfw flags and links to the model.
@@ -580,7 +581,9 @@ on /admin — keep that deliberate.
       **Every branch orders before it limits.** `SELECT DISTINCT chatId ... LIMIT 50` with no ORDER BY
       is satisfied by a sort/unique, so it returned the 50 LOWEST ids — the OLDEST chats — which the
       summary step then re-sorted by recency, so the list READ as newest-first. `discord.gg` matches
-      4,620 chats.
+      4,620 chats. Now paged rather than capped: 25 chats a page (`spage`), ordered by each chat's
+      newest matching message, with each chat's match count; message-text search has no total, since
+      counting would scan again. The search box sits on the Search tab (route `chats`) only.
       **All-digit terms above int4 are usernames, not chat ids.** `Chat.id` is `integer`, so a larger
       value ERRORS the query and 500s the page; 978 users with a 10+ digit numeric username have chat
       messages. `@` forces username mode, and an all-digit term that is also a real username surfaces
@@ -593,8 +596,14 @@ on /admin — keep that deliberate.
       citext[], and the driver returns the raw literal as a STRING that the panel's `.join()` throws on.
       `coalesce` keeps purged accounts visible: 8,589 users with a NULL username hold 34,147 membership
       rows, and dropping them made the list and the member panel disagree about who was in a chat.
-- [x] **Transcript + members** — `FindChatById`, `FindChatMembers`. Newest 300, reversed for reading
-      order, cap disclosed. System rows excluded: 274,106 are `Embed` type whose content is raw JSON,
+- [x] **Transcript + members** — `FindChatById`, `FindChatMembers`. Pages of 300 in reading order,
+      opening on the newest; `msgBefore` / `msgAfter` in the URL (`chat-transcript-cursor.ts`) walk
+      older and newer, so no message is unreachable, and `msgAround` opens the page centred on one
+      message, which is where a search result opens. The open chat (`?chat=`) is the right-hand pane on
+      every tab, with a "Messages X–Y of N" line, and marks the search that found it: the searched
+      account's messages outlined, or the term highlighted. Ordered by `(createdAt, id)`, not `id`: by id the
+      planner walks the primary key backwards (2.2s against ~40ms for the oldest page of a 17k-message
+      chat). System rows excluded: 274,106 are `Embed` type whose content is raw JSON,
       rendered verbatim attributed to "civitai".
 - [x] **Chat reports** — `ChatReport`, served by the SHARED `reports.service.ts` rather than a third
       hand-written join. That also settles a policy split: this page and `/reports` previously

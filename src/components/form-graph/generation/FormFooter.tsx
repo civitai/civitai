@@ -108,7 +108,6 @@ import {
 } from './store';
 import { switchToMatureSourceAlternative, useFlux3MatureSource } from './useFlux3MatureSource';
 import { useGenerationLicense } from './useGenerationLicense';
-import type { GenerationLicenseTerms } from '~/shared/constants/generation-license.constants';
 
 // =============================================================================
 // Cost (including tips)
@@ -161,60 +160,6 @@ export function ConnectedCostPicker({ store }: { store: GenerationStore }) {
 // =============================================================================
 // Priority alerts
 // =============================================================================
-
-export function GenerationLicenseNotice({
-  terms,
-  onAccept,
-  accepting,
-}: {
-  terms: GenerationLicenseTerms;
-  onAccept: () => void;
-  accepting: boolean;
-}) {
-  return (
-    <Notification
-      icon={<IconAlertTriangle size={18} />}
-      color="blue"
-      className="rounded-md bg-blue-8/20"
-      withCloseButton={false}
-      title={terms.title}
-    >
-      <div className="flex flex-col gap-2">
-        <Text size="sm">{terms.intro}</Text>
-        <ul className="list-disc pl-5">
-          {terms.restrictions.map((line) => (
-            <li key={line}>
-              <Text size="sm">{line}</Text>
-            </li>
-          ))}
-        </ul>
-        <Text size="sm">
-          Read the{' '}
-          <Text
-            component="a"
-            href={terms.licenseUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            td="underline"
-            inherit
-          >
-            {terms.licenseName}
-          </Text>
-          .
-        </Text>
-        <Button
-          radius="xl"
-          size="compact-sm"
-          onClick={onAccept}
-          loading={accepting}
-          className="self-start"
-        >
-          I agree to these terms
-        </Button>
-      </div>
-    </Notification>
-  );
-}
 
 export function MatureSourceNotice({
   store,
@@ -304,7 +249,6 @@ function PriorityAlertSpace({
   const selectedIds = useSelectedResourceIds(store);
   const featureFlags = useFeatureFlags();
   const matureSource = useFlux3MatureSource(store);
-  const license = useGenerationLicense(store);
   const mobileGenerator = useMobileGenerator();
 
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
@@ -353,14 +297,6 @@ function PriorityAlertSpace({
         {missingField.message}
         <ShowFieldButton fieldKey={missingField.key} />
       </Notification>
-    );
-  } else if (license.blocked && license.terms) {
-    priorityAlert = (
-      <GenerationLicenseNotice
-        terms={license.terms}
-        onAccept={license.accept}
-        accepting={license.accepting}
-      />
     );
   } else if (matureSource.blocked) {
     priorityAlert = <MatureSourceNotice store={store} canSwitch={matureSource.canSwitch} />;

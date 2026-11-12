@@ -163,6 +163,21 @@ describe('createImage', () => {
     expect(parsed.metadata).toEqual({ size: 1 });
   });
 
+  it('drops a client judge rating, which gates approval in a judge-rated collection', async () => {
+    const forged = { userId: 1, nsfwLevel: 1, ratedAt: '2026-01-01T00:00:00Z' };
+    const parsed = imageSchema.parse({ url: KEY, metadata: { size: 1, judgeRating: forged } });
+    expect(parsed.metadata).toEqual({ size: 1 });
+
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, judgeRating: forged },
+    } as never);
+    expect(createdMetadata()).toEqual(UNRELATED);
+  });
+
   it('leaves metadata absent when neither is given', async () => {
     await createImage({ url: KEY, userId: 1, type: 'image', skipIngestion: true } as never);
 

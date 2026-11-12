@@ -11,7 +11,6 @@ import type {
   GiftableTier,
 } from '~/server/schema/membership-gift.schema';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { refreshSession } from '~/server/auth/session-invalidation';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { createNotification } from '~/server/services/notification.service';
 import { getPlans } from '~/server/services/subscriptions.service';
@@ -505,7 +504,6 @@ export async function acceptMembershipGift({ giftId, userId }: { giftId: string;
 
   await armNextGiftMonth({ userId });
   await invalidateSubscriptionCaches(userId);
-  await refreshSession(userId, { caller: 'membership' });
 
   await log({ type: 'info', stage: 'accept', giftId: gift.id, userId });
   return { accepted: true as const };
@@ -762,8 +760,10 @@ export async function recordGiftMonthConsumed({ invoice }: { invoice: Stripe.Inv
     Number(invoice.discount?.coupon?.metadata?.months) || 1
   );
   const monthsRemaining = gift.monthsRemaining - monthsUsed;
-  await dbWrite.membershipGift.update({
-    where: { id: gift.id },
+  // Conditional on the coupon still being armed: a concurrent delivery of this invoice that read
+  // the same row writes nothing, instead of clearing the next month the first one armed.
+  const { count } = await dbWrite.membershipGift.updateMany({
+    where: { id: gift.id, armedCouponId: couponId },
     data: {
       monthsRemaining,
       monthsConsumed: gift.monthsConsumed + monthsUsed,
@@ -773,6 +773,7 @@ export async function recordGiftMonthConsumed({ invoice }: { invoice: Stripe.Inv
       ...(monthsRemaining === 0 ? { status: MembershipGiftStatus.Completed } : {}),
     },
   });
+  if (!count) return { consumed: false as const };
 
   await log({
     type: 'info',
@@ -833,7 +834,11 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
       customer: customerId,
       items: [{ price: priceId }],
       coupon: coupon.id,
-      cancel_at: dayjs().add(gift.monthsRemaining, 'month').unix(),
+      // Not cancel_at: one read off our clock lands a moment before Stripe's own period
+      // boundary, and Stripe then bills the first month as a proration line, which grants no
+      // Membership bonus. Ending after the first period is also what a failed cancel_at write
+      // below leaves behind: the months it never delivered are restored when it ends.
+      cancel_at_period_end: true,
       // Every invoice inside the window is $0, so no payment method is needed; if Stripe ever
       // computed a non-zero amount the sub parks as `incomplete` instead of charging.
       payment_behavior: 'default_incomplete',
@@ -861,8 +866,36 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
     },
   });
 
+  if (gift.monthsRemaining > 1) {
+    // Stripe counts monthly periods from the anchor in UTC, clamping to the month's end, as
+    // dayjs does when adding from the same instant.
+    const cancelAt = dayjs
+      .unix(subscription.billing_cycle_anchor)
+      .utc()
+      .add(gift.monthsRemaining, 'month')
+      .unix();
+    await stripe.subscriptions
+      .update(subscription.id, {
+        // Alone: Stripe rejects cancel_at sent with cancel_at_period_end, and setting it
+        // replaces the period-end cancel.
+        cancel_at: cancelAt,
+        proration_behavior: 'none',
+      })
+      .catch((error) =>
+        log({
+          type: 'error',
+          stage: 'residual-cancel-at',
+          giftId: gift.id,
+          userId: gift.holderId,
+          stripeSubscriptionId: subscription.id,
+          message: `ends after its first month instead of ${gift.monthsRemaining}: ${String(
+            error
+          )}`,
+        })
+      );
+  }
+
   await invalidateSubscriptionCaches(gift.holderId);
-  await refreshSession(gift.holderId, { caller: 'membership' });
 
   await log({
     type: 'info',
@@ -1098,7 +1131,6 @@ export async function revokeMembershipGift({
   });
 
   await invalidateSubscriptionCaches(gift.holderId);
-  await refreshSession(gift.holderId, { caller: 'membership' });
 
   await log({
     type: 'warning',
@@ -1611,7 +1643,6 @@ export async function keepGiftMembership({ userId }: { userId: number }) {
   });
 
   await invalidateSubscriptionCaches(userId);
-  await refreshSession(userId, { caller: 'membership' });
 
   await log({ type: 'info', stage: 'keep', userId, stripeSubscriptionId: stripeSub.id });
 

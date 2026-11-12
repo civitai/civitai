@@ -30,6 +30,13 @@ export const placeTurfStickerSchema = z.object({
   source: z.enum(['feed', 'image-detail']).optional(),
 });
 
+export const placeFlagHatsSchema = z.object({
+  event: eventName,
+  imageId: z.number().int().positive(),
+  cosmeticId: z.number().int().positive(),
+  count: z.union([z.literal(1), z.literal(5), z.literal(10)]),
+});
+
 export const turfEventSchema = z.object({ event: eventName });
 
 export const turfReactionEarnsSchema = z.object({

@@ -17,7 +17,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  */
 
 const ch = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query: ch.query } }));
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: { query: ch.query },
+  clickhouseLongQueries: { query: ch.query },
+}));
 const signals = vi.hoisted(() => ({ topicSend: vi.fn(async (..._a: unknown[]) => undefined) }));
 vi.mock('~/utils/signal-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SignalClient>()),
@@ -45,17 +48,20 @@ const {
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
 const { eventPointsRefereeUsersSql } = await import('~/server/events/points/referee.sql');
-const { crucibleTeamAwardRowsSql } = await import('~/server/events/scoring/crucible-team-awards');
+const { isCrucibleTeamAwardRowsSql } = await import('~/server/events/scoring/crucible-team-awards');
 const { eventSeasonKeys, hatTopicId, LIVE_BUCKET_MS, previewTopicId } = await import(
   '~/server/events/points/keys'
 );
 
-const MIGRATIONS = ['20261012130000_event_cosmetic_placement', '20261015120000_event_points'].map(
-  (name) =>
-    path.resolve(
-      __dirname,
-      `../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
-    )
+const MIGRATIONS = [
+  '20261012130000_event_cosmetic_placement',
+  '20261015120000_event_points',
+  '20270103120000_event_award_result',
+].map((name) =>
+  path.resolve(
+    __dirname,
+    `../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+  )
 );
 const db = { pg: null as unknown as PGlite };
 
@@ -814,7 +820,7 @@ describe('referee snapshot', () => {
         json: async () =>
           query === eventPointsRefereeUsersSql
             ? [involved]
-            : query === crucibleTeamAwardRowsSql
+            : isCrucibleTeamAwardRowsSql(query)
             ? awards
             : [refereeRow('2026-11-04', 5), refereeRow('2026-11-05', 3)],
       }));
@@ -1120,8 +1126,21 @@ describe('referee snapshot', () => {
     };
     await runEventPointsReferee(scored, 'live', HOURLY);
     expect(refereeParams().restrictedUsers).toEqual([BANNED]);
-    // Two chunks of hidden lookups, then the new-account threshold.
-    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(3);
+    // Two chunks of hidden lookups, the new-account threshold, then the frozen award results.
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(4);
+  });
+
+  it('writes no snapshot and keeps the last base when the award results cannot be read', async () => {
+    const read = dbMock.dbRead.$queryRaw.getMockImplementation();
+    dbMock.dbRead.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('"EventAwardResult"')
+        ? Promise.reject(new Error('replica down'))
+        : read!(strings, ...values)) as never);
+    await expect(runEventPointsReferee(scored, 'live', HOURLY)).rejects.toThrow('replica down');
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('replaces the recomputed days in one transaction', async () => {

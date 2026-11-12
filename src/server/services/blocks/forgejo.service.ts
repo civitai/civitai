@@ -21,6 +21,11 @@ import { randomBytes } from 'crypto';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { MAX_FILES_IN_BUNDLE } from '~/server/schema/blocks/publish-request.schema';
+import {
+  decideVersionTag,
+  versionTagName,
+  type ExistingTag,
+} from '~/server/services/blocks/approve-provenance';
 
 export const FORGEJO_ORG = 'civitai-apps';
 const FORGEJO_REVIEW_ORG = 'civitai-apps-review';
@@ -837,6 +842,117 @@ export async function commitFiles(opts: {
   );
   const result = await unwrap<{ commit: { sha: string } }>(res);
   return { sha: result.commit.sha };
+}
+
+// ---------------------------------------------------------------------------
+// Version tags on approved commits (see approve-provenance.ts for the naming rule).
+// ---------------------------------------------------------------------------
+
+/**
+ * The commit a tag points at, or null when the tag does not exist. For an annotated tag Forgejo
+ * reports the TARGET commit as `commit.sha` (the tag object's own sha is `id`), which is what an
+ * idempotency check must compare.
+ */
+export async function getTagCommitSha(slug: string, tag: string): Promise<ExistingTag> {
+  const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${slug}/tags/${encodeURIComponent(tag)}`);
+  if (res.status === 404) return null;
+  const body = await unwrap<{ commit?: { sha?: string } }>(res);
+  const sha = body?.commit?.sha;
+  if (typeof sha !== 'string' || sha.length === 0) {
+    throw new Error(`Forgejo tag ${tag} on ${slug} has no target commit`);
+  }
+  return { commitSha: sha };
+}
+
+/** Create an annotated tag (a non-empty message is what makes Forgejo write a tag object). */
+async function createAnnotatedTag(opts: {
+  slug: string;
+  tag: string;
+  target: string;
+  message: string;
+}): Promise<'created' | 'conflict'> {
+  const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/tags`, {
+    method: 'POST',
+    body: JSON.stringify({ tag_name: opts.tag, target: opts.target, message: opts.message }),
+  });
+  // 409: a tag with this name exists (another approve, or a re-delivery, got there first).
+  // Anything else non-2xx (422 = a protected tag name or a rejected form) throws with the
+  // server's reason, so the approve log names the refusal rather than a race.
+  if (res.status === 409) return 'conflict';
+  await unwrap<unknown>(res);
+  return 'created';
+}
+
+export type ApprovalTagResult =
+  | { status: 'created' | 'exists'; tag: string; fallbackFrom?: { tag: string; sha: string } }
+  | { status: 'skipped'; reason: string };
+
+/**
+ * Tag an approved commit: `v<version>`, or `approved-<publishRequestId>` when `v<version>`
+ * already names a different commit (`decideVersionTag`). Idempotent: a re-run for the same
+ * commit finds its tag and creates nothing. Throws only on Forgejo errors; the approve path
+ * calls it best-effort.
+ */
+export async function ensureApprovalTag(opts: {
+  slug: string;
+  version: string;
+  publishRequestId: string;
+  sha: string;
+  message: string;
+}): Promise<ApprovalTagResult> {
+  const versionTag = versionTagName(opts.version);
+  const existing = versionTag ? await getTagCommitSha(opts.slug, versionTag) : null;
+  let decision = decideVersionTag({
+    version: opts.version,
+    publishRequestId: opts.publishRequestId,
+    approvedSha: opts.sha,
+    existingVersionTag: existing,
+  });
+  if (decision.action === 'skip') return { status: 'skipped', reason: decision.reason };
+  if (decision.action === 'exists') return { status: 'exists', tag: decision.tag };
+  if (decision.action === 'create') {
+    const created = await createAnnotatedTag({
+      slug: opts.slug,
+      tag: decision.tag,
+      target: opts.sha,
+      message: opts.message,
+    });
+    if (created === 'created') return { status: 'created', tag: decision.tag };
+    // Lost a race for the version tag: decide again against what is there now.
+    decision = decideVersionTag({
+      version: opts.version,
+      publishRequestId: opts.publishRequestId,
+      approvedSha: opts.sha,
+      existingVersionTag: await getTagCommitSha(opts.slug, decision.tag),
+    });
+    if (decision.action === 'exists') return { status: 'exists', tag: decision.tag };
+    if (decision.action !== 'fallback')
+      return { status: 'skipped', reason: 'version tag conflict could not be resolved' };
+  }
+  // fallback: the per-approval tag.
+  const fallbackFrom = { tag: decision.versionTag, sha: decision.versionTagSha };
+  const existingFallback = await getTagCommitSha(opts.slug, decision.tag);
+  if (existingFallback) {
+    return existingFallback.commitSha === opts.sha
+      ? { status: 'exists', tag: decision.tag, fallbackFrom }
+      : {
+          status: 'skipped',
+          reason: `${decision.tag} already names ${existingFallback.commitSha}`,
+        };
+  }
+  const created = await createAnnotatedTag({
+    slug: opts.slug,
+    tag: decision.tag,
+    target: opts.sha,
+    message: opts.message,
+  });
+  if (created === 'conflict') {
+    const now = await getTagCommitSha(opts.slug, decision.tag);
+    return now?.commitSha === opts.sha
+      ? { status: 'exists', tag: decision.tag, fallbackFrom }
+      : { status: 'skipped', reason: `${decision.tag} was created concurrently on another commit` };
+  }
+  return { status: 'created', tag: decision.tag, fallbackFrom };
 }
 
 // ---------------------------------------------------------------------------

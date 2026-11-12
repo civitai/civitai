@@ -1384,6 +1384,9 @@ const HANDLED_MANIFEST_KEYS = new Set([
   // be visible INLINE to the reviewer, not folded into the raw-JSON disclosure. A link
   // the mod never actually looked at is the one thing this whole surface exists to stop.
   'repository',
+  // The issue-tracker / Support link: the same kind of store-visible outbound link as
+  // `repository`, published on approve, so it is shown inline beside Source for the same reason.
+  'bugs',
   'category',
   'type',
   'minApiVersion',
@@ -1494,6 +1497,16 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
   const description = typeof manifest.description === 'string' ? manifest.description : null;
   const tagline = typeof manifest.tagline === 'string' ? manifest.tagline : null;
   const repository = typeof manifest.repository === 'string' ? manifest.repository : null;
+  // Shown whatever its shape: a string is the link the approve publishes; anything else (a
+  // manifest stored before `bugs` was string-only) publishes NO link, and the reviewer is told so
+  // rather than having it silently disappear.
+  const bugsRaw = manifest.bugs;
+  const bugs =
+    bugsRaw === undefined
+      ? null
+      : typeof bugsRaw === 'string'
+      ? { text: bugsRaw, valid: true }
+      : { text: JSON.stringify(bugsRaw) ?? String(bugsRaw), valid: false };
   const category = typeof manifest.category === 'string' ? manifest.category : null;
   const blockId = typeof manifest.blockId === 'string' ? manifest.blockId : null;
   const version = typeof manifest.version === 'string' ? manifest.version : null;
@@ -1565,6 +1578,14 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
         {repository && (
           <Text size="xs" c="dimmed" data-testid="apps-onsite-review-source-repo">
             Source: <Code>{repository}</Code>
+          </Text>
+        )}
+        {/* Store-visible issue-tracker / Support link (manifest `bugs`), on the same terms as
+            Source: plain text, verbatim, never an anchor. */}
+        {bugs && (
+          <Text size="xs" c="dimmed" data-testid="apps-onsite-review-support">
+            Support: <Code>{bugs.text}</Code>
+            {!bugs.valid && ' (not a URL string — approving shows no Support link)'}
           </Text>
         )}
         {description && (

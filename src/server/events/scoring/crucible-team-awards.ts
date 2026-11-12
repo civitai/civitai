@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouseLongQueries as clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
+import {
+  clientAbortAfter,
+  LONG_QUERY_PROGRESS_SETTINGS,
+} from '~/server/events/points/clickhouse-limits';
 import { dbRead, type dbWrite } from '~/server/db/client';
 import type { TeamAward } from '~/server/events/base.event';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
@@ -117,13 +121,40 @@ export function crucibleAwardsFrom(
   }));
 }
 
-export const crucibleTeamAwardRowsSql = /* sql */ `
-SELECT time, op, actorId, entityId, team, sourceId
+// Runs under the settle lock, so it has its own cap.
+export const CRUCIBLE_AWARD_QUERY_MAX_S = 2 * 60;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const utcDay = (time: Date) => time.toISOString().slice(0, 10);
+
+// Every UTC day an award row can sit on: the season's first through the later of now and `until`.
+export function crucibleAwardDays(seasonStart: Date, until: Date, now = new Date()) {
+  const last = Math.max(now.getTime(), until.getTime());
+  const days: string[] = [];
+  for (let t = Date.parse(utcDay(seasonStart)); t <= last; t += DAY_MS)
+    days.push(utcDay(new Date(t)));
+  return days;
+}
+
+const AWARD_ROWS_TAG = '-- crucible team award rows';
+export const isCrucibleTeamAwardRowsSql = (sql: string) => sql.startsWith(AWARD_ROWS_TAG);
+
+// One scan per day. The ledger is ordered by (event, toDate(time), ownerId, ...) and award rows are
+// all written with ownerId 0 (crucibleTeamAwardLedgerRow), so an exact day lets the key use ownerId
+// too and read a few granules; a range of days, or a set of them, cannot, and reads the season.
+export function crucibleTeamAwardRowsSql(days: number) {
+  const scans = Array.from(
+    { length: days },
+    (_, i) => /* sql */ `SELECT time, op, actorId, entityId, team, sourceId
 FROM event_point_events
 WHERE event = {event:String}
+  AND toDate(time) = {day${i}:Date}
+  AND ownerId = 0
   AND type = {type:String}
-  AND time >= {seasonStart:DateTime64(3)}
-`;
+  AND time >= {seasonStart:DateTime64(3)}`
+  );
+  return `${AWARD_ROWS_TAG}\n${scans.join('\nUNION ALL\n')}\n`;
+}
 
 /**
  * The entries that may still count: in their crucible, the crucible not cancelled, the image one
@@ -157,13 +188,22 @@ export async function loadCrucibleTeamAwards(
   const award = CRUCIBLE_TEAM_AWARDS.find((a) => a.event === event.name);
   // No ClickHouse, no ledger: the award writer skips its inserts the same way.
   if (!award || !clickhouse) return [];
+  const days = crucibleAwardDays(event.startDate, until);
+  // A preview read before the season's first day: no row can exist, and no scan would be no query.
+  if (!days.length) return [];
   const result = await clickhouse.query({
-    query: crucibleTeamAwardRowsSql,
+    query: crucibleTeamAwardRowsSql(days.length),
     format: 'JSONEachRow',
+    abort_signal: clientAbortAfter(CRUCIBLE_AWARD_QUERY_MAX_S),
+    clickhouse_settings: {
+      max_execution_time: CRUCIBLE_AWARD_QUERY_MAX_S,
+      ...LONG_QUERY_PROGRESS_SETTINGS,
+    },
     query_params: {
       event: event.name,
       type: CRUCIBLE_TEAM_AWARD_TYPE,
       seasonStart: formatClickhouseDateTime64(event.startDate),
+      ...Object.fromEntries(days.map((day, i) => [`day${i}`, day])),
     },
   });
   const standing = standingCrucibleAwards(await result.json<CrucibleTeamAwardRow>(), until);

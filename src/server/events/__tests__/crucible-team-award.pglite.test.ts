@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Push from '~/server/events/points/push';
@@ -32,9 +34,12 @@ vi.mock('~/server/events/points/push', async (importOriginal) => ({
 // rest is the code under test).
 type LedgerRow = Record<string, unknown> & { event: string; type: string };
 const ledger = vi.hoisted(() => [] as LedgerRow[]);
+// The award writer inserts through the shared client; the loader reads through the long-query one.
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: {
     insert: async ({ values }: { values: LedgerRow[] }) => void ledger.push(...values),
+  },
+  clickhouseLongQueries: {
     query: async ({ query_params }: { query_params: { event: string; type: string } }) => ({
       json: async () =>
         ledger.filter((r) => r.event === query_params.event && r.type === query_params.type),
@@ -55,6 +60,11 @@ const BLUE = 101;
 const TEAMLESS = 102;
 const BANNED = 103;
 const EXCLUDED = 104;
+
+const AWARD_RESULT_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20270103120000_event_award_result/migration.sql'
+);
 
 let db: PGlite;
 const hashes = new Map<string, Map<string, string>>();
@@ -124,6 +134,8 @@ beforeAll(async () => {
     INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey") VALUES
       (${BLUE}, 11, 'claimed'), (${BANNED}, 11, 'claimed'), (${EXCLUDED}, 11, 'claimed');
   `);
+  // The settle also reads the frozen award results.
+  await db.exec(readFileSync(AWARD_RESULT_MIGRATION, 'utf8'));
 });
 afterAll(async () => db.close());
 

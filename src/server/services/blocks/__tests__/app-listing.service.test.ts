@@ -198,6 +198,23 @@ describe('recommendRollup', () => {
   it('recommendPct is null (not 0) when there are zero reviews', () => {
     expect(recommendRollup({ thumbsUpCount: 0, thumbsDownCount: 0 }).recommendPct).toBeNull();
   });
+
+  // One review used to read "100% recommend (1)". Below the threshold the counts still
+  // travel; only the percentage is withheld.
+  it('withholds the percentage below LISTING_RECOMMEND_PCT_MIN_REVIEWS (4 up / 0 down)', () => {
+    expect(recommendRollup({ thumbsUpCount: 4, thumbsDownCount: 0 })).toEqual({
+      recommendedCount: 4,
+      notRecommendedCount: 0,
+      recommendPct: null,
+    });
+    // Counted across both buckets, not just the positive one.
+    expect(recommendRollup({ thumbsUpCount: 1, thumbsDownCount: 3 }).recommendPct).toBeNull();
+  });
+
+  it('returns the percentage from the threshold on (5 up / 0 down → 1; 3 up / 2 down → 0.6)', () => {
+    expect(recommendRollup({ thumbsUpCount: 5, thumbsDownCount: 0 }).recommendPct).toBe(1);
+    expect(recommendRollup({ thumbsUpCount: 3, thumbsDownCount: 2 }).recommendPct).toBe(0.6);
+  });
 });
 
 /**
@@ -538,6 +555,9 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'forkable',
         'iconUrl',
         'id',
+        // 🔴 DETAIL-ONLY, like `sourceRepoUrl`: the issue-tracker / support link. Present as
+        // `null` from the projection (the no-type column is read by the callers, not on `row`).
+        'issueTrackerUrl',
         // 🔴 The two fields added for the store-detail header. Both are in the
         // ALLOWLIST deliberately (see their docstrings on `ListingDetail`):
         // `installCount` is the very column the public `popular` sort already orders
@@ -580,6 +600,7 @@ describe('projectListingDetail — public allowlist + gallery', () => {
       ].sort()
     );
     expect(detail).not.toHaveProperty('status');
+    expect(detail.issueTrackerUrl).toBeNull();
     expect(detail.description).toBe('# Cool app\n\nbody');
     // The integer surrogate is surfaced for the CommentsV2 thread key.
     expect(detail.serialId).toBe(101);

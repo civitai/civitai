@@ -80,13 +80,6 @@ CREATE TABLE "Post" (
   "createdAt" TIMESTAMP(3) NOT NULL, "publishedAt" TIMESTAMP(3)
 );
 CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "postId" INTEGER, "userId" INTEGER NOT NULL);
-CREATE TABLE "Thread" (
-  "id" INTEGER PRIMARY KEY, "postId" INTEGER, "imageId" INTEGER, "rootThreadId" INTEGER
-);
-CREATE TABLE "CommentV2" (
-  "id" INTEGER PRIMARY KEY, "threadId" INTEGER NOT NULL, "userId" INTEGER NOT NULL,
-  "content" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL, "hidden" BOOLEAN DEFAULT false
-);
 CREATE TABLE "CommentV3" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
   "userId" INTEGER NOT NULL, "content" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL,
@@ -106,24 +99,18 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.pg.exec(
-    `TRUNCATE "Post", "Image", "Thread", "CommentV2", "CommentV3";
+    `TRUNCATE "Post", "Image", "CommentV3";
      INSERT INTO "Post" VALUES (100, ${OWNER}, '<p>caption &amp; <b>more</b></p>', '2026-10-01', '2026-10-02 08:30');
      INSERT INTO "Post" VALUES (200, ${OTHER}, '<p>unrelated post</p>', '2026-10-01', NULL);
      INSERT INTO "Post" VALUES (501, ${OTHER}, 'a post sharing an image id', '2026-10-01', NULL);
      INSERT INTO "Image" VALUES (501, 100, ${OWNER}), (502, NULL, ${OWNER}), (601, 200, ${OTHER});
-     INSERT INTO "Thread" VALUES (1, 100, NULL, NULL), (2, NULL, 502, NULL), (3, NULL, NULL, 1), (4, 200, NULL, NULL), (5, 501, NULL, NULL);
      INSERT INTO "CommentV3" VALUES
        (11, 'post', 100, ${OTHER}, '<p>v3 on the post</p>', '2026-10-03', NULL, false),
        (12, 'image', 501, ${OWNER}, 'v3 on the image', '2026-10-04', '2026-10-05', false),
        (13, 'post', 200, ${OWNER}, 'v3 on an unrelated post', '2026-10-04', NULL, false),
-       (21, 'post', 100, ${OTHER}, 'mirrored copy of 21', '2026-10-03', NULL, false),
-       (14, 'post', 501, ${OTHER}, 'v3 on post 501, not image 501', '2026-10-04', NULL, false);
-     INSERT INTO "CommentV2" VALUES
-       (21, 1, ${OTHER}, 'v2 original of 21', '2026-10-03', false),
-       (22, 3, ${OWNER}, 'v2 reply in the post thread', '2026-10-06', false),
-       (23, 2, ${OTHER}, 'v2 on the loose image', '2026-10-07', true),
-       (24, 4, ${OTHER}, 'v2 on an unrelated post', '2026-10-07', false),
-       (25, 5, ${OTHER}, 'v2 on post 501, not image 501', '2026-10-07', false);`
+       (14, 'post', 501, ${OTHER}, 'v3 on post 501, not image 501', '2026-10-04', NULL, false),
+       (22, 'post', 100, ${OWNER}, 'a reply on the post', '2026-10-06', NULL, false),
+       (23, 'image', 502, ${OTHER}, 'on the loose image', '2026-10-07', NULL, true);`
   );
 });
 
@@ -131,7 +118,7 @@ const ids = (rows: { source: string; id: number }[]) =>
   rows.map((r) => `${r.source}:${r.id}`).sort();
 
 describe('candidates', () => {
-  it("lists the images' post descriptions and comments from both tables, each once", async () => {
+  it("lists the images' post descriptions and comments", async () => {
     const { candidates: rows, more } = await getCsamContextCandidates({
       userId: OWNER,
       imageIds: [501, 502],
@@ -139,16 +126,8 @@ describe('candidates', () => {
     expect(more).toBe(false);
 
     expect(ids(rows)).toEqual(
-      [
-        'postDescription:100',
-        'comment:11',
-        'comment:12',
-        'comment:21',
-        'comment:22',
-        'comment:23',
-      ].sort()
+      ['postDescription:100', 'comment:11', 'comment:12', 'comment:22', 'comment:23'].sort()
     );
-    expect(rows.find((r) => r.id === 21)?.text).toBe('mirrored copy of 21');
     expect(rows.find((r) => r.source === 'postDescription')?.text).toBe('caption & more');
     expect(rows.find((r) => r.id === 22)).toMatchObject({ postId: 100 });
     expect(rows.find((r) => r.id === 23)).toMatchObject({ imageId: 502, hidden: true });
@@ -160,8 +139,6 @@ describe('candidates', () => {
   it('says more comments exist past the page size, listing each once', async () => {
     await db.pg.exec(`
       INSERT INTO "CommentV3" SELECT g, 'image', 502, ${OTHER}, 'c' || g, '2026-10-01', NULL, false
-        FROM generate_series(1000, 1600) g;
-      INSERT INTO "CommentV2" SELECT g, 2, ${OTHER}, 'c' || g, '2026-10-01', false
         FROM generate_series(1000, 1600) g;
     `);
     const { candidates, more } = await getCsamContextCandidates({ userId: OWNER, imageIds: [502] });
@@ -232,11 +209,9 @@ describe('snapshot', () => {
 
   it.each([
     ['a comment on a post outside the report', { postIds: [], commentIds: [13] }],
-    ['a V2 comment on a post outside the report', { postIds: [], commentIds: [24] }],
     ['a post outside the report', { postIds: [200], commentIds: [] }],
     ['an id that does not exist', { postIds: [], commentIds: [999] }],
     ['a comment on a post whose id is a report image id', { postIds: [], commentIds: [14] }],
-    ['a V2 comment on a post whose id is a report image id', { postIds: [], commentIds: [25] }],
   ])('refuses %s', async (_, sources) => {
     await expect(snapshot(sources)).rejects.toThrow(/not on the images in this report/);
   });

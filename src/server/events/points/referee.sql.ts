@@ -30,12 +30,20 @@
 // aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), newAccountMinId.
 export const eventPointsRefereeSql = /* sql */ `
 WITH
+  -- Two scans, each with its own time range: the primary key (event, toDate(time), ...) can prune
+  -- daily rows to the recomputed days only this way. One OR across both ranges reads the whole season.
   seasonRows AS (
     SELECT * FROM event_point_events
     WHERE event = {event:String}
       AND time >= {seasonStart:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
       AND has({types:Array(String)}, type)
-      AND (NOT has({dailyTypes:Array(String)}, type) OR time >= {recomputeFrom:DateTime64(3)})
+      AND NOT has({dailyTypes:Array(String)}, type)
+    UNION ALL
+    SELECT * FROM event_point_events
+    WHERE event = {event:String}
+      AND time >= {recomputeFrom:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
+      AND has({types:Array(String)}, type)
+      AND has({dailyTypes:Array(String)}, type)
   ),
   firsts AS (
     SELECT
@@ -117,9 +125,18 @@ ORDER BY day, userId, cosmeticId, claimKey
 export const eventPointsRefereeUsersSql = /* sql */ `
 SELECT groupUniqArray(actorId) AS actors,
   groupUniqArrayArray(if(empty(players), [ownerId], players)) AS owners
-FROM event_point_events
-WHERE event = {event:String}
-  AND time >= {seasonStart:DateTime64(3)} AND time < {cut:DateTime64(3)}
-  AND has({types:Array(String)}, type)
-  AND (NOT has({dailyTypes:Array(String)}, type) OR time >= {recomputeFrom:DateTime64(3)})
+FROM (
+  -- Split for the primary key, as seasonRows is.
+  SELECT actorId, ownerId, players FROM event_point_events
+  WHERE event = {event:String}
+    AND time >= {seasonStart:DateTime64(3)} AND time < {cut:DateTime64(3)}
+    AND has({types:Array(String)}, type)
+    AND NOT has({dailyTypes:Array(String)}, type)
+  UNION ALL
+  SELECT actorId, ownerId, players FROM event_point_events
+  WHERE event = {event:String}
+    AND time >= {recomputeFrom:DateTime64(3)} AND time < {cut:DateTime64(3)}
+    AND has({types:Array(String)}, type)
+    AND has({dailyTypes:Array(String)}, type)
+)
 `;

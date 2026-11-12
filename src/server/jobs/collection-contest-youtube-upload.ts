@@ -119,28 +119,25 @@ export const contestCollectionYoutubeUpload = createJob(
               throw new Error(`Failed to upload video ${item.imageId}`);
             }
 
-            await dbWrite.image.update({
-              where: { id: item.imageId },
-              data: {
-                metadata: {
-                  ...item.metadata,
-                  youtubeUploadEnqueuedAt: new Date().toISOString(),
-                },
-              },
-            });
+            // Merged in place: the batch row may predate other metadata written since.
+            await dbWrite.$executeRaw`
+              UPDATE "Image"
+              SET "metadata" = COALESCE("metadata", '{}'::jsonb)
+                || jsonb_build_object('youtubeUploadEnqueuedAt', NOW())
+              WHERE id = ${item.imageId}
+            `;
           } catch (error) {
             console.error(`Error uploading video ${item.imageId}: ${(error as Error).message}`);
             logWebhook({ error, imageId: item.imageId });
 
-            await dbWrite.image.update({
-              where: { id: item.imageId },
-              data: {
-                metadata: {
-                  ...item.metadata,
-                  youtubeUploadAttempt: (item.metadata.youtubeUploadAttempt ?? 0) + 1,
-                },
-              },
-            });
+            await dbWrite.$executeRaw`
+              UPDATE "Image"
+              SET "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+                'youtubeUploadAttempt',
+                ${(item.metadata.youtubeUploadAttempt ?? 0) + 1}::int
+              )
+              WHERE id = ${item.imageId}
+            `;
 
             await dbWrite.collectionItem.updateMany({
               where: {

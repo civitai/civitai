@@ -45,7 +45,7 @@ import {
   STANDALONE_KIND_LABEL,
 } from '~/components/Apps/listingKindLabels';
 import { getRatingLabel } from '~/utils/rating-label';
-import { listingUsageStat } from '~/components/Apps/appListingCardView';
+import { getRecommendLabel, listingUsageStat } from '~/components/Apps/appListingCardView';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   offsiteContentRatingColor,
@@ -54,10 +54,22 @@ import {
 import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
+/** The `rel` of the Support row's outbound, author-chosen, any-host link. */
+export const SUPPORT_LINK_REL = 'noopener noreferrer nofollow ugc';
+
 /** A single label/value row of the Details panel. */
 export type ListingDetailRow = {
   /** Stable key — also the row's `data-listing-detail-row` attribute in the DOM. */
-  key: 'kind' | 'category' | 'rating' | 'reviews' | 'plays' | 'installs' | 'updated' | 'source';
+  key:
+    | 'kind'
+    | 'category'
+    | 'rating'
+    | 'reviews'
+    | 'plays'
+    | 'installs'
+    | 'updated'
+    | 'source'
+    | 'support';
   /** Dimmed left-hand label. */
   label: string;
   /** Right-hand display value. */
@@ -75,6 +87,13 @@ export type ListingDetailRow = {
    * this is defence in depth on a link we already constrain, not the only control.
    */
   href?: string;
+  /**
+   * The `rel` for an {@link href} row, when it must say MORE than `noopener noreferrer`. Only
+   * the `support` row sets it, to `noopener noreferrer nofollow ugc`: its destination is ANY
+   * host the author chose (the source link is host-allowlisted), so the store neither vouches
+   * for it (`nofollow`) nor presents it as its own (`ugc`). It always includes `noopener`.
+   */
+  rel?: string;
   /**
    * When set, the row's value renders as a SAME-PAGE fragment link to this element id.
    * Only the `reviews` row sets it, and only when there is something to jump to.
@@ -148,7 +167,7 @@ export function buildListingDetailRows(
     | 'installCount'
     | 'updatedAt'
   > &
-    Partial<Pick<ListingDetail, 'sourceRepoUrl'>>,
+    Partial<Pick<ListingDetail, 'sourceRepoUrl' | 'issueTrackerUrl'>>,
   opts: { preview?: boolean; formatDate: (iso: string) => string }
 ): ListingDetailRow[] {
   const rows: ListingDetailRow[] = [];
@@ -212,9 +231,22 @@ export function buildListingDetailRows(
     });
   }
 
+  // SUPPORT — where to report a problem (the issue tracker), right after Source. Present in
+  // `preview` for the reason Source is: the shadow carries it and approving publishes it.
+  // Runtime-guarded on the type for the same cast-producer reason.
+  if (typeof detail.issueTrackerUrl === 'string' && detail.issueTrackerUrl.length > 0) {
+    rows.push({
+      key: 'support',
+      label: 'Support',
+      value: detail.issueTrackerUrl.replace(/^https:\/\//, '').replace(/\/$/, ''),
+      href: detail.issueTrackerUrl,
+      rel: SUPPORT_LINK_REL,
+    });
+  }
+
   if (!opts.preview) {
     const { recommendPct } = detail.recommend;
-    if (recommendPct == null || detail.reviewCount === 0) {
+    if (detail.reviewCount === 0) {
       // Matches `getRecommendLabel`'s zero case. 🔴 The ladder is NOT called here: with
       // zero reviews `positiveRating` is 0, which the ladder scores `Mixed` — a verdict
       // about an app nobody has reviewed.
@@ -222,6 +254,17 @@ export function buildListingDetailRows(
       // in it, so a link would move the viewer to an empty heading. The link is an
       // affordance for content that exists.
       rows.push({ key: 'reviews', label: 'Reviews', value: 'No reviews yet' });
+    } else if (recommendPct == null) {
+      // Reviews exist, but the server withheld the percentage (too few for one to mean
+      // anything — `recommendRollup` owns the number). The counts, and no ladder verdict:
+      // one positive review must not read "Positive (1)". No colour, since there is no
+      // verdict; the link stays, because there are reviews to jump to.
+      rows.push({
+        key: 'reviews',
+        label: 'Reviews',
+        value: getRecommendLabel(detail.recommend, detail.reviewCount),
+        anchorId: LISTING_REVIEWS_ANCHOR_ID,
+      });
     } else {
       const { label, color } = getRatingLabel({
         positiveRating: recommendPct,
@@ -232,7 +275,7 @@ export function buildListingDetailRows(
         label: 'Reviews',
         value: `${label} (${detail.reviewCount.toLocaleString()})`,
         color: String(color),
-        // 🔴 Only in this branch — the zero-review row above deliberately omits it.
+        // 🔴 Only with reviews — the zero-review row above deliberately omits it.
         // No `preview` guard is needed HERE because the whole block is already inside
         // `if (!opts.preview)`. That matters: the reviews SECTION is not rendered in
         // the preview posture, so a link emitted there would point at an id that does

@@ -79,9 +79,15 @@ const typing = (target: EventTarget | null) =>
       : ['TEXTAREA', 'SELECT'].includes(target.tagName)) ||
     target.getAttribute('role') === 'slider');
 
-/** A key press inside a dialog (the Buzz purchase modal, say) is the dialog's, not the editor's. */
-const inDialog = (target: EventTarget | null) =>
-  target instanceof Element && !!target.closest('[role="dialog"], [aria-modal="true"]');
+/**
+ * A key press inside a dialog (the Buzz purchase modal, say) is the dialog's, not the editor's.
+ * The dialog that holds the video is the editor's own host (the image detail modal), not one on top.
+ */
+const inDialog = (target: EventTarget | null, video: HTMLVideoElement) => {
+  const dialog =
+    target instanceof Element ? target.closest('[role="dialog"], [aria-modal="true"]') : null;
+  return !!dialog && !dialog.contains(video);
+};
 
 /**
  * Whether the selected draft on `imageId` has its timeline open, for the media to make room
@@ -186,7 +192,7 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
     if (!moving) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey) return;
-      if (typing(event.target) || inDialog(event.target)) return;
+      if (typing(event.target) || inDialog(event.target, video)) return;
       const { selected, keys, at, playheadMs, drafts } = live.current;
       if (!selected) return;
       const step = event.shiftKey ? 1000 : STICKER_KEY_STEP_MS;
@@ -228,7 +234,7 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
     // or the arrows step the carousel.
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [moving, seek, toggle]);
+  }, [moving, seek, toggle, video]);
 
   // The tray covers where the editor sits, so with it open only the mode choice shows, above it.
   if (trayOpen && selected && !previewing)

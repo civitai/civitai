@@ -120,7 +120,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     : [];
   all.push(postLoginMarkerCookie());
   // De-crud the browser at the legacy->civ-token transition: expire every leftover next-auth cookie — the
-  // SESSION cookie (so the hybrid fallback can't keep a migrated user on the stale legacy identity) AND the
+  // SESSION cookie AND the
   // ancillary cruft (CSRF / callback-url / OAuth state + PKCE). ONLY when the browser actually still carries a
   // legacy cookie — otherwise this would add ~24 useless Set-Cookie headers to every login, bloating this hot
   // response near the edge header limit and risking the real civ-token Set-Cookie getting dropped.

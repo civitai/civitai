@@ -7,7 +7,8 @@
  * second spelling of it. So a fork is counted and listed exactly when this viewer could find it in
  * the `/apps` store: approved (or admitted by its visibility level), not a revision draft, an
  * on-site fork only once it has deployed, not mature on a SFW host, an R/X fork only to a viewer
- * whose browsing level includes that rating, and within the viewer's store scope. A pending, rejected, removed, private or never-deployed fork is in neither the count nor
+ * whose browsing level includes that rating, owned by an account that is neither banned nor
+ * deleted, and within the viewer's store scope. A pending, rejected, removed, private or never-deployed fork is in neither the count nor
  * the list — and the count and the list can never disagree, because they share the WHERE clause.
  *
  * 🔴 MANUAL-APPLY COLUMNS. `fork_of_listing_id` (and the store predicate's `visibility`) may not

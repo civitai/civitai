@@ -15,7 +15,10 @@ import {
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
-import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
+import {
+  getImageScanRetryLimit,
+  IMAGE_RESCAN_RETRY_LIMIT as IMAGE_SCANNING_RETRY_LIMIT,
+} from '~/server/services/image-scan-failure';
 import {
   legalHoldUserIdsSql,
   PLACEHOLDER_OWNER_ID,
@@ -34,7 +37,6 @@ import {
 } from '~/server/jobs/appeal-decision-records';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
-const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
 // Minutes a just-created image counts as "submit in flight" (see the double-submit
 // note below). Must stay above the upload-path submit's own ceiling or the window it
