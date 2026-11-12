@@ -46,6 +46,12 @@ import {
   type ScanResultCode,
 } from '~/shared/utils/prisma/enums';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
+import {
+  getMiniModerationState,
+  MINI_MODERATION_EXPIRES_MS,
+  moderationBlocksGeneration,
+  receivesMiniModeration,
+} from '~/server/utils/mini-moderation-state';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
@@ -53,7 +59,17 @@ import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { hashRouteServesEveryone } from '~/server/services/download-by-hash.servable';
-import { evaluateMiniEpochCaller, getMiniEpochGateMode } from '~/server/utils/mini-epoch-caller';
+import {
+  credentialKind,
+  evaluateMiniEpochCaller,
+  getMiniEpochGateMode,
+  hasVersionGrant,
+} from '~/server/utils/mini-epoch-caller';
+import { downloadCredentialGate, scopeRefusalMode } from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const MINI_ROUTE = '/api/v1/model-versions/mini/[id]';
+const MINI_SCOPES = { anyOfScopes: [TokenScope.ModelsRead, TokenScope.AIServicesRead] };
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -109,6 +125,9 @@ type VersionRow = {
   sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   versionFlags: number;
   userFlags: number;
+  ownerDeletedAt: Date | null;
+  ownerBannedAt: Date | null;
+  modelDeletedAt: Date | null;
 };
 type FileRow = {
   id: number;
@@ -127,8 +146,26 @@ type FileRow = {
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
-  user: Session['user'] | undefined
+  sessionUser: Session['user'] | undefined
 ) {
+  // The orchestrator's service token carries no user and keeps its own path.
+  const orchestrator = matchesOrchestratorServiceToken(req);
+  const credential = orchestrator
+    ? { outcome: 'session' as const, effectiveUser: sessionUser }
+    : downloadCredentialGate(req, sessionUser, MINI_SCOPES);
+  // Read only where the answer depends on it, so the flag and its log see the epoch arm alone.
+  let scopeRefused: Promise<boolean> | undefined;
+  const isScopeRefused = () =>
+    (scopeRefused ??=
+      credential.outcome === 'refused'
+        ? scopeRefusalMode(req, MINI_ROUTE, MINI_SCOPES).then((mode) => mode === 'enforce')
+        : Promise.resolve(false));
+  // A credential the scope gate refuses carries no moderator rights here either.
+  const user =
+    credential.effectiveUser?.isModerator && (await isScopeRefused())
+      ? { ...credential.effectiveUser, isModerator: false }
+      : credential.effectiveUser;
+
   const results = schema.safeParse(req.query);
   if (!results.success)
     return res.status(400).json({ error: z.prettifyError(results.error) ?? 'Invalid id' });
@@ -136,6 +173,7 @@ export default MixedAuthEndpoint(async function handler(
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
   const where = [Prisma.sql`mv.id = ${id}`];
+  // An owner's own credential sees its own version row even when the scope gate refuses it.
   if (!user?.isModerator)
     where.push(Prisma.sql`(mv.status = 'Published' OR m."userId" = ${user?.id})`);
 
@@ -162,6 +200,7 @@ export default MixedAuthEndpoint(async function handler(
       m.mode as "modelMode",
       m.availability as "modelAvailability",
       m.poi,
+      m."deletedAt" AS "modelDeletedAt",
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
@@ -178,6 +217,8 @@ export default MixedAuthEndpoint(async function handler(
       lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
       mv."flags" AS "versionFlags",
       u."flags" AS "userFlags",
+      u."deletedAt" AS "ownerDeletedAt",
+      u."bannedAt" AS "ownerBannedAt",
       (
         (
             pa."entityId" IS NOT NULL
@@ -285,12 +326,14 @@ export default MixedAuthEndpoint(async function handler(
   // url shape applies, and only then apply the gate to the download-route path.
   const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
   const isMod = !!user?.isModerator;
+  // A credential the scope gate refuses sees only what anyone may.
+  const viewerManages = (isOwner || isMod) && !(await isScopeRefused());
   const listed = await trainingDataListing(dbRead, [{ id, files }], {
     redCapable: isRedCapableHost(req.headers.host),
-    viewerManages: isOwner || isMod,
+    viewerManages,
   });
   const visibleFiles = files.filter(
-    (f) => (isOwner || isMod || f.visibility === ModelFileVisibility.Public) && listed(f)
+    (f) => (viewerManages || f.visibility === ModelFileVisibility.Public) && listed(f)
   );
 
   // The download route merges the requesting user's `filePreferences` into
@@ -311,11 +354,34 @@ export default MixedAuthEndpoint(async function handler(
   // `targetFile` still governs both on that arm.
   const filePreferences = { metadata: user?.filePreferences };
 
+  // Owner, moderator, grantee or the service token, with a credential that passes the scope gate.
+  // The scope is checked last, so the refusal log counts only callers it would change.
+  let entitledToVersion: Promise<boolean> | undefined;
+  const isEntitled = () =>
+    (entitledToVersion ??= (async () =>
+      orchestrator ||
+      ((isOwner || isMod || (!!user?.id && (await hasVersionGrant(user.id, modelVersion.id)))) &&
+        !(await isScopeRefused())))());
+
+  // A file id the caller may not see is answered as one that does not exist, decided before the
+  // file is looked up so the answer cannot tell the two apart.
+  if (modelFileId && !visibleFiles.some((f) => f.id === modelFileId)) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    if (!(await isEntitled()))
+      return res
+        .status(404)
+        .json({ error: `Model file ${modelFileId} not found in version ${id}` });
+  }
+
   // `getPrimaryFile` over the unfiltered files with default preferences, deliberately — see both
   // notes above; this only decides `useEpochUrl` and, on the epoch arm, names the training file.
   const requestedFile = modelFileId
     ? files.find((f) => f.id === modelFileId)
     : getPrimaryFile(files);
+  // The primary file the caller may not see is logged as its own reason, so the gate's measurement
+  // counts it separately.
+  const hiddenPrimary = !modelFileId && (!requestedFile || !visibleFiles.includes(requestedFile));
+
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
@@ -335,6 +401,8 @@ export default MixedAuthEndpoint(async function handler(
         modelVersionId: modelVersion.id,
         ownerId: modelVersion.modelUserId,
         mode,
+        scopeRefused: await isScopeRefused(),
+        pick: modelFileId ? 'by-id' : hiddenPrimary ? 'hidden-primary' : 'primary',
       });
       // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
       // 404 to a caller who would be served.
@@ -342,9 +410,9 @@ export default MixedAuthEndpoint(async function handler(
       mayResign = caller.callerClass !== 'anonymous' && caller.callerClass !== 'other';
     } else {
       mayResign =
-        matchesOrchestratorServiceToken(req) ||
-        user?.id === modelVersion.modelUserId ||
-        !!user?.isModerator;
+        orchestrator ||
+        ((user?.id === modelVersion.modelUserId || !!user?.isModerator) &&
+          !(await isScopeRefused()));
     }
   }
 
@@ -488,7 +556,20 @@ export default MixedAuthEndpoint(async function handler(
       wildcardsEnabled: false,
     }
   );
-  const canGenerate = genStates.get(modelVersion.id)?.canGenerate ?? false;
+  const moderation = getMiniModerationState({
+    versionStatus: modelVersion.status,
+    versionAvailability: modelVersion.availability,
+    modelStatus: modelVersion.modelStatus,
+    modelMode: modelVersion.modelMode,
+    modelAvailability: modelVersion.modelAvailability,
+    poi: modelVersion.poi,
+    modelDeletedAt: modelVersion.modelDeletedAt,
+    ownerDeletedAt: modelVersion.ownerDeletedAt,
+    ownerBannedAt: modelVersion.ownerBannedAt,
+  });
+  const canGenerate =
+    !moderationBlocksGeneration(moderation) &&
+    (genStates.get(modelVersion.id)?.canGenerate ?? false);
 
   // Check if should charge
   const shouldChargeResult = await getShouldChargeForResources([
@@ -641,6 +722,7 @@ export default MixedAuthEndpoint(async function handler(
       }).catch(() => undefined);
   }
 
+  const includeModeration = receivesMiniModeration(req, user);
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
@@ -672,9 +754,43 @@ export default MixedAuthEndpoint(async function handler(
     fees,
     payoutEnabled,
     tipsEnabled,
+    ...(includeModeration ? { moderation } : {}),
   };
+  logMiniModerationCaller(req, user, modelVersion, includeModeration);
+  if (includeModeration) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    // Read by the orchestrator as the absolute time its cached copy of this response expires.
+    res.setHeader('X-Expires', new Date(Date.now() + MINI_MODERATION_EXPIRES_MS).toISOString());
+  }
   res.status(200).json(data);
 });
+
+/** Logs which principal the request's credential resolves to. */
+function logMiniModerationCaller(
+  req: NextApiRequest,
+  user: Session['user'] | undefined,
+  { id: modelVersionId, modelUserId: ownerId }: { id: number; modelUserId: number },
+  moderationIncluded: boolean
+) {
+  const orchestrator = matchesOrchestratorServiceToken(req);
+  const resolvedAs = credentialKind(req, user, orchestrator);
+  if (resolvedAs === 'none') return;
+  const principal = user?.isModerator
+    ? 'moderator'
+    : orchestrator
+    ? 'orchestrator-token'
+    : user?.id && user.id === ownerId
+    ? 'owner'
+    : 'other';
+  logToAxiom({
+    type: 'info',
+    name: 'mini-moderation-caller',
+    modelVersionId,
+    resolvedAs,
+    principal,
+    moderationIncluded,
+  }).catch(() => undefined);
+}
 
 const RESIGN_TIMEOUT_MS = 3000;
 

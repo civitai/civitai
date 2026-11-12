@@ -53,6 +53,10 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
     oauthClient: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    // The no-type `issue_tracker_url` column is probed, read and written by raw SQL (opening a
+    // revision clones the parent's link onto the shadow). Column present, no link.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<number> => 1),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {

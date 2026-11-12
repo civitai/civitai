@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { loadEvents } from '~/server/events/load-events';
 import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
 import { EVENT_POINTS_LEDGER_TABLE } from '~/server/events/points/award';
-import { eventSeasonKeys, liveBucket } from '~/server/events/points/keys';
+import { eventSeasonKeys, liveBucket, LIVE_BUCKET_TTL_S } from '~/server/events/points/keys';
 import { markEventTeamsDirty } from '~/server/events/points/push';
 import {
   CRUCIBLE_TEAM_AWARDS,
@@ -16,8 +16,6 @@ import type {
   CrucibleEntrySubscriber,
 } from '~/server/services/crucible-entry-accepted';
 
-// Outlives the referee's hourly cut, as the engine's own live buckets do.
-const LIVE_TTL_S = 3 * 60 * 60;
 const AWARDED_TTL_PAST_END_MS = 7 * 24 * 60 * 60 * 1000;
 
 type LedgerRow = ReturnType<typeof crucibleTeamAwardLedgerRow>;
@@ -83,7 +81,7 @@ async function grant(entry: CrucibleEntryRef & { acceptedAt: Date }) {
       if (!first) continue;
       const key = keys.live(liveBucket(at), 'team');
       await sysRedis.hIncrBy(key, player.team, award.points);
-      await sysRedis.expire(key, LIVE_TTL_S);
+      await sysRedis.expire(key, LIVE_BUCKET_TTL_S);
       markEventTeamsDirty(event, at);
     } catch (error) {
       // The row is the record; the live total catches up at the next settle.

@@ -1,0 +1,50 @@
+import { BlocklistType } from '~/server/common/enums';
+import type { Tracker } from '~/server/clickhouse/tracker';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
+import {
+  nsfwBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
+import type { SessionUser } from '~/types/session';
+import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metadata/audit';
+
+export type QueryTracker = Pick<Tracker, 'action'>;
+export type QueryRefusal = 'minor' | 'poi' | 'error' | false;
+
+/** Only moderators search above the safe levels. */
+export function resolveSemanticBrowsingLevel(requested: number | undefined, user?: SessionUser) {
+  const level = requested || publicBrowsingLevelsFlag;
+  if (user?.isModerator) return level;
+  return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
+}
+
+/** The search gates' query audit, run on the server; any failure refuses. */
+export async function semanticQueryRefusal(
+  query: string,
+  { browsingLevel, disablePoi }: { browsingLevel: number; disablePoi: boolean }
+): Promise<QueryRefusal> {
+  try {
+    const audited = await stripBenignPhrases(query, BlocklistType.PromptBenignPhrase);
+    const nsfw = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
+    const verdict = includesInappropriate({ prompt: audited }, nsfw);
+    // A 'poi' verdict is returned before the minor check runs, so it can hide one.
+    if (verdict === 'minor' || (verdict && includesMinor(audited))) return 'minor';
+    if (verdict) return verdict;
+    if (disablePoi && includesPoi(audited)) return 'poi';
+    return false;
+  } catch {
+    return 'error';
+  }
+}
+
+export function recordRefusal(
+  track: QueryTracker | undefined,
+  refusal: QueryRefusal,
+  query: string,
+  index: string
+) {
+  if (refusal !== 'minor') return;
+  track?.action({ type: 'CSAM_Help_Triggered', details: { query, index } }).catch(() => undefined);
+}

@@ -25,6 +25,13 @@ import {
 } from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
 import { getPlacementFlows } from '../placement-flows.service';
+import {
+  getAccountTrainings,
+  lookupTrainings,
+  MAX_TRAINING_ACCOUNTS,
+  MAX_TRAINING_DAYS,
+  MAX_TRAINING_IDS,
+} from '../training-lookup.service';
 import { getShopPurchaseSummary, SHOP_PURCHASE_KINDS } from '../shop-purchases.service';
 import { getCrucibleJudging } from '../crucible-judging.service';
 import {
@@ -720,6 +727,47 @@ export const TOOLS = [
         rows: flows.flows.length,
         truncated: flows.truncated,
         sources: [...new Set([...userIds, ...counterparties])].map((id) => userSource(id)),
+      };
+    },
+  }),
+
+  tool({
+    name: 'training_lookup',
+    description: `Training runs by id (1-${MAX_TRAINING_IDS} ids): a workflow id like <account>-<yyyyMMddHHmmss...>[-suffix], or the same with a training_ prefix. Per run: the account that submitted it (from the id), the account charged (payerId) and when, the Buzz legs that paid for it by account type (blue = reward Buzz), Buzz refunded, when its last job finished, and the model version it trained. Each part names its source and a status: found, notFound (read, nothing there), beyondRetention (older than the source keeps) or unreachable (could not be read); none of these means the account ran no trainings. A payerId different from submitterId is a run one account paid for and another submitted. Ids that are not a workflow id come back in invalid and are never looked up.`,
+    input: z.object({
+      trainingIds: z.array(z.string().min(1).max(200)).min(1).max(MAX_TRAINING_IDS),
+    }),
+    requires: [LOOKUP],
+    run: async ({ trainingIds }) => {
+      const found = await lookupTrainings(trainingIds);
+      const accounts = new Set(
+        found.runs.flatMap((r) => [r.submitterId, r.charge.payerId ?? r.submitterId])
+      );
+      return {
+        data: found,
+        rows: found.runs.length,
+        truncated: false,
+        sources: [...accounts].map((id) => userSource(id)),
+      };
+    },
+  }),
+
+  tool({
+    name: 'account_trainings',
+    description: `The training runs a set of accounts paid for (1-${MAX_TRAINING_ACCOUNTS} accounts, up to ${MAX_TRAINING_DAYS} days), newest first, up to 500 runs with truncated set past that. Per run: workflow id, submitter and payer, charged time, Buzz legs by account type (blue = reward Buzz), Buzz refunded, when its last job finished and the model version, each with its source and status as in training_lookup. sharedWith names a listed account that submitted a run another listed account paid for. Runs are found by payer only: a run a listed account submitted and an unlisted one paid for does not appear. unlinkedCharges counts charges with no workflow id (before about 2024-10). reachable false means the ledger could not be read, not that there were no trainings. For matching a training id seen on one account against the trainings of linked accounts.`,
+    input: z.object({
+      userIds: userIdList(MAX_TRAINING_ACCOUNTS),
+      days: z.number().int().min(1).max(MAX_TRAINING_DAYS).default(30),
+    }),
+    requires: [LOOKUP],
+    run: async ({ userIds, days }) => {
+      const found = await getAccountTrainings(userIds, days);
+      const accounts = new Set([...userIds, ...found.runs.map((r) => r.submitterId)]);
+      return {
+        data: found,
+        rows: found.runs.length,
+        truncated: found.truncated,
+        sources: [...accounts].map((id) => userSource(id)),
       };
     },
   }),

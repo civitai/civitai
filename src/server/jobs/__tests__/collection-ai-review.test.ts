@@ -16,6 +16,7 @@ import {
   UNAVAILABLE_IMAGE_REJECTION,
   recordFailedAttempt,
   resolveAutomatedRejectionReason,
+  ACCEPTABLE_MINOR_ESCALATION,
   HELD_MINOR_ESCALATION,
   reviewCollection,
 } from '~/server/jobs/collection-ai-review';
@@ -626,25 +627,36 @@ describe('reviewCollection: a rating label the rules do not recognise', () => {
 describe('reviewCollection: an image the scanner flagged as a minor', () => {
   const held = { minor: true, acceptableMinor: false };
 
-  it('is never accepted on an approve: it goes to the minor queue for a human', async () => {
-    queuePending([pendingItem(held)]);
-    modelSees({});
+  it.each([
+    ['flagged', held, HELD_MINOR_ESCALATION],
+    [
+      'flagged and marked acceptable',
+      { minor: true, acceptableMinor: true },
+      HELD_MINOR_ESCALATION,
+    ],
+    ['marked acceptable', { minor: false, acceptableMinor: true }, ACCEPTABLE_MINOR_ESCALATION],
+  ])(
+    'is never accepted on an approve when %s: it goes to the minor queue',
+    async (_l, flags, label) => {
+      queuePending([pendingItem(flags)]);
+      modelSees({});
 
-    await reviewCollection(COLLECTION_ID, { ...config, escalationAction: 'reject' });
+      await reviewCollection(COLLECTION_ID, { ...config, escalationAction: 'reject' });
 
-    expect(statusWrites()).toEqual([]);
-    expect(claimCalls()).toHaveLength(1);
-    expect(minorFlagCalls()).toHaveLength(1);
-    expect(trackReview).toHaveBeenCalledTimes(1);
-    expect(trackReview).toHaveBeenCalledWith(
-      expect.objectContaining({
-        decision: 'escalate',
-        appliedAction: 'stamp',
-        escalations: [HELD_MINOR_ESCALATION],
-        applied: true,
-      })
-    );
-  });
+      expect(statusWrites()).toEqual([]);
+      expect(claimCalls()).toHaveLength(1);
+      expect(minorFlagCalls()).toHaveLength(1);
+      expect(trackReview).toHaveBeenCalledTimes(1);
+      expect(trackReview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          decision: 'escalate',
+          appliedAction: 'stamp',
+          escalations: [label],
+          applied: true,
+        })
+      );
+    }
+  );
 
   it('is logged as an escalation and touches nothing in a dry run', async () => {
     queuePending([pendingItem(held)]);
@@ -668,11 +680,8 @@ describe('reviewCollection: an image the scanner flagged as a minor', () => {
     expect(statusWrites()).toEqual(['REJECTED']);
   });
 
-  it.each([
-    ['not flagged', { minor: false, acceptableMinor: false }],
-    ['flagged but marked acceptable', { minor: true, acceptableMinor: true }],
-  ])('is accepted as before when %s', async (_label, flags) => {
-    queuePending([pendingItem(flags)]);
+  it('is accepted when not flagged', async () => {
+    queuePending([pendingItem({ minor: false, acceptableMinor: false })]);
     modelSees({});
 
     await reviewCollection(COLLECTION_ID, config);
@@ -682,5 +691,72 @@ describe('reviewCollection: an image the scanner flagged as a minor', () => {
     expect(trackReview).toHaveBeenCalledWith(
       expect.objectContaining({ decision: 'approve', appliedAction: 'accept', escalations: [] })
     );
+  });
+});
+
+describe('reviewCollection: the audit row', () => {
+  const trackedRow = () => trackReview.mock.calls[0][0] as Record<string, unknown>;
+
+  it('sends exactly the columns the table has', async () => {
+    queuePending([pendingItem()]);
+    modelSees({});
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(Object.keys(trackedRow()).sort()).toEqual(
+      [
+        'appliedAction',
+        'applied',
+        'collectionId',
+        'collectionItemId',
+        'completionTokens',
+        'decision',
+        'depictsMinor',
+        'entityId',
+        'escalations',
+        'isPhotorealistic',
+        'minorUncertain',
+        'model',
+        'nsfwLevel',
+        'promptTokens',
+        'reason',
+        'sexualContent',
+        'suggestiveStyling',
+        'userId',
+        'violations',
+      ].sort()
+    );
+  });
+
+  it("carries the image's level and the model's observations", async () => {
+    queuePending([pendingItem({ nsfwLevel: 2 })]);
+    modelSees({ minorUncertain: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(trackedRow()).toMatchObject({
+      nsfwLevel: 2,
+      minorUncertain: 1,
+      depictsMinor: 0,
+      isPhotorealistic: 0,
+      suggestiveStyling: 0,
+      sexualContent: 0,
+    });
+  });
+
+  it('records no observations when the model is not called', async () => {
+    queuePending([pendingItem({ nsfwLevel: 16 })]);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(reviewImage).not.toHaveBeenCalled();
+    expect(trackedRow()).toMatchObject({
+      nsfwLevel: 16,
+      minorUncertain: -1,
+      depictsMinor: -1,
+      isPhotorealistic: -1,
+      suggestiveStyling: -1,
+      sexualContent: -1,
+    });
   });
 });

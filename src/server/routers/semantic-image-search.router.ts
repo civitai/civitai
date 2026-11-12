@@ -36,6 +36,7 @@ export const semanticImageSearchRouter = router({
         input,
         user: ctx.user,
         domain: getRequestBoardDomainColor(ctx.req),
+        track: ctx.track,
       });
       const latencyMs = Date.now() - started;
 

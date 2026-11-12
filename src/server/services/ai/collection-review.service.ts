@@ -53,6 +53,27 @@ export const aiReviewObservationsSchema = z.object({
   hasBuzzReference: z.boolean(),
 });
 
+const OBSERVATION_COLUMNS = [
+  'minorUncertain',
+  'depictsMinor',
+  'isPhotorealistic',
+  'suggestiveStyling',
+  'sexualContent',
+] as const;
+export type AiReviewObservationColumns = Record<(typeof OBSERVATION_COLUMNS)[number], -1 | 0 | 1>;
+
+/** For the audit row: 1 or 0 as the model answered, -1 where there is no readable answer. */
+export function toObservationColumns(raw: unknown): AiReviewObservationColumns {
+  const parsed = aiReviewObservationsSchema.safeParse(raw);
+  const o = parsed.success ? parsed.data : undefined;
+  const columns = {} as AiReviewObservationColumns;
+  for (const key of OBSERVATION_COLUMNS) {
+    const value = o?.[key];
+    columns[key] = value === undefined ? -1 : value ? 1 : 0;
+  }
+  return columns;
+}
+
 export type AiReviewDecision = {
   decision: 'approve' | 'reject' | 'escalate';
   violations: AiReviewViolation[];
@@ -157,8 +178,7 @@ export function resolveRejectionMessage(
 
 export const isAiReviewAvailable = () => !!openrouter;
 
-// The codebase treats both 0 and -1 as "not yet rated" (see updateCollectionItemsStatus's
-// judgesApplyBrowsingLevel guard), so neither is a level and neither is allowed here.
+// 0 (not yet scanned or rated) and -1 are not levels, so neither is allowed here.
 export const isUnratedNsfwLevel = (nsfwLevel: number) => nsfwLevel <= 0;
 
 export function isNsfwLevelAllowed(nsfwLevel: number, allowedNsfwLevels: number) {

@@ -20,6 +20,7 @@ const schema = z.object({
       issue.input === undefined ? 'Please provide an email' : 'Please provide a valid email',
   }),
 });
+const schemaWithStoredEmail = schema.omit({ email: true });
 
 export function OnboardingProfile() {
   const currentUser = useCurrentUser();
@@ -35,15 +36,23 @@ export function OnboardingProfile() {
     isInitialLoading: loadingUsarnameAvailable,
   } = trpc.user.usernameAvailable.useQuery({ username }, { enabled: username.length >= 3 });
 
+  const hasEmail = !!currentUser?.email;
   const form = useForm({
-    schema,
+    schema: hasEmail ? schemaWithStoredEmail : schema,
     mode: 'onChange',
     shouldUnregister: false,
-    defaultValues: { email: currentUser?.email, username: currentUser?.username },
+    defaultValues: { username: currentUser?.username },
   });
 
-  const handleSubmit = (data: z.infer<typeof schema>) => {
-    mutate({ step: OnboardingSteps.Profile, ...data }, { onSuccess: () => next() });
+  const handleSubmit = (data: { username: string; email?: string }) => {
+    mutate(
+      {
+        step: OnboardingSteps.Profile,
+        username: data.username,
+        email: hasEmail ? undefined : data.email,
+      },
+      { onSuccess: () => next() }
+    );
   };
 
   useEffect(() => {
@@ -74,7 +83,9 @@ export function OnboardingProfile() {
         <StepperTitle title="Account Details" description="Please add your account details" />
         <Form form={form} onSubmit={handleSubmit}>
           <Stack>
-            <InputText size="lg" name="email" label="Email" type="email" withAsterisk />
+            {!hasEmail && (
+              <InputText size="lg" name="email" label="Email" type="email" withAsterisk />
+            )}
             <InputText
               size="lg"
               name="username"

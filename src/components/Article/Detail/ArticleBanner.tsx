@@ -40,17 +40,31 @@ export function ArticleBanner({
                 <MediaHash {...image} />
               </div>
             ) : (
-              <EdgeMedia
-                src={image.url}
-                className="size-full object-cover"
-                // Lifts EdgeImage's cap at the requested width, so the banner spans screens wider than 2400px.
-                style={{ maxWidth: 'none' }}
-                name={image.name}
-                alt={title}
-                type={image.type}
-                width={constants.article.bannerImageWidth}
-                anim={safe}
-              />
+              <>
+                {image.type === 'image' && (
+                  <EdgeMedia
+                    src={image.url}
+                    name={image.name}
+                    type="image"
+                    width={450}
+                    alt=""
+                    aria-hidden
+                    className="absolute inset-0 size-full scale-110 object-cover opacity-40 blur-2xl"
+                    style={{ maxWidth: 'none' }}
+                  />
+                )}
+                <EdgeMedia
+                  src={image.url}
+                  className="absolute inset-0 size-full object-contain"
+                  // Lifts EdgeImage's cap at the requested width; the image is centred over the backdrop.
+                  style={{ maxWidth: 'none' }}
+                  name={image.name}
+                  alt={title}
+                  type={image.type}
+                  width={constants.article.bannerImageWidth}
+                  anim={safe}
+                />
+              </>
             )}
           </RoutedDialogLink>
         )}

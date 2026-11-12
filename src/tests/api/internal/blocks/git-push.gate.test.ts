@@ -332,6 +332,19 @@ describe('git-push webhook — no-trust-on-push gate', () => {
 
   // ---- the core fix --------------------------------------------------------
 
+  it('🔴 git-push re-validates with the issue-tracker link LENIENT (a stored legacy `bugs` warns, never refuses)', async () => {
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(mockValidate).toHaveBeenCalled();
+    expect(
+      mockValidate.mock.calls.some(
+        (c: unknown[]) =>
+          (c[2] as { strictIssueTrackerLink?: boolean } | undefined)?.strictIssueTrackerLink ===
+          false
+      )
+    ).toBe(true);
+  });
+
   it('a NEW signed push to an existing approved block does NOT approve or deploy — it parks a PENDING review request', async () => {
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
@@ -569,6 +582,81 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     await invoke(signedReq(pushBody({ after: NEW_SHA, ref: 'refs/heads/dev' })), res);
     expect(res._status).toBe(200);
     expect(res._body).toMatchObject({ skipped: 'non-main branch' });
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  // ---- iframe.src: pushes WITH and WITHOUT the key ------------------------
+  // INVARIANT GUARDS (the behaviour predates this change): the webhook stamps the canonical
+  // iframe.src onto the parsed manifest before validating, so a developer tree with no
+  // `iframe.src`, with the canonical one, or with a wrong one is treated identically. These pin
+  // that before any change stops the platform writing the key into the repository: a tree a
+  // developer edits after `civitai app pull` may arrive either way.
+
+  /** The manifest the validator was handed for the last push. */
+  const validatedManifest = () =>
+    (mockValidate.mock.calls.at(-1) as unknown[] | undefined)?.[0] as
+      | { iframe?: Record<string, unknown> }
+      | undefined;
+
+  it.each([
+    ['without iframe.src', { minHeight: 300 }],
+    ['with the canonical iframe.src', { src: `https://${SLUG}.civit.ai/`, minHeight: 300 }],
+    ['with a wrong iframe.src', { src: 'https://evil.example/', minHeight: 300 }],
+  ])('a push %s parks a pending review with the canonical src validated', async (_n, iframe) => {
+    state.manifest = { ...validManifest(NEW_SHA), iframe };
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    expect(mockPubReqCreate).toHaveBeenCalledTimes(1);
+    expect(validatedManifest()?.iframe).toEqual({
+      src: `https://${SLUG}.civit.ai/`,
+      minHeight: 300,
+    });
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+  });
+
+  it('a push with NO iframe object at all gets one with the canonical src', async () => {
+    const { iframe: _drop, ...rest } = validManifest(NEW_SHA);
+    state.manifest = rest;
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    expect(validatedManifest()?.iframe).toEqual({ src: `https://${SLUG}.civit.ai/` });
+  });
+
+  it.each([
+    ['without iframe.src', { minHeight: 300 }],
+    ['with the canonical iframe.src', { src: `https://${SLUG}.civit.ai/`, minHeight: 300 }],
+  ])('the approved sha %s no-ops BEFORE the manifest is fetched', async (_n, iframe) => {
+    state.manifest = { ...validManifest(APPROVED_SHA), iframe };
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: APPROVED_SHA })), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ deploy: 'already-approved' });
+    expect(mockGetRawFile).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a JSON array', '[]'],
+    ['not JSON', '{nope'],
+  ])('a manifest that is %s is still refused (400), nothing parked', async (_n, raw) => {
+    mockGetRawFile.mockResolvedValueOnce(raw);
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(400);
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  // The approve path now creates `v<version>` / `approved-<id>` tags through the API, and a tag
+  // creation is delivered to this webhook as a push to `refs/tags/...`. It must be skipped like
+  // any non-main ref: it is not a code change and must never park a review request.
+  it('invariant guard: a tag push (refs/tags/v1.0.0) is skipped, nothing parked or fetched', async () => {
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA, ref: 'refs/tags/v1.0.0' })), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ skipped: 'non-main branch', ref: 'refs/tags/v1.0.0' });
+    expect(mockGetRawFile).not.toHaveBeenCalled();
     expect(mockPubReqCreate).not.toHaveBeenCalled();
   });
 });

@@ -2587,6 +2587,11 @@ export const REDIS_SYS_KEYS = {
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
     // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
     STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
+    // Training Studio's v2 image rating per dataset blob (packed), key :<raterModel>:<blobId lowercased>.
+    // Blobs are immutable.
+    STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
+    // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
+    STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
@@ -2711,7 +2716,6 @@ export const REDIS_SYS_KEYS = {
     FAMILY_LIVE: 'session:family-live',
     // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
     DEVICE_FAMILIES: 'session:device-families',
-    LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
     // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
     // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
     HUB_UPGRADE: 'session:hub-upgrade',
@@ -3147,7 +3151,7 @@ const REDIS_KEYS_UNPREFIXED = {
     USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
-    PROFILE_PICTURES: 'packed:caches:profile-pictures',
+    PROFILE_PICTURES: 'packed:caches:profile-pictures:v2',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',

@@ -5,6 +5,7 @@ import { dbKV } from '~/server/db/db-helpers';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { usageLimits } from '~/shared/constants/usage-limits';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   studioAutoLabelPollSchema,
   studioAutoLabelSubmitSchema,
@@ -154,15 +155,22 @@ export const trainingRouter = router({
   //   2) submitAutoLabelWorkflow with the resulting blob URLs (≤16 per call)
   //   3) getAutoLabelWorkflow on a poll loop until each step is succeeded/failed
   //
-  // Tagging/captioning is free; the orchestrator work is billed to the system token
-  // and not the user, so each endpoint needs a per-user rate cap to prevent abuse.
+  // Tagging/captioning is free; the workflow is billed to the system token and not
+  // the user, so each endpoint needs a per-user rate cap to prevent abuse. The upload
+  // URL in step 1 is minted with the user's own token, as every consumer upload is.
   getAutoLabelUploadUrl: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(getAutoLabelUploadUrlSchema)
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
     .use(rateLimit(usageLimits('auto-label.upload')))
-    .mutation(({ input, ctx }) => getAutoLabelUploadUrl({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      getAutoLabelUploadUrl({
+        ...input,
+        userId: ctx.user.id,
+        getUserToken: () => getOrchestratorToken(ctx.user.id, ctx),
+      })
+    ),
   submitAutoLabelWorkflow: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(submitAutoLabelWorkflowSchema)

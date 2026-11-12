@@ -100,6 +100,7 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { isStatementTimeout } from '~/server/utils/statement-timeout';
 import {
   createMetricRefresher,
   imageMetricsSwrEnabled,
@@ -3008,9 +3009,6 @@ const getAllImagesUncaptured = async (
   // post.service.ts on image upload/update events.
   const cacheable = queryCacheRaw(
     async <Row>(q: Prisma.Sql) => {
-      // Per-call statement_timeout ceiling — see IMAGE_FEED_STATEMENT_TIMEOUT_MS
-      // for rationale. The timeout fires server-side (pg error code 57014);
-      // we catch it at the call site below and return an empty page.
       const { rows } = await queryWithTimeout(imageDb, IMAGE_FEED_STATEMENT_TIMEOUT_MS, q);
       return rows as Row[];
     },
@@ -3029,19 +3027,9 @@ const getAllImagesUncaptured = async (
       cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags })
     );
   } catch (e) {
-    const code = (e as { code?: string })?.code;
-    const message = (e as { message?: string })?.message ?? '';
-    // SQLSTATE 57014 (query_canceled) is shared by statement_timeout,
-    // pg_cancel_backend(), and client AbortSignal cancellation. Only the
-    // first should fall back to an empty page — the others must propagate
-    // so callers/observers see the cancellation. Postgres distinguishes
-    // them via the error message: "canceling statement due to statement timeout".
-    if (code === '57014' && message.includes('statement timeout')) {
-      // Query exceeded IMAGE_FEED_STATEMENT_TIMEOUT_MS on the replica.
-      // Return an empty page instead of surfacing a 500 — the feed is best-effort
-      // and the UI handles `items: []` gracefully. Log to axiom so we can track
-      // frequency and identify pathological filter combinations; also bump a
-      // counter so we can alert if the rate climbs.
+    // SQLSTATE 57014 also covers user cancellation; the helper checks the timeout message.
+    if (isStatementTimeout(e)) {
+      // Feeds can accept an empty page after a timeout; detail endpoints need an error to retry.
       imageFeedStatementTimeoutCounter.inc({ dbTarget });
       logToAxiom({
         name: 'getInfiniteImages:statement_timeout',
@@ -6909,6 +6897,7 @@ export const getImagesForPosts = async ({
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
+    imageWhere.push(imageReviewedSql());
   }
 
   if (disablePoi) {
@@ -8634,8 +8623,6 @@ export async function resolveIngestionError({
       }).catch(() => undefined),
   });
 
-  const metadata = (image.metadata as ImageMetadata) ?? {};
-
   // Matched on what was read, so a block or ban landing after the replica read is not lifted.
   const { count } = await dbWrite.image.updateMany({
     where: {
@@ -8650,10 +8637,16 @@ export async function resolveIngestionError({
       ingestion: ImageIngestionStatus.Scanned,
       blockedFor: null,
       scannedAt: new Date(),
-      metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
     },
   });
   if (count === 0) throw throwBadRequestError('This image changed; reload and try again.');
+  // Merged in place, not from the replica row: that copy may predate metadata written since.
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "metadata" = COALESCE("metadata", '{}'::jsonb)
+      || jsonb_build_object('nsfwLevelReason', 'Moderator ingestion error review'::text)
+    WHERE id = ${id}
+  `;
   if (image.blockedFor != null) await dropBlockedImageDeleteQueue([id]);
   await imageMetadataCache.refresh(id);
 
