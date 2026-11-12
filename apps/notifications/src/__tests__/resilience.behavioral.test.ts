@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, InjectOptions } from 'fastify';
 
 // What a caller sees when a dependency of the notifications app fails or hangs. Drives the real routes,
 // operations, cache and lag tracker through `app.inject`; only the pg pools, the redis client and Axiom are
@@ -84,7 +84,7 @@ beforeEach(() => {
 });
 
 /** The inject result, or the string 'hung' when the app has not answered within `ms`. */
-async function within(ms: number, req: Parameters<FastifyInstance['inject']>[0]) {
+async function within(ms: number, req: InjectOptions) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const hung = new Promise<'hung'>((r) => (timer = setTimeout(() => r('hung'), ms)));
   try {
