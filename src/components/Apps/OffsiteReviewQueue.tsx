@@ -108,6 +108,11 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
 import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
+import {
+  holdOverrideSatisfied,
+  PublishRequestHoldsPanel,
+  useOpenPublishRequestHolds,
+} from '~/components/Apps/PublishRequestHoldsPanel';
 
 /**
  * /apps/review — the OFF-SITE (external-link) pending review section (W13 P3a).
@@ -437,6 +442,9 @@ export function OffsiteReviewModalBody({
   const features = useFeatureFlags();
   const [rejectionReason, setRejectionReason] = useState('');
   const [approvalNotes, setApprovalNotes] = useState('');
+  const openHolds = useOpenPublishRequestHolds(request?.slug);
+  const [holdOverrideReason, setHoldOverrideReason] = useState('');
+  const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
   // 'view' shows only the two entry buttons; 'reject' / 'approve' each reveal their
   // own notes textarea + confirm (approve gated behind an explicit "Approve…" click,
   // mirroring reject — so a stray click can't approve with un-reviewed notes).
@@ -894,6 +902,17 @@ export function OffsiteReviewModalBody({
         </RatingMismatchAlert>
       )}
 
+      {!readOnly && (
+        <PublishRequestHoldsPanel
+          slug={request.slug}
+          publishRequestId={request.id}
+          kind="listing"
+          holds={openHolds}
+          overrideReason={holdOverrideReason}
+          onOverrideReasonChange={setHoldOverrideReason}
+          disabled={busy}
+        />
+      )}
       {!readOnly &&
         (actionMode === 'reject' ? (
           <Stack gap="xs">
@@ -1003,9 +1022,10 @@ export function OffsiteReviewModalBody({
                     approvalNotes: approvalNotes.trim() || undefined,
                     contentRating: selectedRating,
                     ...(mediaSplit ? { mediaSplit } : {}),
+                    ...(openHolds.length ? { holdOverrideReason: holdOverrideReason.trim() } : {}),
                   })
                 }
-                disabled={busy || splitStateUnknown}
+                disabled={busy || splitStateUnknown || holdBlocked}
                 loading={approveMut.isPending}
                 data-testid="apps-offsite-approve-confirm"
               >

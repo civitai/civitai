@@ -200,6 +200,11 @@ type SearchQueryRuleModActivity = {
   activity: 'dryRun';
 };
 
+type PublishRequestHoldModActivity = {
+  entityType: 'publishRequestHold';
+  activity: 'publishRequestHoldOverride';
+};
+
 type CsamReportModActivity = {
   entityType: 'csamReport';
   activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
@@ -208,6 +213,7 @@ type CsamReportModActivity = {
 type ModActivity = {
   entityId?: number | number[];
 } & (
+  | PublishRequestHoldModActivity
   | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity
@@ -259,7 +265,7 @@ export async function trackModActivity(
   if (input.entityId && !Array.isArray(input.entityId)) input.entityId = [input.entityId];
   await client.$executeRaw`
     INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
-    SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId})
+    SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId}::int[])
     ON CONFLICT DO NOTHING
   `;
 }

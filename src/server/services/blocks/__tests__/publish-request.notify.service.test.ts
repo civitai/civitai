@@ -74,6 +74,15 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
     },
   });
   const db = { read: makeDb(), write: makeDb() };
+  // approveRequest's final step runs in a transaction that writes the request and the block.
+  db.write.$transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+    fn({
+      ...db.write,
+      $queryRaw: async () => [],
+      $executeRaw: async () => 0,
+      $executeRawUnsafe: async () => 0,
+    })
+  );
   const s3 = {
     send: vi.fn(async () => ({
       Body: { transformToByteArray: async () => holder.zipBytes },
