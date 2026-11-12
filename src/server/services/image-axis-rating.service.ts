@@ -19,8 +19,8 @@ const axisLevel = (prefix: 'S' | 'V') =>
 // Only what is stored is read; the rest of the rater's output is not ours to keep.
 const ratingV2Schema = z.object({
   status: z.literal('ok'),
-  modelRef: z.string().min(1),
-  checkpointSha256: z.string().min(1),
+  modelRef: z.string().min(1).max(200),
+  checkpointSha256: z.string().min(1).max(200),
   sexual: axisLevel('S'),
   violence: axisLevel('V'),
 });
@@ -49,7 +49,8 @@ export function combineFrameAxes(frames: (RatingAxes | undefined)[]): RatingAxes
 
 /**
  * Stores a scan's axes. A moderator row is never overwritten, and an older workflow never replaces
- * a newer one, so a redelivered webhook is a no-op. The sexual high-water only rises here.
+ * a newer one's levels, so a redelivered webhook is a no-op. The sexual high-water only rises here,
+ * and does so even for a late, older result.
  * Never throws: this is a shadow write and must not fail the scan.
  */
 export async function writeRatedAxes({
@@ -68,6 +69,7 @@ export async function writeRatedAxes({
     // The completion time orders results; without it a late older result could replace a newer one.
     if (!completedAt) throw new Error('workflow has no completedAt');
     const ratedAt = new Date(completedAt);
+    if (Number.isNaN(ratedAt.getTime())) throw new Error(`invalid completedAt: ${completedAt}`);
 
     await dbWrite.$executeRaw`
       INSERT INTO "ImageAxisRating" AS r (
@@ -79,15 +81,17 @@ export async function writeRatedAxes({
         ${axes.rater}, ${axes.raterVersion}, ${ratedAt}, ${workflowId}
       )
       ON CONFLICT ("imageId") DO UPDATE SET
-        "sexualLevel" = EXCLUDED."sexualLevel",
+        "sexualLevel" = CASE WHEN EXCLUDED."ratedAt" > r."ratedAt" THEN EXCLUDED."sexualLevel" ELSE r."sexualLevel" END,
         "sexualHighWater" = GREATEST(r."sexualHighWater", EXCLUDED."sexualLevel"),
-        "violenceLevel" = EXCLUDED."violenceLevel",
-        "rater" = EXCLUDED."rater",
-        "raterVersion" = EXCLUDED."raterVersion",
-        "ratedAt" = EXCLUDED."ratedAt",
-        "workflowId" = EXCLUDED."workflowId",
+        "violenceLevel" = CASE WHEN EXCLUDED."ratedAt" > r."ratedAt" THEN EXCLUDED."violenceLevel" ELSE r."violenceLevel" END,
+        "rater" = CASE WHEN EXCLUDED."ratedAt" > r."ratedAt" THEN EXCLUDED."rater" ELSE r."rater" END,
+        "raterVersion" = CASE WHEN EXCLUDED."ratedAt" > r."ratedAt" THEN EXCLUDED."raterVersion" ELSE r."raterVersion" END,
+        "workflowId" = CASE WHEN EXCLUDED."ratedAt" > r."ratedAt" THEN EXCLUDED."workflowId" ELSE r."workflowId" END,
+        "ratedAt" = GREATEST(r."ratedAt", EXCLUDED."ratedAt"),
         "updatedAt" = now()
-      WHERE r."source" <> 'moderator' AND EXCLUDED."ratedAt" > r."ratedAt"
+      -- A late, older result still raises the high-water; it replaces nothing else.
+      WHERE r."source" <> 'moderator'
+        AND (EXCLUDED."ratedAt" > r."ratedAt" OR EXCLUDED."sexualLevel" > r."sexualHighWater")
     `;
   } catch (error) {
     logToAxiom(

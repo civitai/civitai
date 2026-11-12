@@ -642,6 +642,7 @@ describe('parseImageScanningSteps rating axes', () => {
   it.each([
     ['a frame is unrated', ratedFrame(undefined)],
     ['frames come from different checkpoints', ratedFrame(ratingV2({ checkpointSha256: 'beef' }))],
+    ['frames come from different raters', ratedFrame(ratingV2({ modelRef: 'other-rater' }))],
   ])('gives a video no axes when %s', (_, other) => {
     expect(axesOf([frames(ratedFrame(ratingV2()), other)])).toBeUndefined();
   });

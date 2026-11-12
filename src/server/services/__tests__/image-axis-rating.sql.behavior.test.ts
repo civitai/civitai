@@ -17,6 +17,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof Flipt>()),
   isFlipt: mockIsFlipt,
 }));
+const { FLIPT_FEATURE_FLAGS } = await import('~/server/flipt/client');
 const { writeRatedAxes, setModeratorAxes } = await import(
   '~/server/services/image-axis-rating.service'
 );
@@ -111,7 +112,13 @@ describe('writeRatedAxes', () => {
 
   it('never overwrites a moderator row', async () => {
     await setModeratorAxes({ imageId: 1, sexual: 0, violence: 0, moderatorId: 42 });
-    await scan(4, 59, 'wf-late', 4);
+    // Later than the moderator's now(), so only the moderator guard can stop it.
+    await writeRatedAxes({
+      imageId: 1,
+      axes: axes(4, 4),
+      workflowId: 'wf-late',
+      completedAt: new Date('2099-01-01T00:00:00Z'),
+    });
     expect(await row()).toMatchObject({
       source: 'moderator',
       sexualLevel: 0,
@@ -121,21 +128,40 @@ describe('writeRatedAxes', () => {
     });
   });
 
-  it('ignores a redelivered workflow and one older than the stored result', async () => {
-    await scan(2, 10, 'wf-new');
+  it('ignores a redelivered workflow and an older, lower one', async () => {
+    await scan(2, 10, 'wf-new', 2);
+    await scan(2, 10, 'wf-new', 2);
+    await scan(1, 5, 'wf-old', 4);
+    expect(await row()).toMatchObject({
+      sexualLevel: 2,
+      sexualHighWater: 2,
+      violenceLevel: 2,
+      workflowId: 'wf-new',
+    });
+  });
+
+  // Arrival order must not decide the high-water: a late result still rated what it rated.
+  it('lets an older, higher result raise only the high-water', async () => {
     await scan(2, 10, 'wf-new');
     await scan(4, 5, 'wf-old', 4);
     expect(await row()).toMatchObject({
       sexualLevel: 2,
-      sexualHighWater: 2,
+      sexualHighWater: 4,
       violenceLevel: 0,
       workflowId: 'wf-new',
     });
   });
 
-  it('writes nothing while the flag is off', async () => {
+  it('writes nothing while the flag is off for the image', async () => {
     mockIsFlipt.mockResolvedValue(false);
     await scan(2, 0);
+    expect(await row()).toBeUndefined();
+    expect(mockIsFlipt).toHaveBeenCalledWith(FLIPT_FEATURE_FLAGS.IMAGE_AXIS_SHADOW_WRITE, '1');
+  });
+
+  it('resolves, writing nothing, when Flipt is unreachable', async () => {
+    mockIsFlipt.mockRejectedValue(new Error('flipt down'));
+    await expect(scan(2, 0)).resolves.toBeUndefined();
     expect(await row()).toBeUndefined();
   });
 

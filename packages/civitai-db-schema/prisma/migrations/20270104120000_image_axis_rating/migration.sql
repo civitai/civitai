@@ -1,5 +1,20 @@
 -- Rating axes of an image (sexual, violence, language) from an axis-capable rater, or a moderator.
 -- Additive: a new type and a new empty table; "Image" itself is not altered.
+--
+-- ORDER: deploy the release first, with image-axis-shadow-write off; it tolerates the missing table.
+-- Apply this, check the grants, then turn the flag on.
+--
+-- The foreign key locks "Image" briefly. A lock timeout rolls everything back; re-run the file as
+-- is, at a quieter moment if it times out again.
+--
+-- GRANTS, A REQUIRED STEP. Unless new tables are granted to the app roles automatically in this
+-- environment, run after this file, with the environment's actual role names:
+--   GRANT SELECT, INSERT, UPDATE ON "ImageAxisRating" TO <app_write_role>;
+-- and check it with has_table_privilege('<role>', '"ImageAxisRating"', '<privilege>'). The shadow
+-- write upserts; nothing reads the table yet. Without the grant every write fails and is only logged.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
 CREATE TYPE "ImageAxisSource" AS ENUM ('rated', 'moderator');
 
 CREATE TABLE "ImageAxisRating" (
@@ -27,13 +42,12 @@ CREATE TABLE "ImageAxisRating" (
   ),
   CONSTRAINT "ImageAxisRating_high_water_check" CHECK (
     "sexualHighWater" IS NULL OR "sexualLevel" IS NULL OR "sexualHighWater" >= "sexualLevel"
-  )
+  ),
+  CONSTRAINT "ImageAxisRating_imageId_fkey" FOREIGN KEY ("imageId") REFERENCES "Image"("id")
+    ON DELETE CASCADE ON UPDATE CASCADE
 );
-
--- NOT VALID then VALIDATE: the lock on "Image" is held only for the brief catalog change.
-ALTER TABLE "ImageAxisRating" ADD CONSTRAINT "ImageAxisRating_imageId_fkey"
-  FOREIGN KEY ("imageId") REFERENCES "Image"("id") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;
-ALTER TABLE "ImageAxisRating" VALIDATE CONSTRAINT "ImageAxisRating_imageId_fkey";
 
 -- Migration-only: Prisma does not model partial indexes.
 CREATE INDEX "ImageAxisRating_rated_idx" ON "ImageAxisRating" ("imageId") WHERE "source" = 'rated';
+
+COMMIT;
