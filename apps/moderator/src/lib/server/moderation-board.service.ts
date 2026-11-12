@@ -81,6 +81,8 @@ const MOD_ACTIVITY_LABELS: Record<string, string> = {
   setNsfwLevelKono: 'ratings (KoNO)',
   resolveAppeal: 'appeals',
   ratingReview: 'rating disputes',
+  clearMinor: 'minor flags cleared',
+  minorQueueAccept: 'minor-queue accepts',
   [PURGE_UNCONFIRMED_ACTIVITY]: activityLabel(PURGE_UNCONFIRMED_ACTIVITY).toLowerCase(),
 };
 
