@@ -37,11 +37,6 @@ export function getSysRedis(): RedisSysClient | null {
   return _sysRedis;
 }
 
-/** The clients built so far, without building any (readiness must not open connections). */
-export function peekRedisClients(): { cache: RedisCacheClient | null; sys: RedisSysClient | null } {
-  return { cache: _redis ?? null, sys: _sysRedis ?? null };
-}
-
 /** Run a Lua script on the sys redis (its typed facade doesn't expose `eval`). Null when it isn't configured. */
 export async function evalSys(script: string, keys: string[], args: string[]): Promise<unknown> {
   const sys = getSysRedis() as unknown as EvalCapableClient | null;
