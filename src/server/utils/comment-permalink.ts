@@ -43,7 +43,11 @@ export type CommentThreadTarget = {
  * Entity types with no public route. They fall to `threadUrlMap`'s `'comment'` fallback in the
  * notification SQL and are unaddressable BY DESIGN; listed so the set is a decision, not a gap.
  */
-export const UNADDRESSABLE_ENTITY_TYPES = ['model3dReview'] as const;
+export const UNADDRESSABLE_ENTITY_TYPES = [
+  'model3dReview',
+  // A storyline text's thread has no route yet, and its surface refuses every comment.
+  'postText',
+] as const;
 
 /**
  * The entity target for a comment, or `null` when it cannot be addressed.
