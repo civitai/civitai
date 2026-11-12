@@ -20,7 +20,9 @@ vi.mock('~/utils/metadata/audit-base', async (importOriginal) => {
   };
 });
 
-const { CustomSearchBox } = await import('~/components/Search/CustomSearchComponents');
+const { CustomSearchBox, searchBoxFor } = await import(
+  '~/components/Search/CustomSearchComponents'
+);
 
 // Longer than the box's 300 ms debounce, so a per-keystroke search would have gone out by then.
 const PAST_DEBOUNCE_MS = 700;
@@ -128,7 +130,7 @@ describe('CustomSearchBox submitOnly', () => {
   test('without it, typing searches after the debounce', async () => {
     const client = renderBox(false);
     await typeQuery('rainy neon street');
-    expect(client.queries).toContain('rainy neon street');
+    await expect.poll(() => client.queries).toContain('rainy neon street');
   });
 
   test('a blocked word is not sent on Enter or blur', async () => {
@@ -147,5 +149,31 @@ describe('CustomSearchBox submitOnly', () => {
     await typeQuery('blockedterm street');
     await userEvent.keyboard('{Enter}');
     await expect.poll(() => client.queries).toEqual(['blockedterm street']);
+  });
+});
+
+// The search page picks its box by index: only an image index waits for Enter.
+describe('searchBoxFor', () => {
+  function renderPageBox(indexName: string) {
+    const client = createRecordingClient();
+    const SearchBox = searchBoxFor(indexName);
+    renderWithProviders(
+      <InstantSearch searchClient={client.searchClient} indexName={indexName}>
+        <SearchBox isMobile={false} />
+      </InstantSearch>
+    );
+    return client;
+  }
+
+  test('the images index sends nothing while typing', async () => {
+    const client = renderPageBox('images_v6');
+    await typeQuery('rainy neon street');
+    expect(client.queries).toEqual([]);
+  });
+
+  test('another index searches after the debounce', async () => {
+    const client = renderPageBox('models_v9');
+    await typeQuery('rainy neon street');
+    await expect.poll(() => client.queries).toContain('rainy neon street');
   });
 });

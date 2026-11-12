@@ -42,6 +42,7 @@ import { useSearchFocusHotkeys } from '~/hooks/useSearchFocusHotkeys';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
+import { isImageSearchIndex } from '~/components/Search/semanticImageSearchClient';
 import { uniqBy } from 'lodash-es';
 import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
@@ -342,11 +343,11 @@ export const CustomSearchBox = forwardRef<
     if (text !== query && canSearch) refine(text);
   };
 
-  // On mobile the box sits in the header's search overlay, and the blur is what closes it (and, with
-  // `submitOnly`, what searches), so Enter there leaves through the blur.
+  // On mobile the box sits in the header's search overlay, and the blur is what closes it and
+  // searches, so Enter there leaves through the blur.
   const submitSearch = () => {
     if (isMobile) blurInput();
-    if (!isMobile || !submitOnly) refineSearch(search);
+    else refineSearch(search);
   };
 
   useEffect(() => {
@@ -375,10 +376,11 @@ export const CustomSearchBox = forwardRef<
         if (submitOnly) refineSearch(search);
         onSearchDone?.(e);
       }}
+      onSubmit={onSearchDone}
       ref={inputRef}
       onKeyDown={getHotkeyHandler([
         ['esc', blurInput],
-        ['Enter', submitSearch],
+        ...(submitOnly ? [['Enter', submitSearch] as [string, () => void]] : []),
       ])}
       rightSection={
         !isMobile && (
@@ -419,6 +421,19 @@ export const CustomSearchBox = forwardRef<
 });
 
 CustomSearchBox.displayName = 'CustomSearchBox';
+
+function renderSearchBox(props: RenderSearchComponentProps) {
+  return <CustomSearchBox {...props} />;
+}
+
+function renderSubmitOnlySearchBox(props: RenderSearchComponentProps) {
+  return <CustomSearchBox {...props} submitOnly />;
+}
+
+/** The search page's box for an index: an image search runs on submit only. */
+export function searchBoxFor(indexName: string) {
+  return isImageSearchIndex(indexName) ? renderSubmitOnlySearchBox : renderSearchBox;
+}
 
 export function DateRangeRefinement({ title, ...props }: RangeInputProps & { title: string }) {
   const { start: active, range, refine } = useRange({ ...props });

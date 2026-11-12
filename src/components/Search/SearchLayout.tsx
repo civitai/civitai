@@ -7,10 +7,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
-import {
-  isImageSearchIndex,
-  withSemanticImageSearch,
-} from '~/components/Search/semanticImageSearchClient';
+import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
@@ -22,8 +19,7 @@ import type { SearchIndex } from '~/components/Search/parsers/base';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { Configure, InstantSearch, useInstantSearch } from 'react-instantsearch';
 import { SEARCH_HITS_PER_PAGE } from '~/components/Search/search.constants';
-import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
-import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
+import { searchBoxFor } from '~/components/Search/CustomSearchComponents';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
 import * as z from 'zod';
@@ -79,15 +75,6 @@ function SearchStateMonitor({ onQueryChange }: { onQueryChange: (query: string) 
   }, [uiState, onQueryChange]);
 
   return null;
-}
-
-function renderSearchComponent(props: RenderSearchComponentProps) {
-  return <CustomSearchBox {...props} />;
-}
-
-// Each image search is an embedding plus a Qdrant query, so it runs on submit, not per keystroke.
-function renderImageSearchComponent(props: RenderSearchComponentProps) {
-  return <CustomSearchBox {...props} submitOnly />;
 }
 
 const searchQuerySchema = z.looseObject({
@@ -169,9 +156,7 @@ export function SearchLayout({
         <Configure hitsPerPage={SEARCH_HITS_PER_PAGE} attributesToHighlight={[]} />
         <SearchStateMonitor onQueryChange={handleQueryChange} />
         <AppLayout
-          renderSearchComponent={
-            isImageSearchIndex(indexName) ? renderImageSearchComponent : renderSearchComponent
-          }
+          renderSearchComponent={searchBoxFor(indexName)}
           scrollable={isMobile ? !sidebarOpen : true}
           left={leftSidebar}
         >

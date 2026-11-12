@@ -61,7 +61,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  return { ...actual, useFeatureFlags: () => new Proxy({}, { get: () => true }) };
+  // With the feed search off: the header opens the image search page rather than filtering a feed.
+  return {
+    ...actual,
+    useFeatureFlags: () => new Proxy({}, { get: (_, key) => key !== 'feedSearch' }),
+  };
 });
 vi.mock('~/providers/BrowsingSettingsAddonsProvider', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
