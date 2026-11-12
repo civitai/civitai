@@ -721,9 +721,8 @@ export type AccessibleAppBlocks = {
  * Enumerate every AppBlock the caller may act on, split by how.
  *
  * 🔴 THIS IS THE ONLY SAFE INPUT TO AN EARNINGS OR ANALYTICS QUERY FOR A NON-OWNER.
- * The pre-existing earnings reads (`getRevenueForOwner`,
- * `getRecentAttributionsForOwner`, `getMyApps`' lifetime groupBy) key on
- * `BlockBuzzAttribution.appOwnerUserId` — a USER-WIDE filter. "Widening" one of those
+ * The owner earnings reads (`getAuthorFeeEarningsForOwner`, `getGoodsSalesForOwner`) key on
+ * the snapshotted `appOwnerUserId` — a USER-WIDE filter. "Widening" one of those
  * for an editor by passing the OWNER's id would hand the editor the owner's ENTIRE
  * PORTFOLIO, including apps they were never invited to. Every collaborator-reachable
  * money/analytics read must instead filter `appBlockId IN allIds`. See

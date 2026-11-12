@@ -116,6 +116,17 @@ describe('AppEarningsPanelView', () => {
     expect(page.getByText(/attributed to you/).elements()).toHaveLength(0);
   });
 
+  test('an older API payload without authorFees/goods says could-not-load, never zero', async () => {
+    const payload: Record<string, unknown> = { ...ok() };
+    delete payload.authorFees;
+    delete payload.goods;
+    renderWithProviders(<AppEarningsPanelView data={payload as AppEarningsResult} />);
+    await expect.element(page.getByTestId('author-fees-unavailable')).toBeInTheDocument();
+    await expect.element(page.getByTestId('goods-unavailable')).toBeInTheDocument();
+    expect(page.getByTestId('author-fees-empty').elements()).toHaveLength(0);
+    expect(page.getByTestId('goods-share-buzz').elements()).toHaveLength(0);
+  });
+
   test('an EDITOR is told the figures are shared with everyone seated on the app', async () => {
     renderWithProviders(<AppEarningsPanelView data={ok({ role: 'editor' })} />);
     await expect

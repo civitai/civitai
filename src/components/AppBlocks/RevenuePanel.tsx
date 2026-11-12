@@ -148,7 +148,7 @@ type RevenueData = {
  * payload" and "could not be read" are the same fact from the reader's side and
  * neither is a measurement of zero sales.
  */
-const GOODS_ABSENT: GoodsShape = {
+export const GOODS_ABSENT: GoodsShape = {
   sales: {
     count: 0,
     grossBuzz: 0,
@@ -196,7 +196,7 @@ const AUTHOR_FEE_PAYOUT_COPY =
   'Viewers pay your author fee when they run a generation in your app. Fees are paid into your Buzz account once a day: the fees for each day settle in a daily batch after that day ends, in the Buzz type the viewer paid with.';
 
 const AUTHOR_FEE_PENDING_TOOLTIP =
-  'Charged to viewers and not yet paid to you. A fee whose generation fails is refunded to the viewer and removed from this figure.';
+  'Charged to viewers and not yet paid to you. If a generation fails on the same UTC day its fee was charged, the fee is refunded to the viewer and removed from this figure. After that day ends, the fee is no longer reversed.';
 
 const AUTHOR_FEE_BLUE_CAVEAT =
   'Some of these fees were paid with Blue Buzz. You receive those as Blue Buzz, which cannot be withdrawn.';

@@ -1,9 +1,10 @@
 import { Alert, Center, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle, IconCoin } from '@tabler/icons-react';
 
-import { AuthorFeeCard, GoodsSalesCard } from '~/components/AppBlocks/RevenuePanel';
+import { AuthorFeeCard, GOODS_ABSENT, GoodsSalesCard } from '~/components/AppBlocks/RevenuePanel';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import type { AppEarningsResult } from '~/server/services/blocks/app-collaborator-earnings.service';
+import type { AuthorFeeEarnings } from '~/server/services/blocks/author-fee-earnings.service';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -121,13 +122,16 @@ export function AppEarningsPanelView({
 
   return (
     <Stack gap="md" data-testid="apps-earnings-panel">
+      {/* `data` is a wire payload: an API process older than this bundle omits both keys.
+          Absent author fees render as "could not be loaded" and absent goods as the
+          unreadable shape, never as zeros. */}
       <AuthorFeeCard
-        authorFees={data.authorFees}
+        authorFees={data.authorFees as AuthorFeeEarnings | undefined}
         scoped
         emptyText="No author fees on this app yet."
       />
       <GoodsSalesCard
-        goods={data.goods}
+        goods={data.goods ?? GOODS_ABSENT}
         scoped
         emptyText="No digital goods sales on this app yet."
       />
