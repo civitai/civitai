@@ -91,3 +91,63 @@ describe('createLagTracker', () => {
     expect(thunk).toHaveBeenCalledTimes(1); // resolved once, then memoized
   });
 });
+
+// The flag read sits in front of model/post page reads. A store that is down must not hold them:
+// a missing flag already means "read the replica", so an unreadable one means the same, promptly.
+describe('createLagTracker — flag store unavailable', () => {
+  const HUNG = Symbol('hung');
+  const within = <T>(p: Promise<T>, ms: number) =>
+    Promise.race([p, new Promise<typeof HUNG>((r) => setTimeout(() => r(HUNG), ms))]);
+
+  function storeWith(get: LagStore['get']): LagStore {
+    return { get, set: async () => undefined };
+  }
+
+  it('a rejecting store reads as fresh (replica) and reports the failure', async () => {
+    const onReadFailure = vi.fn();
+    const tracker = createLagTracker({
+      store: storeWith(() => Promise.reject(new Error('store down'))),
+      delaySeconds: 5,
+      onReadFailure,
+    });
+
+    await expect(within(tracker.isStale('k'), 2000)).resolves.toBe(false);
+    expect(onReadFailure).toHaveBeenCalledWith('error', expect.any(Error));
+  });
+
+  it('a store that never answers reads as fresh within 450ms by default', async () => {
+    const onReadFailure = vi.fn();
+    const tracker = createLagTracker({
+      store: storeWith(() => new Promise(() => {})),
+      delaySeconds: 5,
+      onReadFailure,
+    });
+
+    const started = Date.now();
+    await expect(within(tracker.isStale('k'), 2000)).resolves.toBe(false);
+    expect(Date.now() - started).toBeLessThan(450);
+    expect(onReadFailure).toHaveBeenCalledWith('timeout', expect.any(Error));
+  });
+
+  it('readTimeoutMs bounds the wait at the value given', async () => {
+    const tracker = createLagTracker({
+      store: storeWith(() => new Promise(() => {})),
+      delaySeconds: 5,
+      readTimeoutMs: 30,
+    });
+
+    const started = Date.now();
+    await expect(within(tracker.isStale('k'), 2000)).resolves.toBe(false);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  it('a slow store that answers inside the bound still routes to the primary', async () => {
+    const tracker = createLagTracker({
+      store: storeWith(() => new Promise((r) => setTimeout(() => r('true'), 20))),
+      delaySeconds: 5,
+      readTimeoutMs: 500,
+    });
+
+    await expect(tracker.isStale('k')).resolves.toBe(true);
+  });
+});
