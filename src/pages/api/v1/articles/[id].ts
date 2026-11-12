@@ -104,7 +104,7 @@ export default MixedAuthEndpoint(async function handler(
     }
 
     // The page reads more of each content image to guard it; the documented payload keeps these three.
-    const contentImages = publicArticle.contentImages.map(({ id, url, ingestion }) => ({
+    const contentImages = publicArticle.contentImages?.map(({ id, url, ingestion }) => ({
       id,
       url,
       ingestion,
