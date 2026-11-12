@@ -102,6 +102,38 @@ export function buildApproveCommitMessage(input: ApproveProvenanceInput): string
   return `${subject}\n\n${trailers.map(([k, v]) => `${k}: ${v}`).join('\n')}\n`;
 }
 
+// One git trailer line as buildApproveCommitMessage writes it: `Key: value`, no spaces in the value.
+const TRAILER_LINE = /^([A-Za-z0-9-]+): ([\x21-\x7e]+)$/;
+
+/**
+ * The publish request an approve commit's message names, or null when the message is not in the
+ * shape buildApproveCommitMessage writes. The git-push webhook uses this to recognise the
+ * platform's own approve commit (it also checks who pushed it: a message alone is text anyone with
+ * write access can type).
+ *
+ * Strict on purpose: the subject must name the request, the message's final paragraph must be all
+ * trailer lines, and it must carry exactly one `Publish-Request` equal to the subject's id. A
+ * message that is merely close is not an approve commit.
+ */
+export function approveCommitRequestId(message: unknown): string | null {
+  if (typeof message !== 'string') return null;
+  const lines = message.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n');
+  const lastBlank = lines.lastIndexOf('');
+  // A subject, at least one blank line, then a non-empty trailer paragraph.
+  if (lastBlank < 1 || lastBlank === lines.length - 1) return null;
+  const ids: string[] = [];
+  for (const line of lines.slice(lastBlank + 1)) {
+    const m = TRAILER_LINE.exec(line);
+    if (!m) return null;
+    if (m[1] === 'Publish-Request') ids.push(m[2]);
+  }
+  if (ids.length !== 1) return null;
+  const [id] = ids;
+  if (!PUBLISH_REQUEST_ID.test(id)) return null;
+  if (!lines[0].startsWith(`Approved publish request ${id} — `)) return null;
+  return id;
+}
+
 /** The version tag for an approved version, or null when the version cannot name a tag. */
 export function versionTagName(version: string): string | null {
   return SEMVER.test(version) ? `v${version}` : null;
