@@ -86,11 +86,13 @@ beforeEach(() => {
   mockHGetAll.mockReset();
   mockWithSysReadDeadline.mockReset();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
-  // Each test starts as a fresh process: nothing read before. Optional-called so the file also
-  // runs against a build without the last-known state (where there is nothing to reset).
-  (
-    generationService as { __resetGenerationConfigLastKnownForTests?: () => void }
-  ).__resetGenerationConfigLastKnownForTests?.();
+  // Each test starts as a fresh process: nothing read before. Looked up by key (a mocked module
+  // throws on reading an export it lacks) so the file also runs against a build without the
+  // last-known state, where there is nothing to reset.
+  const reset = Object.entries(generationService).find(
+    ([name]) => name === '__resetGenerationConfigLastKnownForTests'
+  )?.[1] as (() => void) | undefined;
+  reset?.();
 });
 
 const hiddenRule = {
