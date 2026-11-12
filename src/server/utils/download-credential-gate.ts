@@ -73,7 +73,8 @@ export function downloadCredentialGate(
 
   let effectiveUser = user;
   if (user?.isModerator && !isFullScopeUserKey(context)) {
-    if (user.id === constants.system.user.id) logInternalModeratorKey(context);
+    if (user.id === constants.system.user.id && context?.subject?.type === 'apiKey')
+      logInternalModeratorKey(context);
     else effectiveUser = { ...user, isModerator: false };
   }
   const scope = context?.tokenScope;

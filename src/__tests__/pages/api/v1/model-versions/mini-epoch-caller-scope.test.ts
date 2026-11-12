@@ -394,3 +394,29 @@ describe('mini/[id], the primary file hidden from the caller', () => {
     expect(picks).toEqual(['hidden-primary', 'primary']);
   });
 });
+
+describe('mini/[id], the system account', () => {
+  const system = { id: -1, username: 'civitai', isModerator: true };
+
+  it('is not a moderator by an OAuth token', async () => {
+    h.variants['mini-epoch-caller-gate'] = 'enforce';
+    await request({ user: system, context: bearer(TokenScope.Full, 'oauth') }, [TRAINING_FILE]);
+    expect(callerClass()).toEqual(['other']);
+  });
+
+  it('gets no moderation block by a key the scope gate refuses under enforce', async () => {
+    const refused = await request(
+      { user: system, context: bearer(TokenScope.UserRead, 'apiKey') },
+      [PUBLIC_FILE]
+    );
+    expect(refused.status).toBe(200);
+    expect(refused.body).not.toHaveProperty('moderation');
+
+    // Control: with the route scope it keeps the moderator view.
+    const allowed = await request(
+      { user: system, context: bearer(TokenScope.ModelsRead, 'apiKey') },
+      [PUBLIC_FILE]
+    );
+    expect(allowed.body).toHaveProperty('moderation');
+  });
+});

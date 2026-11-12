@@ -153,7 +153,6 @@ export default MixedAuthEndpoint(async function handler(
   const credential = orchestrator
     ? { outcome: 'session' as const, effectiveUser: sessionUser }
     : downloadCredentialGate(req, sessionUser, MINI_SCOPES);
-  const user = credential.effectiveUser;
   // Read only where the answer depends on it, so the flag and its log see the epoch arm alone.
   let scopeRefused: Promise<boolean> | undefined;
   const isScopeRefused = () =>
@@ -161,6 +160,11 @@ export default MixedAuthEndpoint(async function handler(
       credential.outcome === 'refused'
         ? scopeRefusalMode(req, MINI_ROUTE, MINI_SCOPES).then((mode) => mode === 'enforce')
         : Promise.resolve(false));
+  // A credential the scope gate refuses carries no moderator rights here either.
+  const user =
+    credential.effectiveUser?.isModerator && (await isScopeRefused())
+      ? { ...credential.effectiveUser, isModerator: false }
+      : credential.effectiveUser;
 
   const results = schema.safeParse(req.query);
   if (!results.success)
