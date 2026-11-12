@@ -315,8 +315,12 @@ export const BrowsingLevelFilter = ({
 
 export const CustomSearchBox = forwardRef<
   { focus: () => void },
-  SearchBoxProps & RenderSearchComponentProps
->(({ isMobile, onSearchDone, ...props }, ref) => {
+  SearchBoxProps &
+    RenderSearchComponentProps & {
+      /** Search on Enter or on blur, never as the user types — for an index where each search is costly. */
+      submitOnly?: boolean;
+    }
+>(({ isMobile, onSearchDone, submitOnly, ...props }, ref) => {
   const currentUser = useCurrentUser();
   const { query, refine } = useSearchBox({ ...props });
   const [search, setSearch] = useState(query);
@@ -333,14 +337,13 @@ export const CustomSearchBox = forwardRef<
     focus: focusInput,
   }));
 
+  const refineSearch = (text: string) => {
+    const canSearch = currentUser?.isModerator || !getBlockedNsfwWords(text).length;
+    if (text !== query && canSearch) refine(text);
+  };
+
   useEffect(() => {
-    const canSearch = !currentUser?.isModerator
-      ? !getBlockedNsfwWords(debouncedSearch).length
-      : true;
-    if (debouncedSearch !== query && canSearch) {
-      refine(debouncedSearch);
-      // config.refine(getBlockedPromptFilters(debouncedSearch));
-    }
+    if (!submitOnly) refineSearch(debouncedSearch);
   }, [debouncedSearch]);
 
   useEffect(() => {
@@ -361,10 +364,16 @@ export const CustomSearchBox = forwardRef<
       onChange={(e) => setSearch(e.target.value)}
       value={search}
       placeholder="Search..."
-      onBlur={onSearchDone}
+      onBlur={(e) => {
+        if (submitOnly) refineSearch(search);
+        onSearchDone?.(e);
+      }}
       onSubmit={onSearchDone}
       ref={inputRef}
-      onKeyDown={getHotkeyHandler([['esc', blurInput]])}
+      onKeyDown={getHotkeyHandler([
+        ['esc', blurInput],
+        ['Enter', () => refineSearch(search)],
+      ])}
       rightSection={
         !isMobile && (
           <HoverCard withArrow width={300} shadow="sm" openDelay={500}>

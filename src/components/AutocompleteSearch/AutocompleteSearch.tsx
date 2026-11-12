@@ -300,6 +300,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
+  // Each image search is an embedding plus a Qdrant query: the dropdown never runs one as the user
+  // types. Enter (or the search row) opens the search page, which runs it once.
+  const submitOnly = indexNameProp === 'images';
 
   const { trackSearch, trackAction } = useTrackEvent();
   // The resilient search client swallows Meili comm errors (so they never reach
@@ -401,6 +404,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       ];
     }
 
+    if (submitOnly) {
+      return search ? [{ key: 'search', value: search, hit: null as any, label: search }] : [];
+    }
+
     if (status === 'stalled') {
       return []; // Wait it out
     }
@@ -425,7 +432,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
 
     return items;
-  }, [status, searchErrorState, filtered, results?.nbHits, query, showSfwFace]);
+  }, [status, searchErrorState, filtered, results?.nbHits, query, showSfwFace, submitOnly, search]);
 
   // Track profanity search separately to avoid side effects in useMemo
   useEffect(() => {
@@ -565,6 +572,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       router.push(air);
       return;
     }
+    if (submitOnly) return;
 
     const { query: cleanedSearch, filters } = parseQuery(indexName, debouncedSearch);
 
@@ -701,6 +709,18 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                   Please try again later
                 </Text>
               </Stack>
+            );
+          }
+
+          if (key === 'search') {
+            return (
+              <Group gap="xs" wrap="nowrap" className="w-full">
+                <IconSearch size={16} className="shrink-0" />
+                <Text size="sm" lineClamp={1} className="flex-1">
+                  Search images for &ldquo;{item.value}&rdquo;
+                </Text>
+                <Code>Enter</Code>
+              </Group>
             );
           }
 

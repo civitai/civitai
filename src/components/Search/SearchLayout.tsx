@@ -17,7 +17,10 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
-import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
+import {
+  isImageSearchIndex,
+  withSemanticImageSearch,
+} from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
@@ -93,6 +96,11 @@ function SearchStateMonitor({ onQueryChange }: { onQueryChange: (query: string) 
 
 function renderSearchComponent(props: RenderSearchComponentProps) {
   return <CustomSearchBox {...props} />;
+}
+
+// Each image search is an embedding plus a Qdrant query, so it runs on submit, not per keystroke.
+function renderImageSearchComponent(props: RenderSearchComponentProps) {
+  return <CustomSearchBox {...props} submitOnly />;
 }
 
 const searchQuerySchema = z.looseObject({
@@ -229,7 +237,9 @@ export function SearchLayout({
         <Configure hitsPerPage={SEARCH_HITS_PER_PAGE} attributesToHighlight={[]} />
         <SearchStateMonitor onQueryChange={handleQueryChange} />
         <AppLayout
-          renderSearchComponent={renderSearchComponent}
+          renderSearchComponent={
+            isImageSearchIndex(indexName) ? renderImageSearchComponent : renderSearchComponent
+          }
           scrollable={isMobile ? !sidebarOpen : true}
           left={leftSidebar}
         >
