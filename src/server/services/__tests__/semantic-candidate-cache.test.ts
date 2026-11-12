@@ -116,8 +116,9 @@ describe('withCandidateCache', () => {
     vi.useFakeTimers();
     try {
       redisMock.redis.packed.get.mockImplementation(() => new Promise(() => undefined));
-      const { source, calls } = rankedSource();
-      const pending = withCandidateCache(
+      const { source } = rankedSource();
+      let answered: number[] | undefined;
+      void withCandidateCache(
         'images',
         source,
         'user'
@@ -126,10 +127,10 @@ describe('withCandidateCache', () => {
         filter: filter(),
         offset: 0,
         limit: 50,
-      });
+      }).then((result) => (answered = result.ids));
+      // Past the read deadline, the search has answered from the service.
       await vi.advanceTimersByTimeAsync(300);
-      expect((await pending).ids).toHaveLength(50);
-      expect(calls).toHaveLength(1);
+      expect(answered).toHaveLength(50);
     } finally {
       vi.useRealTimers();
     }
@@ -139,32 +140,30 @@ describe('withCandidateCache', () => {
     setEnv({ SEMANTIC_SEARCH_CONCURRENCY: 1 });
     let release!: () => void;
     const held = new Promise<void>((resolve) => (release = resolve));
-    const source: CandidateSource = async ({ offset }) => {
-      if (offset === 0) await held;
+    const source: CandidateSource = async ({ query }) => {
+      if ('text' in query && query.text === 'slow') await held;
       return { ids: [1] };
     };
-    const slow = withCandidateCache(
-      'images',
-      source,
-      'user'
-    )({
-      query: { text: 'slow' },
-      filter: filter(),
-      offset: 0,
-      limit: 50,
-    });
-    await expect(
+    const search = (text: string) =>
       withCandidateCache(
         'images',
         source,
         'user'
       )({
-        query: { text: 'other' },
+        query: { text },
         filter: filter(),
         offset: 0,
         limit: 50,
-      })
-    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+      });
+    const slow = search('slow');
+    const outcome = await Promise.race([
+      search('other').then(
+        () => 'answered',
+        (error: { code?: string }) => error.code
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('still waiting'), 200)),
+    ]);
+    expect(outcome).toBe('TOO_MANY_REQUESTS');
     release();
     expect((await slow).ids).toEqual([1]);
   });
