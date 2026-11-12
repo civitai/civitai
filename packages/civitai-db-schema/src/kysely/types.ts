@@ -3334,6 +3334,10 @@ export type FlagDay = {
    * client before it passes.
    */
   cutAt: Timestamp;
+  /**
+   * The end of the hour the cut falls in: public, unlike the cut.
+   */
+  closesAt: Timestamp;
   imageIds: number[];
   createdAt: Generated<Timestamp>;
 };

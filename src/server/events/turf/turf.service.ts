@@ -524,6 +524,8 @@ export type FlagSummary = {
   closed: boolean;
   // Only once passed: before the cut, nobody may know when it falls.
   cutAt: Date | null;
+  // The cut falls in the hour before this.
+  closesAt: Date;
   flags: {
     imageId: number;
     hatsByTeam: Record<string, number>;
@@ -587,6 +589,7 @@ export async function getFlagSummary(
     flagDayId: day.id,
     closed,
     cutAt: closed ? day.cutAt : null,
+    closesAt: day.closesAt,
     flags: day.imageIds.map((imageId) => {
       const n = playersOf.get(imageId) ?? 0;
       return {

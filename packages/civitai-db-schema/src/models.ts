@@ -3406,6 +3406,7 @@ export interface FlagDay {
   crucibleId: number;
   startsAt: Date;
   cutAt: Date;
+  closesAt: Date;
   imageIds: number[];
   createdAt: Date;
 }

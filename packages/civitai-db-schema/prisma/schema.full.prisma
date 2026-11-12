@@ -5743,6 +5743,8 @@ model FlagDay {
   /// Random within the day's last hour, so nobody can time a last-second pile-on. Never sent to a
   /// client before it passes.
   cutAt      DateTime @db.Timestamptz(3)
+  /// The end of the hour the cut falls in: public, unlike the cut.
+  closesAt   DateTime @db.Timestamptz(3)
   imageIds   Int[]
   createdAt  DateTime @default(now()) @db.Timestamptz(3)
 

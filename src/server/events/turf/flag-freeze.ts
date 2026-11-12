@@ -21,7 +21,7 @@ const leanOf = (lean: FlagsConfig['lean'], multiplier: number) =>
 export async function freezeFlagDays(event: { name: string }, flags: FlagsConfig, now: Date) {
   if (!flags.on) return 0;
   const days = await dbWrite.$queryRaw<FlagDayRow[]>`
-    SELECT id, "crucibleId", "startsAt", "cutAt", "imageIds" FROM "FlagDay" f
+    SELECT id, "crucibleId", "startsAt", "cutAt", "closesAt", "imageIds" FROM "FlagDay" f
     WHERE f.event = ${event.name} AND f."cutAt" <= ${now} AND cardinality(f."imageIds") > 0
       AND NOT EXISTS (SELECT 1 FROM "EventAwardResult" r WHERE r.event = f.event
         AND r."sourceId" = 'flag:' || f.id || ':' || f."imageIds"[1])

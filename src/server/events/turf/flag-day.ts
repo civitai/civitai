@@ -16,9 +16,11 @@ const DAY_MS = 24 * HOUR_MS;
  * A flag day's cut: a random moment in the hour before the next swap (a day after its Crucible ended),
  * or before the event ends if that comes first. Random so nobody can time a last-second pile-on.
  */
+export function flagCloseAt(crucibleEndAt: Date, eventEnd: Date) {
+  return new Date(Math.min(crucibleEndAt.getTime() + DAY_MS, eventEnd.getTime()));
+}
 export function pickCutAt(crucibleEndAt: Date, eventEnd: Date, random = randomInt) {
-  const close = Math.min(crucibleEndAt.getTime() + DAY_MS, eventEnd.getTime());
-  return new Date(close - 1 - random(HOUR_MS));
+  return new Date(flagCloseAt(crucibleEndAt, eventEnd).getTime() - 1 - random(HOUR_MS));
 }
 
 type PotSteps = FlagsConfig['pot'];
@@ -48,13 +50,14 @@ export type FlagDayRow = {
   crucibleId: number;
   startsAt: Date;
   cutAt: Date;
+  closesAt: Date;
   imageIds: number[];
 };
 
 /** The flag day showing now: the latest one started. Closed once its cutAt has passed. */
 export async function currentFlagDay(event: string, now: Date): Promise<FlagDayRow | undefined> {
   const [row] = await dbWrite.$queryRaw<FlagDayRow[]>`
-    SELECT id, "crucibleId", "startsAt", "cutAt", "imageIds" FROM "FlagDay"
+    SELECT id, "crucibleId", "startsAt", "cutAt", "closesAt", "imageIds" FROM "FlagDay"
     WHERE event = ${event} AND "startsAt" <= ${now}
     ORDER BY "startsAt" DESC LIMIT 1
   `;
@@ -98,13 +101,14 @@ export async function swapFlagDay(
   `;
   const imageIds = [...new Set(top.map((r) => r.imageId))];
   const cutAt = pickCutAt(crucible.endAt, event.endDate);
+  const closesAt = flagCloseAt(crucible.endAt, event.endDate);
 
   const day = await dbWrite.$transaction(async (tx) => {
     const [made] = await tx.$queryRaw<FlagDayRow[]>`
-      INSERT INTO "FlagDay" (event, "crucibleId", "startsAt", "cutAt", "imageIds")
-      VALUES (${event.name}, ${crucible.id}, ${now}, ${cutAt}, ${imageIds}::int[])
+      INSERT INTO "FlagDay" (event, "crucibleId", "startsAt", "cutAt", "closesAt", "imageIds")
+      VALUES (${event.name}, ${crucible.id}, ${now}, ${cutAt}, ${closesAt}, ${imageIds}::int[])
       ON CONFLICT (event, "crucibleId") DO NOTHING
-      RETURNING id, "crucibleId", "startsAt", "cutAt", "imageIds"
+      RETURNING id, "crucibleId", "startsAt", "cutAt", "closesAt", "imageIds"
     `;
     if (!made) return undefined;
     await tx.$executeRaw`DELETE FROM "CollectionItem" WHERE "collectionId" = ${flags.homeCollectionId}`;
