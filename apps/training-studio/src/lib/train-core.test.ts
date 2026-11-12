@@ -1278,6 +1278,25 @@ describe('dataset maturity under the v2 rating', () => {
     expect(lastBody().allowMatureContent).toBe(true);
   });
 
+  it('a confirm sent for a dataset v2 rates below the level is not charged Yellow', async () => {
+    uploadRatings({ 'outfit-1': 'X' });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-acked-sfw' } });
+    await submitWith(ratingAt(2, { 'outfit-1': { s: 1, r: false } }), {
+      items: items('outfit-1'),
+      currencies: ['blue', 'green'],
+      matureAck: true,
+    });
+    expect('allowMatureContent' in lastBody()).toBe(false);
+    expect(lastBody().currencies).toEqual(['blue', 'green']);
+  });
+
+  it('a confirm is kept when a HEAD fails, so the count cannot clear it', async () => {
+    headBlob.mockImplementation(async () => ({ response: new Response(null, { status: 503 }) }));
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-acked-failed' } });
+    await submitWith(ratingAt(2, {}), { items: items('x-1'), matureAck: true });
+    expect(lastBody().allowMatureContent).toBe(true);
+  });
+
   describe('keep training quotes', () => {
     const source = (id: string) => ({
       data: {

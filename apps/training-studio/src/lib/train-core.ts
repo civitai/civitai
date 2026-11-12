@@ -517,15 +517,22 @@ async function assertCustomModelTrainable(
 }
 
 /** Refuse, before anything is charged, a run whose dataset is mature but carries no confirm: the client's
- *  own mature count is not trusted. Every run of a sweep shares its dataset, so it is rated once. */
+ *  own mature count is not trusted. Under the v2 rating a confirm is dropped (no Yellow) when a clean count
+ *  finds nothing mature, since Review may have sent it before its own count answered. Every run of a sweep
+ *  shares its dataset, so it is rated once. Returns the runs as they will be charged. */
 async function assertMatureAcked(
   client: OrchestratorClient,
   runs: TrainingRunInput[],
   opts: Pick<SubmitOptions, 'datasetRating' | 'onMatureCount'> = {}
-): Promise<void> {
-  const counts = new Map<string, Promise<number>>();
+): Promise<TrainingRunInput[]> {
+  const counts = new Map<string, Promise<MatureCount>>();
+  const resolved: TrainingRunInput[] = [];
   for (const run of runs) {
-    if (run.matureAck === true) continue;
+    const acked = run.matureAck === true;
+    if (acked && !opts.datasetRating) {
+      resolved.push(run);
+      continue;
+    }
     const airs = [...new Set(run.items.map((item) => item.air))].sort();
     const key = airs.join('\n');
     if (!counts.has(key))
@@ -533,12 +540,14 @@ async function assertMatureAcked(
         key,
         countMatureBlobs(client, airs, opts.datasetRating).then((r) => {
           opts.onMatureCount?.(r);
-          return r.mature;
+          return r;
         })
       );
-    const mature = await counts.get(key)!;
-    if (mature > 0) throw new MatureAckRequiredError(mature);
+    const { mature, failed } = await counts.get(key)!;
+    if (!acked && mature > 0) throw new MatureAckRequiredError(mature);
+    resolved.push(acked && mature === 0 && failed === 0 ? { ...run, matureAck: false } : run);
   }
+  return resolved;
 }
 
 export interface SubmittedBatch {
@@ -570,7 +579,7 @@ export async function submitTrainingBatch(
     const unavailable = unavailableRunMessage(run, opts.status);
     if (unavailable) throw new TrainingBatchValidationError(unavailable);
   }
-  await assertMatureAcked(client, runs, opts);
+  const charged = await assertMatureAcked(client, runs, opts);
 
   // Every run's trigger word is checked before ANY submit, so a refused batch never part-charges. A
   // sweep repeats one trigger word across runs; each distinct one is checked once.
@@ -587,7 +596,7 @@ export async function submitTrainingBatch(
 
   const workflowIds: string[] = [];
   try {
-    for (const run of runs) workflowIds.push(await submitTraining(client, run, opts));
+    for (const run of charged) workflowIds.push(await submitTraining(client, run, opts));
   } catch (err) {
     opts.onRunError?.(err, workflowIds.length);
     if (workflowIds.length === 0) throw err;
