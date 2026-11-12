@@ -38,15 +38,18 @@ const PERMIT_SITES = [
   },
 ];
 
-/** The flagged compares in one file, less the permissive sites listed for it. */
+/**
+ * The flagged compares in one file, less the permissive sites listed for it. Only the listed compare
+ * itself is exempt: it is cut out of the text first, so anything else on its line is still checked.
+ */
 function unlistedCompares(file: string, text: string, permits = PERMIT_SITES) {
-  const lines = text.split('\n');
-  const snippets = permits.filter((p) => p.file === file).map((p) => p.snippet);
-  return handWrittenMinorRatingCompares(file, text).filter((site) => {
-    const line = lines[Number(site.slice(site.lastIndexOf(':') + 1)) - 1];
-    return !snippets.some((snippet) => line.includes(snippet));
-  });
+  const kept = permits
+    .filter((p) => p.file === file)
+    .reduce((t, p) => t.split(p.snippet).join(''), text);
+  return handWrittenMinorRatingCompares(file, kept);
 }
+
+const occurrences = (text: string, snippet: string) => text.split(snippet).length - 1;
 
 const ROOTS = ['src', 'apps/moderator/src', 'apps/event-engine/src', 'packages'];
 
@@ -120,7 +123,7 @@ describe('the minor content rule has one definition', () => {
   it('each permissive site is still in its file, exactly as many times as listed', () => {
     for (const { file, snippet, count } of PERMIT_SITES) {
       const text = files.find((f) => f.rel === file)!.text;
-      expect(text.split(snippet).length - 1, `${file}: ${snippet}`).toBe(count);
+      expect(occurrences(text, snippet), `${file}: ${snippet}`).toBe(count);
     }
   });
 
@@ -133,6 +136,16 @@ describe('the minor content rule has one definition', () => {
     expect(handWrittenMinorRatingCompares('x.ts', permitted)).toEqual(['x.ts:1']);
     expect(unlistedCompares('x.ts', permitted, permits)).toEqual([]);
     expect(unlistedCompares('x.ts', `// a new line above\n${permitted}`, permits)).toEqual([]);
+  });
+
+  it('a hand compare on the same line as a permissive site still fails', () => {
+    const sameLine = `const accept = sql\`"minor" = ${ACCEPT_CASE}\` && level >= NsfwLevel.R;`;
+    expect(unlistedCompares('x.ts', sameLine, permits)).toEqual(['x.ts:1']);
+  });
+
+  it('counts a second copy of a permissive compare', () => {
+    expect(occurrences(permitted, ACCEPT_CASE)).toBe(1);
+    expect(occurrences(`${permitted}\n${permitted}`, ACCEPT_CASE)).toBe(2);
   });
 
   it('a hand compare planted beside a permissive site still fails', () => {
