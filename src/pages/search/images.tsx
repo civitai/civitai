@@ -1,4 +1,16 @@
-import { Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import {
+  Anchor,
+  Button,
+  Center,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+} from '@mantine/core';
+import { useEffect } from 'react';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { useInstantSearch } from 'react-instantsearch';
 import {
   BrowsingLevelFilter,
@@ -17,6 +29,7 @@ import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
 import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useSimilarImage } from '~/components/Search/useSimilarImage';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
@@ -76,8 +89,19 @@ function ImagesHitList() {
   });
   const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Image' });
 
-  // Image search ranks by meaning, so it needs words to rank by; filters alone list nothing.
-  if (!indexUiState.query?.trim()) {
+  const query = indexUiState.query?.trim();
+  const similar = useSimilarImage();
+  // A typed query replaces "more like this" (the search client already ignores it), so drop it
+  // from the URL too, or clearing the query would bring it back.
+  const clearSimilar = similar.refine;
+  const similarTo = query ? undefined : similar.imageId;
+  useEffect(() => {
+    if (query && similar.imageId) clearSimilar(undefined);
+  }, [query, similar.imageId, clearSimilar]);
+
+  // Image search ranks by meaning, so it needs words (or an image) to rank by; filters alone list
+  // nothing.
+  if (!query && !similarTo) {
     const hasFilters =
       Object.values(indexUiState.refinementList ?? {}).some((values) => values.length > 0) ||
       Object.values(indexUiState.range ?? {}).some(Boolean);
@@ -115,8 +139,9 @@ function ImagesHitList() {
               No images found
             </Title>
             <Text align="center">
-              We have a bunch of images, but it looks like we couldn&rsquo;t find any images with
-              prompt or tags matching your query.
+              {similarTo
+                ? 'We couldn’t find images like this one. Try removing some filters.'
+                : 'We have a bunch of images, but it looks like we couldn’t find any images with prompt or tags matching your query.'}
             </Text>
           </Stack>
         </Center>
@@ -157,6 +182,19 @@ function ImagesHitList() {
 
   return (
     <Stack>
+      {similarTo && (
+        <Group gap="xs">
+          <Text size="sm">
+            Showing images like{' '}
+            <Anchor component={NextLink} href={`/images/${similarTo}`} inherit>
+              this image
+            </Anchor>
+          </Text>
+          <Button size="compact-xs" variant="subtle" onClick={() => clearSimilar(undefined)}>
+            Clear
+          </Button>
+        </Group>
+      )}
       {correctedQuery && (
         <Text size="sm">
           Showing results for <strong>{correctedQuery}</strong>

@@ -120,4 +120,24 @@ describe('withSemanticImageSearch', () => {
 
     expect(results[0].userData).toEqual([{ correctedQuery: 'batman' }]);
   });
+  it('searches for images like the one in similarTo when nothing is typed', async () => {
+    const search = fakeSearch([{ ids: [2] }]);
+    const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
+
+    const response = (await client.search([
+      imageRequest({ query: '', similarTo: 42 }),
+    ] as never)) as { results: { hits: unknown[] }[] };
+
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ imageId: 42 }));
+    expect(response.results[0].hits).toHaveLength(1);
+  });
+
+  it('lets a typed query replace similarTo', async () => {
+    const search = fakeSearch([{ ids: [2] }]);
+    const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
+
+    await client.search([imageRequest({ query: 'fox', similarTo: 42 })] as never);
+
+    expect(search.mock.calls[0][0]).toMatchObject({ query: 'fox', imageId: undefined });
+  });
 });

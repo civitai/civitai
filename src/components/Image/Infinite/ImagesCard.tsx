@@ -35,6 +35,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -278,6 +279,7 @@ function ImagesCardContent({
                         </HoverActionButton>
                       </RemixMenu>
                     )}
+                    <MoreLikeThisButton image={image} />
                     {scheduled && (
                       <Tooltip label="Scheduled">
                         <ThemeIcon size={30} radius="xl" variant="filled" color="blue">

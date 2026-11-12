@@ -145,7 +145,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
       {features.imageSearch && isImage && image.type === 'image' && (
         <Menu.Item
           component={NextLink}
-          href={`/search/semantic?imageId=${imageId}`}
+          href={`/search/images?similarTo=${imageId}`}
           leftSection={<IconSparkles size={14} stroke={1.5} />}
         >
           More like this

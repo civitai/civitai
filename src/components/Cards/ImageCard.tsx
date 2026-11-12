@@ -7,6 +7,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
+import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -69,6 +70,7 @@ function ImageCardContent({ data, hideCreator }: Props) {
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
             <CardRemixButton image={data} />
+            <MoreLikeThisButton image={data} />
           </div>
         </div>
       }
