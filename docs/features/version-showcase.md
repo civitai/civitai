@@ -49,7 +49,7 @@ works with the flag off.
 
 ## Caches
 
-`versionShowcaseCache` (1 hour) holds each version's rows and the community images that pass the
+The version showcase cache (`getVersionShowcaseCache`, 1 hour) holds each version's rows and the community images that pass the
 filters. Post changes, bans, blocks, opt-outs, gallery rule changes and version merges refresh it,
 and clear any community cover that no longer qualifies. Every read and refresh fails open: if the
 showcase can't be read, the carousel and covers fall back to the creator's images.
