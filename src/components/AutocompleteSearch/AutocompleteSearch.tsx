@@ -306,7 +306,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
 
-  // Search v3: on a feed that answers `?query=`, the bar filters that feed as you type.
+  // Search v3: on a feed that answers `?query=`, the bar filters that feed on Enter or blur.
   const filtersFeedInPlace = searchesImagesFeedInPlace(features, indexNameProp, router.pathname);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -538,13 +538,13 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onClear?.();
   };
 
-  // Blur empties the input the same way it always has, but leaves the carried copy alone. Reaching
+  // Off a feed, blur empties the input as it always has but leaves the carried copy alone; on a feed
+  // it commits the text, which stays as the active filter. Reaching
   // the category selector REQUIRES blurring this input, so a blur that wrote through `setSearch`
   // emptied the carrier immediately before every selector-driven index switch — the one path the
   // carry exists for. `onClear?.()` still fires, unchanged: on mobile it is what closes the search
   // overlay (`AppHeader` passes `onSearchDone`), and that is not ours to change here.
   const handleBlur = () => {
-    // On a feed it filters, leaving the bar commits the text, which stays as the active filter.
     if (filtersFeedInPlace) feedSearch.commit(search);
     else clearDisplayedText();
     onClear?.();

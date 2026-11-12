@@ -36,7 +36,7 @@ type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'
 export const offersImageSearch = (features: ImageSearchFlags) =>
   !!features.imageSearch || !!features.feedSearch;
 
-/** The header bar filters the images feed as you type, rather than opening a search page. */
+/** The header bar filters the images feed in place, rather than opening a search page. */
 export const searchesImagesFeedInPlace = (
   features: ImageSearchFlags,
   index: SearchIndexKey,
