@@ -365,7 +365,8 @@ export type PausedTrainingRow = {
 export type TrainingReviewRow = PausedTrainingRow & {
   /** The gate's run is waiting on a moderator. */
   underReview: boolean;
-  /** False when the run could not be read (orchestrator unreachable or slow), so it is listed as is. */
+  /** False when the run was not read as a training run (no answer, or an unreadable one), so it is
+   *  listed as is. */
   checked: boolean;
 };
 
@@ -382,9 +383,6 @@ export type TrainingReviewQueue = {
 
 /** Paused versions read from the orchestrator per build. Exported for tests. */
 export const MAX_PAUSED_VERSIONS = 300;
-
-/** Every live Paused version is listed; "under review only" would be `row.underReview || !row.checked`. */
-const listedOnReviewQueue = (_row: TrainingReviewRow) => true;
 
 /**
  * Every Paused version whose gate's workflow the orchestrator still has.
@@ -461,9 +459,11 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
     const reading = read?.kind === 'read' ? read.reading : null;
     return [{ ...row, underReview: reading?.underReview ?? false, checked: reading !== null }];
   });
-  const listed = classified.filter(listedOnReviewQueue);
   return {
-    items: [...listed.filter((r) => r.underReview), ...listed.filter((r) => !r.underReview)],
+    items: [
+      ...classified.filter((r) => r.underReview),
+      ...classified.filter((r) => !r.underReview),
+    ],
     workflowFilterUnavailable: classified.some((r) => !r.checked),
     unanswered: reads.some((r) => r === undefined),
     truncated,
@@ -479,7 +479,8 @@ export async function countTrainingDataReview(): Promise<number | null> {
     reviewQueueCache.get(BADGE_MAX_AGE_MS),
     pendingCache.get(BADGE_MAX_AGE_MS),
   ]);
-  if (queue.workflowFilterUnavailable || queue.truncated) return null;
+  // An unreadable run answered, and is listed not under review; only a read with no answer is partial.
+  if (queue.unanswered || queue.truncated) return null;
   if (gates.ledgerUnavailable || gates.workflowFilterUnavailable || gates.truncated) return null;
   return queue.items.filter((r) => r.underReview).length + gates.items.length;
 }
@@ -1223,8 +1224,7 @@ const PENDING_READ_CONCURRENCY = 8;
  *  unchecked rather than holding the page. */
 const PENDING_READ_BUDGET_MS = 20_000;
 /** How long one build of either queue serves a page load. A ruling clears it in this process only, so
- *  another replica can list a ruled run for up to this long. A build with an unanswered read is not
- *  held (see each cache's discard). */
+ *  another replica can list a ruled run for up to this long. */
 const QUEUE_CACHE_MS = 30_000;
 /** The sidebar badge takes a build up to this old rather than start one on every refresh. */
 const BADGE_MAX_AGE_MS = 2 * 60_000;

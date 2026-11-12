@@ -786,6 +786,26 @@ describe('getTrainingReviewQueue', () => {
       expect(await countTrainingDataReview()).toBeNull();
     });
 
+    it('counts a version whose run answered unreadably as listed, not as unknown', async () => {
+      db([version(1), version(4)], [file(11, 1, W1), file(14, 4, W4)]);
+      gates([]);
+      route = (url) =>
+        byId(url) === W1
+          ? json({ ...workflow({ id: W1 }), steps: [] })
+          : json(workflow({ id: W4, moderationStatus: 'UnderReview' }));
+      expect(await countTrainingDataReview()).toBe(1);
+    });
+
+    it('is unknown when one version did not answer, even beside an unreadable one', async () => {
+      db([version(1), version(4)], [file(11, 1, W1), file(14, 4, W4)]);
+      gates([]);
+      route = (url) =>
+        byId(url) === W1
+          ? json({ ...workflow({ id: W1 }), steps: [] })
+          : new Response(null, { status: 503 });
+      expect(await countTrainingDataReview()).toBeNull();
+    });
+
     it('is unknown when the gate ledger cannot be read', async () => {
       standard();
       chQuery.mockRejectedValue(new Error('clickhouse down'));
@@ -1309,6 +1329,15 @@ describe('the pending queue is bounded and shared', () => {
     const again = await getPendingWorkflowGates();
     expect(again.workflowFilterUnavailable).toBe(false);
     expect(chQuery).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not hold a build made while the ledger could not be read', async () => {
+    chQuery.mockRejectedValueOnce(new Error('clickhouse down'));
+    expect((await getPendingWorkflowGates()).ledgerUnavailable).toBe(true);
+    const calls = chQuery.mock.calls.length;
+    ledgerOf([]);
+    expect((await getPendingWorkflowGates()).ledgerUnavailable).toBe(false);
+    expect(chQuery.mock.calls.length).toBeGreaterThan(calls);
   });
 
   it('re-reads runs after its window, and the ledger only after the ledger window', async () => {
