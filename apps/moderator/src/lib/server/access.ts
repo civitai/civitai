@@ -12,6 +12,7 @@ import {
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
+import { MERGE_ANALYSIS_PATH } from '$lib/model-merge-analysis';
 import { TICKET_COUNT_KEYS } from '$lib/tickets/counts';
 import { feedbackAreaLabel } from '$lib/feedback';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
@@ -161,6 +162,7 @@ export const NAVIGATION: NavLink[] = [
         ],
       },
       { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
+      { path: MERGE_ANALYSIS_PATH, label: 'Model merge analysis' },
     ],
   },
   {
