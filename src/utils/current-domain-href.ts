@@ -51,3 +51,34 @@ export function toCurrentDomainHref(
   url.host = current;
   return url.href;
 }
+
+/**
+ * `href` as a root-relative path ("/articles/1") when it is an http(s) link to one of `ownHosts`,
+ * so it opens on whichever of our sites is being read. Anything else comes back untouched, and so
+ * does a bare-domain link, for the same reason as above: it is the "go to the other site" link.
+ */
+export function toOwnRootRelative(href: string, ownHosts: readonly string[]): string {
+  let url: URL;
+  try {
+    url = new URL(href.trim());
+  } catch {
+    return href;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return href;
+  if (url.username || url.password) return href;
+  if (url.pathname === '/' && !url.search && !url.hash) return href;
+  if (!ownHosts.includes(normalizeHost(url.host))) return href;
+  const path = `${url.pathname}${url.search}${url.hash}`;
+  // A path starting "//" (or "/\", which the parser turns into one) would leave the site.
+  return isSameSitePath(path) ? path : href;
+}
+
+/** Whether `href` is a path on this site: "/x", never "//host" or "/\host", which leave it. */
+export function isSameSitePath(href: string): boolean {
+  if (!/^\/[^/\\]/.test(href)) return false;
+  try {
+    return new URL(href, 'https://invalid.').host === 'invalid.';
+  } catch {
+    return false;
+  }
+}
