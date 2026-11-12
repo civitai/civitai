@@ -18,8 +18,10 @@ const h = vi.hoisted(() => {
   process.env.NOTIFICATIONS_HANDLER_DEADLINE_MS = '1000';
   process.env.NOTIFICATIONS_COUNT_REDIS_DEADLINE_MS = '200';
   delete process.env.NOTIFICATIONS_TOKEN;
-  const state = { db: 'ok' as Mode, redis: 'ok' as Mode, dbCalls: 0 };
-  const never = () => new Promise<never>(() => {});
+  // `redis` drives every call; `cache`, when set, overrides it for the count-cache hash calls only, so
+  // the lag-flag read can answer while the cache misbehaves.
+  const state = { db: 'ok' as Mode, redis: 'ok' as Mode, cache: null as Mode | null, dbCalls: 0 };
+  const never = () => new Promise<never>(() => undefined);
   const settle = <T>(mode: Mode, value: T): Promise<T> =>
     mode === 'hang'
       ? never()
@@ -27,7 +29,8 @@ const h = vi.hoisted(() => {
       ? Promise.reject(new Error(`fake ${mode}`))
       : Promise.resolve(value);
 
-  const pool = {
+  // Two distinct objects: the count path tells the primary from the replica by identity.
+  const makePool = () => ({
     totalCount: 0,
     idleCount: 0,
     waitingCount: 0,
@@ -38,27 +41,29 @@ const h = vi.hoisted(() => {
       if (state.db === 'reject') return Promise.reject(new Error('connection terminated'));
       return Promise.resolve({ result: async () => rows });
     },
-  };
+  });
+  const writePool = makePool();
+  const readPool = makePool();
   const redis = {
     get: () => settle(state.redis, null),
     set: () => settle(state.redis, 'OK'),
-    hGetAll: () => settle(state.redis, {}),
-    hSetMultiWithExpire: () => settle(state.redis, 1),
-    del: () => settle(state.redis, 1),
-    exists: () => settle(state.redis, 0),
-    expire: () => settle(state.redis, 1),
+    hGetAll: () => settle(state.cache ?? state.redis, {}),
+    hSetMultiWithExpire: () => settle(state.cache ?? state.redis, 1),
+    del: () => settle(state.cache ?? state.redis, 1),
+    exists: () => settle(state.cache ?? state.redis, 0),
+    expire: () => settle(state.cache ?? state.redis, 1),
   };
-  return { state, pool, redis };
+  return { state, writePool, readPool, redis };
 });
 
 vi.mock('../lib/server/clients/db', () => ({
-  notifDbWrite: () => h.pool,
-  notifDbRead: () => h.pool,
-  mainDbRead: () => h.pool,
-  mainDbWrite: () => h.pool,
+  notifDbWrite: () => h.writePool,
+  notifDbRead: () => h.readPool,
+  mainDbRead: () => h.readPool,
+  mainDbWrite: () => h.writePool,
 }));
 vi.mock('../lib/server/clients/redis', () => ({ getRedis: () => h.redis }));
-vi.mock('../lib/server/clients/axiom', () => ({ logToAxiom: vi.fn(async () => {}) }));
+vi.mock('../lib/server/clients/axiom', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 
 import { buildServer } from '../app';
 
@@ -74,6 +79,7 @@ afterAll(async () => {
 beforeEach(() => {
   h.state.db = 'ok';
   h.state.redis = 'ok';
+  h.state.cache = null;
   h.state.dbCalls = 0;
 });
 
@@ -95,7 +101,10 @@ const createBody = {
   details: {},
   userId: 7,
 };
-const countBody = { userId: 7, unread: true };
+// A fresh user per call: the count route coalesces concurrent calls per user, so a count an earlier case
+// left hung would otherwise be joined by the next case.
+let nextUserId = 100;
+const countBody = () => ({ userId: nextUserId++, unread: true });
 
 describe('POST /notifications when the DB fails', () => {
   it('answers 503 so the producer retries, never a 202 for a row that was not queued', async () => {
@@ -130,7 +139,7 @@ describe('POST /notifications/count when redis fails', () => {
     const res = await within(2000, {
       method: 'POST',
       url: '/notifications/count',
-      payload: countBody,
+      payload: countBody(),
     });
     expect(res).not.toBe('hung');
     if (res === 'hung') return;
@@ -145,7 +154,7 @@ describe('POST /notifications/count when redis fails', () => {
     const res = await within(2000, {
       method: 'POST',
       url: '/notifications/count',
-      payload: countBody,
+      payload: countBody(),
     });
     expect(res).not.toBe('hung');
     if (res === 'hung') return;
@@ -154,13 +163,30 @@ describe('POST /notifications/count when redis fails', () => {
     expect(Date.now() - started).toBeLessThan(2000);
   });
 
+  it.each(['reject', 'hang'] as const)(
+    'answers from the DB when the lag flag reads but the count cache calls %s',
+    async (mode) => {
+      h.state.cache = mode;
+      const res = await within(2000, {
+        method: 'POST',
+        url: '/notifications/count',
+        payload: countBody(),
+      });
+      expect(res).not.toBe('hung');
+      if (res === 'hung') return;
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual([{ category: 'Comment', count: '3' }]);
+      expect(h.state.dbCalls).toBe(1);
+    }
+  );
+
   it('answers 503 within the handler deadline when the DB hangs too', async () => {
     h.state.redis = 'hang';
     h.state.db = 'hang';
     const res = await within(3000, {
       method: 'POST',
       url: '/notifications/count',
-      payload: countBody,
+      payload: countBody(),
     });
     expect(res).not.toBe('hung');
     if (res === 'hung') return;
