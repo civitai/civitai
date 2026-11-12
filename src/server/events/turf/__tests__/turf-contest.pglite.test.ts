@@ -5,6 +5,7 @@ import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import { turfKeys } from '~/server/events/turf/turf-map';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
@@ -90,7 +91,7 @@ beforeAll(async () => {
     CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
     CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[]);
     CREATE TABLE "CrucibleEntry" (id serial PRIMARY KEY, "crucibleId" int, "imageId" int);
-    CREATE TABLE "FlagDay" (id serial PRIMARY KEY, event text, "startsAt" timestamp(3), "imageIds" int[]);
+    CREATE TABLE "FlagDay" (id serial PRIMARY KEY, event text, "startsAt" timestamp(3), "closesAt" timestamp(3), "imageIds" int[]);
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" ("userId" int, "cosmeticId" int);
     CREATE TABLE "EventCosmeticPlacement" (
@@ -232,7 +233,8 @@ describe('Hat Turf on contest entries', () => {
       INSERT INTO "Image" (id, "userId", "postId") VALUES (${control}, ${OWNER}, 1);
       INSERT INTO "EventTurfSticker" (event, "imageId", "userId", team, "cosmeticId", data)
         VALUES ('e', ${control}, ${PLACER}, 'Blue', 11, '{}');
-      INSERT INTO "FlagDay" (event, "startsAt", "imageIds") VALUES ('e', '2026-11-01', '{${flag}}');
+      INSERT INTO "FlagDay" (event, "startsAt", "closesAt", "imageIds")
+        VALUES ('e', '2026-11-01', '2099-01-01', '{${flag}}');
     `);
     try {
       expect((await getTurfStickers('e', flag, PLACER)).stickers).toEqual([]);
@@ -243,12 +245,16 @@ describe('Hat Turf on contest entries', () => {
         [flag]: true,
       });
 
-      // Nothing earns on it either: a sync pushes it with no counts, as for a contest entry, so a
-      // reaction finds no team to pay.
-      redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
+      // Nothing earns on it either: a sync pushes it with no counts and leaves it off the turf map.
+      const lua = createLuaRedis(0);
+      redisMock.sysRedis.eval.mockImplementation(lua.eval as never);
       redisMock.sysRedis.incr.mockResolvedValue(1 as never);
       pushTurfCounts.mockClear();
       await syncTurfImages((await getTurfEvent('e'))!, [flag, control]);
+      // The turf map is what reactions pay from: the flag has no entry there, the control does.
+      const map = lua.hash(turfKeys('e').map) ?? {};
+      expect(Object.keys(map)).toContain(`Image:${control}`);
+      expect(Object.keys(map)).not.toContain(`Image:${flag}`);
       const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
       const of = (id: number) =>
         pushed.find((push: { imageId: number }) => push.imageId === id) as
@@ -259,7 +265,13 @@ describe('Hat Turf on contest entries', () => {
 
       // The next swap moves the flags on: the old flag's hats come back.
       await db.exec(
-        `INSERT INTO "FlagDay" (event, "startsAt", "imageIds") VALUES ('e', '2026-11-02', '{${OTHER}}')`
+        `INSERT INTO "FlagDay" ("closesAt", event, "startsAt", "imageIds") VALUES ('2099-01-01', 'e', '2026-11-02', '{${OTHER}}')`
+      );
+      expect((await getTurfStickers('e', flag, PLACER)).stickers).toHaveLength(1);
+
+      // A day that has closed hides nothing, even with no swap after it (the race is over).
+      await db.exec(
+        `INSERT INTO "FlagDay" ("closesAt", event, "startsAt", "imageIds") VALUES ('2000-01-01', 'e', '2026-11-03', '{${flag}}')`
       );
       expect((await getTurfStickers('e', flag, PLACER)).stickers).toHaveLength(1);
     } finally {

@@ -15,6 +15,8 @@ export const FLAG_KIND = 'flag';
 /** The cached flag summary (getFlagSummary). A swap clears it, so a cached closed day never hides the new one. */
 export const flagSummaryKey = (event: string) =>
   `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:flagRace:summary` as const;
+/** Counts swaps: a cached summary built before the latest one is stale. */
+export const flagSummaryGenKey = (event: string) => `${flagSummaryKey(event)}:gen` as const;
 
 /** The event tag that makes a Crucible a flag Crucible: its top places become the next day's flags. */
 export const flagCrucibleTag = (event: string) => `${event}-flag`;
@@ -139,11 +141,12 @@ export async function swapFlagDay(
   await homeBlockCacheBust(HomeBlockType.Collection, flags.homeCollectionId).catch((error) =>
     logToAxiom({ type: 'error', name: 'flag-race-swap', message: 'cache bust failed', error })
   );
-  await sysRedis
-    .del(flagSummaryKey(event.name))
-    .catch((error) =>
-      logToAxiom({ type: 'error', name: 'flag-race-swap', message: 'summary bust failed', error })
-    );
+  await Promise.all([
+    sysRedis.incr(flagSummaryGenKey(event.name)),
+    sysRedis.del(flagSummaryKey(event.name)),
+  ]).catch((error) =>
+    logToAxiom({ type: 'error', name: 'flag-race-swap', message: 'summary bust failed', error })
+  );
   void logToAxiom({
     type: 'info',
     name: 'flag-race-swap',
