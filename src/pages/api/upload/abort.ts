@@ -88,6 +88,12 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
         userId,
         type,
         backend,
+        // Which fields failed, and the object key when it was valid — what the old 500 row
+        // carried and this one must not lose.
+        invalid: (['bucket', 'key', 'uploadId'] as const).filter(
+          (f) => !isNonEmptyString({ bucket, key, uploadId }[f])
+        ),
+        ...(isNonEmptyString(key) ? { key } : {}),
         ...(clientFailure ? { failure: clientFailure } : {}),
         ...(clientFileSize !== undefined ? { fileSize: clientFileSize } : {}),
         relayOutcome: clientRelayOutcome,

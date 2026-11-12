@@ -495,8 +495,9 @@ describe('/api/upload/abort — file size', () => {
 });
 
 describe('/api/upload/abort — a malformed body is a 400, not a 500', () => {
-  // The mock reproduces the SDK serializer's throw for a missing UploadId, so these fail
-  // on the pre-fix handler (classifier `other` → 500) instead of passing on a stub.
+  // The mock reproduces the SDK serializer's throw for a missing UploadId, so the first case
+  // fails on the pre-fix handler with a 500 (classifier `other`). The others fail there
+  // because the old handler called S3 at all.
   const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
 
   beforeEach(() => {
@@ -514,6 +515,14 @@ describe('/api/upload/abort — a malformed body is a 400, not a 500', () => {
     expect(mockAbortMultipartUpload).not.toHaveBeenCalled();
     expect(lastLogged().name).toBe('s3-upload-abort-invalid');
     expect(lastLogged().failure).toEqual({ kind: 'complete' });
+    expect(lastLogged().invalid).toEqual(['uploadId']);
+    expect(lastLogged().key).toBe('some/key.safetensors');
+  });
+
+  it('names every bad field and omits an invalid key from the log row', async () => {
+    await handler(makeReq({ body: { key: '', bucket: undefined } }), makeRes());
+    expect(lastLogged().invalid).toEqual(['bucket', 'key']);
+    expect(lastLogged()).not.toHaveProperty('key');
   });
 
   it.each([
