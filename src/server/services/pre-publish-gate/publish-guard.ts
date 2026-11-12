@@ -112,7 +112,8 @@ export async function isLinkTargetOfLiveGatedVersion(
  */
 export async function assertOwnerMayMarkMature(
   modelId: number,
-  db: Prisma.TransactionClient | typeof dbWrite = dbWrite
+  db: Prisma.TransactionClient | typeof dbWrite = dbWrite,
+  message: string = GATE_REFUSAL_MESSAGES.nsfw
 ) {
   const live = await db.modelVersion.findFirst({
     where: {
@@ -122,5 +123,5 @@ export async function assertOwnerMayMarkMature(
     },
     select: { id: true },
   });
-  if (live) throw throwBadRequestError(GATE_REFUSAL_MESSAGES.nsfw);
+  if (live) throw throwBadRequestError(message);
 }

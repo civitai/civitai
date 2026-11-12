@@ -4286,7 +4286,14 @@ export const upsertModel = async (
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
           // The owner's flag or the profanity rating: either would make a reviewed model mature.
-          if (!locked.nsfw && data.nsfw === true) await assertOwnerMayMarkMature(id, tx);
+          if (!locked.nsfw && data.nsfw === true)
+            await assertOwnerMayMarkMature(
+              id,
+              tx,
+              profanityAutoNsfw && nsfwBeforeProfanity !== true
+                ? "This wording can't be saved on a model with a reviewed version. Change it and save again."
+                : undefined
+            );
           const raisedOverScanLock = applyRaisedRestrictions(locked, data);
           const ownerFlagOverride = raisedOverScanLock ?? withRaisedFlags(locked, data);
           if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
