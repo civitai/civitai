@@ -538,15 +538,19 @@ describe('registerOtelShutdown', () => {
     // completed, and that difference is invisible to a `shutdown()` spy.
     const listener = process.listeners('SIGTERM').at(-1) as () => void;
     listener();
-    await ctl.settled();
+    await ctl.flushed();
 
     expect(records).toHaveLength(1);
     expect(records[0].body).toBe('{"type":"error"}');
   });
 
-  it('is IDEMPOTENT across a second signal — SIGINT after SIGTERM joins, it does not re-run', async () => {
+  it('is IDEMPOTENT — SIGINT after SIGTERM joins the flush, a second shutdown joins the first', async () => {
+    let flushCalls = 0;
     let shutdownCalls = 0;
     const target = {
+      forceFlush: async () => {
+        flushCalls += 1;
+      },
       shutdown: async () => {
         shutdownCalls += 1;
       },
@@ -559,9 +563,12 @@ describe('registerOtelShutdown', () => {
     const sigint = process.listeners('SIGINT').at(-1) as () => void;
     sigterm();
     sigint();
-    await ctl.settled();
+    await ctl.flushed();
+    // The signal only flushes; shutting down here would drop what the drain logs.
+    expect([flushCalls, shutdownCalls]).toEqual([1, 0]);
 
-    expect(shutdownCalls).toBe(1);
+    await Promise.all([ctl.shutdown('a'), ctl.shutdown('b')]);
+    expect([flushCalls, shutdownCalls]).toEqual([1, 1]);
   });
 
   it('a failing target does not prevent the other flush, and does not reject', async () => {
@@ -673,6 +680,48 @@ describe('registerOtelShutdown — holds the framework exit for the flush', () =
     expect(exitCalls).toEqual([143]);
     expect(recordsAtExit).toBe(1);
     expect(records[0].body).toBe('{"type":"error","last":"before-exit"}');
+  });
+
+  it('a record logged DURING the drain (after the signal, before the exit) is still exported', async () => {
+    const { exporter, records } = collectingExporter();
+    const provider = new LoggerProvider({
+      processors: [new BatchLogRecordProcessor(exporter, { scheduledDelayMillis: 60_000 })],
+    });
+    logs.setGlobalLoggerProvider(provider);
+    registered = registerOtelShutdown([provider], { log: () => {} });
+
+    let bodiesAtExit: unknown[] = [];
+    onExit = () => {
+      bodiesAtExit = records.map((r) => r.body);
+    };
+    lastListener('SIGTERM')();
+    // A request that finishes while the framework drains logs this.
+    emitOtelLog('{"type":"error","during":"drain"}', { type: 'error' });
+    process.exit(143);
+
+    await vi.waitFor(() => expect(exitCalls).toHaveLength(1));
+    expect(bodiesAtExit).toEqual(['{"type":"error","during":"drain"}']);
+  });
+
+  it('still exits, with the framework code, when a target throws synchronously', async () => {
+    vi.useFakeTimers();
+    const errors: unknown[] = [];
+    const throwing = {
+      shutdown: (): Promise<unknown> => {
+        throw new Error('sync boom');
+      },
+    };
+    registered = registerOtelShutdown([throwing], {
+      log: () => {},
+      onError: (reason) => errors.push(reason),
+    });
+
+    lastListener('SIGTERM')();
+    process.exit(143);
+    await drainMicrotasks();
+
+    expect(exitCalls).toEqual([143]);
+    expect(errors.map((e) => (e as Error).message)).toEqual(['sync boom']);
   });
 
   it('exits with the framework code as soon as the flush settles, without waiting out the cap', async () => {
