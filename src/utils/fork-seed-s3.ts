@@ -1,9 +1,6 @@
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
+import { newS3Client } from '~/utils/s3-client-factory';
+import type { S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';
 
@@ -67,7 +64,7 @@ export function isAcceptableSeedUrl(url: string, endpoint: string): boolean {
 }
 
 function client(config: NonNullable<ReturnType<typeof forkSeedStoreConfig>>): S3Client {
-  return new S3Client({
+  return newS3Client({
     endpoint: config.endpoint,
     region: 'us-east-1',
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },

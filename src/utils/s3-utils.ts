@@ -1,4 +1,5 @@
-import type { GetObjectCommandInput } from '@aws-sdk/client-s3';
+import { newS3Client } from '~/utils/s3-client-factory';
+import type { GetObjectCommandInput, S3Client } from '@aws-sdk/client-s3';
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -9,7 +10,6 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
-  S3Client,
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -45,14 +45,17 @@ const B2_BUCKET_NAMES: ReadonlySet<string> = new Set(
   ].filter((b): b is string => typeof b === 'string' && b.length > 0)
 );
 
+let _b2S3Client: S3Client | null = null;
+// One client per process: the config is fixed env, and a client per call also meant a connection pool
+// per call.
 export function getB2S3Client() {
   if (!env.S3_UPLOAD_B2_ACCESS_KEY || !env.S3_UPLOAD_B2_SECRET_KEY || !env.S3_UPLOAD_B2_ENDPOINT) {
     throw new Error('B2 upload credentials not configured');
   }
   // Wrap with the additive B2 PUT-metrics middleware (counts server-side .send()s;
   // presigned uploads never hit this path). Behavior-neutral.
-  return instrumentB2Client(
-    new S3Client({
+  return (_b2S3Client ??= instrumentB2Client(
+    newS3Client({
       credentials: {
         accessKeyId: env.S3_UPLOAD_B2_ACCESS_KEY,
         secretAccessKey: env.S3_UPLOAD_B2_SECRET_KEY,
@@ -61,7 +64,7 @@ export function getB2S3Client() {
       endpoint: env.S3_UPLOAD_B2_ENDPOINT,
       forcePathStyle: true,
     })
-  );
+  ));
 }
 
 export function getUploadS3Client(backend: UploadBackend = 'default') {
@@ -84,7 +87,7 @@ export function getB2ImageS3Client(): S3Client {
   if (!_b2ImageS3Client) {
     // Additive B2 PUT-metrics middleware (server-side .send()s only). Behavior-neutral.
     _b2ImageS3Client = instrumentB2Client(
-      new S3Client({
+      newS3Client({
         credentials: {
           accessKeyId: env.S3_IMAGE_B2_ACCESS_KEY,
           secretAccessKey: env.S3_IMAGE_B2_SECRET_KEY,
@@ -131,9 +134,9 @@ let _b2ImageProbeS3Client: S3Client | null = null;
  * the live upload-completion endpoints (`src/pages/api/upload/complete.ts`,
  * `src/pages/api/upload/abort.ts`), the announcement media check
  * (`src/server/jobs/announcement-media-check.ts`) and the server-side upload/delete paths.
- * Those WANT the SDK's default retries — a transient 500 there loses a user's bytes. Taking
- * retries away from all of them to bound a telemetry probe would be a production change far
- * wider than the probe. So the probe gets its own client and the shared factory above is
+ * Those WANT a retry (the factory's two attempts) — a transient 500 there loses a user's bytes.
+ * Taking retries away from all of them to bound a telemetry probe would be a production change
+ * far wider than the probe. So the probe gets its own client and the shared factory above is
  * untouched.
  *
  * Same credentials, same region, same endpoint, same PUT-metrics wrapper — the ONLY
@@ -146,7 +149,7 @@ export function getB2ImageProbeS3Client(): S3Client {
   }
   if (!_b2ImageProbeS3Client) {
     _b2ImageProbeS3Client = instrumentB2Client(
-      new S3Client({
+      newS3Client({
         credentials: {
           accessKeyId: env.S3_IMAGE_B2_ACCESS_KEY,
           secretAccessKey: env.S3_IMAGE_B2_SECRET_KEY,
@@ -287,18 +290,19 @@ export async function readImageUploadObjectHead(
   return response.Body.transformToByteArray();
 }
 
+let _s3Client: S3Client | null = null;
 export function getS3Client() {
   const missing = missingEnvs();
   if (missing.length > 0) throw new Error(`Next S3 Upload: Missing ENVs ${missing.join(', ')}`);
 
-  return new S3Client({
+  return (_s3Client ??= newS3Client({
     credentials: {
       accessKeyId: env.S3_UPLOAD_KEY,
       secretAccessKey: env.S3_UPLOAD_SECRET,
     },
     region: env.S3_UPLOAD_REGION,
     endpoint: env.S3_UPLOAD_ENDPOINT,
-  });
+  }));
 }
 
 export async function getBucket() {
@@ -520,7 +524,7 @@ export function getQuarantineS3Client(): S3Client | undefined {
   // the largest single source of B2 writes outside user uploads, and would appear in the counters
   // as nothing at all. The middleware self-guards and cannot throw into the operation.
   return instrumentB2Client(
-    new S3Client({
+    newS3Client({
       credentials: {
         accessKeyId: env.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY,
         secretAccessKey: env.S3_UPLOAD_B2_QUARANTINE_SECRET_KEY,
