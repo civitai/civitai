@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { cardByType } from '$lib/data/trainingModels';
 import { parseServiceStatus } from '$lib/service-status-core';
-import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
+import {
+  FILES_PROCESSING_MESSAGE,
+  FILES_PROCESSING_PARTIAL_REASON,
+  FilesProcessingError,
+} from '$lib/files-processing';
 import {
   continueTraining,
   continueTrainingWhatIf,
@@ -1143,6 +1147,7 @@ describe('a submit refused because a dataset file is still processing', () => {
   it.each([
     ['its code', refusal()],
     ['its message when the code is absent', refusal({})],
+    ['its message when the code is null', refusal({ code: null })],
   ])('is recognised by %s and shows only the neutral message', async (_, answer) => {
     submitWorkflow.mockResolvedValueOnce(answer);
     const err = await submitTrainingBatch(client, [baseRun()], { checkText }).catch((e) => e);
@@ -1161,6 +1166,29 @@ describe('a submit refused because a dataset file is still processing', () => {
     expect(err.reason).toContain('steps must be positive');
   });
 
+  it.each([
+    ['a non-400 status', { ...refusal(), response: { status: 500 } }],
+    [
+      'an unrelated message beside it',
+      {
+        error: { errors: { messages: [notReadyText, 'steps must be positive'] } },
+        response: { status: 400 },
+      },
+    ],
+    [
+      'another field error beside it',
+      {
+        error: { errors: { messages: [notReadyText], steps: ['must be at most 10000'] } },
+        response: { status: 400 },
+      },
+    ],
+  ])('is not matched with %s', async (_, answer) => {
+    submitWorkflow.mockResolvedValueOnce(answer);
+    const err = await submitTrainingBatch(client, [baseRun()], { checkText }).catch((e) => e);
+    expect(err).not.toBeInstanceOf(FilesProcessingError);
+    expect(err).toBeInstanceOf(TrainingSubmitError);
+  });
+
   it('does not match the message under a different code', async () => {
     submitWorkflow.mockResolvedValueOnce(refusal({ code: 'somethingElse' }));
     const err = await submitTrainingBatch(client, [baseRun()], { checkText }).catch((e) => e);
@@ -1175,7 +1203,7 @@ describe('a submit refused because a dataset file is still processing', () => {
     const batch = await submitTrainingBatch(client, [baseRun(), { ...baseRun(), steps: 999 }], {
       checkText,
     });
-    expect(batch).toEqual({ workflowIds: ['wf-landed'], failure: FILES_PROCESSING_MESSAGE });
+    expect(batch).toEqual({ workflowIds: ['wf-landed'], failure: FILES_PROCESSING_PARTIAL_REASON });
     expect(submitWorkflow).toHaveBeenCalledTimes(2);
   });
 });

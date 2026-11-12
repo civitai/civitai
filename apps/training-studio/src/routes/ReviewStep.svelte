@@ -452,20 +452,21 @@
   } | null>(null);
   let spendDialogOpen = $state(false);
 
-  function start() {
-    // total == null means a quote is in flight or failed — never submit without a shown price
-    // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
-    if (
-      starting ||
+  // total == null means a quote is in flight or failed — never submit without a shown price
+  // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
+  const startBlocked = $derived(
+    starting ||
       trainingDisabled ||
-      blockedMessage ||
+      !!blockedMessage ||
       total == null ||
       (needsAttestation && !attestSfw) ||
       ackMissing ||
-      imagesProblem ||
+      !!imagesProblem ||
       uploadingImage
-    )
-      return;
+  );
+
+  function start() {
+    if (startBlocked) return;
     if (spend && !spend.matureYellow) {
       confirmSpend = spend;
       spendDialogOpen = true;
@@ -1052,14 +1053,7 @@
     <Button
       class="mt-4 w-full"
       onclick={start}
-      disabled={starting ||
-        trainingDisabled ||
-        !!blockedMessage ||
-        total == null ||
-        (needsAttestation && !attestSfw) ||
-        ackMissing ||
-        !!imagesProblem ||
-        uploadingImage}
+      disabled={startBlocked}
     >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
@@ -1077,7 +1071,7 @@
     {:else if filesProcessing}
       <div class="mt-2 flex flex-col items-center gap-2">
         <p class="text-center font-mono text-xs text-dark-2">{FILES_PROCESSING_MESSAGE}</p>
-        <Button variant="outline" size="sm" disabled={starting} onclick={reallyStart}>Try again</Button>
+        <Button variant="outline" size="sm" disabled={startBlocked} onclick={start}>Try again</Button>
       </div>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>

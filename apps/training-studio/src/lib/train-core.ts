@@ -58,7 +58,7 @@ import {
   type RunModelRef,
   type TrainingServiceStatus,
 } from '$lib/service-status-core';
-import { FilesProcessingError } from '$lib/files-processing';
+import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { slugify } from '$lib/slug';
 import type { TrainingTextCheck } from '$lib/training-text';
@@ -543,7 +543,7 @@ export interface SubmittedBatch {
 
 /** A submit failure as the user should read it: the orchestrator's own reason when it gave one. */
 export function submitFailureReason(err: unknown): string {
-  if (err instanceof FilesProcessingError) return err.message;
+  if (err instanceof FilesProcessingError) return FILES_PROCESSING_PARTIAL_REASON;
   return err instanceof TrainingSubmitError ? err.reason : 'the training service did not respond';
 }
 

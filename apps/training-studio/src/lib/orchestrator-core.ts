@@ -93,10 +93,11 @@ const NOT_READY_MESSAGE = /^trainingData blob '[^']*' is not available for train
 
 export function isTrainingDataNotReady(error: unknown, status: number | undefined): boolean {
   if (status !== 400 || !error || typeof error !== 'object') return false;
-  const e = error as { code?: unknown; errors?: { messages?: unknown } };
-  if (e.code !== undefined) return e.code === NOT_READY_CODE;
-  const messages = e.errors?.messages;
+  const e = error as { code?: unknown; errors?: Record<string, unknown> };
+  if (e.code != null) return e.code === NOT_READY_CODE;
+  const { messages, ...otherErrors } = e.errors ?? {};
   return (
+    Object.keys(otherErrors).length === 0 &&
     Array.isArray(messages) &&
     messages.length > 0 &&
     messages.every((m) => typeof m === 'string' && NOT_READY_MESSAGE.test(m))
