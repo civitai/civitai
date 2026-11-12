@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { getBlockedPairIds } from '~/server/services/user-preferences.service';
+import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
 import { getServicesMinCreatorScore } from '~/server/services/creator-service-min-score';
@@ -274,8 +274,9 @@ const feedOrderBy = {
 
 /**
  * Active offerings across every seller whose storefront a visitor could open: the storefront's
- * listing rule, plus a published shop and no block either way (`assertCreatorShopVisible`). Owners
- * and moderators get no bypass here: the feed is what visitors see.
+ * listing rule, plus a published shop and no block either way (`assertCreatorShopVisible`), and
+ * minus the creators this viewer hid. Owners and moderators get no bypass: the feed is what
+ * visitors see.
  */
 export async function getServiceOfferingFeed({
   browsingLevel,
@@ -289,16 +290,18 @@ export async function getServiceOfferingFeed({
   servable: number;
   viewerId?: number;
 }) {
-  const blockedPairIds = viewerId ? await getBlockedPairIds(viewerId) : [];
+  const excludedSellerIds = viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [];
   const listable = listableServiceOfferingWhere({ browsingLevel, servable });
   const rows = await dbRead.serviceOffering.findMany({
     where: {
       ...listable,
       seller: {
         ...listable.seller,
+        // The card links to the storefront, which is addressed by username.
+        username: { not: null },
         settings: { path: ['creatorShop', 'enabled'], equals: true },
       },
-      ...(blockedPairIds.length ? { sellerId: { notIn: blockedPairIds } } : {}),
+      ...(excludedSellerIds.length ? { sellerId: { notIn: excludedSellerIds } } : {}),
     },
     select: { ...serviceOfferingSelect, seller: { select: simpleUserSelect } },
     orderBy: feedOrderBy[sort],

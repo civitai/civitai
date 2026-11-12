@@ -4,6 +4,7 @@ import { ServiceFeedCard } from '~/components/CreatorShop/Services/feed/ServiceF
 import { useServiceOfferingFeed } from '~/components/CreatorShop/Services/creator-service.util';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
+import { NoContent } from '~/components/NoContent/NoContent';
 import type { ServiceOfferingFeedSort } from '~/server/schema/creator-service.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
@@ -58,9 +59,7 @@ export default function ServicesFeedPage() {
               <Loader />
             </Center>
           ) : offerings.length === 0 ? (
-            <Text c="dimmed" ta="center" py="xl">
-              No services yet.
-            </Text>
+            <NoContent message="No services to show." />
           ) : (
             <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
               {offerings.map((offering) => (
