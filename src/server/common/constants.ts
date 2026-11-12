@@ -1073,6 +1073,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Nano Banana': baseLicenses['imagen4'],
   Imagen4: baseLicenses['imagen4'],
   'Veo 3': baseLicenses['veo3'],
+  'Gemini Omni': baseLicenses['veo3'],
   'Wan Video': baseLicenses['apache 2.0'],
   'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
   'Wan Video 14B t2v': baseLicenses['apache 2.0'],
