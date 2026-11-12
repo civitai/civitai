@@ -56,6 +56,7 @@ beforeAll(async () => {
       "blockedFor" text,
       "nsfwLevel" int NOT NULL DEFAULT 0,
       metadata jsonb,
+      "needsReview" text,
       "updatedAt" timestamp(3) NOT NULL DEFAULT '2025-01-02 03:04:05'
     );
     CREATE TABLE "TagsOnImageDetails" (
@@ -151,6 +152,7 @@ describe('rescan-judge-collection-images: dry run', () => {
     expect(body).toEqual({
       dryRun: true,
       cohorts: { scannedNoJobs: 1, pendingManual: 1 },
+      heldForReview: 0,
       // 106 and 107 carry the same markers in a collection without the flag.
       wide: { scannedNoJobs: 2, pendingManual: 2 },
       controls: { inScopeWithScannerTags: 0, outOfScopeScannedWithoutScannerTags: 0 },
@@ -172,6 +174,15 @@ describe('rescan-judge-collection-images: dry run', () => {
     });
   });
 
+  it('counts in-scope images held for moderator review', async () => {
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id IN (101, 103)`);
+
+    const { body } = await call({});
+
+    // 103 is held but out of scope.
+    expect(body.heldForReview).toBe(1);
+  });
+
   it('refuses to write from a GET', async () => {
     const before = await snapshot();
 
@@ -183,6 +194,36 @@ describe('rescan-judge-collection-images: dry run', () => {
 });
 
 describe('rescan-judge-collection-images: a run', () => {
+  it('refuses to start, writing nothing, while an in-scope image is held for review', async () => {
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = 102`);
+    const before = await snapshot();
+
+    const { statusCode, body } = await call({ dryRun: 'false' });
+
+    expect(statusCode).toBe(400);
+    expect(body).toEqual({
+      error: 'Some in-scope images are held for moderator review',
+      heldForReview: 1,
+    });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('skips an image held for review after the check', async () => {
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      ...args: Parameters<typeof raw.queryRaw>
+    ) => {
+      const rows = await raw.queryRaw(...args);
+      const text = Array.isArray(args[0]) ? (args[0] as string[]).join('') : '';
+      if (text.includes('ORDER BY i.id'))
+        await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 101`);
+      return rows;
+    }) as never);
+
+    await call({ dryRun: 'false' });
+
+    expect(await rescanned()).toEqual([102]);
+  });
+
   it('queues both cohorts and nothing else, keeping the applied level as a floor', async () => {
     const before = await snapshot();
 

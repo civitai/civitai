@@ -90,6 +90,15 @@ async function scopeControls() {
   return row ?? { inScopeWithScannerTags: 0, outOfScopeScannedWithoutScannerTags: 0 };
 }
 
+/** In-scope rows held for moderator review: a rescan's verdict would replace the hold. */
+async function countHeld(ids?: number[]) {
+  const [row] = await dbRead.$queryRaw<{ held: number }[]>`
+    SELECT count(*)::int AS held FROM "Image" i
+    WHERE ${inScope} AND i."needsReview" IS NOT NULL ${idFilter(ids)}
+  `;
+  return row?.held ?? 0;
+}
+
 async function inScopeIds(ids?: number[]) {
   if (ids && !ids.length) return [];
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
@@ -118,6 +127,7 @@ async function queueBatch(batch: number[]) {
       END
     FROM "Post" p
     WHERE p.id = i."postId" AND i.id IN (${Prisma.join(batch)}) AND ${inScope}
+      AND i."needsReview" IS NULL
     RETURNING i.id
   `;
   if (updated.length) {
@@ -145,17 +155,21 @@ export default WebhookEndpoint(async (req, res) => {
     }
   }
 
-  const cohorts = await countCohorts(ids);
+  const [cohorts, heldForReview] = await Promise.all([countCohorts(ids), countHeld(ids)]);
   console.log(
-    `rescan-judge-collection-images: scannedNoJobs=${cohorts.scannedNoJobs} pendingManual=${cohorts.pendingManual} dryRun=${dryRun}`
+    `rescan-judge-collection-images: scannedNoJobs=${cohorts.scannedNoJobs} pendingManual=${cohorts.pendingManual} heldForReview=${heldForReview} dryRun=${dryRun}`
   );
   if (dryRun) {
     const [wide, controls] = await Promise.all([countWide(), scopeControls()]);
     console.log(
       `rescan-judge-collection-images: wide pendingManual=${wide.pendingManual} scannedNoJobs=${wide.scannedNoJobs}; controls inScopeWithScannerTags=${controls.inScopeWithScannerTags} outOfScopeScannedWithoutScannerTags=${controls.outOfScopeScannedWithoutScannerTags}`
     );
-    return res.status(200).json({ dryRun, cohorts, wide, controls });
+    return res.status(200).json({ dryRun, cohorts, heldForReview, wide, controls });
   }
+  if (heldForReview > 0)
+    return res
+      .status(400)
+      .json({ error: 'Some in-scope images are held for moderator review', heldForReview });
 
   let queued = 0;
   await batchProcessor({
