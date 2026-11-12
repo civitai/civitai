@@ -395,7 +395,27 @@ describe('processImageScanningWorkflow', () => {
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledTimes(1);
   });
 
-  it('completes the scan, side effects included, when storing the axes fails', async () => {
+  it.each([
+    ['rejects', () => Promise.reject(new Error('relation "ImageAxisRating" does not exist'))],
+    [
+      'throws',
+      () => {
+        throw new Error('writer broke');
+      },
+    ],
+  ])('still records the moderator label when the axis writer %s', async (_, fail) => {
+    mockWriteAxes.mockImplementationOnce(fail as never);
+    const refusedRated = {
+      ...refusedStep,
+      output: { ...refusedStep.output, ratingV2: ratingV2() },
+    };
+    await expect(deliver('succeeded', [refusedRated, hashStep])).resolves.toBeUndefined();
+
+    expect(mockWriteAxes).toHaveBeenCalledTimes(1);
+    expect(mockRecordFlag).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fail the scan when storing the axes fails', async () => {
     mockWriteAxes.mockRejectedValueOnce(new Error('relation "ImageAxisRating" does not exist'));
     await expect(deliver('succeeded', withRating(ratingV2()))).resolves.toBeUndefined();
 
@@ -404,6 +424,13 @@ describe('processImageScanningWorkflow', () => {
     expect(pipeline.sendIngestionSignal).toHaveBeenCalledWith(
       expect.objectContaining({ ingestion: 'Scanned' })
     );
+  });
+
+  it('still stores the axes when a side effect after the verdict fails', async () => {
+    pipeline.applyIngestionSideEffects.mockRejectedValueOnce(new Error('side effect down'));
+    await expect(deliver('succeeded', withRating(ratingV2()))).resolves.toBeUndefined();
+
+    expect(mockWriteAxes).toHaveBeenCalledWith(expect.objectContaining({ imageId: 7 }));
   });
 });
 
