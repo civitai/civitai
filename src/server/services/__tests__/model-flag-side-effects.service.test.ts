@@ -13,7 +13,9 @@ const {
   mockModelsQueueUpdate,
   mockQueueImageSearchIndexUpdate,
   mockBustMvCache,
+  mockPurgeShowcaseEdge,
 } = vi.hoisted(() => ({
+  mockPurgeShowcaseEdge: vi.fn(),
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
@@ -83,6 +85,7 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
   createModelVersionPostFromTraining: vi.fn(),
   publishModelVersionsWithEarlyAccess: vi.fn(),
+  purgePublicModelShowcaseEdgeCache: mockPurgeShowcaseEdge,
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({ getHighestTierSubscription: vi.fn() }));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
@@ -344,5 +347,28 @@ describe('applyModelFlagSideEffects — gallery browsing-level cache bust', () =
     });
 
     expect(mockRedisDel).toHaveBeenCalledWith(['model:gallery-settings:42']);
+  });
+});
+
+describe('applyModelFlagSideEffects — public API edge cache', () => {
+  it.each([
+    ['minor', { minor: true }],
+    ['SFW-only', { sfwOnly: true }],
+  ])('purges the edge copies of every version when %s is set', async (_name, flags) => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, ...flags } });
+    expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
+  });
+
+  it('does not purge when only poi changes', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, poi: true } });
+    expect(mockPurgeShowcaseEdge).not.toHaveBeenCalled();
+  });
+
+  it('keeps the flag change when the purge fails', async () => {
+    mockPurgeShowcaseEdge.mockRejectedValueOnce(new Error('cloudflare down'));
+    await expect(
+      applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } })
+    ).resolves.toBeUndefined();
+    expect(mockBustMvCache).toHaveBeenCalled();
   });
 });

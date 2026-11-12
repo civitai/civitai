@@ -155,7 +155,9 @@ export default MixedAuthEndpoint(async function handler(
             'poi', m.poi,
             'mode', m.mode,
             'availability', m.availability,
-            'userId', m."userId"
+            'userId', m."userId",
+            'minor', m.minor,
+            'sfwOnly', m."sfwOnly"
           )
           FROM "Model" m
           WHERE m.id = mv."modelId"
@@ -195,7 +197,13 @@ export async function prepareModelVersionResponse(
 ) {
   // `availability` and the owner only decide visibility; they are not part of the response.
   const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
-  const { availability: modelAvailability, userId: ownerId, ...storedModel } = modelRow;
+  const {
+    availability: modelAvailability,
+    userId: ownerId,
+    minor,
+    sfwOnly,
+    ...storedModel
+  } = modelRow;
   const withSfwFace = showSfwFace && storedModel.sfwName != null;
   const model = resolveModelFace(storedModel, withSfwFace);
   // A .com face has no per-version description; the .red one is not shown in its place.
@@ -216,7 +224,7 @@ export async function prepareModelVersionResponse(
   images = (
     await holdShowcaseImages(
       { [version.id]: { images } },
-      new Map([[version.id, { modelId: version.modelId }]])
+      new Map([[version.id, { modelId: version.modelId, minor, sfwOnly }]])
     )
   )[version.id].images;
   if (paidAccess === undefined)

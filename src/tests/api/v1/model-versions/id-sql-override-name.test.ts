@@ -61,7 +61,7 @@ beforeAll(async () => {
     CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Published');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, name text, "sfwName" text, type text, nsfw boolean, poi boolean,
-      mode text, availability text, "userId" int
+      mode text, availability text, "userId" int, minor boolean, "sfwOnly" boolean
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, name text, "nsfwLevel" int, "createdAt" timestamp(3),
@@ -83,7 +83,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "ModelFileHash" ("fileId" int, type text, hash text);
 
-    INSERT INTO "Model" VALUES (7, 'Qwen Image', NULL, 'Checkpoint', false, false, NULL, 'Public', 1);
+    INSERT INTO "Model" VALUES (7, 'Qwen Image', NULL, 'Checkpoint', false, false, NULL, 'Public', 1, false, false);
     INSERT INTO "ModelVersion" VALUES (${VERSION_ID}, 7, 'v1', 1, now(), now(), 'Published', now(),
       '{}', NULL, NULL, 'SD 1.5', NULL, NULL, 'Created', 'Download', 'Public');
     INSERT INTO "ModelFile" VALUES

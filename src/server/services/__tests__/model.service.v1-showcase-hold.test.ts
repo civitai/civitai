@@ -293,6 +293,35 @@ describe('/api/v1/model-versions — the hold as the version API calls it', () =
     );
   });
 
+  it('leaves the entries it is handed unchanged', async () => {
+    storedModel({ minor: true, gallerySettings: { level: 0 } });
+    const entry = { images: [...SHOWCASE] };
+    const held = await holdShowcaseImages(
+      { [VERSION_ID]: entry },
+      new Map([[VERSION_ID, { modelId: MODEL_ID }]])
+    );
+    expect(held[VERSION_ID].images.map((i) => i.id)).toEqual(SFW_IDS);
+    expect(entry.images.map((i) => i.id)).toEqual(ALL_IDS);
+  });
+
+  it('serves an unflagged row whole on a stale held settings entry', async () => {
+    mockRedisGet.mockResolvedValue(
+      JSON.stringify({
+        hiddenTags: [],
+        hiddenUsers: [],
+        hiddenImages: {},
+        pinnedPosts: {},
+        level: 3,
+        sfwHeld: true,
+      })
+    );
+    const held = await holdShowcaseImages(
+      { [VERSION_ID]: { images: SHOWCASE } },
+      new Map([[VERSION_ID, { modelId: MODEL_ID, minor: false, sfwOnly: false }]])
+    );
+    expect(held[VERSION_ID].images.map((i) => i.id)).toEqual(ALL_IDS);
+  });
+
   it('serves no images of a version with no model', async () => {
     const held = await holdShowcaseImages({ [VERSION_ID]: { images: SHOWCASE } }, new Map());
     expect(held[VERSION_ID].images).toEqual([]);

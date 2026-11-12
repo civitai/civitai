@@ -140,6 +140,8 @@ function modelVersion() {
       mode: null,
       availability: 'Public',
       userId: 7,
+      minor: true,
+      sfwOnly: false,
     },
   } as any;
 }
@@ -180,7 +182,9 @@ describe('a model version response', () => {
     expect(mockHold).toHaveBeenCalledTimes(1);
     const [byVersion, models] = mockHold.mock.calls[0];
     expect(Object.keys(byVersion)).toEqual([String(VERSION)]);
-    expect(models.get(VERSION)).toEqual({ modelId: MODEL });
+    expect(models.get(VERSION)).toEqual({ modelId: MODEL, minor: true, sfwOnly: false });
+    expect(body!.model).not.toHaveProperty('minor');
+    expect(body!.model).not.toHaveProperty('sfwOnly');
   });
 
   it('holds images handed in by the by-hash batch the same way', async () => {

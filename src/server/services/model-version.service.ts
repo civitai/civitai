@@ -1607,6 +1607,31 @@ async function purgeModelVersionByHashCache(hashes: string[]) {
   await purgeCache({ urls });
 }
 
+/**
+ * Purge the edge-cached public API bodies that carry a model's showcase, once its minor or SFW-only
+ * flag changes: by-hash for every file of its versions, and the model and version by-id URLs.
+ * URLs with a query string are left to their TTL.
+ */
+export async function purgePublicModelShowcaseEdgeCache(
+  modelId: number,
+  modelVersionIds: number[]
+) {
+  const hashes = modelVersionIds.length
+    ? await dbRead.modelFileHash.findMany({
+        where: { file: { modelVersionId: { in: modelVersionIds } } },
+        select: { hash: true },
+      })
+    : [];
+  await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
+  const origin = getBaseUrl();
+  await purgeCache({
+    urls: [
+      `${origin}/api/v1/models/${modelId}`,
+      ...modelVersionIds.map((id) => `${origin}/api/v1/model-versions/${id}`),
+    ],
+  });
+}
+
 // Resolve a version's file hashes then purge the by-hash edge cache. Used by
 // publish/unpublish where the ModelFile/ModelFileHash rows still exist. The
 // delete path can't use this (the cascade removes the rows), so it snapshots

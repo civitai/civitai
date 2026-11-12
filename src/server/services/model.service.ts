@@ -203,6 +203,7 @@ import {
   bustPublicModelResponseCache,
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
+  purgePublicModelShowcaseEdgeCache,
 } from '~/server/services/model-version.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -2768,6 +2769,20 @@ export async function applyModelFlagSideEffects({
       }
 
       await bustMvCache(modelVersionIds, id);
+    }
+    // The public API serves a held model's showcase at its gallery level; its edge copies predate the flag.
+    if (minorChanged) {
+      try {
+        await purgePublicModelShowcaseEdgeCache(id, modelVersionIds);
+      } catch (error) {
+        logToAxiom({
+          type: 'warning',
+          name: 'showcase-hold-edge-purge',
+          message: 'model flags changed; public API edge cache not purged',
+          modelId: id,
+          error: safeError(error),
+        }).catch(() => undefined);
+      }
     }
   }
 }
