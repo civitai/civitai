@@ -1058,7 +1058,7 @@ describe('honorGiftResidualsForUser', () => {
       const created = mockStripe.subscriptions.create.mock.calls[0][0];
       expect(created.cancel_at).toBeUndefined();
       const update = mockStripe.subscriptions.update.mock.calls.find(
-        ([id, args]: [string, any]) => id === 'sub_residual' && 'cancel_at' in args
+        ([id, args]) => id === 'sub_residual' && 'cancel_at' in args
       );
       if (update) return update[1].cancel_at;
       return created.cancel_at_period_end ? anchor.add(1, 'month').unix() : null;
