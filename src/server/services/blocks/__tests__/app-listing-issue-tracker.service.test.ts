@@ -128,14 +128,16 @@ describe('isIssueTrackerColumnAvailable', () => {
     ).toBe(false);
   });
 
-  it('false (fail-safe) on any other error, never a throw into the caller', async () => {
-    expect(
-      await isIssueTrackerColumnAvailable(
+  it('🔴 any OTHER error PROPAGATES — a transient fault is not "no column"', async () => {
+    // Read as "unavailable", the transactional callers would skip the column and silently
+    // drop or clear a link; propagating fails the operation instead (as the source-repo probe does).
+    await expect(
+      isIssueTrackerColumnAvailable(
         reads(async () => {
           throw connectionLost();
         })
       )
-    ).toBe(false);
+    ).rejects.toThrow('Connection terminated');
   });
 });
 

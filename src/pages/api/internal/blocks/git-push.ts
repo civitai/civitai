@@ -327,7 +327,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     allowedScopes: appBlock.app.allowedScopes ?? 0,
     allowedOrigins: (appBlock.app.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
   };
-  const validation = await BlockManifestValidator.validateSubmission(manifest, appContext);
+  // `strictIssueTrackerLink: false`: a push re-validates the app's manifest, which may carry a
+  // `bugs` stored before that key became a string-only rule; that must not block the push. A
+  // non-conforming `bugs` is a warning, and the approve publishes no link for it.
+  const validation = await BlockManifestValidator.validateSubmission(manifest, appContext, {
+    strictIssueTrackerLink: false,
+  });
+  if (validation.warnings?.length) {
+    // eslint-disable-next-line no-console
+    console.warn(`[git-push] ${slug}: manifest warnings: ${validation.warnings.join('; ')}`);
+  }
   if (!validation.valid) {
     await setCommitStatusSafe({
       slug,

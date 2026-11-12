@@ -9299,7 +9299,12 @@ export const blocksRouter = router({
         allowedScopes: block.app?.allowedScopes ?? 0,
         allowedOrigins: (block.app?.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
       };
-      const validation = await BlockManifestValidator.validateSubmission(merged, appContext);
+      // `strictIssueTrackerLink: false`: this edits an EXISTING manifest, which may carry a `bugs`
+      // stored before that key became a string-only rule. It must stay editable; a
+      // non-conforming `bugs` is a warning and publishes no link (strict only on a new submission).
+      const validation = await BlockManifestValidator.validateSubmission(merged, appContext, {
+        strictIssueTrackerLink: false,
+      });
       if (!validation.valid) {
         throw new TRPCError({
           code: 'BAD_REQUEST',

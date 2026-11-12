@@ -3426,9 +3426,18 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // here (the H-4 invariant). A post-deploy submission already passed this gate
   // at submit time, and nothing reaches the approve queue without the submit
   // gate first, so skipping the re-check creates no bypass.
+  //
+  // `strictIssueTrackerLink: false` for the same reason: a manifest stored before `bugs` became a
+  // string-only rule must stay approvable. A non-conforming `bugs` is a warning, and the approve's
+  // listing sync publishes no link for it (`resolveListingIssueTracker`).
   const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx, {
     enforceSensitiveScopeJustification: false,
+    strictIssueTrackerLink: false,
   });
+  if (validation.warnings?.length) {
+    // eslint-disable-next-line no-console
+    console.warn(`[approveRequest] manifest warnings: ${validation.warnings.join('; ')}`);
+  }
   if (!validation.valid) {
     throw new Error(
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +

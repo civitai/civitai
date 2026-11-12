@@ -47,7 +47,16 @@ import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 export const MANIFEST_BUGS_NOT_A_STRING =
   'bugs must be a URL string (an object such as { "url": ... } is not supported)';
 
-type ValidationResult = { valid: true } | { valid: false; errors: string[] };
+/**
+ * `warnings` is present only when non-empty: a non-blocking finding (today only a non-conforming
+ * `bugs` outside a new submission — see `strictIssueTrackerLink`).
+ */
+type ValidationResult =
+  | { valid: true; warnings?: string[] }
+  | { valid: false; errors: string[]; warnings?: string[] };
+
+/** Suffix of the warning a lenient re-validation emits for a non-conforming `bugs`. */
+export const MANIFEST_BUGS_IGNORED_SUFFIX = ' — ignored: the store shows no Support link';
 
 /**
  * Options controlling WHICH validation rules run. Defaults to full enforcement
@@ -68,6 +77,15 @@ export type ManifestValidationOptions = {
    * validation still runs on approve.
    */
   enforceSensitiveScopeJustification?: boolean;
+  /**
+   * Refuse a non-conforming `bugs` (not a string, or not a valid issue-tracker URL). Default
+   * `true` — a NEW submission (submit-version, the developer manifest API). The RE-VALIDATIONS of
+   * a manifest that may have been stored before the `bugs` rule existed — moderator approve, the
+   * in-app manifest editor, git-push — pass `false`: the finding becomes a WARNING and the
+   * mapper (`resolveListingIssueTracker`) publishes no link for it, so such a manifest stays
+   * approvable and editable. Every other rule still refuses.
+   */
+  strictIssueTrackerLink?: boolean;
 };
 
 interface RawManifest {
@@ -567,12 +585,21 @@ export class BlockManifestValidator {
     // `repository`. The npm `{ url, email }` object form is REFUSED with a message rather than
     // ignored, so an author who wrote it learns why no Support link appears. The URL goes through
     // the SHARED `validateIssueTrackerUrl`, re-labelled to the manifest key.
+    const warnings: string[] = [];
     if (m.bugs !== undefined) {
+      let bugsError: string | null = null;
       if (typeof m.bugs !== 'string') {
-        errors.push(MANIFEST_BUGS_NOT_A_STRING);
+        bugsError = MANIFEST_BUGS_NOT_A_STRING;
       } else {
         const tracker = validateIssueTrackerUrl(m.bugs);
-        if (!tracker.ok) errors.push(tracker.error.replace('issueTrackerUrl', 'bugs'));
+        if (!tracker.ok) bugsError = tracker.error.replace('issueTrackerUrl', 'bugs');
+      }
+      if (bugsError !== null) {
+        if (opts?.strictIssueTrackerLink === false) {
+          warnings.push(bugsError + MANIFEST_BUGS_IGNORED_SUFFIX);
+        } else {
+          errors.push(bugsError);
+        }
       }
     }
 
@@ -959,7 +986,8 @@ export class BlockManifestValidator {
       }
     }
 
-    return errors.length === 0 ? { valid: true } : { valid: false, errors };
+    const warned = warnings.length > 0 ? { warnings } : {};
+    return errors.length === 0 ? { valid: true, ...warned } : { valid: false, errors, ...warned };
   }
 
   /**
@@ -1036,6 +1064,7 @@ export class BlockManifestValidator {
       }
     }
 
-    return errors.length === 0 ? { valid: true } : { valid: false, errors };
+    const warned = base.warnings && base.warnings.length > 0 ? { warnings: base.warnings } : {};
+    return errors.length === 0 ? { valid: true, ...warned } : { valid: false, errors, ...warned };
   }
 }

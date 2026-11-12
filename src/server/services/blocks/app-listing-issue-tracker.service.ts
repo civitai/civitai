@@ -212,14 +212,16 @@ const ISSUE_TRACKER_COLUMN_PROBE_ID = '__app_listing_issue_tracker_column_probe_
  * transaction will use (the primary). Not memoised: the column appears partway through a
  * deploy's life, and a cached `false` would keep the feature inert until a restart.
  *
- * 🔴 ANY ERROR ANSWERS `false`, not only the missing column, and that is the fail-safe
- * direction for every caller: a system write then skips the column (the pre-feature
- * behaviour) and an author write is refused with a message they can act on. Propagating
- * instead would let a transient fault on this one probe abort the pre-existing write it rides
- * along with — on the on-site approve path, silently stop minting store listings.
+ * 🔴 ONLY A MISSING-COLUMN ERROR ANSWERS `false`; every other error PROPAGATES, exactly as
+ * `isSourceRepoColumnAvailable` does. The transactional callers (`beginListingRevision`, the
+ * revision apply) turn this answer into "skip the column", so a transient fault read as
+ * "unavailable" would mint a shadow without the live link (cleared at the next approve) or apply
+ * a reviewed revision without its link — both silently, with a success response. Failing the
+ * operation instead is recoverable: the caller retries. On the on-site approve sync the probe
+ * runs inside that path's log-and-continue block, as the source-repo probe does.
  */
 export async function isIssueTrackerColumnAvailable(db: IssueTrackerReadClient): Promise<boolean> {
-  return (await readListingIssueTrackerUrlForRender(ISSUE_TRACKER_COLUMN_PROBE_ID, db)).available;
+  return (await readListingIssueTrackerUrl(ISSUE_TRACKER_COLUMN_PROBE_ID, db)).available;
 }
 
 /**
