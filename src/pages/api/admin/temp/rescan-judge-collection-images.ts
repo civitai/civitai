@@ -40,8 +40,8 @@ const scannedNoJobs = Prisma.sql`(i.ingestion = 'Scanned'::"ImageIngestionStatus
 )})`;
 const pendingManual = Prisma.sql`(i.ingestion = 'PendingManualAssignment'::"ImageIngestionStatus")`;
 // What the shared write accepts, in a judge-rated collection: so the counts match what it queues.
-// A row carrying a scan workflow is left out: that scan may still be running, and finishing after
-// the rescan it would overwrite the rescan's verdict. Only waiting-for-a-level rows can carry one.
+// Left out while a scan workflow on the row may still be running. Only rows waiting for a
+// manual level can carry one in this scope.
 const runScope = Prisma.sql`(${inJudgeCollection} AND NOT ${hasScanWorkflowSql('i')})`;
 const inScope = Prisma.sql`(${runScope} AND ${rescannableImageSql('i')})`;
 // Counted only: the shared write marks these Error instead of queuing them.
@@ -102,7 +102,7 @@ async function scopeControls() {
   return row ?? { inScopeWithScannerTags: 0, outOfScopeScannedWithoutScannerTags: 0 };
 }
 
-/** Rows the shared write would take that are left out for carrying a scan workflow. */
+/** Rescannable rows in judge-rated collections left out for carrying a scan workflow. */
 async function countExcludedWithScanWorkflow(ids?: number[]) {
   const [row] = await dbRead.$queryRaw<{ total: number; pendingManual: number }[]>`
     SELECT count(*)::int AS total, count(*) FILTER (WHERE ${pendingManual})::int AS "pendingManual"

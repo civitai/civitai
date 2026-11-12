@@ -320,6 +320,41 @@ describe('rescan-judge-collection-images: a run', () => {
     expect((await snapshot()).find((r) => r.id === 102)).toEqual(before);
   });
 
+  it('skips an image that gains a scan workflow after the read', async () => {
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      ...args: Parameters<typeof raw.queryRaw>
+    ) => {
+      const rows = await raw.queryRaw(...args);
+      const text = Array.isArray(args[0]) ? (args[0] as string[]).join('') : '';
+      if (text.includes('ORDER BY i.id'))
+        await db.exec(`UPDATE "Image" SET "scanJobs" = '{"workflowId": "wf-late"}' WHERE id = 102`);
+      return rows;
+    }) as never);
+    const before = (await snapshot()).find((r) => r.id === 102);
+
+    const { body } = await call({ dryRun: 'false' });
+
+    expect(body).toMatchObject({ queued: 1 });
+    expect(await rescanned()).toEqual([101]);
+    expect((await snapshot()).find((r) => r.id === 102)).toMatchObject({
+      ingestion: before?.ingestion,
+      metadata: before?.metadata,
+      queued: 0,
+    });
+  });
+
+  it('counts only excluded rows in judge-rated collections, and only listed ids', async () => {
+    await db.exec(
+      `UPDATE "Image" SET "scanJobs" = '{"workflowId": "wf-old"}' WHERE id IN (102, 107)`
+    );
+
+    expect((await call({})).body.excludedWithScanWorkflow).toEqual({ total: 1, pendingManual: 1 });
+    expect((await call({ ids: '101' })).body.excludedWithScanWorkflow).toEqual({
+      total: 0,
+      pendingManual: 0,
+    });
+  });
+
   it('refuses to start, writing nothing, until the tag recompute carries the judge floor', async () => {
     await installTagRecompute({ withFloor: false });
     const before = await snapshot();
