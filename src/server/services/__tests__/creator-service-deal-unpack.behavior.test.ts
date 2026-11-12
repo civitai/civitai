@@ -1497,7 +1497,7 @@ describe('the finals malware scan', () => {
         ]),
         'Retry',
       ],
-      ['pickle parse error', workflow('succeeded', [CLEAN, pickle('parseError')]), 'Retry'],
+      ['pickle parse error', workflow('succeeded', [CLEAN, pickle('parseError')]), 'Failed'],
       ['pickle step missing', workflow('succeeded', [CLEAN]), 'Retry'],
       [
         'clean, counted in the step output',
@@ -1534,6 +1534,37 @@ describe('the finals malware scan', () => {
       ['clean but the workflow failed', workflow('failed', [CLEAN, NOT_PICKLE]), 'Retry'],
       ['expired', workflow('expired', []), 'Retry'],
       ['canceled', workflow('canceled', []), 'Retry'],
+      [
+        'encrypted content the virus scan could not read',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'encrypted', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
+        'a virus scan stopped at a limit',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'limitsExceeded', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
+        'a virus scan stopped at a limit, in another case',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'LimitsExceeded', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
+        'encrypted content while the workflow still runs',
+        workflow('processing', [
+          { $type: 'modelClamScan', output: { status: 'encrypted', scannedFileCount: 1 } },
+        ]),
+        'Failed',
+      ],
       [
         'an unknown virus status',
         workflow('succeeded', [{ $type: 'modelClamScan', output: { status: 'new' } }, NOT_PICKLE]),

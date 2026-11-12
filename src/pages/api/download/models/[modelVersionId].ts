@@ -27,8 +27,15 @@ import {
 import { getLoginLink } from '~/utils/login-helpers';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import type { SessionUser } from '~/types/session';
+import type { ProviderServed } from '~/server/services/provider-download/provider-download.service';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 import { logUrlExpiry } from '~/server/utils/url-expiry-log';
+import {
+  checkDownloadCredential,
+  DOWNLOAD_SCOPE_REFUSED,
+  type DownloadRoute,
+} from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -90,10 +97,17 @@ type FileResult = Awaited<ReturnType<typeof getFileForModelVersion>>;
 export type DownloadGate = (args: GateArgs) => Promise<FileResult>;
 /** The file to serve, or the refusal, and the version the browser redirects name. */
 export type PickedFile = { fileResult: FileResult; modelVersionId?: number };
+/** Chooses and serves the file for a caller holding a per-provider download token. */
+export type ProviderPick = (args: {
+  req: NextApiRequest;
+  res: NextApiResponse;
+  provider: string;
+}) => Promise<ProviderServed>;
 export type DownloadRequest =
   | {
       ok: true;
       pick: (gate: DownloadGate, user: SessionUser | undefined) => Promise<PickedFile>;
+      providerPick: ProviderPick;
     }
   | { ok: false; reason: 'schema'; message: string }
   | { ok: false; reason: 'missing-version' | 'invalid-hash' };
@@ -114,6 +128,13 @@ function parseVersionRequest(req: NextApiRequest, repaired: boolean): DownloadRe
 
   return {
     ok: true,
+    async providerPick({ req, res, provider }) {
+      const { serveProviderDownload } = await import(
+        '~/server/services/provider-download/provider-download.service'
+      );
+      const { modelVersionId: _, fileId, ...selectors } = input;
+      return serveProviderDownload({ req, res, provider, modelVersionId, fileId, selectors });
+    },
     async pick(gate) {
       const fileResult = await gate(input);
       // Skipped when fileId is used — we already found the exact file.
@@ -136,12 +157,12 @@ function parseVersionRequest(req: NextApiRequest, repaired: boolean): DownloadRe
 /**
  * The download route, shared by every URL that names a model file. `parseRequest` reads the URL
  * and says how its file is chosen; everything else, from the blocklists to the redirect, is here,
- * so no download URL can check less than another. Only the ID URL accepts a per-provider token
- * (`providerTokens`); the others refuse one rather than serve its holder as anonymous.
+ * so no download URL can check less than another. A per-provider token is served by the request's
+ * `providerPick`, never as an anonymous download.
  */
 export function createModelDownloadHandler(
   parseRequest: (req: NextApiRequest, repaired: boolean) => DownloadRequest,
-  { providerTokens = false }: { providerTokens?: boolean } = {}
+  route: DownloadRoute
 ) {
   return PublicEndpoint(
     async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
@@ -170,6 +191,12 @@ export function createModelDownloadHandler(
         if (isBrowser) return res.send(message);
         return res.json({ error: message });
       }
+      function refuseRequest(request: Extract<DownloadRequest, { ok: false }>) {
+        if (request.reason === 'schema') return res.status(400).json({ error: request.message });
+        if (request.reason === 'invalid-hash')
+          return errorResponse(400, 'Invalid hash: expected 64 hexadecimal characters');
+        return errorResponse(400, 'Missing modelVersionId');
+      }
 
       try {
         // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
@@ -189,40 +216,32 @@ export function createModelDownloadHandler(
         if (providerToken.kind === 'duplicate')
           return res.status(400).json({ error: 'Send one token' });
         if (providerToken.kind === 'provider') {
-          if (!providerTokens)
-            return res.status(400).json({ error: 'Provider tokens are not accepted on this URL' });
           // Loaded only for a provider token, so every other download keeps today's import graph.
-          const { authorizeProviderToken, serveProviderDownload } = await import(
+          const { authorizeProviderToken } = await import(
             '~/server/services/provider-download/provider-download.service'
           );
           const authorized = await authorizeProviderToken(providerToken.token);
           if (!authorized.ok) return res.status(authorized.status).json(authorized.body);
-          const parsed = schema.safeParse(req.query);
-          if (!parsed.success)
-            return res
-              .status(400)
-              .json({ error: z.prettifyError(parsed.error) ?? 'Invalid modelVersionId' });
-          const { modelVersionId, fileId, ...selectors } = parsed.data;
-          const served = await serveProviderDownload({
-            req,
-            res,
-            provider: authorized.provider,
-            modelVersionId,
-            fileId,
-            selectors,
-          });
+          const request = parseRequest(req, repaired);
+          if (!request.ok) return refuseRequest(request);
+          const served = await request.providerPick({ req, res, provider: authorized.provider });
           if (!served.ok) return res.status(served.status).json(served.body);
           return res.redirect(served.url);
         }
 
         // Check if user is blacklisted
         const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
-        if (!!session?.user) {
+        const credential = await checkDownloadCredential(req, session?.user, {
+          route,
+          requiredScope: TokenScope.ModelsRead,
+        });
+        if (credential.refuse) return res.status(403).json(DOWNLOAD_SCOPE_REFUSED);
+        const user = credential.effectiveUser;
+        if (!!user) {
           const userBlacklist = parseUserBlocklist(
             await getDownloadBlocklistValue('user-blacklist')
           );
-          if (userBlacklist.includes(session.user.id.toString()))
-            return errorResponse(403, 'Forbidden');
+          if (userBlacklist.includes(user.id.toString())) return errorResponse(403, 'Forbidden');
         }
 
         // Check if user has a concerning number of downloads
@@ -253,8 +272,8 @@ export function createModelDownloadHandler(
         // Before setting a threshold for the anonymous bucket, give this surface
         // a key that does not collapse, or scope the limit to edge-attested
         // requests.
-        const isAuthed = !!session?.user;
-        const userKey = session?.user?.id?.toString() ?? ip;
+        const isAuthed = !!user;
+        const userKey = user?.id?.toString() ?? ip;
         if (!userKey) return errorResponse(403, 'Forbidden');
         const fallbackKey = isAuthed ? 'authed' : 'anon';
         if (await downloadLimiter.hasExceededLimit(userKey, fallbackKey)) {
@@ -265,12 +284,7 @@ export function createModelDownloadHandler(
         }
 
         const request = parseRequest(req, repaired);
-        if (!request.ok) {
-          if (request.reason === 'schema') return res.status(400).json({ error: request.message });
-          if (request.reason === 'invalid-hash')
-            return errorResponse(400, 'Invalid hash: expected 64 hexadecimal characters');
-          return errorResponse(400, 'Missing modelVersionId');
-        }
+        if (!request.ok) return refuseRequest(request);
 
         // `direct` is evaluated here, AFTER the blocklist, rate-limit and (inside
         // getFileForModelVersion) auth/ownership/paid-access checks. It selects
@@ -280,12 +294,12 @@ export function createModelDownloadHandler(
         const gate: DownloadGate = (args) =>
           getFileForModelVersion({
             ...args,
-            user: session?.user,
+            user: user,
             direct,
-            attribution: { caller: 'download-route', actor: resolveActorFor(session?.user) },
+            attribution: { caller: 'download-route', actor: resolveActorFor(user) },
             redCapable: isRedCapableHost(req.headers.host),
           });
-        const { fileResult, modelVersionId } = await request.pick(gate, session?.user);
+        const { fileResult, modelVersionId } = await request.pick(gate, user);
 
         if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
         if (fileResult.status === 'resolve-failed') {
@@ -367,7 +381,7 @@ export function createModelDownloadHandler(
           // fetches the file minutes after upload, which was landing a Download event and leaving every
           // draft showing 1 download before it went live.
           const tracker = new Tracker(req, res, session);
-          if (fileResult.published && countsAsPublicDownload(session?.user))
+          if (fileResult.published && countsAsPublicDownload(user))
             await tracker.modelVersionEvent({
               type: 'Download',
               modelId: fileResult.modelId,
@@ -379,8 +393,8 @@ export function createModelDownloadHandler(
             });
 
           // Bust the downloads cache so the user sees their download immediately
-          if (session?.user?.id) {
-            bustUserDownloadsCache(session.user.id).catch(() => {
+          if (user?.id) {
+            bustUserDownloadsCache(user.id).catch(() => {
               // ignore
             });
           }
@@ -436,4 +450,7 @@ export function createModelDownloadHandler(
   );
 }
 
-export default createModelDownloadHandler(parseVersionRequest, { providerTokens: true });
+export default createModelDownloadHandler(
+  parseVersionRequest,
+  '/api/download/models/[modelVersionId]'
+);

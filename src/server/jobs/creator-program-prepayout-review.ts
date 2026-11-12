@@ -1,7 +1,6 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { readMinimum } from '~/server/jobs/creator-program-counterparty-review';
 import { logToAxiom } from '~/server/logging/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -14,28 +13,11 @@ import { createPayoutReviewStore } from '~/server/services/creator-program-prepa
 import { moderatorApp } from '~/server/services/moderator-app.service';
 import { createJob } from './job';
 
-const { PREPAYOUT_LIMITS, COUNTERPARTY_REVIEW_WARNINGS } = REDIS_SYS_KEYS.CREATOR_PROGRAM;
+const { PREPAYOUT_LIMITS } = REDIS_SYS_KEYS.CREATOR_PROGRAM;
 const ACCOUNT_LOOKUP_CHUNK = 1_000;
 
 export async function readLimits() {
   return parseLimits(decodeRedisString(await sysRedis.get(PREPAYOUT_LIMITS)));
-}
-
-async function getWarnedAt(userIds: number[]) {
-  const records = userIds.length
-    ? await sysRedis.hmGet(COUNTERPARTY_REVIEW_WARNINGS, userIds.map(String))
-    : [];
-  const warned = new Map<number, string>();
-  for (const [i, userId] of userIds.entries()) {
-    const raw = decodeRedisString(records[i]);
-    if (!raw) continue;
-    try {
-      warned.set(userId, (JSON.parse(raw) as { warnedAt: string }).warnedAt);
-    } catch {
-      // An unreadable record is treated as no warning; the counterparty review owns that hash.
-    }
-  }
-  return warned;
 }
 
 async function loadAccounts(userIds: number[]) {
@@ -65,8 +47,6 @@ export const creatorProgramPrepayoutReview = createJob(
     runPrepayoutReview({
       ch: clickhouse ?? null,
       readLimits,
-      readCounterpartyMinimum: readMinimum,
-      getWarnedAt,
       loadAccounts,
       getCarriedUserIds: (period) => store.getCarriedUserIds(period),
       store,

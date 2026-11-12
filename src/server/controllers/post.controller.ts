@@ -860,7 +860,11 @@ export const getPostResourcesHandler = async ({
 }) => {
   try {
     await assertPostVisibleToViewer({ ...input, user: ctx.user });
-    const resources = await getPostResources({ ...input });
+    const resources = await getPostResources({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
 
     return resources.filter((x) => x.name !== 'vae');
   } catch (error) {
@@ -895,13 +899,23 @@ export const getPostResourceCoversHandler = async ({
 // #region [post for collections]
 export const getPostContestCollectionDetailsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetByIdInput;
   ctx: Context;
 }) => {
   try {
-    const items = await getPostContestCollectionDetails({ ...input });
-    return items;
+    const visible = await assertPostVisibleToViewer({ ...input, user: ctx.user }).catch((e) => {
+      if (e instanceof TRPCError && e.code === 'NOT_FOUND') return null;
+      throw e;
+    });
+    if (!visible) return { collection: null, permissions: null, items: [] };
+
+    return await getPostContestCollectionDetails({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

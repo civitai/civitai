@@ -564,6 +564,9 @@ const featureFlags = createFeatureFlags({
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
+  // The Flag Race: the badge on the home flag row and adding hats to a flag. Testers get it before
+  // launch; it goes public when the first flags swap in. The row itself is gated by its block's featureFlag.
+  flagRace: { availability: ['mod'], fliptKey: 'birthday2026-flag-race' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -663,7 +666,9 @@ const featureFlags = createFeatureFlags({
   blocklists: ['granted'],
   toolSearch: ['public'],
   comicSearch: ['public'],
-  generationOnlyModels: ['mod', 'granted', 'gold'],
+  // Open to every signed-in creator; kept as a flag so an env override can switch it off in the main app
+  // (Creator Studio's canSetGenerationOnly restates the default and doesn't read it).
+  generationOnlyModels: ['user'],
   appTour: ['public'],
   privateModels: ['public'],
   auctions: ['blue', 'red', 'green', 'public'],
@@ -852,6 +857,11 @@ const featureFlags = createFeatureFlags({
   // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
   // dark.
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
+  // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
+  // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for
+  // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
+  // fail-closed `isAppLimitsUpgradePromptEnabled`, so the two agree while the flag is absent.
+  appLimitsUpgradePrompt: { availability: [], fliptKey: 'app-limits-upgrade-prompt' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key

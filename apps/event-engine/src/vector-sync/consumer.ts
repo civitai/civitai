@@ -9,6 +9,7 @@ import { assertVectorSyncConfig, config } from '@/config';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { logger } from '@/utils/logger';
 import { MixedStampError, Embedder } from './embedder';
+import { recordFlush, serveMetrics, timeEmbeds, vectorSyncMetrics } from './metrics';
 import { ModelMismatchError, VectorStore } from './qdrant';
 import { connectorBlock, staticEmbedBlock, syncImageIds, type SyncDeps } from './sync';
 
@@ -114,8 +115,13 @@ export class VectorSyncQueue {
           this.deferred.delete(id);
         }
       }
-      const stats = await syncImageIds(ids, stamped ? this.deps : { ...this.deps, embedder: null });
+      const { embedder } = this.deps;
+      const stats = await syncImageIds(ids, {
+        ...this.deps,
+        embedder: stamped && embedder ? timeEmbeds('image', embedder) : null,
+      });
       const { deferredIds = [], ...counts } = stats;
+      recordFlush('image', counts);
       // Paused, not stopped: keep them for when it resumes. Stopped for good, they wait for a
       // reconcile like everything else that is missing.
       if (this.deps.embedder) this.defer(deferredIds);
@@ -124,6 +130,7 @@ export class VectorSyncQueue {
         'vector-sync: flushed'
       );
     } catch (err) {
+      vectorSyncMetrics.flushErrors.inc({ domain: 'image' });
       // Put the work back; newer offsets taken meanwhile stay, older ones are re-covered by them.
       for (const id of ids) this.pending.add(id);
       for (const o of offsets) {
@@ -258,7 +265,8 @@ async function main() {
   }, vs.debounceMs);
 
   http
-    .createServer((_req, res) => {
+    .createServer(async (req, res) => {
+      if (req.url === '/metrics') return serveMetrics(res);
       const healthy = queue.isHealthy();
       res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(

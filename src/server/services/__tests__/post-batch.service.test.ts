@@ -382,7 +382,7 @@ describe('scheduleBatch', () => {
   });
 
   it('announces the unreleased reviews of the post it rolls back, read before the delete', async () => {
-    addImage.mockRejectedValueOnce(new TRPCError({ code: 'BAD_REQUEST', message: 'nope' }));
+    updatePost.mockRejectedValueOnce(new TRPCError({ code: 'BAD_REQUEST', message: 'nope' }));
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       Array.isArray(strings) && strings.join('?').includes('"releasedAt" IS NULL')
         ? [{ id: 77 }]

@@ -141,7 +141,7 @@ describe('imagesForModelVersionsCache has no per-process L1', () => {
     expect(await imagesForModelVersionsCache.fetch([301])).toEqual({ 301: withTags(after) });
     expect(redisReads()).toBe(2);
     expect(tagReads).toHaveBeenCalledTimes(2);
-    expect(tagReads).toHaveBeenNthCalledWith(2, [before.images[1].id]);
+    expect(tagReads).toHaveBeenNthCalledWith(2, [before.images[1].id], { bypassLocal: false });
   });
 
   it('every read goes to Redis and re-reads the tag ids, however close together', async () => {
@@ -152,6 +152,19 @@ describe('imagesForModelVersionsCache has no per-process L1', () => {
       await advance(5);
     }
     expect([redisReads(), tagReads.mock.calls.length]).toEqual([3, 3]);
+  });
+
+  // The models search index fetches with bypassLocal; the tag ids it writes into a document come
+  // from this appendFn read, so the flag has to reach it.
+  it("passes the caller's bypassLocal on to the tag-id read", async () => {
+    const entry = entryFor(503);
+    plant(entry);
+    await imagesForModelVersionsCache.fetch([503], { bypassLocal: true });
+    expect(tagReads).toHaveBeenCalledTimes(1);
+    expect(tagReads).toHaveBeenCalledWith(
+      entry.images.map((i) => i.id),
+      { bypassLocal: true }
+    );
   });
 });
 

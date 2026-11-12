@@ -7,7 +7,7 @@ import {
 } from '~/server/services/usage-limit-config.service';
 import type { UsageLimitRef } from '~/shared/constants/usage-limits';
 import { articleRateLimits } from '~/server/schema/article.schema';
-import { commentRateLimits } from '~/server/schema/comment.schema';
+import { commentRateLimits } from '~/server/schema/commentv3.schema';
 import { postRateLimits } from '~/server/schema/post.schema';
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
 import { CacheTTL, EARLY_ACCESS_CONFIG } from '~/server/common/constants';

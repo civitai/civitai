@@ -104,11 +104,18 @@ describe('ModelVersionWrittenReviews', () => {
     expect(document.body.textContent).not.toMatch(/Read review(?! by)/);
   });
 
-  test('the line under the title is the share of recommending reviews, rounded down, and the count', async () => {
+  test('the line under the title leads with the rating label, then the share rounded down and the count', async () => {
     const screen = await renderSection({ thumbsUpCount: 996, thumbsDownCount: 4 });
     await expect
       .element(screen.getByTestId('model-written-reviews-summary'))
-      .toHaveTextContent('99% recommend · 1,000 reviews');
+      .toHaveTextContent('Overwhelmingly Positive · 99% of 1,000 reviews');
+  });
+
+  test('a single review reads "1 review", not "1 reviews"', async () => {
+    const screen = await renderSection({ thumbsUpCount: 1, thumbsDownCount: 0 });
+    await expect
+      .element(screen.getByTestId('model-written-reviews-summary'))
+      .toHaveTextContent(/100% of 1 review$/);
   });
 
   test('with no thumbs on the model, shows no summary line', async () => {

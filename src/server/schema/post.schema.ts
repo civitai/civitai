@@ -364,7 +364,7 @@ export const scheduleBatchSchema = z.object({
   tags: z.array(z.string().trim().min(1)).max(POST_TAG_LIMIT).default([]),
   tools: z.array(z.number().int().positive()).default([]),
   techniques: z.array(z.number().int().positive()).default([]),
-  /** Model versions listed on every image of every post, as the post editor's manual resources. */
+  /** Credited to every image as uploader-asserted (`detected: false`), like a hand-added resource. */
   resourceIds: z.array(z.number().int().positive()).max(MAX_MANUAL_RESOURCES_PER_IMAGE).default([]),
   posts: z
     .array(scheduleBatchPostSchema)

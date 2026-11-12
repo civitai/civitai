@@ -15,6 +15,11 @@ import { outOfCsamQueuePending as outOfPending } from '@civitai/db-queries/csam-
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
+import {
+  FEEDBACK_CAPTURE_METADATA_KEY,
+  FEEDBACK_CAPTURE_OWNER_ID,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 
 export type ReviewTag = { id: number; name: string; nsfwLevel: number };
 
@@ -51,7 +56,22 @@ export type ImageReviewItem = {
   /** `imageVersion`: what a dismissal from the CSAM queue is taken against. */
   version: string;
   reviewTags: ReviewTag[];
+  /** Set on a feedback page capture: the report it came with and its reporter, never its subject. */
+  capture: FeedbackCaptureStamp | null;
 };
+
+export type FeedbackCaptureStamp = {
+  feedbackId: number | null;
+  reporterId: number | null;
+  reporterUsername: string | null;
+};
+
+const captureOwner = sql.lit(FEEDBACK_CAPTURE_OWNER_ID);
+/** A stamp field of a capture row aliased `i`; null on any other image. */
+const captureStampInt = (field: 'feedbackId' | 'reporterId') =>
+  sql<number | null>`case when i."userId" = ${captureOwner}
+    and (i.metadata -> ${FEEDBACK_CAPTURE_METADATA_KEY} ->> ${field}) ~ '^[1-9][0-9]{0,8}$'
+    then (i.metadata -> ${FEEDBACK_CAPTURE_METADATA_KEY} ->> ${field})::int end`;
 
 export async function getImageReviewQueue({
   needsReview,
@@ -59,6 +79,7 @@ export async function getImageReviewQueue({
   excludedTagIds,
   browsingLevel,
   userId,
+  capturesOnly,
   cursor,
   limit,
 }: {
@@ -68,6 +89,8 @@ export async function getImageReviewQueue({
   browsingLevel: number;
   /** One owner's images only. */
   userId?: number;
+  /** Feedback page captures only. */
+  capturesOnly?: boolean;
   cursor?: number;
   limit: number;
 }): Promise<{ items: ImageReviewItem[]; nextCursor?: number }> {
@@ -88,6 +111,9 @@ export async function getImageReviewQueue({
           .limit(1)
           .as('ic'),
       (join) => join.onTrue()
+    )
+    .leftJoin('User as cr', (join) =>
+      join.on(sql<boolean>`cr.id = ${captureStampInt('reporterId')}`)
     )
     .select([
       'i.id',
@@ -119,6 +145,9 @@ export async function getImageReviewQueue({
       sql<string | null>`i.metadata ->> 'size'`.as('size'),
       sql<string | null>`i.metadata ->> 'duration'`.as('duration'),
       imageVersion('i').as('version'),
+      captureStampInt('feedbackId').as('captureFeedbackId'),
+      captureStampInt('reporterId').as('captureReporterId'),
+      'cr.username as captureReporterUsername',
     ])
     // needsReview + ingestion equality drives the Image_needsReview_index partial index. The bit-op
     // browsing-level test and the correlated tag EXISTS/NOT EXISTS subqueries stay as sql fragments.
@@ -140,6 +169,7 @@ export async function getImageReviewQueue({
       )
     )
     .$if(userId != null, (qb) => qb.where('i.userId', '=', userId!))
+    .$if(!!capturesOnly, (qb) => qb.where('i.userId', '=', FEEDBACK_CAPTURE_OWNER_ID))
     .$if(setAside != null, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i', setAside!)}`))
     .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
     .orderBy('i.id', 'desc')
@@ -165,7 +195,17 @@ export async function getImageReviewQueue({
   }
 
   return {
-    items: rows.map((r) => ({ ...r, reviewTags: tagsByImage.get(r.id) ?? [] })),
+    items: rows.map(({ captureFeedbackId, captureReporterId, captureReporterUsername, ...r }) => ({
+      ...r,
+      reviewTags: tagsByImage.get(r.id) ?? [],
+      capture: isFeedbackCaptureOwner(r.userId)
+        ? {
+            feedbackId: captureFeedbackId,
+            reporterId: captureReporterId,
+            reporterUsername: captureReporterUsername,
+          }
+        : null,
+    })),
     nextCursor,
   };
 }
@@ -229,6 +269,8 @@ export type CsamQueueUser = {
   reported: boolean;
   /** The holds on the user's account; empty when there are none. */
   heldBy: CsamQueueHoldReason[];
+  /** A feedback page capture is a row of its own, never grouped under the capture account. */
+  capture: { imageId: number; feedbackId: number | null; removed: boolean } | null;
 };
 
 /** The CSAM review queue as one row per owning user, most pending first, at the browsing level of
@@ -239,10 +281,32 @@ export async function getCsamQueueByUser({
   browsingLevel: number;
 }): Promise<{ users: CsamQueueUser[]; truncated: boolean }> {
   const setAside = await setAsideState(dbRead);
+  // A capture shows someone else's content, so each is a group of its own, keyed by image.
+  const groupKey = sql`case when i."userId" = ${captureOwner} then 'c' || i.id::text else i."userId"::text end`;
   const groups = await dbRead
     .selectFrom('Image as i')
     .select([
-      'i.userId',
+      sql<number>`min(i."userId")`.as('userId'),
+      sql<number | null>`max(${captureStampInt('feedbackId')})`.as('captureFeedbackId'),
+      // A report on a capture names whatever subject the moderator picked, so a capture is reported
+      // when any report lists it. One image per capture group.
+      sql<Date | null>`max(case when i."userId" = ${captureOwner} then (
+        select max(r."reportSentAt") from "CsamReport" r
+        cross join lateral jsonb_array_elements(
+          case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
+        ) e
+        where e ->> 'id' = i.id::text
+      ) end)`.as('captureReportSentAt'),
+      sql<boolean>`coalesce(bool_or(i."userId" = ${captureOwner} and exists (
+        select 1 from "CsamReport" r
+        cross join lateral jsonb_array_elements(
+          case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
+        ) e
+        where e ->> 'id' = i.id::text
+      )), false)`.as('captureReported'),
+      sql<boolean>`bool_or(i.ingestion = 'Blocked' and not ${setAsideCounts('i', setAside)})`.as(
+        'removedNotDismissed'
+      ),
       sql<number>`count(*)::int`.as('flagged'),
       sql<number>`(count(*) filter (where not ${outOfPending('i', setAside)}))::int`.as('pending'),
       sql<number>`max(i.id)`.as('latestImageId'),
@@ -250,41 +314,59 @@ export async function getCsamQueueByUser({
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('i.ingestion', 'in', reviewQueueIngestion(FLAG_KEPT_THROUGH_BLOCK))
-    .groupBy('i.userId')
+    .groupBy(groupKey)
     .orderBy('pending', 'desc')
     .orderBy(sql`count(*)`, 'desc')
-    .orderBy('i.userId')
+    .orderBy(groupKey)
     .limit(CSAM_QUEUE_USER_LIMIT + 1)
     .execute();
 
   const truncated = groups.length > CSAM_QUEUE_USER_LIMIT;
   const page = groups.slice(0, CSAM_QUEUE_USER_LIMIT);
-  const userIds = page.map((g) => g.userId);
-  if (!userIds.length) return { users: [], truncated };
+  if (!page.length) return { users: [], truncated };
+  // Account-level lookups never cover the capture account: it is no one's account.
+  const userIds = [...new Set(page.map((g) => g.userId))].filter(
+    (id) => !isFeedbackCaptureOwner(id)
+  );
+  const capture = (g: (typeof page)[number]) =>
+    isFeedbackCaptureOwner(g.userId)
+      ? {
+          imageId: Number(g.latestImageId),
+          feedbackId: g.captureFeedbackId,
+          removed: g.removedNotDismissed,
+        }
+      : null;
 
+  const none = userIds.length === 0;
   const [users, reports, removed, holds, marker] = await Promise.all([
-    dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
-    dbRead
-      .selectFrom('CsamReport')
-      .select([
-        'userId',
-        sql<Date | null>`max("reportSentAt")`.as('reportSentAt'),
-        sql<number | null>`(array_agg(id order by "reportSentAt" desc) filter (
+    none
+      ? []
+      : dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
+    none
+      ? []
+      : dbRead
+          .selectFrom('CsamReport')
+          .select([
+            'userId',
+            sql<Date | null>`max("reportSentAt")`.as('reportSentAt'),
+            sql<number | null>`(array_agg(id order by "reportSentAt" desc) filter (
           where type = 'Image' and "reportSentAt" is not null and "reportId" is not null
         ))[1]`.as('latestSentImageReportId'),
-      ])
-      .where('userId', 'in', userIds)
-      .groupBy('userId')
-      .execute(),
-    removedNotDismissed(dbRead, setAside)
-      .select([
-        'i.userId',
-        sql<number>`count(*)::int`.as('count'),
-        imagesVersion('i').as('version'),
-      ])
-      .where('i.userId', 'in', userIds)
-      .groupBy('i.userId')
-      .execute(),
+          ])
+          .where('userId', 'in', userIds)
+          .groupBy('userId')
+          .execute(),
+    none
+      ? []
+      : removedNotDismissed(dbRead, setAside)
+          .select([
+            'i.userId',
+            sql<number>`count(*)::int`.as('count'),
+            imagesVersion('i').as('version'),
+          ])
+          .where('i.userId', 'in', userIds)
+          .groupBy('i.userId')
+          .execute(),
     getFlagClearHolds(userIds),
     holdMarkerState(dbRead),
   ]);
@@ -305,10 +387,13 @@ export async function getCsamQueueByUser({
       removed: Number(removedByUser.get(g.userId)?.count ?? 0),
       removedVersion: removedByUser.get(g.userId)?.version ?? null,
       latestImageId: Number(g.latestImageId),
-      reportSentAt: reportsByUser.get(g.userId)?.reportSentAt ?? null,
+      reportSentAt: isFeedbackCaptureOwner(g.userId)
+        ? g.captureReportSentAt
+        : reportsByUser.get(g.userId)?.reportSentAt ?? null,
       latestSentImageReportId: reportsByUser.get(g.userId)?.latestSentImageReportId ?? null,
-      reported: reportsByUser.has(g.userId),
+      reported: isFeedbackCaptureOwner(g.userId) ? g.captureReported : reportsByUser.has(g.userId),
       heldBy: reasons(holds.get(g.userId)),
+      capture: capture(g),
     })),
     truncated,
   };

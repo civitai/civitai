@@ -650,7 +650,9 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['thumbnailImageId', 'sourceImageId'],
     decision: 'server-derived',
   },
-  'src/server/services/post.service.ts#addResourceToPostImage': {
+  // Reached from addResourceToPostImage behind the route guard, and from scheduleBatch with the
+  // images it just created.
+  'src/server/services/post.service.ts#creditResourcesToImages': {
     writes: ['imageId'],
     decision: 'route-guard',
   },
@@ -711,7 +713,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
 
 /** The middleware each `route-guard` site sits behind, as it appears in its router. */
 const ROUTE_GUARDS: Record<string, { router: string; procedure: string }> = {
-  'src/server/services/post.service.ts#addResourceToPostImage': {
+  'src/server/services/post.service.ts#creditResourcesToImages': {
     router: 'src/server/routers/post.router.ts',
     procedure:
       'addResourceToImage: verifiedProcedure .meta({ requiredScope: TokenScope.MediaWrite }) .input(addResourceToPostImageInput) .use(isImageOwnerOrModerator) .mutation(addResourceToPostImageHandler)',

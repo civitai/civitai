@@ -157,7 +157,9 @@
 
 <svelte:document onpointerover={retarget} onfocusin={retarget} />
 
-<SidebarProvider>
+<!-- Pinned open: with no desktop trigger, a Ctrl+B collapse would have no way back. Phones keep the
+     off-canvas sheet's own state. -->
+<SidebarProvider bind:open={() => true, () => {}}>
   {#if navigating.to}
     <div
       class="pointer-events-none fixed inset-x-0 top-0 z-100 h-0.5 overflow-hidden"
@@ -340,23 +342,27 @@
   <!-- min-w-0: a flex item's automatic minimum is its content's width, so one wide table would widen
        the whole content column past the viewport instead of scrolling inside its own container. -->
   <SidebarInset class="min-w-0">
-    <!-- headerInline: the page's own header starts at the top and leaves room for the trigger, which
+    <!-- Phones only: there the sidebar is off-canvas and this is the way to open it.
+         headerInline: the page's own header starts at the top and leaves room for the trigger, which
          floats over it instead of reserving a row. -->
     <header
       class={page.data.headerInline
-        ? 'absolute top-0 left-0 z-10 flex h-12 items-center px-4'
-        : 'flex h-12 shrink-0 items-center gap-2 px-4'}
+        ? 'absolute top-0 left-0 z-10 flex h-12 items-center px-4 md:hidden'
+        : 'flex h-12 shrink-0 items-center gap-2 px-4 md:hidden'}
     >
       <SidebarTrigger />
     </header>
     <!-- fullBleed: edge-to-edge, self-managed height (scanner focused review). wide: full content width
-         (no cap) for image-heavy grids. default: readable text width. -->
+         (no cap) for image-heavy grids. default: readable text width.
+         md:pt-12 stands in for the trigger row hidden above: pages size against it (`100svh-3rem`). -->
     <div
       class={page.data.fullBleed
-        ? 'min-h-0 flex-1'
+        ? page.data.headerInline
+          ? 'min-h-0 flex-1'
+          : 'min-h-0 flex-1 md:pt-12'
         : page.data.wide
-          ? 'w-full px-6 pb-10'
-          : 'mx-auto w-full max-w-6xl px-6 pb-10'}
+          ? 'w-full px-6 pb-10 md:pt-12'
+          : 'mx-auto w-full max-w-6xl px-6 pb-10 md:pt-12'}
     >
       {@render children()}
     </div>

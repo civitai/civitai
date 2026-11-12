@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AxisRating from '~/server/services/image-axis-rating.service';
 import {
   classifyImageScanFailure,
   ImageScanFailureClass,
@@ -15,14 +16,21 @@ const pipeline = vi.hoisted(() => ({
   resolveScanOutcome: vi.fn(),
   sendIngestionSignal: vi.fn(),
 }));
-const { mockRecordAudit, mockRemoveJobQueue, mockFanOut, mockRecordFlag, mockLabelPrompt } =
-  vi.hoisted(() => ({
-    mockRecordAudit: vi.fn(),
-    mockRemoveJobQueue: vi.fn(),
-    mockFanOut: vi.fn(),
-    mockRecordFlag: vi.fn(),
-    mockLabelPrompt: vi.fn(),
-  }));
+const {
+  mockRecordAudit,
+  mockRemoveJobQueue,
+  mockFanOut,
+  mockRecordFlag,
+  mockLabelPrompt,
+  mockWriteAxes,
+} = vi.hoisted(() => ({
+  mockRecordAudit: vi.fn(),
+  mockRemoveJobQueue: vi.fn(),
+  mockFanOut: vi.fn(),
+  mockRecordFlag: vi.fn(),
+  mockLabelPrompt: vi.fn(),
+  mockWriteAxes: vi.fn(),
+}));
 
 // The pipeline imports the whole ingestion stack, and its stages run for real in
 // image-scan-result.test.ts, so this suite pins only what this service passes them.
@@ -42,6 +50,11 @@ vi.mock('~/server/services/scan-label-flag.service', () => ({
 }));
 vi.mock('~/server/services/upload-prompt-scan.service', () => ({
   labelUploadPrompt: mockLabelPrompt,
+}));
+// Its SQL runs for real in image-axis-rating.sql.behavior.test.ts.
+vi.mock('~/server/services/image-axis-rating.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AxisRating>()),
+  writeRatedAxes: mockWriteAxes,
 }));
 
 import {
@@ -339,6 +352,86 @@ describe('processImageScanningWorkflow', () => {
       expect.objectContaining({ ingestion: 'Scanned' })
     );
   });
+
+  const withRating = (rating: unknown) => [
+    { ...scanStep, output: { ...scanStep.output, ratingV2: rating } },
+    hashStep,
+  ];
+
+  it('stores the axes of a rated scan with the workflow and its completion time', async () => {
+    await deliver('succeeded', withRating(ratingV2()));
+
+    expect(mockWriteAxes).toHaveBeenCalledWith({
+      imageId: 7,
+      axes: { sexual: 3, violence: 1, rater: 'radio-alpha', raterVersion: 'c0ffee' },
+      workflowId: 'wf',
+      completedAt: 'end',
+    });
+  });
+
+  // No row is how an image the rater never saw stays apart from a rated one.
+  it('stores nothing for a scan without axes', async () => {
+    await deliver('succeeded', withRating(undefined));
+    expect(mockWriteAxes).not.toHaveBeenCalled();
+  });
+
+  it('leaves the verdict and every stage the same whether or not the scan has axes', async () => {
+    const stages = [
+      pipeline.buildAndInsertScanTags,
+      pipeline.resolveScanOutcome,
+      pipeline.applyIngestionSideEffects,
+      pipeline.sendIngestionSignal,
+      pipeline.markImageScanError,
+    ];
+    const run = async (rating: unknown) => {
+      for (const stage of stages) stage.mockClear();
+      await deliver('succeeded', withRating(rating));
+      return stages.map((stage) => stage.mock.calls);
+    };
+
+    const unrated = await run(undefined);
+    const rated = await run(ratingV2());
+    expect(rated).toEqual(unrated);
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['rejects', () => Promise.reject(new Error('relation "ImageAxisRating" does not exist'))],
+    [
+      'throws',
+      () => {
+        throw new Error('writer broke');
+      },
+    ],
+  ])('still records the moderator label when the axis writer %s', async (_, fail) => {
+    mockWriteAxes.mockImplementationOnce(fail as never);
+    const refusedRated = {
+      ...refusedStep,
+      output: { ...refusedStep.output, ratingV2: ratingV2() },
+    };
+    await expect(deliver('succeeded', [refusedRated, hashStep])).resolves.toBeUndefined();
+
+    expect(mockWriteAxes).toHaveBeenCalledTimes(1);
+    expect(mockRecordFlag).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fail the scan when storing the axes fails', async () => {
+    mockWriteAxes.mockRejectedValueOnce(new Error('relation "ImageAxisRating" does not exist'));
+    await expect(deliver('succeeded', withRating(ratingV2()))).resolves.toBeUndefined();
+
+    expect(pipeline.markImageScanError).not.toHaveBeenCalled();
+    expect(pipeline.applyIngestionSideEffects).toHaveBeenCalledTimes(1);
+    expect(pipeline.sendIngestionSignal).toHaveBeenCalledWith(
+      expect.objectContaining({ ingestion: 'Scanned' })
+    );
+  });
+
+  it('still stores the axes when a side effect after the verdict fails', async () => {
+    pipeline.applyIngestionSideEffects.mockRejectedValueOnce(new Error('side effect down'));
+    await expect(deliver('succeeded', withRating(ratingV2()))).resolves.toBeUndefined();
+
+    expect(mockWriteAxes).toHaveBeenCalledWith(expect.objectContaining({ imageId: 7 }));
+  });
 });
 
 const detection = (ageBand: string, isMinor: boolean) => ({
@@ -518,6 +611,68 @@ describe('parseImageScanningSteps', () => {
       ).not.toBe(ImageScanFailureClass.Permanent);
     }
   );
+});
+
+// The fields of the orchestrator's ImageScanningRatingV2 that are stored; the client predates them.
+const ratingV2 = (overrides: Record<string, unknown> = {}) => ({
+  status: 'ok',
+  modelRef: 'radio-alpha',
+  checkpointSha256: 'c0ffee',
+  sexual: { label: 'S3', score: 0.7, scores: { S3: 0.7 } },
+  violence: { label: 'V1', score: 0.6, scores: { V1: 0.6 } },
+  ...overrides,
+});
+const ratedFrame = (rating: unknown) => scanOutput({ ratingV2: rating });
+const axesOf = (steps: unknown[]) => parseImageScanningSteps(steps, 'wf').axes;
+
+describe('parseImageScanningSteps rating axes', () => {
+  it('reads the axes and the rater checkpoint from ratingV2', () => {
+    expect(axesOf([parserScanStep(ratedFrame(ratingV2()))])).toEqual({
+      sexual: 3,
+      violence: 1,
+      rater: 'radio-alpha',
+      raterVersion: 'c0ffee',
+    });
+  });
+
+  // An image the rater did not rate must stay unrated, not read as the lowest level.
+  it.each([
+    ['absent', undefined],
+    ['not ok', ratingV2({ status: 'error' })],
+    ['an out-of-range label', ratingV2({ sexual: { label: 'S5', score: 1 } })],
+    ['a label of the other axis', ratingV2({ violence: { label: 'S1', score: 1 } })],
+    ['a missing axis', ratingV2({ sexual: undefined })],
+    ['no checkpoint', ratingV2({ checkpointSha256: '' })],
+  ])('has no axes when ratingV2 is %s, and the scan still parses', (_, rating) => {
+    const scan = parseImageScanningSteps([parserScanStep(ratedFrame(rating))], 'wf');
+    expect(scan.axes).toBeUndefined();
+    expect(scan.nsfwLevel).toBe('r');
+  });
+
+  it('gives a video the highest level per axis across frames', () => {
+    const steps = [
+      frames(
+        ratedFrame(
+          ratingV2({ sexual: { label: 'S1', score: 1 }, violence: { label: 'V0', score: 1 } })
+        ),
+        ratedFrame(
+          ratingV2({ sexual: { label: 'S4', score: 1 }, violence: { label: 'V0', score: 1 } })
+        ),
+        ratedFrame(
+          ratingV2({ sexual: { label: 'S2', score: 1 }, violence: { label: 'V3', score: 1 } })
+        )
+      ),
+    ];
+    expect(axesOf(steps)).toMatchObject({ sexual: 4, violence: 3 });
+  });
+
+  it.each([
+    ['a frame is unrated', ratedFrame(undefined)],
+    ['frames come from different checkpoints', ratedFrame(ratingV2({ checkpointSha256: 'beef' }))],
+    ['frames come from different raters', ratedFrame(ratingV2({ modelRef: 'other-rater' }))],
+  ])('gives a video no axes when %s', (_, other) => {
+    expect(axesOf([frames(ratedFrame(ratingV2()), other)])).toBeUndefined();
+  });
 });
 
 describe('isImageScanningWorkflow', () => {

@@ -4008,7 +4008,52 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   }
 
+  const BLOB_SOURCE = {
+    url: 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg',
+    width: 768,
+    height: 1024,
+  };
+  /** The host-source rows, each with whether it was written before the orchestrator token. */
+  const hostSourceRows = () => {
+    const tokenAt = mockGetOrchestratorToken.mock.invocationCallOrder[0] ?? Infinity;
+    return mockLogToAxiom.mock.calls
+      .map(([data], i) => ({
+        data: data as Record<string, unknown>,
+        beforeToken: mockLogToAxiom.mock.invocationCallOrder[i] < tokenAt,
+      }))
+      .filter(({ data }) => data.name === 'app-block-host-source');
+  };
+
   describe('estimateWorkflow', () => {
+    it('counts an orchestrator source image once, before the token, tagged estimate', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      mockLogToAxiom.mockClear();
+      mockGetOrchestratorToken.mockClear();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller
+        .estimateWorkflow({ blockToken: 'tok', body: validBody({ sourceImage: BLOB_SOURCE }) })
+        .catch(() => undefined);
+      expect(hostSourceRows()).toEqual([
+        {
+          data: expect.objectContaining({
+            reason: 'host-orchestrator-source',
+            count: 1,
+            stepTypes: 'textToImage',
+            phase: 'estimate',
+          }),
+          beforeToken: true,
+        },
+      ]);
+    });
+
     it('a page token skips model-binding and passes the canGenerate gate → reaches whatif', async () => {
       // ctx has NO modelId, body.modelId=7 — a MODEL token would 403 here; a
       // page token must NOT.
@@ -4239,6 +4284,33 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
   });
 
   describe('submitWorkflow', () => {
+    it('counts an orchestrator source image once, before the token, tagged submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+      mockLogToAxiom.mockClear();
+      mockGetOrchestratorToken.mockClear();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller
+        .submitWorkflow({ blockToken: 'tok', body: validBody({ sourceImages: [BLOB_SOURCE] }) })
+        .catch(() => undefined);
+      expect(hostSourceRows()).toEqual([
+        {
+          data: expect.objectContaining({ count: 1, stepTypes: 'textToImage', phase: 'submit' }),
+          beforeToken: true,
+        },
+      ]);
+    });
+
     it('a page token submits when generatable + within budget (no spend bound bypassed)', async () => {
       mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
       happyVersionLookup();
@@ -10991,12 +11063,11 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       }
     });
 
-    // 🔴 A RAW comfy GRAPH IS REFUSED. `workflow.service` delivers a comfy step's
-    // `output.blobs` as media, and this arm runs no prompt audit, so a block
-    // naming `$type: 'comfy'` here would otherwise get an unaudited ComfyUI graph
-    // rendered and handed back. The platform's own comfy steps (built from
-    // `kind: 'textToImage'`) do not pass this guard; see the native submit test.
-    it.each(['comfy', 'Comfy'])(
+    // 🔴 A RAW comfy GRAPH IS REFUSED, under `$type: 'comfy'` or `'customComfy'`.
+    // `workflow.service` delivers a comfy step's `output.blobs` as media and this arm
+    // runs no prompt audit. Platform-built comfy steps (`kind: 'textToImage'`,
+    // `kind: 'customComfy'`) do not pass this guard.
+    it.each(['comfy', 'Comfy', 'customComfy', 'CustomComfy'])(
       'refuses a raw `%s` step on submit AND estimate, before the orchestrator or any reservation',
       async (t) => {
         // `as never`: `ptBody` is a loosely typed fixture; the cast keeps these two
@@ -11934,14 +12005,23 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(5, 5);
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ptBody({ $type: 'app-block:app_someone_else' }),
-      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'imageGen' }) });
       const tags: string[] = ptRealSubmits()[0][0].body.tags;
       expect(tags).toContain('app-block:app_test');
-      expect(tags).not.toContain('app-block:app_someone_else');
+      expect(tags).not.toContain('imageGen');
       expect(tags).toContain('passthrough');
+    });
+
+    it('refuses a $type shaped like a tag at the wire, before any submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      for (const $type of ['app-block:app_someone_else', 'a:b']) {
+        await expect(
+          caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type }) })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      }
+      expect(ptRealSubmits()).toHaveLength(0);
     });
 
     // civitai-app-starters#541 — `/models/train/from-orchestrator` admits only
@@ -12097,7 +12177,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(stamped).toBe('step:imageBackgroundRemoval');
     });
 
-    it('NAMESPACES a $type that collides with a kind key — never bare `customComfy`', async () => {
+    it('NAMESPACES a $type that collides with a kind key — never bare `training`', async () => {
       // 🔴 THE REASON THE VALUE IS PREFIXED, asserted at the call site the money
       // flows through. `textToImage` is itself a live orchestrator `$type`
       // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
@@ -12108,12 +12188,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       ptQuoting(5, 5);
       await caller().submitWorkflow({
         blockToken: 'tok',
-        body: ptBody({ $type: 'customComfy' }),
+        body: ptBody({ $type: 'training' }),
       });
       await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
-      expect(stamped).toBe('step:customComfy');
-      expect(stamped).not.toBe('customComfy');
+      expect(stamped).toBe('step:training');
+      expect(stamped).not.toBe('training');
     });
 
     // The collision this namespacing was written for is now closed at the door instead:
@@ -12128,21 +12208,6 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'textToImage' }) })
       ).rejects.toThrow(/platform-internal and cannot be submitted by an app block/);
       expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
-    });
-
-    it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {
-      // `$type` is `z.string().min(1).max(64)` with no character class, so `a:b`
-      // PARSES and reaches this submit. A second colon would break the value
-      // grammar, so the subtype is dropped — the row still records that a
-      // pass-through submit happened, which is shallower and never wrong. The
-      // write is fire-and-forget off an already-billed submit, so this must
-      // degrade rather than throw.
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
-      happyUser();
-      ptQuoting(5, 5);
-      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'a:b' }) });
-      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
-      expect(mockRecordSpendAttribution.mock.calls[0][0].generationType).toBe('step');
     });
 
     it('IDEMPOTENCY: a replayed submit does not double-charge', async () => {

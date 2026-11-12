@@ -116,11 +116,13 @@ export const auditRemixSourcesJob = createJob(
 
         // 5. Flag for moderator review if problematic
         if (isProblematic) {
-          const updated = await dbWrite.image.update({
-            where: { id: imageId },
+          // Re-checked in the write: a flag set since the read above is kept.
+          const [updated] = await dbWrite.image.updateManyAndReturn({
+            where: { id: imageId, needsReview: null },
             data: { needsReview: 'remixSource' },
             select: { postId: true },
           });
+          if (!updated) continue;
           // Flagged images need to disappear from the model-version showcase.
           if (updated.postId) await bustCachesForPosts(updated.postId);
           flagged++;

@@ -1,11 +1,25 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import {
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type DatabaseConnection,
+} from 'kysely';
 import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as GenerationFetch from '~/server/services/download-link/generation-fetch.service';
 import type * as TokenStore from '~/server/services/provider-download/provider-token.store';
 import type * as DeliveryWorker from '~/utils/delivery-worker';
 
-// A per-provider download token (`?token=<provider>:<secret>`) on the model download route.
+// A per-provider download token (`?token=<provider>:<secret>`) on the model download routes. The
+// hash URLs' candidate query is answered from `holder.rows`; its SQL is covered by
+// download-by-hash.sql.behavior.test.ts.
+
+const holder = vi.hoisted(() => ({
+  rows: [] as Record<string, unknown>[],
+  params: [] as unknown[][],
+}));
 
 const {
   mockGetServerAuthSession,
@@ -25,6 +39,36 @@ const {
   mockTrackerCtor: vi.fn(),
 }));
 
+vi.mock('~/server/db/kyselyDb.lazy', () => {
+  const connection: DatabaseConnection = {
+    async executeQuery(compiled) {
+      holder.params.push([...compiled.parameters]);
+      return { rows: holder.rows as never[] };
+    },
+    // eslint-disable-next-line require-yield
+    async *streamQuery() {
+      throw new Error('not used');
+    },
+  };
+  const noop = async () => undefined;
+  const kyselyRead = new Kysely({
+    dialect: {
+      createAdapter: () => new PostgresAdapter(),
+      createDriver: () => ({
+        init: noop,
+        acquireConnection: async () => connection,
+        beginTransaction: noop,
+        commitTransaction: noop,
+        rollbackTransaction: noop,
+        releaseConnection: noop,
+        destroy: noop,
+      }),
+      createIntrospector: (k) => new PostgresIntrospector(k),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+    },
+  });
+  return { loadKyselyDb: async () => ({ kyselyRead }) };
+});
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: mockGetServerAuthSession,
 }));
@@ -72,6 +116,8 @@ import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import handler from '~/pages/api/download/models/[modelVersionId]';
+import sha256Route from '~/pages/api/download/sha256/[hash]';
+import blake3Route from '~/pages/api/download/blake3/[hash]';
 import { hashProviderSecret } from '~/server/services/provider-download/provider-token';
 
 const SECRET = 'ab'.repeat(32);
@@ -119,6 +165,8 @@ async function counter(provider: string, result: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetEnv();
+  holder.rows = [];
+  holder.params = [];
   dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null);
   mockGetServerAuthSession.mockResolvedValue(null);
   // An anonymous caller may download this version.
@@ -327,4 +375,160 @@ it('a user API key on the same route still resolves a session', async () => {
   await run({ token: '0123456789abcdef0123456789abcdef' });
   expect(mockGetServerAuthSession).toHaveBeenCalled();
   expect(mockGetLiveProviderTokens).not.toHaveBeenCalled();
+});
+
+describe('a provider token on a hash URL', () => {
+  const HASH = 'ab'.repeat(32);
+  const candidate = (fileId: number) => ({
+    fileId,
+    modelVersionId: fileId + 1000,
+    groupSize: 2,
+    liveCount: 2,
+    takenDownFileIds: null,
+    groupSizeSpreadKB: 0,
+    liveSizeSpreadKB: 0,
+  });
+
+  async function runHash(
+    hash: unknown,
+    query: Record<string, string | string[]> = {},
+    route = sha256Route
+  ) {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(query))
+      for (const v of Array.isArray(value) ? value : [value]) search.append(key, v);
+    const req = {
+      method: 'GET',
+      url: `/api/download/sha256/${hash}?${search}`,
+      query: { hash, ...query },
+      headers: { 'user-agent': 'python-requests/2.31' },
+      socket: { remoteAddress: '203.0.113.7' },
+    } as unknown as NextApiRequest;
+    const res = {
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+      redirect: vi.fn().mockReturnThis(),
+      setHeader: vi.fn().mockReturnThis(),
+      headersSent: false,
+    } as unknown as NextApiResponse;
+    await route(req, res);
+    return { req, res };
+  }
+
+  beforeEach(() => {
+    holder.rows = [candidate(1), candidate(2)];
+    mockCheckGenerationFetch.mockImplementation(async ({ modelVersionId, fileId }) =>
+      fileId === 2
+        ? {
+            ok: true,
+            modelId: 1,
+            modelVersionId,
+            fileId,
+            fileUrl: 'https://bucket/2.safetensors',
+            fileName: '2.safetensors',
+            sizeKB: 1,
+            nsfw: false,
+            inEarlyAccess: false,
+            isPublic: false,
+          }
+        : { ok: false, error: 'not-found' }
+    );
+  });
+
+  it('serves the first copy the provider gate passes, as a GenerationFetch carrying the provider', async () => {
+    const granted = await counter('RunPods', 'granted');
+    const { res } = await runHash(HASH, { token: `RunPods:${SECRET}` });
+
+    expect(res.redirect).toHaveBeenCalledWith('https://storage.example/private?sig=1');
+    expect(mockCheckGenerationFetch.mock.calls.map(([a]) => a)).toEqual([
+      { modelVersionId: 1001, fileId: 1, principal: { kind: 'provider', provider: 'RunPods' } },
+      { modelVersionId: 1002, fileId: 2, principal: { kind: 'provider', provider: 'RunPods' } },
+    ]);
+    expect(mockModelVersionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'GenerationFetch', provider: 'RunPods', fileId: 2 })
+    );
+    expect(mockTrackerCtor).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
+    expect(mockGetServerAuthSession).not.toHaveBeenCalled();
+    expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
+    expect(holder.params[0]).toEqual(expect.arrayContaining([HASH.toUpperCase(), 'SHA256', true]));
+    expect(await counter('RunPods', 'granted')).toBe(granted + 1);
+  });
+
+  it('answers the most specific refusal when no copy passes', async () => {
+    mockCheckGenerationFetch.mockImplementation(async ({ fileId }) => ({
+      ok: false,
+      error: fileId === 2 ? 'in-review' : 'not-found',
+    }));
+    const { res } = await runHash(HASH, { token: `RunPods:${SECRET}` });
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({ error: 'in-review' });
+    expect(res.redirect).not.toHaveBeenCalled();
+  });
+
+  it('answers an unknown hash as the ID URL answers an unknown file for a provider', async () => {
+    holder.rows = [];
+    const { res } = await runHash(HASH, { token: `RunPods:${SECRET}` });
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({ error: 'not-found' });
+    expect(mockCheckGenerationFetch).not.toHaveBeenCalled();
+  });
+
+  it('is a 401 for an unknown token, before any lookup, never an anonymous download', async () => {
+    await runHash(HASH);
+    expect(holder.params).toHaveLength(1);
+    expect(holder.params[0]).not.toContain(true);
+    holder.params = [];
+
+    const { res } = await runHash(HASH, { token: `RunPods:${'cd'.repeat(32)}` });
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ error: 'invalid provider token' });
+    expect(holder.params).toEqual([]);
+    expect(res.redirect).not.toHaveBeenCalled();
+  });
+
+  it('looks a blake3 URL up under BLAKE3 for a provider', async () => {
+    const { res } = await runHash(HASH, { token: `RunPods:${SECRET}` }, blake3Route);
+
+    expect(res.redirect).toHaveBeenCalledWith('https://storage.example/private?sig=1');
+    expect(holder.params[0]).toEqual(expect.arrayContaining([HASH.toUpperCase(), 'BLAKE3']));
+    expect(holder.params[0]).not.toContain('SHA256');
+  });
+
+  it('two tokens on one request are a 400', async () => {
+    const { res } = await runHash(HASH, {
+      token: [`RunPods:${SECRET}`, '0123456789abcdef0123456789abcdef'],
+    });
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Send one token' });
+    expect(holder.params).toEqual([]);
+  });
+
+  it('refuses a malformed hash with a 400 before any lookup', async () => {
+    const { res } = await runHash(HASH.slice(2), { token: `RunPods:${SECRET}` });
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Invalid hash: expected 64 hexadecimal characters',
+    });
+    expect(holder.params).toEqual([]);
+  });
+
+  it('names the provider to the gate exactly as the ID URL does for a single-copy hash', async () => {
+    holder.rows = [{ ...candidate(2), groupSize: 1, liveCount: 1 }];
+    await runHash(HASH, { token: `RunPods:${SECRET}` });
+    const hashCheck = mockCheckGenerationFetch.mock.calls[0][0];
+    mockCheckGenerationFetch.mockClear();
+
+    await run({ token: `RunPods:${SECRET}`, fileId: '2' });
+    const idCheck = mockCheckGenerationFetch.mock.calls[0][0];
+
+    expect(hashCheck).toMatchObject({ fileId: 2, principal: idCheck.principal });
+    expect(idCheck).toMatchObject({
+      fileId: 2,
+      principal: { kind: 'provider', provider: 'RunPods' },
+    });
+  });
 });

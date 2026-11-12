@@ -339,6 +339,8 @@ export const constants = {
     minCreateAmount: 500,
     maxCreateAmount: 100000000,
     supportedBountyToModels: [BountyType.ModelCreation, BountyType.LoraCreation],
+    // The edit form saves back only the images its read returned, so writes are capped at the same number.
+    maxEntryImagesForEdit: 100,
   },
   defaultCurrency: Currency.BUZZ,
   referrals: {
@@ -899,6 +901,16 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy: 'MiniMax H3',
     requiresSameLicense: true,
   },
+  'minimax h3 image': {
+    // Same text and permalink as licence 55 in basemodel.constants.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/492fd8c4eca666f1085f57e30738c1e0d86b3439/LICENSE',
+    name: 'MiniMax-H3-Image Community License Agreement',
+    notice:
+      'MiniMax-H3-Image is licensed under the MiniMax-H3-Image Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
+    attribution: 'MiniMax-H3-Image',
+    poweredBy: 'MiniMax-H3-Image',
+    requiresSameLicense: true,
+  },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
     // the published text.
@@ -1061,6 +1073,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Nano Banana': baseLicenses['imagen4'],
   Imagen4: baseLicenses['imagen4'],
   'Veo 3': baseLicenses['veo3'],
+  'Gemini Omni': baseLicenses['veo3'],
   'Wan Video': baseLicenses['apache 2.0'],
   'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
   'Wan Video 14B t2v': baseLicenses['apache 2.0'],
@@ -1085,6 +1098,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
+  'MiniMax H3 Image': baseLicenses['minimax h3 image'],
   'Krea 2': baseLicenses['krea 2 community'],
   'Krea 2 Turbo': baseLicenses['krea 2 community'],
   Ernie: baseLicenses['apache 2.0'],

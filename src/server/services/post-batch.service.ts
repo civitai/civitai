@@ -503,6 +503,7 @@ async function runScheduleBatch({
   );
   steps.alreadyCreated = alreadyCreated.size;
   const toCreate = input.posts.filter((_, index) => !alreadyCreated.has(index));
+  // Checked once per call, not per post: every post is credited with the same versions.
   if (toCreate.length)
     await timed(steps, 'validateMs', async () => {
       const validation = await validateBatchSchedule({

@@ -4,6 +4,7 @@ import {
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
   onsiteRequestToUnifiedRow,
+  reviewRowLane,
   type OffsiteReviewRequest,
   type OnsiteReviewRequest,
   type UnifiedReviewRow,
@@ -824,5 +825,148 @@ describe('mergeReviewRows — the new fields changed NOTHING about merge/dedup/s
       'offsite:ord-b',
       'onsite:ord-a',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The pending queue's fast lane
+// ---------------------------------------------------------------------------
+
+describe('fast lane — agent-clean submissions sort first on the pending queue', () => {
+  const cleanReview = {
+    status: 'complete',
+    severities: [],
+    overBroad: 0,
+    underDeclared: 0,
+    inaccurate: 0,
+    sectionsOk: true,
+    impersonationCheck: 'complete',
+    impersonationStale: false,
+  };
+  const pending = (id: string, at: string, agentReview: unknown, previewState = 'preview-live') =>
+    onsiteRequestToUnifiedRow(
+      onsite({ id, submittedAt: at, previewState, agentReview } as never),
+      vi.fn()
+    );
+
+  const oldFlagged = pending('old-flagged', '2026-01-01T00:00:00Z', {
+    ...cleanReview,
+    severities: ['high'],
+  });
+  const oldWaiting = pending('old-waiting', '2026-01-02T00:00:00Z', null);
+  const newClean = pending('new-clean', '2026-01-05T00:00:00Z', cleanReview);
+  const newerClean = pending('newer-clean', '2026-01-06T00:00:00Z', cleanReview);
+  const listingOnly = row('offsite:listing', '2026-01-03T00:00:00Z');
+
+  it('🔴 with fastLane, agent-clean rows lead (oldest first among them); the rest keep date order', () => {
+    expect(
+      mergeReviewRows(
+        [newerClean, oldFlagged, newClean, oldWaiting],
+        [listingOnly],
+        'asc',
+        undefined,
+        {
+          fastLane: true,
+        }
+      ).map((r) => r.key)
+    ).toEqual([
+      'onsite:new-clean',
+      'onsite:newer-clean',
+      'onsite:old-flagged',
+      'onsite:old-waiting',
+      'offsite:listing',
+    ]);
+  });
+
+  it('without fastLane (history tabs) the order is the plain date order', () => {
+    expect(
+      mergeReviewRows([newerClean, oldFlagged, newClean, oldWaiting], [listingOnly], 'asc').map(
+        (r) => r.key
+      )
+    ).toEqual([
+      'onsite:old-flagged',
+      'onsite:old-waiting',
+      'offsite:listing',
+      'onsite:new-clean',
+      'onsite:newer-clean',
+    ]);
+  });
+
+  it('a review preview that failed to build keeps an otherwise clean row out of the fast lane', () => {
+    const failedPreview = pending('fp', '2026-01-05T00:00:00Z', cleanReview, 'preview-failed');
+    expect(reviewRowLane(failedPreview)).toEqual({
+      lane: 'flagged',
+      reasons: ['the review preview failed to build'],
+    });
+    expect(reviewRowLane(newClean).lane).toBe('agent-clean');
+  });
+
+  it.each([null, 'preview-expired', 'preview-building', 'preview-queued'])(
+    '🔴 only a LIVE preview can be agent-clean: %s is not',
+    (previewState) => {
+      const row = pending('p', '2026-01-05T00:00:00Z', cleanReview, previewState as never);
+      expect(reviewRowLane(row)).toEqual({
+        lane: 'flagged',
+        reasons: ['the review preview is not live'],
+      });
+    }
+  );
+
+  it('a viewer without the agentic surface (no agentReview field) gets no lane', () => {
+    const noSurface = onsiteRequestToUnifiedRow(
+      onsite({ id: 'x', previewState: 'preview-live' } as never),
+      vi.fn()
+    );
+    expect(reviewRowLane(noSurface)).toEqual({ lane: 'waiting', reasons: [] });
+    expect(reviewRowLane(listingOnly)).toEqual({ lane: 'waiting', reasons: [] });
+  });
+});
+
+describe('listing-edit impersonation check on the pending queue', () => {
+  const hit = { status: 'complete', flagging: 1, titles: ['Uses a protected brand name'] };
+  const listingEdit = (check: unknown) =>
+    offsiteRequestToUnifiedRow(
+      offsite({ id: 'le', kind: 'onsite', slug: 'shared-slug', listingEditCheck: check } as never),
+      vi.fn()
+    );
+
+  it('the listing row carries the check summary', () => {
+    expect(listingEdit(hit).listingEditCheck).toEqual(hit);
+    expect(listingEdit(undefined).listingEditCheck ?? null).toBeNull();
+  });
+
+  it('🔴 an app whose code is agent-clean but whose listing edit HIT is not fast-laned', () => {
+    const clean = {
+      status: 'complete',
+      severities: [],
+      overBroad: 0,
+      underDeclared: 0,
+      inaccurate: 0,
+      sectionsOk: true,
+      impersonationCheck: 'complete',
+      impersonationStale: false,
+    };
+    const code = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'code',
+        slug: 'shared-slug',
+        previewState: 'preview-live',
+        agentReview: clean,
+      } as never),
+      vi.fn()
+    );
+    const [combined] = mergeReviewRows([code], [listingEdit(hit)], 'asc', vi.fn(), {
+      fastLane: true,
+    });
+    expect(combined.kind).toBe('combined');
+    expect(reviewRowLane(combined)).toEqual({
+      lane: 'flagged',
+      reasons: ['the listing edit hit the impersonation check'],
+    });
+    // Control: the same pair without a hit IS agent-clean.
+    const [plain] = mergeReviewRows([code], [listingEdit(null)], 'asc', vi.fn(), {
+      fastLane: true,
+    });
+    expect(reviewRowLane(plain).lane).toBe('agent-clean');
   });
 });

@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { PointsReadRedis } from '~/server/events/points/read';
 import type { RefereeRedis } from '~/server/events/points/referee';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
-const { refereeTotals, resetLiveBase } = await import('~/server/events/points/referee');
+const { alertOnStaleCut, refereeTotals, resetLiveBase } = await import(
+  '~/server/events/points/referee'
+);
 const { getHatTotals, readTotals } = await import('~/server/events/points/read');
 const { COUNT_BASE_MARK, eventSeasonKeys, LIVE_BUCKET_MS, liveBucket } = await import(
   '~/server/events/points/keys'
@@ -78,6 +81,9 @@ function fakeRedis() {
 const EVENT = { name: 'e', startDate: new Date('2026-11-01T00:00:00.000Z') };
 const keys = eventSeasonKeys(EVENT.name, 'live');
 
+// Before the season's end both cuts are the same.
+const settledAt = (cut: Date) => ({ cut, removeCut: cut });
+
 const totals = (
   hat: Record<string, number>,
   team: Record<string, number> = {},
@@ -117,7 +123,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      settledAt(cutAt(NEW_CUT)),
       // a: 10 + 5 settled = 15, unchanged; b: corrected down; c: came from live only; gone: removed.
       totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 }, { '1': 20 })
     );
@@ -130,7 +136,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      { cut: cutAt(NEW_CUT), removeCut: new Date(cutAt(NEW_CUT).getTime() + 3_600_000) },
       totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 }, {}, { 'view:a': 3 })
     );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: '15', b: '4', c: '1' });
@@ -147,6 +153,7 @@ describe('resetLiveBase', () => {
         // The counts move with the points: a reader never pairs new counts with the old cut.
         `rename ${keys.base('count')}:next ${keys.base('count')}`,
         `set ${keys.cut} ${NEW_CUT}`,
+        `set ${keys.removeCut} ${cutAt(NEW_CUT).getTime() + 3_600_000}`,
       ],
     ]);
     // No staging key survives.
@@ -160,7 +167,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      settledAt(cutAt(NEW_CUT)),
       totals({ a: 15 })
     );
     expect(fake.hashes.get(keys.base('count'))).toEqual({ [COUNT_BASE_MARK]: '1' });
@@ -176,7 +183,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      settledAt(cutAt(NEW_CUT)),
       totals({ a: 15 })
     );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: '15' });
@@ -189,7 +196,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      new Date((NEW_CUT - 1) * LIVE_BUCKET_MS + 60_000),
+      settledAt(new Date((NEW_CUT - 1) * LIVE_BUCKET_MS + 60_000)),
       totals({ a: 15, b: 5, c: 1 })
     );
     expect(fake.strings.get(keys.cut)).toBe(String(NEW_CUT));
@@ -203,7 +210,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      settledAt(cutAt(NEW_CUT)),
       totals({ a: 3, b: 4 })
     );
     expect(changed.sort()).toEqual(['a', 'b']);
@@ -226,7 +233,13 @@ describe('resetLiveBase', () => {
         modelLikes: 0,
       },
     ]);
-    await resetLiveBase(fake.redis as unknown as RefereeRedis, EVENT, 'live', cutAt(NEW_CUT), t);
+    await resetLiveBase(
+      fake.redis as unknown as RefereeRedis,
+      EVENT,
+      'live',
+      settledAt(cutAt(NEW_CUT)),
+      t
+    );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ '1:7:claimed': '6' });
     expect(fake.hashes.get(keys.base('owner'))).toEqual({ '1': '6' });
     expect(fake.hashes.get(keys.base('count'))).toEqual({
@@ -406,5 +419,74 @@ describe('readTotals', () => {
       await readTotals(EVENT, 'hat', [], NOW, fake.redis as unknown as PointsReadRedis)
     ).toEqual({});
     expect(fake.hmGets).toEqual([]);
+  });
+});
+
+// Hours of failed settles leave the cut where the last good one put it, with every point earned since
+// in live buckets. The total shown must hold through that and through the settle that catches up.
+describe('settles that fail for hours, then catch up', () => {
+  const NOW = new Date('2026-11-05T17:07:00.000Z');
+  const NOW_BUCKET = liveBucket(NOW);
+  const STUCK_BUCKETS = (5 * 60 * 60 * 1000) / LIVE_BUCKET_MS;
+  const BASE = 100;
+
+  function stuck() {
+    const fake = fakeRedis();
+    const cut = NOW_BUCKET - STUCK_BUCKETS + 1;
+    fake.strings.set(keys.cut, String(cut));
+    fake.hashes.set(keys.base('hat'), { a: String(BASE) });
+    for (let b = cut; b <= NOW_BUCKET; b++) fake.hashes.set(keys.live(b, 'hat'), { a: '1' });
+    return { fake, cut };
+  }
+  const shown = async (fake: ReturnType<typeof fakeRedis>) =>
+    (await readTotals(EVENT, 'hat', ['a'], NOW, fake.redis as unknown as PointsReadRedis)).a;
+
+  it('shows every point earned since the last settle, five hours on', async () => {
+    const { fake } = stuck();
+    expect(await shown(fake)).toBe(BASE + STUCK_BUCKETS);
+  });
+
+  it('shows the same total after the catch-up settle: each settled bucket leaves the sum as it enters the base', async () => {
+    const { fake, cut } = stuck();
+    const newCut = NOW_BUCKET - 2;
+    const settled = BASE + (newCut - cut);
+    await resetLiveBase(
+      fake.redis as unknown as RefereeRedis,
+      EVENT,
+      'live',
+      settledAt(new Date(newCut * LIVE_BUCKET_MS)),
+      totals({ a: settled })
+    );
+    expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: String(settled) });
+    expect(await shown(fake)).toBe(BASE + STUCK_BUCKETS);
+  });
+});
+
+describe('alertOnStaleCut', () => {
+  const CUT = new Date('2026-11-05T17:00:00.000Z');
+  const cutBucket = (msBefore: number) => String((CUT.getTime() - msBefore) / LIVE_BUCKET_MS);
+  const alert = async (stored: string | undefined) => {
+    const fake = fakeRedis();
+    if (stored) fake.strings.set(keys.cut, stored);
+    loggingMock.logToAxiom.mockClear();
+    await alertOnStaleCut(fake.redis as unknown as RefereeRedis, EVENT, 'live', CUT);
+    return loggingMock.logToAxiom.mock.calls.map(([entry]) => entry);
+  };
+
+  it('logs an error with the lag once the base is over two hours behind', async () => {
+    expect(await alert(cutBucket(2 * 60 * 60 * 1000 + LIVE_BUCKET_MS))).toEqual([
+      expect.objectContaining({
+        type: 'error',
+        name: 'event-points-cut-stale',
+        event: EVENT.name,
+        season: 'live',
+        cutAgeMinutes: 125,
+      }),
+    ]);
+  });
+
+  it('stays quiet after one missed hour, and before any settle has run', async () => {
+    expect(await alert(cutBucket(2 * 60 * 60 * 1000))).toEqual([]);
+    expect(await alert(undefined)).toEqual([]);
   });
 });
