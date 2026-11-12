@@ -107,6 +107,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 
 import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
 import { anchorBrowsingLevel } from '~/server/services/semantic-query-guard';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import type { CandidateSource } from '~/server/services/semantic-search-client';
 
 const VIEWER = { id: 500, isModerator: false } as SessionUser;
@@ -570,6 +571,21 @@ describe('the query audit and the browsing level', () => {
     const { result, calls } = await run({});
     expect(result.items).toEqual([]);
     expect(calls).toHaveLength(0);
+  });
+
+  it('refuses a person-of-interest query from a non-moderator with no add-on', async () => {
+    vi.mocked(getBrowsingSettingAddons).mockResolvedValueOnce([]);
+    h.includesPoi.mockReturnValue('someone');
+    const { result, calls } = await run({});
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('lets a moderator with no add-on search a person-of-interest query', async () => {
+    vi.mocked(getBrowsingSettingAddons).mockResolvedValueOnce([]);
+    h.includesPoi.mockReturnValue('someone');
+    const { result } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
   it('clamps a non-moderator to the safe levels, in the index filter and in hydration', async () => {
