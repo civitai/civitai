@@ -30,11 +30,12 @@ const AUTHOR = 7;
 const POST = 5;
 const TEXT = 31;
 
-const stored = (content = '<p>old</p>') =>
+const stored = (content = '<p>old</p>', csamHeld = false) =>
   w.postText.findUnique.mockResolvedValue({
     id: TEXT,
     postId: POST,
     content,
+    csamHeld,
     post: { userId: AUTHOR },
   } as never);
 
@@ -105,10 +106,22 @@ describe('setPostText', () => {
     expect(w.postText.update).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses someone else's text", async () => {
+  it('keeps the rating of a markup-only edit, which the scan would skip as unchanged', async () => {
+    await setPostText({ id: TEXT, content: '<p><strong>old</strong></p>', userId: AUTHOR });
+    expect(w.postText.update).toHaveBeenCalledWith({
+      where: { id: TEXT },
+      data: { content: '<p><strong>old</strong></p>' },
+    });
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
+  });
+
+  it("refuses someone else's text, a moderator's included", async () => {
     await expect(setPostText({ id: TEXT, content: '<p>x</p>', userId: 99 })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
+    await expect(
+      setPostText({ id: TEXT, content: '<p>x</p>', userId: 99, isModerator: true })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(w.postText.update).not.toHaveBeenCalled();
   });
 });
@@ -118,6 +131,25 @@ describe('deletePostText', () => {
     await deletePostText({ id: TEXT, userId: AUTHOR });
     expect(w.postText.delete).toHaveBeenCalledWith({ where: { id: TEXT } });
     expect(updatePostNsfwLevels).toHaveBeenCalledWith([POST]);
+  });
+
+  it("refuses someone else's text; a moderator may delete it", async () => {
+    await expect(deletePostText({ id: TEXT, userId: 99 })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(w.postText.delete).not.toHaveBeenCalled();
+    await deletePostText({ id: TEXT, userId: 99, isModerator: true });
+    expect(w.postText.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps text under a CSAM hold from its author, not from a moderator', async () => {
+    stored('<p>old</p>', true);
+    await expect(deletePostText({ id: TEXT, userId: AUTHOR })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(w.postText.delete).not.toHaveBeenCalled();
+    await deletePostText({ id: TEXT, userId: 99, isModerator: true });
+    expect(w.postText.delete).toHaveBeenCalledTimes(1);
   });
 });
 

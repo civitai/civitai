@@ -203,6 +203,17 @@ describe('storyline router — account state refuses a storyline write', () => {
     });
   }
 
+  // `storylines` alone does not open the text writes: they ride their own rollout flag. The control
+  // is the "ordinary user" case above, which has both.
+  for (const { name, writer, input } of WRITE_CALLS.filter((c) => c.name.endsWith('Text'))) {
+    it(`refuses ${name} without the storylineText flag`, async () => {
+      await expect(callerFor({ permissions: ['storylines'] })[name](input)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+      expect(writer).not.toHaveBeenCalled();
+    });
+  }
+
   // The end-of-chapter card's join check: zod drops a key the schema does not name, which would
   // turn the server's end check off with every other test still green.
   it('passes the at-end check of a join through to the service', async () => {

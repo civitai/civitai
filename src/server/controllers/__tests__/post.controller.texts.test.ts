@@ -63,6 +63,12 @@ describe("post.get's storyline text items", () => {
     expect(mocks.getPostTextsForViewer).toHaveBeenLastCalledWith(
       expect.objectContaining({ seesAll: false })
     );
+    // A moderator reviewing someone else's post sees every row.
+    const moderator = { ...author, id: 77, isModerator: true };
+    await getPostHandler({ input: { id: POST }, ctx: ctx({ user: moderator }) });
+    expect(mocks.getPostTextsForViewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ seesAll: true })
+    );
   });
 
   it('returns none with the flag off, without reading them', async () => {

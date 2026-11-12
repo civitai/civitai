@@ -32,6 +32,9 @@ describe('reorderPostImages with storyline text items', () => {
       [10, 2],
     ]);
     expect(textIndexes()).toEqual([[1, 1]]);
+    // Each write is scoped to the post, so ids from another post change nothing.
+    for (const [call] of [...w.image.update.mock.calls, ...w.postText.update.mock.calls])
+      expect(call.where).toEqual({ id: call.where.id, postId: POST });
   });
 
   it('without `items`, keeps every text row where it is: images swap the indexes they hold', async () => {

@@ -48,7 +48,13 @@ export async function addPostText({
 async function getOwnText(id: number, userId: number, isModerator?: boolean) {
   const text = await dbWrite.postText.findUnique({
     where: { id },
-    select: { id: true, postId: true, content: true, post: { select: { userId: true } } },
+    select: {
+      id: true,
+      postId: true,
+      content: true,
+      csamHeld: true,
+      post: { select: { userId: true } },
+    },
   });
   if (!text) throw throwNotFoundError('Text not found');
   if (text.post.userId !== userId && !isModerator)
@@ -71,19 +77,24 @@ export async function setPostText({
   userId: number;
   isModerator?: boolean;
 }) {
-  const text = await getOwnText(id, userId, isModerator);
-  if (text.post.userId === userId)
-    await assertChapterPostAuthor({
-      postId: text.postId,
-      postUserId: text.post.userId,
-      userId,
-      what: 'change its text',
-    });
+  const text = await getOwnText(id, userId);
+  await assertChapterPostAuthor({
+    postId: text.postId,
+    postUserId: text.post.userId,
+    userId,
+    what: 'change its text',
+  });
   const html = content.trim();
   const plain = removeTags(html).trim();
   if (plain.length > STORYLINE_TEXT_MAX_LENGTH)
     throw throwBadRequestError(`Text is limited to ${STORYLINE_TEXT_MAX_LENGTH} characters`);
   if (text.content === html) return { id, content: html };
+  // The scan reads the plain text, so a markup-only edit keeps its rating: a rescan would be
+  // skipped as unchanged and the reset level would never be lifted.
+  if (removeTags(text.content).trim() === plain) {
+    await dbWrite.postText.update({ where: { id }, data: { content: html } });
+    return { id, content: html };
+  }
 
   if (plain) await throwOnBlockedUserContent(html, { isModerator, surface: 'storyline-text' });
   await dbWrite.postText.update({ where: { id }, data: { content: html, nsfwLevel: 0 } });
@@ -104,6 +115,8 @@ export async function deletePostText({
   isModerator?: boolean;
 }) {
   const text = await getOwnText(id, userId, isModerator);
+  if (text.csamHeld && !isModerator)
+    throw throwBadRequestError('This text is under review and cannot be deleted');
   await dbWrite.postText.delete({ where: { id } });
   await updatePostNsfwLevels([text.postId]);
   return { id };

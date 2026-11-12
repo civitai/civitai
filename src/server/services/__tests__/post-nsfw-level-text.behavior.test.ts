@@ -47,9 +47,9 @@ describe("a post's storyline text rates it as its images do", () => {
     expect(await level()).toBe(NsfwLevel.PG);
   });
 
-  it('a post with text and no images takes the text level', async () => {
-    await db.exec(`DELETE FROM "Image";
+  it('a text does not lift a post whose images are all Blocked off exactly Blocked', async () => {
+    await db.exec(`UPDATE "Image" SET "nsfwLevel" = ${NsfwLevel.Blocked};
       INSERT INTO "PostText" ("postId", "nsfwLevel") VALUES (1, ${NsfwLevel.R})`);
-    expect(await level()).toBe(NsfwLevel.R);
+    expect(await level()).toBe(NsfwLevel.Blocked);
   });
 });

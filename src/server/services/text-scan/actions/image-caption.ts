@@ -9,8 +9,11 @@ import { recomputeRatedEntityNsfwLevel } from '~/server/services/text-scan/rated
 import type { TextScanSubject } from '~/server/services/text-scan/types';
 
 type Row = { userId: number; content: string; nsfwLevel: number };
-/** `content` pins a write to the text the verdict was about; `nsfwLevelBelow` only ever raises. */
-type RowWhere = { content?: string; nsfwLevelBelow?: number; refused?: boolean };
+/**
+ * `content` pins a write to the text the verdict was about; `nsfwLevelBelow` only ever raises;
+ * `rated` skips a row still at 0.
+ */
+type RowWhere = { content?: string; nsfwLevelBelow?: number; rated?: true; refused?: boolean };
 type RowData = { nsfwLevel?: number; refused?: boolean; csamHeld?: boolean };
 
 /** A short authored text with its own rating and refusal, rated by the scan. */
@@ -20,15 +23,30 @@ type ScannedTextTable = {
   update: (id: number, where: RowWhere, data: RowData) => Promise<unknown>;
   /** When the `nsfw` label fires, the stored level is at least this. */
   nsfwFloor?: number;
-  /** A `csam` verdict sets the row's `csamHeld`; the hold itself is `withCsamHold`'s. */
-  holdsCsam?: boolean;
+  /**
+   * A `csam` verdict sets the row's `csamHeld` while a hold is pending on it (the hold itself is
+   * `withCsamHold`'s, which writes none for text a moderator already ruled on).
+   */
+  holdsCsam?: (id: number) => Promise<boolean>;
+  /**
+   * Level 0 hides the row from readers (an edit resets it), so a verdict on text the row no
+   * longer has must not rate it: that would show the new text at the old text's rating.
+   */
+  unratedHides?: boolean;
   /** Recomputes whatever the row's level and refusal feed, after every verdict. */
   afterVerdict?: (id: number) => Promise<unknown>;
 };
 
-const whereOf = ({ content, nsfwLevelBelow, refused }: RowWhere) => ({
+const whereOf = ({ content, nsfwLevelBelow, rated, refused }: RowWhere) => ({
   ...(content !== undefined ? { content } : {}),
-  ...(nsfwLevelBelow !== undefined ? { nsfwLevel: { lt: nsfwLevelBelow } } : {}),
+  ...(nsfwLevelBelow !== undefined || rated
+    ? {
+        nsfwLevel: {
+          ...(nsfwLevelBelow !== undefined ? { lt: nsfwLevelBelow } : {}),
+          ...(rated ? { gt: 0 } : {}),
+        },
+      }
+    : {}),
   ...(refused !== undefined ? { refused } : {}),
 });
 
@@ -43,7 +61,7 @@ async function applyScannedTextScan(
   const current = textHash === textScanTextHash(table.subject(before));
   const pinned = { content: before.content };
 
-  if (table.holdsCsam && outcome.csam?.detected)
+  if (outcome.csam?.detected && (await table.holdsCsam?.(entityId)))
     await table.update(entityId, {}, { csamHeld: true });
 
   const detected = outcome.nsfw?.detectedLevel;
@@ -52,10 +70,12 @@ async function applyScannedTextScan(
     detected != null && table.nsfwFloor && detected >= NsfwLevel.PG13
       ? Math.max(detected, table.nsfwFloor)
       : detected;
-  if (level != null && (current || level > before.nsfwLevel)) {
-    await table.update(entityId, level <= before.nsfwLevel ? pinned : { nsfwLevelBelow: level }, {
-      nsfwLevel: level,
-    });
+  const staleMayRaise = !table.unratedHides || before.nsfwLevel > 0;
+  if (level != null && (current || (staleMayRaise && level > before.nsfwLevel))) {
+    const raise: RowWhere = table.unratedHides
+      ? { nsfwLevelBelow: level, ...(current ? pinned : { rated: true }) }
+      : { nsfwLevelBelow: level };
+    await table.update(entityId, level <= before.nsfwLevel ? pinned : raise, { nsfwLevel: level });
   }
 
   const refuse =
@@ -89,7 +109,12 @@ const postTextTable: ScannedTextTable = {
   update: (id, where, data) =>
     dbWrite.postText.updateMany({ where: { id, ...whereOf(where) }, data }),
   nsfwFloor: NsfwLevel.R,
-  holdsCsam: true,
+  holdsCsam: async (id) =>
+    !!(await dbWrite.textScanHold.findFirst({
+      where: { entityType: 'PostText', entityId: id, label: 'csam', status: 'Pending' },
+      select: { id: true },
+    })),
+  unratedHides: true,
   afterVerdict: async (id) => {
     const row = await dbWrite.postText.findUnique({ where: { id }, select: { postId: true } });
     if (row) await recomputeRatedEntityNsfwLevel('Post', row.postId);

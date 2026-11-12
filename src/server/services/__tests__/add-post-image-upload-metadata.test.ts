@@ -186,6 +186,22 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     );
   });
 
+  it('puts a new image after the last image when that comes after the last text', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce({ index: 2 } as never);
+    dbMock.dbWrite.image.aggregate.mockResolvedValueOnce({ _max: { index: 5 } } as never);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 0 } as never).catch(
+      () => null
+    );
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ index: 6 })
+    );
+  });
+
   it('keeps the index the client sent on a post with no text items', async () => {
     dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
     dbMock.dbRead.image.findFirst.mockResolvedValue(null);
