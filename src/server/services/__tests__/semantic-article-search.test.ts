@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
   includesPoi: vi.fn<(prompt?: string) => string | false>(),
   includesMinor: vi.fn<(prompt?: string) => boolean>(),
+  addons: [] as unknown[],
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -23,7 +24,7 @@ vi.mock('~/utils/metadata/audit', () => ({
   includesMinor: h.includesMinor,
 }));
 vi.mock('~/server/services/system-cache', () => ({
-  getBrowsingSettingAddons: async () => [],
+  getBrowsingSettingAddons: async () => h.addons,
 }));
 
 // The feed's fetch path: every id it is asked for comes back, owned by `owner(id)`.
@@ -100,6 +101,7 @@ beforeEach(() => {
   h.includesInappropriate.mockReset().mockReturnValue(false);
   h.includesPoi.mockReset().mockReturnValue(false);
   h.includesMinor.mockReset().mockReturnValue(false);
+  h.addons = [];
   loggingMock.logToAxiom.mockClear();
   dbMock.dbRead.article.findMany.mockImplementation((args: never) =>
     harness.prisma.article.findMany(args)
@@ -207,6 +209,20 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+  });
+
+  it("refuses a person-of-interest query when the viewer's add-on disables them", async () => {
+    h.addons = [{ type: 'some', nsfwLevels: [1], disablePoi: true }];
+    h.includesPoi.mockReturnValue('someone');
+    const { result } = await run();
+    expect(result.items).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('searches a person-of-interest query when no add-on disables them', async () => {
+    h.includesPoi.mockReturnValue('someone');
+    const { result } = await run();
+    expect(result.items.map((a) => a.id)).toEqual([10]);
   });
 
   it('refuses when the benign list cannot be read', async () => {
