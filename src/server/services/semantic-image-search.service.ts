@@ -16,7 +16,7 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { includesInappropriate, includesPoi } from '~/utils/metadata/audit';
+import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metadata/audit';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -49,7 +49,10 @@ async function refusesQuery(
 ) {
   try {
     const audited = await stripBenignPhrases(query, BlocklistType.PromptBenignPhrase);
-    if (includesInappropriate({ prompt: audited }, nsfw) === 'minor') return 'minor';
+    const verdict = includesInappropriate({ prompt: audited }, nsfw);
+    // A 'poi' verdict is returned before the minor check runs, so it can hide one.
+    if (verdict === 'minor' || (verdict && includesMinor(audited))) return 'minor';
+    if (verdict) return verdict;
     if (disablePoi && includesPoi(audited)) return 'poi';
     return false;
   } catch {

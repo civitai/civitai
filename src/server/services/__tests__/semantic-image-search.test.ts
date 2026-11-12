@@ -24,6 +24,7 @@ const h = vi.hoisted(() => {
     includesInappropriate:
       vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
     includesPoi: vi.fn<(prompt?: string) => string | false>(),
+    includesMinor: vi.fn<(prompt?: string) => boolean>(),
   };
 });
 
@@ -35,6 +36,7 @@ vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
   includesInappropriate: h.includesInappropriate,
   includesPoi: h.includesPoi,
+  includesMinor: h.includesMinor,
 }));
 
 vi.mock('~/server/prom/client', async (importOriginal) => ({
@@ -136,6 +138,7 @@ beforeEach(() => {
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
   h.includesInappropriate.mockReset().mockReturnValue(false);
   h.includesPoi.mockReset().mockReturnValue(false);
+  h.includesMinor.mockReset().mockReturnValue(false);
 });
 
 describe('a stale index cannot surface a hidden image', () => {
@@ -482,6 +485,24 @@ describe('the query audit and the browsing level', () => {
     expect(result.items).toEqual([]);
     expect(calls).toHaveLength(0);
     expect(track.action).not.toHaveBeenCalled();
+  });
+
+  it('refuses any flagged verdict, for a moderator without the POI add-on too', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+    expect(track.action).not.toHaveBeenCalled();
+  });
+
+  it('records a minor match that a POI verdict came back ahead of', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    h.includesMinor.mockReturnValue(true);
+    const { result, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items).toEqual([]);
+    expect(track.action).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'CSAM_Help_Triggered' })
+    );
   });
 
   it('refuses a person-of-interest query when the add-on disables them', async () => {
