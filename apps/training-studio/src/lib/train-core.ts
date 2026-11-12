@@ -23,6 +23,7 @@ import {
 import {
   blobIdFromAir,
   describeSubmitError,
+  forEachPooled,
   isTrainingDataNotReady,
   isFlux2,
   resolveCurrencies,
@@ -304,8 +305,7 @@ export async function submitTraining(
         ? [CIVITAI_TAG, TRAINING_TAG, `${NAME_TAG_PREFIX}${slug}`]
         : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
-      steps: [buildStep(run, traceMode)],
-      ...chargeFields(run.currencies, run.matureAck === true),
+      ...trainingSteps(run, traceMode, run.matureAck === true),
       ...(callbacks ? { callbacks } : {}),
     },
     query: { wait: 0 },
@@ -318,6 +318,34 @@ export async function submitTraining(
       response?.status
     );
   return data.id;
+}
+
+/** The step and charge fields of a training submit; the readiness whatif sends the same. */
+function trainingSteps(run: TrainingRunInput, traceMode: string, matureUnlock: boolean) {
+  return { steps: [buildStep(run, traceMode)], ...chargeFields(run.currencies, matureUnlock) };
+}
+
+const READINESS_WHATIF_TIMEOUT_MS = 30_000;
+
+/** Whether the orchestrator would take this run's dataset now, from a whatif of the real submit body (never
+ *  charges). False only when it answers that a file isn't ready; null for any other answer. */
+export async function trainingDataReady(
+  client: OrchestratorClient,
+  run: TrainingRunInput
+): Promise<boolean | null> {
+  try {
+    validateRun(run, 'run');
+  } catch {
+    return null;
+  }
+  const { data, error, response } = await submitWorkflow({
+    client,
+    body: trainingSteps(run, 'events', false),
+    query: { whatif: true },
+    signal: AbortSignal.timeout(READINESS_WHATIF_TIMEOUT_MS),
+  });
+  if (data) return true;
+  return isTrainingDataNotReady(error, response?.status) ? false : null;
 }
 
 // Unauthorized (expired token), request timeout, rate limited.
@@ -677,33 +705,28 @@ async function countMatureBlobs(
   const stored: Map<string, StoredRating> = rating
     ? await rating.read(airs.map(trainingBlobKey)).catch(() => new Map())
     : new Map();
-  let next = 0;
   let mature = 0;
   let failed = 0;
   let rated = 0;
   const unratedKeys: string[] = [];
-  const worker = async () => {
-    while (next < airs.length) {
-      const air = airs[next++];
-      try {
-        const { response } = await headBlob({ client, path: { blobId: blobIdFromAir(air) } });
-        if (!response?.ok) failed++;
-        // Only for a blob this caller's HEAD could read: the cache is shared across users.
-        const v2 = rating && response?.ok ? stored.get(trainingBlobKey(air)) : undefined;
-        if (v2) {
-          rated++;
-          if (isMatureRating(v2, rating!.matureLevel)) mature++;
-          continue;
-        }
-        if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
-        const level = response?.headers.get('x-nsfw-level')?.toLowerCase();
-        if (level && MATURE_NSFW_LEVELS.has(level)) mature++;
-      } catch {
-        failed++;
+  await forEachPooled(airs, PROBE_CONCURRENCY, async (air) => {
+    try {
+      const { response } = await headBlob({ client, path: { blobId: blobIdFromAir(air) } });
+      if (!response?.ok) failed++;
+      // Only for a blob this caller's HEAD could read: the cache is shared across users.
+      const v2 = rating && response?.ok ? stored.get(trainingBlobKey(air)) : undefined;
+      if (v2) {
+        rated++;
+        if (isMatureRating(v2, rating!.matureLevel)) mature++;
+        return;
       }
+      if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
+      const level = response?.headers.get('x-nsfw-level')?.toLowerCase();
+      if (level && MATURE_NSFW_LEVELS.has(level)) mature++;
+    } catch {
+      failed++;
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, airs.length) }, worker));
+  });
   return { images: airs.length, mature, failed, rated, unratedKeys };
 }
 

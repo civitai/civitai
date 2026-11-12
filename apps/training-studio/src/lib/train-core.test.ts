@@ -16,6 +16,7 @@ import {
   TrainingBatchValidationError,
   TrainingSubmitError,
   TrainingTextRefusedError,
+  trainingDataReady,
   type TrainingRunInput,
   type TrainingTextCheck,
 } from './train-core';
@@ -1519,5 +1520,40 @@ describe('a submit refused because a dataset file is still processing', () => {
     });
     expect(batch).toEqual({ workflowIds: ['wf-landed'], failure: FILES_PROCESSING_PARTIAL_REASON });
     expect(submitWorkflow).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('trainingDataReady (the readiness whatif)', () => {
+  const notReady = {
+    error: { status: 400, code: 'trainingDataNotReady', errors: {} },
+    response: { status: 400 },
+  };
+
+  it('is false only when the whatif says a dataset file is not ready', async () => {
+    submitWorkflow.mockReset();
+    submitWorkflow.mockResolvedValueOnce(notReady);
+    expect(await trainingDataReady(client, baseRun())).toBe(false);
+    const call = submitWorkflow.mock.calls[0]![0];
+    expect(call.query).toEqual({ whatif: true });
+    expect(call.body.steps[0].input.trainingData).toBeDefined();
+  });
+
+  it('is true when the whatif prices the run', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 500 } } });
+    expect(await trainingDataReady(client, baseRun())).toBe(true);
+  });
+
+  it('is null for any other refusal, so it never holds Start', async () => {
+    submitWorkflow.mockResolvedValueOnce({
+      error: { status: 400, code: 'somethingElse', errors: {} },
+      response: { status: 400 },
+    });
+    expect(await trainingDataReady(client, baseRun())).toBeNull();
+  });
+
+  it('is null without asking for a run the submit would refuse anyway', async () => {
+    submitWorkflow.mockReset();
+    expect(await trainingDataReady(client, { ...baseRun(), items: [] })).toBeNull();
+    expect(submitWorkflow).not.toHaveBeenCalled();
   });
 });

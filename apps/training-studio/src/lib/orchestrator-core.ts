@@ -116,6 +116,29 @@ export function blobIdFromAir(air: string): string {
   return air.split('?')[0];
 }
 
+/** More blobs than any dataset the app builds; a bigger request is refused. */
+export const MAX_DATASET_BLOBS = 2000;
+
+/** A request body's list of dataset blob ids. */
+export const isDatasetBlobIds = (v: unknown): v is string[] =>
+  Array.isArray(v) &&
+  v.length <= MAX_DATASET_BLOBS &&
+  v.every((id) => typeof id === 'string' && id.length > 0 && id.length < 512);
+
+/** Runs `fn` over `items` with at most `concurrency` in flight. No new item starts once `stop()` is true. */
+export async function forEachPooled<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+  stop: () => boolean = () => false
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length && !stop()) await fn(items[next++]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+}
+
 /** The orchestrator's authenticated GET URL for one of the caller's dataset blobs (fetch with
  *  `Authorization: Bearer <token>`). Shared by the shell's proxy route and the element's direct fetch. */
 export function consumerBlobUrl(endpoint: string, air: string, workflowId?: string): string {

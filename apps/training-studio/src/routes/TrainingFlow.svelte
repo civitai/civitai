@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
   import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
@@ -32,6 +32,8 @@
   import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
   import { JUNK_TAGS } from '$lib/autolabel-exclude';
+  import type { TrainingRunPayload } from '$lib/backend';
+  import { watchReadiness, type ReadinessView } from './uploadReadiness';
 
   let {
     prices,
@@ -127,7 +129,8 @@
   const RATING_POLLS = 6;
   const RATING_POLL_MS = 5000;
   $effect(() => {
-    if (step !== 3) return;
+    // After the readiness wait, so Review never reads every file for both at once.
+    if (step !== 3 || !readinessSettled) return;
     const be = backend();
     if (!be.datasetRating) return;
     const ids = datasetBlobIds;
@@ -154,6 +157,79 @@
   const reviewMatureCount = $derived(
     ratedMature?.key === datasetKey ? ratedMature.count : matureCount
   );
+
+  // Review holds Start until the orchestrator would take every dataset file, for the dataset it was made for.
+  let readiness = $state<{ key: string; view: ReadinessView } | null>(null);
+  // "Check again" bumps this to start a fresh wait.
+  let readinessRound = $state(0);
+  const readinessSupported = !!backend().datasetReadiness && !!backend().datasetReadyToTrain;
+  $effect(() => {
+    if (step !== 3 || !readinessSupported) return;
+    const be = backend();
+    // Keyed on the dataset, not the array: a re-derived array of the same files must not restart the wait.
+    const key = datasetKey;
+    void readinessRound;
+    const stop = watchReadiness(
+      untrack(() => datasetBlobIds),
+      {
+        probe: (blobIds) => be.datasetReadiness!(blobIds),
+        check: (run) => be.datasetReadyToTrain!(run),
+        buildRun: () => untrack(readinessRun),
+        onView: (view) => (readiness = { key, view }),
+      }
+    );
+    return () => {
+      stop();
+      readiness = null;
+    };
+  });
+  // Until the wait reports for this dataset, Start is held.
+  const readinessView = $derived<ReadinessView>(
+    readiness?.key === datasetKey
+      ? readiness.view
+      : readinessSupported
+        ? { kind: 'checking', ready: 0, total: datasetBlobIds.length }
+        : { kind: 'off' }
+  );
+  const readinessSettled = $derived(
+    readinessView.kind === 'ready' || readinessView.kind === 'off'
+  );
+  // An edit pair goes as a whole, so Remove counts the pairs it takes out.
+  const readinessUnusableCount = $derived.by(() => {
+    if (readinessView.kind !== 'unusable') return undefined;
+    const gone = new Set(readinessView.blobIds);
+    if (!trainsPairs) return gone.size;
+    return pairs.filter((p) => gone.has(p.before.blobId ?? '') || gone.has(p.after?.blobId ?? ''))
+      .length;
+  });
+
+  /** The first run as the submit would send it, for the readiness whatif. */
+  function readinessRun(): TrainingRunPayload | undefined {
+    const run = selection?.runs[0];
+    const params = run && runParams[runParamsKey(run)];
+    if (!selection || !run || !params) return undefined;
+    const edit = trainsPairs ? { items: pairItems(pairs), pairs: readyPairs.length } : undefined;
+    return buildTrainingRuns(
+      selection,
+      images,
+      runTrigger,
+      reviewName,
+      [{ run, params }],
+      samplePrompts,
+      ['yellow', 'blue'],
+      labelMode,
+      edit
+    )[0];
+  }
+
+  function removeDatasetFiles(blobIds: string[]) {
+    const gone = new Set(blobIds);
+    if (trainsPairs)
+      pairs = pairs.filter(
+        (p) => !gone.has(p.before.blobId ?? '') && !gone.has(p.after?.blobId ?? '')
+      );
+    else images = images.filter((i) => !gone.has(i.blobId ?? ''));
+  }
 
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
   const datasetLabels = $derived.by(() => {
@@ -373,6 +449,10 @@
       imageCount={trainableCount}
       {trainsPairs}
       matureCount={reviewMatureCount}
+      readiness={readinessView}
+      {readinessUnusableCount}
+      onCheckReadinessAgain={() => readinessRound++}
+      onRemoveFiles={removeDatasetFiles}
       onStart={start}
       onBack={() => (step = 2)}
       onShowMature={() => {
