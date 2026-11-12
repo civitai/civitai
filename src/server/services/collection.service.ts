@@ -4241,11 +4241,12 @@ export const setCollectionItemNsfwLevel = async ({
       ingestion: ImageIngestionStatus;
       nsfwLevel: number;
       blockedFor: string | null;
+      needsReview: string | null;
       scanned: boolean;
     }[]
   >`
     SELECT p."collectionId" AS "postCollectionId", i.ingestion, i."nsfwLevel", i."blockedFor",
-      COALESCE(i."scanJobs" ? 'workflowId', false) AS scanned
+      i."needsReview", COALESCE(i."scanJobs" ? 'workflowId', false) AS scanned
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
@@ -4265,6 +4266,9 @@ export const setCollectionItemNsfwLevel = async ({
     throw throwBadRequestError('This image is blocked and cannot be rated.');
   if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned)
     throw throwBadRequestError('This image is still being scanned. Try again shortly.');
+  // A rating can send the image back through the scan, whose verdict replaces a moderation hold.
+  if (image.needsReview != null)
+    throw throwBadRequestError('This image is waiting for moderator review.');
 
   // The judge may raise the scan's level, never lower it; a later scan keeps the judge's level as a
   // floor (resolveScanOutcome). The WHERE repeats the checks above for a scan or block in between.
@@ -4298,6 +4302,7 @@ export const setCollectionItemNsfwLevel = async ({
       AND "blockedFor" IS NULL
       AND "nsfwLevel" != ${NsfwLevel.Blocked}
       AND "scanJobs" ? 'workflowId'
+      AND "needsReview" IS NULL
     RETURNING "nsfwLevel", ingestion
   `;
   if (!updated)

@@ -251,6 +251,25 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     }
   });
 
+  it('does not send a held image back for a rescan when the floor write fails', async () => {
+    scanTagLevel = PG13;
+    holder.holdRule = true;
+    holder.beforeVerdict = () =>
+      db.query(`UPDATE "Image" SET metadata = $1 WHERE id = $2`, [judgeRated(X), ID]);
+    const passthrough = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (strings.join('').includes('RETURNING "nsfwLevel", ingestion')) throw new Error('boom');
+      return passthrough(strings, ...values);
+    }) as never);
+
+    const { row } = await scan(await arrange({ nsfwLevel: PG13 }));
+
+    expect(row).toMatchObject({ ingestion: 'Scanned', nsfwLevel: PG13 });
+  });
+
   it('still sends the image back for a rescan when the floor write fails above the checked level', async () => {
     scanTagLevel = PG13;
     holder.beforeVerdict = () =>

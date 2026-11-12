@@ -777,6 +777,7 @@ export async function resolveScanOutcome({
           AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
           AND NOT "nsfwLevelLocked"
           AND "blockedFor" IS NULL
+          AND "needsReview" IS NULL
           AND ${rescan}
       `.catch(() => null);
       await dbWrite.$executeRaw`

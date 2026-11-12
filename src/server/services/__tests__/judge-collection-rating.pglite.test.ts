@@ -48,6 +48,7 @@ beforeAll(async () => {
       "blockedFor" text,
       "scannedAt" timestamp(3),
       "scanJobs" jsonb,
+      "needsReview" text,
       metadata jsonb,
       "updatedAt" timestamp(3)
     );
@@ -177,8 +178,24 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
     expect((await imageRow()).blockedFor).toBe('tos');
   });
 
+  it.each(['minor', 'poi', 'modRule'])(
+    'refuses an image held for moderator review (%s), and leaves it unchanged',
+    async (needsReview) => {
+      await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG13 });
+      await db.query(`UPDATE "Image" SET "needsReview" = $1`, [needsReview]);
+
+      await expect(rate(NsfwLevel.X)).rejects.toThrow(/waiting for moderator review/i);
+      expect(await imageRow()).toMatchObject({
+        nsfwLevel: NsfwLevel.PG13,
+        ingestion: 'Scanned',
+        metadata: null,
+      });
+    }
+  );
+
   it.each([
     ['moved to Rescan', `UPDATE "Image" SET ingestion = 'Rescan'`],
+    ['was held for review', `UPDATE "Image" SET "needsReview" = 'minor'`],
     ['was blocked', `UPDATE "Image" SET "blockedFor" = 'tos'`],
     ['lost its scan workflow', `UPDATE "Image" SET "scanJobs" = NULL`],
   ])('refuses, writing nothing, when the image %s after the check read it', async (_, change) => {
