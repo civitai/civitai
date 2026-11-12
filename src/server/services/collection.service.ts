@@ -4227,7 +4227,8 @@ export async function getCollectionEntryCount({
 /**
  * A scanned, unblocked image a judge of this collection rated, over `Image` aliased `alias`. A row
  * that carries no scan workflow was never scanned, whatever its `ingestion` says. A legacy rating
- * (seeded from a level applied before ratings were recorded) is a floor, never an approval.
+ * (seeded from a level applied before ratings were recorded) is a floor, never an approval. An
+ * image held for moderator review (`needsReview`) is not rated for approval until the hold clears.
  */
 export const judgeRatedSql = (alias: string, collectionId: number) => {
   const i = Prisma.raw(`"${alias}"`);
@@ -4238,6 +4239,7 @@ export const judgeRatedSql = (alias: string, collectionId: number) => {
     AND ${i}."blockedFor" IS NULL
     AND ${i}."nsfwLevel" != ${NsfwLevel.Blocked}
     AND ${i}."scanJobs" ? 'workflowId'
+    AND ${i}."needsReview" IS NULL
     AND COALESCE(${i}."metadata" -> ${JUDGE_RATING_METADATA_KEY}::text ->> 'legacy', '') != 'true'
   ), false)`;
 };

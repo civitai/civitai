@@ -569,6 +569,27 @@ describe('an image that was never scanned', () => {
   });
 });
 
+describe('approving a judge-rated item held for moderator review', () => {
+  it('is refused as waiting for moderator review', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R });
+    await rate(NsfwLevel.R);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor'`);
+
+    await expect(approve()).rejects.toThrow(
+      'Some of the items selected are waiting for moderator review.'
+    );
+  });
+
+  it('goes ahead once the hold is cleared', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R });
+    await rate(NsfwLevel.R);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor'`);
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL`);
+
+    await expect(approve()).rejects.toThrow(PAST_GATE);
+  });
+});
+
 describe('a legacy judge rating', () => {
   const LEGACY = {
     judgeRating: { userId: null, nsfwLevel: 4, legacy: true, collectionId: COLLECTION_ID },

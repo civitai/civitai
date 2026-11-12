@@ -305,6 +305,38 @@ describe('reviewCollection: a collection whose judges apply the rating', () => {
     expect(reviewImage).toHaveBeenCalledTimes(1);
   });
 
+  it('does not select a judge-rated item held for moderator review', async () => {
+    await seed([
+      { id: 1, nsfwLevel: PG },
+      { id: 2, nsfwLevel: PG },
+    ]);
+    await judgeRated([1, 2]);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 1`);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(await claimedIds()).toEqual([2]);
+    expect(statusWrites()).toEqual([{ status: 'ACCEPTED', ids: [2] }]);
+    expect(reviewImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not accept a judge-rated item held for review after it was classified', async () => {
+    await seed([
+      { id: 1, nsfwLevel: PG },
+      { id: 2, nsfwLevel: PG },
+    ]);
+    await judgeRated([1, 2]);
+    reviewImage.mockImplementationOnce(async () => {
+      await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 1`);
+      return { observations: clean, usage: { promptTokens: 1, completionTokens: 1 } };
+    });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(await claimedIds()).toEqual([2]);
+    expect(statusWrites()).toEqual([{ status: 'ACCEPTED', ids: [2] }]);
+  });
+
   it('does not accept an item carrying only a legacy rating', async () => {
     await seed([{ id: 1, nsfwLevel: PG }]);
     await judgeRated([1], `, 'legacy', true`);
