@@ -34,8 +34,10 @@ export async function downloadOutput(
   const ext = idExt ?? DEFAULT_EXTENSION[output.type];
   if (isOrchestratorUrl(output.url) && ext) {
     const href = new URL(output.url);
-    href.searchParams.set('download', 'true');
-    href.searchParams.set('filename', `${baseName}.${ext}`);
+    // Append to the raw query: searchParams.set would re-encode the signed params (`:` → `%3A`),
+    // and the orchestrator checks the signature against them.
+    const extra = new URLSearchParams({ download: 'true', filename: `${baseName}.${ext}` });
+    href.search = href.search ? `${href.search}&${extra}` : `?${extra}`;
     deps.openHref(href.toString());
     return;
   }

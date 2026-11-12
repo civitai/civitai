@@ -6,7 +6,9 @@ import { downloadOutput } from '~/components/ImageGeneration/utils/output-downlo
  * with `Content-Disposition: attachment`. A plain link then saves the file without the browser
  * holding it in memory, so a long video can't hit a fetch timeout.
  */
-const SIGNED = 'https://orchestration-new.civitai.com/v2/consumer/blobs/abc.mp4?sig=s1&exp=99';
+// Real-format signed query: `:` in exp and `%2B` in sig must reach the orchestrator byte for byte.
+const SIGNED =
+  'https://orchestration-new.civitai.com/v2/consumer/blobs/abc.mp4?sig=a%2Bb&exp=2027-02-26T17:34:23Z';
 
 const deps = () => ({
   fetchBlob: vi.fn(async () => new Blob(['x'], { type: 'image/png' })),
@@ -26,8 +28,8 @@ describe('downloadOutput', () => {
       'https://orchestration-new.civitai.com/v2/consumer/blobs/abc.mp4'
     );
     expect(Object.fromEntries(href.searchParams)).toEqual({
-      sig: 's1',
-      exp: '99',
+      sig: 'a+b',
+      exp: '2027-02-26T17:34:23Z',
       download: 'true',
       filename: 'abc.mp4',
     });
@@ -39,10 +41,7 @@ describe('downloadOutput', () => {
 
     await downloadOutput({ url: SIGNED, id: 'abc.mp4', type: 'video' }, d);
 
-    const href = new URL(d.openHref.mock.calls[0][0] as string);
-    href.searchParams.delete('download');
-    href.searchParams.delete('filename');
-    expect(href.toString()).toBe(SIGNED);
+    expect(d.openHref.mock.calls[0][0]).toBe(`${SIGNED}&download=true&filename=abc.mp4`);
   });
 
   it('names a video without an extension in its id as mp4', async () => {
