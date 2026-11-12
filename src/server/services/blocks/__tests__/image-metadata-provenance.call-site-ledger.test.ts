@@ -561,11 +561,11 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
   },
   // Module-level job body: the enclosing-function rule attributes it to `<module>`.
   'src/server/jobs/collection-contest-youtube-upload.ts#<module>': {
-    decision: 'stored-merge-server-keys',
+    decision: 'raw-server-keys',
     sites: 2,
   },
   'src/server/services/image.service.ts#resolveIngestionError': {
-    decision: 'stored-merge-server-keys',
+    decision: 'raw-server-keys',
     sites: 1,
   },
   'src/server/services/image.service.ts#setVideoThumbnail': {
@@ -674,11 +674,14 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
       if (
         expr !==
-        'COALESCE(${ metadataUpdate ? JSON.stringify(metadataUpdate) : null }::jsonb, "metadata")'
+        `CASE WHEN \${metadataJson}::jsonb IS NULL THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || (\${metadataJson}::jsonb - \${JUDGE_RATING_METADATA_KEY}::text) END`
       )
         return 'metadata is no longer the moderation-rule result or the stored value';
       if (
         !/let metadataUpdate[^;]*;\s*if \(modRule\) \{\s*metadataUpdate = modRule\.metadata;/.test(
+          body
+        ) ||
+        !/const metadataJson = metadataUpdate \? JSON\.stringify\(metadataUpdate\) : null;/.test(
           body
         )
       )

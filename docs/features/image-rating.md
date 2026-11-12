@@ -30,9 +30,10 @@ For the `nsfwLevel` bitflag itself and browsing-level filtering, see [nsfw-filte
    Uploads to collections whose judges apply the rating are scanned like any other. Once the scan
    is done (`Scanned`, no block), a judge's rating (`setCollectionItemNsfwLevel`) may raise the
    level, never lower it. It does not lock the level: it is recorded in the server-owned
-   `metadata.judgeRating` (`userId`, `nsfwLevel`, `ratedAt`), and a later scan writes the higher of
-   its own level and that one, unless a moderator lock holds. Approval in such a collection
-   requires the rating.
+   `metadata.judgeRating` (`userId`, `nsfwLevel`, `collectionId`, `ratedAt`), and neither a later
+   scan nor a tag recompute (`update_nsfw_levels_new`) writes an unlocked, unblocked level below it.
+   Approval in such a collection requires that collection's rating on a scanned (`scanJobs` has a
+   `workflowId`), unblocked image.
 2. It calls `ingestImage`, which submits the scan and stamps `scanRequestedAt` and `scanJobs.workflowId`.
 3. A database trigger also queues the image in `JobQueue(ImageScan)` whenever `ingestion` becomes `Pending`,
    `Rescan` or `Error`, so a lost submit is retried by the cron (step 3).

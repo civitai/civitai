@@ -31,6 +31,7 @@ const POST_ID = 70;
 const JUDGE_ID = 900;
 
 let db: PGlite;
+let raw: ReturnType<typeof pgliteRaw>;
 
 beforeAll(async () => {
   db = new PGlite();
@@ -46,6 +47,7 @@ beforeAll(async () => {
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "blockedFor" text,
       "scannedAt" timestamp(3),
+      "scanJobs" jsonb,
       metadata jsonb,
       "updatedAt" timestamp(3)
     );
@@ -55,34 +57,44 @@ beforeAll(async () => {
       "imageId" int REFERENCES "Image"(id)
     );
   `);
-  const raw = pgliteRaw(db);
-  dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
-  dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+  raw = pgliteRaw(db);
 });
 afterAll(() => db.close());
 
 const SCANNED_AT = '2026-01-01 00:00:00';
+const SCANNED = '{"workflowId": "wf-1"}';
 
 async function seed(image: {
   ingestion: string;
   nsfwLevel: number;
   blockedFor?: string | null;
   postCollectionId?: number;
+  scanJobs?: string | null;
 }) {
   await db.query(`INSERT INTO "Post" (id, "collectionId") VALUES ($1, $2)`, [
     POST_ID,
     image.postCollectionId ?? COLLECTION_ID,
   ]);
   await db.query(
-    `INSERT INTO "Image" (id, "postId", "nsfwLevel", ingestion, "blockedFor", "scannedAt")
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [IMAGE_ID, POST_ID, image.nsfwLevel, image.ingestion, image.blockedFor ?? null, SCANNED_AT]
+    `INSERT INTO "Image" (id, "postId", "nsfwLevel", ingestion, "blockedFor", "scannedAt", "scanJobs")
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      IMAGE_ID,
+      POST_ID,
+      image.nsfwLevel,
+      image.ingestion,
+      image.blockedFor ?? null,
+      SCANNED_AT,
+      image.scanJobs === undefined ? SCANNED : image.scanJobs,
+    ]
   );
   await db.query(
     `INSERT INTO "CollectionItem" (id, "collectionId", "imageId") VALUES ($1, $2, $3)`,
     [ITEM_ID, COLLECTION_ID, IMAGE_ID]
   );
 }
+
+type JudgeRating = { userId: number; nsfwLevel: number; ratedAt: string; collectionId: number };
 
 const imageRow = async () =>
   (
@@ -92,15 +104,32 @@ const imageRow = async () =>
       ingestion: string;
       blockedFor: string | null;
       scannedAt: Date | null;
-      metadata: { judgeRating?: { userId: number; nsfwLevel: number; ratedAt: string } } | null;
+      metadata: { judgeRating?: JudgeRating } | null;
     }>(`SELECT * FROM "Image" WHERE id = $1`, [IMAGE_ID])
   ).rows[0];
 
 const rate = (nsfwLevel: NsfwLevel) =>
   setCollectionItemNsfwLevel({ collectionItemId: ITEM_ID, nsfwLevel, userId: JUDGE_ID });
 
+const approve = () =>
+  updateCollectionItemsStatus({
+    input: {
+      collectionId: COLLECTION_ID,
+      collectionItemIds: [ITEM_ID],
+      status: CollectionItemStatus.ACCEPTED,
+    },
+    userId: JUDGE_ID,
+    isSystem: true,
+  });
+
+/** The first read after the rating check: reaching it means the check passed. */
+const PAST_GATE = 'past the rating check';
+
 beforeEach(async () => {
   vi.clearAllMocks();
+  dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+  dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+  dbMock.dbWrite.collectionItem.findMany.mockRejectedValue(new Error(PAST_GATE));
   await db.exec(`DELETE FROM "CollectionItem"; DELETE FROM "Image"; DELETE FROM "Post";`);
   dbMock.dbRead.collectionItem.findUniqueOrThrow.mockResolvedValue({
     id: ITEM_ID,
@@ -119,11 +148,17 @@ beforeEach(async () => {
 
 describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => {
   it('refuses an image whose scan has not finished, with a retry message', async () => {
-    await seed({ ingestion: 'Pending', nsfwLevel: 0 });
+    await seed({ ingestion: 'Pending', nsfwLevel: 0, scanJobs: null });
 
     await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
-    expect((await imageRow()).nsfwLevel).toBe(0);
-    expect((await imageRow()).ingestion).toBe('Pending');
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 0, ingestion: 'Pending', metadata: null });
+  });
+
+  it('refuses a Scanned image that carries no scan workflow', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG, scanJobs: null });
+
+    await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
+    expect(await imageRow()).toMatchObject({ nsfwLevel: NsfwLevel.PG, metadata: null });
   });
 
   it('refuses a Blocked image and leaves the block in place', async () => {
@@ -140,6 +175,26 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
 
     await expect(rate(NsfwLevel.X)).rejects.toThrow(/blocked/i);
     expect((await imageRow()).blockedFor).toBe('tos');
+  });
+
+  it.each([
+    ['moved to Rescan', `UPDATE "Image" SET ingestion = 'Rescan'`],
+    ['was blocked', `UPDATE "Image" SET "blockedFor" = 'tos'`],
+    ['lost its scan workflow', `UPDATE "Image" SET "scanJobs" = NULL`],
+  ])('refuses, writing nothing, when the image %s after the check read it', async (_, change) => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG });
+    // The check reads the row as it was; the row changes before the write.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      ...args: Parameters<typeof raw.queryRaw>
+    ) => {
+      const rows = await raw.queryRaw(...args);
+      const text = Array.isArray(args[0]) ? (args[0] as string[]).join('') : '';
+      if (text.includes('AS "postCollectionId"')) await db.exec(change);
+      return rows;
+    }) as never);
+
+    await expect(rate(NsfwLevel.R)).rejects.toThrow(/changed while it was being rated/i);
+    expect(await imageRow()).toMatchObject({ nsfwLevel: NsfwLevel.PG, metadata: null });
   });
 
   it('keeps the scan level when the judge picks a lower one', async () => {
@@ -159,7 +214,7 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
     expect((await imageRow()).nsfwLevel).toBe(NsfwLevel.R);
   });
 
-  it('leaves the level unlocked, so a later scan can raise it, and never writes the scan state', async () => {
+  it('leaves the level unlocked and never writes the scan state', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG });
 
     await rate(NsfwLevel.R);
@@ -171,13 +226,17 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
     expect(row.scannedAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
   });
 
-  it('records the judge, the level they picked and when', async () => {
+  it('records the judge, the collection, the level they picked and when', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.X });
 
     await rate(NsfwLevel.PG13);
 
     const { judgeRating } = (await imageRow()).metadata ?? {};
-    expect(judgeRating).toMatchObject({ userId: JUDGE_ID, nsfwLevel: NsfwLevel.PG13 });
+    expect(judgeRating).toMatchObject({
+      userId: JUDGE_ID,
+      nsfwLevel: NsfwLevel.PG13,
+      collectionId: COLLECTION_ID,
+    });
     expect(Number.isNaN(Date.parse(judgeRating?.ratedAt ?? ''))).toBe(false);
   });
 
@@ -201,17 +260,6 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
 });
 
 describe('updateCollectionItemsStatus: approving in a judge-rated collection', () => {
-  const approve = () =>
-    updateCollectionItemsStatus({
-      input: {
-        collectionId: COLLECTION_ID,
-        collectionItemIds: [ITEM_ID],
-        status: CollectionItemStatus.ACCEPTED,
-      },
-      userId: JUDGE_ID,
-      isSystem: true,
-    });
-
   it('refuses an item no judge has rated, even after a scan set its level', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R });
 
@@ -221,9 +269,26 @@ describe('updateCollectionItemsStatus: approving in a judge-rated collection', (
   it('lets a judge-rated item past the rating check', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R });
     await rate(NsfwLevel.R);
-    // The first read after the rating check: reaching it means the check passed.
-    dbMock.dbWrite.collectionItem.findMany.mockRejectedValue(new Error('past the rating check'));
 
-    await expect(approve()).rejects.toThrow('past the rating check');
+    await expect(approve()).rejects.toThrow(PAST_GATE);
+  });
+
+  it.each([
+    [
+      "carries another collection's rating",
+      `UPDATE "Image" SET metadata = jsonb_set(metadata, '{judgeRating,collectionId}', '${OTHER_COLLECTION_ID}')`,
+    ],
+    [
+      'was blocked after the rating',
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'tos', "nsfwLevel" = 32`,
+    ],
+    ['has a block reason', `UPDATE "Image" SET "blockedFor" = 'tos'`],
+    ['carries no scan workflow', `UPDATE "Image" SET "scanJobs" = NULL`],
+  ])('refuses a rated item that %s', async (_, change) => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R });
+    await rate(NsfwLevel.R);
+    await db.exec(change);
+
+    await expect(approve()).rejects.toThrow(/NSFW rating/);
   });
 });

@@ -71,12 +71,17 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Rescan');
+    CREATE TABLE "Collection" (id int PRIMARY KEY, type text NOT NULL, metadata jsonb NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       url text NOT NULL DEFAULT 'abc',
       type text NOT NULL DEFAULT 'image',
       "nsfwLevel" int NOT NULL,
-      ingestion text NOT NULL DEFAULT 'Scanned',
+      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
+      "blockedFor" text,
+      "scanJobs" jsonb,
+      metadata jsonb,
       meta jsonb,
       "needsReview" text,
       "postId" int,
@@ -103,7 +108,7 @@ afterAll(() => db.close());
 beforeEach(async () => {
   reviewImage.mockReset();
   updateCollectionItemsStatus.mockReset();
-  await db.exec(`DELETE FROM "CollectionItem"; DELETE FROM "Image";`);
+  await db.exec(`DELETE FROM "CollectionItem"; DELETE FROM "Image"; DELETE FROM "Collection";`);
 });
 
 async function seed(items: { id: number; nsfwLevel: number }[]) {
@@ -250,5 +255,32 @@ describe('reviewCollection: an image flagged as a minor before its outcome is wr
       { status: 'ACCEPTED', ids: [2] },
       { status: 'REJECTED', ids: [1] },
     ]);
+  });
+});
+
+describe('reviewCollection: a collection whose judges apply the rating', () => {
+  it('leaves an item no judge rated in REVIEW, and accepts the rated ones', async () => {
+    await db.exec(`
+      INSERT INTO "Collection" VALUES (${COLLECTION_ID}, 'Image', '{"judgesApplyBrowsingLevel": true}');
+    `);
+    await seed([
+      { id: 1, nsfwLevel: PG },
+      { id: 2, nsfwLevel: PG },
+      { id: 3, nsfwLevel: PG },
+    ]);
+    await db.exec(`
+      UPDATE "Image" SET "scanJobs" = '{"workflowId": "wf"}',
+        metadata = jsonb_build_object('judgeRating', jsonb_build_object('collectionId', ${COLLECTION_ID}))
+      WHERE id IN (1, 3);
+    `);
+    reviewImage.mockResolvedValue({
+      observations: clean,
+      usage: { promptTokens: 1, completionTokens: 1 },
+    });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(await claimedIds()).toEqual([1, 3]);
+    expect(statusWrites()).toEqual([{ status: 'ACCEPTED', ids: [1, 3] }]);
   });
 });

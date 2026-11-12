@@ -15,6 +15,7 @@ import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import {
   AI_REVIEW_SYSTEM_USER_ID as SYSTEM_USER_ID,
   COLLECTION_AI_REVIEW_KEY_PREFIX,
+  judgeRatedSql,
   updateCollectionItemsStatus,
 } from '~/server/services/collection.service';
 import {
@@ -445,6 +446,27 @@ async function applyOutcomes({
               AND EXISTS (
                 SELECT 1 FROM "Image" i
                 WHERE i.id = ci."imageId" AND (i.minor OR i."acceptableMinor")
+              )
+            )`
+          : Prisma.empty
+      }
+      ${
+        // Where judges apply the rating, an accept needs a judge's rating: an unrated item stays
+        // in REVIEW, unclaimed, and the rest of the batch goes ahead.
+        acceptIds.length
+          ? Prisma.sql`AND NOT (
+              ci.id IN (${Prisma.join(acceptIds)})
+              AND EXISTS (
+                SELECT 1 FROM "Collection" c
+                WHERE c.id = ci."collectionId"
+                  AND c.type = 'Image'
+                  AND c.metadata->>'judgesApplyBrowsingLevel' = 'true'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM "Image" i WHERE i.id = ci."imageId" AND ${judgeRatedSql(
+                  'i',
+                  collectionId
+                )}
               )
             )`
           : Prisma.empty

@@ -2888,7 +2888,7 @@ export const updateCollectionItemsStatus = async ({
         JOIN "Image" i ON i.id = ci."imageId"
         WHERE ci."collectionId" = ${collectionId}
           AND ci.id IN (${Prisma.join(collectionItemIds)})
-          AND NOT ${judgeRatedSql('i')}
+          AND NOT ${judgeRatedSql('i', collectionId)}
         LIMIT 1
       `;
 
@@ -4190,8 +4190,21 @@ export async function getCollectionEntryCount({
   return result;
 }
 
-const judgeRatedSql = (alias: string) =>
-  Prisma.sql`(${Prisma.raw(`"${alias}"`)}."metadata" -> ${JUDGE_RATING_METADATA_KEY}) IS NOT NULL`;
+/**
+ * A scanned, unblocked image a judge of this collection rated, over `Image` aliased `alias`. A row
+ * that carries no scan workflow was never scanned, whatever its `ingestion` says.
+ */
+export const judgeRatedSql = (alias: string, collectionId: number) => {
+  const i = Prisma.raw(`"${alias}"`);
+  // COALESCE: a missing key or NULL column is "not rated", never an unknown that NOT keeps out.
+  return Prisma.sql`COALESCE((
+    ${i}."metadata" -> ${JUDGE_RATING_METADATA_KEY}::text ->> 'collectionId' = ${collectionId}::text
+    AND ${i}.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+    AND ${i}."blockedFor" IS NULL
+    AND ${i}."nsfwLevel" != ${NsfwLevel.Blocked}
+    AND ${i}."scanJobs" ? 'workflowId'
+  ), false)`;
+};
 
 export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
@@ -4225,9 +4238,11 @@ export const setCollectionItemNsfwLevel = async ({
       ingestion: ImageIngestionStatus;
       nsfwLevel: number;
       blockedFor: string | null;
+      scanned: boolean;
     }[]
   >`
-    SELECT p."collectionId" AS "postCollectionId", i.ingestion, i."nsfwLevel", i."blockedFor"
+    SELECT p."collectionId" AS "postCollectionId", i.ingestion, i."nsfwLevel", i."blockedFor",
+      COALESCE(i."scanJobs" ? 'workflowId', false) AS scanned
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
@@ -4245,7 +4260,7 @@ export const setCollectionItemNsfwLevel = async ({
 
   if (hasBlockMarker(image))
     throw throwBadRequestError('This image is blocked and cannot be rated.');
-  if (image.ingestion !== ImageIngestionStatus.Scanned)
+  if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned)
     throw throwBadRequestError('This image is still being scanned. Try again shortly.');
 
   // The judge may raise the scan's level, never lower it; a later scan keeps the judge's level as a
@@ -4258,6 +4273,7 @@ export const setCollectionItemNsfwLevel = async ({
         jsonb_build_object(
           'userId', ${userId}::int,
           'nsfwLevel', ${nsfwLevel}::int,
+          'collectionId', ${collectionItem.collectionId}::int,
           'ratedAt', NOW()
         )
       ),
@@ -4266,6 +4282,7 @@ export const setCollectionItemNsfwLevel = async ({
       AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
       AND "blockedFor" IS NULL
       AND "nsfwLevel" != ${NsfwLevel.Blocked}
+      AND "scanJobs" ? 'workflowId'
     RETURNING "nsfwLevel"
   `;
   if (!updated)

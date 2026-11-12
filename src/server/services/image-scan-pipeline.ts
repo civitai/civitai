@@ -61,6 +61,7 @@ import {
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import { hasBlockMarker } from '~/server/common/image-visibility';
+import { judgeRatingFloorSql } from '~/server/common/judge-rating';
 import { JUDGE_RATING_METADATA_KEY } from '~/shared/utils/block-provenance-metadata';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
@@ -338,14 +339,6 @@ export async function markImageScanError({
 
 // Image loading
 // --------------------------------------------------
-/** The level a collection judge recorded (`metadata.judgeRating`), or 0 when there is none. */
-function judgeRatingFloor(metadata: unknown) {
-  const level = (metadata as Record<string, { nsfwLevel?: unknown } | undefined> | null)?.[
-    JUDGE_RATING_METADATA_KEY
-  ]?.nsfwLevel;
-  return typeof level === 'number' && level > 0 && level < NsfwLevel.Blocked ? level : 0;
-}
-
 export async function loadImageForScan(imageId: number) {
   const image = await dbWrite.image.findUnique({
     where: { id: imageId },
@@ -627,11 +620,8 @@ export async function resolveScanOutcome({
     toUpdate.ingestion = ImageIngestionStatus.Scanned;
     toUpdate.needsReview = reviewKey;
     toUpdate.blockedFor = null;
-    // Respect a manually-locked nsfw level — never overwrite it from the scan. A collection judge's
-    // rating is a floor: the scan may rate higher, never lower.
-    toUpdate.nsfwLevel = image.nsfwLevelLocked
-      ? image.nsfwLevel
-      : Math.max(audit.nsfwLevel, judgeRatingFloor(image.metadata));
+    // Respect a manually-locked nsfw level — never overwrite it from the scan.
+    toUpdate.nsfwLevel = image.nsfwLevelLocked ? image.nsfwLevel : audit.nsfwLevel;
   }
 
   // Moderation rules can block the image, hold it for review, or annotate its
@@ -706,6 +696,10 @@ export async function resolveScanOutcome({
     }
   }
 
+  const scanLevel = toUpdate.nsfwLevel as number;
+  // Merged over the stored row, without the loaded copy of the judge rating: a rule annotation must
+  // not erase a key written since this scan loaded the image.
+  const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
@@ -713,24 +707,41 @@ export async function resolveScanOutcome({
       "pHash" = ${pHash ?? null},
       "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
-      "nsfwLevel" = ${toUpdate.nsfwLevel as number},
+      "nsfwLevel" = ${scanLevel},
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
         ELSE ${(toUpdate.needsReview as string) ?? null} END,
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
-      "metadata" = COALESCE(${
-        metadataUpdate ? JSON.stringify(metadataUpdate) : null
-      }::jsonb, "metadata"),
+      "metadata" = CASE WHEN ${metadataJson}::jsonb IS NULL THEN "metadata"
+        ELSE COALESCE("metadata", '{}'::jsonb) || (${metadataJson}::jsonb - ${JUDGE_RATING_METADATA_KEY}::text) END,
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
       )}::jsonb)
     WHERE id = ${image.id}
   `;
 
+  // A collection judge's rating is a floor under an unlocked, unblocked level. Read from the row
+  // after the write above, so a rating that landed after this scan loaded the image still holds; the
+  // judge write takes the greater level too, so either order ends at the higher of the two.
+  let nsfwLevel = scanLevel;
+  if (scanLevel !== NsfwLevel.Blocked && !image.nsfwLevelLocked) {
+    const floor = judgeRatingFloorSql();
+    const [raised] = await dbWrite.$queryRaw<{ nsfwLevel: number }[]>`
+      UPDATE "Image" SET "nsfwLevel" = ${floor}
+      WHERE id = ${image.id}
+        AND NOT "nsfwLevelLocked"
+        AND ingestion != ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+        AND "nsfwLevel" != ${NsfwLevel.Blocked}
+        AND ${floor} > "nsfwLevel"
+      RETURNING "nsfwLevel"
+    `;
+    if (typeof raised?.nsfwLevel === 'number') nsfwLevel = raised.nsfwLevel;
+  }
+
   return {
     ingestion: toUpdate.ingestion as ImageIngestionStatus,
-    nsfwLevel: toUpdate.nsfwLevel as number,
+    nsfwLevel,
     blockedFor: (toUpdate.blockedFor as string) ?? null,
     reviewKey,
     audit,
