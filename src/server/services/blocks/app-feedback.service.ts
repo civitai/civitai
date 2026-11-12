@@ -37,6 +37,7 @@ import {
   resolveListingAccess,
 } from '~/server/services/blocks/app-access.service';
 import { notifyAppFeedbackReporter } from '~/server/services/blocks/app-feedback-notify';
+import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
 import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 import {
@@ -203,6 +204,57 @@ export async function resolveLiveSourceCommit(target: {
     : UNKNOWN_SOURCE;
 }
 
+/**
+ * 🔴 `appSourceCommit` / `appSourceDirty` ARE MANUAL-APPLY, NO-TYPE COLUMNS, written and read only
+ * here, in raw SQL, each degrading when the column is not there yet. As Prisma fields they would
+ * be named by the feedback create's RETURNING and by every read, and app feedback would fail
+ * outright between this deploy and the migration. So a report is always created first and the
+ * source commit added to it best-effort; until the migration is applied it is simply not kept.
+ */
+async function writeFeedbackSourceCommit(id: number, source: AppSourceCommit): Promise<void> {
+  if (source.appSourceCommit === null && source.appSourceDirty === null) return;
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Feedback"
+      SET "appSourceCommit" = ${source.appSourceCommit}, "appSourceDirty" = ${source.appSourceDirty}
+      WHERE "id" = ${id}
+    `;
+  } catch (err) {
+    if (!isMissingColumnError(err))
+      noteDegradedRead('app-feedback-source-commit-write-failed', err);
+  }
+}
+
+/** The source commit of each row, by id; a row missing from the map is unknown. Never throws. */
+export async function readFeedbackSourceCommits(
+  ids: readonly number[],
+  db: typeof dbRead = dbRead
+): Promise<Map<number, AppSourceCommit>> {
+  if (ids.length === 0) return new Map();
+  try {
+    const rows = await db.$queryRaw<
+      Array<{ id: number; appSourceCommit: string | null; appSourceDirty: boolean | null }>
+    >(Prisma.sql`
+      SELECT f.id, f."appSourceCommit", f."appSourceDirty"
+      FROM "Feedback" f
+      WHERE f.id IN (${Prisma.join([...ids])})
+    `);
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        { appSourceCommit: r.appSourceCommit ?? null, appSourceDirty: r.appSourceDirty ?? null },
+      ])
+    );
+  } catch (err) {
+    if (!isMissingColumnError(err))
+      noteDegradedRead('app-feedback-source-commit-read-degraded', err);
+    return new Map();
+  }
+}
+
+const withSource = <T extends { id: number }>(rows: T[], sources: Map<number, AppSourceCommit>) =>
+  rows.map((row) => ({ ...row, ...(sources.get(row.id) ?? UNKNOWN_SOURCE) }));
+
 export async function getAppFeedbackEligibility(user: SessionUser, target: AppFeedbackTarget) {
   const resolved = await resolveAppFeedbackTarget(user, target);
   if (!resolved.ok) return { eligible: false as const };
@@ -299,7 +351,7 @@ export async function createAppFeedback({
   // Stamped now: the live submission changes on the next approve, so it cannot be recovered later.
   const source = await resolveLiveSourceCommit(resolved.target);
 
-  return dbWrite.feedback.create({
+  const created = await dbWrite.feedback.create({
     data: {
       userId: user.id,
       area: APP_BLOCK_FEEDBACK_AREA,
@@ -308,10 +360,11 @@ export async function createAppFeedback({
       appListingId,
       appBlockVersion,
       appBlockSha,
-      ...source,
     },
     select: { id: true },
   });
+  await writeFeedbackSourceCommit(created.id, source);
+  return created;
 }
 
 export const APP_FEEDBACK_NO_ACCESS_MESSAGE = "You do not have access to this app's feedback";
@@ -553,15 +606,13 @@ export async function listAppFeedbackForListing({
     ...ownerStatusSql(input.ownerStatus),
     ...cursorSql(input.cursor, seatListingId),
   ];
-  const rows = await dbRead.$queryRaw<OwnerFeedbackRow[]>(Prisma.sql`
+  const rows = await dbRead.$queryRaw<Omit<OwnerFeedbackRow, keyof AppSourceCommit>[]>(Prisma.sql`
     SELECT
       f.id,
       f.message,
       f."createdAt",
       f."appBlockVersion",
       f."appBlockSha",
-      f."appSourceCommit",
-      f."appSourceDirty",
       f.context->>'surface' AS surface,
       f.context->'recentErrors' AS "recentErrors",
       f.context->'environment' AS "environment",
@@ -577,9 +628,10 @@ export async function listAppFeedbackForListing({
     LIMIT ${input.limit + 1}
   `);
   const page = rows.slice(0, input.limit);
+  const sources = await readFeedbackSourceCommits(page.map((r) => r.id));
   const forkOf = page.length ? await readFeedbackForkOrigin(seatListingId) : null;
   return {
-    items: page.map((row) => ({ ...toOwnerFeedbackDto(row), forkOf })),
+    items: withSource(page, sources).map((row) => ({ ...toOwnerFeedbackDto(row), forkOf })),
     nextCursor: rows.length > input.limit ? page[page.length - 1].id : undefined,
   };
 }
@@ -780,7 +832,7 @@ export async function modListAppFeedback(input: ModListAppFeedbackInput) {
   // The PRIMARY, not a replica: the moderator tab refetches this right after a hide/unhide and must
   // read its own write. Moderator-only, over a small table.
   // LEFT joins from the listing on, so a row whose listing was deleted still lists.
-  const rows = await dbWrite.$queryRaw<ModFeedbackRow[]>(Prisma.sql`
+  const rows = await dbWrite.$queryRaw<Omit<ModFeedbackRow, keyof AppSourceCommit>[]>(Prisma.sql`
     SELECT
       f.id,
       f.message,
@@ -791,8 +843,6 @@ export async function modListAppFeedback(input: ModListAppFeedbackInput) {
       f."appListingId",
       f."appBlockVersion",
       f."appBlockSha",
-      f."appSourceCommit",
-      f."appSourceDirty",
       f."ownerStatus",
       f."ownerStatusAt",
       f."ownerStatusById",
@@ -831,8 +881,13 @@ export async function modListAppFeedback(input: ModListAppFeedbackInput) {
     LIMIT ${input.limit + 1}
   `);
   const page = rows.slice(0, input.limit);
+  // The replica is enough here: the source commit is written once, with the row, and never moves.
+  const sources = await readFeedbackSourceCommits(page.map((r) => r.id));
   return {
-    items: page.map(({ context, ...row }) => ({ ...row, ...readContext(context) })),
+    items: withSource(page, sources).map(({ context, ...row }) => ({
+      ...row,
+      ...readContext(context),
+    })),
     nextCursor: rows.length > input.limit ? page[page.length - 1].id : undefined,
   };
 }

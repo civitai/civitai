@@ -488,8 +488,6 @@ describe('createAppFeedback', () => {
         appListingId: PARENT,
         appBlockVersion: '1.4.2',
         appBlockSha: 'sha-parent-91c',
-        appSourceCommit: null,
-        appSourceDirty: null,
       },
       select: { id: true },
     });
@@ -508,14 +506,21 @@ describe('createAppFeedback', () => {
   describe("the developer's source commit", () => {
     // Distinct from the platform sha the fixture serves, so a stamp of the wrong one shows.
     const LIVE_COMMIT = '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901';
-    const data = () => dbMock.dbWrite.feedback.create.mock.calls[0][0].data;
+    /** The raw UPDATE's text and its values (commit, dirty, feedback id). */
+    const sourceWrites = () =>
+      dbMock.dbWrite.$executeRaw.mock.calls.map(([strings, ...values]) => ({
+        sql: norm((strings as TemplateStringsArray).join('?')),
+        values,
+      }));
 
     it('stamps the commit of the approved request that built the serving sha', async () => {
       dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
         sourceCommit: LIVE_COMMIT,
         sourceDirty: true,
       });
-      await createAppFeedback({ user: user(REPORTER), input });
+      await expect(createAppFeedback({ user: user(REPORTER), input })).resolves.toEqual({
+        id: 555,
+      });
       expect(dbMock.dbRead.appBlockPublishRequest.findFirst).toHaveBeenCalledWith({
         where: {
           appBlockId: 'blk_parent',
@@ -525,11 +530,12 @@ describe('createAppFeedback', () => {
         orderBy: { reviewedAt: 'desc' },
         select: { sourceCommit: true, sourceDirty: true },
       });
-      expect(data()).toMatchObject({
-        appBlockSha: 'sha-parent-91c',
-        appSourceCommit: LIVE_COMMIT,
-        appSourceDirty: true,
-      });
+      expect(sourceWrites()).toEqual([
+        {
+          sql: 'UPDATE "Feedback" SET "appSourceCommit" = ?, "appSourceDirty" = ? WHERE "id" = ?',
+          values: [LIVE_COMMIT, true, 555],
+        },
+      ]);
     });
 
     it('keeps an unknown dirty flag NULL rather than calling it clean', async () => {
@@ -538,13 +544,13 @@ describe('createAppFeedback', () => {
         sourceDirty: null,
       });
       await createAppFeedback({ user: user(REPORTER), input });
-      expect(data()).toMatchObject({ appSourceCommit: LIVE_COMMIT, appSourceDirty: null });
+      expect(sourceWrites()[0].values).toEqual([LIVE_COMMIT, null, 555]);
     });
 
-    it('records unknown when no approved request carries the serving sha', async () => {
+    it('writes nothing when no approved request carries the serving sha', async () => {
       dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
       await createAppFeedback({ user: user(REPORTER), input });
-      expect(data()).toMatchObject({ appSourceCommit: null, appSourceDirty: null });
+      expect(sourceWrites()).toEqual([]);
     });
 
     it('looks nothing up for an off-site app or a block that has no serving sha', async () => {
@@ -555,8 +561,32 @@ describe('createAppFeedback', () => {
       STATUS[PARENT].appBlock!.currentVersionSha = null;
       await createAppFeedback({ user: user(REPORTER), input });
       expect(dbMock.dbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
-      for (const [call] of dbMock.dbWrite.feedback.create.mock.calls)
-        expect(call.data).toMatchObject({ appSourceCommit: null, appSourceDirty: null });
+      expect(sourceWrites()).toEqual([]);
+    });
+
+    it('still creates the report before the migration is applied (missing column)', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        sourceCommit: LIVE_COMMIT,
+        sourceDirty: false,
+      });
+      dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(
+        Object.assign(new Error('column "appSourceCommit" does not exist'), { code: '42703' })
+      );
+      await expect(createAppFeedback({ user: user(REPORTER), input })).resolves.toEqual({
+        id: 555,
+      });
+      expect(sourceWrites()).toHaveLength(1);
+    });
+
+    it('never names the new columns on the Prisma create, so it cannot fail on them', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        sourceCommit: LIVE_COMMIT,
+        sourceDirty: true,
+      });
+      await createAppFeedback({ user: user(REPORTER), input });
+      const call = dbMock.dbWrite.feedback.create.mock.calls[0][0];
+      expect(JSON.stringify(call)).not.toMatch(/appSource/);
+      expect(call.select).toEqual({ id: true });
     });
   });
 
@@ -584,8 +614,6 @@ describe('createAppFeedback', () => {
         appListingId: PARENT,
         appBlockVersion: '1.4.2',
         appBlockSha: 'sha-parent-91c',
-        appSourceCommit: null,
-        appSourceDirty: null,
       },
       select: { id: true },
     });
@@ -852,8 +880,6 @@ describe('listAppFeedbackForListing', () => {
       'f."createdAt"',
       'f."appBlockVersion"',
       'f."appBlockSha"',
-      'f."appSourceCommit"',
-      'f."appSourceDirty"',
       "f.context->>'surface' AS surface",
       `f.context->'recentErrors' AS "recentErrors"`,
       `f.context->'environment' AS "environment"`,
@@ -908,6 +934,48 @@ describe('listAppFeedbackForListing', () => {
     const res = await listAppFeedbackForListing({ userId: OWNER, input: { ...input, limit: 2 } });
     expect(res.items.map((i) => i.id)).toEqual([30, 20]);
     expect(res.nextCursor).toBeUndefined();
+  });
+});
+
+const NO_SOURCE = { appSourceCommit: null, appSourceDirty: null };
+
+describe('the source commit on the read paths (no-type columns, raw SQL)', () => {
+  const COMMIT = '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901';
+  const list = () =>
+    listAppFeedbackForListing({ userId: OWNER, input: { appListingId: PARENT, limit: 50 } });
+
+  it('merges the source commit of each row from its own query, by id', async () => {
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([
+        { ...ownerRow, id: 30 },
+        { ...ownerRow, id: 20 },
+      ])
+      .mockResolvedValueOnce([{ id: 20, appSourceCommit: COMMIT, appSourceDirty: false }]);
+    const res = await list();
+    expect(res.items.map((i) => [i.id, i.appSourceCommit, i.appSourceDirty])).toEqual([
+      [30, null, null],
+      [20, COMMIT, false],
+    ]);
+    const q = dbMock.dbRead.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+    expect(norm(q.sql)).toBe(
+      'SELECT f.id, f."appSourceCommit", f."appSourceDirty" FROM "Feedback" f WHERE f.id IN (?,?)'
+    );
+    expect(q.values).toEqual([30, 20]);
+  });
+
+  it('still lists every row before the migration is applied, with no source commit', async () => {
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([{ ...ownerRow, id: 30 }])
+      .mockRejectedValueOnce(Object.assign(new Error('column does not exist'), { code: '42703' }));
+    const res = await list();
+    expect(res.items.map((i) => [i.id, i.appSourceCommit, i.appSourceDirty])).toEqual([
+      [30, null, null],
+    ]);
+  });
+
+  it('issues no source query for an empty page', async () => {
+    await list();
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -973,6 +1041,7 @@ describe('readFeedbackForkOrigin — the upstream of a fork', () => {
         { ...ownerRow, id: 30 },
         { ...ownerRow, id: 20 },
       ])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([forkRow]);
     const res = await listAppFeedbackForListing({
       userId: OWNER,
@@ -1327,8 +1396,23 @@ describe('moderator procedures', () => {
     ]);
     const res = await modListAppFeedback({ limit: 2, hidden: 'all', cursor: 999 });
     expect(res.items).toEqual([
-      { ...modRow, surface: 'page', modelId: 31337, recentErrors: [], environment: null },
-      { ...modRow, id: 702, surface: null, modelId: null, recentErrors: [], environment: null },
+      {
+        ...modRow,
+        ...NO_SOURCE,
+        surface: 'page',
+        modelId: 31337,
+        recentErrors: [],
+        environment: null,
+      },
+      {
+        ...modRow,
+        ...NO_SOURCE,
+        id: 702,
+        surface: null,
+        modelId: null,
+        recentErrors: [],
+        environment: null,
+      },
     ]);
     expect(res.nextCursor).toBe(702);
     const q = lastModListQuery();

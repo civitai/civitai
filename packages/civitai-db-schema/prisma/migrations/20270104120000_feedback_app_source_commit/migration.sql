@@ -4,16 +4,18 @@
 -- ADDITIVE ONLY. Two NULLable columns and one CHECK on "Feedback". No existing
 -- column, constraint or row is changed.
 --
--- "appBlockSha" (already stamped) is the platform's own repo sha, which a developer
--- cannot map to their code. These two columns copy the developer's own
+-- "appBlockSha" (already stamped) is the release commit in the app's platform repo,
+-- not a commit in the developer's own tree. These two columns copy the developer's own
 -- `sourceCommit` / `sourceDirty` claim from the publish request that was live when
 -- the report was written, so the report names a commit in the developer's tree.
 -- Both are an UNVERIFIED client claim, and NULL means unknown, never "clean".
 --
 -- ⚠️ MANUAL APPLY, per environment (the dev database PR previews use, then
--- production). APPLY BEFORE the code that declares these fields deploys: the app
--- feedback create writes both columns, so it fails until they exist. Pre-applying
--- is safe: nothing reads or writes them until then.
+-- production). EITHER ORDER relative to the deploy: both columns are no-type in
+-- `schema.full.prisma` and are written and read only by raw SQL in
+-- src/server/services/blocks/app-feedback.service.ts, which degrades on a missing
+-- column (reports are still created and listed; the source commit is just not
+-- kept or shown). Reports written before the apply carry no source commit.
 --
 -- One transaction, run as written including the `BEGIN`: `SET LOCAL lock_timeout`
 -- only takes effect inside a transaction block.

@@ -2155,8 +2155,6 @@ export interface Feedback {
   appListing?: AppListing | null;
   appBlockVersion: string | null;
   appBlockSha: string | null;
-  appSourceCommit: string | null;
-  appSourceDirty: boolean | null;
   ownerStatus: string | null;
   ownerStatusAt: Date | null;
   ownerStatusById: number | null;
