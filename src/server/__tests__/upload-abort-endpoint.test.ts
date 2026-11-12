@@ -493,3 +493,48 @@ describe('/api/upload/abort — file size', () => {
     expect(lastLogged()).not.toHaveProperty('fileSize');
   });
 });
+
+describe('/api/upload/abort — a malformed body is a 400, not a 500', () => {
+  // The mock reproduces the SDK serializer's throw for a missing UploadId, so these fail
+  // on the pre-fix handler (classifier `other` → 500) instead of passing on a stub.
+  const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+  beforeEach(() => {
+    mockAbortMultipartUpload.mockImplementation(async (_b, _k, uploadId) => {
+      if (uploadId == null) throw new TypeError('Expected a non-null value for UploadId');
+    });
+  });
+
+  it('missing uploadId → 400 + no-store, S3 never called, still logged', async () => {
+    const res = makeRes();
+    await handler(makeReq({ body: { uploadId: undefined, failure: { kind: 'complete' } } }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'Missing or invalid bucket, key or uploadId' });
+    expect(res.headers['Cache-Control']).toBe('no-store');
+    expect(mockAbortMultipartUpload).not.toHaveBeenCalled();
+    expect(lastLogged().name).toBe('s3-upload-abort-invalid');
+    expect(lastLogged().failure).toEqual({ kind: 'complete' });
+  });
+
+  it.each([
+    ['missing key', { key: undefined }],
+    ['empty key', { key: '' }],
+    ['missing bucket', { bucket: undefined }],
+    ['empty uploadId', { uploadId: '' }],
+    ['non-string uploadId', { uploadId: 123 }],
+  ])('%s → 400, and S3 is never called', async (_label, body) => {
+    const res = makeRes();
+    await handler(makeReq({ body }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockAbortMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it('a literal null JSON body → 400, not a destructuring 500', async () => {
+    const req = makeReq();
+    (req as { body: unknown }).body = null;
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+    expect(mockAbortMultipartUpload).not.toHaveBeenCalled();
+  });
+});

@@ -55,6 +55,9 @@ function sanitizeClientFileSize(input: unknown): number | undefined {
   return size >= 0 && size <= MAX_LOGGED_FILE_SIZE ? size : undefined;
 }
 
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0;
+
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
@@ -67,12 +70,33 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
-  const { bucket, key, type, uploadId, backend, failure, relayOutcome, fileSize } = req.body;
+  const { bucket, key, type, uploadId, backend, failure, relayOutcome, fileSize } = req.body ?? {};
   const clientFailure = sanitizeClientFailure(failure);
   const clientFileSize = sanitizeClientFileSize(fileSize);
   // Logged unconditionally, unlike `failure` above: a conditional spread would drop the
   // `unknown` row the sanitiser exists to mint.
   const clientRelayOutcome = sanitizeRelayFallbackOutcome(relayOutcome);
+  // Same guard as ./complete.ts: the SDK rejects a missing bucket/key/uploadId client-side
+  // with an error the classifier would answer as a 500. Still logged after responding — an
+  // abort is also the failed-upload telemetry event, and a 400 must not erase it.
+  if (!isNonEmptyString(bucket) || !isNonEmptyString(key) || !isNonEmptyString(uploadId)) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ error: 'Missing or invalid bucket, key or uploadId' });
+    try {
+      await logToAxiom({
+        name: 's3-upload-abort-invalid',
+        userId,
+        type,
+        backend,
+        ...(clientFailure ? { failure: clientFailure } : {}),
+        ...(clientFileSize !== undefined ? { fileSize: clientFileSize } : {}),
+        relayOutcome: clientRelayOutcome,
+      });
+    } catch {
+      /* contained — see the success path */
+    }
+    return;
+  }
   try {
     let s3;
     if (backend === 'backblaze') {
