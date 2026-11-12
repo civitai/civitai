@@ -69,6 +69,7 @@ async function minorReview() {
 
 const { PG, PG13, R, X, XXX } = NsfwLevel;
 const RATINGS: [number, boolean][] = [
+  [0, false],
   [PG, false],
   [PG13, false],
   [R, true],

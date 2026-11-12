@@ -378,6 +378,8 @@ describe('applyStorylineTextScan', () => {
 describe('applyStorylineTextScan minor content truth table', () => {
   it.each([
     [true, undefined, true],
+    [true, 0, false],
+    [false, 0, false],
     [true, NsfwLevel.PG, false],
     [true, NsfwLevel.PG13, false],
     [true, NsfwLevel.R, true],

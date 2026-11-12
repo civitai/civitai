@@ -6,8 +6,8 @@ import { browsingLevels, flagifyBrowsingLevel, NsfwLevel } from './browsing-leve
  * hides, caps, refuses or keeps such content flagged asks here, so they cannot disagree.
  *
  * Today the rule is the content's maturity rating: mature ratings are restricted. A rating that is
- * not known yet counts as restricted, never as safe. `nsfwLevel` may be a single rating or a mask of
- * ratings; a mask is restricted when any rating in it is.
+ * missing (null/undefined) counts as restricted, never as safe. `nsfwLevel` may be a single rating
+ * or a mask of ratings; a mask is restricted when any rating in it is.
  *
  * Gates that clear a minor flag (the minor review queue's Accept) are permissive and do not use this.
  */
