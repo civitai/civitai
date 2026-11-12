@@ -4,7 +4,6 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   ingestionAfterScanErrorSql,
   ingestionAfterVerdictSql,
-  ingestionKeptAfterVerdict,
 } from '~/server/common/image-visibility';
 
 let db: PGlite;
@@ -28,9 +27,8 @@ async function run(current: string, fragment: Prisma.Sql) {
 const after = (current: string, verdict: string) => run(current, ingestionAfterVerdictSql(verdict));
 const afterError = (current: string) => run(current, ingestionAfterScanErrorSql());
 
-// A hidden image (original gone) is kept off public reads by ingestion = NotFound. Do not delete
-// these to "simplify" the scan UPDATE: a stale clean result would republish it. The rows come from
-// the lost-original hide run; the guard must be live before that run is applied.
+// Do not delete these to "simplify" the scan UPDATE: a stale clean result would republish a hidden
+// (NotFound) image.
 describe('scan verdict vs a NotFound image', () => {
   it('a clean verdict does not lift NotFound to Scanned', async () => {
     expect(await after('NotFound', 'Scanned')).toBe('NotFound');
@@ -51,11 +49,5 @@ describe('scan verdict vs a NotFound image', () => {
     expect(await afterError('NotFound')).toBe('NotFound');
     expect(await afterError('Pending')).toBe('Error');
     expect(await afterError('Scanned')).toBe('Error');
-  });
-
-  it('reports a Blocked verdict as Blocked even for a NotFound image', () => {
-    expect(ingestionKeptAfterVerdict('NotFound', 'Blocked' as any)).toBe('Blocked');
-    expect(ingestionKeptAfterVerdict('NotFound', 'Scanned' as any)).toBe('NotFound');
-    expect(ingestionKeptAfterVerdict('Rescan', 'Scanned' as any)).toBe('Scanned');
   });
 });

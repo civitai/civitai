@@ -734,8 +734,7 @@ export async function resolveScanOutcome({
   let nsfwLevel = scanLevel;
   // What the guarded assignment above left. A row loaded as NotFound is read back, because a
   // rescan request may have moved it before the write and the Scanned effects must then run.
-  // shortcut: a row that turned NotFound after the load is still reported Scanned (sub-second, only
-  // for a scan in flight while an image is hidden); the UPDATE is an $executeRaw many suites pin.
+  // shortcut: a row that turned NotFound after the load is still reported Scanned.
   let ingestion = ingestionKeptAfterVerdict(
     image.ingestion,
     toUpdate.ingestion as ImageIngestionStatus

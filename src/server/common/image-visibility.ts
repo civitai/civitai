@@ -111,8 +111,7 @@ export const isImageReviewed = ({
  * The `ingestion` a scan verdict writes. A row that reads NotFound keeps it when the verdict is
  * Scanned: a hidden image (its original is gone) must not be republished by a stale clean result.
  * A requested rescan moves the row to Rescan/Pending first, so its result is unaffected, and a
- * Blocked verdict still lands. Only the ingestion assignment is guarded: the block, minor, POI and
- * level columns beside it are written as before.
+ * Blocked verdict still lands.
  */
 export const ingestionAfterVerdictSql = (verdict: string) => Prisma.sql`(CASE
   WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus"

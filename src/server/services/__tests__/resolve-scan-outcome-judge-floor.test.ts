@@ -104,7 +104,6 @@ beforeAll(async () => {
 afterAll(() => db.close());
 
 type Row = {
-  /** The stored state; default Rescan. */
   ingestion?: string;
   nsfwLevel: number;
   nsfwLevelLocked?: boolean;
@@ -359,8 +358,7 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     expect(outcome.nsfwLevel).toBe(BLOCKED);
   });
 
-  // A hidden image (original lost) is NotFound. These run the real scan writes against the real row:
-  // no verdict, floor or rescan write may move it back toward public; a block still lands.
+  // No verdict, floor or rescan write may move a NotFound image back toward public; a block still lands.
   describe('an image hidden as NotFound', () => {
     it('stays NotFound under a clean verdict', async () => {
       scanTagLevel = PG13;

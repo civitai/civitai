@@ -739,9 +739,6 @@ describe('image-scan-result webhook - pipeline tests', () => {
       );
     });
 
-    // A hidden lost-original image is NotFound; a stale clean result must not republish it. The
-    // guard itself runs in image-scan-notfound-guard.test.ts; this pins that the handler hands it
-    // the verdict and reports NotFound onward (no Scanned signal, so no publish effects).
     it('a clean verdict for a NotFound image is not reported as Scanned', async () => {
       getImageState(43).ingestion = ImageIngestionStatus.NotFound;
       await deliver(43, [scanStep(scanOutput()), hashStep]);
