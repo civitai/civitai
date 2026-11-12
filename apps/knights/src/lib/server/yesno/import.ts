@@ -1,5 +1,6 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
 import { closeOpenYesNoItem } from './close';
+import { parseCsv } from './csv';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   isModeratedSql,
@@ -407,4 +408,33 @@ async function retireWithdrawn(
       if (await closeOpenYesNoItem(db, id, 'retired', now)) result.retired++;
     }
   }
+}
+
+export type ChunkSummary = {
+  /** Records in the chunk, before any are skipped. */
+  read: number;
+  toImport: number;
+  skipped: Skipped;
+  /** Withdrawn ids in the chunk; only the import acts on them. */
+  retire: number;
+  /** Absent on a dry run, which never touches the database. */
+  result?: ImportResult;
+};
+
+/** Parses one CSV chunk and, unless `dryRun`, imports it. A dry run is `toYesNoRows` alone: nothing is written. */
+export async function importYesNoChunk(
+  db: Kysely<DB>,
+  csv: string,
+  { dryRun }: { dryRun: boolean }
+): Promise<ChunkSummary> {
+  const records = parseCsv(csv);
+  const { rows, skipped, retire } = toYesNoRows(records);
+  const summary: ChunkSummary = {
+    read: records.length,
+    toImport: rows.length,
+    skipped,
+    retire: retire.length,
+  };
+  if (!dryRun) summary.result = await importYesNo(db, rows, { retire });
+  return summary;
 }
