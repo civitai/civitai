@@ -2,9 +2,11 @@ import * as z from 'zod';
 
 import {
   MAX_EXTERNAL_URL_LENGTH,
+  MAX_ISSUE_TRACKER_URL_LENGTH,
   MAX_REPOSITORY_URL_LENGTH,
   assertNoOnPlatformSurface,
   validateExternalUrl,
+  validateIssueTrackerUrl,
   validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
@@ -145,6 +147,10 @@ export const submitExternalListingSchema = z
     // the on-site manifest path uses, so the two store kinds cannot disagree about what
     // a valid source link is. Omitted ⇒ no Source row on the detail page.
     sourceRepoUrl: z.string().min(1).max(MAX_REPOSITORY_URL_LENGTH).optional(),
+    // OPTIONAL public issue-tracker / support link. Any host; https / no credentials / no
+    // port / ≤200 chars, checked by the shared `validateIssueTrackerUrl` in the superRefine
+    // below (the same function the on-site manifest `bugs` key goes through).
+    issueTrackerUrl: z.string().min(1).max(MAX_ISSUE_TRACKER_URL_LENGTH).optional(),
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).optional(),
     // Validated against the shared taxonomy const so adding a category needs no
     // schema change (mirrors the read-path `listAppListingsSchema.category`).
@@ -172,6 +178,12 @@ export const submitExternalListingSchema = z
       const repo = validateRepositoryUrl(val.sourceRepoUrl);
       if (!repo.ok) {
         ctx.addIssue({ code: 'custom', message: repo.error, path: ['sourceRepoUrl'] });
+      }
+    }
+    if (val.issueTrackerUrl != null) {
+      const tracker = validateIssueTrackerUrl(val.issueTrackerUrl);
+      if (!tracker.ok) {
+        ctx.addIssue({ code: 'custom', message: tracker.error, path: ['issueTrackerUrl'] });
       }
     }
     const surface = assertNoOnPlatformSurface({
@@ -221,6 +233,11 @@ export const updateListingPatchSchema = z
     // listing it routes through a shadow revision and re-enters moderator review,
     // because it is an outbound link on a public store page.
     sourceRepoUrl: z.string().min(1).max(MAX_REPOSITORY_URL_LENGTH).nullable().optional(),
+    // Public issue-tracker / support link, on the same terms as `sourceRepoUrl`: omitted leaves
+    // it, `null` clears it, a value is re-validated + normalised in the service, and a change is
+    // MATERIAL (an outbound link on a public page), so on an approved listing it is staged on a
+    // shadow revision for moderator review.
+    issueTrackerUrl: z.string().min(1).max(MAX_ISSUE_TRACKER_URL_LENGTH).nullable().optional(),
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).nullable().optional(),
     category: z.enum(MARKETPLACE_CATEGORIES).nullable().optional(),
     contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),

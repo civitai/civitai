@@ -7,7 +7,11 @@ const query = vi.hoisted(() =>
     json: async () => [],
   }))
 );
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query } }));
+// The shared client is absent: every referee query must go through the long-query client.
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: undefined,
+  clickhouseLongQueries: { query },
+}));
 
 const { queryReferee, REFEREE_CLICKHOUSE_BUDGET_S, refereeWindow, runEventPointsReferee } =
   await import('~/server/events/points/referee');

@@ -3533,6 +3533,14 @@ model AppListing {
   // MANUAL-APPLY, like every migration here — the read paths degrade to NULL while
   // the column is absent rather than 500ing the public store.
   sourceRepoUrl   String?      @map("source_repo_url")
+  // OPTIONAL public ISSUE-TRACKER / SUPPORT link, rendered as a `Support` row on the store DETAIL
+  // page only. Any https host (`validateIssueTrackerUrl`). Manifest-governed for on-site listings
+  // (`manifest.bugs`), listing-form-governed for off-site, and MATERIAL (staged on a shadow
+  // revision) like `sourceRepoUrl`.
+  // 🔴 CARRIES THE no-type ANNOTATION — stripped from the generated client, read and written by
+  // raw SQL in `app-listing-issue-tracker.service.ts` only, for the reason `visibility` above
+  // documents. MANUAL-APPLY migration `20270103120000_app_listing_issue_tracker`.
+  issueTrackerUrl String?      @map("issue_tracker_url") // @no-type
   // AUTHOR-DECLARED "this app is in beta" flag + an optional short note, rendered as
   // a badge on the store card and a badge + notice on the detail page and the app's
   // run page. DISPLAY ONLY — it feeds no ranking, no curation, no launch gate and no

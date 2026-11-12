@@ -760,8 +760,10 @@ export async function recordGiftMonthConsumed({ invoice }: { invoice: Stripe.Inv
     Number(invoice.discount?.coupon?.metadata?.months) || 1
   );
   const monthsRemaining = gift.monthsRemaining - monthsUsed;
-  await dbWrite.membershipGift.update({
-    where: { id: gift.id },
+  // Conditional on the coupon still being armed: a concurrent delivery of this invoice that read
+  // the same row writes nothing, instead of clearing the next month the first one armed.
+  const { count } = await dbWrite.membershipGift.updateMany({
+    where: { id: gift.id, armedCouponId: couponId },
     data: {
       monthsRemaining,
       monthsConsumed: gift.monthsConsumed + monthsUsed,
@@ -771,6 +773,7 @@ export async function recordGiftMonthConsumed({ invoice }: { invoice: Stripe.Inv
       ...(monthsRemaining === 0 ? { status: MembershipGiftStatus.Completed } : {}),
     },
   });
+  if (!count) return { consumed: false as const };
 
   await log({
     type: 'info',

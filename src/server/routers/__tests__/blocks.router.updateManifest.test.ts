@@ -278,7 +278,9 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     // allowedScopes bitmask + allowedOrigins), i.e. the subset check actually ran.
     expect(mockValidate).toHaveBeenCalledWith(
       expect.any(Object),
-      expect.objectContaining({ allowedScopes: 1, allowedOrigins: ['https://my-app.civit.ai'] })
+      expect.objectContaining({ allowedScopes: 1, allowedOrigins: ['https://my-app.civit.ai'] }),
+      // The in-app editor re-validates an EXISTING manifest: `bugs` is lenient there.
+      { strictIssueTrackerLink: false }
     );
     expect(mockCommitFiles).not.toHaveBeenCalled();
   });
@@ -499,6 +501,22 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
   // gated there alone — a dropped `undefined` would silently retain a stale published
   // repository link, which is the exact failure the null was introduced for.
   describe('repository (the manifest-governed public source-repo link)', () => {
+    it('🔴 the in-app editor re-validates with the issue-tracker link LENIENT', async () => {
+      // A manifest stored before the `bugs` rule must stay editable: a non-conforming `bugs`
+      // is a warning there, never a refusal (it is strict only on a new submission).
+      findUnique.mockResolvedValue(approvedBlock);
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await caller.updateManifest({ appBlockId: 'ab_1', patch: { ...validPatch } });
+      expect(mockValidate).toHaveBeenCalled();
+      expect(
+        mockValidate.mock.calls.some(
+          (c: unknown[]) =>
+            (c[2] as { strictIssueTrackerLink?: boolean } | undefined)?.strictIssueTrackerLink ===
+            false
+        )
+      ).toBe(true);
+    });
+
     it('accepts + commits a repository link', async () => {
       findUnique.mockResolvedValue(approvedBlock);
       const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);

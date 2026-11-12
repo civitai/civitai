@@ -839,7 +839,7 @@ describe('recordGiftMonthConsumed', () => {
     const result = await recordGiftMonthConsumed({ invoice: invoice('gift_gift_1_m1') });
 
     expect(result).toMatchObject({ consumed: true, monthsRemaining: 2 });
-    expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           monthsRemaining: 2,
@@ -864,7 +864,7 @@ describe('recordGiftMonthConsumed', () => {
     });
 
     expect(result).toMatchObject({ consumed: true, monthsRemaining: 1 });
-    expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ monthsRemaining: 1, monthsConsumed: 2 }),
       })
@@ -880,7 +880,7 @@ describe('recordGiftMonthConsumed', () => {
 
     await recordGiftMonthConsumed({ invoice: invoice('gift_gift_1_m3') });
 
-    expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ monthsRemaining: 0, status: 'Completed' }),
       })
@@ -892,7 +892,7 @@ describe('recordGiftMonthConsumed', () => {
     expect(await recordGiftMonthConsumed({ invoice: invoice('promo_xyz') })).toEqual({
       consumed: false,
     });
-    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
   });
 
   it('ignores an invoice with no discount at all', async () => {
@@ -905,11 +905,60 @@ describe('recordGiftMonthConsumed', () => {
     mockDbWrite.membershipGift.findFirst.mockResolvedValueOnce(armed).mockResolvedValueOnce(null);
 
     await recordGiftMonthConsumed({ invoice: invoice('gift_gift_1_m1') });
-    mockDbWrite.membershipGift.update.mockClear();
+    mockDbWrite.membershipGift.updateMany.mockClear();
     const second = await recordGiftMonthConsumed({ invoice: invoice('gift_gift_1_m1') });
 
     expect(second).toEqual({ consumed: false });
-    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a stale concurrent delivery cannot clear the month the first one armed', async () => {
+    // Two deliveries of one invoice both read the row armed with m1. A consumes it and arms m2;
+    // if B's write from its stale read then lands, the row forgets m2 while Stripe still carries
+    // it, and the invoice that uses m2 is never counted: an extra free month.
+    let row: Record<string, unknown> = { ...armed, acceptedAt: new Date() };
+    let stripeDiscount: { coupon: { id: string } } | null = null;
+    const matches = (where: Record<string, unknown>) =>
+      Object.entries(where).every(([k, v]) => row[k] === v);
+    let armWritten!: () => void;
+    const armed2 = new Promise<void>((resolve) => (armWritten = resolve));
+    let consumeWrites = 0;
+    const write = async ({ where, data }: { where: Record<string, unknown>; data: any }) => {
+      if ('monthsConsumed' in data && ++consumeWrites === 2) await armed2;
+      if (!matches(where)) return 0;
+      row = { ...row, ...data };
+      if (data.armedCouponId) armWritten();
+      return 1;
+    };
+    mockDbWrite.membershipGift.findFirst.mockImplementation((async ({ where }: any) =>
+      matches(where) ? { ...row } : null) as never);
+    mockDbWrite.membershipGift.findMany.mockImplementation((async () =>
+      row.status === 'Active' && (row.monthsRemaining as number) > 0 ? [{ ...row }] : []) as never);
+    mockDbWrite.membershipGift.update.mockImplementation((async (args: any) => {
+      await write(args);
+      return { ...row };
+    }) as never);
+    mockDbWrite.membershipGift.updateMany.mockImplementation((async (args: any) => ({
+      count: await write(args),
+    })) as never);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub());
+    mockStripe.subscriptions.retrieve.mockImplementation(async () =>
+      stripeSub({ discount: stripeDiscount })
+    );
+    mockStripe.subscriptions.update.mockImplementation(async (_id: string, args: any) => {
+      if (args.coupon) stripeDiscount = { coupon: { id: args.coupon } };
+      return {};
+    });
+
+    const results = await Promise.all([
+      recordGiftMonthConsumed({ invoice: invoice('gift_gift_1_m1') }),
+      recordGiftMonthConsumed({ invoice: invoice('gift_gift_1_m1') }),
+    ]);
+
+    expect(stripeDiscount).toEqual({ coupon: { id: 'gift_gift_1_m2' } });
+    expect(row.armedCouponId).toBe('gift_gift_1_m2');
+    expect(row).toMatchObject({ monthsRemaining: 2, monthsConsumed: 1 });
+    expect(results.filter((r) => r.consumed)).toHaveLength(1);
   });
 });
 

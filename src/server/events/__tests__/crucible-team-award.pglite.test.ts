@@ -34,9 +34,12 @@ vi.mock('~/server/events/points/push', async (importOriginal) => ({
 // rest is the code under test).
 type LedgerRow = Record<string, unknown> & { event: string; type: string };
 const ledger = vi.hoisted(() => [] as LedgerRow[]);
+// The award writer inserts through the shared client; the loader reads through the long-query one.
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: {
     insert: async ({ values }: { values: LedgerRow[] }) => void ledger.push(...values),
+  },
+  clickhouseLongQueries: {
     query: async ({ query_params }: { query_params: { event: string; type: string } }) => ({
       json: async () =>
         ledger.filter((r) => r.event === query_params.event && r.type === query_params.type),

@@ -1,8 +1,10 @@
 import {
   MAX_EXTERNAL_URL_LENGTH,
+  MAX_ISSUE_TRACKER_URL_LENGTH,
   MAX_REPOSITORY_URL_LENGTH,
   REPOSITORY_HOST_ALLOWLIST,
   validateExternalUrl,
+  validateIssueTrackerUrl,
   validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import {
@@ -58,6 +60,7 @@ export const OFFSITE_SUBMIT_LIMITS = {
   changelogMax: OFFSITE_CHANGELOG_MAX,
   urlMax: MAX_EXTERNAL_URL_LENGTH,
   sourceRepoUrlMax: MAX_REPOSITORY_URL_LENGTH,
+  issueTrackerUrlMax: MAX_ISSUE_TRACKER_URL_LENGTH,
   betaMessageMax: BETA_MESSAGE_MAX,
   justificationMax: SCOPE_JUSTIFICATION_MAX_LENGTH,
 } as const;
@@ -79,6 +82,8 @@ export type OffsiteSubmitFormValues = {
   externalUrl: string;
   /** OPTIONAL public source-repository link ('' = none). */
   sourceRepoUrl: string;
+  /** OPTIONAL public issue-tracker / support link ('' = none). */
+  issueTrackerUrl: string;
   /**
    * AUTHOR-DECLARED beta status + an optional short note ('' = none).
    *
@@ -146,6 +151,7 @@ export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {
     name: '',
     externalUrl: '',
     sourceRepoUrl: '',
+    issueTrackerUrl: '',
     isBeta: false,
     betaMessage: '',
     tagline: '',
@@ -187,6 +193,7 @@ export function isOffsiteSubmitFormDirty(values: OffsiteSubmitFormValues): boole
     // A typed-but-unsaved source link IS work worth a confirmation before Cancel
     // discards it — the same claim every other text field here makes.
     'sourceRepoUrl',
+    'issueTrackerUrl',
     // A typed-but-unsaved beta note is work too. `isBeta` itself is covered by the explicit
     // comparison below rather than here — this list is string fields, and `String(false)` is
     // the non-empty `'false'`, so including a boolean here would report EVERY blank form as
@@ -248,6 +255,14 @@ export function validateOffsiteSubmitForm(
   if (values.sourceRepoUrl.trim().length > 0) {
     const repo = validateRepositoryUrl(values.sourceRepoUrl);
     if (!repo.ok) errors.sourceRepoUrl = repo.error;
+  }
+
+  // issueTrackerUrl is OPTIONAL — the same shared validator the server runs, when provided.
+  // `?? ''`: a values object built before this field existed (a stale draft, a fixture) must
+  // read as "no link", not throw.
+  if ((values.issueTrackerUrl ?? '').trim().length > 0) {
+    const tracker = validateIssueTrackerUrl(values.issueTrackerUrl);
+    if (!tracker.ok) errors.issueTrackerUrl = tracker.error;
   }
 
   // The beta note is OPTIONAL and free text — the only rule is the shared bound, mirrored
@@ -630,6 +645,7 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
   scopeJustifications: Record<string, string>;
   externalUrl?: string;
   sourceRepoUrl?: string;
+  issueTrackerUrl?: string;
   tagline?: string;
   description?: string;
   category?: MarketplaceCategory;
@@ -650,6 +666,7 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
     scopeJustifications,
     externalUrl: values.externalUrl.trim() || undefined,
     sourceRepoUrl: values.sourceRepoUrl.trim() || undefined,
+    issueTrackerUrl: (values.issueTrackerUrl ?? '').trim() || undefined,
     tagline: values.tagline.trim() || undefined,
     description: values.description.trim() || undefined,
     category: values.category ?? undefined,
