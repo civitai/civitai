@@ -20,6 +20,7 @@ describe('toSemanticImageSearchInput', () => {
         baseModels: ['Flux.1 D'],
         types: [MediaType.image],
         username: 'someone',
+        userId: 7,
         period: MetricTimeframe.Week,
         tools: [9],
         techniques: [3],
@@ -35,6 +36,7 @@ describe('toSemanticImageSearchInput', () => {
       baseModels: ['Flux.1 D'],
       types: [MediaType.image],
       usernames: ['someone'],
+      userIds: [7],
       postedAfter: new Date('2026-11-04T15:00:00Z'),
       limit: 50,
     });
