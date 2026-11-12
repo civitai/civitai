@@ -132,6 +132,41 @@ describe('image-scan-result webhook routing', () => {
     );
   });
 
+  const videoSteps = (maxFrames: number, frames: number) => [
+    {
+      $type: 'videoFrameExtraction',
+      input: { maxFrames },
+      output: { frames: Array.from({ length: frames }, (_, i) => ({ url: `f${i}` })) },
+    },
+    { $type: 'repeat', output: { steps: [{ $type: 'mediaRating' }] } },
+  ];
+  const frameLimitLogs = () =>
+    loggingMock.logToAxiom.mock.calls.filter(([log]) => log?.name === 'image-scan-frame-limit');
+
+  it('logs a video whose frame extraction hit maxFrames, read from the step input', async () => {
+    await deliver('succeeded', videoSteps(50, 50));
+
+    expect(frameLimitLogs()).toEqual([
+      [
+        expect.objectContaining({
+          type: 'warning',
+          imageId: 7,
+          workflowId: 'wf',
+          frames: 50,
+          maxFrames: 50,
+        }),
+      ],
+    ]);
+    expect(mocks.processImageScanWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not log a video that stayed under maxFrames, or an image', async () => {
+    await deliver('succeeded', videoSteps(500, 499));
+    await deliver('succeeded', [{ $type: 'wdTagging' }, { $type: 'mediaRating' }]);
+
+    expect(frameLimitLogs()).toEqual([]);
+  });
+
   it('acknowledges a result for an image deleted since the scan was submitted', async () => {
     mocks.processImageScanningWorkflow.mockRejectedValueOnce(new Error('image not found: 7'));
     const res = await deliver('succeeded', [{ $type: 'imageScanning', output: {} }]);
