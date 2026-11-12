@@ -37,14 +37,15 @@ export function parseMatureLevel(variantKey: string | null | undefined): number 
 }
 
 /** The v2 rating in an imageScanning output, or null when there is none to trust: no `ratingV2` block,
- *  a status other than OK, or a sexual label or restricted flag that doesn't parse. */
+ *  a status other than "ok", or a sexual label or restricted flag that doesn't parse. The top-level
+ *  `nsfwLevel` is not a v2 rating and is never read. */
 export function parseRatingV2(output: unknown): StoredRating | null {
   const block = (output as { ratingV2?: unknown } | null | undefined)?.ratingV2 as
     | { status?: unknown; sexual?: { label?: unknown }; restricted?: unknown }
     | null
     | undefined;
   if (!block || typeof block !== 'object') return null;
-  if (typeof block.status !== 'string' || block.status.toLowerCase() !== 'ok') return null;
+  if (block.status !== 'ok') return null;
   const label = block.sexual?.label;
   const match = typeof label === 'string' ? LEVEL.exec(label) : null;
   if (!match || typeof block.restricted !== 'boolean') return null;

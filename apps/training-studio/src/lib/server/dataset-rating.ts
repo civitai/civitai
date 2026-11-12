@@ -91,13 +91,17 @@ type RateResult =
   | { rating: StoredRating }
   | { rating: null; retryAfterMs?: number; limited?: boolean };
 
+/** The recipe's reference to an orchestrator blob: used as-is, with no import and no rescan. A bare id
+ *  would be read as base64 image data and refused. */
+export const scanImageRef = (blobId: string) => `urn:air:other:other:orchestrator:blob@${blobId}`;
+
 /** One image through the v2 rater. Anything but a parsed OK rating is null. */
 export async function rateImage(
   client: OrchestratorClient,
-  blobKey: string,
+  blobId: string,
   signal: AbortSignal
 ): Promise<RateResult> {
-  const body: RatingV2ScanInput = { image: blobKey, 'rater-model': RATER_MODEL };
+  const body: RatingV2ScanInput = { image: scanImageRef(blobId), 'rater-model': RATER_MODEL };
   try {
     const { data, response } = await invokeImageScanningStepTemplate({ client, body, signal });
     if (response?.status === 429) {

@@ -99,17 +99,23 @@ describe('one rating call', () => {
     // The job's deadline must reach the call, or it runs on past it.
     expect(invokeScan.mock.calls[0]![0].signal).toBe(signal);
     expect(invokeScan.mock.calls[0]![0].body).toEqual({
-      image: 'blob-1',
+      // The exact form the recipe takes a blob in; a bare id is decoded as base64 and refused.
+      image: 'urn:air:other:other:orchestrator:blob@blob-1',
       'rater-model': 'radio-alpha',
     });
   });
 
   it.each([
     [
-      'a status other than OK',
+      'a status in another case',
+      { ratingV2: { status: 'OK', sexual: { label: 'S0' }, restricted: false } },
+    ],
+    [
+      'an error status',
       { ratingV2: { status: 'error', sexual: { label: 'S0' }, restricted: false } },
     ],
     ['no ratingV2 block', { nsfwLevel: 'pg' }],
+    ['only a top-level nsfwLevel', { nsfwLevel: 'xxx', ratingV2: null }],
     [
       'an unknown label',
       { ratingV2: { status: 'ok', sexual: { label: 'S7' }, restricted: false } },
@@ -118,6 +124,14 @@ describe('one rating call', () => {
   ])('%s is no rating', async (_name, data) => {
     invokeScan.mockResolvedValueOnce({ data, response: new Response(null, { status: 200 }) });
     expect((await rateImage(client, 'b', new AbortController().signal)).rating).toBeNull();
+  });
+
+  it('reads a label in either case', async () => {
+    invokeScan.mockResolvedValueOnce(ok('s3'));
+    expect((await rateImage(client, 'b', new AbortController().signal)).rating).toEqual({
+      s: 3,
+      r: false,
+    });
   });
 
   it('a 429 is no rating, carrying Retry-After', async () => {
@@ -195,7 +209,7 @@ describe('starting a job', () => {
     warmDatasetRating('t', 9, ['a']);
     warmDatasetRating('t', 9, ['b']);
     await vi.waitFor(() => expect(invokeScan).toHaveBeenCalledTimes(1));
-    expect(invokeScan.mock.calls[0]![0].body.image).toBe('a');
+    expect(invokeScan.mock.calls[0]![0].body.image).toBe('urn:air:other:other:orchestrator:blob@a');
     release();
     await vi.waitFor(() => expect(store.get('rating:radio-alpha:a')).toEqual({ s: 0, r: false }));
   });
