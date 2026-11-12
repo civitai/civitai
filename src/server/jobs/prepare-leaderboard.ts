@@ -8,8 +8,8 @@ import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles'
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import {
+  getLeaderboardPopulation,
   getUnpopulatedLeaderboards,
-  isLeaderboardPopulated,
 } from '~/server/services/leaderboard.service';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import { leaderboardPopulatedKey } from '~/server/services/new-creators.service';
@@ -291,13 +291,42 @@ type LeaderboardContext = {
   excludedUserIds: number[];
 };
 
+const USER_RANK_BUILT_KEY = 'leaderboard:user-rank:built';
+
+/**
+ * Rebuilds UserRank once per day, retried hourly until it succeeds. A board not populated for
+ * today carries its previous day's ranks, so one late board can't freeze every badge; the day
+ * is only marked done once every board is in, so a board that lands later still gets picked up.
+ */
+export async function rebuildUserRanks() {
+  const [{ built }] = await dbWrite.$queryRaw<{ built: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM "KeyValue" WHERE key = ${USER_RANK_BUILT_KEY} AND value #>> '{}' = current_date::text
+    ) AS built`;
+  if (built) return { skipped: true };
+
+  const { boards, unpopulated } = await getLeaderboardPopulation();
+  // Nothing to rebuild from: the TRUNCATE would blank every badge. Keep yesterday's and retry.
+  if (unpopulated.length >= boards) throw new Error('Leaderboard not populated');
+  if (unpopulated.length)
+    logToAxiom({
+      type: 'warn',
+      name: 'user-rank-partially-populated',
+      // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
+      error: { unpopulated },
+    }).catch();
+
+  await updateLeaderboardRank({
+    carriedBoardIds: unpopulated,
+    builtMarkerKey: unpopulated.length ? undefined : USER_RANK_BUILT_KEY,
+  });
+  return { carried: unpopulated };
+}
+
 const updateUserLeaderboardRank = createJob(
   'update-user-leaderboard-rank',
-  '1 0 * * *',
-  async () => {
-    if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
-    await updateLeaderboardRank();
-  }
+  '1 * * * *',
+  rebuildUserRanks
 );
 
 const updateUserDiscordLeaderboardRoles = createJob(

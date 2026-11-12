@@ -18,7 +18,8 @@ import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/servi
  * show. The job writes the marker with `current_date + addDays` at 23:00, so the 00:01 readers see it as
  * `current_date`.
  */
-export async function getUnpopulatedLeaderboards() {
+/** Every active board with a query, and which of them are not populated for today. */
+export async function getLeaderboardPopulation() {
   const rows = await dbWrite.$queryRaw<
     { id: string; hasRows: boolean; marker: string | null; today: string }[]
   >`
@@ -36,7 +37,14 @@ export async function getUnpopulatedLeaderboards() {
       WHERE l.query != '' AND l.active
     `;
 
-  return rows.filter((x) => !x.hasRows && x.marker !== x.today).map((x) => x.id);
+  return {
+    boards: rows.length,
+    unpopulated: rows.filter((x) => !x.hasRows && x.marker !== x.today).map((x) => x.id),
+  };
+}
+
+export async function getUnpopulatedLeaderboards() {
+  return (await getLeaderboardPopulation()).unpopulated;
 }
 
 export async function isLeaderboardPopulated() {
