@@ -12,16 +12,28 @@ import {
   type Member,
   type ReviewClickhouse,
 } from './detect';
-import { renderSummary, toFinding, toIndirectFinding, type ReviewOutcome } from './report';
+import { renderSummary, toFinding, toIndirectFinding } from './report';
 
 type Finding = AbuseReportInput['findings'][number];
 
-export type WarningRecord = {
-  warnedAt: string;
-  chatId: number;
+export type FiledRecord = {
+  filedAt: string;
   /** Two-way amount per counterparty when the creator was last filed. */
   counterparties: Record<string, number>;
 };
+
+/** Entries written while the review still messaged creators carry `warnedAt` instead of `filedAt`. */
+export function parseFiledRecord(raw: string | null | undefined): FiledRecord | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<FiledRecord> & { warnedAt?: string };
+    const filedAt = parsed.filedAt ?? parsed.warnedAt;
+    if (!filedAt || !parsed.counterparties) return null;
+    return { filedAt, counterparties: parsed.counterparties };
+  } catch {
+    return null;
+  }
+}
 
 /** Amount per indirect path when it was last filed, keyed by `pathKey`. */
 export type IndirectRecord = Record<string, number>;
@@ -34,15 +46,14 @@ export type ReviewDeps = {
   readMinimum: () => Promise<number | null>;
   readMaxIntermediaries: () => Promise<number>;
   findMembers: (ids: number[]) => Promise<Member[]>;
-  warnings: {
-    get: (userId: number) => Promise<WarningRecord | null>;
-    set: (userId: number, record: WarningRecord) => Promise<void>;
+  filed: {
+    get: (userId: number) => Promise<FiledRecord | null>;
+    set: (userId: number, record: FiledRecord) => Promise<void>;
   };
   indirect: {
     get: (userId: number) => Promise<IndirectRecord | null>;
     set: (userId: number, record: IndirectRecord) => Promise<void>;
   };
-  sendWarning: (member: Member) => Promise<{ chatId: number }>;
   sendReport: (report: AbuseReportInput) => Promise<unknown>;
   now: () => Date;
   log?: (name: string, data: Record<string, unknown>) => void;
@@ -50,9 +61,8 @@ export type ReviewDeps = {
 
 export type ReviewResult = {
   pairs: number;
-  warned: number;
+  filed: number;
   repeats: number;
-  failed: number;
   indirect: number;
   skipped?: 'before-cutover' | 'minimum-not-set' | 'clickhouse-unavailable';
 };
@@ -61,7 +71,7 @@ const twoWay = (p: CounterpartyPair) => Math.min(p.received, p.sent);
 
 export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewResult> {
   const startedAt = deps.now();
-  const empty = { pairs: 0, warned: 0, repeats: 0, failed: 0, indirect: 0 };
+  const empty = { pairs: 0, filed: 0, repeats: 0, indirect: 0 };
 
   // Before the cutover every yellow and green Buzz is bankable, so an exchange gains nothing.
   if (startedAt < BANKABLE_CUTOVER) return { ...empty, skipped: 'before-cutover' };
@@ -82,7 +92,6 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
   const pairs = await findCounterpartyPairs(deps.ch, { since: BANKABLE_CUTOVER, min });
   if (pairs.length >= PAIR_CEILING)
     deps.log?.('creator-program-counterparty-review-ceiling', { pairs: pairs.length });
-  // Read before any warning goes out: a failure after that would leave warned members unfiled.
   // A failed search costs only the indirect findings; the direct ones are still filed.
   const transfers: IndirectTransfer[] = [];
   try {
@@ -120,8 +129,8 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
   ]);
   const members = allMembers.filter((m) => byUser.has(m.id));
 
-  // Which indirect paths to file, also decided before any warning goes out. A member with a direct
-  // finding gets these in it rather than a second finding.
+  // Which indirect paths to file. A member with a direct finding gets these in it rather than a
+  // second finding.
   const indirectDue = new Map<number, { transfers: IndirectTransfer[]; record: IndirectRecord }>();
   try {
     for (const member of allMembers) {
@@ -152,69 +161,28 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     return finding;
   };
 
-  const warnedEarlier = new Map<number, Date>();
-  // Saved only once the report carrying the repeat has been filed: saved earlier, a failed report
-  // would lose the repeat for good, since the next run would see no new volume.
-  const repeatRecords = new Map<number, { record: WarningRecord; finding: Finding }>();
-  let warned = 0;
+  const filedEarlier = new Map<number, Date>();
+  // Saved only once the report carrying the finding has been filed: saved earlier, a failed report
+  // would lose the finding for good, since the next run would see no new volume.
+  const filedRecords = new Map<number, { record: FiledRecord; finding: Finding }>();
+  let filed = 0;
   let repeats = 0;
-  let failed = 0;
 
   for (const member of members) {
     const memberPairs = byUser.get(member.id) ?? [];
     const current = Object.fromEntries(
       memberPairs.map((p) => [String(p.counterpartyId), twoWay(p)])
     );
-    const record = await deps.warnings.get(member.id);
+    const record = await deps.filed.get(member.id);
 
-    if (!record) {
-      let outcome: ReviewOutcome;
-      try {
-        const { chatId } = await deps.sendWarning(member);
-        outcome = { kind: 'warned', chatId };
-        warned++;
-      } catch (e) {
-        outcome = { kind: 'warning-failed', error: (e as Error).message };
-        failed++;
-        deps.log?.('creator-program-counterparty-review-warning-failed', {
-          userId: member.id,
-          error: (e as Error).message,
-        });
-      }
-      if (outcome.kind === 'warned') {
-        // A record that fails to save means the next run warns again, so it is logged on its own.
-        await deps.warnings
-          .set(member.id, {
-            warnedAt: startedAt.toISOString(),
-            chatId: outcome.chatId,
-            counterparties: current,
-          })
-          .catch((e: Error) =>
-            deps.log?.('creator-program-counterparty-review-record-failed', {
-              userId: member.id,
-              error: e.message,
-            })
-          );
-      }
-      file(
-        member.id,
-        toFinding(
-          member.id,
-          memberPairs,
-          outcome,
-          BANKABLE_CUTOVER,
-          indirectDue.get(member.id)?.transfers
-        )
-      );
-      continue;
-    }
-
-    // Already warned: file again only for new volume of at least the minimum on some pair.
-    const grew = memberPairs.filter(
-      (p) => twoWay(p) - (record.counterparties[String(p.counterpartyId)] ?? 0) >= min
-    );
-    if (!grew.length) {
-      warnedEarlier.set(member.id, new Date(record.warnedAt));
+    // Already filed: file again only for new volume of at least the minimum on some pair.
+    if (
+      record &&
+      !memberPairs.some(
+        (p) => twoWay(p) - (record.counterparties[String(p.counterpartyId)] ?? 0) >= min
+      )
+    ) {
+      filedEarlier.set(member.id, new Date(record.filedAt));
       continue;
     }
 
@@ -223,25 +191,28 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
       toFinding(
         member.id,
         memberPairs,
-        { kind: 'repeat', warnedAt: new Date(record.warnedAt) },
+        record ? new Date(record.filedAt) : null,
         BANKABLE_CUTOVER,
         indirectDue.get(member.id)?.transfers
       )
     );
-    repeatRecords.set(member.id, {
-      record: { ...record, counterparties: { ...record.counterparties, ...current } },
+    filedRecords.set(member.id, {
+      record: {
+        filedAt: record?.filedAt ?? startedAt.toISOString(),
+        counterparties: { ...record?.counterparties, ...current },
+      },
       finding,
     });
-    repeats++;
+    if (record) repeats++;
+    else filed++;
   }
 
-  // The rest are filed for a moderator only: no warning message, since more innocent patterns look
-  // like this.
+  // The rest are filed with only their indirect transfers.
   for (const [userId, { transfers: memberTransfers }] of indirectDue)
     if (!indirectRecords.has(userId))
       file(
         userId,
-        toIndirectFinding(userId, memberTransfers, BANKABLE_CUTOVER, warnedEarlier.get(userId))
+        toIndirectFinding(userId, memberTransfers, BANKABLE_CUTOVER, filedEarlier.get(userId))
       );
 
   findings.sort((a, b) => b.confidence - a.confidence);
@@ -258,24 +229,28 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     summary: renderSummary({
       pairs: pairs.length,
       members: members.length,
-      warned,
+      filed,
       repeats,
-      failed,
       indirect,
     }),
     counters: {
       pairs: pairs.length,
       members: members.length,
-      warned,
+      filed,
       repeats,
-      failed,
       indirect,
     },
     findings,
   });
   // By finding, not member: one member can have a finding that survived the cut and one that did not.
-  for (const [userId, { record, finding }] of repeatRecords)
-    if (findings.includes(finding)) await deps.warnings.set(userId, record);
+  for (const [userId, { record, finding }] of filedRecords)
+    if (findings.includes(finding))
+      await deps.filed.set(userId, record).catch((e: Error) =>
+        deps.log?.('creator-program-counterparty-review-record-failed', {
+          userId,
+          error: e.message,
+        })
+      );
   for (const [userId, { record, finding }] of indirectRecords)
     if (findings.includes(finding))
       await deps.indirect.set(userId, record).catch((e: Error) =>
@@ -287,11 +262,10 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
 
   deps.log?.('creator-program-counterparty-review-reported', {
     pairs: pairs.length,
-    warned,
+    filed,
     repeats,
-    failed,
     indirect,
   });
 
-  return { pairs: pairs.length, warned, repeats, failed, indirect };
+  return { pairs: pairs.length, filed, repeats, indirect };
 }

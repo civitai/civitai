@@ -1183,25 +1183,19 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     expect(v3.calls[1]).toMatchObject({ afterId: pageSize, take: pageSize });
   });
 
-  it("archives a held user's comments on their own, with the CommentV2 rows CommentV3 lacks", async () => {
+  it("archives a held user's comments on their own", async () => {
     seedDb();
     v3.comments = [
       { id: 1, userId: report.userId, content: 'c1' },
       { id: 2, userId: report.userId, content: 'c2' },
       { id: 3, userId: report.userId + 1, content: 'not theirs' },
     ];
-    dbMock.dbRead.commentV2.findMany.mockResolvedValue([
-      { id: 1, userId: report.userId },
-      { id: 99, userId: report.userId },
-    ] as never);
-
     const result = await archiveUserComments(report.userId);
 
     const archive = JSON.parse(uploads.get('comments.json')!.toString('utf8'));
     expect(archive.userId).toBe(report.userId);
     expect(archive.comments.map((c: { id: number }) => c.id)).toEqual([1, 2]);
-    expect(archive.commentsV2NotInV3.map((c: { id: number }) => c.id)).toEqual([99]);
-    expect(result.comments).toBe(3);
+    expect(result.comments).toBe(2);
   });
 
   it('filters model versions by the COMPLETE set of model ids, not a partially-scanned one', async () => {

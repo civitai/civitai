@@ -35,6 +35,7 @@ import { trainingCanaryJob } from '~/server/jobs/training-canary';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
+import { checkMatureSafeBitDrift } from '~/server/jobs/check-mature-safe-bit-drift';
 import { reconcileVaultStorage } from '~/server/jobs/reconcile-vault-storage';
 import { reconcileCollectionCollaboration } from '~/server/jobs/reconcile-collection-collaboration';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
@@ -146,6 +147,7 @@ import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
+import { trainingDataScanHealJob } from '~/server/jobs/training-data-scan-heal';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
@@ -187,6 +189,7 @@ import { booleanString } from '~/utils/zod-helpers';
 export const jobs: Job[] = [
   gdprStripeScrubJob,
   scanFilesFallbackJob,
+  trainingDataScanHealJob,
   processHuggingFaceImportsJob,
   archiveStudioTrainingDatasetsJob,
   storageUsageNightlyJob,
@@ -253,6 +256,7 @@ export const jobs: Job[] = [
   processVaultItems,
   reconcileVaultStorage,
   reconcileRestrictedImages,
+  checkMatureSafeBitDrift,
   reconcileCollectionCollaboration,
   clearVaultItems,
   reconcileWildcardSetsJob,

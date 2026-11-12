@@ -21,6 +21,8 @@ import {
 } from '~/server/utils/archive-helpers';
 import { isTrainingModerationApproved } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { studioDatasetVisibility } from '~/server/services/training-data-restricted.service';
+import { submitTrainingDataScanSafe } from '~/server/services/training-data-scan.service';
+import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getGetUrlByKey, getUploadBucket, getUploadS3Client } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
@@ -383,6 +385,11 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
           url: stored.url,
           sizeKB,
           exists: true,
+          // A new zip has not been scanned, whatever the placeholder carried.
+          virusScanResult: ScanResultCode.Pending,
+          virusScanMessage: null,
+          scannedAt: null,
+          scanRequestedAt: null,
           visibility: await studioDatasetVisibility(tx, {
             modelVersionId: file.modelVersionId,
             metadata: current,
@@ -419,6 +426,12 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
         op: 'studio-dataset-archive',
         fileId: file.id,
       }).catch(() => undefined)
+    );
+    // Not awaited: the copy to the orchestrator would hold the job's lock, and the scan's own failure
+    // is logged; the zip stays Pending until it is submitted again.
+    void submitTrainingDataScanSafe(
+      { fileId: file.id, modelVersionId: file.modelVersionId, url: stored.url },
+      'studio-dataset-archive'
     );
     return { fileId, outcome: 'archived', items: stored.included, skipped: stored.skipped };
   } catch (error) {

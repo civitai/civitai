@@ -97,6 +97,20 @@ async function versionAirs(versionIds: number[]) {
 }
 
 /**
+ * `bustOrchestratorModelCache` for a caller that must stop on failure (a backfill): throws when the
+ * orchestrator is not configured or any invalidation fails, instead of logging. Returns the AIR count.
+ */
+export async function invalidateOrchestratorVersionsOrThrow(versionIds: number[]) {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN)
+    throw new Error('orchestrator is not configured');
+  const airs = await versionAirs(versionIds);
+  if (!airs.length) return 0;
+  const etag = await getCurrentLSN();
+  await Promise.all(airs.map((air) => invalidateOrchestratorResource(air, etag)));
+  return airs.length;
+}
+
+/**
  * The versions' AIRs as derived now. Read them before a write that deletes a version or changes its
  * AIR kind, and pass them to `bustOrchestratorAirs` after the commit: a bust after the write derives
  * only the new AIRs, and one before it can be refilled while the write runs. Never throws.

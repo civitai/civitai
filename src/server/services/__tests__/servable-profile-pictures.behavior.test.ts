@@ -48,6 +48,10 @@ const runOnPg = (strings: TemplateStringsArray, ...values: unknown[]) => {
   return pg.query(sql.text, sql.values as unknown[]).then((r) => r.rows);
 };
 const pgClient = { $queryRaw: runOnPg } as never;
+// The servable-picture read, told apart by its first clause: the whole fragment's text cannot be
+// matched, because its nested placeholders are renumbered where it is embedded.
+const isServablePictureRead = (text: string) =>
+  text.includes(servableProfilePictureSql.text.trim().split('\n')[0].trim());
 
 beforeAll(async () => {
   pg = new PGlite();
@@ -56,14 +60,18 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
-      "needsReview" text, type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb
+      "needsReview" text, type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb
     );
     INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
       (${CLEAN}, 'clean', ${CLEAN_AUTHOR}, 'Scanned', NULL),
       (${BLOCKED}, 'blocked', ${BLOCKED_AUTHOR}, 'Blocked', NULL),
       (${FLAGGED}, 'flagged', ${FLAGGED_AUTHOR}, 'Scanned', 'csam'),
       (40, 'pending', 4, 'Pending', NULL),
-      (50, 'other-review', 5, 'Scanned', 'other-review');
+      (50, 'other-review', 5, 'Scanned', 'other-review'),
+      (60, 'error', 6, 'Error', NULL);
+    INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevelLocked") VALUES
+      (70, 'pending-mod-rated', 7, 'Pending', true);
   `);
 });
 afterAll(() => pg.close());
@@ -108,7 +116,7 @@ const authors = [
 const indexDb = (rows: unknown[]) => ({
   $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = Prisma.sql(strings, ...(values as never[]));
-    if (sql.text.includes(servableProfilePictureSql.text)) return runOnPg(strings, ...values);
+    if (isServablePictureRead(sql.text)) return runOnPg(strings, ...values);
     return Promise.resolve(rows);
   },
   image: { findMany: async () => unfilteredPictures },
@@ -120,9 +128,18 @@ const pictureUrls = (pictures: { url: string }[]) => pictures.map((p) => p.url).
 
 describe('servable profile pictures', () => {
   it('leaves out pictures that may not be served and keeps the rest', async () => {
-    const pictures = await getServableProfilePictures(pgClient, [CLEAN, BLOCKED, FLAGGED, 40, 50]);
+    const pictures = await getServableProfilePictures(pgClient, [
+      CLEAN,
+      BLOCKED,
+      FLAGGED,
+      40,
+      50,
+      60,
+      70,
+    ]);
 
-    expect(pictureUrls(pictures)).toEqual(['clean', 'other-review', 'pending']);
+    // Unscanned pictures (Pending, Error) are left out; a moderator's rating stands in for a scan.
+    expect(pictureUrls(pictures)).toEqual(['clean', 'other-review', 'pending-mod-rated']);
   });
 
   it('bounty search docs carry no author picture that may not be served', async () => {
@@ -189,7 +206,7 @@ describe('servable profile pictures', () => {
         ...values: unknown[]
       ) => {
         const sql = Prisma.sql(strings, ...(values as never[]));
-        if (sql.text.includes(servableProfilePictureSql.text)) return runOnPg(strings, ...values);
+        if (isServablePictureRead(sql.text)) return runOnPg(strings, ...values);
         return Promise.resolve(articleRows());
       }) as never);
       dbMock.dbRead.image.findMany.mockResolvedValue(unfilteredPictures as never);

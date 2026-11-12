@@ -15,7 +15,7 @@ import { resolveAppCapLimits } from '~/server/services/blocks/app-cap-limits.ser
  *
  * WHY THIS EXISTS — the aggregate-spend leak the per-user cap can't see.
  * The only live spend ceiling today is the per-(USER, UTC-day)
- * `BLOCK_BUZZ_CAP_PER_DAY` (blocks.router.ts). `appBlockId` is intentionally
+ * daily cap (`resolveUserAppCaps`, reserved in blocks.router.ts). `appBlockId` is intentionally
  * NOT in its key, so a Sybil ring of N sockpuppet accounts each gets its OWN
  * daily spend ceiling, and ALL of that spend can be funnelled through ONE app.
  * The per-user cap cannot see that concentration. And nothing bounds the RATE

@@ -1,5 +1,10 @@
 import { setWithSpanSkipUnsampledGate } from '@civitai/telemetry/otel-helpers';
-import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import {
+  ensureFliptInitialized,
+  FLIPT_FEATURE_FLAGS,
+  getFliptClientSync,
+  isFliptSync,
+} from '~/server/flipt/client';
 
 /** How long one read of the flag is reused. A flip takes effect within this window. */
 export const WITHSPAN_GATE_REFRESH_MS = 5_000;
@@ -28,6 +33,22 @@ export function createCachedFlagGate(
       expiresAt = t + refreshMs;
     }
     return value;
+  };
+}
+
+type FlagKey = (typeof FLIPT_FEATURE_FLAGS)[keyof typeof FLIPT_FEATURE_FLAGS];
+
+/**
+ * A synchronous read of a global boolean Flipt switch, for `createCachedFlagGate`. `isFliptSync`
+ * answers null until the client is initialized; the read starts it rather than wait for an
+ * unrelated async flag read to do so. `flag` is a thunk so nothing touches the Flipt module before
+ * the first read (a test mock without the key then reads as off, via the gate's throw handling).
+ */
+export function readFliptSwitch(flag: () => FlagKey): () => boolean | null {
+  return () => {
+    const on = isFliptSync(flag());
+    if (on === null && !getFliptClientSync()) void ensureFliptInitialized().catch(() => undefined);
+    return on;
   };
 }
 

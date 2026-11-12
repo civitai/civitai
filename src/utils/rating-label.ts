@@ -72,3 +72,21 @@ export function getRatingLabel({
     else return { label: 'Overwhelmingly Positive', color: 'green' };
   }
 }
+
+/** Label, colour, share and total for a thumbs pair, or `null` with no reviews. The share is floored so anything with a thumbs down never reads 100%. */
+export function getRatingSummary({
+  thumbsUp,
+  thumbsDown,
+}: {
+  thumbsUp: number;
+  thumbsDown: number;
+}): (RatingLabel & { percent: number; total: number }) | null {
+  const total = thumbsUp + thumbsDown;
+  if (!total) return null;
+  const positiveRating = thumbsUp / total;
+  return {
+    ...getRatingLabel({ positiveRating, totalCount: total }),
+    percent: Math.floor(positiveRating * 100),
+    total,
+  };
+}

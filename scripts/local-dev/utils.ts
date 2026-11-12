@@ -5,21 +5,37 @@ import format from 'pg-format';
 import { getCleanedNSFWWords } from '~/components/Auction/auction.utils';
 import { env } from '~/env/server';
 import { pgDbWrite } from '~/server/db/pgDb';
+import {
+  LOCAL_MAIN_DB_HOSTS,
+  LOCAL_NOTIFICATION_DB_HOSTS,
+  describeDbUrl,
+  isLocalDbUrl,
+} from './local-db-guard';
 
 const cleanWords = getCleanedNSFWWords();
 
 export const checkLocalDb = () => {
-  console.log(env.DATABASE_URL);
-  if (!(env.DATABASE_URL.includes('localhost:15432') || env.DATABASE_URL.includes('db:5432'))) {
+  console.log(`DATABASE_URL -> ${describeDbUrl(env.DATABASE_URL)}`);
+  // 127.0.0.1 too: on Windows Prisma resolves localhost to ::1, which Docker doesn't publish on.
+  if (!isLocalDbUrl(env.DATABASE_URL, LOCAL_MAIN_DB_HOSTS)) {
     console.error('ERROR: not running with local database server.');
     process.exit(1);
   }
 };
 
+export const checkLocalNotificationDb = () => {
+  // The seed TRUNCATEs "Notification" on this connection.
+  if (!isLocalDbUrl(process.env.NOTIFICATION_DB_URL, LOCAL_NOTIFICATION_DB_HOSTS)) {
+    console.error('ERROR: NOTIFICATION_DB_URL is not the local notification database.');
+    process.exit(1);
+  }
+};
+
 export const checkLocalMeili = () => {
+  const localHosts = ['http://localhost:7700', 'http://127.0.0.1:7700', 'http://meilisearch:7700'];
   if (
-    !['http://localhost:7700', 'http://meilisearch:7700'].includes(env.METRICS_SEARCH_HOST ?? '') ||
-    !['http://localhost:7700', 'http://meilisearch:7700'].includes(env.SEARCH_HOST ?? '')
+    !localHosts.includes(env.METRICS_SEARCH_HOST ?? '') ||
+    !localHosts.includes(env.SEARCH_HOST ?? '')
   ) {
     console.error('ERROR: not running with local meilisearch server.');
     process.exit(1);

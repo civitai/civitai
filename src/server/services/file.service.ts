@@ -7,7 +7,7 @@ import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/fil
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import type { ScanResultCode } from '~/shared/utils/prisma/enums';
+import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { hasFailedScan } from '~/server/utils/failed-scan';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -385,6 +385,14 @@ export const getFileForModelVersion = async ({
     !isOwner &&
     !isMod &&
     (await trainingDataShareRestricted(dbRead, modelVersionId))
+  )
+    return { status: 'not-found' };
+  // Fails closed: an unscanned or failed dataset is served only to its owner and moderators.
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    file.virusScanResult !== ScanResultCode.Success
   )
     return { status: 'not-found' };
   if (!isMod && hasFailedScan(file)) return { status: 'failed-scan' };

@@ -556,7 +556,7 @@ export const serverSchema = z
     SEARCH_API_KEY: z.string().optional(),
     // Search-only Meilisearch key (value + uid). With `siteSearchProxy` on, /api/search queries with
     // it (unset = SEARCH_API_KEY); off, it signs per-viewer browser search tokens (unset = browsers
-    // use NEXT_PUBLIC_SEARCH_CLIENT_KEY).
+    // search through /api/search).
     SEARCH_TOKEN_API_KEY: z.string().optional(),
     SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
@@ -1274,7 +1274,7 @@ export const serverSchema = z
     // for the callback base) — no parallel infra knobs.
     AGENT_REVIEW_COST_CAP_USD: z.string().default('2'),
     // Platform-wide ceiling (USD per UTC day) on agent reviews started AUTOMATICALLY when a review
-    // preview goes live. Past it, automatic starts are refused; a moderator can still start one.
+    // build settles. Past it, automatic starts are refused; a moderator can still start one.
     AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: z.coerce.number().nonnegative().default(40),
     // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
     // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL

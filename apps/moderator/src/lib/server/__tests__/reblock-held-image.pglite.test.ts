@@ -1,14 +1,18 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ThumbnailCache from '../thumbnail-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
- * Blocking an image already removed with its CSAM reason kept writes the block and nothing the owner
- * or a reporter would see: no owner notice, no report actioned (so no reward), and a CSAM blocklist
- * entry. Any other image still gets all of them.
+ * Blocking a held image (removed with its CSAM reason kept, or under the review flag and not
+ * dismissed) writes the block and nothing the owner or a reporter would see: no owner notice, no
+ * report actioned (so no reward), and a CSAM blocklist entry. Any other image still gets all of them.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -72,7 +76,7 @@ vi.mock('../redis', () => ({ getSysRedis: () => ({ del: vi.fn(), sRem: vi.fn() }
 vi.mock('../user-actions.service', () => ({ setImageFlag: vi.fn() }));
 vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined), logToAxiom }));
 
-const { acceptImage, FlagOnlyRemovedError } = await import('../image-moderation.service');
+const { acceptImage, RemovedImageNotRestorableError } = await import('../image-moderation.service');
 const { imageQueueActions } = await import('../image-queue');
 
 const SCHEMA = `
@@ -92,6 +96,8 @@ CREATE TABLE "Image" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
+${SET_ASIDE_TABLE_SQL}
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageReport" ("imageId" INTEGER, "reportId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
@@ -131,7 +137,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await db.exec(`TRUNCATE "Image", "ImageReport", "Appeal", "User"`);
+  await db.exec(
+    `TRUNCATE "Image", "ImageReport", "Appeal", "User", "CsamQueueSetAside", "ImageDeferredBlockEffect"`
+  );
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash") VALUES
       ($1, 7, NULL, 'CSAM', 'Blocked', 32, 101),
@@ -190,8 +198,30 @@ const underReviewNotices = () =>
     .filter((e) => e.name === 'image-notice-under-review')
     .map((e) => [e.imageId, e.userId]);
 
+const deferredImages = async () =>
+  (
+    await db.query<{ imageId: number }>(
+      `SELECT "imageId" FROM "ImageDeferredBlockEffect" ORDER BY "imageId"`
+    )
+  ).rows.map((r) => r.imageId);
+
 describe('blocking an image removed with only the review flag left', () => {
-  it('sends no owner notice and actions its report, as before', async () => {
+  it('sends no owner notice, and defers its report, not a notice, to the review', async () => {
+    await block(FLAG_ONLY);
+
+    expect(notifiedImages()).toEqual([]);
+    expect(actionedReports()).toEqual([]);
+    const { rows } = await db.query(
+      `SELECT "imageId", "notifyOwner" FROM "ImageDeferredBlockEffect"`
+    );
+    expect(rows).toEqual([{ imageId: FLAG_ONLY, notifyOwner: false }]);
+  });
+
+  it('once dismissed from the review queue, actions its report, as before', async () => {
+    await db.query(
+      `INSERT INTO "CsamQueueSetAside" ("imageId", "userId", outcome, "moderatorId") VALUES ($1, 7, 'Dismissed', 2)`,
+      [FLAG_ONLY]
+    );
     await block(FLAG_ONLY);
 
     expect(notifiedImages()).toEqual([]);
@@ -200,9 +230,10 @@ describe('blocking an image removed with only the review flag left', () => {
 });
 
 describe('blocking an image already removed with its block reason kept', () => {
-  it('sends no owner notice and leaves its report open', async () => {
+  it('sends no owner notice, leaves its report open and defers nothing', async () => {
     await block(HELD);
 
+    expect(await deferredImages()).toEqual([]);
     expect(await row(HELD)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
     expect(notifiedImages()).toEqual([]);
     expect(actionedReports()).toEqual([]);
@@ -244,12 +275,13 @@ describe('blocking an image under review that is not removed yet', () => {
     expect(new Set(reasons)).toEqual(new Set(['CSAM']));
   });
 
-  it('still notifies the owner and actions the report, and logs the notice', async () => {
+  it('sends no notice and leaves its report open, deferring both to the review', async () => {
     await block(FLAGGED_LIVE);
 
-    expect(notifiedImages()).toEqual([`/images/${FLAGGED_LIVE}`]);
-    expect(actionedReports()).toEqual([report(FLAGGED_LIVE)]);
-    expect(underReviewNotices()).toEqual([[FLAGGED_LIVE, 7]]);
+    expect(notifiedImages()).toEqual([]);
+    expect(actionedReports()).toEqual([]);
+    expect(underReviewNotices()).toEqual([]);
+    expect(await deferredImages()).toEqual([FLAGGED_LIVE]);
   });
 });
 
@@ -262,6 +294,7 @@ describe('blocking any other image', () => {
     expect(actionedReports()).toEqual([report(OTHER_REASON)]);
     expect(blocklistReasons()).toEqual({ '104': 'TOS' });
     expect(underReviewNotices()).toEqual([]);
+    expect(await deferredImages()).toEqual([]);
   });
 });
 
@@ -272,8 +305,9 @@ describe('a bulk block over held and other images', () => {
       event({ imageIds: ids.join(','), reportIds: ids.map(report).join(',') })
     );
 
-    expect(notifiedImages().sort()).toEqual([`/images/${FLAGGED_LIVE}`, `/images/${OTHER_REASON}`]);
-    expect(actionedReports().sort()).toEqual([FLAG_ONLY, FLAGGED_LIVE, OTHER_REASON].map(report));
+    expect(notifiedImages()).toEqual([`/images/${OTHER_REASON}`]);
+    expect(actionedReports()).toEqual([report(OTHER_REASON)]);
+    expect(await deferredImages()).toEqual([FLAG_ONLY, FLAGGED_LIVE]);
     // The image removed with only its flag left is not blocked again, so it adds no entry.
     expect(blocklistReasons()).toEqual({ '101': 'CSAM', '103': 'CSAM', '104': 'TOS' });
   });
@@ -282,7 +316,7 @@ describe('a bulk block over held and other images', () => {
 describe('accepting from a review queue', () => {
   it('does not put an image removed with its block reason kept back live', async () => {
     await expect(acceptImage({ imageId: HELD, userId: 2 })).rejects.toBeInstanceOf(
-      FlagOnlyRemovedError
+      RemovedImageNotRestorableError
     );
 
     expect(await row(HELD)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });

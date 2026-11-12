@@ -1,4 +1,4 @@
-import { NsfwLevel } from '~/server/common/enums';
+import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import { dbWrite } from '~/server/db/client';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import { imageCaptionTextScanSubject } from '~/server/services/text-scan/profiles/image-caption.profile';
@@ -28,7 +28,7 @@ export async function applyImageCaptionTextScan({
 
   const refuse =
     !!outcome.poi?.detected ||
-    (!!outcome.minor?.detected && (level == null || level >= NsfwLevel.R));
+    isMinorContentRestricted({ minor: !!outcome.minor?.detected, nsfwLevel: level });
   if (refuse)
     await dbWrite.imageCaption.updateMany({
       where: { imageId: entityId, refused: false },

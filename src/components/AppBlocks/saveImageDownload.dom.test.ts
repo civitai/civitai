@@ -1,6 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { downloadBytesAsBlob, downloadUrlAsBlob, SAVE_IMAGE_MAX_BYTES } from './saveImageDownload';
+import {
+  downloadBytesAsBlob,
+  downloadUrlAsBlob,
+  SAVE_IMAGE_MAX_BYTES,
+  verifySaveBytesContent,
+} from './saveImageDownload';
 
 /**
  * F4 — executed coverage for `downloadUrlAsBlob` (the browser-side XHR→blob→
@@ -204,7 +209,14 @@ describe('downloadUrlAsBlob (F4 executed coverage)', () => {
 describe('downloadBytesAsBlob', () => {
   it('builds the Blob with the classified type and downloads it under the given name', async () => {
     const bytes = new TextEncoder().encode('{"a":1}').buffer as ArrayBuffer;
-    downloadBytesAsBlob(bytes, 'application/json', 'meta.json');
+    // Only a VERIFIED save can be downloaded (a no-op check for JSON).
+    const verified = await verifySaveBytesContent(bytes, {
+      ok: true,
+      type: 'application/json',
+      filename: 'meta.json',
+    });
+    if (!verified.ok) throw new Error(verified.error);
+    downloadBytesAsBlob(bytes, verified.save);
 
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     const blob = createObjectURL.mock.calls[0][0] as Blob;

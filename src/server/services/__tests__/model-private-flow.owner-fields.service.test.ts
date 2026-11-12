@@ -474,6 +474,33 @@ describe('privateModelFromTraining — moderation-owned meta', () => {
   });
 });
 
+describe('privateModelFromTraining — the returned model', () => {
+  // The write keeps the stored moderation records; the row handed back to the caller must not carry them.
+  it.each([
+    ['an owner', owner],
+    ['a moderator', moderator],
+  ])('leaves moderator-only meta out of the response to %s', async (_, user) => {
+    mockStored({
+      meta: { ...STORED_MODERATION_META, profanityMatches: ['x'], systemNsfwLock: { source: 's' } },
+    });
+
+    const result = (await privateFromTraining({ user, meta: { commentsLocked: true } })) as {
+      meta: object;
+    };
+
+    expect(writtenMeta()).toHaveProperty('minorFlagSnapshot');
+    for (const key of [
+      'minorFlagSnapshot',
+      'textScanFlags',
+      'textModeration',
+      'profanityMatches',
+      'systemNsfwLock',
+    ])
+      expect(result.meta).not.toHaveProperty(key);
+    expect(result.meta).toHaveProperty('commentsLocked', true);
+  });
+});
+
 describe('privateModelFromTraining — publish gates', () => {
   it.each(['UnpublishedViolation', 'Deleted'])(
     'refuses a non-moderator when the stored status is %s',

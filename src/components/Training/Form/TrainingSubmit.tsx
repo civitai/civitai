@@ -46,17 +46,17 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { goBack, minsToHours } from '~/components/Training/Form/TrainingCommon';
 import { BaseModelWarningAlert } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
 import { getBaseModelWarning } from '~/shared/constants/base-model-warnings.constants';
-import {
-  blockedCustomModels,
-  isClassicTrainerRetired,
-} from '~/shared/constants/training.constants';
+import { isClassicTrainerRetired } from '~/shared/constants/training.constants';
 import {
   type NumberTrainingSettingsType,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
 import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvancedSettings';
 import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
-import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import {
+  isTrainingModelBlocked,
+  useTrainingServiceStatus,
+} from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -260,7 +260,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   );
 
   const status = useTrainingServiceStatus();
-  const blockedModels = status.blockedModels ?? blockedCustomModels;
 
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -589,7 +588,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      if (blockedModels.includes(r.base)) {
+      if (isTrainingModelBlocked(status, r.base)) {
         showErrorNotification({
           error: new Error('This model has been blocked from training - please try another one.'),
           autoClose: false,
@@ -1608,7 +1607,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           <Button
             loading={awaitInvalidate || dryRunResult.isLoading}
             disabled={
-              blockedModels.includes(formBaseModel ?? '') ||
+              isTrainingModelBlocked(status, formBaseModel ?? '') ||
               !!unacknowledgedRun ||
               !status.available ||
               isClassicTrainerRetired() ||

@@ -41,6 +41,8 @@ const USER_ID = 4242;
 const NEW_EMAIL = 'fresh@example.test';
 const OLD_EMAIL = 'existing@example.test';
 
+const NO_EMAIL_ROW = { email: null, emailVerified: null, username: 'ada' };
+
 function onboardingCtx(email?: string) {
   return {
     user: { id: USER_ID, onboarding: 0, email },
@@ -67,6 +69,8 @@ beforeEach(() => {
 
 describe('onboarding Profile step', () => {
   it('runs the guard on a NEW address', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(NO_EMAIL_ROW);
+
     await completeOnboardingHandler({
       input: { step: OnboardingSteps.Profile, email: NEW_EMAIL },
       ctx: onboardingCtx(undefined),
@@ -105,13 +109,14 @@ describe('onboarding Profile step', () => {
 
   it('propagates the guard rejection instead of writing the address', async () => {
     mockAssertEmailAllowed.mockRejectedValue(new Error('blocked'));
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(NO_EMAIL_ROW);
 
     await expect(
       completeOnboardingHandler({
         input: { step: OnboardingSteps.Profile, email: NEW_EMAIL },
         ctx: onboardingCtx(undefined),
       } as Parameters<typeof completeOnboardingHandler>[0])
-    ).rejects.toThrow();
+    ).rejects.toThrow('blocked');
 
     expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
   });

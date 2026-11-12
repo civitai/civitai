@@ -346,7 +346,7 @@ export async function getGrantedScopes(opts: {
  * Reads the per-(user, app) CONSENT BUDGET — the daily Buzz ceiling the viewer
  * themselves set for this app when they consented. `null` means the user set no
  * budget, in which case the app spends under the platform's own per-user daily
- * ceiling (`BLOCK_BUZZ_CAP_PER_DAY`) alone — the behaviour of every grant written
+ * ceiling (`resolveUserAppCaps`) alone — the behaviour of every grant written
  * before the column existed.
  *
  * 🔴 A REVOKED GRANT STILL RETURNS `null` HERE, AND THE SPEND PATH NO LONGER READS
@@ -357,7 +357,7 @@ export async function getGrantedScopes(opts: {
  * "**the revoke drops the user's own ceiling BEFORE it drops the scope**", and that was
  * an accurate description of `reserveBlockBuzzSpendForClaims` at the time: it read this
  * function, saw `null`, and fell through to the platform ceiling
- * (`BLOCK_BUZZ_CAP_PER_DAY`) alone — so a user who set 500 Buzz/day on an app had that
+ * (then the 50,000 constant) alone — so a user who set 500 Buzz/day on an app had that
  * LIFTED, not enforced, for the remainder of an already-minted token's life. (An earlier
  * revision than that said the opposite — *"a revoked user's token carries no
  * `ai:write:budgeted` and can reach no spend path at all"* — which is true only at the
@@ -445,7 +445,7 @@ export async function getGrantedScopes(opts: {
  * does not exist then no user can ever have set a budget — "no budget set" is not a
  * degraded guess, it is the only state the database can be in — and `null` routes to
  * exactly the same behaviour every pre-column grant already had: the platform's own
- * `BLOCK_BUZZ_CAP_PER_DAY` ceiling keeps enforcing, unchanged. Only P2022 is caught;
+ * per-user daily ceiling (`resolveUserAppCaps`) keeps enforcing, unchanged. Only P2022 is caught;
  * any other Prisma failure still throws, because for those the budget is UNKNOWN
  * rather than absent, and treating unknown as "no budget" would be a fail-open.
  */
@@ -480,7 +480,7 @@ export async function getConsentBuzzBudget(opts: {
  *                 revoked (`revoked_at`) or `ai:write:budgeted` is in `revoked_scopes`.
  *                 The caller must REFUSE.
  *   `no-budget` — spend is consented but the viewer set no per-app ceiling, so only the
- *                 platform's own `BLOCK_BUZZ_CAP_PER_DAY` applies. This includes the
+ *                 platform's own per-user daily cap (`resolveUserAppCaps`) applies. This includes the
  *                 no-grant-row case: a token that reached a spend gate carries the scope,
  *                 and "no row" carries no budget.
  *   `budget`    — spend is consented and bounded at `budget` per UTC day.

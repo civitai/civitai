@@ -862,6 +862,8 @@ export default function TrainingSelectFile({
         <TrainingReviewNotice
           heldSince={trainingHeldSince(tResultsV2?.startedAt, trainingResults?.submittedAt)}
           runId={tResultsV2?.workflowId ?? String(modelVersion.id)}
+          completedEpochs={epochsCompletedForRun(trainingResults ?? {})}
+          plannedEpochs={thisTrainingDetails?.params?.maxTrainEpochs}
         />
       ) : showBlockingError ? (
         <Stack p="xl" align="center">

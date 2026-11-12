@@ -270,6 +270,13 @@ export interface GateCoreOptions {
    * result counts whatever this says.
    */
   sandboxFeatures?: () => SandboxFeatures | null;
+  /**
+   * Told the open app's key after a call of this reply's assistant that can change its files
+   * (`changesApp`) finished without an error: what the app's source repo commits on
+   * (`createSourceSaveScheduler`). A subagent's calls are told too (a command it runs can change
+   * files); a refused or stopped call is not (it did not run), nor any call while no app is open.
+   */
+  onAppChanged?: (app: string) => void;
 }
 
 /** What a gate starts from: what this conversation already did (a server run picking a reply up). */
@@ -324,6 +331,7 @@ export function createGateCore({
   openApp,
   unjustifiedScopes,
   sandboxFeatures,
+  onAppChanged,
 }: GateCoreOptions = {}): GateCore {
   const runChecks = () => sandboxFeatures?.()?.runChecks === true;
   let conversationId: string | null = null;
@@ -522,6 +530,11 @@ export function createGateCore({
     choose(result);
     verify(result);
     noteReady(result);
+    // A subagent's call counts too: a command it runs can change files, as `verify` reads it.
+    if (onAppChanged && !result.isError && changesApp(name, result.input)) {
+      const app = openApp?.() ?? null;
+      if (app) onAppChanged(app);
+    }
   };
 
   /** A report_ready that passed: what it declared is what submit_for_review is judged on. */

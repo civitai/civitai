@@ -16,7 +16,10 @@
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
-  import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
+  import { page } from '$app/state';
+  import { clearPaging } from '$lib/paging';
+  import { csamCaptureReportUrl, csamReportUrl, userLookupUrl } from '$lib/entity-url';
+  import type { FeedbackCaptureStamp } from '$lib/server/image-review.service';
   import CsamQueueTabs from './CsamQueueTabs.svelte';
   import { isFlagOnlyRemaining } from '$lib/image-review';
   import { ReportEntity, reportDetailEntries, reportedPlacementId } from '$lib/reports';
@@ -224,11 +227,41 @@
   </div>
 {/if}
 
+{#if data.kind === 'review' || data.kind === 'review-highlight'}
+  {@const capturesHref = (() => {
+    const url = new URL(page.url);
+    clearPaging(url.searchParams);
+    if (data.capturesOnly) url.searchParams.delete('captures');
+    else url.searchParams.set('captures', '1');
+    return `${url.pathname}${url.search}`;
+  })()}
+  <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
+    <a
+      href={capturesHref}
+      class="rounded-full border px-3 py-0.5 text-xs {data.capturesOnly
+        ? 'border-sky-500/60 bg-sky-500/15 text-sky-300'
+        : 'border-border text-dark-2 hover:text-foreground'}">Feedback captures</a
+    >
+  </div>
+{/if}
+
 {#snippet userHeader(item: {
   userId: number;
   username: string | null;
   profilePicture?: boolean | null;
+  capture?: FeedbackCaptureStamp | null;
 })}
+  {#if item.capture}
+    <!-- A capture's owner is a system account and its reporter is not its subject: never a profile. -->
+    <div class="truncate text-xs text-muted-foreground">
+      Feedback page capture · reporter
+      {#if item.capture.reporterUsername}@{item.capture.reporterUsername}{:else}#{item.capture.reporterId ?? '?'}{/if}
+      (reporter, not subject)
+      {#if item.capture.feedbackId != null}
+        · <a href={`/feedback/${item.capture.feedbackId}`} class="link">report #{item.capture.feedbackId}</a>
+      {/if}
+    </div>
+  {:else}
   <div class="flex items-center gap-1.5">
     <!-- On the report queue a username is the start of an investigation, not a profile visit, so it
          goes to User Lookup. The other queues rule on one image and the profile is the useful page. -->
@@ -246,6 +279,7 @@
       <Badge class="shrink-0 bg-indigo-500/15 text-indigo-400">Avatar</Badge>
     {/if}
   </div>
+  {/if}
 {/snippet}
 
 <!-- Accept / Remove for the review queues, Unaction / Remove for the reported one. A `reportId`
@@ -506,13 +540,22 @@
           {#if isFlagOnlyRemaining(item)}<Badge class="bg-muted">Removed</Badge>{/if}
         </div>
         <div class="flex gap-2 text-xs">
-          <a href={`/images/csam?userId=${item.userId}&level=${data.level}`} class="link">This user's images</a>
-          <a
-            href={`${csamReportUrl(data.civitaiUrl, item.userId)}?imageId=${item.id}`}
-            target="_blank"
-            rel="noreferrer"
-            class="link">Report page</a
-          >
+          {#if item.capture}
+            <a
+              href={csamCaptureReportUrl(data.civitaiUrl, item.id)}
+              target="_blank"
+              rel="noreferrer"
+              class="link">Report page</a
+            >
+          {:else}
+            <a href={`/images/csam?userId=${item.userId}&level=${data.level}`} class="link">This user's images</a>
+            <a
+              href={`${csamReportUrl(data.civitaiUrl, item.userId)}?imageId=${item.id}`}
+              target="_blank"
+              rel="noreferrer"
+              class="link">Report page</a
+            >
+          {/if}
         </div>
       {/if}
       <ReviewActions

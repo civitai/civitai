@@ -458,8 +458,6 @@ model User {
   roles                UserRole[]
   membershipOverride   UserMembershipOverride?
   links                UserLink[]
-  comments             Comment[]
-  commentReactions     CommentReaction[]
   notificationSettings UserNotificationSettings[]
   pushSubscriptions    PushSubscription[]
   pushSettings         UserPushSetting[]
@@ -479,11 +477,8 @@ model User {
   appAccessReviewed    AppAccessRequest[]         @relation("AppAccessRequestReviewedBy")
   questions            Question[]
   answers              Answer[]
-  commentsv2           CommentV2[]
   questionReactions    QuestionReaction[]
   answerReactions      AnswerReaction[]
-  commentV2Reactions   CommentV2Reaction[]
-  threadMutes          ThreadMute[]
   commentsV3           CommentV3[]
   commentV3Reactions   CommentV3Reaction[]
   commentMutes         CommentMute[]
@@ -1130,12 +1125,10 @@ model Model {
   saves              SavedModel[]
   reports            ModelReport[]
   engagements        ModelEngagement[]
-  comments           Comment[]
   interests          ModelInterest[]
   licenses           License[]
   reportStats        ModelReportStat?
   hashes             ModelHash[]
-  threads            Thread[]
   resourceReviews    ResourceReview[]
   metricsDaily       ModelMetricDaily[]
   baseModelMetrics   ModelBaseModelMetric[]
@@ -1698,6 +1691,8 @@ model ModActivity {
   entityId   Int?
   createdAt  DateTime @default(now())
   host       String?
+  /// Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
+  credential String?
 
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])
@@ -1749,8 +1744,6 @@ model Report {
   statusSetBy             Int?
 
   model          ModelReport?
-  comment        CommentReport?
-  commentV2      CommentV2Report?
   commentV3      CommentV3Report?
   image          ImageReport?
   resourceReview ResourceReviewReport?
@@ -1792,26 +1785,6 @@ model ModelReport {
 
   @@id([reportId, modelId])
   @@index([modelId], type: Hash)
-}
-
-model CommentReport {
-  commentId Int
-  comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  reportId  Int     @unique
-  report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
-
-  @@id([reportId, commentId])
-  @@index([commentId], type: Hash)
-}
-
-model CommentV2Report {
-  commentV2Id Int
-  commentV2   CommentV2 @relation(fields: [commentV2Id], references: [id], onDelete: Cascade)
-  reportId    Int       @unique
-  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
-
-  @@id([reportId, commentV2Id])
-  @@index([commentV2Id], type: Hash)
 }
 
 model ImageReport {
@@ -1939,7 +1912,6 @@ model ResourceReview {
   details        String?
   userId         Int
   user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  thread         Thread?
   createdAt      DateTime                 @default(now())
   updatedAt      DateTime                 @updatedAt
   exclude        Boolean                  @default(false)
@@ -1963,6 +1935,9 @@ model ResourceReview {
   // NOTE: the partial index "ResourceReview_unreleased_postId_idx" (postId WHERE postId IS NOT NULL
   // AND releasedAt IS NULL) serves the review release sweep. It lives only in migration
   // 20261231130000_resource_review_post_id: Prisma does not support partial indexes.
+  // The partial index "ResourceReview_modelVersionId_createdAt_written_idx" (modelVersionId,
+  // createdAt DESC WHERE details IS NOT NULL AND details <> '') serves the text-only reviews list;
+  // it lives only in migration 20270102120000_resource_review_written_idx.
 }
 
 model ResourceReviewReaction {
@@ -2113,7 +2088,6 @@ model Post {
   images          Image[]
   tags            TagsOnPost[]
   reactions       PostReaction[]
-  thread          Thread?
   helper          PostHelper?
   stats           PostStat?
   metrics         PostMetric[]
@@ -2223,7 +2197,6 @@ model Image {
 
   reports             ImageReport[]
   reactions           ImageReaction[]
-  thread              Thread?
   tags                TagsOnImageDetails[]
   tagVotes            TagsOnImageVote[]
   tagComposites       ImageTag[]
@@ -2275,6 +2248,7 @@ model Image {
   storylineSparks        Storyline[]            @relation("StorylineSparkImage")
   storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
+  axisRating             ImageAxisRating?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2876,6 +2850,12 @@ model Feedback {
   /// The block version live when the feedback was sent, stamped server-side. NULL for off-site apps.
   appBlockVersion     String?
   appBlockSha         String?
+  // The developer's own build provenance of the submission that was live when the feedback was
+  // sent, copied from `AppBlockPublishRequest.sourceCommit` / `sourceDirty`: an unverified client
+  // claim, NULL = unknown (never "clean"). CHECK `Feedback_app_source_columns_check`. No-type:
+  // raw SQL only, in app-feedback.service.ts, so the deploy and the migration can land in either order.
+  appSourceCommit     String?  // @no-type
+  appSourceDirty      Boolean? // @no-type
 
   /// Owner (developer) status, SEPARATE from the moderator `status` / `triageNote` / `handledBy`
   /// columns above so an owner can never move moderator triage. NULL = new to the developer; otherwise
@@ -3490,15 +3470,8 @@ model AppBlockBuildAttempt {
 /// NOT run prisma migrate deploy; the committed SQL is hand-applied per env.
 model AppListing {
   id              String       @id // apl_<ULID>
-  // Integer surrogate for CommentsV2. The store `id` is a TEXT ULID, but a
-  // CommentsV2 `Thread` parent FK must be Int (`Thread.appListingId Int? @unique`)
-  // — CommentsV2 is integer-keyed end to end. This UNIQUE auto-increment surrogate
-  // bridges the two; it is NOT the PK (`id` stays the ULID). DB-assigned
-  // (autoincrement) + backfilled for existing rows by the w13 comments migration.
+  // Integer surrogate: comments address their entity by integer (`CommentV3.entityId`), and `id` is a ULID.
   serialId        Int          @unique @default(autoincrement()) @map("serial_id")
-  // The CommentsV2 discussion thread for this listing (parent = serialId). Optional
-  // 1:1 — created lazily on the first comment/lock (mirrors every other Thread parent).
-  thread          Thread?      @relation("AppListingThread")
   // Store kind discriminator: 'onsite' (an AppBlock we host) or 'offsite'
   // (external-link or OAuth-connect). Validated in the service + a DB CHECK.
   kind            String
@@ -3570,6 +3543,14 @@ model AppListing {
   // MANUAL-APPLY, like every migration here — the read paths degrade to NULL while
   // the column is absent rather than 500ing the public store.
   sourceRepoUrl   String?      @map("source_repo_url")
+  // OPTIONAL public ISSUE-TRACKER / SUPPORT link, rendered as a `Support` row on the store DETAIL
+  // page only. Any https host (`validateIssueTrackerUrl`). Manifest-governed for on-site listings
+  // (`manifest.bugs`), listing-form-governed for off-site, and MATERIAL (staged on a shadow
+  // revision) like `sourceRepoUrl`.
+  // 🔴 CARRIES THE no-type ANNOTATION — stripped from the generated client, read and written by
+  // raw SQL in `app-listing-issue-tracker.service.ts` only, for the reason `visibility` above
+  // documents. MANUAL-APPLY migration `20270103120000_app_listing_issue_tracker`.
+  issueTrackerUrl String?      @map("issue_tracker_url") // @no-type
   // AUTHOR-DECLARED "this app is in beta" flag + an optional short note, rendered as
   // a badge on the store card and a badge + notice on the detail page and the app's
   // run page. DISPLAY ONLY — it feeds no ranking, no curation, no launch gate and no
@@ -5029,6 +5010,30 @@ model AppStorageHookSource {
   @@map("app_storage_hook_sources")
 }
 
+// App Blocks source repos: one row per fork or App Assistant app that has a developer-facing git
+// repo (`civitai-apps-src/<slug>`). RAW SQL ONLY (`app-source-repo.service.ts`), so the model is
+// stripped from the generated client; the migration `20270105120000_app_source_repos` is applied by
+// hand (with its CHECKs and indexes, which live only there) and the service tolerates the table's
+// absence.
+// @no-type
+model AppSourceRepo {
+  slug                   String    @id
+  ownerUserId            Int       @map("owner_user_id")
+  appBlockId             String?   @map("app_block_id")
+  origin                 String
+  forkedFromAppBlockId   String?   @map("forked_from_app_block_id")
+  forkedFromCommitSha    String?   @map("forked_from_commit_sha")
+  assistantTree          Json?     @map("assistant_tree")
+  lastAssistantCommitSha String?   @map("last_assistant_commit_sha")
+  lastAssistantBranch    String?   @map("last_assistant_branch")
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([ownerUserId], map: "app_source_repos_owner_idx")
+  @@index([appBlockId], map: "app_source_repos_app_block_idx")
+  @@map("app_source_repos")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.
@@ -5119,47 +5124,6 @@ model AdToken {
   expiresAt DateTime?
 }
 
-model Comment {
-  id           Int      @id @default(autoincrement())
-  content      String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  nsfw         Boolean  @default(false)
-  tosViolation Boolean  @default(false)
-  parent       Comment? @relation("ParentComments", fields: [parentId], references: [id], onDelete: Cascade)
-  parentId     Int?
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId       Int
-  model        Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId      Int
-  locked       Boolean? @default(false)
-  hidden       Boolean? @default(false)
-  pinnedAt     DateTime?
-  /// No longer set; only the reverse copy reads it. Kept until a migration drops it.
-  removedByAuthor Boolean @default(false)
-
-  comments  Comment[]         @relation("ParentComments")
-  reactions CommentReaction[]
-  reports   CommentReport[]
-
-  @@index([modelId], type: Hash)
-  @@index([parentId], type: Hash)
-  @@index([userId])
-}
-
-model CommentReaction {
-  id        Int             @id @default(autoincrement())
-  commentId Int
-  comment   Comment         @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  userId    Int
-  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reaction  ReviewReactions
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-
-  @@unique([commentId, userId, reaction])
-}
-
 model UserNotificationSettings {
   id         Int      @id @default(autoincrement())
   userId     Int
@@ -5242,7 +5206,6 @@ model Question {
   answers   Answer[]           @relation("Question")
   metrics   QuestionMetric[]
   rank      QuestionRank?
-  thread    Thread?
 }
 
 model QuestionMetric {
@@ -5271,7 +5234,6 @@ model Answer {
   answerFor Question?        @relation("SelectedAnswer")
   votes     AnswerVote[]
   rank      AnswerRank?
-  thread    Thread?
 }
 
 model AnswerVote {
@@ -5295,111 +5257,6 @@ model AnswerMetric {
   commentCount Int
 
   @@id([answerId, timeframe])
-}
-
-model CommentV2 {
-  id            Int       @id @default(autoincrement())
-  content       String
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  nsfw          Boolean   @default(false)
-  tosViolation  Boolean   @default(false)
-  userId        Int
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  threadId      Int
-  thread        Thread    @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
-  childThread   Thread?   @relation("childThread")
-  metadata      Json?
-  hidden        Boolean?  @default(false)
-  pinnedAt      DateTime?
-  reactionCount Int       @default(0)
-
-  reactions CommentV2Reaction[]
-  reports   CommentV2Report[]
-
-  @@index([threadId], type: Hash)
-  @@index([reactionCount(sort: Desc), id(sort: Desc)])
-  @@index([userId])
-}
-
-model Thread {
-  id             Int     @id @default(autoincrement())
-  locked         Boolean @default(false)
-  parentThreadId Int?
-  parentThread   Thread? @relation("childThread", fields: [parentThreadId], references: [id], onDelete: Cascade)
-  rootThreadId   Int?
-  rootThread     Thread? @relation("root", fields: [rootThreadId], references: [id], onDelete: Cascade)
-
-  // `commentId` alone stays SetNull: cascading it would let one comment's delete destroy other users' replies.
-  questionId    Int?            @unique
-  question      Question?       @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  answerId      Int?            @unique
-  answer        Answer?         @relation(fields: [answerId], references: [id], onDelete: Cascade)
-  imageId       Int?            @unique
-  image         Image?          @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  postId        Int?            @unique
-  post          Post?           @relation(fields: [postId], references: [id], onDelete: Cascade)
-  reviewId      Int?            @unique
-  review        ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  commentId     Int?            @unique
-  comment       CommentV2?      @relation("childThread", fields: [commentId], references: [id], onDelete: SetNull)
-  modelId       Int?            @unique
-  model         Model?          @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  articleId     Int?            @unique
-  article       Article?        @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  bountyId      Int?            @unique
-  bounty        Bounty?         @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  bountyEntryId Int?            @unique
-  bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
-  clubPostId    Int?            @unique
-  clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
-  comicProjectId       Int?
-  comicChapterPosition Int?
-  comicChapter         ComicChapter? @relation(fields: [comicProjectId, comicChapterPosition], references: [projectId, position], onDelete: Cascade, onUpdate: Cascade)
-  challengeId   Int?            @unique
-  challenge     Challenge?      @relation(fields: [challengeId], references: [id], onDelete: Cascade)
-  model3dId        Int?            @unique
-  model3d          Model3D?        @relation(fields: [model3dId], references: [id], onDelete: Cascade)
-  model3dReviewId  Int?            @unique
-  model3dReview    Model3DReview?  @relation(fields: [model3dReviewId], references: [id], onDelete: Cascade)
-  // App-store listing comments (W13). References the AppListing INTEGER surrogate
-  // (`serial_id`), NOT its TEXT ULID `id` — CommentsV2 is integer-keyed. `app_listings`
-  // is the same DB (main civitai nvme0), so this is a plain FK, not a cross-DB bridge.
-  appListingId     Int?            @unique
-  appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: Cascade)
-  crucibleId       Int?            @unique
-  crucible         Crucible?       @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
-  storylineId      Int?            @unique
-  storyline        Storyline?      @relation(fields: [storylineId], references: [id], onDelete: Cascade)
-
-  metadata     Json @default("{}") // unused
-  commentCount Int  @default(0)
-
-  comments       CommentV2[] @relation("thread")
-  directChildren Thread[]    @relation("childThread")
-  children       Thread[]    @relation("root")
-  mutes          ThreadMute[]
-
-  @@unique([comicProjectId, comicChapterPosition])
-  @@index([reviewId], type: Hash)
-  @@index([postId], type: Hash)
-  @@index([questionId], type: Hash)
-  @@index([imageId], type: Hash)
-  @@index([articleId], type: Hash)
-  @@index([rootThreadId], type: Hash)
-  @@index([parentThreadId])
-  @@index([challengeId], type: Hash)
-}
-
-model ThreadMute {
-  userId   Int
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  threadId Int
-  thread   Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  mutedAt  DateTime @default(now())
-
-  @@id([userId, threadId])
-  @@index([threadId])
 }
 
 // CommentV3 (docs/comments-consolidation.md). Declared for type generation only; access is via Kysely.
@@ -5464,8 +5321,6 @@ model CommentV3 {
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
   legacyV1Id    Int?
-  // No longer set; only the reverse copy reads it. Kept until a migration drops it.
-  removedByAuthor Boolean @default(false)
 
   reactions CommentV3Reaction[]
   reports   CommentV3Report[]
@@ -5552,19 +5407,6 @@ model AnswerReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([answerId, userId, reaction])
-}
-
-model CommentV2Reaction {
-  id        Int             @id @default(autoincrement())
-  comment   CommentV2       @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  commentId Int
-  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    Int
-  reaction  ReviewReactions
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-
-  @@unique([commentId, userId, reaction])
 }
 
 model ImageReaction {
@@ -5903,6 +5745,61 @@ model EventTurfStock {
   refilledAt DateTime @db.Timestamptz(3)
 
   @@id([event, userId])
+}
+
+/// A team award computed once and frozen: a Crucible placement or a won flag. `sourceId` names what
+/// earned it, so a second freeze of the same thing inserts nothing. `team` is null when the earner had
+/// no eligible team: the place is recorded as unawarded rather than computed again later.
+model EventAwardResult {
+  id       Int       @id @default(autoincrement())
+  event    String
+  sourceId String
+  kind     String
+  team     String?
+  points   Int
+  /// When the award counts from: the Crucible's end, or the flag's cut.
+  at       DateTime  @db.Timestamptz(3)
+  /// What the result was computed from, kept for audit.
+  inputs   Json
+  frozenAt DateTime  @default(now()) @db.Timestamptz(3)
+  voidedAt DateTime? @db.Timestamptz(3)
+
+  @@unique([event, sourceId])
+}
+
+/// One day of the Flag Race: the flags a finished Crucible's accepted top places became, and when
+/// they stop taking hats. Written once by the swap; `imageIds` is in rank order.
+model FlagDay {
+  id         Int      @id @default(autoincrement())
+  event      String
+  crucibleId Int
+  startsAt   DateTime @db.Timestamptz(3)
+  /// Random within the day's last hour, so nobody can time a last-second pile-on. Never sent to a
+  /// client before it passes.
+  cutAt      DateTime @db.Timestamptz(3)
+  /// The end of the hour the cut falls in: public, unlike the cut.
+  closesAt   DateTime @db.Timestamptz(3)
+  imageIds   Int[]
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([event, crucibleId])
+  @@index([event, startsAt])
+}
+
+/// Hats spent on a flag. Not an EventTurfSticker: flags stack without limit and never count toward
+/// normal Turf. `count` is how many hats one placement spent.
+model EventTurfFlagSticker {
+  id         BigInt   @id @default(autoincrement())
+  event      String
+  flagDayId  Int
+  imageId    Int
+  userId     Int
+  team       String
+  cosmeticId Int
+  count      Int
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([flagDayId, imageId, team, userId, createdAt])
 }
 
 /// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
@@ -6379,7 +6276,6 @@ model Article {
   isOfficial       Boolean       @default(false)
   status           ArticleStatus @default(Draft)
 
-  thread             Thread?
   reactions          ArticleReaction[]
   tags               TagsOnArticle[]
   reports            ArticleReport[]
@@ -6824,7 +6720,6 @@ model Bounty {
   entries     BountyEntry[]
   benefactors BountyBenefactor[]
   engagements BountyEngagement[]
-  thread      Thread?
   metrics     BountyMetric[]
   rank        BountyRank?
   stats       BountyStat?
@@ -6850,7 +6745,6 @@ model BountyEntry {
   moderatorNsfwLevelBasis Int?
 
   benefactors BountyBenefactor[]
-  thread      Thread?
   reactions   BountyEntryReaction[]
   metrics     BountyEntryMetric[]
   rank        BountyEntryRank?
@@ -7015,6 +6909,22 @@ model CsamQueueSetAside {
   createdAt    DateTime                 @default(now())
 
   @@index([userId])
+}
+
+/// A block's owner notice and report actioning, deferred until the review flag's close. Written with
+/// the block; claimed (deleted) once by whichever close ends the review.
+model ImageDeferredBlockEffect {
+  imageId       Int      @id
+  /// The violation the moderator chose, if any; the notice states it.
+  violationType String?
+  /// False for a re-block of an image already removed: only its reports are deferred.
+  notifyOwner   Boolean  @default(true)
+  /// Open reports of this reason on the image are actioned at the close.
+  reportReason  String?
+  /// These reports are actioned at the close, if still open.
+  reportIds     Int[]    @default([])
+  blockedBy     Int?
+  createdAt     DateTime @default(now())
 }
 
 /// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
@@ -7461,7 +7371,6 @@ model ClubPost {
   entityId     Int?
   entityType   String?
 
-  thread    Thread?
   reactions ClubPostReaction[]
   metrics   ClubPostMetric[]
 }
@@ -8142,6 +8051,36 @@ model ImageAudioScan {
   @@index([flagged, createdAt])
 }
 
+enum ImageAxisSource {
+  rated
+  moderator
+}
+
+/// Current rating axes of an image from an axis-capable rater, or a moderator. No row means the
+/// image was not rated on axes. A scan never overwrites a moderator row. Nothing reads it to
+/// filter, rate or hide media yet.
+model ImageAxisRating {
+  imageId         Int             @id
+  image           Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  source          ImageAxisSource
+  sexualLevel     Int?            @db.SmallInt
+  /// Highest sexualLevel any scan has rated; only a moderator lowers it.
+  sexualHighWater Int?            @db.SmallInt
+  violenceLevel   Int?            @db.SmallInt
+  /// No rater produces a language axis yet.
+  languageLevel   Int?            @db.SmallInt
+  /// The rater's modelRef; null on a moderator row.
+  rater           String?
+  /// The rater checkpoint's sha256; null on a moderator row.
+  raterVersion    String?
+  /// The scan workflow's completion time; an older result never replaces a newer one.
+  ratedAt         DateTime        @db.Timestamptz(3)
+  workflowId      String?
+  /// The moderator's user id on a moderator row.
+  setBy           Int?
+  updatedAt       DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
+}
+
 model ScanLabelVote {
   itemId    Int
   userId    Int
@@ -8547,7 +8486,6 @@ model Challenge {
 
   // Relations
   winners     ChallengeWinner[]
-  threads     Thread[]
   reports     ChallengeReport[]
   engagements ChallengeEngagement[]
   standings   ChallengeEntryStanding[]
@@ -9785,7 +9723,6 @@ model ComicChapter {
   updatedAt         DateTime           @updatedAt
 
   panels ComicPanel[]
-  thread Thread?
   reads  ComicChapterRead[]
 
   @@id([projectId, position])
@@ -10277,7 +10214,6 @@ model Model3D {
   engagements     Model3DEngagement[]
   reports         Model3DReport[]
   reviews         Model3DReview[]
-  threads         Thread[]
   collectionItems CollectionItem[]
   metric          Model3DMetric?
 
@@ -10364,7 +10300,6 @@ model Model3DReview {
   metadata     Json?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  thread       Thread?
   post         Post?
   reports      Model3DReviewReport[]
 
@@ -10749,7 +10684,6 @@ model Storyline {
   reports       StorylineReport[]
   coverUploads  StorylineCoverUpload[]
   /// The storyline's own discussion (commentsv2 entity type `storyline`), separate from chapter 1's post thread.
-  thread        Thread?
 
   @@index([userId])
   @@index([coverImageId])
@@ -11557,7 +11491,6 @@ model Crucible {
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
   engagements CrucibleEngagement[]
-  thread      Thread?
 
   @@index([userId], type: Hash)
   @@index([status])

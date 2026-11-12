@@ -57,7 +57,19 @@ function stampConflicts(stored: Partial<ModelStamp>, got: ModelStamp) {
 export type VectorPoint<P = ImagePayload> = { id: number; vector: number[]; payload: P };
 
 /** What a collection is created with. Images keep their original settings. */
-export type CollectionSpec<P> = { indexes: PayloadIndexes<P>; quantile: number };
+export type CollectionSpec<P> = {
+  indexes: PayloadIndexes<P>;
+  quantile: number;
+  /** Unset keeps Qdrant's default of 1, which the single-node image instance runs on. */
+  replicationFactor?: number;
+  writeConsistencyFactor?: number;
+};
+
+/**
+ * Every non-image collection lives on the 3-node site-search instance: two copies of each shard,
+ * and a write is acknowledged by one so a node down never stalls the sync.
+ */
+export const SITE_REPLICATION = { replicationFactor: 2, writeConsistencyFactor: 1 } as const;
 const IMAGE_COLLECTION: CollectionSpec<ImagePayload> = { indexes: PAYLOAD_INDEXES, quantile: 1.0 };
 
 export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
@@ -84,6 +96,8 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
           scalar: { type: 'int8', quantile: this.spec.quantile, always_ram: true },
         },
         on_disk_payload: true,
+        replication_factor: this.spec.replicationFactor,
+        write_consistency_factor: this.spec.writeConsistencyFactor,
         metadata: { model: EMBED_MODEL, dimensions: VECTOR_DIMENSIONS },
       });
       logger.info({ collection: this.collection }, 'vector-sync: created collection');

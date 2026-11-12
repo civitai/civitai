@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
+import { stripImpersonationRecord } from '~/server/services/blocks/app-impersonation.logic';
 import { verifyAgentCallbackToken } from '~/server/services/blocks/review-session';
 import {
   AGENT_REVIEW_SECTIONS,
@@ -116,6 +117,10 @@ export function buildReportUpdate(body: CallbackBody): Record<string, unknown> {
     const value = body[section];
     if (value !== undefined && value !== null) data[section] = value;
   }
+  // The impersonation record is written by civitai's own check after this callback, never by
+  // the runner: a bundle that got the agent to emit one must not fake a completed check.
+  if (data.securityAudit !== undefined)
+    data.securityAudit = stripImpersonationRecord(data.securityAudit);
   if (body.tokenUsage !== undefined && body.tokenUsage !== null) data.tokenUsage = body.tokenUsage;
   if (typeof body.costUsd === 'number' && Number.isFinite(body.costUsd) && body.costUsd >= 0)
     data.costUsd = body.costUsd;
@@ -212,4 +217,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   res.status(200).json({ ok: true, applied: true });
+
+  // The IMPERSONATION check (name, branding, listing art) runs here, once the agent's report
+  // has landed, and writes into that report's security audit. After the response, so the agent
+  // pod is not held open by a second model call; it never throws.
+  const { runImpersonationCheckForRequest } = await import(
+    '~/server/services/blocks/app-impersonation-check.service'
+  );
+  await runImpersonationCheckForRequest(body.publishRequestId);
 });
