@@ -92,3 +92,37 @@ describe('appListings.approveExternalRequest with an open review hold', () => {
     expect(dbMock.dbRead.appListing.findUnique).toHaveBeenCalled();
   });
 });
+
+describe('appListings.listMySubmissions never returns hold text to the developer', () => {
+  it('a submission with an open hold carries no hold reason, label or count', async () => {
+    dbMock.dbRead.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...v: unknown[]) =>
+      Promise.resolve(
+        Prisma.sql(strings, ...v).text.includes('app_publish_request_holds') ? [hold] : []
+      )) as never);
+    dbMock.dbRead.appListingPublishRequest.findMany.mockResolvedValueOnce([
+      {
+        id: 'alpr_1',
+        kind: 'offsite',
+        slug: 'listing-app',
+        status: 'pending',
+        submittedAt: new Date(),
+        reviewedAt: null,
+        rejectionReason: null,
+        approvalNotes: null,
+        appListingId: null,
+        appListing: null,
+      },
+    ] as never);
+    const caller = appListingsRouter.createCaller({
+      ...modCtx(),
+      user: { id: 2, isModerator: false, onboarding: 0x1f },
+      features: { trpcFlagGuardPerRequest: true, appBlocksAuthor: true },
+    } as never);
+    const body = JSON.stringify(await caller.listMySubmissions({}));
+    expect(body).toContain('alpr_1');
+    for (const secret of ['code-check', 'security check still running']) {
+      expect(body).not.toContain(secret);
+    }
+    expect(body).not.toMatch(/hold/i);
+  });
+});
