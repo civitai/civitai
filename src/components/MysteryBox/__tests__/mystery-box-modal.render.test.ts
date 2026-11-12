@@ -84,6 +84,7 @@ vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
 vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
   const { edgeMediaOptions, resolveEdgeImageUrl } = await import('~/client-utils/edge-url');
   return {
+    // Only as faithful as this mock: the real EdgeMedia passes more options than width.
     // The URL EdgeImage would put on the <img>, built from the width the caller passed.
     EdgeMedia: ({
       src,
@@ -108,6 +109,7 @@ const { reportError } = vi.hoisted(() => ({ reportError: vi.fn() }));
 vi.mock('~/utils/application-error', () => ({ reportApplicationError: reportError }));
 vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false }));
 
+import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import MysteryBoxModal from '../MysteryBoxModal';
 import type { HeldMysteryBox, MysteryBoxSource } from '../mystery-box.utils';
 
@@ -276,6 +278,7 @@ describe('MysteryBoxModal reward art', () => {
 
     state.phase = 'revealed';
     await render({ inventory: true });
+    expect(preloaded).toHaveLength(1);
     expect(preloaded[0]).toBe(revealImg()?.getAttribute('src'));
   });
 
@@ -289,6 +292,15 @@ describe('MysteryBoxModal reward art', () => {
 
     expect(reportError).toHaveBeenCalledTimes(1);
     const [, ctx] = reportError.mock.calls[0];
-    expect(ctx.message).toBe('cosmeticId=1002 url=abc-uuid');
+    expect(ctx).toEqual({
+      name: 'mystery-box-reveal-art',
+      message: 'cosmeticId=1002 url=abc-uuid',
+    });
+  });
+
+  it('leaves every other HatArt caller lazy', async () => {
+    await act(async () => root.render(React.createElement(HatArt, { url: 'abc-uuid' })));
+
+    expect(container.querySelector('img')?.getAttribute('loading')).toBe('lazy');
   });
 });
