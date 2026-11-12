@@ -1,6 +1,7 @@
 import { createHmac } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { buildApproveCommitMessage } from '~/server/services/blocks/approve-provenance';
 
 /**
@@ -36,13 +37,8 @@ const {
   mockSetCommitStatus,
   mockValidate,
   mockGetPlatformLogin,
-  mockAppBlockFindFirst,
-  mockReadPubReqFindFirst,
-  mockWritePubReqFindFirst,
-  mockPubReqCreate,
-  mockPubReqUpdate,
-  mockPubReqUpdateMany,
   mockTriggerBuild,
+  findRequest,
   state,
 } = vi.hoisted(() => {
   const state = {
@@ -68,6 +64,7 @@ const {
   };
   return {
     state,
+    findRequest,
     mockGetRawFile: vi.fn(async () =>
       JSON.stringify({
         blockId: 'race-demo-app',
@@ -79,12 +76,6 @@ const {
     mockSetCommitStatus: vi.fn(async () => undefined),
     mockValidate: vi.fn(() => ({ valid: true, errors: [] as string[] })),
     mockGetPlatformLogin: vi.fn(async () => 'platform-bot-7q'),
-    mockAppBlockFindFirst: vi.fn(async () => state.appBlock),
-    mockReadPubReqFindFirst: vi.fn(findRequest),
-    mockWritePubReqFindFirst: vi.fn(findRequest),
-    mockPubReqCreate: vi.fn(async (_args: { data: Record<string, unknown> }) => undefined),
-    mockPubReqUpdate: vi.fn(async () => undefined),
-    mockPubReqUpdateMany: vi.fn(async () => ({ count: 0 })),
     mockTriggerBuild: vi.fn(async () => ({ name: 'pr-1' })),
   };
 });
@@ -104,26 +95,6 @@ vi.mock('~/env/server', () => ({
 }));
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) => flag === 'app-blocks-pipeline-enabled'),
-}));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    appBlock: {
-      findFirst: mockAppBlockFindFirst,
-      findUnique: vi.fn(async () => ({ app: { userId: 77 } })),
-    },
-    appBlockPublishRequest: { findFirst: mockReadPubReqFindFirst },
-    user: { findUnique: async () => ({ username: 'author' }) },
-  },
-  dbWrite: {
-    appBlock: { update: vi.fn() },
-    appBlockPublishRequest: {
-      findFirst: mockWritePubReqFindFirst,
-      create: mockPubReqCreate,
-      update: mockPubReqUpdate,
-      updateMany: mockPubReqUpdateMany,
-      findMany: async () => [],
-    },
-  },
 }));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
   BlockManifestValidator: { validate: mockValidate, validateSubmission: mockValidate },
@@ -148,6 +119,24 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
   assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
   assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
 }));
+
+// The database is the canonical shared mock (src/__tests__/mocks/db.mock.ts), wired per test.
+const mockPubReqCreate = dbMock.dbWrite.appBlockPublishRequest.create;
+const mockPubReqUpdate = dbMock.dbWrite.appBlockPublishRequest.update;
+const mockPubReqUpdateMany = dbMock.dbWrite.appBlockPublishRequest.updateMany;
+const mockWritePubReqFindFirst = dbMock.dbWrite.appBlockPublishRequest.findFirst;
+
+function wireDb() {
+  dbMock.dbRead.appBlock.findFirst.mockImplementation(async () => state.appBlock);
+  dbMock.dbRead.appBlock.findUnique.mockImplementation(async () => ({ app: { userId: 77 } }));
+  dbMock.dbRead.appBlockPublishRequest.findFirst.mockImplementation(findRequest);
+  dbMock.dbRead.user.findUnique.mockImplementation(async () => ({ username: 'author' }));
+  mockWritePubReqFindFirst.mockImplementation(findRequest);
+  mockPubReqCreate.mockImplementation(async () => undefined);
+  mockPubReqUpdate.mockImplementation(async () => undefined);
+  mockPubReqUpdateMany.mockImplementation(async () => ({ count: 0 }));
+  dbMock.dbWrite.appBlockPublishRequest.findMany.mockImplementation(async () => []);
+}
 
 /** The message approveRequest writes for APPROVING_ID (the real writer, so reader and writer agree). */
 function approveMessage(publishRequestId = APPROVING_ID) {
@@ -231,6 +220,7 @@ function expectRecordedForReview(res: { _status: number; _body: any }, sha: stri
 describe("git-push webhook — the approve's own commit, before its markers are written", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    wireDb();
     state.appBlock = {
       id: APP_BLOCK_ID,
       appId: `app-${SLUG}`,
