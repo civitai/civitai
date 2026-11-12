@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 import * as z from 'zod';
 
-import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead } from '~/server/db/client';
 import {
   getCollectionById,
@@ -10,11 +9,11 @@ import {
 } from '~/server/services/collection.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
+import { publicCoverImageSelect, toPublicCoverImage } from '~/server/utils/public-cover-image';
 import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils/flags';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
@@ -85,35 +84,27 @@ export default MixedAuthEndpoint(async function handler(
     // maps it to the same 404.
     const collection = await getCollectionById({ input: { id } });
 
-    const coverWithinCeiling =
-      !!collection.image?.url &&
-      (!collection.image.nsfwLevel || Flags.intersects(collection.image.nsfwLevel, browsingLevel));
-    // Same poi/minor exclusion the public image endpoints apply. getCollectionById
-    // doesn't select these, so look them up only for a cover that is otherwise shown.
-    const coverFlags =
-      coverWithinCeiling && collection.image
-        ? await dbRead.image.findUnique({
-            where: { id: collection.image.id },
-            select: { poi: true, minor: true },
-          })
-        : null;
-    const showCover = !!coverFlags && !coverFlags.poi && !coverFlags.minor;
+    // getCollectionById returns only a cover that passes the servable-cover check, without the
+    // fields the public check needs, so read those for that cover.
+    const cover = collection.image
+      ? await dbRead.image.findUnique({
+          where: { id: collection.image.id },
+          select: publicCoverImageSelect,
+        })
+      : null;
+    const coverImage = toPublicCoverImage(cover, browsingLevel);
 
     return res.status(200).json({
       id: collection.id,
       name: collection.name,
       description: collection.description ?? null,
       type: collection.type ?? null,
+      mode: collection.mode ?? null,
       nsfwLevel: collection.nsfwLevel ?? null,
       read: collection.read,
       isPublic: collection.read === CollectionReadConfiguration.Public,
-      coverImageUrl:
-        showCover && collection.image?.url
-          ? getEdgeUrl(collection.image.url, {
-              width: 450,
-              type: collection.image.type ?? undefined,
-            })
-          : null,
+      coverImage,
+      coverImageUrl: coverImage?.url ?? null,
       user: collection.user
         ? { id: collection.user.id, username: collection.user.username ?? null }
         : { id: collection.userId, username: null },
