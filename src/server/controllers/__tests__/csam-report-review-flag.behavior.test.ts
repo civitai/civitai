@@ -93,6 +93,7 @@ beforeAll(async () => {
       "userId" int,
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3),
+      images jsonb NOT NULL DEFAULT '[]',
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
     CREATE TABLE "ImageDeferredBlockEffect" ("imageId" int PRIMARY KEY);

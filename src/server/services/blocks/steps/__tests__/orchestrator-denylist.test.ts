@@ -74,6 +74,20 @@ describe('orchestrator denylist — the predicate', () => {
     }
   });
 
+  it('refuses a $type that is not ASCII letters and digits', () => {
+    for (const t of [
+      'cu\u017ftomComfy',
+      'custom Comfy',
+      'customComfy\u200b',
+      '\uff43omfy',
+      'x_guard_moderation',
+      'xGuard-Moderation',
+      'a.b',
+    ]) {
+      expect(() => assertStepTypeAllowed(t)).toThrow(PlatformInternalStepTypeError);
+    }
+  });
+
   it('allows an ordinary generation type', () => {
     expect(() => assertStepTypeAllowed('imageGen')).not.toThrow();
     expect(() => assertStepTypeAllowed('videoGen')).not.toThrow();

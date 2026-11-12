@@ -98,6 +98,23 @@ describe('🔴 buildRecommendHoverMessage — the percentage is REACHABLE (F1)',
     ).toBe('No reviews yet');
   });
 
+  it('reviews present but no percentage (below the threshold) → counts, NOT "No reviews yet"', () => {
+    // `recommendPct: null` no longer means "no reviews": the server withholds it below
+    // LISTING_RECOMMEND_PCT_MIN_REVIEWS. Only `reviewCount === 0` is the empty case.
+    expect(
+      buildRecommendHoverMessage({
+        recommend: { recommendedCount: 3, notRecommendedCount: 1, recommendPct: null },
+        reviewCount: 4,
+      })
+    ).toBe("4 reviews · 3 recommend · 1 doesn't");
+    expect(
+      buildRecommendHoverMessage({
+        recommend: { recommendedCount: 1, notRecommendedCount: 0, recommendPct: null },
+        reviewCount: 1,
+      })
+    ).toBe("1 review · 1 recommends · 0 don't");
+  });
+
   it('the percentage tracks the rollup rather than a constant', () => {
     // Anti-hardcode control: move the input and require the output to move with it. A
     // mutant returning a fixed string, or one that reads the wrong field, dies here even

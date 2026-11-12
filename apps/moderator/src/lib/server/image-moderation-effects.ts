@@ -15,6 +15,7 @@ import { getSysRedis } from './redis';
 import { syncSearchIndex } from './search-index';
 import { logAxiomError, logToAxiom } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 
 /**
  * Run a post-write side effect so it cannot fail the moderation action that already happened.
@@ -310,6 +311,7 @@ export async function notifyImageTosViolation(image: {
    *  before this field existed. */
   reason?: string;
 }): Promise<boolean> {
+  if (isFeedbackCaptureOwner(image.ownerId)) return false;
   try {
     await getNotifications().createNotification({
       userId: image.ownerId,

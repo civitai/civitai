@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -356,6 +357,22 @@ describe('handleBlockImages over held and other images', () => {
       { imageId: FLAGGED_LIVE, notifyOwner: true, reportReason: null },
       { imageId: FLAG_REMOVED, notifyOwner: false, reportReason: null },
     ]);
+  });
+
+  it('notifies no one for a feedback page capture, where an ordinary owner is told (control)', async () => {
+    const CAPTURE = 99;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", "pHash")
+        VALUES (${CAPTURE}, ${FEEDBACK_CAPTURE_OWNER_ID}, 'Blocked', 'moderated', 32, NULL, 299);
+    `);
+
+    await handleBlockImages({
+      ids: [CAPTURE, OTHER_REASON],
+      include: ['user-notification'],
+      moderatorId: 2,
+    });
+
+    expect(notifiedImages()).toEqual([`/images/${OTHER_REASON}`]);
   });
 
   it('defers nothing when it sends no notice', async () => {

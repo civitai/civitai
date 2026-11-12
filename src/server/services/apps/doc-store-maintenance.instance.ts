@@ -10,12 +10,15 @@ import { appdataDb } from '~/server/db/appdataDb';
 import { logToAxiom } from '~/server/logging/client';
 import type { DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { createDocStoreMaintenance } from '~/server/services/apps/doc-store';
+import { docStoreUserLimits } from '~/server/services/blocks/user-app-caps.service';
 
 let instance: DocStoreMaintenance | undefined;
 
 export function getDocStoreMaintenance(): DocStoreMaintenance {
   return (instance ??= createDocStoreMaintenance({
     db: appdataDb,
+    // A migration's rewrite is charged like a write: each user's ceiling is their tier's.
+    userLimits: docStoreUserLimits,
     onRefused: (role) => {
       logToAxiom(
         {

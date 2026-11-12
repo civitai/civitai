@@ -577,8 +577,8 @@ With the first write flip (the moderation items moved here from Phases 1 and 2):
 - [x] No legal holds on comments (decided 2026-11-04, Briant, on the CSAM reviewer's word): every
       comment delete is a plain delete and an entity's delete takes its comments with it, on every
       table. A reported user's comments are kept as evidence in the CSAM report archive instead
-      (`userContentSections` in `csam.service-new.ts`). The `removedByAuthor` columns stay until a
-      migration drops them
+      (`userContentSections` in `csam.service-new.ts`). `CommentV3.removedByAuthor` is dropped by the
+      Phase 6 migration; `Comment`'s copy goes with that table
 - [ ] Clavata path, so `CommentV3` is moderated exactly as `CommentV2` is (decided 2026-10-30):
       `EntityType` value `CommentV3` + `trg_moderation_commentv3`, firing only on direct writes
       (`20261211120000_comment_v3_moderation_trigger`, applied in prod 2026-10-30 in the same
@@ -751,12 +751,11 @@ Tooling / tests:
 **Gate:** zero code paths query the old tables (grep proves it); notifications + metrics verified
 continuous across the cutover.
 
-Deliberate old-table readers left until the Phase 6 teardown (the gate's grep excludes them): the
-personal-data export (`personal-data-export/registry.ts`) and reaction erasure
-(`user-reaction-erasure.service.ts`), which must cover rows still held; the CSAM comment archive
-(`archiveUserComments` in `csam.service-new.ts`) and hold context text (`csam-context-text.ts`),
-which read the CommentV2 rows that never reached CommentV3; and the `comment-v3-mirror.sql.behavior`
-test with its fixture.
+The old-table readers left through Phase 5 (the personal-data export, reaction erasure, the CSAM
+comment archive `archiveUserComments` and hold context text `csam-context-text.ts`, and the
+`comment-v3-mirror.sql.behavior` test and the old-row case in `commentv3/__tests__/write.sql.behavior`)
+are removed in Phase 6 (`docs/plans/comments-v3-phase6.md`).
+`comment-v3-fixture.ts` stays.
 
 ## Phase 5.5 — Shared builders (its own PR, decided 2026-11-09)
 
@@ -830,7 +829,7 @@ special case stays with the `CommentV2` Buzz entity type, Group B):
 
 With the old tables (before the drops below):
 
-- [ ] Old arms beside a v3 one: removed in Phase 5 — `block-check.service.ts` (`ownersForCommentV2`,
+- [x] Old arms beside a v3 one: removed in Phase 5 — `block-check.service.ts` (`ownersForCommentV2`,
       `threadAncestorsCte`; CommentV3 is the only path); the `user.service.ts` account wipe and ban
       CommentV2 arms and `v3SurfaceCommentIds`; `bulkDeleteCommentsV2` and `deleteCommentsV2` (now
       `bulkDeleteComments`); `v3WriteCommentIds` and `bulkSet`/`bulkClearCommentV2TosViolation`
@@ -838,9 +837,10 @@ With the old tables (before the drops below):
       `setV3SurfaceHidden`; `reaction.service.ts` `isV3WriteComment` and the CommentV2 toggle arm;
       `reaction.controller.ts`'s CommentV2 tracking read; `hasV3SurfaceTwinSql` and its
       exclusions; the `CommentTopic` delete ahead of an article (the entity cascade covers it); the
-      reverse copy's `removedByAuthor` carry. Left: the `goodContent.reward.ts` `CommentV3` special
-      case (stays with the `CommentV2` Buzz entity type, Group B) and the `removedByAuthor` columns (a migration)
-- [ ] Text-scan: removed in Phase 5 — `comment.profile.ts` and `comment-v2.profile.ts` with the
+      reverse copy's `removedByAuthor` carry. The `goodContent.reward.ts` `CommentV3` special
+      case stays with the `CommentV2` Buzz entity type (Group B); `CommentV3.removedByAuthor` is
+      dropped by the Phase 6 migration (`Comment`'s copy goes with that table)
+- [x] Text-scan: removed in Phase 5 — `comment.profile.ts` and `comment-v2.profile.ts` with the
       `Comment`/`CommentV2` entity types, their cases in `csam-hold-decision.ts` and the Clavata
       cutover set, and the scam adapter's `commentsV2` cleanup kind (now `comments`; a stored
       `commentsV2` record still restores; the hand-run SQL rewrote the stored ones on 2026-11-10). `mode.ts`'s
@@ -851,11 +851,10 @@ With the old tables (before the drops below):
       `src/server/common/__tests__/comment-v3-surfaces.parity.test.ts`; `public.Comment`/`public.CommentV2`
       in `config/index.ts`, `scripts/create-kafka-topics.ts` and `scripts/sql/replica-identity.sql`.
       Left: deleting the Kafka topics themselves (ask an infra owner)
-- [ ] Old main-app files: `commentsv2.service.ts` deleted in Phase 5 (the owner lookup moved to
+- [x] Old main-app files: `commentsv2.service.ts` deleted in Phase 5 (the owner lookup moved to
       `comment-owner.service.ts`, the judge read to `challenge-judge-review.service.ts`), with
-      `getImageThread` in `@civitai/db-queries/hot-reads` and its parity case. Left:
-      `comment.schema.ts`, still imported by `commentv3.router.ts` and the usage limits, so it is
-      renamed or folded into `commentv3.schema.ts` rather than deleted. Earlier: `comment.service.ts`,
+      `getImageThread` in `@civitai/db-queries/hot-reads` and its parity case; `comment.schema.ts`
+      folded into `commentv3.schema.ts` in Phase 6. Earlier: `comment.service.ts`,
       `comment.router.ts`, `comment.controller.ts`, `comment.selector.ts` and
       `components/CommentSection/` went with the model flip; `commentv2.router.ts`,
       `commentv2.controller.ts`, `commentv2.schema.ts`, `commentsv2.reply-threads.ts`,
@@ -870,46 +869,52 @@ With the old tables (before the drops below):
 - [x] Backfill and parity: `comment-v3-backfill.service.ts` and
       `api/admin/temp/comment-v3-backfill.ts`; `jobs/comment-v3-parity.ts`, its registration in
       `api/webhooks/run-jobs/[[...run]].ts`, and the `comment_v3_parity_finding` gauge (Phase 5).
-      The `comment-v3-parity:last` KeyValue row is data, left for the teardown
-- [ ] Transition-only tests: removed in Phase 5 — `comment-v3-backfill.sql.behavior`,
+      The `comment-v3-parity:last` KeyValue row is deleted by the Phase 6 migration
+- [x] Transition-only tests: removed in Phase 5 — `comment-v3-backfill.sql.behavior`,
       `comment-v3-reverse-copy.sql.behavior`, `comment-v3-parity-verdict`,
       `jobs/__tests__/comment-v3-parity`, the v2 cases of
       `commentv3/__tests__/scam-cleanup.sql.behavior`, and the v2 arms of
       `bulk-delete-comments.behavior.test.ts` and `remove-all-content-legal-hold.behavior.test.ts`;
-      `commentsv2.threadMute.service.test.ts` is gone. Left: `comment-v3-mirror.sql.behavior` and the
-      mirror schema `comment-v3-fixture.ts` loads, which go with the mirror's functions
+      `commentsv2.threadMute.service.test.ts` is gone. `comment-v3-mirror.sql.behavior` went in Phase 6.
+      `comment-v3-fixture.ts` stays: the SQL tests replay the real migration history from it, and
+      the moderation, scam-cleanup and write tests replay it through the Phase 6 teardown
 
 ### Database teardown
 
-- [ ] 🔴 **Verify `CommentMute` + `CommentTopicMute` are populated BEFORE dropping `Thread`** —
-      `ThreadMute_threadId_fkey` is `ON DELETE CASCADE`, so the teardown deletes every mute a user
-      ever set, silently
-- [ ] Phase 5 migration `20270101120000_comment_v3_old_table_triggers_off`: drops the eight
-      `commentv3_mirror` triggers and `trg_moderation_comment`/`trg_moderation_commentv2`, keeping
-      their functions. Written 2026-11-09, not applied; apply by hand before the Phase 5 deploy (plan
-      "Deploy")
-- [ ] Before any table drop: drop the Phase 2 mirror triggers (all named `commentv3_mirror`; the
-      Phase 5 migration above drops them) and the functions that take old-table row types as parameters (`commentv3_thread_entity`,
-      `commentv3_mirror_v1`, `commentv3_mirror_v1_one`, `commentv3_mirror_v2`,
-      `commentv3_mirror_v2_one`) — `DROP TABLE` fails while they exist
-- [ ] Before the drops: copy the Q&A comments into a `qa_archive` schema (decision 1, amended
-      2026-11-02): every `Thread` with `questionId` or `answerId` and the reply threads below it,
-      their `CommentV2` rows and those rows' `CommentV2Reaction` and `CommentV2Report` rows.
-      Nothing reads the schema; it is not part of the `archive` drop below
-- [ ] Drop order: `ThreadMute` → `CommentReaction`/`CommentV2Reaction`/`CommentReport`/
-      `CommentV2Report` → `Comment`/`CommentV2` → `Thread`
-- [ ] Drop triggers `comment_count_update` (function `update_thread_comment_count`) and
-      `comment_reaction_count_update` (`trg_moderation_comment` and `trg_moderation_commentv2` go
-      with the Phase 5 migration above), and
-      the remaining `commentv3_*` functions the mirror migration created (`ensure_topic`,
-      `clamp_parent`, `v1_id_floor`, `mirror_delete` and the eight `mirror_*_trigger` functions)
-- [ ] Remove any remaining Thread entries from `schema-drift/drift-baseline.json` + update
-      remediation plan and `production-plan.test.ts`
-- [ ] `DROP SCHEMA archive CASCADE` (the ten purge-archive tables) once the old tables are gone
-- [ ] `EntityType` values `Comment`/`CommentV2` **left in place** (read-time aliases only)
-- [ ] `job-queue.ts` unused mappings deleted (the `Comment`/`CommentV2` ones went in Phase 5);
-      schema reverse-relations cleaned;
-      `db:generate` + `db:check-generated` clean
-- [ ] Plan doc + this checklist marked complete; `docs-drift-review` over the final diff
+Migration `20270102120000_comment_v3_teardown` (Phase 6 PR), applied by hand after that PR deploys:
+the previous build still reads the old tables (reaction erasure, the personal-data export, the CSAM
+comment archive and context text) and selects `CommentV3.removedByAuthor`.
+
+- [x] 🔴 **Verify `CommentMute` + `CommentTopicMute` are populated BEFORE dropping `Thread`** —
+      `ThreadMute_threadId_fkey` is `ON DELETE CASCADE`. Verified on prod 2026-11-10: every
+      comment-level and section-level `ThreadMute` has its `CommentMute` or `CommentTopicMute` row; one mute sits on a thread
+      with no entity, which nothing can map
+- [x] Phase 5 migration `20270101120000_comment_v3_old_table_triggers_off` (the mirror triggers and
+      `trg_moderation_comment`/`_commentv2`), applied 2026-11-10 before the Phase 5 deploy
+- [x] Before the teardown on prod: the held users' comments in the orphan purge's `archive` schema,
+      their only copy, written to the CSAM bucket by a local one-off run (2026-11-11, read back)
+- [ ] The teardown migration, applied on each writable environment after the Phase 6 deploy, in one
+      transaction:
+      - keeps none of the comments never copied to CommentV3, on Q&A and club posts (Briant,
+        2026-11-10 and 2026-11-11)
+      - drops the functions taking old-table row types, then the eight tables in one statement (no
+        CASCADE, so a view, foreign key or row-typed function depending on them fails the migration;
+        none is defined in this repo), then the old count
+        functions and the mirror's remaining `commentv3_*` functions
+      - drops the orphan purge's `archive` schema, the `comment-v3-parity:last` KeyValue row and
+        `CommentV3.removedByAuthor`
+      - keeps `comment_shared_id_seq` (CommentV3 draws its ids from it) and the live CommentV3
+        triggers and functions
+- [x] Schema: the eight models and their 25 reverse relations removed from `schema.full.prisma`;
+      `db:generate` regenerated. `drift-baseline.json` had no old-table entries; the remediation
+      `production-plan.test.ts` and the drift tests' old-table entries are updated
+- [x] Code: the CSAM context reader (`csam-context-text.ts`) and the held-user comment archive
+      (`archiveUserComments`) read CommentV3 only (the unmigrated rows, on Q&A and club posts, are
+      dropped); reaction erasure, the personal-data export registry
+      and the reaction selector no longer name the old tables
+- [x] `EntityType` values `Comment`/`CommentV2` **left in place** (read-time aliases only)
+- [x] `job-queue.ts`: no old-type mapping is left (they went in Phase 5)
+- [ ] Plan doc + this checklist marked complete after the migration runs; `docs-drift-review` over
+      the final diff
 
 **Gate:** prod schema contains no old comment tables; drift gate green; full unit suite green.

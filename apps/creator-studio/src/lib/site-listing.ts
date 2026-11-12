@@ -1,11 +1,13 @@
 import { allBrowsingLevelsFlag, Flags, sfwBrowsingLevelsFlag } from '@civitai/shared';
 
 export type Site = 'com' | 'red';
-/** The models page's site filter: on both sites, or on only one of them. */
-export type SiteFilter = 'both' | Site;
+/** The models page's site filter: on both sites, on only one of them, or showing a separate civitai.com face. */
+export type SiteFilter = 'both' | Site | 'com-face';
 
 export function parseSiteFilter(value: string | null | undefined): SiteFilter | undefined {
-  return value === 'both' || value === 'com' || value === 'red' ? value : undefined;
+  return value === 'both' || value === 'com' || value === 'red' || value === 'com-face'
+    ? value
+    : undefined;
 }
 
 export type SiteListing = { com: boolean; red: boolean; note: string | null };

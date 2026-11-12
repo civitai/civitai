@@ -16,6 +16,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
   // on every mini request.
   DOWNLOAD_HASH_URLS = 'download-hash-urls',
+  // On: "more like this" stops capping results at the anchor image's level. Off or missing, the cap
+  // holds. Create the key in Flipt (disabled) before this deploys: a missing key logs on every eval.
+  SEMANTIC_SIMILAR_ANCHOR_CAP_OFF = 'semantic-similar-anchor-cap-off',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
@@ -330,8 +333,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
-  // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts.
+  // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts, which also
+  // still handles an `enforce-anon` variant should the flag define one.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
+  // Variant: `log` | `enforce`; any other answer is off. Read by download-credential-gate.ts.
+  DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
@@ -400,6 +406,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Records image-scan flags in the moderator label queue. DEFAULT-OFF: leave it off until the queue's
   // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
   SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',
+
+  // Stores the rating axes an imageScanning result already carries in ImageAxisRating. DEFAULT-OFF:
+  // leave it off until the ImageAxisRating migration is applied. Shadow only: never changes the
+  // verdict. Evaluated with the imageId, so ramp by percentage or boolean.
+  IMAGE_AXIS_SHADOW_WRITE = 'image-axis-shadow-write',
 
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.

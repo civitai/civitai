@@ -23,7 +23,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, ingestion text, "needsReview" text);
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
-      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+      images jsonb NOT NULL DEFAULT '[]', "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
     CREATE TABLE "ImageDeferredBlockEffect" ("imageId" int PRIMARY KEY, "violationType" text);
   `);

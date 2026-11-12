@@ -161,7 +161,7 @@
       <BuzzBalances userId={result.identity.id} />
       <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
         {#if data.grants['user.buzz.send']}
-          <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
+          <div class="xl:sticky xl:top-0 xl:w-96 xl:shrink-0">
             <BuzzTransactionPanel
               userId={result.identity.id}
               onSuccess={() => (version += 1)}
@@ -213,7 +213,7 @@
               : undefined}
           />
         </div>
-        <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
+        <div class="xl:sticky xl:top-0 xl:w-96 xl:shrink-0">
           <GenerationPanel {signals} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
         </div>
       </div>
@@ -222,9 +222,8 @@
     {:else if section === 'bounties'}
       <BountiesPanel {account} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'comments'}
-      <!-- No `onSuccess`: the panel keeps its own rows in step, and a refresh here would discard them. -->
+      <!-- No `onSuccess`: the panel fetches its own pages and refetches the current one after a delete. -->
       <CommentsPanel
-        {account}
         userId={result.identity.id}
         canBulkAct={!!data.grants['user.comments.bulk']}
         civitaiUrl={data.civitaiUrl}

@@ -3,7 +3,7 @@ import type { SessionUser } from '~/types/session';
 import type { RateLimit } from '~/server/utils/rate-limit-window';
 import { postRateLimits } from '~/server/schema/post.schema';
 import { articleRateLimits } from '~/server/schema/article.schema';
-import { commentRateLimits } from '~/server/schema/comment.schema';
+import { commentRateLimits } from '~/server/schema/commentv3.schema';
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
 import { resourceLoadRateLimits } from '~/server/routers/resource-load.router';
 import {

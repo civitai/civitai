@@ -65,6 +65,7 @@ beforeAll(async () => {
       (25, 100, ${UPLOADER}, 1, 'Scanned', true, NULL),   -- REJECTED, added by the collection owner
       (26, 200, ${UPLOADER}, 4, 'Scanned', true, NULL),   -- REVIEW submission, managed post, above the level
       (27, 100, ${UPLOADER}, 0, 'Pending', false, NULL),  -- REVIEW, unrated, added by the collection owner
+      (28, 100, ${UPLOADER}, 0, 'Scanned', false, NULL),  -- REVIEW submission, scanned, unrated
       (30, 100, ${UPLOADER}, 1, 'Scanned', true, NULL);   -- REVIEW submission of another collection
 
     INSERT INTO "CollectionItem" ("collectionId", status, "imageId", "addedById") VALUES
@@ -72,7 +73,8 @@ beforeAll(async () => {
       (${COLLECTION}, 'ACCEPTED', 22, ${UPLOADER}), (${COLLECTION}, 'REJECTED', 23, ${UPLOADER}),
       (${COLLECTION}, 'REVIEW', 24, ${UPLOADER}), (${COLLECTION}, 'REJECTED', 25, ${COLLECTION_OWNER}),
       (${COLLECTION}, 'REVIEW', 26, ${UPLOADER}),
-      (${COLLECTION}, 'REVIEW', 27, ${COLLECTION_OWNER}), (${OTHER_COLLECTION}, 'REVIEW', 30, ${UPLOADER});
+      (${COLLECTION}, 'REVIEW', 27, ${COLLECTION_OWNER}), (${OTHER_COLLECTION}, 'REVIEW', 30, ${UPLOADER}),
+      (${COLLECTION}, 'REVIEW', 28, ${UPLOADER});
   `);
 });
 afterAll(() => db.close());
@@ -93,7 +95,7 @@ describe('a pending image read by a signed-in non-moderator', () => {
   });
 
   it('shows the uploader all of their own images within the level, plus their unrated ones', async () => {
-    expect(await visibleTo(UPLOADER)).toEqual([1, 2, 3, 4, 11, 20, 21, 22, 23, 25, 27, 30]);
+    expect(await visibleTo(UPLOADER)).toEqual([1, 2, 3, 4, 11, 20, 21, 22, 23, 25, 27, 28, 30]);
   });
 
   it("shows a collection manager the collection's reviewed images above the level, and no unrated, Blocked or acceptableMinor ones", async () => {
@@ -105,9 +107,10 @@ describe('a pending image read by a signed-in non-moderator', () => {
   // queue sets, and stops at REVIEW and REJECTED items their uploader submitted to a collection the
   // viewer manages, within the viewer's level. Image 27 (unrated, not submitted by its uploader) and
   // 25 stay out.
-  it("shows a judge the collection's acceptableMinor and unrated submissions in the review queue", async () => {
-    expect(await visibleTo(MANAGER, COLLECTION)).toEqual([2, 10, 20, 21, 23]);
-    expect(await visibleTo(COLLECTION_OWNER, COLLECTION)).toEqual([2, 20, 21, 23]);
+  it("shows a judge the collection's acceptableMinor and scanned unrated submissions in the review queue", async () => {
+    // 21 is 28 before its scan finished: withheld.
+    expect(await visibleTo(MANAGER, COLLECTION)).toEqual([2, 10, 20, 23, 28]);
+    expect(await visibleTo(COLLECTION_OWNER, COLLECTION)).toEqual([2, 20, 23, 28]);
   });
 
   it("hides the same submissions from the judge's reads outside the review queue", async () => {
@@ -134,12 +137,12 @@ const passOthersConditions = async (userId: number) => {
 
 describe("the per-image conditions on another user's pending images", () => {
   it('drop images awaiting moderator review, acceptableMinor ones, and rated ones never reviewed', async () => {
-    expect(await passOthersConditions(STRANGER)).toEqual([2, 10, 11, 12, 21, 24, 27]);
+    expect(await passOthersConditions(STRANGER)).toEqual([2, 10, 11, 12, 21, 24, 27, 28]);
   });
 
   it("exempt the viewer's own images", async () => {
     expect(await passOthersConditions(UPLOADER)).toEqual([
-      1, 2, 3, 4, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 26, 27, 30,
+      1, 2, 3, 4, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30,
     ]);
   });
 });

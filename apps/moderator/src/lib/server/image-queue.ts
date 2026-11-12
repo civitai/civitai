@@ -1,4 +1,5 @@
 import { fail, type Actions } from '@sveltejs/kit';
+import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import {
@@ -45,6 +46,11 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(10).max(200).catch(100),
   level: z.coerce.number().int().min(0).catch(allBrowsingLevelsWithBlockedFlag),
   userId: int4Id.optional().catch(undefined),
+  captures: z
+    .literal('1')
+    .transform(() => true)
+    .optional()
+    .catch(undefined),
 });
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
@@ -82,7 +88,8 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
  * `/reports/image` (the reported-image queue, which moved there from `/images/reported`).
  */
 export async function loadImageQueue(view: ImageViewSlug, url: URL) {
-  const { cursor, limit, level, userId } = parseQuery(url, querySchema);
+  const { cursor, limit, level, userId, captures } = parseQuery(url, querySchema);
+  const capturesOnly = captures ?? false;
   const tagIds = parseIds(url.searchParams.get('tags'));
   const excludedTagIds = parseIds(url.searchParams.get('notags'));
 
@@ -130,6 +137,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       browsingLevel: level,
       tagIds,
       excludedTagIds,
+      capturesOnly,
       cursor,
       limit,
     });
@@ -149,6 +157,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
         }))
       ),
       nextCursor,
+      capturesOnly,
     };
   }
 
@@ -159,6 +168,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     tagIds,
     excludedTagIds,
     userId: csamUserId,
+    capturesOnly,
     cursor,
     limit,
   });
@@ -183,6 +193,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     ),
     nextCursor,
     userId: csamUserId ?? null,
+    capturesOnly,
   };
 }
 
@@ -307,11 +318,12 @@ export const imageQueueActions = {
     if (typeof input === 'string') return fail(400, { error: input });
     const result = await dismissUserFromCsamQueue({ ...input, moderatorId: locals.user.id });
     if (!result.ok)
-      return fail(result.reason === 'unavailable' ? 503 : 409, {
-        error:
-          result.reason === 'unavailable'
-            ? 'Dismissing is not available yet. Nothing was dismissed.'
-            : `User #${input.userId}'s queue changed since it was shown. Nothing was dismissed. Reload.`,
+      return fail({ unavailable: 503, capture: 400, changed: 409 }[result.reason], {
+        error: {
+          unavailable: 'Dismissing is not available yet. Nothing was dismissed.',
+          capture: `${FEEDBACK_CAPTURE_OWNER_REFUSAL} Nothing was dismissed.`,
+          changed: `User #${input.userId}'s queue changed since it was shown. Nothing was dismissed. Reload.`,
+        }[result.reason],
       });
     return {
       success: true,

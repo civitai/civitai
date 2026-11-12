@@ -45,6 +45,10 @@ const COLLECTION_ID = 40;
 const SHOWN = 101;
 const HIDDEN = 102;
 const MISSING = { collection: null, permissions: null, items: [] };
+const COLLECTION_OWNER = 600;
+// May add to the collection without reading it (Private read, write granted).
+const WRITER = 601;
+let collectionPrivate = false;
 
 type User = { id: number; isModerator?: boolean } | undefined;
 const ANON: User = undefined;
@@ -73,7 +77,16 @@ beforeEach(() => {
     mode: CollectionMode.Contest,
     type: CollectionType.Image,
   });
-  m.permissions.mockImplementation(async ({ userId }: { userId?: number }) => ({ userId }));
+  collectionPrivate = false;
+  // getUserCollectionPermissionsById's rule, reduced: a Private collection is read only by its
+  // owner and moderators.
+  m.permissions.mockImplementation(
+    async ({ userId, isModerator }: { userId?: number; isModerator?: boolean }) => {
+      const manage = userId === COLLECTION_OWNER || !!isModerator;
+      const write = userId === WRITER;
+      return { userId, read: !collectionPrivate || manage, write, manage };
+    }
+  );
   m.visibleIds.mockImplementation(async ({ ids, userId, isModerator }) => {
     const opens = isModerator || userId === OWNER;
     return new Set((ids as number[]).filter((id) => id !== HIDDEN || opens));
@@ -121,6 +134,40 @@ describe('post.getContestCollectionDetails visibility', () => {
 
   it('computes permissions for the signed-in viewer, not as signed out', async () => {
     postIs({});
-    expect((await detailsFor(STRANGER)).permissions).toEqual({ userId: STRANGER!.id });
+    expect((await detailsFor(STRANGER)).permissions).toMatchObject({ userId: STRANGER!.id });
+  });
+
+  it('answers a Private collection as none for a viewer who may not read it', async () => {
+    postIs({});
+    collectionPrivate = true;
+    // WRITER may add to it but not read it.
+    for (const user of [ANON, STRANGER, { id: WRITER }])
+      expect(await detailsFor(user)).toEqual(MISSING);
+    expect(m.getCollectionById).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.collectionItem.findMany).not.toHaveBeenCalled();
+  });
+
+  it("serves a Private collection's entries to its owner, a moderator and the post's owner", async () => {
+    postIs({});
+    collectionPrivate = true;
+    for (const user of [{ id: COLLECTION_OWNER }, MOD, SELF]) {
+      expect(itemImageIds(await detailsFor(user)).length).toBeGreaterThan(0);
+      expect(m.getCollectionById).toHaveBeenLastCalledWith(
+        expect.objectContaining({ viewer: { id: user.id, isModerator: user.isModerator } })
+      );
+    }
+  });
+
+  it('reads the collection as signed out, with no viewer, for a signed-out caller', async () => {
+    postIs({});
+    await detailsFor(ANON);
+    expect(m.getCollectionById).toHaveBeenLastCalledWith(
+      expect.objectContaining({ viewer: undefined })
+    );
+  });
+
+  it('gives a moderator their moderator permissions', async () => {
+    postIs({});
+    expect((await detailsFor(MOD)).permissions).toMatchObject({ manage: true });
   });
 });

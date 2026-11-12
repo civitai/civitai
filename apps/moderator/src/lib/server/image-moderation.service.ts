@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { dbRead, dbWrite } from './db';
 import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
 import { insertModActivityBatch, recordModActivity } from './mod-activity';
@@ -401,7 +402,7 @@ export async function dismissFromCsamQueue({
 
 export type DismissUserResult =
   | { ok: true; dismissed: number; remaining: number }
-  | { ok: false; reason: 'changed' | 'unavailable' };
+  | { ok: false; reason: 'changed' | 'unavailable' | 'capture' };
 
 class QueueChanged extends Error {}
 
@@ -422,6 +423,8 @@ export async function dismissUserFromCsamQueue({
   version: string;
   moderatorId: number;
 }): Promise<DismissUserResult> {
+  // Captures belong to no one; each is dismissed on its own, from its image.
+  if (isFeedbackCaptureOwner(userId)) return { ok: false, reason: 'capture' };
   let claimed: DeferredBlockEffect[] = [];
   try {
     const result = await dbWrite.transaction().execute(async (tx) => {

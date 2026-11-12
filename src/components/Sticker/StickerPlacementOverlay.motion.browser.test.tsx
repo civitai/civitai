@@ -71,7 +71,7 @@ const path: StickerTrack = encodeStickerTrack(
   }))
 );
 
-function Harness() {
+function Harness({ sticker: base = placed }: { sticker?: PlacedSticker }) {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [mounted, setMounted] = useState(true);
   const [renders, setRenders] = useState(0);
@@ -85,7 +85,7 @@ function Harness() {
         <StickerPlacementOverlay
           placements={
             // Each render moves the stored pose, so React rewrites the style playback wrote.
-            mounted ? [{ ...placed, data: { ...placed.data, x: start.x + renders * 0.05 } }] : []
+            mounted ? [{ ...base, data: { ...base.data, x: start.x + renders * 0.05 } }] : []
           }
           viewerId={99}
           sticker={sticker as never}
@@ -97,14 +97,14 @@ function Harness() {
   );
 }
 
-const render = async (track: StickerTrack, startSeconds = 0) => {
+const render = async (track: StickerTrack, startSeconds = 0, placement = placed) => {
   tracksQuery.mockReturnValue({ data: [{ id: 1, track }] });
   let time = startSeconds;
   Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
     configurable: true,
     get: () => time,
   });
-  renderWithProviders(<Harness />);
+  renderWithProviders(<Harness sticker={placement} />);
   await expect.element(page.getByAltText(':test:')).toBeInTheDocument();
   const video = page.getByTestId('media').element() as HTMLVideoElement;
   const box = () =>
@@ -196,6 +196,14 @@ describe('a recorded sticker moves with the video', () => {
 
     (page.getByRole('button', { name: 'Toggle' }).element() as HTMLElement).click();
     await expect.element(page.getByAltText(':test:')).toBeInTheDocument();
+    expect(left()).toBeCloseTo(50);
+  });
+
+  test('a pending sticker moves too, for the viewer it is shown to', async () => {
+    const pending: PlacedSticker = { ...placed, isPending: true };
+    const { left, seek } = await render(path, 0, pending);
+
+    seek(0.5);
     expect(left()).toBeCloseTo(50);
   });
 

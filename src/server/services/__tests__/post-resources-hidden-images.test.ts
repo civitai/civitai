@@ -50,7 +50,12 @@ beforeEach(() => {
   dbMock.dbRead.image.findMany.mockResolvedValue([{ id: SHOWN }, { id: HIDDEN }] as never);
   dbMock.dbRead.imageResourceNew.findMany.mockImplementation((async (args: {
     where: { imageId: { in: number[] } };
-  }) => USES.filter((u) => args.where.imageId.in.includes(u.imageId))) as never);
+    orderBy?: { imageId: 'asc' | 'desc' };
+  }) => {
+    const rows = USES.filter((u) => args.where.imageId.in.includes(u.imageId));
+    const dir = args.orderBy?.imageId === 'desc' ? -1 : 1;
+    return args.orderBy ? [...rows].sort((a, b) => dir * (a.imageId - b.imageId)) : rows;
+  }) as never);
   models = VIEW_ROWS.map((row) => ({
     id: row.modelId,
     status: 'Published',

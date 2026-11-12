@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { violationUserMessage } from '$lib/violations';
@@ -147,6 +148,10 @@ export async function fireDeferredBlockEffects(
   for (const { imageId, violationType, notifyOwner } of claimed) {
     const image = byId.get(imageId);
     if (!image || !notifyOwner) continue;
+    if (isFeedbackCaptureOwner(image.userId)) {
+      await log({ type: 'info', name: DEFERRED_NOTICE_LOG.skipped, imageId });
+      continue;
+    }
     if (withheld.has(image.userId)) {
       try {
         await insertModActivityBatch(dbWrite, {

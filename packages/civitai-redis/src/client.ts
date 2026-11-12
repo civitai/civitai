@@ -2229,12 +2229,30 @@ export const REDIS_SYS_KEYS = {
     // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
     ATTEMPTS: 'system:collection-ai-review:attempts',
   },
+  TRAINING_DATA_SCAN: {
+    // Self-heal resubmits per zip — `system:training-data-scan:heal-attempts:${fileId}:${urlHash}`.
+    HEAL_ATTEMPTS: 'system:training-data-scan:heal-attempts',
+    // Definite "can't read the zip" answers per zip — same key shape.
+    HEAL_UNREADABLE: 'system:training-data-scan:heal-unreadable',
+    // Self-heal workflows already taken back — `system:training-data-scan:heal-taken-back:${workflowId}`.
+    HEAL_TAKEN_BACK: 'system:training-data-scan:heal-taken-back',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).
     EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
     // Cumulative Buzz-spend cap counter, keyed `system:blocks:buzz-cap:${userId}:${appBlockId}:${day}`.
     BUZZ_CAP: 'system:blocks:buzz-cap',
+    // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
+    // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
+    // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT
+    // prefixed `buzz-cap`, so a prefix match on the counters never takes it in.
+    BUZZ_CAP_OPT_IN: 'system:blocks:buzz-opt-in',
+    // The viewer's LAST daily app Buzz cap check refused: `system:blocks:buzz-refused:
+    // ${userId}:${UTC-day}` = the cap it was refused at, expiring at the next UTC midnight. What
+    // the running app's paused notice reads; a passing check or opting in deletes it. Not
+    // prefixed `buzz-cap`.
+    BUZZ_CAP_REFUSED: 'system:blocks:buzz-refused',
     // Cumulative TIP-spend cap counter for the block tip endpoint, keyed
     // `system:blocks:tip-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP: that
     // bounds a user's daily generation SPEND; this bounds a user's daily Buzz
@@ -2330,6 +2348,10 @@ export const REDIS_SYS_KEYS = {
     // (`system:blocks:agent-review-autostart-reserved:${YYYY-MM-DD}`): the per-review cap is
     // reserved before the start and released once its report row exists (or the start failed).
     AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
+    // Model spend of the impersonation check on approved apps' listing edits, in US cents, per
+    // UTC day (`system:blocks:listing-check-spend:${YYYY-MM-DD}`): added to the day's agent-review
+    // spend, so it counts against the same automatic-start budget.
+    LISTING_CHECK_SPEND: 'system:blocks:listing-check-spend',
     // Live app pointer on the shared static server, per app slug. TAKEDOWN
     // (`...:${slug}`, no TTL) is set to 'attempted' when this platform starts a live unpublish or
     // restore for the app (the evidence a relist restores on), upgraded to 'confirmed' when an
@@ -2379,6 +2401,13 @@ export const REDIS_SYS_KEYS = {
      * MULTI (always created with its TTL); fail-closed on a redis error.
      */
     FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
+    /**
+     * SOURCE REPOS — one writer at a time per source repo, keyed
+     * `system:blocks:source-repo-lock:${slug}`. `SET NX EX` (60 s) around an App Assistant save or
+     * a backfill seed, so two saves of one app never race each other into a spurious conflict
+     * (`app-source-repo.service.ts`). Released by its holder; the TTL frees a dead holder's lock.
+     */
+    SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
@@ -2565,6 +2594,11 @@ export const REDIS_SYS_KEYS = {
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
     // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
     STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
+    // Training Studio's v2 image rating per dataset blob (packed), key :<raterModel>:<blobId lowercased>.
+    // Blobs are immutable.
+    STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
+    // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
+    STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
@@ -2689,7 +2723,6 @@ export const REDIS_SYS_KEYS = {
     FAMILY_LIVE: 'session:family-live',
     // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
     DEVICE_FAMILIES: 'session:device-families',
-    LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
     // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
     // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
     HUB_UPGRADE: 'session:hub-upgrade',
@@ -2732,9 +2765,9 @@ export const REDIS_SYS_KEYS = {
     // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
     // (`readMinimum`).
     COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
-    // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
-    // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
-    // and only new volume after that is filed again. No TTL.
+    // Hash: field = creator userId, value = JSON { filedAt, counterparties: { [userId]: two-way
+    // amount when last filed } }, so only new volume is filed again. Older entries have `warnedAt`
+    // and `chatId` in place of `filedAt` (`parseFiledRecord`). No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
     // String. How many other users the review follows Buzz through before it reaches the creator
     // again; the review clamps it to what it supports (`runCounterpartyReview`).
@@ -3125,7 +3158,7 @@ const REDIS_KEYS_UNPREFIXED = {
     USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
-    PROFILE_PICTURES: 'packed:caches:profile-pictures',
+    PROFILE_PICTURES: 'packed:caches:profile-pictures:v2',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
@@ -3257,6 +3290,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // only delays a brand-new epoch becoming generatable. See
     // `validateRawAirResources` in orchestration-new.service.
     TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
+    // `<ownerId>:<blobId>` -> a freshly signed url for a published training epoch, re-signed with
+    // the owner's orchestrator token. Short TTL, well under the signed lifetime; see mini/[id].ts.
+    EPOCH_BLOB_RESIGNED_URL: 'packed:caches:epoch-blob-resigned-url',
     // Per-user creator card (`user.getCreator` by id): the user row slice, links, stats, rank,
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.

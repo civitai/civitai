@@ -42,7 +42,6 @@ import {
   refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
@@ -62,6 +61,7 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
   enqueueCollectionRebuild,
@@ -123,7 +123,6 @@ import {
   JobQueueType,
   MediaType,
   Model3DStatus,
-  ModelHashType,
   ModelModifier,
   TagTarget,
   TagType,
@@ -1642,20 +1641,11 @@ export const addPostImage = async ({
 
   const post = await dbRead.post.findFirst({
     where: { id: props.postId },
-    select: {
-      userId: true,
-      collection: {
-        select: {
-          metadata: true,
-        },
-      },
-    },
+    select: { userId: true },
   });
 
   if (!post) throw throwNotFoundError(`No post with id ${props.postId}`);
   if (post.userId !== user.id) throw throwAuthorizationError();
-
-  const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
 
   // Idempotency guard: if the same (postId, url) pair was just saved — e.g. by
   // a retried mutation or a duplicated client submission — return the existing
@@ -1694,7 +1684,6 @@ export const addPostImage = async ({
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
-    skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
     clientUrl: serverMintedUrl ? undefined : true,
   });
 
@@ -1894,15 +1883,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
 };
 
-export const addResourceToPostImage = async ({
-  id: imageIds,
-  modelVersionId,
-  user,
-}: AddResourceToPostImageInput & { user: SessionUser }) => {
-  if (!imageIds.length) {
-    throw throwBadRequestError('Must include at least one image.');
-  }
-
+/** Looks up a version an uploader may credit to their images, or throws not found. */
+export async function findCreditableModelVersion(modelVersionId: number, user: SessionUser) {
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
@@ -1911,63 +1893,82 @@ export const addResourceToPostImage = async ({
         select: { ...modelVersionVisibilitySelect.model.select, name: true, id: true, type: true },
       },
       name: true,
-      files: {
-        select: {
-          hashes: {
-            select: {
-              hash: true,
-            },
-            where: {
-              type: ModelHashType.AutoV2,
-            },
-          },
-        },
-      },
     },
   });
 
   if (!modelVersion || !(await canViewModelVersion(modelVersion, user)))
     throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
+  return modelVersion;
+}
+
+type CreditableModelVersion = Awaited<ReturnType<typeof findCreditableModelVersion>>;
+
+/**
+ * Credits every version to every image as uploader-asserted (`detected: false`), in one locked
+ * insert with one round of cache busting. `skipOnSite` leaves on-site generations out instead of
+ * refusing the whole call.
+ */
+export async function creditResourcesToImages({
+  imageIds,
+  modelVersions,
+  user,
+  skipOnSite = false,
+}: {
+  imageIds: number[];
+  modelVersions: CreditableModelVersion[];
+  user: SessionUser;
+  skipOnSite?: boolean;
+}) {
+  if (!imageIds.length) {
+    throw throwBadRequestError('Must include at least one image.');
+  }
+  if (!modelVersions.length) return [];
 
   // Read from primary — users can attach a resource within seconds of posting
   // the image, so the replica (5-10s lag) would return fewer rows and throw
   // a spurious "Image not found".
   const images = await dbWrite.image.findMany({
     where: { id: { in: imageIds } },
-    select: { postId: true, meta: true, type: true },
+    select: { id: true, postId: true, meta: true, type: true },
   });
 
   if (images.length !== imageIds.length) {
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
-  // TODO technically this can be called with a combo of on/off site imgs
-  if (images.some((image) => !canAddManualResources(image))) {
+  let creditableIds = imageIds;
+  if (skipOnSite) {
+    creditableIds = images.filter((image) => canAddManualResources(image)).map((x) => x.id);
+    if (!creditableIds.length) return [];
+  } else if (images.some((image) => !canAddManualResources(image))) {
+    // TODO technically this can be called with a combo of on/off site imgs
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
+  const adding = modelVersions.map((version) => ({
+    modelVersionId: version.id,
+    modelType: version.model.type,
+  }));
   const createdResources = await dbWrite.$transaction(async (tx) => {
     // Serialises concurrent adds to the same image, so two requests cannot both pass the limit check.
     await tx.$queryRaw`SELECT id FROM "Image" WHERE id IN (${Prisma.join(
-      imageIds
+      creditableIds
     )}) ORDER BY id FOR UPDATE`;
     const existing = await tx.imageResourceHelper.findMany({
-      where: { imageId: { in: imageIds } },
+      where: { imageId: { in: creditableIds } },
       select: { imageId: true, modelVersionId: true, modelType: true, detected: true },
     });
-    for (const imageId of imageIds) {
+    for (const imageId of creditableIds) {
       const error = getManualResourceLimitError(
         existing.filter((r) => r.imageId === imageId),
-        [{ modelVersionId, modelType: modelVersion.model.type }]
+        adding
       );
       if (error) throw throwBadRequestError(error);
     }
 
     return tx.imageResourceNew.createManyAndReturn({
-      data: imageIds.map((imageId) => ({
-        modelVersionId,
-        imageId,
-        detected: false,
-      })),
+      data: creditableIds.flatMap((imageId) =>
+        adding.map(({ modelVersionId }) => ({ modelVersionId, imageId, detected: false }))
+      ),
       skipDuplicates: true,
       select: { modelVersionId: true, imageId: true },
     });
@@ -1985,8 +1986,10 @@ export const addResourceToPostImage = async ({
 
   await imageResourcesCache.refresh(createdResources.map((x) => x.imageId));
   await bustCacheTag(`images-user:${user.id}`);
-  await bustCacheTag(`images-modelVersion:${modelVersionId}`);
-  await bustCacheTag(`images-model:${modelVersion.model.id}`);
+  for (const version of modelVersions) {
+    await bustCacheTag(`images-modelVersion:${version.id}`);
+    await bustCacheTag(`images-model:${version.model.id}`);
+  }
 
   // Once per post, not per image: every image of a post shares its caches.
   const postIds = uniq(images.map((image) => image.postId).filter(isDefined));
@@ -2001,6 +2004,18 @@ export const addResourceToPostImage = async ({
       modelVersionId: { in: createdResources.map((x) => x.modelVersionId) },
     },
   });
+}
+
+export const addResourceToPostImage = async ({
+  id: imageIds,
+  modelVersionId,
+  user,
+}: AddResourceToPostImageInput & { user: SessionUser }) => {
+  if (!imageIds.length) {
+    throw throwBadRequestError('Must include at least one image.');
+  }
+  const modelVersion = await findCreditableModelVersion(modelVersionId, user);
+  return creditResourcesToImages({ imageIds, modelVersions: [modelVersion], user });
 };
 
 export const removeResourceFromPostImage = async ({
@@ -2063,11 +2078,9 @@ const readPostResourceRows = (id: number) =>
   dbRead.postResourceHelper.findMany({ where: { postId: id }, orderBy: { modelName: 'asc' } });
 
 /**
- * The resources of the post's images the viewer may open (`getImageIdsVisibleToViewer`), from
- * models they may see (`getModelIdsVisibleToViewer`). The view keeps one row per resource from any
- * of the post's images, so for anyone but the post's owner or a moderator a row stays only when a
- * visible image uses that version, and it names that image. The owner gets rows from all their
- * images, still only of models they may see.
+ * Moderators get every row. Anyone else gets rows of models they may see
+ * (`getModelIdsVisibleToViewer`; a row with no model is dropped). The post's owner gets them from
+ * all its images; others only from images they may open, each row naming such an image.
  */
 export const getPostResources = async ({
   id,
@@ -2247,7 +2260,25 @@ export const getPostContestCollectionDetails = async ({
       items: [],
     };
 
-  const collection = await getCollectionById({ input: { id: post.collectionId } });
+  const permissions = await getUserCollectionPermissionsById({
+    id: post.collectionId,
+    userId,
+    isModerator,
+  });
+  // A collection whose items the viewer may not read answers as none. The post's owner submitted
+  // it, so they always see it.
+  const isPostOwner = !!userId && userId === post.userId;
+  if (!isPostOwner && !canReadCollectionItems(permissions))
+    return {
+      collection: null,
+      permissions: null,
+      items: [],
+    };
+
+  const collection = await getCollectionById({
+    input: { id: post.collectionId },
+    viewer: userId ? { id: userId, isModerator } : undefined,
+  });
 
   if (!collection || collection?.mode !== CollectionMode?.Contest)
     return {
@@ -2289,11 +2320,6 @@ export const getPostContestCollectionDetails = async ({
       reviewedAt: true,
       tag: true,
     },
-  });
-
-  const permissions = await getUserCollectionPermissionsById({
-    id: post.collectionId,
-    userId,
   });
 
   return {

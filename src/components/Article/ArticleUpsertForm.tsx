@@ -1,6 +1,7 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
 import { Alert, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
+import { aspectRatioMap } from '~/components/CardTemplates/AspectRatioCard';
 import { openConfirmModal } from '@mantine/modals';
 import { IconLink, IconQuestionMark, IconSparkles, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -514,9 +515,11 @@ export function ArticleUpsertForm({ article }: Props) {
               label="Cover Image"
               description={
                 features.articleTypography
-                  ? `Shown on cards. Optional if you add a banner, which is then used on cards instead. Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`
-                  : `Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`
+                  ? `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight} when there is no banner. Optional if you add a banner: without a cover, cards crop the banner once it has been reviewed.`
+                  : `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}. Keep the subject near the top center.`
               }
+              cardCrop={aspectRatioMap.portrait}
+              previewWidth={constants.article.coverImageWidth}
               withAsterisk={!features.articleTypography}
             />
             {features.articleTypography && (
@@ -530,7 +533,7 @@ export function ArticleUpsertForm({ article }: Props) {
               <InputSimpleImageUpload
                 name="bannerImage"
                 label="Banner Image"
-                description={`Optional. Shown across the full width of the top of your article; the cover image is still used on cards. Use a wide 4:1 image, ${constants.article.bannerImageWidth} x ${constants.article.bannerImageHeight} suggested.`}
+                description={`Optional. Shown across the full width of the top of your article. Cards use your cover image, or this banner if there is no cover. Use a wide 4:1 image, ${constants.article.bannerImageWidth} x ${constants.article.bannerImageHeight} suggested.`}
                 aspectRatio={
                   constants.article.bannerImageHeight / constants.article.bannerImageWidth
                 }

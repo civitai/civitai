@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  creatorRailHeading,
+  CREATOR_RAIL_LIMIT,
   isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
@@ -325,5 +327,140 @@ describe('🔴 relatedRailFirstHeading — what a link to the rail may call it',
   it('while loading there is no answer yet (null), whatever the partial sections say', () => {
     const s = sections({ selfId: 'me', category: 'utility', sameCategory: [same('a')] });
     expect(relatedRailFirstHeading({ category: 'utility', sections: s, loading: true })).toBeNull();
+  });
+});
+
+/**
+ * "More by this developer" — the creator group, rendered FIRST.
+ *
+ * Its own cap (one row), so a prolific developer cannot push the category and popular groups
+ * off the rail; and it goes through the same self-exclusion and de-dup as the other groups, so
+ * the page you are on never appears and no app appears twice.
+ */
+describe('🔴 relatedRailSections — the creator group', () => {
+  const dev = (id: string) => card(id, 'games');
+
+  it('🔴 leads the rail, headed "More by <developer>", and EXCLUDES SELF', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: [dev('me'), dev('d1'), dev('d2')],
+      creatorName: 'pixelsmith',
+      sameCategory: [same('a')],
+      popular: [pop('p1')],
+    });
+    expect(shape(sections)).toEqual([
+      ['creator', 'More by pixelsmith', ['d1', 'd2']],
+      ['category', 'More in Utility', ['a']],
+      ['popular', 'Popular apps', ['p1']],
+    ]);
+  });
+
+  it('🔴 an app already in the creator group is not repeated in the category or popular group', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: [same('a'), dev('d1')],
+      creatorName: 'pixelsmith',
+      sameCategory: [same('a'), same('b')],
+      popular: [dev('d1'), pop('p1')],
+    });
+    expect(shape(sections)).toEqual([
+      ['creator', 'More by pixelsmith', ['a', 'd1']],
+      ['category', 'More in Utility', ['b']],
+      ['popular', 'Popular apps', ['p1']],
+    ]);
+  });
+
+  it('is capped at one row of its own, and does not shrink the rest of the rail', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: Array.from({ length: 10 }, (_, i) => dev(`d${i}`)),
+      creatorName: 'pixelsmith',
+      sameCategory: [same('a'), same('b'), same('c')],
+      popular: Array.from({ length: 10 }, (_, i) => pop(`p${i}`)),
+      limit: 5,
+    });
+    expect(CREATOR_RAIL_LIMIT).toBe(3);
+    expect(shape(sections)).toEqual([
+      ['creator', 'More by pixelsmith', ['d0', 'd1', 'd2']],
+      ['category', 'More in Utility', ['a', 'b', 'c']],
+      ['popular', 'Popular apps', ['p0', 'p1']],
+    ]);
+  });
+
+  it('a developer whose only app is this one gets no creator group', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: [dev('me')],
+      creatorName: 'pixelsmith',
+      sameCategory: [same('a')],
+    });
+    expect(shape(sections)).toEqual([['category', 'More in Utility', ['a']]]);
+  });
+
+  it('a link to the rail names the creator group when it leads', () => {
+    const s = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: [dev('d1')],
+      creatorName: 'pixelsmith',
+    });
+    expect(relatedRailFirstHeading({ category: 'utility', sections: s, loading: false })).toBe(
+      'More by pixelsmith'
+    );
+  });
+});
+
+describe('creatorRailHeading', () => {
+  it('names the developer, or says "this developer" when the name is unknown', () => {
+    expect(creatorRailHeading('pixelsmith')).toBe('More by pixelsmith');
+    expect(creatorRailHeading(null)).toBe('More by this developer');
+    expect(creatorRailHeading('')).toBe('More by this developer');
+  });
+});
+
+describe('needsPopularTopUp — with a creator group', () => {
+  it('🔴 category apps the creator group takes do not count toward filling the rail', () => {
+    // Two category apps, both by this developer: the category group will render neither.
+    expect(
+      needsPopularTopUp({
+        selfId: 'me',
+        sameCategory: [card('a'), card('b')],
+        creator: [card('a'), card('b')],
+        limit: 2,
+      })
+    ).toBe(true);
+    // Control: the same category list with no creator overlap fills the rail.
+    expect(
+      needsPopularTopUp({
+        selfId: 'me',
+        sameCategory: [card('a'), card('b')],
+        creator: [card('x')],
+        limit: 2,
+      })
+    ).toBe(false);
+  });
+});
+
+describe('isRelatedRailLoading — the creator query', () => {
+  it('loading while the enabled creator query is pending; ignored when it is disabled', () => {
+    const settled = {
+      hasCategoryFilter: true,
+      categoryPending: false,
+      wantTopUp: false,
+      popularPending: false,
+    };
+    expect(isRelatedRailLoading({ ...settled, wantCreator: true, creatorPending: true })).toBe(
+      true
+    );
+    expect(isRelatedRailLoading({ ...settled, wantCreator: false, creatorPending: true })).toBe(
+      false
+    );
+    expect(isRelatedRailLoading({ ...settled, wantCreator: true, creatorPending: false })).toBe(
+      false
+    );
   });
 });

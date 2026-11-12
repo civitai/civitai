@@ -143,10 +143,13 @@ export const getModelVersionDataForVault = async ({
     throw throwNotFoundError('Model version has no files.');
   }
 
-  const parsedFiles = modelVersion.files.map((file) => ({
-    ...file,
-    metadata: (file.metadata || {}) as FileMetadata,
-  }));
+  // Training data is never a version's stored file: its downloads go through the scan gate.
+  const parsedFiles = modelVersion.files
+    .filter((file) => file.type !== 'Training Data')
+    .map((file) => ({
+      ...file,
+      metadata: (file.metadata || {}) as FileMetadata,
+    }));
 
   const mainFile = getPrimaryFile(parsedFiles, { metadata: filePreferences });
 

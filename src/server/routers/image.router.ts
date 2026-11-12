@@ -218,8 +218,13 @@ export const imageRouter = router({
 
   // #region [moderation]
   getImagesByUserIdForModeration: moderatorProcedure
-    .input(z.object({ userId: z.number() }))
-    .query(({ input, ctx }) => getImagesByUserIdForModeration(input.userId)),
+    .input(
+      z.object({
+        userId: z.number(),
+        captureImageIds: z.number().int().array().max(500).optional(),
+      })
+    )
+    .query(({ input }) => getImagesByUserIdForModeration(input.userId, input.captureImageIds)),
 
   // #endregion
 

@@ -59,6 +59,7 @@ vi.mock('~/server/services/image-url-ownership', async (importOriginal) => {
 
 const {
   assertGenerationInputsUsable,
+  countAppBlockHostSources,
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
   generationInputUrlsIn,
@@ -595,6 +596,115 @@ describe('an App Blocks generation source', () => {
     for (const entry of APP_ENTRIES)
       expect(await check([BLOB], entry)).toBe(`refused: ${APP_SOURCE_NOT_ON_CIVITAI_MESSAGE}`);
     expect(await check([BLOB], 'generateFromGraph')).toBe('accepted');
+  });
+
+  describe('the orchestrator source count', () => {
+    const JOB_OUTPUT = 'https://orchestration.civitai.com/v2/consumer/jobs/J1/outputs/out.png';
+    const hostRows = () =>
+      loggingMock.logToAxiom.mock.calls
+        .map(([data]) => data as Record<string, unknown>)
+        .filter((data) => data.name === 'app-block-host-source');
+    // `appBlocks` gates inside its step builder; its router counts with countAppBlockHostSources.
+    const GATE_COUNTED = APP_ENTRIES.filter((entry) => entry !== 'appBlocks');
+
+    // The setup mock's stub for the counter, found by name; captured at collection time.
+    const registered = vi.mocked(registerCounterWithLabels).mock;
+    const hostSourceCounter = registered.results[
+      registered.calls.findIndex(([def]) => def.name === 'app_block_host_source_total')
+    ]?.value as { inc: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      loggingMock.logToAxiom.mockClear();
+      hostSourceCounter.inc.mockClear();
+    });
+
+    it('counts a consumer blob and any other orchestrator path, refusing neither', async () => {
+      for (const entry of GATE_COUNTED) {
+        loggingMock.logToAxiom.mockClear();
+        hostSourceCounter.inc.mockClear();
+        expect(await check([BLOB, JOB_OUTPUT], entry)).toBe('accepted');
+        expect(hostSourceCounter.inc.mock.calls).toEqual([
+          [{ entry, reason: 'host-orchestrator-source' }],
+          [{ entry, reason: 'host-unparsable' }],
+        ]);
+        expect(hostRows()).toEqual([
+          expect.objectContaining({ entry, reason: 'host-orchestrator-source', count: 1 }),
+          expect.objectContaining({ entry, reason: 'host-unparsable', count: 1 }),
+        ]);
+      }
+      const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls);
+      expect(logged).not.toContain('ABC123');
+      expect(logged).not.toContain('orchestration.civitai.com');
+    });
+
+    it('writes one row per reason with its count', async () => {
+      const other = 'https://orchestration.civitai.com/v2/consumer/blobs/DEF456.png';
+      expect(await check([BLOB, other], 'appBlocksPassThrough')).toBe('accepted');
+      expect(hostSourceCounter.inc).toHaveBeenCalledTimes(2);
+      expect(hostRows()).toEqual([
+        expect.objectContaining({ reason: 'host-orchestrator-source', count: 2 }),
+      ]);
+    });
+
+    it('a call refused for another source counts nothing', async () => {
+      await givenImage({ userId: CALLER + 1, postId: null });
+      expect(await check([BLOB, CDN()], 'appBlocksPassThrough')).toMatch(/^refused/);
+      expect(hostRows()).toEqual([]);
+      expect(hostSourceCounter.inc).not.toHaveBeenCalled();
+    });
+
+    it('control: a Civitai image, an orchestrator blob outside App Blocks, or the step builder gate, is not counted', async () => {
+      await givenImage({ userId: CALLER, postId: null });
+      expect(await check([CDN()], 'appBlocksPassThrough')).toBe('accepted');
+      expect(await check([BLOB], 'generateFromGraph')).toBe('accepted');
+      expect(await check([BLOB], 'appBlocks')).toBe('accepted');
+      expect(hostRows()).toEqual([]);
+      expect(hostSourceCounter.inc).not.toHaveBeenCalled();
+    });
+
+    it('tags each count with the app and with estimate or submit', async () => {
+      for (const phase of ['estimate', 'submit'] as const)
+        await assertGenerationInputsUsable({
+          urls: [BLOB],
+          userId: CALLER,
+          entry: 'appBlocksPassThrough',
+          isApiCaller: false,
+          appBlockLog: { appBlockId: 'apb_1', stepTypes: 'videoGen', phase },
+          now: AFTER,
+        });
+      expect(hostRows()).toEqual([
+        expect.objectContaining({ appBlockId: 'apb_1', stepTypes: 'videoGen', phase: 'estimate' }),
+        expect.objectContaining({ appBlockId: 'apb_1', stepTypes: 'videoGen', phase: 'submit' }),
+      ]);
+    });
+
+    it('countAppBlockHostSources counts only orchestrator urls, under appBlocks, with the app', async () => {
+      await countAppBlockHostSources({
+        urls: [BLOB, JOB_OUTPUT, CDN(), undefined],
+        appBlockLog: { appBlockId: 'apb_1', stepTypes: 'textToImage', phase: 'submit' },
+      });
+      expect(hostSourceCounter.inc.mock.calls).toEqual([
+        [{ entry: 'appBlocks', reason: 'host-orchestrator-source' }],
+        [{ entry: 'appBlocks', reason: 'host-unparsable' }],
+      ]);
+      expect(hostRows()).toEqual([
+        expect.objectContaining({ entry: 'appBlocks', appBlockId: 'apb_1', phase: 'submit' }),
+        expect.objectContaining({ entry: 'appBlocks', reason: 'host-unparsable' }),
+      ]);
+      holder.scannedRows = true;
+      hostSourceCounter.inc.mockClear();
+      await countAppBlockHostSources({ urls: [BLOB], appBlockLog: {} });
+      expect(hostSourceCounter.inc).not.toHaveBeenCalled();
+    });
+
+    it('a blob the scanned-rows flag refuses is not counted', async () => {
+      holder.scannedRows = true;
+      expect(await check([BLOB], 'appBlocksPassThrough')).toBe(
+        `refused: ${APP_SOURCE_NOT_ON_CIVITAI_MESSAGE}`
+      );
+      expect(hostRows()).toEqual([]);
+      expect(hostSourceCounter.inc).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -2,8 +2,13 @@ import type {
   BrowsingLevelAttribute,
   BrowsingLevelMatch,
 } from '~/components/Search/search-index-filters';
+import {
+  BROWSING_LEVEL_ATTRIBUTE,
+  BROWSING_LEVEL_MATCH,
+} from '~/components/Search/search-index-filters';
+import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/search.types';
+import { reverseSearchIndexMap } from '~/components/Search/search.types';
 import { NsfwLevel } from '~/server/common/enums';
-import type { SearchIndexKey } from '~/components/Search/search.types';
 import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 
@@ -33,6 +38,16 @@ export function buildBrowsingLevelClause(
   }
 
   return levels.map((value) => `${attribute}=${value}`).join(' OR ');
+}
+
+/** The browsing-level clause for a Meilisearch index uid; `null` for an index with no level. */
+export function indexBrowsingLevelClause(indexUid: string, browsingLevel: number) {
+  const indexKey = reverseSearchIndexMap[indexUid as ReverseSearchIndexKey];
+  return buildBrowsingLevelClause(
+    indexKey ? BROWSING_LEVEL_ATTRIBUTE[indexKey] : undefined,
+    browsingLevel,
+    indexKey ? BROWSING_LEVEL_MATCH[indexKey] : undefined
+  );
 }
 
 export function buildBrowsingLevelFilters({

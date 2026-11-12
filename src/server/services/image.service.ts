@@ -100,6 +100,7 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { isStatementTimeout } from '~/server/utils/statement-timeout';
 import {
   createMetricRefresher,
   imageMetricsSwrEnabled,
@@ -168,6 +169,7 @@ import {
   type ContestCollectionItem,
   type SharedContestCollectionItem,
 } from '~/server/services/contest-collection-items.cache';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
@@ -296,6 +298,8 @@ import {
 } from '~/shared/utils/block-provenance-metadata';
 import {
   FEEDBACK_CAPTURE_METADATA_KEY,
+  FEEDBACK_CAPTURE_OWNER_ID,
+  isFeedbackCaptureOwner,
   type FeedbackCaptureMetadata,
 } from '@civitai/shared/feedback-capture';
 import type {
@@ -1524,7 +1528,9 @@ export async function handleBlockImages({
       });
     }
     if (include?.includes('user-notification')) {
-      const notified = images.filter((img) => !held.has(img.id));
+      const notified = images.filter(
+        (img) => !held.has(img.id) && !isFeedbackCaptureOwner(img.userId)
+      );
       logNoticeUnderReview(
         notified.filter((img) => underReview.has(img.id)).map(({ id, userId }) => ({ id, userId }))
       );
@@ -3003,9 +3009,6 @@ const getAllImagesUncaptured = async (
   // post.service.ts on image upload/update events.
   const cacheable = queryCacheRaw(
     async <Row>(q: Prisma.Sql) => {
-      // Per-call statement_timeout ceiling — see IMAGE_FEED_STATEMENT_TIMEOUT_MS
-      // for rationale. The timeout fires server-side (pg error code 57014);
-      // we catch it at the call site below and return an empty page.
       const { rows } = await queryWithTimeout(imageDb, IMAGE_FEED_STATEMENT_TIMEOUT_MS, q);
       return rows as Row[];
     },
@@ -3024,19 +3027,9 @@ const getAllImagesUncaptured = async (
       cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags })
     );
   } catch (e) {
-    const code = (e as { code?: string })?.code;
-    const message = (e as { message?: string })?.message ?? '';
-    // SQLSTATE 57014 (query_canceled) is shared by statement_timeout,
-    // pg_cancel_backend(), and client AbortSignal cancellation. Only the
-    // first should fall back to an empty page — the others must propagate
-    // so callers/observers see the cancellation. Postgres distinguishes
-    // them via the error message: "canceling statement due to statement timeout".
-    if (code === '57014' && message.includes('statement timeout')) {
-      // Query exceeded IMAGE_FEED_STATEMENT_TIMEOUT_MS on the replica.
-      // Return an empty page instead of surfacing a 500 — the feed is best-effort
-      // and the UI handles `items: []` gracefully. Log to axiom so we can track
-      // frequency and identify pathological filter combinations; also bump a
-      // counter so we can alert if the rate climbs.
+    // SQLSTATE 57014 also covers user cancellation; the helper checks the timeout message.
+    if (isStatementTimeout(e)) {
+      // Feeds can accept an empty page after a timeout; detail endpoints need an error to retry.
       imageFeedStatementTimeoutCounter.inc({ dbTarget });
       logToAxiom({
         name: 'getInfiniteImages:statement_timeout',
@@ -6904,6 +6897,7 @@ export const getImagesForPosts = async ({
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
+    imageWhere.push(imageReviewedSql());
   }
 
   if (disablePoi) {
@@ -8629,8 +8623,6 @@ export async function resolveIngestionError({
       }).catch(() => undefined),
   });
 
-  const metadata = (image.metadata as ImageMetadata) ?? {};
-
   // Matched on what was read, so a block or ban landing after the replica read is not lifted.
   const { count } = await dbWrite.image.updateMany({
     where: {
@@ -8645,10 +8637,16 @@ export async function resolveIngestionError({
       ingestion: ImageIngestionStatus.Scanned,
       blockedFor: null,
       scannedAt: new Date(),
-      metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
     },
   });
   if (count === 0) throw throwBadRequestError('This image changed; reload and try again.');
+  // Merged in place, not from the replica row: that copy may predate metadata written since.
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "metadata" = COALESCE("metadata", '{}'::jsonb)
+      || jsonb_build_object('nsfwLevelReason', 'Moderator ingestion error review'::text)
+    WHERE id = ${id}
+  `;
   if (image.blockedFor != null) await dropBlockedImageDeleteQueue([id]);
   await imageMetadataCache.refresh(id);
 
@@ -9015,26 +9013,35 @@ export const getImageContestCollectionDetails = async ({
   id,
   userId,
   isModerator,
-}: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
+  imageOwnerId,
+}: { userId?: number; isModerator?: boolean; imageOwnerId?: number } & GetByIdInput) => {
   const useSharedCache = await isFlipt(FLIPT_FEATURE_FLAGS.CONTEST_COLLECTION_ITEMS_REDIS_CACHE);
-  const items: (SharedContestCollectionItem | ContestCollectionItem)[] = useSharedCache
+  const cachedItems: (SharedContestCollectionItem | ContestCollectionItem)[] = useSharedCache
     ? await fetchSharedContestCollectionItems(id)
     : await contestCollectionItemsCache.fetch(id);
 
   // Fetch all permissions in one query instead of N queries
-  const collectionIds = items.map((i) => i.collection.id);
+  const collectionIds = [...new Set(cachedItems.map((i) => i.collection.id))];
   const allPermissions = await getUserCollectionPermissionsByIds({
     ids: collectionIds,
     userId,
+    isModerator,
   });
   const permissionsFor = (item: { collection: { id: number } }) =>
     allPermissions.find((p) => p.collectionId === item.collection.id);
+  // Cached per image for every viewer, so the read rule is applied per viewer here. The image's
+  // owner and an entry's submitter always see it.
+  const isImageOwner = !!userId && userId === imageOwnerId;
+  const items = cachedItems.filter((item) => {
+    if (isImageOwner || (!!userId && userId === item.addedById)) return true;
+    return canReadCollectionItems(permissionsFor(item));
+  });
 
   // This endpoint is public. The reason — and above all the reviewer's free text about
   // someone else's entry — is only for the submitter, whoever manages the collection,
   // and site moderators investigating reports about reviewer behaviour.
   const canReadRejection = (item: SharedContestCollectionItem) =>
-    (!!userId && userId === item.addedById) || !!permissionsFor(item)?.manage || !!isModerator;
+    (!!userId && userId === item.addedById) || !!permissionsFor(item)?.manage;
 
   // The shared value carries no rejection fields (see SharedContestCollectionItem), so with the
   // flag on they are read live, and only for the entries this viewer passes the gate on.
@@ -9054,6 +9061,9 @@ export const getImageContestCollectionDetails = async ({
 
     return {
       ...i,
+      scores: permissions?.manage
+        ? i.scores
+        : i.scores.filter((s) => !!userId && s.userId === userId),
       rejectionReason: readable ? rejection?.rejectionReason ?? null : null,
       rejectionDetail: readable ? rejection?.rejectionDetail ?? null : null,
       permissions,
@@ -9068,10 +9078,21 @@ export const getImageContestCollectionDetails = async ({
 // this method should hopefully not be a lasting addition
 export type ModerationImageModel = AsyncReturnType<typeof getImagesByUserIdForModeration>[number];
 
-export async function getImagesByUserIdForModeration(userId: number) {
+/**
+ * `userId`'s images, plus any of `captureImageIds` that are feedback page captures: a capture is owned
+ * by the capture account, so a report on another subject can only name it explicitly.
+ */
+export async function getImagesByUserIdForModeration(
+  userId: number,
+  captureImageIds: number[] = []
+) {
   const { tags, meta, ...select } = imageSelect;
   return await dbRead.image.findMany({
-    where: { userId },
+    where: captureImageIds.length
+      ? {
+          OR: [{ userId }, { userId: FEEDBACK_CAPTURE_OWNER_ID, id: { in: captureImageIds } }],
+        }
+      : { userId },
     select,
     orderBy: { id: 'desc' },
   });

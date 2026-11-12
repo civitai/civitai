@@ -588,6 +588,28 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it.each(paths)(
+    '%s: a repeat template $type outside ASCII letters and digits is denied',
+    async (_n, run) => {
+      const { snapshot } = await run(
+        body({
+          arguments: { frames: [{ url: 'a' }] },
+          steps: [
+            {
+              $type: 'repeat',
+              input: {
+                for: { $ref: '$arguments', path: 'frames', as: 'frame' },
+                template: { $type: 'cu\u017ftomComfy', input: { workflow: {} } },
+              },
+            },
+          ],
+        })
+      );
+      expect(snapshot.errorCode).toBe('workflow_step_denied');
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
   it.each(paths)('🔴 %s: the denylist covers the step a `repeat` runs', async (_n, run) => {
     const { snapshot } = await run(
       body({
@@ -2037,6 +2059,22 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     }
   );
 
+  const hostSourcePhases = () =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([data]) => data as Record<string, unknown>)
+      .filter((data) => data.reason === 'host-orchestrator-source')
+      .map((data) => data.phase);
+
+  it.each(ARMS)(
+    '%s: counts an orchestrator blob on the estimate and on the submit',
+    async (_, make) => {
+      loggingMock.logToAxiom.mockClear();
+      await estimate(make(BLOB)).catch(() => undefined);
+      await submit(make(BLOB)).catch(() => undefined);
+      expect(hostSourcePhases()).toEqual(['estimate', 'submit']);
+    }
+  );
+
   const refusedBeforeTheOrchestrator = async (b: Record<string, unknown>) => {
     const refusal = { code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE };
     await expect(estimate(b)).rejects.toMatchObject(refusal);
@@ -2466,9 +2504,9 @@ describe('inline customComfy — the generation input gate', () => {
 
   it('submit gates its own graph: an image swapped in after a passing estimate is refused', async () => {
     givenImage(OTHER_USER);
-    const body = inline({ image: 'clean.png' });
+    const body = inline();
     await expect(estimate(body)).resolves.toMatchObject({ snapshot: { status: 'pending' } });
-    body.workflow['3'].inputs.image = CDN;
+    (body.workflow['3'].inputs as Record<string, unknown>).image = CDN;
     await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
@@ -2497,7 +2535,9 @@ describe('inline customComfy — the generation input gate', () => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
     await given();
     loggingMock.logToAxiom.mockClear();
-    await expect(submit(inline({ image: OWN_KEY }))).rejects.toMatchObject({
+    const body = inline();
+    (body.workflow['2'].inputs as Record<string, unknown>).text = `restyle ${OWN_KEY}`;
+    await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: APP_SOURCE_UNUSABLE_MESSAGE,
     });
@@ -2505,6 +2545,19 @@ describe('inline customComfy — the generation input gate', () => {
       expect.objectContaining({ name: 'app-block-source-refusal', reason })
     );
     expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('counts an orchestrator blob on the estimate and on the submit', async () => {
+    const blob = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg';
+    const body = inline({ image: blob });
+    loggingMock.logToAxiom.mockClear();
+    await estimate(body).catch(() => undefined);
+    await submit(body).catch(() => undefined);
+    const phases = loggingMock.logToAxiom.mock.calls
+      .map(([data]) => data as Record<string, unknown>)
+      .filter((data) => data.reason === 'host-orchestrator-source')
+      .map((data) => data.phase);
+    expect(phases).toEqual(['estimate', 'submit']);
   });
 
   it('refuses inline image bytes in a node input at the schema', async () => {
@@ -2519,18 +2572,65 @@ describe('inline customComfy — the generation input gate', () => {
       () => {
         let deep: unknown = 'x';
         for (let i = 0; i < 80; i++) deep = { v: deep };
-        return { image: deep };
+        return deep;
       },
     ],
-    ['is too large to check', () => ({ image: 'a\n'.repeat(70_000) })],
-  ])('refuses a graph that %s, never passing it unscanned', async (what, inputs) => {
+    ['is too large to check', () => 'a\n'.repeat(70_000)],
+  ])('refuses a graph that %s, never passing it unscanned', async (what, text) => {
     for (const call of [estimate, submit]) {
-      await expect(call(inline(inputs()))).rejects.toMatchObject({
+      const body = inline();
+      (body.workflow['2'].inputs as Record<string, unknown>).text = text();
+      await expect(call(body)).rejects.toMatchObject({
         code: 'BAD_REQUEST',
         message: `workflow graph ${what}`,
       });
     }
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('inline customComfy — nodes the host does not run inline', () => {
+  beforeEach(() => {
+    const viewer = { id: VIEWER, isModerator: false, email: 'v@example.com', username: 'v' };
+    dbMock.dbRead.user.findUnique.mockImplementation((async () => viewer) as never);
+  });
+  afterEach(() => dbMock.dbRead.user.findUnique.mockReset());
+
+  const AIR = 'urn:air:sdxl:lora:civitai:101@202';
+  type Node = { class_type: string; inputs: Record<string, unknown> };
+  const graphWith = (node: Node) => ({
+    kind: 'customComfy' as const,
+    mode: 'inline' as const,
+    workflow: {
+      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: AIR } },
+      '2': { class_type: 'StringConcatenate', inputs: { string_a: 'a', string_b: 'b' } },
+      '3': node,
+    },
+    resources: [AIR],
+    maxBuzz: 60,
+  });
+  const refused = { snapshot: { status: 'failed', errorCode: 'inline-node-refused' } };
+
+  it.each([
+    ['a path node', { class_type: 'VHS_LoadImagePath', inputs: { image: '/x.png' } }],
+    ['a linked loader input', { class_type: 'LoadImage', inputs: { image: ['2', 0] } }],
+    ['a local file in a loader', { class_type: 'LoadImage', inputs: { image: 'x.png' } }],
+  ])('refuses %s on estimate AND submit, before any orchestrator call', async (_what, node) => {
+    for (const call of [estimate, submit]) {
+      await expect(call(graphWith(node))).resolves.toMatchObject(refused);
+    }
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(0);
+  });
+
+  it('estimates a LoRA loader with linked model, CLIP and strength', async () => {
+    const node = {
+      class_type: 'LoraLoader',
+      inputs: { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_model: ['2', 0] },
+    };
+    await expect(estimate(graphWith(node))).resolves.toMatchObject({
+      snapshot: { status: 'pending' },
+    });
   });
 });

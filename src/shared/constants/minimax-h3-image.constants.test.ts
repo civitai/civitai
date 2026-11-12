@@ -6,10 +6,12 @@ import {
   baseModelSelectData,
   getActiveBaseModels,
   getBaseModelLicense,
+  getEcosystemDefaults,
   getGenerationSupport,
   getTrainingBaseModels,
   isModelSupported,
 } from '~/shared/constants/basemodel.constants';
+import { minimaxH3ImageVersionId } from '~/shared/form-graph/generation/image/minimax-h3-image.graph';
 
 // MiniMax H3 Image ships for generation only. Uploads, training and LoRAs under this base
 // model are a separate, later change; each case is a surface that would open one early.
@@ -36,5 +38,12 @@ describe('MiniMax H3 Image base model is generation only', () => {
   // Licence section IV.2: the exact string, which the base model's own label is not.
   it('names MiniMax-H3-Image in the generator', () => {
     expect(getBaseModelLicense(BM.MiniMaxH3Image)?.attribution).toBe('MiniMax-H3-Image');
+  });
+
+  // The graph's locked model and the ecosystem default must name the same version, or the
+  // generator opens on one model and submits another.
+  it('opens the generator on the H3 Image version', () => {
+    expect(minimaxH3ImageVersionId).toBeGreaterThan(0);
+    expect(getEcosystemDefaults(ECO.MiniMaxH3Image)?.model?.id).toBe(minimaxH3ImageVersionId);
   });
 });

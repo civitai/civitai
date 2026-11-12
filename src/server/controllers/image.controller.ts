@@ -1,3 +1,4 @@
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
 import {
   ImageSort,
@@ -78,7 +79,12 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
-import { viewerCanSeeImageMedia, withoutMedia } from '~/server/utils/image-media-visibility';
+import {
+  canViewImageMedia,
+  keepCrawlerAnswerOutOfEdgeCache,
+  viewerCanSeeImageMedia,
+  withoutMedia,
+} from '~/server/utils/image-media-visibility';
 import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
 import { eventViewerOf } from '~/server/events/event-viewer';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
@@ -86,6 +92,8 @@ import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-sc
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
+  CollectionItemStatus,
+  CollectionMode,
   EntityType,
   ReportReason,
   ReportStatus,
@@ -276,21 +284,20 @@ export const setTosViolationHandler = async ({
         )
       );
 
-      await createNotification({
-        userId: image.userId,
-        type: 'tos-violation',
-        category: NotificationCategory.System,
-        key: `tos-violation:image:${crypto.randomUUID()}`,
-        details: {
-          modelName: image.post?.title ?? `post #${image.postId as number}`,
-          entity: 'image',
-          url: `/images/${id}`,
-          // Only the moderator's own choice — the inferred fallback below is a classification for
-          // analytics, and telling someone their image broke a rule the moderator never picked is
-          // worse than telling them nothing.
-          ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
-        },
-      }).catch();
+      if (!isFeedbackCaptureOwner(image.userId))
+        await createNotification({
+          userId: image.userId,
+          type: 'tos-violation',
+          category: NotificationCategory.System,
+          key: `tos-violation:image:${crypto.randomUUID()}`,
+          details: {
+            modelName: image.post?.title ?? `post #${image.postId as number}`,
+            entity: 'image',
+            url: `/images/${id}`,
+            // Only the moderator's explicit pick; the inferred fallback below is for analytics, not the user.
+            ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
+          },
+        }).catch();
     }
 
     await clearReviewFlagsOnBlock([id]);
@@ -382,7 +389,20 @@ export const getImagesForModelVersionHandler = async ({
   ctx: Context;
 }) => {
   if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
-  return getImagesForModelVersionCache([input.id]);
+  const byVersion = await getImagesForModelVersionCache([input.id]);
+  // Any version id can be asked for, so the cap applies per image.
+  keepCrawlerAnswerOutOfEdgeCache(ctx);
+  return Object.fromEntries(
+    Object.entries(byVersion).map(([versionId, entry]) => [
+      versionId,
+      {
+        ...entry,
+        images: entry.images.filter((image) =>
+          canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } })
+        ),
+      },
+    ])
+  );
 };
 
 /**
@@ -411,6 +431,7 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   const { user, features, signal } = ctx;
+  const eventViewer = eventViewerOf(ctx);
 
   // The hub pages and the whole hub router are behind `userHubs`, but `hubId` is a
   // plain feed input, so `/images?hubId=N` would keep serving a hub after the flag
@@ -502,7 +523,7 @@ export const getInfiniteImagesHandler = async ({
       include: [...scopedInput.include, 'tagIds' as const],
       dbTarget: features.datapacketRead ? ('datapacket' as const) : ('read' as const),
       // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
-      eventDecorationViewer: user,
+      eventDecorationViewer: eventViewer,
     };
 
     if (turfEvent && (hatFeedSort || hatsOf)) {
@@ -575,7 +596,7 @@ export const getInfiniteImagesHandler = async ({
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
         // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
-        eventDecorationViewer: user,
+        eventDecorationViewer: eventViewer,
         signal,
         actor: buildSearchActor({
           userId: user?.id,
@@ -593,7 +614,7 @@ export const getInfiniteImagesHandler = async ({
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
         // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
-        eventDecorationViewer: user,
+        eventDecorationViewer: eventViewer,
       });
       // Name this branch too, like the index path's `source`. Stamped here rather
       // than inside getAllImages because the index result type is derived from its
@@ -678,8 +699,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const { user, features } = ctx;
-    // Every fetch below names `user` as the event decoration viewer. Safe because only a signed-out
-    // response is edge-cached here (createContext), and that one names no viewer.
+    const eventViewer = eventViewerOf(ctx);
+    // Every fetch below names `eventViewer` as the event decoration viewer. Safe because only a
+    // signed-out response is edge-cached here (createContext), and a signed-out viewer has no id.
 
     const useIndex = features.imageIndexFeed;
 
@@ -748,7 +770,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         followed: false,
         postIds: versionPinnedPosts,
         user,
-        eventDecorationViewer: user,
+        eventDecorationViewer: eventViewer,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: 'datapacket',
@@ -796,7 +818,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         followed: false,
         postIds: [sponsoredPost.postId],
         user,
-        eventDecorationViewer: user,
+        eventDecorationViewer: eventViewer,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: 'datapacket',
@@ -821,7 +843,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       domain: getRequestBoardDomainColor(ctx.req),
       ids: fetchHidden ? versionHiddenImages : undefined,
       user,
-      eventDecorationViewer: user,
+      eventDecorationViewer: eventViewer,
       headers: { src: 'getImagesAsPostsInfiniteHandler' },
       include: [...input.include, 'tagIds' as const, 'profilePictures' as const],
       dbTarget: features.datapacketRead ? ('datapacket' as const) : ('read' as const),
@@ -1207,14 +1229,19 @@ export const getEntitiesCoverImageHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getEntityCoverImage({
+    const covers = await getEntityCoverImage({
       ...input,
       include: ['tags'],
       viewer: ctx.user,
       // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
-      eventDecorationViewer: ctx.user,
+      eventDecorationViewer: eventViewerOf(ctx),
     });
+    // Any entity id can be asked for, so each cover is held to the request's cap like a single image.
+    keepCrawlerAnswerOutOfEdgeCache(ctx);
+    return covers.filter((cover) =>
+      canViewImageMedia(ctx, { nsfwLevel: cover.nsfwLevel, user: { id: cover.userId } })
+    );
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1234,19 +1261,19 @@ export const getImageContestCollectionDetailsHandler = async ({
     const userId = ctx.user?.id;
     const isModerator = ctx.user?.isModerator;
     // An image the viewer may not open gets the same answer as an id with no contest entries.
-    const visible = await assertImageVisibleToViewer({ id: input.id, userId, isModerator }).then(
-      () => true,
+    const image = await assertImageVisibleToViewer({ id: input.id, userId, isModerator }).catch(
       (error) => {
-        if (error instanceof TRPCError && error.code === 'NOT_FOUND') return false;
+        if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
         throw error;
       }
     );
-    if (!visible) return { collectionItems: [], post: null };
+    if (!image) return { collectionItems: [], post: null };
 
     const collectionItems = await getImageContestCollectionDetails({
       ...input,
       userId,
       isModerator,
+      imageOwnerId: image.userId,
     });
     const imageId = collectionItems?.[0]?.imageId;
     if (!imageId) return { collectionItems, post: null };
@@ -1293,6 +1320,21 @@ export async function updateImageAcceptableMinorHandler({
       isModerator,
     });
     if (!permissions.manage) throw throwAuthorizationError();
+
+    if (!isModerator) {
+      // A contest entry its own image's owner submitted, judged by someone else.
+      const item = await dbRead.collectionItem.findFirst({
+        where: {
+          collectionId,
+          imageId: input.id,
+          status: { not: CollectionItemStatus.REJECTED },
+          collection: { mode: CollectionMode.Contest },
+        },
+        select: { addedById: true, image: { select: { userId: true } } },
+      });
+      if (!item?.addedById || item.addedById !== item.image?.userId || item.addedById === userId)
+        throw throwAuthorizationError();
+    }
 
     const image = await updateImageAcceptableMinor(input);
     return image;

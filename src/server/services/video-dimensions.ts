@@ -1,8 +1,13 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { logToAxiom } from '~/server/logging/client';
+import { isCivitaiMediaUrl, logHostOf } from '~/server/services/orchestrator/trusted-blob-url';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('video-dimensions', 'yellow');
 
 // ffprobe runs on the orchestrator while it builds the workflow, so this sits on the caller's
 // request; past this the video is created without dimensions rather than held up.
@@ -22,6 +27,12 @@ export function parseTimeSpanSeconds(value: unknown): number | undefined {
 /** Width, height and duration of a stored video, or null when they can't be read. */
 export async function probeVideoDimensions(url: string): Promise<VideoDimensions | null> {
   if (!isAllowedImageScanUrl(url)) return null;
+  // The step runs on the system orchestrator token, so like the metadata route an absolute url is
+  // probed only when it is Civitai-hosted media. A relative key is built into a CDN url below.
+  if (isEdgeUrlPassthrough(url) && !isCivitaiMediaUrl(url)) {
+    log('probe skipped for an absolute url on', logHostOf(url));
+    return null;
+  }
   const videoUrl = getEdgeUrl(normalizeImageScanUrl(url), { type: MediaType.video });
 
   try {

@@ -1,7 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { foldStepTypeCase } from '~/server/services/blocks/steps/orchestrator-denylist';
+import {
+  foldStepTypeCase,
+  isTrainingStepTypeIgnoringCase,
+} from '~/server/services/blocks/steps/orchestrator-denylist';
 import { collectBlockStepTemplates } from '~/server/services/blocks/workflow-graph';
 import {
   auditPromptServer,
@@ -121,6 +124,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The training-input fields the trainer renders sample images from (`samples`, `samplePrompts`,
+ * `negativePrompt` in the `@civitai/orchestration-client` training inputs), lower-cased. Only
+ * these are read on a training step: captions and settings are not generated from.
+ */
+const TRAINING_SAMPLE_KEYS: ReadonlySet<string> = new Set([
+  'samples',
+  'sampleprompts',
+  'negativeprompt',
+]);
+
 const REF_KEYS: ReadonlySet<string> = new Set(['$ref', 'path', 'default', 'format']);
 /** Steps whose input is a caller-authored graph: node ids and input names say nothing. */
 const GRAPH_STEP_TYPES: ReadonlySet<string> = new Set(['customcomfy', 'comfy']);
@@ -195,12 +209,27 @@ export function collectPassThroughAuditText(
     const templates = collectBlockStepTemplates(step.$type, step.input) ?? [step];
     for (const template of templates) {
       const type = foldStepTypeCase(template.$type);
-      if (!AUDITED_TYPE_LOOKUP.has(type)) continue;
+      const training = isTrainingStepTypeIgnoringCase(template.$type);
+      if (!training && !AUDITED_TYPE_LOOKUP.has(type)) continue;
       auditedTypes.push(type);
       // A whole input that is a reference resolves to text nothing here can read.
       const inputRef = isPlainObject(template.input) ? refSource(template.input) : null;
       if (inputRef) promptRefs.push(inputRef);
-      else
+      else if (training) {
+        if (!isPlainObject(template.input)) continue;
+        for (const [key, child] of Object.entries(template.input))
+          if (TRAINING_SAMPLE_KEYS.has(key.toLowerCase()))
+            walk(
+              child,
+              {
+                text: TEXT_KEY.test(key),
+                negative: NEGATIVE_KEY.test(key),
+                graph: false,
+                media: false,
+              },
+              1
+            );
+      } else
         walk(
           template.input,
           { text: false, negative: false, graph: GRAPH_STEP_TYPES.has(type), media: false },
@@ -236,7 +265,6 @@ export async function getPassThroughPromptAuditMode(): Promise<PassThroughPrompt
 }
 
 type AuditContext = {
-  steps: ReadonlyArray<{ $type: string; input: unknown }>;
   userId: number;
   appBlockId: string;
   isGreen: boolean;
@@ -298,12 +326,49 @@ export async function shadowPassThroughPromptAudit(
  * request path.
  */
 export async function auditPassThroughPrompts(
-  ctx: AuditContext,
+  ctx: AuditContext & { steps: ReadonlyArray<{ $type: string; input: unknown }> },
   mode?: PassThroughPromptAuditMode
 ): Promise<void> {
   const resolved = mode ?? (await getPassThroughPromptAuditMode());
   if (resolved === 'off') return;
-  const collected = collectPassThroughAuditText(ctx.steps);
+  await runPromptAudit(ctx, collectPassThroughAuditText(ctx.steps), resolved);
+}
+
+/** Labels a training run's sample prompts in the audit log; not an orchestrator `$type`. */
+export const TRAINING_SAMPLE_PROMPTS_AUDIT_TYPE = 'trainingsampleprompts';
+
+/**
+ * The same gate for a training run's sample prompts, which the trainer renders to images
+ * during the run. Blank prompts are skipped: the quote substitutes three empty prompts when
+ * none are given.
+ */
+export async function auditTrainingSamplePrompts(
+  ctx: AuditContext & { samplePrompts: readonly string[] },
+  mode?: PassThroughPromptAuditMode
+): Promise<void> {
+  const resolved = mode ?? (await getPassThroughPromptAuditMode());
+  if (resolved === 'off') return;
+  const prompts = [...new Set(ctx.samplePrompts.map((p) => p.trim()).filter(Boolean))];
+  if (prompts.length === 0) return;
+  const prompt = prompts.join('\n');
+  await runPromptAudit(
+    ctx,
+    {
+      auditedTypes: [TRAINING_SAMPLE_PROMPTS_AUDIT_TYPE],
+      prompt,
+      negativePrompt: '',
+      promptRefs: [],
+      tooLarge: prompt.length > PASS_THROUGH_AUDIT_TEXT_MAX,
+    },
+    resolved
+  );
+}
+
+async function runPromptAudit(
+  ctx: AuditContext,
+  collected: PassThroughAuditText,
+  resolved: Exclude<PassThroughPromptAuditMode, 'off'>
+): Promise<void> {
   if (collected.auditedTypes.length === 0) return;
 
   if (resolved === 'log') {

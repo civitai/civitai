@@ -310,6 +310,12 @@ describe('getVotableTags — a model the viewer may not see', () => {
     expect(await tagNames(SELF)).toEqual(['nude']);
   });
 
+  it('serves a published model to a moderator its owner blocked', async () => {
+    amIBlocked.mockResolvedValue(true);
+    modelIs({});
+    expect(await tagNames(MOD)).toEqual(['nude']);
+  });
+
   it('serves a published model to anyone (control)', async () => {
     for (const viewer of [ANON, OTHER]) {
       modelIs({});

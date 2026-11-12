@@ -806,6 +806,29 @@ export function splitTags(text: string): string[] {
   ];
 }
 
+/** The Data step's tag filter: an image matches when it carries every `include` tag and none of the
+ *  `exclude` tags, compared case-insensitively so a typed `Dress` finds the tagger's `dress`. */
+export type TagFilter = { include: string[]; exclude: string[] };
+export function matchesTagFilter(tags: string[], { include, exclude }: TagFilter): boolean {
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  return (
+    include.every((t) => have.has(t.toLowerCase())) &&
+    !exclude.some((t) => have.has(t.toLowerCase()))
+  );
+}
+/** `filter` with the tags in `text` added to one side. A tag lives on one side only, so adding it to
+ *  one takes it off the other. */
+export function withFilterTags(filter: TagFilter, text: string, side: keyof TagFilter): TagFilter {
+  const added = splitTags(text);
+  const keys = new Set(added.map((t) => t.toLowerCase()));
+  const other = side === 'include' ? 'exclude' : 'include';
+  const kept = filter[side].filter((t) => !keys.has(t.toLowerCase()));
+  return {
+    [side]: [...kept, ...added],
+    [other]: filter[other].filter((t) => !keys.has(t.toLowerCase())),
+  } as TagFilter;
+}
+
 /** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present. */
 export function withTags(tags: string[], text: string): string[] {
   const additions = splitTags(text).filter((t) => !tags.includes(t));
