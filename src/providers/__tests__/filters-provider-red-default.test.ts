@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as React from 'react';
-import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ArticleSort } from '~/server/common/enums';
 import { FiltersProvider, useFiltersContext } from '~/providers/FiltersProvider';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const act = (React as unknown as { act: (callback: () => void) => void }).act;
 
 let seen: string | undefined;
 function ArticleSortProbe() {
@@ -19,7 +19,13 @@ let container: HTMLElement;
 
 function render(props: { isRed?: boolean }) {
   act(() =>
-    root.render(React.createElement(FiltersProvider, props, React.createElement(ArticleSortProbe)))
+    root.render(
+      React.createElement(
+        FiltersProvider as React.FC<React.PropsWithChildren<{ isRed?: boolean }>>,
+        props,
+        React.createElement(ArticleSortProbe)
+      )
+    )
   );
 }
 
