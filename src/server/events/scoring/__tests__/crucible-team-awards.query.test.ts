@@ -9,6 +9,7 @@ vi.mock('~/server/clickhouse/client', () => ({
   clickhouseLongQueries: { query },
 }));
 
+const { CLIENT_GRACE_S } = await import('~/server/events/points/clickhouse-limits');
 const { CRUCIBLE_AWARD_QUERY_MAX_S, loadCrucibleTeamAwards } = await import(
   '~/server/events/scoring/crucible-team-awards'
 );
@@ -19,6 +20,7 @@ const { CRUCIBLE_AWARD_QUERY_MAX_S, loadCrucibleTeamAwards } = await import(
 describe('loadCrucibleTeamAwards ledger read', () => {
   it('is capped on the server, kept alive past the idle timer, and abandoned by the client', async () => {
     query.mockClear();
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
     await loadCrucibleTeamAwards(
       { name: 'birthday2026', startDate: new Date('2026-11-01T00:00:00.000Z') },
       new Date('2026-11-05T12:00:00.000Z')
@@ -34,6 +36,9 @@ describe('loadCrucibleTeamAwards ledger read', () => {
     expect(Number(arg.clickhouse_settings?.http_headers_progress_interval_ms)).toBeLessThan(
       300_000
     );
-    expect(arg.abort_signal).toBeInstanceOf(AbortSignal);
+    // Given up by the client after the server's cap plus its grace, not at some other time.
+    expect(timeout).toHaveBeenCalledWith((CRUCIBLE_AWARD_QUERY_MAX_S + CLIENT_GRACE_S) * 1000);
+    expect(arg.abort_signal).toBe(timeout.mock.results.at(-1)?.value);
+    timeout.mockRestore();
   });
 });
