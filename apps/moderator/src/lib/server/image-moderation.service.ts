@@ -105,7 +105,7 @@ export async function acceptImage({
 }): Promise<ClosedAppeal | undefined> {
   const img = await dbRead
     .selectFrom('Image')
-    .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor', 'minor'])
+    .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
     .where('id', '=', imageId)
     .executeTakeFirst();
   if (!img) return;
@@ -142,7 +142,17 @@ export async function acceptImage({
     .$if(!restoreRemoved, (qb) =>
       qb.where(NOT_FLAG_ONLY_REMAINING).where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
     )
-    .returning('minor')
+    // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
+    // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
+    .returning([
+      'id',
+      sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
+      sql<boolean | null>`${
+        nr === 'minor'
+          ? sql`(SELECT pre."minor" FROM "Image" pre WHERE pre."id" = ${imageId})`
+          : sql`NULL`
+      }`.as('wasMinor'),
+    ])
     .executeTakeFirst();
   if (!updated) {
     if (restoreRemoved) return;
@@ -185,7 +195,7 @@ export async function acceptImage({
       userId,
       entityType: 'image',
       entityId: imageId,
-      activity: img.minor && !updated.minor ? 'clearMinor' : 'minorQueueAccept',
+      activity: updated.wasMinor && !updated.minor ? 'clearMinor' : 'minorQueueAccept',
     });
 
   await applyAcceptSideEffects(img, imageId);

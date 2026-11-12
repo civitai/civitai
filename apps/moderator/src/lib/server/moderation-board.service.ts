@@ -5,6 +5,7 @@ import {
   PURGE_UNCONFIRMED_ACTIVITY,
 } from '$lib/mod-activity';
 import type { task_enum_0648e184 } from './moderator-db/enums';
+import { COMPANION_ACTIVITIES } from '$lib/mod-activity';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { getModeratorDb } from './moderator-db';
@@ -61,7 +62,8 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
  *
  * Grouped by (entityType, activity) because that is the granularity the log carries. Do NOT put the
  * queue into the stored `activity` string to get finer rows — its values are a contract with the main
- * app, which writes and types them too.
+ * app, which writes and types them too. The minor queue's `clearMinor` / `minorQueueAccept` are written
+ * beside its `review` row, never instead of it.
  *
  * The window is a row count, not a date range: `ModActivity_createdAt_idx` makes it an index scan,
  * where `DISTINCT ON` over a fortnight would sort every row in it. It is large because the log is one
@@ -415,6 +417,7 @@ export async function getYouToday(userId: number): Promise<YouToday> {
       .select((eb) => eb.fn.countAll<string>().as('count'))
       .where('userId', '=', userId)
       .where('createdAt', '>=', midnight)
+      .where('activity', 'not in', COMPANION_ACTIVITIES)
       .executeTakeFirst(),
     // The `<> -1` literal lets the planner use Report_human_statusSetAt_idx.
     sql<{ actioned: string; dismissed: string }>`
