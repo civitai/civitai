@@ -520,6 +520,67 @@ describe('parseImageScanningSteps', () => {
   );
 });
 
+// The fields of the orchestrator's ImageScanningRatingV2 that are stored; the client predates them.
+const ratingV2 = (overrides: Record<string, unknown> = {}) => ({
+  status: 'ok',
+  modelRef: 'radio-alpha',
+  checkpointSha256: 'c0ffee',
+  sexual: { label: 'S3', score: 0.7, scores: { S3: 0.7 } },
+  violence: { label: 'V1', score: 0.6, scores: { V1: 0.6 } },
+  ...overrides,
+});
+const ratedFrame = (rating: unknown) => scanOutput({ ratingV2: rating });
+const axesOf = (steps: unknown[]) => parseImageScanningSteps(steps, 'wf').axes;
+
+describe('parseImageScanningSteps rating axes', () => {
+  it('reads the axes and the rater checkpoint from ratingV2', () => {
+    expect(axesOf([parserScanStep(ratedFrame(ratingV2()))])).toEqual({
+      sexual: 3,
+      violence: 1,
+      rater: 'radio-alpha',
+      raterVersion: 'c0ffee',
+    });
+  });
+
+  // An image the rater did not rate must stay unrated, not read as the lowest level.
+  it.each([
+    ['absent', undefined],
+    ['not ok', ratingV2({ status: 'error' })],
+    ['an out-of-range label', ratingV2({ sexual: { label: 'S5', score: 1 } })],
+    ['a label of the other axis', ratingV2({ violence: { label: 'S1', score: 1 } })],
+    ['a missing axis', ratingV2({ sexual: undefined })],
+    ['no checkpoint', ratingV2({ checkpointSha256: '' })],
+  ])('has no axes when ratingV2 is %s, and the scan still parses', (_, rating) => {
+    const scan = parseImageScanningSteps([parserScanStep(ratedFrame(rating))], 'wf');
+    expect(scan.axes).toBeUndefined();
+    expect(scan.nsfwLevel).toBe('r');
+  });
+
+  it('gives a video the highest level per axis across frames', () => {
+    const steps = [
+      frames(
+        ratedFrame(
+          ratingV2({ sexual: { label: 'S1', score: 1 }, violence: { label: 'V0', score: 1 } })
+        ),
+        ratedFrame(
+          ratingV2({ sexual: { label: 'S4', score: 1 }, violence: { label: 'V0', score: 1 } })
+        ),
+        ratedFrame(
+          ratingV2({ sexual: { label: 'S2', score: 1 }, violence: { label: 'V3', score: 1 } })
+        )
+      ),
+    ];
+    expect(axesOf(steps)).toMatchObject({ sexual: 4, violence: 3 });
+  });
+
+  it.each([
+    ['a frame is unrated', ratedFrame(undefined)],
+    ['frames come from different checkpoints', ratedFrame(ratingV2({ checkpointSha256: 'beef' }))],
+  ])('gives a video no axes when %s', (_, other) => {
+    expect(axesOf([frames(ratedFrame(ratingV2()), other)])).toBeUndefined();
+  });
+});
+
 describe('isImageScanningWorkflow', () => {
   it.each([
     ['a finished image scan', [parserScanStep(scanOutput()), parserHashStep], true],
