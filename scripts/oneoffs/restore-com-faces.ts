@@ -9,14 +9,13 @@
  * Usage (repo root, with the app's env):
  *   pnpm run tsscript scripts/oneoffs/restore-com-faces.ts --log <apply run log> [--ids 1,2,3]
  *     Dry run: counts what would be restored. --ids limits it to those models of the run.
- *   ... --apply [--out <file>]
+ *   ... --apply --out <new file>
  *     Restores, writes the undo log (ids and count) and one batch-level ModActivity row.
  *
  * The run log and the undo log hold model ids: both stay private.
  */
 import { Prisma } from '@prisma/client';
-import { readFileSync, writeFileSync } from 'fs';
-import os from 'os';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { parseRunFile, runEntityType, type RunLog } from './sweep-com-faces';
 
@@ -124,6 +123,9 @@ async function main() {
   const logPath = arg('--log');
   if (!logPath) throw new Error('--log <apply run log> is required');
   const write = process.argv.includes('--apply');
+  const out = arg('--out');
+  if (write && !out) throw new Error('--apply needs --out <new path>');
+  if (out && existsSync(out)) throw new Error('that path already exists; pass a new one');
   const ids = arg('--ids')?.split(',').map(Number);
   if (ids?.some((id) => !Number.isInteger(id)))
     throw new Error('--ids takes model ids, comma-separated');
@@ -155,8 +157,7 @@ async function main() {
   };
   const result = await restore(deps, readFileSync(logPath, 'utf8'), { ids, write });
   if (write) {
-    const out = arg('--out') ?? path.join(os.tmpdir(), `${SCRIPT_BASENAME}-${Date.now()}.json`);
-    writeFileSync(out, JSON.stringify({ ...result, count: result.restored.length }), {
+    writeFileSync(out as string, JSON.stringify({ ...result, count: result.restored.length }), {
       mode: 0o600,
     });
     console.log({

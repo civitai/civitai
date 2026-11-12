@@ -3,10 +3,10 @@
  * checked the way a listing edit re-checks it, and those it flags leave .com the same way.
  *
  * Usage (repo root, with the app's env):
- *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts [--out <file>] [--concurrency 4] [--delay-ms 250]
- *     Dry run. Writes nothing to the database. Writes the run file to --out (default: a new file in
- *     the OS temp dir) and prints counts, up to 10 sample ids, the file's path and its sha256.
- *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --apply --ids-file <file> --sha256 <hex> --expect <n> [--log <file>]
+ *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --out <new file> [--concurrency 4] [--delay-ms 250]
+ *     Dry run. Writes nothing to the database. Writes the run file to --out and prints counts, the
+ *     file's path and its sha256 only.
+ *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --apply --ids-file <file> --sha256 <hex> --expect <n> --log <new file>
  *     Takes off exactly the models the dry run flagged, without checking again; refused unless the
  *     file has the sha256 the dry run printed and lists exactly n. A model whose .com cover or
  *     listing changed since the dry run is left alone. Writes the run log (the input to
@@ -17,13 +17,11 @@
  */
 import { createHash, randomUUID } from 'crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
-import os from 'os';
 import path from 'path';
 import type { ComFaceIntentVerdict } from '~/server/services/model-sfw-face.service';
 
 export const SCRIPT_BASENAME = 'sweep-com-faces';
 const BATCH = 500;
-const SAMPLE = 10;
 
 export type Face = {
   id: number;
@@ -220,6 +218,13 @@ function arg(name: string) {
 }
 
 async function main() {
+  const apply_ = process.argv.includes('--apply');
+  // Both files are private: never a default path that could land somewhere shared by accident. An
+  // existing apply log is the earlier run's undo input, so it is never overwritten either.
+  const outPath = arg(apply_ ? '--log' : '--out');
+  if (!outPath)
+    throw new Error(apply_ ? '--apply needs --log <new path>' : '--out <path> is required');
+  if (existsSync(outPath)) throw new Error('that path already exists; pass a new one');
   const { dbRead, dbWrite } = await import('~/server/db/client');
   const { finishRemoval, queueComFaceRecheck, removeComFace } = await import(
     '~/server/services/model-com-face-recheck.service'
@@ -227,9 +232,7 @@ async function main() {
   const { checkComFaceIntentVerdict, getOwnTriggerWords } = await import(
     '~/server/services/model-sfw-face.service'
   );
-  const apply_ = process.argv.includes('--apply');
   const runId = randomUUID();
-  const logPath = arg('--log') ?? path.join(os.tmpdir(), `${SCRIPT_BASENAME}-apply-${runId}.json`);
   const deps: Deps = {
     faces: (after, take) =>
       dbRead.model.findMany({
@@ -273,8 +276,8 @@ async function main() {
     },
     // Temp file then rename: a kill mid-write never leaves a half-written log.
     save: (log) => {
-      writeFileSync(`${logPath}.tmp`, JSON.stringify(log), { mode: 0o600 });
-      renameSync(`${logPath}.tmp`, logPath);
+      writeFileSync(`${outPath}.tmp`, JSON.stringify(log), { mode: 0o600 });
+      renameSync(`${outPath}.tmp`, outPath);
     },
     logRun: async (data) => {
       await dbWrite.modActivity.create({ data });
@@ -285,21 +288,18 @@ async function main() {
 
   if (!apply_) {
     const { counts, file } = await scan(deps, pace);
-    const out = arg('--out') ?? path.join(os.tmpdir(), `${SCRIPT_BASENAME}-${Date.now()}.json`);
     const text = JSON.stringify(file);
-    writeFileSync(out, text, { mode: 0o600 });
+    writeFileSync(outPath, text, { mode: 0o600 });
+    // Counts only: a terminal lands in transcripts, and model ids with a verdict stay in the file.
     console.log({
       mode: 'dry run',
       ...counts,
-      sampleDetectedIds: file.detected.slice(0, SAMPLE).map((d) => d.id),
-      file: out,
+      file: outPath,
       sha256: sha256(text),
     });
     return;
   }
 
-  // A re-run after a crash must not overwrite the first run's log: it is that run's undo input.
-  if (existsSync(logPath)) throw new Error('--log already exists; pass a new path');
   const idsFile = arg('--ids-file');
   const fileSha256 = arg('--sha256');
   const expect = Number(arg('--expect'));
@@ -317,7 +317,7 @@ async function main() {
     removed: log.removed.length,
     skipped: log.skipped.length,
     failed: log.failed.length,
-    log: logPath,
+    log: outPath,
   });
 }
 
