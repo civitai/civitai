@@ -2,26 +2,49 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-// Every place that mints a consumer blob upload URL, and the client or token it mints with.
-// A consumer upload carries the user's own media, so it is minted with that user's orchestrator
-// token: the upload is then attributed to and processed for the user. The shared system client
-// mints a presign that carries no user.
+// Every place that mints a consumer blob upload URL, the client or token it mints with, and where
+// that value comes from. A consumer upload carries the user's own media, so it is minted with that
+// user's orchestrator token: the upload is then attributed to and processed for the user. The shared
+// system client mints a presign that carries no user.
+// Each entry is `<argument> <- <its binding in the enclosing function>`, or `(not bound locally)` when the
+// value arrives as a parameter; UPSTREAM below pins what each parameter is fed with.
 // Adding, removing or changing an entry is a review decision, not a test fix.
 const SDK_CALLS: Record<string, string[]> = {
-  // A client the caller builds from the signed-in user's token (the embed's host token, or the
-  // app's own session token).
-  'apps/training-studio/src/lib/orchestrator-core.ts': ['client'],
-  // createOrchestratorClient(token), with the token its caller passes in (below).
-  'src/server/services/orchestrator/consumerBlobUpload.ts': ['client'],
+  'apps/training-studio/src/lib/orchestrator-core.ts': ['client <- (not bound locally)'],
+  'src/server/services/orchestrator/consumerBlobUpload.ts': [
+    'client <- createOrchestratorClient(token)',
+  ],
 };
 
-// Callers of getConsumerBlobUploadUrlService, and the token argument each passes.
+// Callers of getConsumerBlobUploadUrlService, the token each passes, and its binding.
 const SERVICE_CALLS: Record<string, string[]> = {
-  // OrchestratorEndpoint hands the handler the caller's own token.
-  'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts': ['token'],
-  // The training wizard's auto-label upload: the router's getOrchestratorToken(ctx.user.id, ctx).
-  'src/server/services/training.service.ts': ['token'],
+  'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts': ['token <- (not bound locally)'],
+  'src/server/services/training.service.ts': ['token <- await getUserToken()'],
 };
+
+// Where each parameter or getter above is fed from, as whitespace-normalised source that must be
+// present. Behaviour for the training wizard's getter is pinned by the router test too.
+const UPSTREAM: [file: string, source: string][] = [
+  // OrchestratorEndpoint hands its handler the caller's own token.
+  [
+    'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts',
+    'OrchestratorEndpoint( async function handler(req, res, user, token) {',
+  ],
+  // The training wizard's auto-label upload.
+  [
+    'src/server/routers/training.router.ts',
+    'getUserToken: () => getOrchestratorToken(ctx.user.id, ctx),',
+  ],
+  // Training Studio: the app's own session token, and the embed's host token.
+  [
+    'apps/training-studio/src/lib/server/orchestrator.ts',
+    'return core.blobUploadUrl(orchestratorClient(token));',
+  ],
+  [
+    'apps/training-studio/src/lib/element/backend.ts',
+    'return await call((client) => orch.blobUploadUrl(client));',
+  ],
+];
 
 const SYSTEM_CREDENTIALS = /internalOrchestratorClient|ORCHESTRATOR_ACCESS_TOKEN/;
 
@@ -50,13 +73,29 @@ function sourceFiles(dir: string): string[] {
 const SDK_IMPORT =
   /import\s*\{[^}]*\bgetConsumerBlobUploadUrl\b[^}]*\}\s*from\s*['"]@civitai\/orchestration-client['"]/;
 
-/** The `client` (or `token`) argument of each call, or a marker for a call shape not read here. */
+const normalise = (text: string) => text.replace(/\s+/g, ' ');
+
+/**
+ * The `client` (or `token`) argument of each call and its binding in the enclosing function, or a
+ * marker for a call shape not read here.
+ */
 function callArguments(text: string, callee: string, key: string): string[] {
   const calls = [...text.matchAll(new RegExp(`\\b${callee}\\(`, 'g'))];
   return calls.map((call) => {
-    const rest = text.slice((call.index ?? 0) + call[0].length);
+    const at = call.index ?? 0;
+    const rest = text.slice(at + call[0].length);
     const m = rest.match(new RegExp(`^\\s*\\{\\s*${key}\\s*(?::\\s*([\\w.$]+))?\\s*[,}]`));
-    return m ? m[1] ?? key : '<unread call shape>';
+    if (!m) return '<unread call shape>';
+    const arg = m[1] ?? key;
+    const before = text.slice(0, at);
+    const fnStart = Math.max(before.lastIndexOf('function '), before.lastIndexOf('function('));
+    const body = before.slice(Math.max(fnStart, 0));
+    const name = arg.replace(/[.$]/g, '\\$&');
+    const bindings = [
+      ...body.matchAll(new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=\\s*([^;]+);`, 'g')),
+    ];
+    const binding = bindings.at(-1)?.[1];
+    return `${arg} <- ${binding ? normalise(binding).trim() : '(not bound locally)'}`;
   });
 }
 
@@ -96,10 +135,27 @@ describe('consumer blob upload URLs', () => {
     expect(service).toEqual(SERVICE_CALLS);
   });
 
-  it('are never minted with the system client or token', () => {
-    const system = [...Object.entries(sdk), ...Object.entries(service)].filter(([, args]) =>
-      args.some((arg) => SYSTEM_CREDENTIALS.test(arg))
+  it('take each parameter from the reviewed upstream source', () => {
+    const missing = UPSTREAM.filter(
+      ([file, source]) => !normalise(readFileSync(join(root, file), 'utf8')).includes(source)
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it('are never minted with a client or token bound to the system credentials', () => {
+    // Positive control: the scan reads a system binding through a variable, not only by name.
+    const control = callArguments(
+      'function f() { const client = internalOrchestratorClient; return getConsumerBlobUploadUrl({ client }); }',
+      'getConsumerBlobUploadUrl',
+      'client'
+    );
+    expect(control).toEqual(['client <- internalOrchestratorClient']);
+    expect(control.some((entry) => SYSTEM_CREDENTIALS.test(entry))).toBe(true);
+
+    const system = [...Object.entries(sdk), ...Object.entries(service)].filter(([, entries]) =>
+      entries.some((entry) => SYSTEM_CREDENTIALS.test(entry))
     );
     expect(system).toEqual([]);
+    expect(UPSTREAM.filter(([, source]) => SYSTEM_CREDENTIALS.test(source))).toEqual([]);
   });
 });
