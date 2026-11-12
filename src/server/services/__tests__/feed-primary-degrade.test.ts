@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEED_PRIMARY_TIMEOUT_MS, serveFromFeed } from '../feed-primary.service';
+import type { FeedPrimaryDeps } from '../feed-primary.service';
+import type { CapturableSearchInput } from '../feed-request-capture.service';
 import type { FeedAnswer } from '../feed-shadow.service';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -48,7 +50,7 @@ afterEach(() => vi.useRealTimers());
 describe('feed-service request timeout', () => {
   it('asks the feed with a 2.5s budget', async () => {
     expect(FEED_PRIMARY_TIMEOUT_MS).toBe(2_500);
-    const fetchFeed = vi.fn(async () => answer([1]));
+    const fetchFeed = vi.fn<FeedPrimaryDeps<{ id: number }>['fetchFeed']>(async () => answer([1]));
     await serveFromFeed(anon, { fetchFeed, hydrate });
     expect(fetchFeed.mock.calls[0]?.[1]).toBe(2_500);
   });
@@ -143,7 +145,7 @@ describe('feed-service circuit breaker', () => {
 });
 
 describe('last-good page for anonymous first pages', () => {
-  const prime = async (input: Record<string, unknown> = anon) =>
+  const prime = async (input: CapturableSearchInput = anon) =>
     serveFromFeed(input, {
       fetchFeed: async () => answer([9, 5], { nextCursor: '17|5', route: 'tag-walk' }),
       hydrate,
