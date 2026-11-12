@@ -31,6 +31,7 @@ const ECOSYSTEMS_WITH_A_LIMIT: string[] = [
   'Flux3Klein_base',
   'Flux3Video',
   'FluxKrea',
+  'GeminiOmni',
   'Grok',
   'Haiper',
   'HappyHorse',
@@ -137,6 +138,9 @@ const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['Flux3Video', 'img2vid', 1, 2],
   ['Flux3Video', 'img2vid:first-last', 1, 2],
   ['Grok', 'img2img:edit', 1, 7],
+  ['GeminiOmni', 'img2vid', 1, 2],
+  ['GeminiOmni', 'img2vid:first-last', 1, 2],
+  ['GeminiOmni', 'img2vid:ref2vid', 3, 6],
   ['Grok', 'img2vid:ref2vid', 1, 7],
   ['HappyHorse', 'img2vid:ref2vid', 1, 9],
   ['HappyHorse', 'vid2vid:edit', 1, 9],
@@ -223,7 +227,7 @@ describe('getImagesLimit', () => {
     expect(
       withLimit,
       'fewer pairs answer than before — a limit was lost, not added'
-    ).toBeGreaterThanOrEqual(282);
+    ).toBeGreaterThanOrEqual(403);
 
     // Which ecosystems answer at all is frozen by name, so losing one reads as its own
     // key rather than as an arithmetic drop.
