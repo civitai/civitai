@@ -1,3 +1,4 @@
+import { SONG_LYRICS_MAX_LENGTH } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { toSubmittedWorkflow } from '~/server/services/text-scan/route';
@@ -7,14 +8,23 @@ import { EntityModerationStatus, TrackLyricsSource } from '~/shared/utils/prisma
 
 export const TRACK_LYRICS_ENTITY_TYPE = 'TrackLyrics';
 
+/** Cuts text over the cap at its last whole line; a single line past the cap is cut where it hits. */
+function capLyrics(text: string) {
+  if (text.length <= SONG_LYRICS_MAX_LENGTH) return text;
+  const head = text.slice(0, SONG_LYRICS_MAX_LENGTH + 1);
+  const lastBreak = head.lastIndexOf('\n');
+  return lastBreak > 0 ? head.slice(0, lastBreak) : head.slice(0, SONG_LYRICS_MAX_LENGTH);
+}
+
 /** Saves the lyrics a song was generated from, untimed. Nothing is saved for text with no lines. */
 export async function saveGeneratedTrackLyrics({
   imageId,
-  text,
+  text: rawText,
 }: {
   imageId: number;
   text: string | undefined;
 }) {
+  const text = rawText === undefined ? undefined : capLyrics(rawText);
   const lines = parseLyricLines(text);
   if (!text || !lines) return false;
   const data = { text, lines, source: TrackLyricsSource.generator };

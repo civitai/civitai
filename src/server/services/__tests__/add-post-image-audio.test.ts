@@ -187,6 +187,24 @@ describe('addPostImage — audio', () => {
     expect(mocks.createImage).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a title longer than a post title', { title: 'x'.repeat(256) }],
+    ['a key longer than 16 characters', { key: 'x'.repeat(17) }],
+  ])('rejects a song with %s', async (_, extra) => {
+    mocks.music = true;
+    await expect(addSong({ metadata: { ...song, ...extra } })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mocks.createImage).not.toHaveBeenCalled();
+  });
+
+  it('stores a title and key at their caps', async () => {
+    mocks.music = true;
+    const metadata = { ...song, title: 'x'.repeat(255), key: 'x'.repeat(16) };
+    await expect(addSong({ metadata })).rejects.toThrow('stop after create');
+    expect(mocks.createImage.mock.calls[0][0].metadata).toEqual(metadata);
+  });
+
   // The lyrics are saved after the create; stop at the read that follows them.
   const createThenStop = () => {
     mocks.createImage.mockResolvedValue({ id: 11 });

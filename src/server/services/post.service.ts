@@ -139,7 +139,7 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { audioMetadataSchema } from '~/server/schema/media.schema';
+import { audioMetadataSchema, lyricLineSchema, type LyricLine } from '~/server/schema/media.schema';
 import {
   saveGeneratedTrackLyrics,
   submitTrackLyricsScan,
@@ -874,11 +874,35 @@ async function getPostUnpublishContext({
   };
 }
 
-async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
+/** Each song's stored lyric lines, in one read for all of them. */
+async function getSongLyricLines(
+  images: { id: number; type: MediaType }[],
+  db: typeof dbRead | typeof dbWrite
+) {
+  const songIds = images.filter((x) => x.type === MediaType.audio).map((x) => x.id);
+  if (!songIds.length) return new Map<number, LyricLine[]>();
+  const rows = await db.trackLyrics.findMany({
+    where: { imageId: { in: songIds } },
+    select: { imageId: true, lines: true },
+  });
+  return new Map(
+    rows.flatMap(({ imageId, lines }) => {
+      const parsed = lyricLineSchema.array().safeParse(lines);
+      return parsed.success ? [[imageId, parsed.data] as const] : [];
+    })
+  );
+}
+
+async function combinePostEditImageData(
+  images: PostImageEditSelect[],
+  user: SessionUser,
+  db: typeof dbRead | typeof dbWrite = dbRead
+) {
   const imageIds = images.map((x) => x.id);
   const _images = images as PostImageEditProps[];
   const tags = await getVotableImageTags({ ids: imageIds, user });
   const thumbnails = await thumbnailCache.fetch(imageIds);
+  const lyrics = await getSongLyricLines(images, db);
 
   return _images
     .map((image) => ({
@@ -888,6 +912,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
       techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
       thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
+      lyrics: lyrics.get(image.id) ?? null,
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
@@ -899,7 +924,7 @@ export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: Ses
     where: { postId: id },
     select: editPostImageSelect,
   });
-  return combinePostEditImageData(images, user);
+  return combinePostEditImageData(images, user, db);
 };
 
 export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
@@ -1711,7 +1736,7 @@ export const addPostImage = async ({
         select: editPostImageSelect,
       });
       if (existingResult) {
-        const [existingImage] = await combinePostEditImageData([existingResult], user);
+        const [existingImage] = await combinePostEditImageData([existingResult], user, dbWrite);
         return existingImage;
       }
     }
@@ -1763,7 +1788,7 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
   if (!result) throw throwDbError(`Image not found`);
-  const [image] = await combinePostEditImageData([result], user);
+  const [image] = await combinePostEditImageData([result], user, dbWrite);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
   // Cache Busting — parallelize independent operations
@@ -1863,10 +1888,11 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   await imagesForModelVersionsCache.refresh(showcaseVersionIds);
 }
 
-export const updatePostImage = async (image: UpdatePostImageInput) => {
+export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePostImageInput) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
     select: {
+      type: true,
       hideMeta: true,
       ingestion: true,
       blockedFor: true,
@@ -1875,6 +1901,22 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       meta: true,
     },
   });
+
+  const songFieldsSent = title !== undefined || allowRemix !== undefined;
+  if (songFieldsSent && currentImage.type !== MediaType.audio)
+    throw throwBadRequestError('Only a song has a title and a remix setting.');
+  if (title)
+    await throwOnBlockedUserContent(title, {
+      surface: 'post',
+      entityType: 'Image',
+      entityId: image.id,
+    });
+  const metadata: MixedObject = { ...((currentImage.metadata as MixedObject) ?? {}) };
+  if (title !== undefined) {
+    if (title) metadata.title = title;
+    else delete metadata.title;
+  }
+  if (allowRemix !== undefined) metadata.allowRemix = allowRemix;
 
   // `meta` is optional on this input, and the difference matters: absent means "leave the
   // stored metadata alone" (the hide/show-prompt toggle sends only `hideMeta`), while an
@@ -1916,9 +1958,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       // If this image was blocked due to missing metadata, we need to set it back to pending
       ingestion: shouldIngest ? 'Pending' : undefined,
       blockedFor: shouldIngest ? null : undefined,
-      metadata: {
-        ...((currentImage.metadata as MixedObject) ?? {}),
-      } as Prisma.JsonObject,
+      metadata: metadata as Prisma.JsonObject,
     },
     select: { id: true, url: true, userId: true, name: true, type: true },
   });

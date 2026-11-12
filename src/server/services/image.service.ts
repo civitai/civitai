@@ -1,4 +1,7 @@
-import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
+import {
+  SONGS_UNAVAILABLE_MESSAGE,
+  songAllowsRemix,
+} from '~/shared/form-graph/generation/audio/song-metadata';
 import { Prisma } from '@prisma/client';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
@@ -8981,6 +8984,10 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
       getGenerationDisplayKeys(meta as Record<string, unknown>, graphResources) ?? undefined;
   }
 
+  const songRefusesRemix =
+    image.type === 'audio' &&
+    !songAllowsRemix((await imageMetadataCache.fetch([id]))[id]?.metadata);
+
   return {
     type: image.type,
     onSite,
@@ -8997,7 +9004,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     tools,
     techniques,
     external,
-    canRemix: !image.hideMeta && !!meta?.prompt,
+    canRemix: !image.hideMeta && !!meta?.prompt && !songRefusesRemix,
     remixOfId: meta?.extra?.remixOfId,
     remixOfIds: getRemixSourceIds(id, meta),
   };

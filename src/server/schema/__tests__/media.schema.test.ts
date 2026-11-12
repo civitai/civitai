@@ -20,6 +20,13 @@ describe('audioMetadataSchema', () => {
     expect(audioMetadataSchema.safeParse({ title: 'No length' }).success).toBe(false);
   });
 
+  it('keeps a song that turned remixing off', () => {
+    expect(audioMetadataSchema.parse({ duration: 10, allowRemix: false })).toEqual({
+      duration: 10,
+      allowRemix: false,
+    });
+  });
+
   it('rejects a lyric line without text', () => {
     expect(audioMetadataSchema.safeParse({ duration: 10, lyrics: [{ t: 1 }] }).success).toBe(false);
   });
