@@ -1,7 +1,13 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  classifyGenerationInputUrl,
+  type GenerationInputUrlClass,
+} from '~/server/services/generation-input-urls';
+import { logHostOf } from '~/server/services/orchestrator/trusted-blob-url';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 // ffprobe runs on the orchestrator while it builds the workflow, so this sits on the caller's
@@ -19,9 +25,26 @@ export function parseTimeSpanSeconds(value: unknown): number | undefined {
   return Number(days) * 86400 + Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
 }
 
+/**
+ * The step runs on the system orchestrator token, so an absolute url is probed only when it is
+ * Civitai-hosted media: the image CDN or an orchestrator host, by the generation input gate's rule.
+ */
+const PROBED_ABSOLUTE_URL_CLASSES = new Set<GenerationInputUrlClass>(['cdn', 'orchestrator']);
+
 /** Width, height and duration of a stored video, or null when they can't be read. */
 export async function probeVideoDimensions(url: string): Promise<VideoDimensions | null> {
   if (!isAllowedImageScanUrl(url)) return null;
+  if (
+    isEdgeUrlPassthrough(url) &&
+    !PROBED_ABSOLUTE_URL_CLASSES.has(classifyGenerationInputUrl(url))
+  ) {
+    void logToAxiom({
+      type: 'info',
+      name: 'video-dimensions-probe-skipped',
+      host: logHostOf(url),
+    }).catch(() => null);
+    return null;
+  }
   const videoUrl = getEdgeUrl(normalizeImageScanUrl(url), { type: MediaType.video });
 
   try {
