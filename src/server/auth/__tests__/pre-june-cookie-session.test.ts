@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { hkdfSync } from 'node:crypto';
 import { EncryptJWT } from 'jose';
 import type * as CivitaiAuth from '@civitai/auth';
@@ -24,9 +24,7 @@ const h = await vi.hoisted(async () => {
   return {
     kp,
     verifier: undefined as undefined | CivitaiAuth.AuthVerifier,
-    getSessionUserById: undefined as unknown as import('vitest').Mock<
-      (id: number) => Promise<unknown>
-    >,
+    getSessionUserById: undefined as unknown as Mock<(id: number) => Promise<unknown>>,
   };
 });
 
