@@ -19,7 +19,7 @@ const defaultSortBy = ImagesSearchIndexSortBy[0];
 
 const imageSearchParamsSchema = searchParamsSchema
   .extend({
-    imageId: z.coerce.number(),
+    similarTo: z.coerce.number().int().positive(),
     index: z.literal('images'),
     createdAt: z.string(),
     sortBy: z.enum(ImagesSearchIndexSortBy),
@@ -33,7 +33,7 @@ const imageSearchParamsSchema = searchParamsSchema
   .partial();
 
 type ImageUiState = UiState & {
-  [IMAGES_SEARCH_INDEX]?: IndexUiState & { imageId?: number | null };
+  [IMAGES_SEARCH_INDEX]?: IndexUiState & { similarTo?: number };
 };
 
 export type ImageSearchParams = z.output<typeof imageSearchParamsSchema>;
@@ -61,14 +61,14 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       createdAtUnix: images.createdAt as string,
     });
 
-    const { query, sortBy, imageId } = images;
+    const { query, sortBy, similarTo } = images;
 
     return {
       [IMAGES_SEARCH_INDEX]: {
         sortBy: sortBy ?? defaultSortBy,
         refinementList,
         query,
-        imageId,
+        similarTo,
         range,
       },
     };
@@ -89,7 +89,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const users = uiState[IMAGES_SEARCH_INDEX].refinementList?.['user.username'];
     const sortBy =
       (uiState[IMAGES_SEARCH_INDEX].sortBy as ImageSearchParams['sortBy']) || defaultSortBy;
-    const imageId = uiState[IMAGES_SEARCH_INDEX].imageId || undefined;
+    const similarTo = uiState[IMAGES_SEARCH_INDEX].similarTo || undefined;
 
     const { query } = uiState[IMAGES_SEARCH_INDEX];
 
@@ -100,7 +100,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       users,
       sortBy,
       query,
-      imageId,
+      similarTo,
       baseModel,
       aspectRatio,
       createdAt,
