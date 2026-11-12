@@ -294,8 +294,8 @@ type LeaderboardContext = {
 const USER_RANK_BUILT_KEY = 'leaderboard:user-rank:built';
 
 /**
- * Rebuilds UserRank once per day, retried hourly until it succeeds. A board not populated for
- * today carries its previous day's ranks, so one late board can't freeze every badge; the day
+ * Rebuilds UserRank once per day, retried hourly until it succeeds. A board not marked populated
+ * for today carries its latest earlier day's ranks, so one late board can't freeze every badge; the day
  * is only marked done once every board is in, so a board that lands later still gets picked up.
  */
 export async function rebuildUserRanks() {
@@ -305,22 +305,23 @@ export async function rebuildUserRanks() {
     ) AS built`;
   if (built) return { skipped: true };
 
-  const { boards, unpopulated } = await getLeaderboardPopulation();
+  // The marker, not rows: rows appear batch by batch while a board is still being written.
+  const { boards, unmarked } = await getLeaderboardPopulation();
   // Nothing to rebuild from: the TRUNCATE would blank every badge. Keep yesterday's and retry.
-  if (unpopulated.length >= boards) throw new Error('Leaderboard not populated');
-  if (unpopulated.length)
+  if (unmarked.length >= boards) throw new Error('Leaderboard not populated');
+  if (unmarked.length)
     logToAxiom({
       type: 'warn',
       name: 'user-rank-partially-populated',
       // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
-      error: { unpopulated },
+      error: { unpopulated: unmarked },
     }).catch();
 
   await updateLeaderboardRank({
-    carriedBoardIds: unpopulated,
-    builtMarkerKey: unpopulated.length ? undefined : USER_RANK_BUILT_KEY,
+    carriedBoardIds: unmarked,
+    builtMarkerKey: unmarked.length ? undefined : USER_RANK_BUILT_KEY,
   });
-  return { carried: unpopulated };
+  return { carried: unmarked };
 }
 
 const updateUserLeaderboardRank = createJob(

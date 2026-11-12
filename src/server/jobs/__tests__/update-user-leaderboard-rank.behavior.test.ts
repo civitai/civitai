@@ -106,6 +106,30 @@ describe('update-user-leaderboard-rank', () => {
     );
   });
 
+  it('carries a board from its latest day when it has missed more than one', async () => {
+    await q(`DELETE FROM "LeaderboardResult" WHERE "leaderboardId" = 'board-b';
+             INSERT INTO "LeaderboardResult" ("leaderboardId", date, "userId", position)
+               VALUES ('board-b', current_date - 2, ${B_USER}, 8);
+             UPDATE "KeyValue" SET value = to_jsonb((current_date - 2)::text)
+               WHERE key = 'leaderboard:populated:board-b';`);
+
+    await job.run({});
+
+    expect(await rankOf(A_USER)).toBe(4);
+    expect(await rankOf(B_USER)).toBe(8);
+  });
+
+  it('carries a board that has rows for today but is not marked done', async () => {
+    // Population commits in batches and marks the board only when finished, so rows alone can
+    // be a partial board: read it as not yet populated.
+    await q(`UPDATE "KeyValue" SET value = to_jsonb((current_date - 1)::text)
+               WHERE key = 'leaderboard:populated:board-b';`);
+
+    await job.run({});
+
+    expect(await rankOf(B_USER)).toBe(7);
+  });
+
   it('retries a failed rebuild later the same day', async () => {
     // Hourly, not once a day: a missed run must get another chance before tomorrow.
     expect(job.cron.split(' ')[1]).toBe('*');

@@ -2484,19 +2484,30 @@ const leaderboardRankInsert = ({
   leaderboardFilter: Prisma.Sql;
   userFilter: Prisma.Sql;
   onConflict?: Prisma.Sql;
-  /** Boards not populated for today: read their previous day so their badges carry over. */
+  /** Boards not populated for today: read their latest earlier day so their badges carry over. */
   carriedBoardIds?: string[];
 }) => {
   // Bound only when a board is carried: the plain rebuild binds nothing, which
   // leaderboard-rank-showcase.test.ts relies on to catch a board list hiding in a parameter.
-  const dayFilter = carriedBoardIds.length
+  const carried = carriedBoardIds.length;
+  // One index-backed max per carried board, not per row: a board can miss more than one night.
+  const carriedDays = carried
+    ? Prisma.sql`carried_day AS (
+        SELECT id, (
+          SELECT max(r.date) FROM "LeaderboardResult" r
+          WHERE r."leaderboardId" = id AND r.date < current_date
+        ) AS day
+        FROM unnest(${carriedBoardIds}::text[]) AS id
+      ),`
+    : Prisma.empty;
+  const dayFilter = carried
     ? Prisma.sql`(
         (lr.date = current_date AND lr."leaderboardId" <> ALL(${carriedBoardIds}::text[]))
-        OR (lr.date = current_date - 1 AND lr."leaderboardId" = ANY(${carriedBoardIds}::text[]))
+        OR (lr."leaderboardId", lr.date) IN (SELECT id, day FROM carried_day)
       )`
     : Prisma.sql`lr.date = current_date`;
   return Prisma.sql`
-  WITH user_positions AS (
+  WITH ${carriedDays} user_positions AS (
     SELECT
       lr."userId",
       lr."leaderboardId",
