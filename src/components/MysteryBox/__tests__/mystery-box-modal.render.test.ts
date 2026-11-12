@@ -50,7 +50,7 @@ vi.mock('../useMysteryBoxOpen', async (importOriginal) => ({
   useMysteryBoxOpen: () => ({
     phase: state.phase,
     result:
-      state.phase === 'revealed'
+      state.phase === 'revealed' || state.phase === 'glowing'
         ? {
             boxItemId: '502',
             boxDefinitionId: 9,
@@ -81,9 +81,31 @@ vi.mock('~/components/Buzz/useAvailableBuzz', async (importOriginal) => ({
 vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
   BuzzTransactionButton: () => null,
 }));
-vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
-  EdgeMedia: ({ src }: { src: string }) => React.createElement('img', { 'data-src': src }),
-}));
+vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
+  const { edgeMediaOptions, resolveEdgeImageUrl } = await import('~/client-utils/edge-url');
+  return {
+    // The URL EdgeImage would put on the <img>, built from the width the caller passed.
+    EdgeMedia: ({
+      src,
+      width,
+      loading,
+      onError,
+    }: {
+      src: string;
+      width?: number;
+      loading?: 'lazy' | 'eager';
+      onError?: () => void;
+    }) =>
+      React.createElement('img', {
+        'data-src': src,
+        src: resolveEdgeImageUrl(src, edgeMediaOptions({ width })).url,
+        loading,
+        onError,
+      }),
+  };
+});
+const { reportError } = vi.hoisted(() => ({ reportError: vi.fn() }));
+vi.mock('~/utils/application-error', () => ({ reportApplicationError: reportError }));
 vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false }));
 
 import MysteryBoxModal from '../MysteryBoxModal';
@@ -196,5 +218,77 @@ describe('MysteryBoxModal opened from an event page', () => {
       { enabled: true },
     ]);
     expect(state.held.mock.calls.at(-1)?.[1]).toEqual({ enabled: false });
+  });
+});
+
+describe('MysteryBoxModal reward art', () => {
+  const withArt = () => {
+    state.views = [
+      view({
+        contents: [
+          {
+            contentId: 2,
+            tierId: 7,
+            cosmeticId: 1002,
+            name: 'B',
+            url: 'abc-uuid',
+            fit: null,
+            left: false,
+          },
+        ],
+      }),
+    ];
+  };
+  const preloaded: string[] = [];
+  const RealImage = globalThis.Image;
+  beforeEach(() => {
+    preloaded.length = 0;
+    reportError.mockReset();
+    globalThis.Image = class {
+      set src(v: string) {
+        preloaded.push(v);
+      }
+    } as unknown as typeof Image;
+  });
+  afterEach(() => {
+    globalThis.Image = RealImage;
+  });
+  const revealImg = () =>
+    document.body.querySelector<HTMLImageElement>('[data-testid="box-stage"] img[data-src]');
+
+  it('loads the revealed hat eagerly, not on scroll-in', async () => {
+    withArt();
+    state.phase = 'revealed';
+    await render({ inventory: true });
+
+    expect(revealImg()?.getAttribute('loading')).toBe('eager');
+  });
+
+  it('fetches the hat when the glow starts, with the URL the reveal will ask for', async () => {
+    withArt();
+    state.phase = 'shaking';
+    await render({ inventory: true });
+    expect(preloaded).toEqual([]);
+
+    state.phase = 'glowing';
+    await render({ inventory: true });
+    expect(preloaded).toHaveLength(1);
+
+    state.phase = 'revealed';
+    await render({ inventory: true });
+    expect(preloaded[0]).toBe(revealImg()?.getAttribute('src'));
+  });
+
+  it('reports a hat that fails to load, with its id and url only', async () => {
+    withArt();
+    state.phase = 'revealed';
+    await render({ inventory: true });
+    await act(async () => {
+      revealImg()?.dispatchEvent(new Event('error'));
+    });
+
+    expect(reportError).toHaveBeenCalledTimes(1);
+    const [, ctx] = reportError.mock.calls[0];
+    expect(ctx.message).toBe('cosmeticId=1002 url=abc-uuid');
   });
 });
