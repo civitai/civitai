@@ -535,6 +535,25 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     expect(mocks.submitEntry.mock.calls.map(([input]) => input.imageId).sort()).toEqual([77, 78]);
   });
 
+  test('reports a failed scan in the batch notice only, not a toast of its own as well', async () => {
+    const { rerender } = await startBatch();
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.addImageOnSuccess!({ id: 78 });
+    mocks.images = [image(77), { ...image(78), ingestion: ImageIngestionStatus.Error }];
+    await rerender();
+
+    await vi.waitFor(() =>
+      expect(mocks.showErrorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "1 couldn't be entered" })
+      )
+    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledTimes(1));
+    expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 });
+    expect(mocks.showErrorNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Processing failed' })
+    );
+  });
+
   // A scan that sends an upload to review drops it from the library rather than settling it.
   test('counts an upload that leaves the library mid-scan as failed, and enters the rest', async () => {
     const { rerender } = await startBatch();
@@ -632,7 +651,23 @@ describe('CrucibleSubmitEntryModal — an upload whose scan fails', () => {
     expect(tile.textContent).toContain('Processing failed');
 
     tile.click();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(plainSubmit()?.disabled ?? true).toBe(true);
+    await vi.waitFor(() => expect(plainSubmit()!.disabled).toBe(true));
+    expect(plainSubmit()!.textContent).not.toContain('Submit 1 Entry');
+  });
+});
+
+describe('CrucibleSubmitEntryModal — the same image listed twice', () => {
+  // A failed upload added to page 1 can come back on a later page once its rescan succeeds.
+  test('shows it once', async () => {
+    mocks.images = [image(1), image(2), image(1)];
+    await renderModal();
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll('[data-testid="entry-media"]').length).toBeGreaterThan(0)
+    );
+    expect(
+      [...document.querySelectorAll('[data-testid="entry-media"]')].map((el) =>
+        el.getAttribute('data-src')
+      )
+    ).toEqual(['image-1', 'image-2']);
   });
 });

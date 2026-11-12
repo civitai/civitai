@@ -562,7 +562,11 @@ export default function CrucibleSubmitEntryModal({
 
   // Flatten images from pages
   const images = useMemo(() => {
-    return imagesData?.pages.flatMap((page) => page.items) ?? [];
+    // A failed upload listed on page 1 can come back on a later page once its rescan succeeds.
+    const seen = new Set<number>();
+    return (imagesData?.pages.flatMap((page) => page.items) ?? []).filter(
+      (item) => !seen.has(item.id) && !!seen.add(item.id)
+    );
   }, [imagesData]);
 
   // Answered with submission's own rule — don't re-derive recency from the listing's `createdAt`.

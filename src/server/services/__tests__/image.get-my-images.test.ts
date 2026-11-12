@@ -90,12 +90,28 @@ describe('getMyImages — entry drafts whose scan failed', () => {
       needsReview: null,
       tosViolation: false,
       post: { publishedAt: null, metadata: { path: ['crucibleEntryDraft'], equals: true } },
+      createdAt: { gte: expect.any(Date) },
     });
+    const since = errorQueryOf()!.where.createdAt.gte as Date;
+    const days = (Date.now() - since.getTime()) / 86_400_000;
+    expect(days).toBeGreaterThan(6.99);
+    expect(days).toBeLessThan(7.01);
   });
 
   it('adds them to the first page only, so paging never repeats one', async () => {
     const { items } = await listForEntry(800);
     expect(items.map((x) => x.id)).toEqual([800]);
+    expect(errorQueryOf()).toBeUndefined();
+  });
+
+  it('leaves callers that list unpublished media too without them', async () => {
+    await getMyImages({
+      userId: 42,
+      mediaTypes: [MediaType.image],
+      limit: 10,
+      publishedOnly: false,
+      includeEntryDrafts: true,
+    });
     expect(errorQueryOf()).toBeUndefined();
   });
 
