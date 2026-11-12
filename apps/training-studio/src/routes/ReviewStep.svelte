@@ -41,6 +41,7 @@
     type LabelType,
     type ParamBound,
   } from '$lib/data/trainingModels';
+  import { isFlux2 } from '$lib/orchestrator-core';
   import {
     addSamplePrompt,
     defaultRunParams,
@@ -63,8 +64,7 @@
     runVersionLabel,
     blockedSelectionMessage,
     filledPrompts,
-    teLocked,
-    teLockReason,
+    paramLockReason,
     withTrigger,
     type LaunchedRun,
     type NumericInput,
@@ -290,7 +290,7 @@
 
   // Per-model input bounds and Flux.2 gating (imageResourceTraining takes no hyperparameters).
   const boundsFor = (i: number) => paramBounds(runCard(selection.runs[i]!));
-  const noAdvancedParams = (run: Run) => runVersion(run).engine === 'flux2-dev';
+  const noAdvancedParams = (run: Run) => isFlux2(runVersion(run).engine);
 
   type ParamField = keyof RunParams;
   interface FieldDef {
@@ -355,8 +355,8 @@
     isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;
-    const teReason = field === 'textEncoderLr' ? teLockReason(run) : undefined;
-    if (teReason) return teReason;
+    const lockReason = paramLockReason(run, field);
+    if (lockReason) return lockReason;
     return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
@@ -593,7 +593,7 @@
 {/snippet}
 
 {#snippet paramRow(i: number, f: FieldDef, last: boolean)}
-  {@const locked = f.field === 'textEncoderLr' && teLocked(selection.runs[i]!)}
+  {@const locked = paramLockReason(selection.runs[i]!, f.field) !== undefined}
   {@const changed = deviates(i, f.field)}
   {@const bound = fieldBound(i, f.field)}
   {@const unacknowledged = fieldLocked(i, f.field)}
