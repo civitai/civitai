@@ -58,9 +58,8 @@ const skipEdgeCacheForModerators = middleware(({ ctx, next }) => {
   return next({ ctx: { ...ctx, cache: { ...ctx.cache, skip: true } } });
 });
 
-// The client sends no `date`, so without this the cacheIt key carries no day: an entry written
-// just after the midnight purge kept serving the previous day's board until the next one.
-// `.use()` it BEFORE `cacheIt`, like the domain stamp below.
+// The client sends no `date`; without a day in the cacheIt key, an entry written just after the
+// midnight purge serves the previous day's board. Must run before `cacheIt`.
 const stampLeaderboardDay = middleware(({ input, next }) => {
   const dated = input as { date?: Date } | undefined;
   if (dated) dated.date = new Date(leaderboardDay(dated.date));

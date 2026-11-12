@@ -52,6 +52,17 @@ describe('leaderboard serve day', () => {
     expect(badgeDay()).toBe('2026-11-12');
   });
 
+  it('reads today, not the next day the 23:00 run just wrote', async () => {
+    vi.setSystemTime(new Date('2026-11-12T23:30:00Z'));
+    const { getLeaderboard, getLeaderboardPositions } = await import('../leaderboard.service');
+
+    await getLeaderboard({ id: 'images-funny', isModerator: false } as never);
+    await getLeaderboardPositions({ userId: 1, top: 1000, isModerator: false } as never);
+
+    expect(listDay()).toBe('2026-11-12');
+    expect(badgeDay()).toBe('2026-11-12');
+  });
+
   it('an explicit date resolves to the same day on both sides', async () => {
     const { getLeaderboard, getLeaderboardPositions } = await import('../leaderboard.service');
     const date = new Date('2026-11-10T00:00:00Z');

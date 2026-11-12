@@ -94,8 +94,9 @@ export async function getLeaderboards(input: GetLeaderboardsInput) {
 }
 
 /**
- * The board day (YYYY-MM-DD) for `date`, default now. prepare-leaderboard stamps rows with
- * `current_date` and picks tomorrow by the UTC hour, so a board's day is the UTC calendar day.
+ * The board day (YYYY-MM-DD) for `date`, default now: the UTC calendar day. prepare-leaderboard's
+ * 23:00 UTC run writes the next day's rows, so day D's rows exist from D-1 23:00 and a reader
+ * on day D always finds them, including in the hour after that run.
  */
 export function leaderboardDay(date?: Date) {
   return dayjs.utc(date ?? new Date()).format('YYYY-MM-DD');

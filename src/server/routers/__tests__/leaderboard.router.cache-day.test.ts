@@ -13,12 +13,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { leaderboardRouter } from '~/server/routers/leaderboard.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-/**
- * The client sends no `date`, and `cacheIt` keys on the input, so without a day in the input
- * the Redis key had none either. A board computed just before midnight and written just after
- * the midnight purge was then served as "today" for the whole next day: a tester's list showed
- * 11-11's #37 while their badge showed 11-12's #33. The key must change when the board day does.
- */
+/** The cacheIt key must change when the UTC board day does, and only then. */
 type Middleware = (opts: Record<string, unknown>) => Promise<unknown>;
 const procedures = (
   leaderboardRouter as unknown as {

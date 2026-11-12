@@ -29,10 +29,8 @@ import { CreatorList } from '~/components/Leaderboard/CreatorList';
 import type { LeaderboardGetModel } from '~/types/router';
 
 /**
- * A sidebar rank badge navigates with router.replace('#46'), which is history.replaceState
- * and fires no `hashchange`. The rows used to read the hash only on mount or on `hashchange`,
- * and are keyed by position, so on a board whose rows were already mounted nothing scrolled:
- * the tester's URL said #46 while the viewport sat at ranks 11-14.
+ * A rank badge sets the hash with router.replace (replaceState, no `hashchange`), and rows keyed
+ * by position stay mounted across boards, so the list must scroll on prop changes alone.
  */
 const board = (userIdOffset: number) =>
   Array.from({ length: 80 }, (_, i) => ({
