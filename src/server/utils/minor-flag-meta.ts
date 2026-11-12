@@ -1,4 +1,4 @@
-import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { filterSensitiveProfanityData, PROFANITY_META_KEYS } from '~/libs/profanity-simple/helpers';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { REMOVED_WITH_OWNER_META_KEYS } from '~/server/utils/legal-hold';
@@ -48,52 +48,10 @@ export function resolveMinorAppeal<T>({
   return isOwner ? appeal : null;
 }
 
-// Written by the minor-hash service and never safe to expose: the snapshot carries
-// prevMinorImageIds, the dismissal/clear stamps describe moderator decisions, and
-// textModeration forensics and the systemNsfwLock source are for moderator review only.
-// The single definition of which meta keys are secret — everything that hands a
-// Model.meta back to a client must go through this.
-export function stripMinorHashMeta(meta: ModelMeta): ModelMeta;
-export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null;
-export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
-  if (!meta) return meta;
-
-  const {
-    minorFlagSnapshot: _snapshot,
-    ownerFlagOverride: _ownerFlagOverride,
-    ownerDeclaredFlags: _ownerDeclaredFlags,
-    minorHashDismissed: _dismissed,
-    minorHashCleared: _cleared,
-    minorHashAccepted: _accepted,
-    poiFlagSnapshot: _poiSnapshot,
-    poiHashMatch: _poiMatch,
-    poiHashCleared: _poiCleared,
-    textModeration: _textModeration,
-    textScanFlags: _textScanFlags,
-    modelRules: _modelRules,
-    modelRulesCleared: _modelRulesCleared,
-    systemNsfwLock: _systemNsfwLock,
-    restrictedNsfwVerdict: _restrictedNsfwVerdict,
-    restrictedNsfwVerdictRulings: _restrictedNsfwVerdictRulings,
-    restrictedNsfwVerdictDormant: _restrictedNsfwVerdictDormant,
-    ...rest
-  } = meta;
-
-  return rest;
-}
-
-/**
- * Meta keys only a server-side moderation path may write. `modelUpsertSchema.meta`
- * is a `looseObject`, so unknown keys survive parsing and are merged into
- * `Model.meta` with the client's copy winning — without this, a creator can author
- * their own `textModeration` forensics for a moderator to read, or mint the
- * `minorFlagSnapshot` that the appeal flow treats as proof of an automated flag.
- *
- * Deliberately the same list as `stripMinorHashMeta` plus the profanity pair: a key
- * that is never safe to hand out is never safe to accept either, and keeping one
- * list means the two directions cannot drift apart.
- */
-const MODERATION_OWNED_META_KEYS = [
+// Moderation records an owner may neither read nor write: the minor-hash snapshot carries
+// prevMinorImageIds, the dismissal/clear stamps describe moderator decisions, and textModeration
+// forensics are for moderator review only.
+const MODERATION_SECRET_META_KEYS = [
   'minorFlagSnapshot',
   'ownerFlagOverride',
   'minorHashDismissed',
@@ -106,8 +64,47 @@ const MODERATION_OWNED_META_KEYS = [
   'textScanFlags',
   'modelRules',
   'modelRulesCleared',
-  'profanityMatches',
-  'profanityEvaluation',
+] as const satisfies readonly (keyof ModelMeta)[];
+
+// Server-owned keys that are also hidden from clients. Client meta can't write them at all
+// (`SERVER_OWNED_META_KEYS`), so they are not in the inbound list.
+const HIDDEN_SERVER_OWNED_META_KEYS = [
+  'ownerDeclaredFlags',
+  'systemNsfwLock',
+  'restrictedNsfwVerdict',
+  'restrictedNsfwVerdictRulings',
+  'restrictedNsfwVerdictDormant',
+] as const satisfies readonly (typeof SERVER_OWNED_META_KEYS)[number][];
+
+const CLIENT_HIDDEN_META_KEYS: readonly string[] = [
+  ...MODERATION_SECRET_META_KEYS,
+  ...HIDDEN_SERVER_OWNED_META_KEYS,
+];
+
+// The single definition of which meta keys are secret: everything that hands a Model.meta back to
+// a client must go through this.
+export function stripMinorHashMeta(meta: ModelMeta): ModelMeta;
+export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null;
+export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
+  if (!meta) return meta;
+  const rest = { ...meta } as Record<string, unknown>;
+  for (const key of CLIENT_HIDDEN_META_KEYS) delete rest[key];
+  return rest as ModelMeta;
+}
+
+/**
+ * Meta keys only a server-side moderation path may write. `modelUpsertSchema.meta`
+ * is a `looseObject`, so unknown keys survive parsing and are merged into
+ * `Model.meta` with the client's copy winning — without this, a creator can author
+ * their own `textModeration` forensics for a moderator to read, or mint the
+ * `minorFlagSnapshot` that the appeal flow treats as proof of an automated flag.
+ *
+ * Built from the same lists `stripMinorHashMeta` and `filterSensitiveProfanityData` hide: a
+ * key that is never safe to hand out is never safe to accept either.
+ */
+const MODERATION_OWNED_META_KEYS = [
+  ...MODERATION_SECRET_META_KEYS,
+  ...PROFANITY_META_KEYS,
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 /**
