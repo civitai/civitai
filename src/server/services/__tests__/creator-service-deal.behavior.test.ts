@@ -96,7 +96,20 @@ vi.mock('~/server/services/creator-service-deal-file-access', async (importOrigi
   readServiceDealFileAccess: async () => accessLog.value,
 }));
 
+// The job's own context is irrelevant here; only which sweeps it runs is.
+vi.mock('~/server/jobs/job', () => ({
+  createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
+    name,
+    cron,
+    run: () => fn({ checkIfCanceled: () => undefined }),
+  }),
+}));
+
 const deals = await import('~/server/services/creator-service-deal.service');
+const { dealOverdueCancelledChatLine } = await import(
+  '~/shared/utils/creator-service-deal-chat-line'
+);
+const { creatorServiceDealsJob } = await import('~/server/jobs/creator-service-deal-jobs');
 const reviews = await import('~/server/services/creator-service-dispute-review.service');
 const escrow = await import('~/server/services/creator-service-escrow.service');
 const { creatorServiceNotifications } = await import(
@@ -1120,21 +1133,24 @@ describe('an overdue deal nothing was delivered for', () => {
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
     return id;
   };
-  const dueDaysAgo = (id: number, days: number) =>
-    q(`UPDATE "ServiceDeal" SET "dueAt" = now() - make_interval(days => ${days}) WHERE id = $1`, [
+  const dueHoursAgo = (id: number, hours: number) =>
+    q(`UPDATE "ServiceDeal" SET "dueAt" = now() - make_interval(hours => ${hours}) WHERE id = $1`, [
       id,
     ]);
+  const dueDaysAgo = (id: number, days: number) => dueHoursAgo(id, days * 24);
+  const ageRevisionRequests = (id: number, days: number) =>
+    q(
+      `UPDATE "ServiceDealEvent" SET "createdAt" = now() - make_interval(days => ${days})
+       WHERE "dealId" = $1 AND type = 'RevisionRequested'`,
+      [id]
+    );
   /** A revision round opened `days` ago, on a deal whose due date passed long before. */
   const inRevision = async (days: number, buyerId = BUYER) => {
     const id = await working(buyerId);
     await deliver(id);
     await deals.requestServiceDealRevision({ dealId: id, userId: buyerId, comment: 'tweak' });
     await dueDaysAgo(id, 30);
-    await q(
-      `UPDATE "ServiceDealEvent" SET "createdAt" = now() - make_interval(days => ${days})
-       WHERE "dealId" = $1 AND type = 'RevisionRequested'`,
-      [id]
-    );
+    await ageRevisionRequests(id, days);
     return id;
   };
 
@@ -1153,7 +1169,7 @@ describe('an overdue deal nothing was delivered for', () => {
       expect.objectContaining({
         userId: -1,
         chatId: 77,
-        content: expect.stringContaining('within 7 days of the due date'),
+        content: dealOverdueCancelledChatLine({ dealId: id, days: 7 }),
       })
     );
   });
@@ -1172,8 +1188,8 @@ describe('an overdue deal nothing was delivered for', () => {
   it('is left alone until 7 days past due', async () => {
     const early = await working();
     const late = await working(STRANGER);
-    await dueDaysAgo(early, 6);
-    await dueDaysAgo(late, 8);
+    await dueHoursAgo(early, 7 * 24 - 1);
+    await dueHoursAgo(late, 7 * 24 + 1);
     expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 1 });
     expect((await deal(early)).status).toBe('Accepted');
     expect(await deals.cancelOverdueServiceDeal(early)).toBe(false);
@@ -1201,6 +1217,26 @@ describe('an overdue deal nothing was delivered for', () => {
     expect((await deal(fresh)).status).toBe('InRevision');
     expect(await deals.cancelOverdueServiceDeal(fresh)).toBe(false);
     expect(await deal(stale)).toMatchObject({ status: 'Cancelled', closeReason: 'overdue' });
+  });
+
+  it('counts a second revision round from its own request', async () => {
+    const id = await working();
+    await deliver(id);
+    await q(`UPDATE "ServiceDeal" SET "revisionsIncluded" = 2 WHERE id = $1`, [id]);
+    await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'one' });
+    await ageRevisionRequests(id, 8);
+    await deliver(id);
+    await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'two' });
+    await dueDaysAgo(id, 30);
+    expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 0 });
+    expect((await deal(id)).status).toBe('InRevision');
+  });
+
+  it('runs in the creator-service-deals job', async () => {
+    const id = await working();
+    await dueDaysAgo(id, 8);
+    expect(await creatorServiceDealsJob.run({})).toMatchObject({ overdue: { moved: 1 } });
+    expect((await deal(id)).status).toBe('Cancelled');
   });
 
   it('never touches a deal in dispute or waiting on a cancellation answer', async () => {

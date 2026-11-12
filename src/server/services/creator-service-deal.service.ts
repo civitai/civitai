@@ -895,7 +895,7 @@ export const cancelOverdueServiceDeals = ({ limit = 100 } = {}) =>
       statuses: ['Accepted', 'InRevision'],
       clock: overdueClock,
       after: SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS,
-      narrow: Prisma.sql`"dueAt" + ${ms(SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS)} <= now()`,
+      narrow: Prisma.sql`"dueAt" <= now() - ${ms(SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS)}`,
     },
     limit,
     cancelOverdueServiceDeal
