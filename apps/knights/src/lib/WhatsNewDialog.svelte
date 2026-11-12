@@ -100,6 +100,7 @@
     margin: 12px 0 0;
     color: var(--io-parchment);
     font: 700 32px/1.15 var(--io-font-display);
+    text-wrap: balance;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -149,6 +150,7 @@
     margin: 0;
     color: var(--io-parchment-muted);
     font: 400 17px/1.5 var(--io-font-body);
+    text-wrap: pretty;
   }
   strong {
     color: var(--io-parchment);
@@ -158,6 +160,9 @@
     color: var(--io-gold);
     text-decoration: underline;
     text-underline-offset: 3px;
+  }
+  a:hover {
+    color: var(--io-parchment);
   }
   .footer {
     display: flex;

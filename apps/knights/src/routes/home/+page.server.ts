@@ -75,5 +75,7 @@ export const actions = {
     if (!(await dismissWhatsNew(seenStore, locals.user.id, status))) {
       return fail(500, { message: 'Could not close this. Try again.', whatsNewFailed: true });
     }
+    // The button reads "Start judging", so from /home it goes where judging happens.
+    redirect(303, '/play');
   },
 } satisfies Actions;
