@@ -53,7 +53,9 @@ describe('getAllHiddenForUser with the cache unavailable', () => {
   });
 
   it('a cache write that never answers does not hold the answer either', async () => {
-    // Read misses (the default), the database answers, and the write-back parks.
+    // Read misses, the database answers, and the write-back parks. (Set explicitly: clearAllMocks
+    // keeps the previous test's never-answering read implementation.)
+    redisMock.redis.packed.hGetAll.mockResolvedValue({});
     redisMock.redis.packed.hSet.mockImplementation(() => new Promise(() => undefined));
 
     const started = Date.now();

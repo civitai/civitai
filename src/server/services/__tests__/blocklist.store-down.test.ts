@@ -86,6 +86,21 @@ describe('getBlocklistDTO with the cache unavailable', () => {
     expect(await getBlocklistDTO({ type: BlocklistType.LinkDomain })).toEqual(updated);
   });
 
+  it('cache and database both down, last copy older than the cache TTL: still serves that copy', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+    const { getBlocklistDTO } = await load();
+    redisMock.redis.get.mockResolvedValue(JSON.stringify(ROW));
+    await getBlocklistDTO({ type: BlocklistType.LinkDomain });
+
+    vi.setSystemTime(new Date('2026-11-01T02:00:00Z'));
+    redisMock.redis.get.mockRejectedValue(new Error('cluster down'));
+    dbMock.dbWrite.blocklist.findMany.mockRejectedValue(new Error('db down'));
+
+    await expect(getBlocklistDTO({ type: BlocklistType.LinkDomain })).resolves.toEqual(ROW);
+    expect(dbMock.dbWrite.blocklist.findMany).toHaveBeenCalled();
+  });
+
   it('no copy anywhere: throws instead of answering with an empty list', async () => {
     redisMock.redis.get.mockRejectedValue(new Error('cluster down'));
     dbMock.dbWrite.blocklist.findMany.mockRejectedValue(new Error('db down'));
