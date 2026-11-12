@@ -19,8 +19,7 @@ import type { SearchIndex } from '~/components/Search/parsers/base';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { Configure, InstantSearch, useInstantSearch } from 'react-instantsearch';
 import { SEARCH_HITS_PER_PAGE } from '~/components/Search/search.constants';
-import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
-import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
+import { searchBoxFor } from '~/components/Search/CustomSearchComponents';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
 import * as z from 'zod';
@@ -76,10 +75,6 @@ function SearchStateMonitor({ onQueryChange }: { onQueryChange: (query: string) 
   }, [uiState, onQueryChange]);
 
   return null;
-}
-
-function renderSearchComponent(props: RenderSearchComponentProps) {
-  return <CustomSearchBox {...props} />;
 }
 
 const searchQuerySchema = z.looseObject({
@@ -161,7 +156,7 @@ export function SearchLayout({
         <Configure hitsPerPage={SEARCH_HITS_PER_PAGE} attributesToHighlight={[]} />
         <SearchStateMonitor onQueryChange={handleQueryChange} />
         <AppLayout
-          renderSearchComponent={renderSearchComponent}
+          renderSearchComponent={searchBoxFor(indexName)}
           scrollable={isMobile ? !sidebarOpen : true}
           left={leftSidebar}
         >
