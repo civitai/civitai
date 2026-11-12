@@ -1301,11 +1301,6 @@ export async function getReviewRepoHeadSha(slug: string): Promise<string> {
   return branch.commit.id;
 }
 
-// ---------------------------------------------------------------------------
-// Source repos (`civitai-apps-src/<slug>`) — the developer's own history of a fork or an App
-// Assistant app. See `app-source-repo.service.ts`.
-// ---------------------------------------------------------------------------
-
 /**
  * Ensure the `civitai-apps-src` org and its `<slug>` repo exist. Idempotent: the org POST and the
  * repo POST both treat 409 / 422 as "already exists". The repo is created with `auto_init`, so
