@@ -64,6 +64,18 @@ describe('personal-data-export mongo-client against the real driver', () => {
     expect(created.options.readPreference.mode).toBe('secondary');
   });
 
+  it('forgets a client whose connect() failed, so the next call builds a fresh one', async () => {
+    const { connect, getWorkflowCollection } = await load();
+    connect.mockRejectedValueOnce(new Error('server selection timed out'));
+    const url = 'mongodb://reader:pw@db1.example.net/prod';
+
+    await expect(getWorkflowCollection(url)).rejects.toThrow('server selection timed out');
+    await getWorkflowCollection(url);
+
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect.mock.contexts[1]).not.toBe(connect.mock.contexts[0]);
+  });
+
   it('find() with the export options returns a real closable async-iterable cursor', async () => {
     const { getWorkflowCollection } = await load();
     const collection = await getWorkflowCollection('mongodb://reader:pw@db1.example.net/prod');
