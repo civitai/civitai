@@ -358,6 +358,54 @@ describe('sendNotifications', () => {
     expect(received().get(1)).toEqual(['new-images', 'verdicts']);
   });
 
+  /** An unsettled vote on an image outside the queue: activity, but no verdict to announce. */
+  let voteItemId = 90_000;
+  const seedVoteOn = (playerId: number, createdAt: string) =>
+    pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+       VALUES ($1,$2,$3,$4,1,'Knight','4',1)`,
+      [++voteItemId, playerId, createdAt, Q]
+    );
+
+  it('nudges an active player about waiting images every day', async () => {
+    await seedPlayer(pg, 1);
+    await seedVoteOn(1, '2026-12-10 10:00:00');
+    await enqueueImage();
+    const { run, received } = runner();
+
+    await run(at(12));
+    await run(new Date('2026-12-18T12:30:00Z'));
+
+    expect(received().get(1)).toEqual(['new-images', 'new-images']);
+  });
+
+  it('nudges an inactive player about waiting images at most once every 30 days', async () => {
+    await seedPlayer(pg, 1);
+    await seedVoteOn(1, '2026-11-10 10:00:00');
+    await enqueueImage();
+    const { run, received } = runner();
+
+    await run(at(12));
+    await run(new Date('2026-12-18T12:30:00Z'));
+    await run(new Date('2027-01-15T12:30:00Z'));
+    expect(received().get(1)).toEqual(['new-images']);
+
+    await run(new Date('2027-01-16T12:30:00Z'));
+    expect(received().get(1)).toEqual(['new-images', 'new-images']);
+  });
+
+  it('goes back to daily nudges once an inactive player votes again', async () => {
+    await seedPlayer(pg, 1);
+    await enqueueImage();
+    const { run, received } = runner();
+
+    await run(at(12));
+    await seedVoteOn(1, '2026-12-17 13:00:00');
+    await run(new Date('2026-12-18T12:30:00Z'));
+
+    expect(received().get(1)).toEqual(['new-images', 'new-images']);
+  });
+
   it('does not repeat verdicts the next day when nothing new settled', async () => {
     await seedPlayer(pg, 1);
     await seedSettledVote(1);
