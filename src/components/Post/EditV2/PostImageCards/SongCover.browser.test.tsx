@@ -185,6 +185,27 @@ describe("a song's cover in the post editor", () => {
     await expect.element(page.getByRole('button', { name: 'Change cover' })).toBeInTheDocument();
   });
 
+  // After a reload there is no local preview: the status must not sit on top of the music glyph.
+  const glyphsOutsideStatus = (root: Element) =>
+    [...root.querySelectorAll('svg')].filter((svg) => !svg.closest('[role="status"], button'));
+
+  test('a cover being processed with nothing to show is the status alone, no music glyph', async () => {
+    const { screen } = await renderCover({ ...scanned, ingestion: 'Pending' });
+
+    await expect.element(page.getByText('Processing')).toBeVisible();
+    expect(glyphsOutsideStatus(screen.container)).toHaveLength(0);
+  });
+
+  test('an upload with no preview to show is the status alone, no music glyph', async () => {
+    const { screen, choose } = await renderCover();
+
+    choose(png());
+    mocks.setFiles((files) => [{ ...files[0], objectUrl: '', progress: 10 }]);
+
+    await expect.element(page.getByText('Uploading 10%')).toBeVisible();
+    expect(glyphsOutsideStatus(screen.container)).toHaveLength(0);
+  });
+
   test('shows a blocked cover as blocked, with Change cover offered', async () => {
     await renderCover({ ...scanned, ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'moderated' });
 

@@ -69,7 +69,7 @@ export function SongPreviewPlayer({
         type="button"
         onClick={togglePlay}
         aria-label={playing ? 'Pause' : 'Play'}
-        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#E64980] text-white transition-transform hover:scale-105"
+        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--mantine-color-pink-6)] text-[var(--mantine-color-body)] transition-transform hover:scale-105"
       >
         {playing ? <IconPlayerPauseFilled size={14} /> : <IconPlayerPlayFilled size={14} />}
       </button>
@@ -103,7 +103,7 @@ export function SongPreviewPlayer({
           <div className="h-1 w-full overflow-hidden rounded-full bg-black/15 transition-[height] group-hover:h-1.5 dark:bg-white/35">
             <div
               data-testid="song-progress-fill"
-              className="h-full bg-[#E64980]"
+              className="h-full bg-[var(--mantine-color-pink-6)]"
               style={{ width: `${progress}%` }}
             />
           </div>

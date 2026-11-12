@@ -16,13 +16,16 @@ import type {
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 
+const tileSurface = 'rounded-xl bg-gray-2 dark:bg-dark-6';
+
 /** Stands in for a song's cover wherever the post editor would show an image. */
 export function SongGlyphTile({ className }: { className?: string }) {
   return (
     <div
       data-testid="song-tile"
       className={clsx(
-        'flex shrink-0 items-center justify-center rounded-xl bg-gray-2 text-gray-6 dark:bg-dark-6 dark:text-dark-2',
+        'flex shrink-0 items-center justify-center text-gray-6 dark:text-dark-2',
+        tileSurface,
         className
       )}
     >
@@ -90,6 +93,9 @@ export function SongCover({ image }: { image: PostEditImageDetail }) {
           className={clsx('size-full object-cover', view !== 'done' && 'opacity-40')}
           wrapperProps={{ className: 'size-full' }}
         />
+      ) : view === 'uploading' || view === 'processing' ? (
+        // The status panel carries the spinner and label; a glyph under it would stack on them.
+        <div className={clsx('size-full', tileSurface)} />
       ) : (
         <SongGlyphTile className="size-full" />
       )}
@@ -205,12 +211,12 @@ function CoverPicker({
         >
           <span
             className={clsx(
-              'flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-semibold text-white transition-opacity',
+              'flex items-center gap-1.5 rounded bg-dark-9/80 px-2.5 py-[5px] text-xs font-semibold text-white transition-opacity',
               !alwaysShown &&
                 'opacity-0 group-hover/cover:opacity-100 group-focus-visible/cover:opacity-100 [@media(hover:none)]:opacity-100'
             )}
           >
-            <IconPhotoEdit size={14} aria-hidden />
+            <IconPhotoEdit size={13} aria-hidden />
             {label}
           </span>
         </UnstyledButton>

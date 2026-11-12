@@ -110,6 +110,16 @@ const picture = (overrides: Partial<Record<string, unknown>> = {}) =>
 const clip = () =>
   picture({ id: 9, type: 'video', metadata: { width: 100, height: 100, duration: 4 } });
 
+// The height the autosizer gives the title: its content height, read at zero height as the
+// autosizer reads it (tests render Mantine's plain textarea, whose box keeps its default rows).
+function contentHeight(field: HTMLTextAreaElement) {
+  const height = field.style.height;
+  field.style.height = '0px';
+  const measured = field.scrollHeight;
+  field.style.height = height;
+  return measured;
+}
+
 function sectionTitles(root: Element) {
   return [...root.querySelectorAll('h3')].map((h) => h.textContent?.trim());
 }
@@ -228,6 +238,52 @@ describe('a song in the post editor', () => {
     expect(mocks.updateImage).toHaveBeenLastCalledWith({ id: 7, title: 'Neon Rain' });
   });
 
+  test('clicking the pencil puts the cursor in the title', async () => {
+    await renderCard(song());
+    await userEvent.click(page.getByRole('button', { name: 'Edit song title' }));
+    await expect.element(page.getByRole('textbox', { name: 'Song title' })).toHaveFocus();
+  });
+
+  test('the pencil sits right after a short title, not at the far edge of the column', async () => {
+    await renderWithProviders(
+      <div style={{ width: 900 }}>
+        <AddedImage image={song()} />
+      </div>
+    );
+    const title = page.getByRole('textbox', { name: 'Song title' });
+    await expect.element(title).toBeVisible();
+    const titleBox = title.element().getBoundingClientRect();
+    const pencilBox = page
+      .getByRole('button', { name: 'Edit song title' })
+      .element()
+      .getBoundingClientRect();
+    expect(pencilBox.left - titleBox.right).toBeGreaterThanOrEqual(6);
+    expect(pencilBox.left - titleBox.right).toBeLessThanOrEqual(10);
+    // "Midnight Arcade" at 24px bold is well under 300px wide, and stays on one 30px line.
+    expect(titleBox.width).toBeLessThan(300);
+    expect(contentHeight(title.element() as HTMLTextAreaElement)).toBeLessThanOrEqual(30);
+  });
+
+  test('a long title wraps inside the card at 390px', async () => {
+    const long = `${'Neon '.repeat(30)}Supercalifragilisticexpialidociousarcadeanthem`;
+    const screen = await renderWithProviders(
+      <div style={{ width: 390 }} data-testid="narrow">
+        <AddedImage image={song({ metadata: { duration: 192, title: long } })} />
+      </div>
+    );
+    const title = page.getByRole('textbox', { name: 'Song title' });
+    await expect.element(title).toHaveValue(long);
+    const narrow = screen.container.querySelector('[data-testid="narrow"]')!;
+    const field = title.element() as HTMLTextAreaElement;
+    const pencil = page.getByRole('button', { name: 'Edit song title' }).element();
+    expect(contentHeight(field)).toBeGreaterThan(60);
+    expect(pencil.getBoundingClientRect().right).toBeLessThanOrEqual(
+      narrow.getBoundingClientRect().right
+    );
+    expect(field.scrollWidth).toBeLessThanOrEqual(field.clientWidth);
+    expect(narrow.scrollWidth).toBeLessThanOrEqual(390);
+  });
+
   test('shows the lyrics read-only, with times only on timed lines', async () => {
     await renderCard(
       song({
@@ -331,6 +387,31 @@ describe('image and video cards next to songs', () => {
     await expect
       .element(page.getByRole('slider', { name: 'Song progress' }))
       .not.toBeInTheDocument();
+  });
+
+  test("the song's menu sits on a backdrop that reads over a light cover; the image menu does not change", async () => {
+    const screen = await renderWithProviders(
+      <>
+        <div data-testid="image">
+          <AddedImage image={picture()} />
+        </div>
+        <div data-testid="song">
+          <AddedImage image={song()} />
+        </div>
+      </>
+    );
+    const songMenu = page.getByRole('button', { name: 'Song options' });
+    await expect.element(songMenu).toBeVisible();
+    // The pointer stays where an earlier test clicked; park it away from both menus.
+    await userEvent.hover(page.getByText('Techniques').first());
+    const imageMenu = screen.container
+      .querySelector('[data-testid="image"] .tabler-icon-dots-vertical')!
+      .closest('button')!;
+    expect(getComputedStyle(imageMenu).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    const backdrop = getComputedStyle(songMenu.element()).backgroundColor;
+    const alpha = Number(backdrop.match(/rgba?\((?:[\d.]+,\s*){3}([\d.]+)\)/)?.[1] ?? 1);
+    expect(backdrop).not.toBe('rgba(0, 0, 0, 0)');
+    expect(alpha).toBeGreaterThanOrEqual(0.3);
   });
 
   test('removing an image keeps the image copy', async () => {

@@ -1373,6 +1373,8 @@ function PostImage() {
             onTouchStart={warmMenu}
             onFocus={warmMenu}
             aria-label={isAudio ? 'Song options' : undefined}
+            // A song's cover may be the light placeholder or a pale image, with no gradient behind.
+            className={isAudio ? 'rounded-full bg-black/40 hover:bg-black/60' : undefined}
           >
             <IconDotsVertical
               color="#fff"
