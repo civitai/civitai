@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { stripComments } from '../../../../test/strip-comments';
+import { getDeveloperRateCard } from '~/server/services/blocks/app-developer-terms.service';
+import { DEVELOPER_RATE_CARD_SHOWN_ROWS } from '~/shared/constants/app-developer-terms.constants';
 
 /**
  * Money copy must not describe a disbursement that does not run.
@@ -230,8 +232,6 @@ const CARD_SHARE_MARKERS = [
   'lifetimeShareCents',
   'ownedEarningCents',
 ];
-/** The rate card advertises that share. Its component may exist; no page may render it. */
-const RATE_CARD_FILE = 'src/components/Apps/AppDeveloperTerms/DeveloperRateCard.tsx';
 
 /**
  * The digital-goods card's timing disclosure, pinned whole for the same reason the two
@@ -442,7 +442,7 @@ describe('app earnings copy does not promise a payout pipeline that does not run
 
   it('no author surface renders the card-purchase share, which is never paid out', () => {
     // Hidden on every author surface until a payout exists: the revenue pages, the listing
-    // editor's Earnings tab, the marketplace cards' earning chip and the rate card. A surface
+    // editor's Earnings tab and the marketplace cards' earning chip. A surface
     // that brings one back fails here and has to decide whether that share now has a payout.
     const files = MONEY_COPY_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
     expect(files.map(rel)).toContain(REVENUE_PANEL); // walk control
@@ -456,15 +456,15 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     expect(read('src/server/services/blocks/app-collaborator-earnings.service.ts')).toContain(
       'lifetimeShareCents'
     );
+  });
 
-    // The rate card: no file renders the component.
-    const tsx = walk(join(REPO_ROOT, 'src')).filter((f) => f.endsWith('.tsx') && nonTest(f));
-    expect(tsx.map(rel)).toContain(RATE_CARD_FILE); // walk control
-    const renders = (re: RegExp) =>
-      tsx.filter((f) => re.test(stripComments(readFileSync(f, 'utf8')))).map(rel);
-    expect(renders(/<DeveloperRateCard[\s/>]/)).toEqual([]);
-    // Pattern control: the same scan finds the view the component itself renders.
-    expect(renders(/<DeveloperRateCardView[\s/>]/)).toEqual([RATE_CARD_FILE]);
+  it('the rate card shows only the goods split, never a card-purchase or subscription share row', () => {
+    // `/apps/revenue` renders the rate card, and that is a correct disclosure only while it
+    // lists the goods split alone: every other row is a share of Buzz bought through the app,
+    // which is recorded but never paid out.
+    expect(DEVELOPER_RATE_CARD_SHOWN_ROWS).toEqual(['goods']);
+    // ...and the card is built from that list, so the pin is on what the page shows.
+    expect(getDeveloperRateCard().rows.map((r) => r.row)).toEqual(['goods']);
   });
 
   it('the digital-goods timing disclosure is pinned whole', () => {

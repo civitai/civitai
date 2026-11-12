@@ -4,6 +4,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppAnalyticsPanel } from '~/components/AppBlocks/AppAnalyticsPanel';
 import { RevenuePanel } from '~/components/AppBlocks/RevenuePanel';
 import { Meta } from '~/components/Meta/Meta';
+import { DeveloperRateCard } from '~/components/Apps/AppDeveloperTerms/DeveloperRateCard';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -71,6 +72,7 @@ export default function AppBlocksDashboardPage() {
           </>
         }
       >
+        {features.appDeveloperRateCard && <DeveloperRateCard />}
         <Tabs defaultValue="revenue" keepMounted={false}>
           <Tabs.List mb="md">
             <Tabs.Tab value="revenue">Revenue</Tabs.Tab>
