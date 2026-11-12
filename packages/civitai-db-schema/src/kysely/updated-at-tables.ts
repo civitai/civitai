@@ -52,6 +52,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'HomeBlock',
   'HuggingFaceImport',
   'Image',
+  'ImageAxisRating',
   'ImageCaption',
   'ImageReaction',
   'Item',
