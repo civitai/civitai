@@ -688,6 +688,10 @@ describe('getTrainingReviewQueue', () => {
     const queue = await getTrainingReviewQueue();
     expect(queue.items.map((i) => [i.id, i.checked])).toEqual([[1, false]]);
     expect(queue.workflowFilterUnavailable).toBe(true);
+    // An answer, not a failure: the build is held rather than redone on every load.
+    db([version(1)], [file(11, 1, W1)]);
+    await getTrainingReviewQueue();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not hold a build with an unchecked row', async () => {
@@ -1301,21 +1305,39 @@ describe('the pending queue is bounded and shared', () => {
     expect(chQuery).toHaveBeenCalledTimes(3);
   });
 
-  it('does not ask again for a workflow the orchestrator says is gone', async () => {
+  it('stops asking about a workflow only once two 404s a minute apart say it is gone', async () => {
     ledgerOf(ids);
+    const rebuild = async () => {
+      invalidatePendingWorkflowGates();
+      await getPendingWorkflowGates();
+    };
     route = () => new Response(null, { status: 404 });
     await getPendingWorkflowGates();
-    invalidatePendingWorkflowGates();
-    await getPendingWorkflowGates();
-    expect(readsOf(ids[0])).toBe(1);
+    await rebuild();
+    expect(readsOf(ids[0])).toBe(2); // one 404, or two close together, is not enough
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 61_000);
+    await rebuild();
+    await rebuild();
+    expect(readsOf(ids[0])).toBe(3);
   });
 
-  it('does not hold on to a ledger failure', async () => {
-    chQuery.mockRejectedValueOnce(new Error('down'));
-    route = () => new Response(null, { status: 599 });
-    expect((await getPendingWorkflowGates()).ledgerUnavailable).toBe(true);
-    ledgerOf([]);
-    expect((await getPendingWorkflowGates()).ledgerUnavailable).toBe(false);
+  it('forgets a 404 once the workflow answers again', async () => {
+    ledgerOf(ids);
+    const rebuild = async () => {
+      invalidatePendingWorkflowGates();
+      return getPendingWorkflowGates();
+    };
+    route = () => new Response(null, { status: 404 });
+    await getPendingWorkflowGates();
+    route = (url) => json(workflow({ id: byIdOf(url) }));
+    await rebuild();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 61_000);
+    route = () => new Response(null, { status: 404 });
+    await rebuild();
+    route = (url) => json(workflow({ id: byIdOf(url) }));
+    expect((await rebuild()).items).toHaveLength(3);
   });
 
   it('re-reads runs after its window, and the ledger only after the ledger window', async () => {
@@ -1334,15 +1356,24 @@ describe('the pending queue is bounded and shared', () => {
   });
 
   it('lets the badge reuse a build the page would rebuild', async () => {
+    const V = '9-20261005123456789-v';
+    const paused = () =>
+      fileRows
+        .mockResolvedValueOnce([
+          { id: 1, name: 'v1', createdAt: new Date(), modelId: 1, modelName: 'm' },
+        ])
+        .mockResolvedValueOnce([file(11, 1, V)]);
     ledgerOf(ids);
     route = (url) => json(workflow({ id: byIdOf(url) }));
-    expect(await countTrainingDataReview()).toBe(3);
+    paused();
+    expect(await countTrainingDataReview()).toBe(4);
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(Date.now() + 2 * 60_000);
-    expect(await countTrainingDataReview()).toBe(3);
-    expect(readsOf(ids[0])).toBe(1);
-    await getPendingWorkflowGates();
-    expect(readsOf(ids[0])).toBe(2);
+    expect(await countTrainingDataReview()).toBe(4);
+    expect([readsOf(ids[0]), readsOf(V)]).toEqual([1, 1]);
+    paused();
+    await Promise.all([getPendingWorkflowGates(), getTrainingReviewQueue()]);
+    expect([readsOf(ids[0]), readsOf(V)]).toEqual([2, 2]);
   });
 });
 

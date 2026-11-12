@@ -374,6 +374,8 @@ export type TrainingReviewQueue = {
   items: TrainingReviewRow[];
   /** At least one row could not be checked; those are listed unchecked. */
   workflowFilterUnavailable: boolean;
+  /** A read did not answer (as opposed to answering with something unreadable): worth retrying. */
+  unanswered: boolean;
   /** More Paused versions than one build reads; the oldest were not checked. */
   truncated: boolean;
 };
@@ -416,7 +418,8 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
     .execute();
   const truncated = fetched.length > MAX_PAUSED_VERSIONS;
   const rows = fetched.slice(0, MAX_PAUSED_VERSIONS).sort((a, b) => a.id - b.id);
-  if (!rows.length) return { items: [], workflowFilterUnavailable: false, truncated };
+  if (!rows.length)
+    return { items: [], workflowFilterUnavailable: false, unanswered: false, truncated };
 
   // The gate's picker, as the version route releases with: the scored one returns a version's
   // finished run, and the queue would check a workflow other than the one Approve acts on.
@@ -462,6 +465,7 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
   return {
     items: [...listed.filter((r) => r.underReview), ...listed.filter((r) => !r.underReview)],
     workflowFilterUnavailable: classified.some((r) => !r.checked),
+    unanswered: reads.some((r) => r === undefined),
     truncated,
   };
 }
@@ -647,7 +651,6 @@ export async function moderateTrainingData(input: {
 
   const synced = await notifyTrainingWebhook(input.modelVersionId, workflowId, workflow.status);
   // Again: a build during the webhook still saw the version Paused and under review.
-  invalidatePendingWorkflowGates();
   invalidateTrainingReviewQueue();
   if (!synced) {
     logToAxiom({
@@ -1226,10 +1229,13 @@ const QUEUE_CACHE_MS = 30_000;
 const BADGE_MAX_AGE_MS = 5 * 60_000;
 /** The ledger's candidate list. A just-submitted gate can take this long to appear. */
 const LEDGER_CACHE_MS = 2 * 60_000;
-/** A workflow the orchestrator answered 404/410 for is not asked again for this long. */
+/** A workflow answered 404/410 twice, at least `GONE_CONFIRM_MS` apart, is not asked again for
+ *  `GONE_CACHE_MS`. One 404 is not enough: a front end mid-deploy answers 404 for everything, and
+ *  holding that would show an empty queue and a 0 badge with no warning. */
+const GONE_CONFIRM_MS = 60_000;
 const GONE_CACHE_MS = 60 * 60_000;
 const GONE_CACHE_MAX = 10_000;
-const goneWorkflows = new Map<string, number>();
+const goneWorkflows = new Map<string, { first: number; confirmedAt?: number }>();
 
 type QueueRead =
   | { kind: 'gone' }
@@ -1239,17 +1245,22 @@ type QueueRead =
 
 /** One queue row's workflow, through the manager read. Undefined when the orchestrator did not answer. */
 async function readForQueue(workflowId: string): Promise<QueueRead | undefined> {
-  const goneUntil = goneWorkflows.get(workflowId);
-  if (goneUntil !== undefined && goneUntil > Date.now()) return { kind: 'gone' };
+  const known = goneWorkflows.get(workflowId);
+  if (known?.confirmedAt !== undefined && Date.now() - known.confirmedAt < GONE_CACHE_MS)
+    return { kind: 'gone' };
   const loaded = await getManagerWorkflow(workflowId);
   if (!loaded.ok) {
     if (!loaded.gone) return undefined;
-    goneWorkflows.delete(workflowId);
-    if (goneWorkflows.size >= GONE_CACHE_MAX)
-      goneWorkflows.delete(goneWorkflows.keys().next().value!);
-    goneWorkflows.set(workflowId, Date.now() + GONE_CACHE_MS);
+    const now = Date.now();
+    if (known && now - known.first >= GONE_CONFIRM_MS) known.confirmedAt = now;
+    else if (!known) {
+      if (goneWorkflows.size >= GONE_CACHE_MAX)
+        goneWorkflows.delete(goneWorkflows.keys().next().value!);
+      goneWorkflows.set(workflowId, { first: now });
+    }
     return { kind: 'gone' };
   }
+  goneWorkflows.delete(workflowId);
   const read = readTrainingWorkflow(workflowId, loaded.workflow);
   return read.ok ? { kind: 'read', reading: read.reading } : { kind: 'unreadable' };
 }
@@ -1340,11 +1351,7 @@ const pendingCache = sharedBuild(
   () => buildPendingWorkflowGates({}),
   (r) => r.ledgerUnavailable || r.workflowFilterUnavailable
 );
-const reviewQueueCache = sharedBuild(
-  QUEUE_CACHE_MS,
-  buildTrainingReviewQueue,
-  (r) => r.workflowFilterUnavailable
-);
+const reviewQueueCache = sharedBuild(QUEUE_CACHE_MS, buildTrainingReviewQueue, (r) => r.unanswered);
 // Rulings do not clear it: a ruled run is dropped by its re-read, not by the ledger.
 const ledgerCache = sharedBuild(
   LEDGER_CACHE_MS,

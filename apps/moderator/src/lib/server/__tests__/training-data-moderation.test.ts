@@ -112,6 +112,7 @@ describe('moderateTrainingData', () => {
     });
 
     await moderateTrainingData({ modelVersionId: VERSION, approve: true, moderatorId: MODERATOR });
+    expect(midRuling).toBeDefined();
     await midRuling;
     const before = fileRows.mock.calls.length;
     await emptyBuild();
