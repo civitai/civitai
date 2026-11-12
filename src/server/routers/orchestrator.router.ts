@@ -69,9 +69,11 @@ import {
   protectedProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
+import { rewriteProxyUrlToOrchestrator } from '~/server/orchestrator/region-proxy';
+import { isCivitaiMediaUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import {
   getPresetModelConfig,
@@ -207,7 +209,16 @@ export const orchestratorRouter = router({
   getVideoMetadata: orchestratorProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ videoUrl: z.string() }))
-    .query(({ ctx, input }) => getVideoMetadata(input)),
+    .query(({ input }) => {
+      // The step runs on the system token, so like the other system-run steps it only takes
+      // media on Civitai's orchestrator. A region-proxy url is read from the orchestrator host.
+      const videoUrl = rewriteProxyUrlToOrchestrator(input.videoUrl);
+      if (!isCivitaiMediaUrl(videoUrl))
+        throw throwBadRequestError(
+          'Video metadata is only available for videos uploaded to Civitai. Upload the file, then try again.'
+        );
+      return getVideoMetadata({ videoUrl });
+    }),
 
   // #region [prompt enhancement]
   enhancePrompt: orchestratorGuardedProcedure

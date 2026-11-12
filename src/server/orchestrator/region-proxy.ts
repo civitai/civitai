@@ -1,3 +1,4 @@
+import { env as clientEnv } from '~/env/client';
 import { isOrchestratorUrl } from '~/server/common/constants';
 
 // Cloudflare-fronted reverse proxy to the orchestrator. Russian ISP DPI filters
@@ -26,6 +27,19 @@ export function rewriteOrchestratorUrlToProxy(url: string): string {
   } catch {
     return url;
   }
+}
+
+/**
+ * The inverse of `rewriteOrchestratorUrlToProxy`, for a url a proxied browser sends back: a
+ * canonical url on the proxy host moves to the public orchestrator host, path and query intact.
+ * Anything else is returned unchanged, so the caller's own url check still judges it.
+ */
+export function rewriteProxyUrlToOrchestrator(url: string): string {
+  if (!URL.canParse(url)) return url;
+  const parsed = new URL(url);
+  if (parsed.href !== url || parsed.host !== ORCHESTRATOR_PROXY_HOST) return url;
+  parsed.host = new URL(clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT).host;
+  return parsed.href;
 }
 
 /**
