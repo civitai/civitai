@@ -604,6 +604,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 1,
   },
+  'src/server/services/collection.service.ts#setCollectionItemNsfwLevel': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
   'src/server/services/image-scan-pipeline.ts#resolveScanOutcome': {
     decision: 'raw-mod-rule-metadata',
     sites: 1,

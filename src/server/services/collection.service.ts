@@ -19,6 +19,7 @@ import {
   PostSort,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   bustContestCollectionItemsCache,
@@ -142,7 +143,10 @@ import {
   assertImagesVisibleToViewer,
   assertImageVisibleToViewer,
 } from '~/server/services/image-visibility.service';
-import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import {
+  JUDGE_RATING_METADATA_KEY,
+  stripBlockProvenanceMetadata,
+} from '~/shared/utils/block-provenance-metadata';
 import {
   collectionSupportsCollaborators,
   freeGrantBaseline,
@@ -2872,19 +2876,23 @@ export const updateCollectionItemsStatus = async ({
       }
     }
 
-    if (collectionMetadata?.judgesApplyBrowsingLevel && collection.type === CollectionType.Image) {
-      const exists = await dbRead.collectionItem.findFirst({
-        where: {
-          id: { in: collectionItemIds },
-          image: {
-            nsfwLevel: {
-              in: [0, -1],
-            },
-          },
-        },
-      });
+    // Approval needs a judge's rating, not only a level: a scan sets the level on its own.
+    if (
+      collectionMetadata?.judgesApplyBrowsingLevel &&
+      collection.type === CollectionType.Image &&
+      collectionItemIds.length > 0
+    ) {
+      const unrated = await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT ci.id
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        WHERE ci."collectionId" = ${collectionId}
+          AND ci.id IN (${Prisma.join(collectionItemIds)})
+          AND NOT ${judgeRatedSql('i')}
+        LIMIT 1
+      `;
 
-      if (exists) {
+      if (unrated.length) {
         throw throwBadRequestError(
           'Some of the items selected have not been given a NSFW rating. Please ensure all items have a NSFW rating before approving them.'
         );
@@ -4182,10 +4190,14 @@ export async function getCollectionEntryCount({
   return result;
 }
 
+const judgeRatedSql = (alias: string) =>
+  Prisma.sql`(${Prisma.raw(`"${alias}"`)}."metadata" -> ${JUDGE_RATING_METADATA_KEY}) IS NOT NULL`;
+
 export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
   nsfwLevel,
-}: SetCollectionItemNsfwLevelInput) => {
+  userId,
+}: SetCollectionItemNsfwLevelInput & { userId: number }) => {
   const collectionItem = await getCollectionItemById({ id: collectionItemId });
 
   if (!collectionItem) {
@@ -4204,47 +4216,79 @@ export const setCollectionItemNsfwLevel = async ({
     throw throwBadRequestError('This collection does not support NSFW level assignment.');
   }
 
-  const image = await dbRead.image.findUnique({
-    where: { id: collectionItem.imageId as number },
-    select: {
-      post: {
-        select: {
-          collectionId: true,
-        },
-      },
-    },
-  });
+  if (!nsfwLevel || nsfwLevel === NsfwLevel.Blocked) throw throwBadRequestError();
+
+  const imageId = collectionItem.imageId;
+  const [image] = await dbWrite.$queryRaw<
+    {
+      postCollectionId: number | null;
+      ingestion: ImageIngestionStatus;
+      nsfwLevel: number;
+      blockedFor: string | null;
+    }[]
+  >`
+    SELECT p."collectionId" AS "postCollectionId", i.ingestion, i."nsfwLevel", i."blockedFor"
+    FROM "Image" i
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId}
+  `;
 
   if (!image) {
     throw throwNotFoundError('Image not found');
   }
 
-  if (image.post?.collectionId !== collectionItem.collectionId) {
+  if (image.postCollectionId !== collectionItem.collectionId) {
     throw throwBadRequestError(
       'The image you are trying to apply an NSFW level to was not created for this collection. NSFW level assignment is only available for images created for this collection.'
     );
   }
 
-  if (!nsfwLevel) throw throwBadRequestError();
+  if (hasBlockMarker(image))
+    throw throwBadRequestError('This image is blocked and cannot be rated.');
+  if (image.ingestion !== ImageIngestionStatus.Scanned)
+    throw throwBadRequestError('This image is still being scanned. Try again shortly.');
 
-  // A rating must not lift a block, so a Blocked image is never written.
-  const { count } = await dbWrite.image.updateMany({
-    where: {
-      id: collectionItem.imageId as number,
-      ingestion: { not: ImageIngestionStatus.Blocked },
-    },
-    data: {
-      nsfwLevel,
-      scannedAt: new Date(),
-      ingestion: ImageIngestionStatus.Scanned,
-      blockedFor: null,
-    },
-  });
-  if (count === 0) throw throwBadRequestError('This image is blocked and cannot be rated.');
+  // The judge may raise the scan's level, never lower it. The lock keeps the result through a
+  // rescan. The WHERE repeats the checks above for a scan or block that lands in between.
+  const [updated] = await dbWrite.$queryRaw<{ nsfwLevel: number }[]>`
+    UPDATE "Image"
+    SET "nsfwLevel" = GREATEST("nsfwLevel", ${nsfwLevel}::int),
+      "nsfwLevelLocked" = TRUE,
+      "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+        ${JUDGE_RATING_METADATA_KEY}::text,
+        jsonb_build_object(
+          'userId', ${userId}::int,
+          'nsfwLevel', ${nsfwLevel}::int,
+          'ratedAt', NOW()
+        )
+      ),
+      "updatedAt" = NOW()
+    WHERE id = ${imageId}
+      AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+      AND "blockedFor" IS NULL
+      AND "nsfwLevel" != ${NsfwLevel.Blocked}
+    RETURNING "nsfwLevel"
+  `;
+  if (!updated)
+    throw throwBadRequestError('This image changed while it was being rated. Try again.');
+
+  logToAxiom({
+    type: 'info',
+    name: 'collection-judge-rating',
+    userId,
+    collectionId: collectionItem.collectionId,
+    collectionItemId,
+    imageId,
+    judgeLevel: nsfwLevel,
+    scanLevel: image.nsfwLevel,
+    finalLevel: updated.nsfwLevel,
+  }).catch();
 
   await imagesSearchIndex.queueUpdate([
-    { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
+    { id: imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
+
+  return { nsfwLevel: updated.nsfwLevel };
 };
 
 export type CollectionEntityType = 'image' | 'model' | 'post' | 'article';

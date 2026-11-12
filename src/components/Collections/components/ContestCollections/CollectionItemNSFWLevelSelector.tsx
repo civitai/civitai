@@ -27,8 +27,9 @@ export const CollectionItemNSFWLevelSelector = ({
         nsfwLevel: parseInt(value, 10),
       },
       {
-        onSuccess: async () => {
-          onNsfwLevelUpdated?.(value);
+        // The saved level is the higher of the pick and the scan's level.
+        onSuccess: async (res) => {
+          onNsfwLevelUpdated?.(String(res?.nsfwLevel ?? value));
         },
       }
     ).catch(() => null);
