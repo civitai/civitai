@@ -17,8 +17,9 @@ import {
   toggleCommentMuteHandler,
 } from '~/server/controllers/commentv3.controller';
 import { rateLimit } from '~/server/middleware.trpc';
-import { COMMENT_V3_RATE_LIMIT_KEY, commentRateLimits } from '~/server/schema/comment.schema';
 import {
+  COMMENT_V3_RATE_LIMIT_KEY,
+  commentRateLimits,
   commentV3IdSchema,
   getCommentRepliesSchema,
   getCommentSectionSchema,

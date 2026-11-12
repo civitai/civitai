@@ -158,6 +158,37 @@ describe('resolveWildcardPackForUser — maturity ceiling', () => {
   });
 });
 
+describe('resolveWildcardPackForUser — a mature model', () => {
+  // Answers with the model's nsfw only when the resolver selects it.
+  const matureModel = () =>
+    modelVersionFindFirst.mockImplementation((async (args: {
+      select: { model: { select: Record<string, boolean> } };
+    }) => {
+      const row = wildcardVersion({ nsfwLevel: NsfwLevel.PG });
+      return args.select.model.select.nsfw ? { ...row, model: { ...row.model, nsfw: true } } : row;
+    }) as never);
+
+  it('FORBIDs it on a SFW ceiling even when its version is rated PG, without signing', async () => {
+    matureModel();
+    getFileForModelVersionMock.mockResolvedValue(successGate);
+    await expect(
+      resolveWildcardPackForUser({ modelVersionId: 100, user: sfwUser, canViewNsfw: false })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(getFileForModelVersionMock).not.toHaveBeenCalled();
+  });
+
+  it('serves it to a user whose ceiling allows mature content', async () => {
+    matureModel();
+    getFileForModelVersionMock.mockResolvedValue(successGate);
+    const res = await resolveWildcardPackForUser({
+      modelVersionId: 100,
+      user: matureUser,
+      canViewNsfw: true,
+    });
+    expect(res.signedUrl).toBe(successGate.url);
+  });
+});
+
 describe('resolveWildcardPackForUser — success shape', () => {
   it('returns the resolved URL, sizeBytes, meta, and maturity', async () => {
     modelVersionFindFirst.mockResolvedValue(wildcardVersion());

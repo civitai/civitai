@@ -1777,6 +1777,7 @@ describe('model-file-scan.service', () => {
         ],
         ['a clean scan with no file count', ckpt, { status: 'clean' }],
         ['a legacy exit 0 that read zero files', ckpt, { exitCode: 0, output: 'Scanned files: 0' }],
+        ['a text encoder', { name: 'te.bin', type: 'Text Encoder' }, unknownFormat],
       ])('does not clear a loadable weight on %s', async (_, file, output) => {
         expect(await scanPickle(file, output)).toEqual({
           result: ScanResultCode.Error,
@@ -1817,6 +1818,153 @@ describe('model-file-scan.service', () => {
         ['in a scan that counted no files', { status: 'clean', dangerousImports: ['os,system'] }],
       ])('keeps Danger for dangerous imports found %s', async (_, output) => {
         expect((await scanPickle(ckpt, output)).result).toBe(ScanResultCode.Danger);
+      });
+    });
+
+    describe('a scan-only rescan', () => {
+      beforeEach(() => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
+      });
+
+      const stored = {
+        id: 1,
+        name: 'model.ckpt',
+        type: 'Model',
+        modelVersionId: 100,
+        pickleScanResult: ScanResultCode.Success,
+        virusScanResult: ScanResultCode.Success,
+        hashes: [{ type: ModelHashType.SHA256, hash: SHA256_FIXTURE }],
+        modelVersion: {
+          status: 'Published',
+          modelId: 200,
+          baseModel: 'SDXL 1.0',
+          model: { type: 'Checkpoint' },
+        },
+        url: 's3://k',
+        sizeKB: 4096,
+      };
+      async function rescan(
+        steps: unknown[],
+        metadata: Record<string, unknown> = { op: 'scan-only-rescan' },
+        file: Record<string, unknown> = stored
+      ) {
+        mockDbWrite.modelFile.findUnique.mockResolvedValue(file);
+        mockGetWorkflow.mockResolvedValue({
+          data: { metadata: { fileId: 1, ...metadata }, steps },
+        });
+        await processModelFileScanResult(
+          makeReq({ workflowId: 'wf-scan-only', type: 'workflow', status: 'succeeded' })
+        );
+        return mockDbWrite.modelFile.updateMany.mock.calls[0]?.[0]?.data;
+      }
+      const pickle = (output: Record<string, unknown>) => ({ $type: 'modelPickleScan', output });
+      const DANGER = pickle({ status: 'dangerousImportsFound', dangerousImportsFound: true });
+      const CLAM_LIMITS = { $type: 'modelClamScan', output: { status: 'limitsExceeded' } };
+      const HASH = { $type: 'modelHash', output: { sha256: SHA256_FIXTURE } };
+
+      it('writes the pickle verdict and leaves the virus verdict as stored', async () => {
+        const data = await rescan([CLAM_LIMITS, pickle({ status: 'clean' }), HASH]);
+
+        expect(data).toMatchObject({ pickleScanResult: ScanResultCode.Error });
+        expect(data).not.toHaveProperty('virusScanResult');
+      });
+
+      it('writes a virus Danger', async () => {
+        const clam = { $type: 'modelClamScan', output: { status: 'infected', infected: true } };
+        const data = await rescan([clam, pickle({ status: 'clean', scannedFileCount: 1 })]);
+
+        expect(data).toMatchObject({ virusScanResult: ScanResultCode.Danger });
+      });
+
+      it('acts on nothing: no unpublish, hash rebuild or hash checks', async () => {
+        expect(await rescan([DANGER, HASH])).toMatchObject({
+          pickleScanResult: ScanResultCode.Danger,
+        });
+        expect(mockUnpublishModelById).not.toHaveBeenCalled();
+        expect(mockDbWrite.modelFileHash.deleteMany).not.toHaveBeenCalled();
+        expect(mockCheckDuplicateHashOnScan).not.toHaveBeenCalled();
+        expect(findOfficialFileByHash).not.toHaveBeenCalled();
+      });
+
+      it('keeps the stored verdict on a result it cannot read', async () => {
+        expect(await rescan([pickle({ status: 'somethingNew' })])).toBeUndefined();
+      });
+
+      it('writes nothing over a file an edit sent back to the scan since the submit', async () => {
+        await rescan([pickle({ status: 'clean', scannedFileCount: 1 })]);
+
+        expect(mockDbWrite.modelFile.updateMany.mock.calls[0][0].where).toMatchObject({
+          pickleScanResult: ScanResultCode.Success,
+        });
+      });
+
+      it('writes a virus Danger even when the pickle result cannot be read', async () => {
+        const clam = { $type: 'modelClamScan', output: { status: 'infected', infected: true } };
+        const data = await rescan([clam, pickle({ status: 'somethingNew' })]);
+
+        expect(data).toMatchObject({ virusScanResult: ScanResultCode.Danger });
+        expect(data).not.toHaveProperty('pickleScanResult');
+        expect(data).not.toHaveProperty('rawScanResult');
+      });
+
+      it('refreshes caches and search when the verdict changes, and only then', async () => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
+        await rescan([pickle({ status: 'clean', scannedFileCount: 1 })]);
+        expect(mockResourceDataBust).not.toHaveBeenCalled();
+
+        await rescan([pickle({ status: 'clean' })]);
+        expect(mockResourceDataBust).toHaveBeenCalledTimes(1);
+        expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+        expect(mockDeleteFilesForModelVersionCache).toHaveBeenCalledWith(100);
+        expect(mockModelsSearchIndexQueueUpdate).toHaveBeenCalledTimes(1);
+      });
+
+      it("refreshes the version's file-pinned AIRs when the file leaves generation", async () => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
+        mockDbWrite.modelFile.findMany.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+
+        await rescan([pickle({ status: 'clean' })]);
+
+        expect(
+          mockBustOrchestratorScannedFileCache.mock.calls.map(([f]) => f.fileId).sort()
+        ).toEqual([1, 2]);
+      });
+
+      it("refreshes the version's caches but not its file-pinned AIRs when coverage stays", async () => {
+        // A virus Error already keeps the file out of generation, so Success -> Error moves nothing.
+        const excluded = { ...stored, virusScanResult: ScanResultCode.Error };
+
+        await rescan([pickle({ status: 'clean' })], undefined, excluded);
+
+        expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+        expect(mockBustOrchestratorModelCache).toHaveBeenCalledTimes(1);
+        expect(mockBustOrchestratorScannedFileCache).not.toHaveBeenCalled();
+      });
+
+      it('logs a Danger it found even when the verdict changed since the submit', async () => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
+
+        await rescan([DANGER]);
+
+        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'scan-only-rescan', danger: true }),
+          'webhooks'
+        );
+      });
+
+      it('refreshes nothing when the verdict changed since the submit', async () => {
+        mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
+
+        await rescan([pickle({ status: 'clean' })]);
+
+        expect(mockResourceDataBust).not.toHaveBeenCalled();
+        expect(mockModelsSearchIndexQueueUpdate).not.toHaveBeenCalled();
+      });
+
+      it('runs the full path for a scan the rescan did not submit', async () => {
+        await rescan([DANGER, HASH], {});
+
+        expect(mockDbWrite.modelFileHash.deleteMany).toHaveBeenCalled();
       });
     });
 

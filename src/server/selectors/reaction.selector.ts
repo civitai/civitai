@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-export const getReactionsSelectV2 = Prisma.validator<Prisma.CommentReactionSelect>()({
+export const getReactionsSelectV2 = Prisma.validator<Prisma.ImageReactionSelect>()({
   userId: true,
   reaction: true,
 });

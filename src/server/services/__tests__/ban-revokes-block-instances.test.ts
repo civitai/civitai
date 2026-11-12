@@ -190,8 +190,6 @@ const appBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
 // `undefined` from the canonical mock and the fan-out then throws on `.catch`.
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
-const commentUpdateMany = dbMock.dbWrite.comment.updateMany;
-const commentV2UpdateMany = dbMock.dbWrite.commentV2.updateMany;
 
 async function mint(
   blockInstanceId: string,
@@ -324,8 +322,6 @@ beforeEach(() => {
   userFindFirst.mockResolvedValue(null);
   userLinkDeleteMany.mockResolvedValue({ count: 0 });
   imageUpdateMany.mockResolvedValue({ count: 0 });
-  commentUpdateMany.mockResolvedValue({ count: 0 });
-  commentV2UpdateMany.mockResolvedValue({ count: 0 });
 
   subscriptionFindMany.mockResolvedValue([
     ...PINNED.map(({ blockInstanceId }, i) => ({

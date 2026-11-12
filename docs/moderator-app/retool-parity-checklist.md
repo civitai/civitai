@@ -182,7 +182,8 @@ Open, with the evidence each audit produced:
 - [x] **Filter rows missing on five list panels** (2026-08-11 completes this). Reviews, Bounties and
       Reports were done by the 2026-08-10 filter work; **Comments** now has Retool's search on both
       lists, matched against the plain text rather than the stored HTML — searching the markup meant
-      "p" hit every row.
+      "p" hit every row. Since 2026-11 Comments pages 50 at a time (`/api/user-comments`), so its
+      search covers the loaded page only; the card states the account-wide total.
       Fixing it exposed a defect in the **existing** filter work, not just the new bar: `ListCard`
       renders its empty state *instead of* `children`, and every filter bar lived in `children` with a
       **filtered** count passed as `total`. So filtering down to zero matches hid the filter bar — the

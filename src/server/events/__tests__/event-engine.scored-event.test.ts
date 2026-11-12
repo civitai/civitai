@@ -29,7 +29,7 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
       hasStandingsSnapshot: vi.fn<(event: unknown) => Promise<boolean>>(async () => false),
       refreshStandings: vi.fn(),
     },
-    mockReferee: { runEventPointsReferee: vi.fn(), REFEREE_CLICKHOUSE_BUDGET_S: 720 },
+    mockReferee: { runEventPointsReferee: vi.fn(), REFEREE_CLICKHOUSE_BUDGET_S: 2100 },
     mockSync: { syncEventHats: vi.fn() },
   })
 );
@@ -433,7 +433,7 @@ describe('end-of-event cleanup', () => {
         return [];
       });
       await eventEngine.updateLeaderboard(new Date(close + HOUR));
-      expect(mockReferee.runEventPointsReferee.mock.calls[0]?.[3]).toBe(start + 720_000);
+      expect(mockReferee.runEventPointsReferee.mock.calls[0]?.[3]).toBe(start + 2_100_000);
     } finally {
       vi.useRealTimers();
     }

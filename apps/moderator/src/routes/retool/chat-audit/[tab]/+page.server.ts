@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { PageServerLoad } from './$types';
-import { parseQuery } from '$lib/server/query';
+import { int4Id, parseQuery } from '$lib/server/query';
 import { MAX_INT4 } from '$lib/server/users.service';
 import {
   DEFAULT_REPORT_REASONS,
@@ -21,6 +21,11 @@ import {
 } from '$lib/server/chat-audit.service';
 import { TABS } from '../tabs';
 import { readerOf } from '$lib/server/chat-read-audit';
+import {
+  USER_MESSAGES_BEFORE,
+  toTranscriptCursor,
+  transcriptCursorSchema,
+} from '$lib/chat-transcript-cursor';
 
 // `q` is the search, `chat` is the opened transcript, `rpage` pages the report queue — all in the URL
 // so a moderator can link a colleague straight to a conversation, and so back/forward works through an
@@ -30,8 +35,10 @@ import { readerOf } from '$lib/server/chat-read-audit';
 // rather than missing, which took the whole page down with a 500.
 const REPORTS_PER_PAGE = 20;
 
-const querySchema = z.object({
+const querySchema = transcriptCursorSchema.extend({
   q: z.string().trim().catch(''),
+  // Pages "What they said": the message id the page continues past.
+  [USER_MESSAGES_BEFORE]: int4Id.optional().catch(undefined),
   chat: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
   rpage: z.coerce.number().int().positive().max(10_000).catch(1),
   // Retool's select1 filtered the report table by status. Hardcoding the open ones made every
@@ -54,7 +61,8 @@ export const load: PageServerLoad = async ({ url, params, locals }) => {
   const tab = params.tab;
   if (!(TABS as readonly string[]).includes(tab)) error(404, 'Unknown tab');
 
-  const { q, chat, rpage, rstatus } = parseQuery(url, querySchema);
+  const query = parseQuery(url, querySchema);
+  const { q, chat, rpage, rstatus } = query;
 
   if (tab === 'reports') {
     // The report queue comes from the shared report service rather than a hand-written
@@ -86,13 +94,15 @@ export const load: PageServerLoad = async ({ url, params, locals }) => {
   const [search, exists, transcript, members, userMessages] = await Promise.all([
     searchChats(reader, q),
     chat ? chatExists(chat) : false,
-    chat ? getTranscript(reader, chat) : null,
+    chat ? getTranscript(reader, chat, toTranscriptCursor(query)) : null,
     chat ? getChatMembers(chat) : null,
     // Retool's UserDetails: what the account actually SAID, across every chat. The chat list answers
     // who they talked to; this answers what they said, which is the question when the term was a name.
     // `getUserMessages` returns null for a non-existent username, which is the same fall-through
     // `searchChats` applies — so a spam term that looks like a username still lands on content search.
-    q && classifySearch(q.trim()) !== 'chat' ? getUserMessages(reader, q.trim()) : null,
+    q && classifySearch(q.trim()) !== 'chat'
+      ? getUserMessages(reader, q.trim(), query[USER_MESSAGES_BEFORE])
+      : null,
   ]);
 
   return {

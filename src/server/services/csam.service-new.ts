@@ -1,3 +1,4 @@
+import type { ReadableStream as WebReadableStream } from 'stream/web';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyV3Read } from '~/server/db/kyselyDb';
@@ -2185,7 +2186,7 @@ async function getTrainingDataZipStream({
   if (!response.ok) throw new Error(`no training data exists for model version: ${versionId}`);
   if (!response.body) throw new Error(`no response body for model version: ${versionId}`);
   // Convert Web ReadableStream to Node.js Readable stream
-  return Readable.fromWeb(response.body as import('stream/web').ReadableStream);
+  return Readable.fromWeb(response.body as WebReadableStream);
 }
 
 function uploadStream({
@@ -2355,28 +2356,9 @@ export const userContentSections: {
 
 /**
  * Writes every comment `userId` wrote to `comments.json` in the CSAM bucket, beside their reports'
- * archives: the CommentV3 rows, then any CommentV2 row the mirror never copied. For accounts whose
- * reports were archived before `data.json` carried comments.
+ * archives. For accounts whose reports were archived before `data.json` carried comments.
  */
 export async function archiveUserComments(userId: number) {
-  const v2 = await dbRead.commentV2.findMany({ where: { userId }, orderBy: { id: 'asc' } });
-  const mirrored = v2.length
-    ? new Set(
-        (
-          await kyselyV3Read
-            .selectFrom('CommentV3')
-            .select('id')
-            .where(
-              'id',
-              'in',
-              v2.map((c) => c.id)
-            )
-            .execute()
-        ).map((c) => c.id)
-      )
-    : new Set<number>();
-  const unmirrored = v2.filter((c) => !mirrored.has(c.id));
-
   let comments = 0;
   async function* counted<T>(rows: AsyncIterable<T>) {
     for await (const row of rows) {
@@ -2394,12 +2376,11 @@ export async function archiveUserComments(userId: number) {
         ['userId', { value: userId }],
         ['archivedAt', { value: new Date().toISOString() }],
         ['comments', { items: counted(userCommentRows(userId)) }],
-        ['commentsV2NotInV3', { value: unmirrored }],
       ],
     }),
     uploadStream({ stream: sink, userId, filename: 'comments.json' }),
   ]);
-  return { userId, ...stored, comments: comments + unmirrored.length };
+  return { userId, ...stored, comments };
 }
 
 /**
