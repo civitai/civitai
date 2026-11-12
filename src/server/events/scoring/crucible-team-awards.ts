@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouseLongQueries as clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { dbRead, type dbWrite } from '~/server/db/client';
 import type { TeamAward } from '~/server/events/base.event';

@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { chunk } from 'lodash-es';
 import { TURF_CLAIM_KEY } from '~/server/events/turf/turf-map';
 import type { EventScoring } from '~/server/events/base.event';
-import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouseLongQueries as clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {

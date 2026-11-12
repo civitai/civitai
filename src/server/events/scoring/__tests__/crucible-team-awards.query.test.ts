@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 const query = vi.hoisted(() =>
   vi.fn(async (_arg: Record<string, unknown>) => ({ json: async () => [] }))
 );
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query } }));
+// The shared client is absent: the award read must go through the long-query client.
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: undefined,
+  clickhouseLongQueries: { query },
+}));
 
 const { CRUCIBLE_AWARD_QUERY_MAX_S, loadCrucibleTeamAwards } = await import(
   '~/server/events/scoring/crucible-team-awards'
