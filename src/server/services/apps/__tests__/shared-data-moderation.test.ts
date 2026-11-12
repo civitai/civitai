@@ -190,13 +190,18 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
   it('maps blocklist hits back to their leaf by index', async () => {
     mockFindBlocked.mockResolvedValue([
       { kind: 'link', index: 1, matched: ['bad.example', 'worse.example'] },
-      { kind: 'pattern', index: 0, matched: 'scam phrase', patternId: 0 },
+      { kind: 'pattern', index: 0, matched: 'scam phrase', patternId: 3, listId: 12 },
     ]);
     const hits = await classifySharedTexts([leaf('zero'), leaf('one', 'k', 'key')]);
     expect(hits).toEqual([
-      // A pattern's `matched` is the list ENTRY, so it is its own label; a link's is the user's
-      // URL, so its label is empty.
-      { category: 'pattern', matched: 'scam phrase', label: 'scam phrase', leaf: leaf('zero') },
+      // A pattern hit names the list row and entry position, never the entry; a link's matched
+      // is the user's URL, so its label is empty.
+      {
+        category: 'pattern',
+        matched: 'blocklist:12#3',
+        label: 'blocklist:12#3',
+        leaf: leaf('zero'),
+      },
       {
         category: 'link',
         matched: 'bad.example,worse.example',
@@ -538,13 +543,17 @@ describe('recording', () => {
     expect(shadowRows.find((r) => r.category === 'audit_regex')?.matched).toBe('fuck');
   });
 
-  it('enforce keeps a PLATFORM-authored matched term: the POI list word and a blocklist entry', async () => {
+  it('enforce keeps a PLATFORM-authored matched term: the POI list word and a blocklist reference', async () => {
     mockFindBlocked.mockResolvedValue([
-      { kind: 'pattern', index: 0, matched: 'list entry', patternId: 0 },
+      { kind: 'pattern', index: 0, matched: 'list entry', patternId: 0, listId: 12 },
     ]);
     const scan = await scanSharedData({ a: 'a list entry here', b: 'emma watson' });
     const rows = sharedDataHitRows(scan, enforce);
-    expect(rows.find((r) => r.category === 'pattern')?.matched).toBe('list entry');
+    expect(rows.find((r) => r.category === 'pattern')?.matched).toBe('blocklist:12#0');
+    expect(JSON.stringify(rows)).not.toContain('list entry');
+    // Shadow rows keep the user's leaf for review, but the matched column is still the reference.
+    const shadowRows = sharedDataHitRows(scan, { ...enforce, mode: 'shadow' });
+    expect(shadowRows.find((r) => r.category === 'pattern')?.matched).toBe('blocklist:12#0');
     expect(rows.find((r) => r.category === 'poi')?.matched).toBe('emma watson');
   });
 
