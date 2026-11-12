@@ -11,11 +11,7 @@ import { isAccountMuted } from '~/server/services/account-standing.service';
 import type { NextApiRequest } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
-import {
-  acquireBulkheadSlot,
-  BulkheadFullError,
-  HEAVY_REQUEST_CONCURRENCY,
-} from '~/server/utils/request-bulkhead';
+import { HEAVY_REQUEST_CONCURRENCY, withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/server/prom/client';
 import { recordTrpcCall } from '~/server/prom/route-traffic.metrics';
 import {
@@ -328,21 +324,7 @@ export const publicProcedure = t.procedure
 // timeout → Error/137. Keyed so the tRPC feed procedures and the REST
 // /api/v1/images handler share one per-pod budget (they hit the same heavy path).
 const withBulkhead = (key: string) =>
-  t.middleware(async ({ next }) => {
-    let release: () => void;
-    try {
-      release = acquireBulkheadSlot(key, HEAVY_REQUEST_CONCURRENCY);
-    } catch (e) {
-      if (e instanceof BulkheadFullError)
-        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Server busy — please retry.' });
-      throw e;
-    }
-    try {
-      return await next();
-    } finally {
-      release();
-    }
-  });
+  t.middleware(({ next }) => withBulkheadSlotOrBusy(key, HEAVY_REQUEST_CONCURRENCY, next));
 
 /**
  * Public procedure for CPU-heavy endpoints (e.g. the image feed). Adds a per-pod

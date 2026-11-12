@@ -76,6 +76,34 @@ describe('withCandidateCache', () => {
     expect(calls).toHaveLength(4);
   });
 
+  it('fetches a block once per request, across its hydration rounds', async () => {
+    const { source, calls } = rankedSource();
+    const search = withCandidateCache('images', source, 'user');
+    const reads = redisMock.redis.packed.get.mock.calls.length;
+    await search({ query: { text: 'fox' }, filter: filter(), offset: 0, limit: 60 });
+    await search({ query: { text: 'fox' }, filter: filter(), offset: 40, limit: 30 });
+    expect(calls).toHaveLength(1);
+    expect(redisMock.redis.packed.get.mock.calls.length - reads).toBe(1);
+  });
+
+  it('refetches a range whose cached blocks disagree on the spelling correction', async () => {
+    const service: { correctedQuery?: string } = {};
+    const calls: number[] = [];
+    const source: CandidateSource = async ({ offset }) => {
+      calls.push(offset);
+      const ids = Array.from({ length: 100 }, (_, i) => offset + i + 1);
+      return { ids, correctedQuery: service.correctedQuery };
+    };
+    const args = { query: { text: 'red foks' }, filter: filter(), limit: 50 };
+    await withCandidateCache('images', source, 'user')({ ...args, offset: 0 });
+    service.correctedQuery = 'red fox';
+    await withCandidateCache('images', source, 'user')({ ...args, offset: 100 });
+
+    const spanning = await withCandidateCache('images', source, 'user')({ ...args, offset: 80 });
+    expect(spanning.correctedQuery).toBe('red fox');
+    expect(calls).toEqual([0, 100, 0, 100]);
+  });
+
   it('makes one call for identical searches in flight together', async () => {
     const { source, calls } = rankedSource();
     const search = withCandidateCache('images', source, 'user');

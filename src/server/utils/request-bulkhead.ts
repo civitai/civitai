@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 // Per-pod (per-process) admission control for CPU-heavy routes.
 //
 // Node.js runs ONE JS thread. The feed/image endpoints do seconds of synchronous
@@ -110,6 +111,21 @@ export async function withBulkheadSlot<T>(
     return await fn();
   } finally {
     release();
+  }
+}
+
+/** `withBulkheadSlot` for a tRPC path: a full bulkhead answers 429 "Server busy". */
+export async function withBulkheadSlotOrBusy<T>(
+  key: string,
+  limit: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  try {
+    return await withBulkheadSlot(key, limit, fn);
+  } catch (e) {
+    if (e instanceof BulkheadFullError)
+      throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Server busy — please retry.' });
+    throw e;
   }
 }
 

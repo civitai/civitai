@@ -140,7 +140,6 @@ function visibleOnly(visible: Set<number>) {
 }
 
 beforeEach(() => {
-  // Each test starts with an empty candidate cache.
   installFakeCacheRedis();
   h.fakeGetAllImages = undefined;
   h.queryWithTimeout.mockReset().mockRejectedValue(new Error('stop here'));

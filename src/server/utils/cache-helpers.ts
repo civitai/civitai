@@ -265,7 +265,9 @@ type FetchThroughCacheOptions = {
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
 
 /**
- * Per-pod (per-process) single-flight map for the fail-open path ONLY.
+ * Per-pod (per-process) single-flight: concurrent calls for the same key on one pod share one
+ * in-flight promise, removed once it settles. Exported for callers that want that dedup on their
+ * own path; fetchThroughCache uses it only on its fail-open path, for the reason below.
  *
  * fetchThroughCache normally prevents an origin (DB/ClickHouse) stampede with a
  * REDIS-backed distributed lock: only the lock-winner runs `fetchFn`, everyone else
@@ -282,8 +284,7 @@ type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
  * origin load to ≤ (distinct keys × pods) concurrent origin calls instead of
  * unbounded (× per-request concurrency). It is NOT cross-pod (that's what the Redis
  * lock was for and Redis is down), but it removes the per-pod multiplier, which is the
- * dominant term under a request flood. Entries are deleted as soon as the shared
- * promise settles, so the map only ever holds currently-degraded keys.
+ * dominant term under a request flood.
  */
 const failOpenInFlight = new Map<string, Promise<unknown>>();
 
