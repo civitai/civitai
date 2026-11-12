@@ -5,36 +5,32 @@ import {
 } from '~/server/prom/sys-read-guard.metrics';
 
 /**
- * Fast-fail for request-path reads from the SYSTEM Redis client, behind `withSysReadDeadline`.
+ * Fast-fail for the hot request-path reads from the SYSTEM Redis client.
  *
- * The deadline (REDIS_SYS_READ_TIMEOUT_MS) bounds one read. While the system Redis is hung, every
- * read still waits out that deadline before its caller's fail-open branch runs, so a request that
- * makes several reads waits several deadlines. The breaker stops paying the wait once the client
- * has shown it is not answering:
+ * `withSysReadDeadline` bounds one read (REDIS_SYS_READ_TIMEOUT_MS). While the system Redis is hung,
+ * every read still waits out that deadline before its caller's fail-open branch runs, and the reads
+ * that run on every request pay it on every request. `withSysReadBreaker` adds a breaker for those
+ * reads only:
  *
  * BREAKER (dark; REDIS_SYS_READ_BREAKER_ENABLED). One per process (globalThis, because the server
- * evaluates this module once per bundler module graph). After REDIS_SYS_READ_BREAKER_THRESHOLD
- * consecutive failed reads (timeout or error) it OPENS: reads reject at once with a
- * SysReadUnavailableError('breaker-open'), so the caller's fail-open runs in ~0ms. After
- * REDIS_SYS_READ_BREAKER_COOLDOWN_MS one read is let through as a probe (HALF-OPEN; every other read
- * still fails fast); the probe's success closes the breaker, its failure re-opens it for another
- * cooldown. A probe that has not settled within one cooldown (only possible with the deadline off)
- * is abandoned and the next read probes instead, so a hung probe cannot hold the breaker half-open.
- * A null reply is a success.
+ * evaluates this module once per bundler module graph), shared by every opted-in read. After
+ * REDIS_SYS_READ_BREAKER_THRESHOLD consecutive failed reads (timeout or error) it OPENS: opted-in reads
+ * reject at once with a SysReadUnavailableError('breaker-open'), so the caller's fail-open runs in
+ * ~0ms. After REDIS_SYS_READ_BREAKER_COOLDOWN_MS one read is let through as a probe (HALF-OPEN; every
+ * other read still fails fast); the probe's success closes the breaker, its failure re-opens it for
+ * another cooldown. A probe that has not settled within one cooldown (only possible with the deadline
+ * off) is abandoned and the next read probes instead, so a hung probe cannot hold the breaker
+ * half-open. A null reply is a success.
  *
- * What an open breaker skips depends on what the call site passes:
- * - a THUNK (`() => sysRedis.get(k)`) is never invoked, so the client is not touched at all;
- * - a PROMISE (`sysRedis.get(k)`, what every existing call site passes) was created before the guard
- *   ran, so the command is already queued on the client; the guard stops the caller WAITING for it.
- *   The command still settles in the background, bounded by the client's command queue cap. Existing
- *   call sites stay in promise form on purpose: the client's self-heal watchdog detects a wedge from
- *   commands piling up and timing out on the client, and a breaker that stopped issuing them would
- *   hide the wedge from the thing that repairs it.
+ * The caller passes the command's promise, so while the breaker is open the command has already been
+ * issued; the breaker stops the caller WAITING for it, and it settles in the background, bounded by the
+ * client's command queue cap. That is deliberate: the client's self-heal watchdog detects a wedge from
+ * commands piling up and timing out on the client, and a breaker that stopped issuing them would hide
+ * the wedge from the thing that repairs it.
  *
- * Reads only. A call with a side effect (a write, a MULTI that writes, an EVAL, a destructive pop) or
- * a read whose failure decides a security/authz or moderation outcome must use `withSysDeadline`,
- * which bounds the wait and never consults the breaker, so a healthy write is never refused during
- * the breaker's cooldown.
+ * OPT-IN, for reads that fail open and run on every request. Never for a write, and never for a read
+ * whose failure must fail closed. Every other sys read keeps the plain deadline, which never consults
+ * or feeds the breaker.
  *
  * Mirrors the cluster-cache guard's breaker (same states, defaults and env shape) so the two can be
  * unified later; it lives in its own module until then.
@@ -141,9 +137,6 @@ export type SysReadGuardDeps = {
   onFailure?: (reason: SysReadFailureReason) => void;
 };
 
-/** What a guarded read takes: the command's promise, or a thunk that issues it. */
-export type SysReadOp<T> = Promise<T> | (() => Promise<T>);
-
 /**
  * Race `p` against a rejecting timer. `ms <= 0` returns `p` unchanged. The timer is always cleared,
  * and Promise.race keeps a handler on `p`, so a late rejection of the abandoned command never
@@ -163,12 +156,6 @@ export function raceSysDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-function start<T>(op: SysReadOp<T>): Promise<T> {
-  if (typeof op !== 'function') return op;
-  // Promise.resolve().then so a synchronous throw from the thunk is a rejection like any other.
-  return Promise.resolve().then(op);
-}
-
 export function createSysReadGuard(deps: SysReadGuardDeps) {
   const now = deps.now ?? Date.now;
 
@@ -179,43 +166,50 @@ export function createSysReadGuard(deps: SysReadGuardDeps) {
       // Observability only.
     }
   };
+  const reasonOf = (err: unknown): SysReadFailureReason =>
+    err instanceof SysReadUnavailableError ? err.reason : 'error';
 
-  return function guardedRead<T>(op: SysReadOp<T>, ms: number): Promise<T> {
+  /** The deadline alone. Never consults or feeds the breaker. `ms <= 0` hands back `p` itself. */
+  function deadline<T>(p: Promise<T>, ms: number): Promise<T> {
+    if (!ms || ms <= 0) return p;
+    return raceSysDeadline(p, ms).catch((err) => {
+      report(reasonOf(err));
+      throw err;
+    });
+  }
+
+  /**
+   * The deadline plus the breaker. While the breaker is disabled this is `deadline` exactly. While it
+   * is open it rejects at once; the caller's command was already issued (it is a promise), so it still
+   * reaches the client and settles in the background.
+   */
+  function withBreaker<T>(p: Promise<T>, ms: number): Promise<T> {
     const cfg = deps.config();
-
-    if (!cfg.breakerEnabled) {
-      // Dark: exactly the deadline the call sites have always had. `ms <= 0` hands back the
-      // caller's own promise.
-      const p = start(op);
-      if (!ms || ms <= 0) return p;
-      return raceSysDeadline(p, ms).catch((err) => {
-        report(err instanceof SysReadUnavailableError ? err.reason : 'error');
-        throw err;
-      });
-    }
+    if (!cfg.breakerEnabled) return deadline(p, ms);
 
     if (!deps.breaker.allow(cfg.breaker, now())) {
-      // A promise-form command is already on the client; keep a handler on it so its eventual
-      // rejection is not an unhandledRejection. A thunk is simply never called.
-      if (typeof op !== 'function') op.catch(() => undefined);
+      // Keep a handler on the abandoned command so its eventual rejection is not unhandled.
+      p.catch(() => undefined);
       report('breaker-open');
       return Promise.reject(
         new SysReadUnavailableError('sysRedis read skipped: breaker open', 'breaker-open')
       );
     }
 
-    return raceSysDeadline(start(op), ms).then(
+    return raceSysDeadline(p, ms).then(
       (value) => {
         deps.breaker.onSuccess();
         return value;
       },
       (err) => {
         deps.breaker.onFailure(cfg.breaker, now());
-        report(err instanceof SysReadUnavailableError ? err.reason : 'error');
+        report(reasonOf(err));
         throw err;
       }
     );
-  };
+  }
+
+  return { deadline, withBreaker };
 }
 
 declare global {
@@ -223,7 +217,7 @@ declare global {
   var __civitaiSysReadBreaker: CircuitBreaker | undefined;
 }
 
-/** The process-wide breaker behind `withSysReadDeadline`. */
+/** The process-wide breaker behind `withSysReadBreaker`. */
 export const sysReadBreaker: CircuitBreaker = (globalThis.__civitaiSysReadBreaker ??=
   createCircuitBreaker((to) => sysReadBreakerTransitionCounter.inc({ to })));
 

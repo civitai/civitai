@@ -1,5 +1,5 @@
 import { env } from '~/env/server';
-import { raceSysDeadline, sysReadGuard, type SysReadOp } from '~/server/redis/sys-read-breaker';
+import { sysReadGuard } from '~/server/redis/sys-read-breaker';
 
 /**
  * Wall-clock deadline for ANY per-request sysRedis READ (single command OR MULTI).
@@ -15,39 +15,38 @@ import { raceSysDeadline, sysReadGuard, type SysReadOp } from '~/server/redis/sy
  * background (its stray rejection is reaped by Promise.race) and is capped by the sys
  * client's `commandsQueueMaxLength`; `disableOfflineQueue` keeps the reconnect path clear.
  *
- * With REDIS_SYS_READ_BREAKER_ENABLED, reads also go through a process-wide breaker that,
- * after repeated failures, rejects at once instead of waiting out the deadline on every read
- * (./sys-read-breaker.ts). It is off by default, and while off this is the deadline alone.
- * The rejection is a SysReadUnavailableError whose message says "timed out" on the deadline.
+ * NOTE: this only bounds the awaited READ it wraps. Awaited sys WRITES on a half-open
+ * are not raced here — they are bounded by `commandsQueueMaxLength` (heap) and are
+ * fail-open / best-effort at their call sites.
  *
- * Takes the command's promise (every existing call site) or a thunk that issues it; a thunk
- * is not invoked while the breaker is open. See sys-read-breaker.ts for why the existing
- * call sites keep the promise form.
- *
- * READS ONLY. A call with a side effect, or a read whose failure decides a security/authz
- * or moderation outcome, uses `withSysDeadline` below — the same deadline, never refused by
- * the breaker.
+ * The deadline alone: it never consults the read breaker (see withSysReadBreaker). A
+ * timeout rejects with a SysReadUnavailableError whose message says "timed out", and is
+ * counted in sys_read_guard_failopen_total.
  *
  * `ms` defaults to REDIS_SYS_READ_TIMEOUT_MS; pass an explicit value in tests. `<= 0`
- * disables the deadline (with the breaker off, returns the promise unchanged).
+ * disables the guard (returns the promise unchanged).
  */
 export function withSysReadDeadline<T>(
-  p: SysReadOp<T>,
-  ms: number = env.REDIS_SYS_READ_TIMEOUT_MS
-): Promise<T> {
-  return sysReadGuard(p, ms);
-}
-
-/**
- * The deadline alone, for sysRedis calls the read breaker must never refuse: writes, MULTIs
- * that write, EVALs, destructive pops, and reads whose failure decides a security/authz or
- * moderation outcome. It bounds how long the caller waits and changes nothing else: the
- * command is not cancelled, and a late rejection is reaped. `<= 0` disables it (returns the
- * promise unchanged). Defaults to REDIS_SYS_READ_TIMEOUT_MS like withSysReadDeadline.
- */
-export function withSysDeadline<T>(
   p: Promise<T>,
   ms: number = env.REDIS_SYS_READ_TIMEOUT_MS
 ): Promise<T> {
-  return raceSysDeadline(p, ms);
+  return sysReadGuard.deadline(p, ms);
+}
+
+/**
+ * withSysReadDeadline plus the process-wide read breaker (./sys-read-breaker.ts), for the
+ * hot reads a hung store multiplies per request. With REDIS_SYS_READ_BREAKER_ENABLED off
+ * (the default) it is withSysReadDeadline exactly. Once the breaker has tripped it rejects
+ * at once with a SysReadUnavailableError('breaker-open'); the command was already issued
+ * and still reaches the client.
+ *
+ * Only for READS that FAIL OPEN and run on every request. Never for a write, and never for
+ * a read whose failure must fail closed: during the breaker's cooldown it refuses reads the
+ * store would have answered.
+ */
+export function withSysReadBreaker<T>(
+  p: Promise<T>,
+  ms: number = env.REDIS_SYS_READ_TIMEOUT_MS
+): Promise<T> {
+  return sysReadGuard.withBreaker(p, ms);
 }

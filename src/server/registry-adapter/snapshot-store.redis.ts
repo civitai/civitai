@@ -2,12 +2,7 @@ import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
 import { sha256Hex } from '~/server/registry-adapter/release';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
-import {
-  REDIS_SYS_KEYS,
-  sysRedis,
-  withSysDeadline,
-  withSysReadDeadline,
-} from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
 /** How long a cursor stays resumable after it was last issued or resumed from. */
 export const SNAPSHOT_RETENTION_SECONDS = 30 * 24 * 60 * 60;
@@ -46,7 +41,7 @@ export function createRedisSnapshotStore(
     tx.lRange(states, keep, -1);
     tx.lTrim(states, 0, keep - 1);
     tx.expire(states, SNAPSHOT_RETENTION_SECONDS);
-    const results = await withSysDeadline(tx.exec());
+    const results = await withSysReadDeadline(tx.exec());
     const evicted = Array.isArray(results?.[3]) ? (results[3] as unknown[]) : [];
     for (const old of evicted) {
       const d = String(decodeRedisString(old as string));

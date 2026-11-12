@@ -36,7 +36,6 @@ vi.mock('~/server/redis/fail-open-log', () => ({
 // a rejecting mock propagates immediately (no real timer). Pass-through.
 vi.mock('~/server/redis/sys-read-deadline', () => ({
   withSysReadDeadline: <T>(p: Promise<T>) => p,
-  withSysDeadline: <T>(p: Promise<T>) => p,
 }));
 
 vi.mock('~/server/redis/client', () => ({
@@ -131,9 +130,11 @@ describe('createLimiter — happy-path counting (semantics unchanged)', () => {
     const { limiter } = buildLimiter();
     await expect(limiter.increment('42')).resolves.toBe(11);
     // setLimitHitTime → sysRedis.set on the limit key
-    expect(sysRedis.set).toHaveBeenCalledWith('download:limits:42', expect.any(Number), {
-      EX: 60 * 60,
-    });
+    expect(sysRedis.set).toHaveBeenCalledWith(
+      'download:limits:42',
+      expect.any(Number),
+      { EX: 60 * 60 }
+    );
   });
 
   it('increment: does NOT set limit-hit time when under the limit', async () => {

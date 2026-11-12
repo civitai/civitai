@@ -128,8 +128,6 @@ vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
   REDIS_SYS_KEYS: { BLOCKS: { DEV_TOKEN_RATE_LIMIT: 'system:blocks:dev-token-rate-limit' } },
   withSysReadDeadline: mockWithSysReadDeadline,
-  // The limiter MULTI writes, so it takes the breaker-free deadline: the same race.
-  withSysDeadline: mockWithSysReadDeadline,
 }));
 vi.mock('~/env/server', () => ({
   env: { BLOCK_TOKEN_PRIVATE_KEY: 'priv', BLOCK_TOKEN_PUBLIC_KEY: 'pub' },

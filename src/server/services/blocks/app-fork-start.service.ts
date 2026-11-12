@@ -41,12 +41,7 @@ import JSZip from 'jszip';
 import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
-import {
-  REDIS_SYS_KEYS,
-  sysRedis,
-  withSysDeadline,
-  withSysReadDeadline,
-} from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
@@ -396,7 +391,7 @@ async function consumeForkStart(userId: number): Promise<void> {
     const key = `${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
-      const result = await withSysDeadline(
+      const result = await withSysReadDeadline(
         sysRedis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
       );
       count = Number((result as unknown[] | null)?.[1]);
@@ -552,7 +547,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
   for (let attempt = 0; attempt < SLUG_ATTEMPTS && !forkSlug; attempt++) {
     const candidate = forkSlugFor(parentBlock.blockId, randomBytes(2).toString('hex'));
     if (!isValidForkSlug(candidate) || (await slugTakenInDb(candidate))) continue;
-    const claimed = await withSysDeadline(
+    const claimed = await withSysReadDeadline(
       sysRedis.set(forkSessionKey(candidate), JSON.stringify({ ...base, forkSlug: candidate }), {
         NX: true,
         EX: FORK_SESSION_TTL_SECONDS,
@@ -589,7 +584,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
       seed,
       seedExpiresAt: new Date(now.getTime() + FORK_SEED_PRESIGN_TTL_SECONDS * 1000).toISOString(),
     };
-    await withSysDeadline(
+    await withSysReadDeadline(
       sysRedis.set(forkSessionKey(forkSlug), JSON.stringify(session), {
         EX: FORK_SESSION_TTL_SECONDS,
       })
@@ -622,7 +617,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
   } catch (err) {
     // Release the reservation: nothing will ever be created under it. And the seed object, if it
     // was uploaded: nothing will ever download it.
-    await withSysDeadline(sysRedis.del(forkSessionKey(forkSlug))).catch(() => undefined);
+    await withSysReadDeadline(sysRedis.del(forkSessionKey(forkSlug))).catch(() => undefined);
     if (uploadedKey) await deleteForkSeed(uploadedKey);
     if (err instanceof TRPCError) throw err;
     logToAxiom({

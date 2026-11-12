@@ -30,7 +30,6 @@ import {
   REDIS_SUB_KEYS,
   REDIS_SYS_KEYS,
   sysRedis,
-  withSysDeadline,
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -863,7 +862,7 @@ export const eventEngine = {
 
       let queueJson: string[] | null = null;
       try {
-        queueJson = await withSysDeadline(sysRedis.lPopCount(queueKey, queueLength));
+        queueJson = await withSysReadDeadline(sysRedis.lPopCount(queueKey, queueLength));
       } catch (err) {
         logSysRedisFailOpen('read-degraded', 'events.processAddRoleQueue lPopCount', err, {
           event: eventDef.name,

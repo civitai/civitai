@@ -1,9 +1,4 @@
-import {
-  sysRedis,
-  REDIS_SYS_KEYS,
-  withSysDeadline,
-  withSysReadDeadline,
-} from '~/server/redis/client';
+import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
 
 /**
  * The bundle-submit rate limit, shared by both submit routes (the CLI's token route and the session
@@ -67,7 +62,7 @@ async function takeRateSlot(
   const rateKey = `${RATE_KEYS[family]}:${subject}` as const;
   let count: number;
   try {
-    const multiResult = await withSysDeadline(
+    const multiResult = await withSysReadDeadline(
       sysRedis.multi().set(rateKey, '0', { NX: true, EX: limit.windowSeconds }).incr(rateKey).exec()
     );
     count = Number(multiResult?.[1]);

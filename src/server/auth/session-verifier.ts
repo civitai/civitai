@@ -5,52 +5,39 @@
 // The revocation check is the package registry's, so every app reads the same markers. Reads
 // fail OPEN — a sysRedis blip must not 500 every authed request.
 import {
-  SESSION_REGISTRY_KEYS,
   createAuthVerifier,
-  createSessionRegistry,
+  createRevocationCheck,
   type SessionRegistryRedis,
 } from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
-import { sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { env } from '~/env/server';
+import { sysRedis, withSysReadBreaker } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { refuseModerationAccountSession } from './moderation-account';
 import { observeSessionLeg } from './session-metrics';
 
-// Read-only use: only isRevoked is called, so the write-side config is irrelevant here.
-const registry = createSessionRegistry({
-  redis: sysRedis as unknown as SessionRegistryRedis,
-  keys: SESSION_REGISTRY_KEYS,
+// The shared revocation check (the same one the hub and the spokes use), bounded by the sys read deadline
+// (REDIS_SYS_READ_TIMEOUT_MS, default 1000ms): the sys client carries NO socketTimeout, so on a silent
+// half-open this read could park the whole authed request until the client's backstop. It runs on every
+// authenticated request, so it also goes through the read breaker: once the breaker has tripped (when
+// enabled) a hung store costs this read ~0ms instead of a deadline per request. Fails OPEN (not revoked) on
+// a timeout, an open breaker or an error — a revocation-check failure must never block login.
+const checkRevocation = createRevocationCheck({
+  redis: () => sysRedis as unknown as SessionRegistryRedis,
+  timeoutMs: () => env.REDIS_SYS_READ_TIMEOUT_MS,
+  bound: (read, ms) => withSysReadBreaker(read, ms),
+  onOutcome: (outcome, seconds) => observeSessionLeg('revocation', outcome, seconds),
+  onError: (err, _reason, claims) =>
+    logSysRedisFailOpen('read-degraded', 'session-verifier isRevoked', err, {
+      tokenId: claims.jti,
+      userId: claims.user?.id,
+    }),
 });
 
 export async function isRevoked(claims: SessionClaims): Promise<boolean> {
   if (refuseModerationAccountSession(claims.sub, 'session-token')) return true;
-  const tokenId = claims.jti;
-  if (!tokenId) return false; // can't check — fail open
-  // Bound the revocation read with the shared wall-clock deadline (REDIS_SYS_READ_TIMEOUT_MS, default 1000ms):
-  // the sys client carries NO socketTimeout (0, to dodge the reconnect-storm wedge on the single-replica
-  // backend), so on a silent half-open these reads could park the whole authed request until OS TCP
-  // keepalive (~minutes). withSysReadDeadline races them so a stall FAILS OPEN fast — a revocation-check
-  // timeout must never block login (matches the existing catch → return false posture, just bounded now).
-  const start = performance.now();
-  try {
-    const revoked = await withSysReadDeadline(registry.isRevoked(claims));
-    observeSessionLeg('revocation', 'hit', (performance.now() - start) / 1000);
-    return revoked;
-  } catch (err) {
-    // withSysReadDeadline rejects with a "…read timed out after Nms" Error on the deadline; anything else is a
-    // real read error. Both fail OPEN (return false) — the timeout is just the bounded, observable variant.
-    const timedOut = err instanceof Error && /timed out/.test(err.message);
-    observeSessionLeg(
-      'revocation',
-      timedOut ? 'timeout' : 'error',
-      (performance.now() - start) / 1000
-    );
-    logSysRedisFailOpen('read-degraded', 'session-verifier isRevoked', err, {
-      tokenId,
-      userId: claims.user?.id,
-    });
-    return false; // fail open
-  }
+  if (!claims.jti) return false; // can't check — fail open
+  return checkRevocation(claims);
 }
 
 // Singleton — caches the remote JWKS keyset across requests.

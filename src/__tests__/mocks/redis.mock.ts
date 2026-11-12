@@ -78,11 +78,11 @@ const SEAMS: Record<string, (...args: any[]) => any> = {
     realModule ??= await import('~/server/redis/sys-read-deadline');
     return realModule.withSysReadDeadline(...(args as [Promise<unknown>, number?]));
   },
-  // The breaker-free deadline used by sys writes and fail-closed reads; the same kind of seam,
-  // defaulting to the real implementation for the same reason.
-  withSysDeadline: async (...args: any[]) => {
+  // The opt-in read breaker for the hot reads; the same kind of seam, defaulting to the real
+  // implementation for the same reason.
+  withSysReadBreaker: async (...args: any[]) => {
     realModule ??= await import('~/server/redis/sys-read-deadline');
-    return realModule.withSysDeadline(...(args as [Promise<unknown>, number?]));
+    return realModule.withSysReadBreaker(...(args as [Promise<unknown>, number?]));
   },
 };
 
@@ -100,10 +100,10 @@ export const redisMock: {
   redis: HybridNode;
   sysRedis: HybridNode;
   withSysReadDeadline: HybridNode;
-  withSysDeadline: HybridNode;
+  withSysReadBreaker: HybridNode;
 } = {
   redis: hybridNode('redis'),
   sysRedis: hybridNode('sysRedis'),
   withSysReadDeadline: hybridNode('withSysReadDeadline'),
-  withSysDeadline: hybridNode('withSysDeadline'),
+  withSysReadBreaker: hybridNode('withSysReadBreaker'),
 };

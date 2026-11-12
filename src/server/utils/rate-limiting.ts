@@ -1,6 +1,6 @@
 import type { RedisKeyStringsSys } from '~/server/redis/client';
 import { sysRedis } from '~/server/redis/client';
-import { withSysDeadline, withSysReadDeadline } from '~/server/redis/sys-read-deadline';
+import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 export function createLimiter({
@@ -154,7 +154,7 @@ export function createLimiter({
       // Assert arity BEFORE parsing — a malformed reply would otherwise make
       // newCount NaN and silently disable the limit-hit-time write with no
       // fail-open log. A throw routes into the catch below (logged fail-open).
-      const results = assertMultiArity(await withSysDeadline(pipeline.exec()), 2);
+      const results = assertMultiArity(await withSysReadDeadline(pipeline.exec()), 2);
 
       const newCount = Number(results[0] ?? 0);
       const cachedLimit = results[1] as unknown as (string | null)[] | undefined;

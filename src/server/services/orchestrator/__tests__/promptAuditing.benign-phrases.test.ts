@@ -48,7 +48,7 @@ vi.mock('~/server/redis/client', () => {
     },
     REDIS_KEYS: keyProxy,
     REDIS_SYS_KEYS: keyProxy,
-    withSysDeadline: vi.fn((p: Promise<unknown>) => p),
+    withSysReadDeadline: vi.fn((p: Promise<unknown>) => p),
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));

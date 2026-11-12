@@ -157,7 +157,7 @@ import {
   REDIS_KEYS,
   REDIS_SYS_KEYS,
   sysRedis,
-  withSysReadDeadline,
+  withSysReadBreaker,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
@@ -5053,7 +5053,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       try {
         // Wall-clock deadline so a silent sysRedis half-open can't park this
         // highest-traffic read ~11min (a fast DOWN already rejects into catch).
-        cachedResults = await withSysReadDeadline(sysRedis.packed.mGet(cacheKeys));
+        cachedResults = await withSysReadBreaker(sysRedis.packed.mGet(cacheKeys));
       } catch (err) {
         logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
         cachedResults = new Array(uniqueIds.length).fill(null);
@@ -5856,7 +5856,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         // Wall-clock deadline — see the sibling checkImageExistence call site
         // above; bounds a silent sysRedis half-open on this hot read.
         cachedResults =
-          cacheKeys.length > 0 ? await withSysReadDeadline(sysRedis.packed.mGet(cacheKeys)) : [];
+          cacheKeys.length > 0 ? await withSysReadBreaker(sysRedis.packed.mGet(cacheKeys)) : [];
       } catch (err) {
         logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
         cachedResults = new Array(uniqueIds.length).fill(null);

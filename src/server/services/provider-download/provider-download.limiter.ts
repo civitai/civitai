@@ -1,6 +1,6 @@
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { withSysDeadline } from '~/server/redis/sys-read-deadline';
+import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
 
 const HOUR_MS = 60 * 60 * 1000;
 /** Two hours, so a key outlives the hour it counts. */
@@ -21,7 +21,7 @@ export async function takeProviderDownload(
   )}` as const;
   try {
     // One MULTI, so the key never exists without its TTL.
-    const reply = await withSysDeadline(
+    const reply = await withSysReadDeadline(
       sysRedis.multi().set(key, '0', { NX: true, EX: KEY_TTL_S }).incr(key).exec()
     );
     const count = Number(reply?.[1]);

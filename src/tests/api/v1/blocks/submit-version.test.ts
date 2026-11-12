@@ -128,8 +128,6 @@ vi.mock('~/server/redis/client', async () => ({
   ...(await import('@civitai/redis/client')),
   sysRedis: mockRedis,
   withSysReadDeadline: mockWithSysReadDeadline,
-  // The limiter MULTI writes, so it takes the breaker-free deadline: the same race.
-  withSysDeadline: mockWithSysReadDeadline,
 }));
 // The route dynamically imports env + the service; mock both so the heavy
 // dependency tree never loads in the unit test.

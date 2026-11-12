@@ -104,7 +104,8 @@ const redisKeys = async () => {
   };
 };
 const sys = async () => (await import('~/server/redis/client')).sysRedis;
-const read = async <T>(p: Promise<T>) => (await import('~/server/redis/client')).withSysDeadline(p);
+const read = async <T>(p: Promise<T>) =>
+  (await import('~/server/redis/client')).withSysReadDeadline(p);
 
 // The takedown key holds 'attempted' or 'confirmed'; any other value present reads as attempted.
 const redisStore: LivePointerStore = {

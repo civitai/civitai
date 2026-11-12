@@ -4,7 +4,7 @@ import { BlocklistType } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import type { ExternalModerationSource } from '~/server/prom/external-moderation.metrics';
-import { REDIS_SYS_KEYS, sysRedis, withSysDeadline } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
@@ -223,10 +223,9 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
   // error MUST keep propagating so auditPromptServer fails CLOSED (the generation
   // request aborts) rather than silently proceeding — do NOT add a fail-open catch.
   // The deadline only BOUNDS a silent half-open (which would otherwise park each
-  // awaited read for minutes): it rejects at REDIS_SYS_READ_TIMEOUT_MS, preserving
-  // the same fail-closed direction. withSysDeadline, not withSysReadDeadline: these
-  // reads decide a moderation outcome, so the read breaker never refuses them.
-  const exists = await withSysDeadline(sysRedis.exists(key));
+  // awaited read ~11min): it rejects at REDIS_SYS_READ_TIMEOUT_MS, preserving the same fail-closed
+  // direction. See STEP-6 report's promptAuditing note.
+  const exists = await withSysReadDeadline(sysRedis.exists(key));
 
   if (!exists) {
     await seedBlockedPromptsFromClickHouse(userId);
@@ -238,7 +237,7 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
 
   // If the seeded list was just a reset marker, drop the marker now that we
   // have a real entry. Using lRem (not del) preserves the TTL set by the seed.
-  const currentEntries = (await withSysDeadline(sysRedis.lRange(key, 0, -1))).map((e) =>
+  const currentEntries = (await withSysReadDeadline(sysRedis.lRange(key, 0, -1))).map((e) =>
     decodeRedisString(e)
   );
   if (currentEntries.includes(RESET_MARKER)) {
@@ -246,7 +245,7 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
   }
 
   // Marker has been removed above, so lLen now equals the real violation count.
-  return await withSysDeadline(sysRedis.lLen(key));
+  return await withSysReadDeadline(sysRedis.lLen(key));
 }
 
 /** Get all blocked prompts (excludes reset marker) */
@@ -259,7 +258,7 @@ async function getBlockedPrompts(userId: number): Promise<BlockedPromptEntry[]> 
   // Deadline the read so a silent half-open rejects at ~2s instead of parking
   // ~11min; we add no fail-open catch of our own — the existing banError handler
   // already bounds the blast to "mute skipped this once."
-  const entries = (await withSysDeadline(sysRedis.lRange(key, 0, -1))).map((e) =>
+  const entries = (await withSysReadDeadline(sysRedis.lRange(key, 0, -1))).map((e) =>
     decodeRedisString(e)
   );
   return entries

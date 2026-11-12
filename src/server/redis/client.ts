@@ -13,7 +13,7 @@ export * from '@civitai/redis/client';
 // Wall-clock deadline for per-request sysRedis reads — an app-side leaf (reads ~/env/server) so
 // it's unit-testable without building the clients. Re-exported here because callers import it
 // from '~/server/redis/client'.
-export { withSysDeadline, withSysReadDeadline } from './sys-read-deadline';
+export { withSysReadBreaker, withSysReadDeadline } from './sys-read-deadline';
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top

@@ -128,10 +128,11 @@ export const serverSchema = z
     // above 1s in normal traffic (about 2 in 100,000 above 500ms), so a 1s bound rarely fires on a
     // healthy store and halves what each read costs while the store is hung. Was 2000.
     REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(1000),
-    // Process-wide breaker over the same reads (redis/sys-read-breaker.ts): after THRESHOLD
-    // consecutive failed reads (timeout or error), withSysReadDeadline rejects at once instead of
-    // waiting out the deadline, until COOLDOWN passes and one probe read succeeds. Dark by default —
-    // while off, every read waits on the client as before. Writes (withSysDeadline) never use it.
+    // Process-wide breaker for the hot request-path reads that opt in with withSysReadBreaker
+    // (redis/sys-read-breaker.ts): after THRESHOLD consecutive failed reads (timeout or error), those
+    // reads reject at once instead of waiting out the deadline, until COOLDOWN passes and one probe
+    // read succeeds. Dark by default — while off, they wait on the client as before. Plain
+    // withSysReadDeadline reads never consult it.
     REDIS_SYS_READ_BREAKER_ENABLED: zc.booleanString.default(false),
     REDIS_SYS_READ_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
     REDIS_SYS_READ_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),

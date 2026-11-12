@@ -3,7 +3,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 // Every call is raced against the read deadline, writes included: the part route holds a
 // buffering slot across `recordRelaySessionPart`, and a write parked on a half-open sys socket
 // would hold it for minutes.
-import { withSysDeadline, withSysReadDeadline } from '~/server/redis/sys-read-deadline';
+import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
 
 /**
  * Server-side state of one chunked upload-relay session.
@@ -39,7 +39,7 @@ export async function createRelaySession(
   session: Omit<ImageUploadRelaySession, 'etags'>
 ): Promise<string> {
   const sessionId = randomUUID();
-  await withSysDeadline(
+  await withSysReadDeadline(
     sysRedis.hSetMultiWithExpire(
       sessionKey(sessionId),
       [
@@ -95,7 +95,7 @@ export async function getOwnedRelaySession(
 
 /** Record a stored part's ETag; a re-sent part overwrites, as S3 does with the part itself. */
 export async function recordRelaySessionPart(sessionId: string, partNumber: number, etag: string) {
-  await withSysDeadline(
+  await withSysReadDeadline(
     sysRedis.hSetMultiWithExpire(
       sessionKey(sessionId),
       [`${PART_FIELD_PREFIX}${partNumber}`, etag],
@@ -105,5 +105,5 @@ export async function recordRelaySessionPart(sessionId: string, partNumber: numb
 }
 
 export async function deleteRelaySession(sessionId: string) {
-  await withSysDeadline(sysRedis.del(sessionKey(sessionId)));
+  await withSysReadDeadline(sysRedis.del(sessionKey(sessionId)));
 }
