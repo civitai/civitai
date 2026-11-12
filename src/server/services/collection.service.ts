@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
+import { hasScanWorkflowSql, legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { reviewQueueVisibleTargetSql } from '~/server/services/collection-review.sql';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
@@ -2901,7 +2901,7 @@ export const updateCollectionItemsStatus = async ({
             ${ImageIngestionStatus.Pending}::"ImageIngestionStatus",
             ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus",
             ${ImageIngestionStatus.PendingManualAssignment}::"ImageIngestionStatus"
-          ) OR NOT COALESCE(i."scanJobs" ? 'workflowId', false) THEN 'scanning'
+          ) OR NOT ${hasScanWorkflowSql('i')} THEN 'scanning'
         END AS state
         FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
@@ -4271,7 +4271,7 @@ async function queueNeverScannedImages(imageIds: number[], collectionId: number)
         ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus",
         ${ImageIngestionStatus.PendingManualAssignment}::"ImageIngestionStatus"
       )
-      AND NOT COALESCE(i."scanJobs" ? 'workflowId', false)
+      AND NOT ${hasScanWorkflowSql('i')}
       AND i."blockedFor" IS NULL
       AND i."nsfwLevel" != ${NsfwLevel.Blocked}
       AND i."needsReview" IS NULL
@@ -4331,7 +4331,7 @@ export const setCollectionItemNsfwLevel = async ({
     }[]
   >`
     SELECT p."collectionId" AS "postCollectionId", i.ingestion, i."nsfwLevel", i."blockedFor",
-      i."needsReview", COALESCE(i."scanJobs" ? 'workflowId', false) AS scanned
+      i."needsReview", ${hasScanWorkflowSql('i')} AS scanned
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}

@@ -211,7 +211,7 @@ describe('rescan-judge-collection-images: dry run', () => {
 });
 
 describe('rescan-judge-collection-images: a run', () => {
-  it('marks an in-scope image out of rescan retries as Error, seeded and not queued', async () => {
+  it('marks an in-scope image out of rescan retries as Error, seeded, with no queue insert', async () => {
     await db.exec(
       `UPDATE "Image" SET "scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT}}' WHERE id = 102`
     );
@@ -232,6 +232,53 @@ describe('rescan-judge-collection-images: a run', () => {
     expect(row.ingestion).toBe('Error');
     expect(row.queued).toBe(0);
     expect(row.metadata.judgeRating).toMatchObject({ legacy: true, nsfwLevel: 2 });
+  });
+
+  // A Scanned row with scan bookkeeping but no scan workflow was never scanned, the same as one
+  // with no scanJobs at all: it is in scope.
+  it('queues a Scanned image whose scanJobs has no workflow, seeded', async () => {
+    await db.exec(
+      `UPDATE "Image" SET "scanJobs" = '{"retryCount": ${
+        IMAGE_RESCAN_RETRY_LIMIT - 1
+      }}' WHERE id = 101`
+    );
+
+    const dry = (await call({})).body;
+    expect(dry.cohorts).toMatchObject({ scannedNoJobs: 1, outOfRetries: 0 });
+    // In scope, so not "Scanned, out of scope, without scanner tags"; it has none, so not
+    // "in scope with scanner tags" either.
+    expect(dry.controls).toEqual({
+      inScopeWithScannerTags: 0,
+      outOfScopeScannedWithoutScannerTags: 0,
+    });
+    expect(dry.wide).toMatchObject({ scannedNoJobs: 2 });
+    const { body } = await call({ dryRun: 'false' });
+
+    expect(body).toMatchObject({ queued: 2, markedError: 0 });
+    expect(await rescanned()).toEqual(IN_SCOPE);
+    const row = (await snapshot()).find((r) => r.id === 101) as unknown as {
+      metadata: { judgeRating: { legacy: boolean; nsfwLevel: number } };
+    };
+    expect(row.metadata.judgeRating).toMatchObject({ legacy: true, nsfwLevel: X });
+  });
+
+  it('marks a Scanned image with no workflow at the retry limit as Error, seeded, with no queue insert', async () => {
+    await db.exec(
+      `UPDATE "Image" SET "scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT}}' WHERE id = 101`
+    );
+
+    expect((await call({})).body.cohorts).toMatchObject({ scannedNoJobs: 1, outOfRetries: 1 });
+    const { body } = await call({ dryRun: 'false' });
+
+    expect(body).toMatchObject({ queued: 1, markedError: 1 });
+    expect(await rescanned()).toEqual([102]);
+    const row = (await snapshot()).find((r) => r.id === 101) as unknown as {
+      ingestion: string;
+      queued: number;
+      metadata: { judgeRating: { legacy: boolean; nsfwLevel: number } };
+    };
+    expect(row).toMatchObject({ ingestion: 'Error', queued: 0 });
+    expect(row.metadata.judgeRating).toMatchObject({ legacy: true, nsfwLevel: X });
   });
 
   it('refuses to start, writing nothing, until the tag recompute carries the judge floor', async () => {
@@ -311,13 +358,24 @@ describe('rescan-judge-collection-images: a run', () => {
       SELECT ${legacyJudgeRatingSeedSql('i', Prisma.sql`p."collectionId"`)} AS metadata
       FROM "Image" i JOIN "Post" p ON p.id = i."postId" WHERE i.id = 101
     `) as { metadata: { judgeRating: Record<string, unknown> } }[];
-    expect(seeded.judgeRating).toMatchObject({ legacy: true, nsfwLevel: X, ratedAt: null });
+    // Pinned as literals too, so a change to the helper's shape fails here, not only in its own test.
+    expect(seeded.judgeRating).toEqual({
+      userId: null,
+      nsfwLevel: X,
+      ratedAt: null,
+      legacy: true,
+      collectionId: JUDGE_COLLECTION,
+    });
 
     const { statusCode, body } = await call({ dryRun: 'false' });
 
     expect(statusCode).toBe(200);
     expect(body).toMatchObject({ dryRun: false, queued: 2 });
     expect(await rescanned()).toEqual(IN_SCOPE);
+    const { rows: touched } = await db.query<{ id: number }>(
+      `SELECT id FROM "Image" WHERE "updatedAt" > '2025-01-02 03:04:05' ORDER BY id`
+    );
+    expect(touched.map((r) => r.id)).toEqual(IN_SCOPE);
     const rows = await snapshot();
     expect(rows.filter((r) => !IN_SCOPE.includes(r.id))).toEqual(
       before.filter((r) => !IN_SCOPE.includes(r.id))

@@ -2,23 +2,24 @@ import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { batchProcessor } from '~/server/db/db-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
+import { hasScanWorkflowSql, legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 /**
  * Queues a normal rescan for images posted to collections whose judges apply the browsing level,
- * when the image is `Scanned` with no `scanJobs`, or `PendingManualAssignment`. Run it only once the
- * judge-rating floor (`metadata.judgeRating`, honoured by `resolveScanOutcome`) is deployed; a
- * run refuses until the primary's `update_nsfw_levels_new` carries that floor.
+ * when the image is `Scanned` with no scan workflow (`scanJobs.workflowId`), or
+ * `PendingManualAssignment`. Run it only once the judge-rating floor (`metadata.judgeRating`,
+ * honoured by `resolveScanOutcome`) is deployed; a run refuses until the primary's
+ * `update_nsfw_levels_new` carries that floor.
  *
- * Writes, per image: `ingestion = 'Rescan'` and a `JobQueue` `ImageScan` row (or `Error` and no
- * queue row for an image already at the rescan retry limit, which the scan would never re-send;
- * the dry run counts these as `cohorts.outOfRetries`), and, when the image has a
- * single browsing level and no judge rating yet, a legacy `metadata.judgeRating` carrying that level
+ * Writes, per image: `ingestion = 'Rescan'` and a `JobQueue` `ImageScan` row, or, for an image
+ * already at the rescan retry limit (which the scan would never re-send), `Error` with no explicit
+ * queue insert; the dry run counts these as `cohorts.outOfRetries`. When the image has a single
+ * browsing level and no judge rating yet, also a legacy `metadata.judgeRating` carrying that level
  * (`ratedAt` null: when it was applied is not recorded), so the level the judges applied stays a
- * floor under the rescan. Nothing else.
+ * floor under the rescan. And `updatedAt`. Nothing else.
  *
  * A dry run (the default, and the only thing a GET does) writes nothing and returns counts: per
  * cohort, the same markers outside the flag's collections, and two checks on the scope from an
@@ -41,7 +42,10 @@ const inCollectionPost = (flagged: boolean) => Prisma.sql`EXISTS (
   ${flagged ? Prisma.sql`AND c.metadata->>'judgesApplyBrowsingLevel' = 'true'` : Prisma.empty}
 )`;
 const inJudgeCollection = inCollectionPost(true);
-const scannedNoJobs = Prisma.sql`(i.ingestion = 'Scanned'::"ImageIngestionStatus" AND i."scanJobs" IS NULL)`;
+// "No jobs": no scan workflow, the never-scanned marker the rating self-heal and approval gate use.
+const scannedNoJobs = Prisma.sql`(i.ingestion = 'Scanned'::"ImageIngestionStatus" AND NOT ${hasScanWorkflowSql(
+  'i'
+)})`;
 const pendingManual = Prisma.sql`(i.ingestion = 'PendingManualAssignment'::"ImageIngestionStatus")`;
 const inScope = Prisma.sql`(${inJudgeCollection} AND (${scannedNoJobs} OR ${pendingManual}))`;
 // The scan never re-sends a Rescan image at the retry limit; such an image is marked Error instead.
@@ -68,9 +72,9 @@ async function countCohorts(ids?: number[]) {
 }
 
 /**
- * The same markers without the flag: `PendingManualAssignment` anywhere, and `Scanned` without
- * `scanJobs` in any collection's post. Rows here and not in the cohorts are in a collection whose
- * flag is off now; they are reported, not queued.
+ * The same markers without the flag: `PendingManualAssignment` anywhere, and `Scanned` without a
+ * scan workflow in any collection's post. Rows here and not in the cohorts are in a collection
+ * whose flag is off now; they are reported, not queued.
  */
 async function countWide() {
   const [row] = await dbRead.$queryRaw<{ pendingManual: number; scannedNoJobs: number }[]>`
@@ -144,7 +148,8 @@ async function queueBatch(batch: number[]) {
       ingestion = CASE WHEN ${outOfRetries}
         THEN 'Error'::"ImageIngestionStatus"
         ELSE 'Rescan'::"ImageIngestionStatus"
-      END
+      END,
+      "updatedAt" = NOW()
     FROM "Post" p
     WHERE p.id = i."postId" AND i.id IN (${Prisma.join(batch)}) AND ${inScope}
       AND i."needsReview" IS NULL
