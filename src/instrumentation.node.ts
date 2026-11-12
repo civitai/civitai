@@ -115,6 +115,16 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
+// The last-known Flipt flag state in sysRedis: read only when this pod cannot reach Flipt at startup
+// (so its default-on flags are not all OFF), kept current by healthy pods. Registered BEFORE the
+// block below, whose awaited gate is this process's first Flipt init. Dynamic for the same reason as
+// that block (keeps Flipt and sysRedis out of this module's static graph); never affects boot.
+try {
+  (await import('~/server/flipt/snapshot-store')).registerFliptSnapshotStore();
+} catch (err) {
+  console.error('[instrumentation.node] flipt snapshot store not registered:', err);
+}
+
 // Arm the redis command metrics behind the `redis-command-metrics-batched` Flipt flag (dark until
 // it is on). Independent of OTEL: both metrics are prom-client. Dynamic, to keep the Flipt client out
 // of this module's static graph; a failure here must never affect boot — both metrics then keep

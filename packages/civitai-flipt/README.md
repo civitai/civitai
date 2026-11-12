@@ -24,6 +24,7 @@ Transpile (raw TS): Next `transpilePackages: ['@civitai/flipt']`, Vite `ssr.noEx
 | `FLIPT_DEPLOYMENT_ID` | no | carried on `config`, for apps that put it in evaluation context |
 | `FLIPT_EVAL_CACHE_TTL_MS` | no | default `10000`; `0` disables the eval cache |
 | `FLIPT_LOCAL_OVERRIDES` | no | dev only — ignored when `NODE_ENV=production` |
+| `FLIPT_SNAPSHOT_MAX_AGE_MS` | no | default `86400000` (24h); the oldest stored snapshot a process that cannot reach Flipt at startup will evaluate from. `0` turns seeding off |
 
 Env is read lazily: importing this package touches nothing, `createFliptClient()` reads only the
 optional tuning vars, and `FLIPT_URL`/`FLIPT_FETCHER_SECRET` are resolved on the **first evaluation**
@@ -58,6 +59,21 @@ const mode = await flipt.getVariant('some-variant-flag', String(userId));
 **Flag keys stay in the app.** This package deliberately ships no flag enum: flags are owned by the
 app that gates on them (the monolith's list is `FLIPT_FEATURE_FLAGS` in
 `src/server/flipt/client.ts`). Two apps sharing a flag share the *string*, not an import.
+
+## When Flipt is unreachable
+
+- **Init is bounded and retried in the background.** Every snapshot fetch has a 4s timeout and init
+  a 5s one. Only a process's FIRST attempt is waited on; after a failure, retries (one per 30s
+  cooldown) run in the background and requests answer straight away. A client that arrives after
+  the timeout is closed, so its poller does not leak.
+- **Last-known snapshot (optional).** Pass `snapshotStore` (or call `setSnapshotStore`) and a process
+  that cannot reach Flipt at startup evaluates from the newest stored snapshot no older than
+  `FLIPT_SNAPSHOT_MAX_AGE_MS`, logging that it did, instead of answering `false` for every flag.
+  It switches to live state as soon as a background retry succeeds. Processes with live state keep
+  the store current; `createKvSnapshotStore` builds one over any key-value store with TTLs and holds
+  the write rate near one per 10 minutes across all of them. The monolith's is
+  `src/server/flipt/snapshot-store.ts` (sysRedis).
+- A running process keeps evaluating its last fetched state when polls fail.
 
 ## Gotchas
 

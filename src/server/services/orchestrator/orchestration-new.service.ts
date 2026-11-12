@@ -52,7 +52,9 @@ import {
 import type { GenerationCtx } from '~/shared/generation/context';
 import { resourceSchema, type ResourceData } from '~/shared/generation/values';
 import {
-  getGateRules,
+  generationConfigUnavailableError,
+  getGateRuleState,
+  getGenerationStatus,
   resolveTestingAccess,
   getResourceData,
   getSelfHostedDisabledEcosystems,
@@ -69,18 +71,10 @@ import {
 } from '~/shared/generation/model-substitution';
 import { classifyModelSubstitutionReason } from '~/shared/generation/workflow-capability';
 import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
-import {
-  redis,
-  REDIS_KEYS,
-  REDIS_SYS_KEYS,
-  sysRedis,
-  withSysReadDeadline,
-} from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
-import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { generationStatusSchema } from '~/server/schema/generation.schema';
-import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
+import type { GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import {
   assertGenerationInputsUsable,
@@ -350,22 +344,6 @@ export type GenerationContextResult = {
   };
 };
 
-async function getGenerationStatus(): Promise<GenerationStatus> {
-  // Fail open: a sysRedis outage shouldn't crash generation context build.
-  let raw: string | null | undefined;
-  try {
-    // Wall-clock deadline so a silent sysRedis half-open can't park this read
-    // (runs while building the generation context) ~11min.
-    raw = await withSysReadDeadline(
-      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
-    );
-  } catch (err) {
-    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus orchestration-new', err);
-    raw = undefined;
-  }
-  return generationStatusSchema.parse(JSON.parse(raw ?? '{}')) as GenerationStatus;
-}
-
 /**
  * Builds the GenerationCtx from user tier information.
  * Fetches generation status (tier-based limits) and the per-user gated
@@ -395,11 +373,16 @@ export async function buildGenerationContext(
   user: { id?: number; isModerator?: boolean } | undefined,
   surface: GenerationSurface
 ): Promise<GenerationContextResult> {
-  const [status, hasTestingAccess, gateRules] = await Promise.all([
+  const [status, hasTestingAccess, gateRuleState] = await Promise.all([
     getGenerationStatus(),
     resolveTestingAccess(user ?? {}),
-    getGateRules(),
+    getGateRuleState(),
   ]);
+  // Gate rules hide and disable models. Unknown (sysRedis down, never read in this process) is
+  // refused for every caller and every surface, moderators included: an empty rule set would let
+  // a hidden model through.
+  if (!gateRuleState.known) throw generationConfigUnavailableError();
+  const gateRules = gateRuleState.value;
   const limits = status.limits[userTier];
 
   return {
