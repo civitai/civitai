@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as GenerationServiceModule from '~/server/services/generation/generation.service';
 
 /**
  * The SUBMIT path's view of the generation kill switch and the gate rules on a sysRedis failure:
@@ -54,7 +55,7 @@ vi.mock('@civitai/db', () => ({
 
 // The REAL kill-switch and gate-rule readers; only the testing-access flag lookup is stubbed.
 vi.mock('~/server/services/generation/generation.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/services/generation/generation.service')>()),
+  ...(await importOriginal<typeof GenerationServiceModule>()),
   resolveTestingAccess: vi.fn(async () => false),
 }));
 // generation.service's own heavy neighbours, never reached by these reads.

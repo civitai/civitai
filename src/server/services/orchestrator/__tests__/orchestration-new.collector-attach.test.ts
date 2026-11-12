@@ -89,7 +89,7 @@ import {
   validateInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { generationValidationRefusedCounter } from '~/server/prom/generation-validation.metrics';
-import { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
+import type { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
 import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 

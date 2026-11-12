@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { resetSharedMocks } from '~/__tests__/mocks';
+import type * as GenerationService from '~/server/services/generation/generation.service';
 
 // The canonical sysRedis mock (src/__tests__/setup.ts); only the commands these reads use.
 const mockHGet = redisMock.sysRedis.hGet;
@@ -50,7 +51,7 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 // reaches its isFlipt at runtime for a NON-empty user; the tests pass `{}`, so the
 // flag call is short-circuited and never opens a connection.
 
-type Service = typeof import('~/server/services/generation/generation.service');
+type Service = typeof GenerationService;
 let svc: Service;
 
 beforeEach(async () => {
