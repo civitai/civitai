@@ -28,6 +28,9 @@ const TAKEN_DOWN_THEN_LIVE = 108;
 const IMAGE_RESTRICTED_R = 109;
 const POST_RESTRICTED_R = 110;
 const IMAGE_RESTRICTED_PG = 111;
+const MODEL_RESTRICTED_FIRST = 112;
+const ARTICLE_RESTRICTED_R = 113;
+const MODEL3D_RESTRICTED_R = 114;
 
 let db: PGlite;
 
@@ -74,10 +77,19 @@ beforeAll(async () => {
       (30, ${OWNER}, 20), (31, ${OWNER}, 21), (32, ${STRANGER}, 21), (33, ${STRANGER}, NULL);
     INSERT INTO "Image" (id, "userId", "postId") VALUES
       (40, ${OWNER}, 30), (41, ${OWNER}, 31), (42, ${STRANGER}, 32), (43, ${STRANGER}, 33);
-    -- On a restricted base model: an R image alone on its post, and a PG image.
-    INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (34, ${STRANGER}, NULL);
-    INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", "modelRestricted") VALUES
-      (44, ${STRANGER}, 34, 4, true), (45, ${STRANGER}, 33, 1, true);
+    -- On a restricted base model: an R image first on its post with a PG image after it, a PG
+    -- image, a live model whose first image is R, and an article cover and 3D thumbnail at R.
+    INSERT INTO "Model" (id, "userId") VALUES (12, ${OWNER});
+    INSERT INTO "ModelVersion" (id, "modelId") VALUES (22, 12);
+    INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (34, ${STRANGER}, NULL), (35, ${OWNER}, 22);
+    INSERT INTO "Image" (id, "userId", "postId", index, "nsfwLevel", "modelRestricted") VALUES
+      (44, ${STRANGER}, 34, 0, 4, true), (50, ${STRANGER}, 34, 1, 1, true),
+      (45, ${STRANGER}, 33, 1, 1, true),
+      (46, ${OWNER}, 35, 0, 4, true), (47, ${OWNER}, 35, 1, 1, false),
+      (48, ${STRANGER}, NULL, 0, 4, true), (49, ${STRANGER}, NULL, 0, 4, true);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt", availability, ingestion) VALUES
+      (60, 48, 'Published', now() - interval '1 day', 'Public', 'Scanned');
+    INSERT INTO "Model3D" (id, "thumbnailImageId", status, availability) VALUES (61, 49, 'Published', 'Public');
     INSERT INTO "CollectionItem" ("collectionId", "addedById", "imageId", "postId", "modelId") VALUES
       (${IMAGE_ON_LIVE}, ${OWNER}, 40, NULL, NULL),
       (${IMAGE_ON_TAKEN_DOWN}, ${STRANGER}, 42, NULL, NULL),
@@ -91,7 +103,11 @@ beforeAll(async () => {
       (${TAKEN_DOWN_THEN_LIVE}, ${OWNER}, 40, NULL, NULL),
       (${IMAGE_RESTRICTED_R}, ${STRANGER}, 44, NULL, NULL),
       (${POST_RESTRICTED_R}, ${STRANGER}, NULL, 34, NULL),
-      (${IMAGE_RESTRICTED_PG}, ${STRANGER}, 45, NULL, NULL);
+      (${IMAGE_RESTRICTED_PG}, ${STRANGER}, 45, NULL, NULL),
+      (${MODEL_RESTRICTED_FIRST}, ${OWNER}, NULL, NULL, 12);
+    INSERT INTO "CollectionItem" ("collectionId", "addedById", "articleId", "model3dId") VALUES
+      (${ARTICLE_RESTRICTED_R}, ${STRANGER}, 60, NULL),
+      (${MODEL3D_RESTRICTED_R}, ${STRANGER}, NULL, 61);
   `);
 });
 
@@ -113,6 +129,8 @@ describe('collection item covers', () => {
     ['an image item on no model', IMAGE_ON_NO_MODEL, 43],
     ['a post item on no model', POST_ON_NO_MODEL, 43],
     ['a PG image item on a restricted base model', IMAGE_RESTRICTED_PG, 45],
+    ['a post item past its R image on a restricted base model', POST_RESTRICTED_R, 50],
+    ['a model item past its R image on a restricted base model', MODEL_RESTRICTED_FIRST, 47],
   ])('takes the cover from %s', async (_, collectionId, imageId) => {
     expect(await coverOf(collectionId)).toEqual([imageId]);
   });
@@ -122,7 +140,8 @@ describe('collection item covers', () => {
     ['a post item on a taken-down model', POST_ON_TAKEN_DOWN],
     ['a model item for a taken-down model', MODEL_TAKEN_DOWN],
     ['an R image item on a restricted base model', IMAGE_RESTRICTED_R],
-    ['a post item whose image is R on a restricted base model', POST_RESTRICTED_R],
+    ['an article item whose cover is R on a restricted base model', ARTICLE_RESTRICTED_R],
+    ['a 3D model item whose thumbnail is R on a restricted base model', MODEL3D_RESTRICTED_R],
   ])('takes no cover from %s', async (_, collectionId) => {
     expect(await coverOf(collectionId)).toEqual([null]);
   });

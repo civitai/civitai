@@ -113,6 +113,8 @@ const RESTRICTED_R = 218; // stranger's R image on a restricted base model
 const RESTRICTED_PG = 219; // stranger's PG image on a restricted base model
 const UNRESTRICTED_R = 220; // stranger's R image on an unrestricted base model
 const VIEWER_RESTRICTED_R = 221; // the viewer's own R image on a restricted base model
+const RESTRICTED_X = 222; // stranger's X image on a restricted base model
+const RESTRICTED_XXX = 223; // stranger's XXX image on a restricted base model
 
 beforeAll(async () => {
   const schema = `
@@ -193,7 +195,9 @@ beforeAll(async () => {
       (${RESTRICTED_R},        ${STRANGER}, 1, 4, true),
       (${RESTRICTED_PG},       ${STRANGER}, 1, 1, true),
       (${UNRESTRICTED_R},      ${STRANGER}, 1, 4, false),
-      (${VIEWER_RESTRICTED_R}, ${VIEWER},   5, 4, true);
+      (${VIEWER_RESTRICTED_R}, ${VIEWER},   5, 4, true),
+      (${RESTRICTED_X},        ${STRANGER}, 1, 8, true),
+      (${RESTRICTED_XXX},      ${STRANGER}, 1, 16, true);
     INSERT INTO "CollectionContributor" ("collectionId", "userId", "permissions") VALUES
       (${COLLECTION}, ${MANAGER}, ARRAY['VIEW', 'MANAGE']::"CollectionContributorPermission"[]),
       (${COLLECTION}, ${VIEW_ONLY}, ARRAY['VIEW', 'ADD']::"CollectionContributorPermission"[]),
@@ -239,6 +243,8 @@ describe('which covers a stranger is shown', () => {
     ['an image still being scanned', PENDING_SCAN],
     ['an image on a taken-down model', TAKEN_DOWN_MODEL],
     ['an R image on a restricted base model', RESTRICTED_R],
+    ['an X image on a restricted base model', RESTRICTED_X],
+    ['an XXX image on a restricted base model', RESTRICTED_XXX],
   ])('hides %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(false);
   });
