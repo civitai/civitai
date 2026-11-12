@@ -162,6 +162,23 @@ describe('the recompute counts a text verdict only for the text it judged', () =
     row.result = { ...(row.result as object), meta: { inputCut: true } };
     await recomputeArticleIngestion(ARTICLE);
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning', name: 'article-verdict-input-cut' })
+    );
+  });
+
+  it('a text-scan verdict that found a violation in part of the current text blocks it', async () => {
+    row = { ...scanVerdict(NEW), blocked: true };
+    row.result = { ...(row.result as object), meta: { inputCut: true } };
+    await recomputeArticleIngestion(ARTICLE);
+    expect(writtenIngestion()).toBe(ArticleIngestionStatus.Blocked);
+  });
+
+  it('a cut text-scan verdict with a hit, for older text, does not block this text', async () => {
+    row = { ...scanVerdict(OLD), blocked: true };
+    row.result = { ...(row.result as object), meta: { inputCut: true } };
+    await recomputeArticleIngestion(ARTICLE);
+    expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
   });
 
   it('a blocked verdict for older text does not block this text', async () => {

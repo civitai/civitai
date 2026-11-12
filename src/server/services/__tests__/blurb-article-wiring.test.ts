@@ -537,6 +537,12 @@ describe('upsertArticle — a live article leaves Scanned with its new text', ()
     expect(contentWrites()[0]).toMatchObject({ ingestion: 'Rescan' });
   });
 
+  it('for a scheduled draft saved without its schedule, which keeps the stored one', async () => {
+    stored({ status: 'Draft', scheduledAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) });
+    await upsert({ status: 'Draft' });
+    expect(contentWrites()[0]).toMatchObject({ ingestion: 'Rescan' });
+  });
+
   it('not for a draft, which is not live', async () => {
     stored({ status: 'Draft' });
     await upsert({ status: 'Draft' });

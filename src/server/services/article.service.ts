@@ -2911,14 +2911,17 @@ export function articleTextVerdictMatch(
     meta?: { inputCut?: unknown };
   } | null;
   // It did not judge all of the text; a resubmit would judge the same part.
-  if (result?.version != null && result.meta?.inputCut === true) return 'partial';
+  const cut = result?.version != null && result.meta?.inputCut === true;
   const stored =
     result?.version != null
       ? typeof result.textHash === 'string'
         ? result.textHash
         : null
       : row.contentHash;
-  if (!stored) return row.updatedAt < ARTICLE_TEXT_VERDICT_HASHED_SINCE ? 'legacy' : 'other';
+  if (!stored) {
+    if (row.updatedAt >= ARTICLE_TEXT_VERDICT_HASHED_SINCE) return 'other';
+    return cut ? 'partial' : 'legacy';
+  }
   const current =
     result?.version != null
       ? textScanTextHash({
@@ -2926,7 +2929,8 @@ export function articleTextVerdictMatch(
           declared: {},
         })
       : hashContent(articleModerationText(article.title, article.content));
-  return stored === current ? 'current' : 'other';
+  if (stored !== current) return 'other';
+  return cut ? 'partial' : 'current';
 }
 
 /**
@@ -3067,11 +3071,15 @@ export async function recomputeArticleIngestionInTx(
       : 'current';
   if (verdictMatch === 'legacy')
     logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' }).catch();
-  if (verdictMatch === 'partial')
-    logToAxiom({ type: 'info', name: 'article-verdict-input-cut' }).catch();
-  // A verdict for other text, or for part of this one, neither clears nor blocks it.
+  // A verdict for other text neither clears nor blocks it. One for part of this text blocks on a
+  // hit in the part it judged, but cannot clear the rest.
   const verdictForThisText = verdictMatch === 'current' || verdictMatch === 'legacy';
-  const textBlocked = textSucceeded && verdictForThisText && textModeration?.blocked === true;
+  const textBlocked =
+    textSucceeded &&
+    (verdictForThisText || verdictMatch === 'partial') &&
+    textModeration?.blocked === true;
+  if (verdictMatch === 'partial' && !textBlocked)
+    logToAxiom({ type: 'warning', name: 'article-verdict-input-cut', articleId }).catch();
   const textError =
     hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
   const textDone = !hasText || (textSucceeded && verdictForThisText);
