@@ -30,6 +30,11 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
     refresh: async () => undefined,
   }),
 }));
+const notify = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
+vi.mock('~/server/services/notification.service', () => ({ createNotification: notify }));
+vi.mock('~/server/services/model.service', () => ({
+  getGallerySettingsByModelId: async () => null,
+}));
 vi.mock('~/server/services/model-com-face-recheck.service', () => ({
   queueComFaceRecheck: mocks.queueComFaceRecheck,
 }));
@@ -60,6 +65,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 const showcase = await import('../version-showcase.service');
 const cover = await import('../model-cover.service');
 const { pickCoverImageId } = await import('~/shared/utils/model-sfw-face');
+const { VERSION_SHOWCASE_LIMIT } = await import('~/shared/constants/version-showcase.constants');
 
 const VERSION = 100;
 const row = (imageId: number, site: 'com' | 'red', extra: object = {}) => ({
@@ -73,6 +79,8 @@ const row = (imageId: number, site: 'com' | 'red', extra: object = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dbMock.dbWrite.$queryRaw.mockReset();
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
   mocks.entry = undefined;
   mocks.fetchError = null;
   mocks.communityCovers = new Map();
@@ -133,7 +141,7 @@ describe('getVersionShowcaseImageIds: the carousel order of a curated list', () 
       ownerImageIds: owner,
       coverImageId: null,
     });
-    expect(ids).toHaveLength(showcase.VERSION_SHOWCASE_LIMIT);
+    expect(ids).toHaveLength(VERSION_SHOWCASE_LIMIT);
   });
 
   it('falls back to today’s carousel when the showcase can’t be read', async () => {
@@ -164,7 +172,9 @@ describe('assertCoverImagesValid: which images may be a cover', () => {
   // A community image featured in the model's showcase, on the given sites.
   const featuredOn = (imageId: number, sites: string[], nsfwLevel = 1) => {
     dbMock.dbRead.image.findMany.mockResolvedValue([]);
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ modelVersionId: VERSION, imageId }] as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
+      { modelVersionId: VERSION, modelId: 1, imageId },
+    ] as never);
     mocks.entry = {
       modelVersionId: VERSION,
       rows: [],
@@ -299,17 +309,96 @@ describe('setVersionShowcase: what the write path refuses', () => {
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
-  it('refuses an image its author removed from this showcase', async () => {
+  it('refuses an image its author removed, even on the other site', async () => {
+    // The author removed it while it was featured on .red only; the save is for the other site.
     dbMock.dbWrite.modelVersionShowcaseItem.findMany.mockImplementation((async (args: {
-      where: { removedByContributor?: boolean };
-    }) => (args.where.removedByContributor ? [{ imageId: 77 }] : [])) as never);
-    await expect(set(5)).rejects.toThrow(/removed it from your showcase/);
+      where: { removedByContributor?: boolean; site?: string };
+    }) =>
+      args.where.removedByContributor && (args.where.site ?? 'red') === 'red'
+        ? [{ imageId: 77 }]
+        : []) as never);
+    await expect(
+      showcase.setVersionShowcase({
+        modelVersionId: VERSION,
+        site: 'com',
+        items: [{ imageId: 77 }],
+        userId: 5,
+        isModerator: false,
+      })
+    ).rejects.toThrow(/removed it from your showcase/);
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('refuses an image that does not pass the showcase filters', async () => {
     await expect(set(5)).rejects.toThrow(/can’t be featured/);
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('setVersionShowcase: a valid save', () => {
+  const version = {
+    id: VERSION,
+    status: 'Published',
+    model: { id: 1, name: 'Model', userId: 5, nsfw: false, status: 'Published' },
+  };
+  beforeEach(() => {
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue(version as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ username: 'creator' } as never);
+    // Image 78 was featured before this save; 77 is new.
+    dbMock.dbWrite.modelVersionShowcaseItem.findMany.mockImplementation((async (args: {
+      where: { removedByContributor?: boolean };
+    }) => (args.where.removedByContributor ? [] : [{ imageId: 78 }])) as never);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (query: { strings?: string[] }) => {
+      const sql = (Array.isArray(query) ? query : query.strings ?? []).join('');
+      if (sql.includes('CROSS JOIN'))
+        return [
+          { id: 77, userId: 50, nsfwLevel: 1 },
+          { id: 78, userId: 51, nsfwLevel: 1 },
+        ];
+      if (sql.includes('p."userId" = m."userId"')) return [{ id: 1 }];
+      return [];
+    }) as never);
+  });
+
+  it('stores the list in order, the creator’s image as Owner and the others as Community', async () => {
+    await showcase.setVersionShowcase({
+      modelVersionId: VERSION,
+      site: 'red',
+      items: [{ imageId: 77 }, { imageId: 1, excluded: true }, { imageId: 78 }],
+      userId: 5,
+      isModerator: false,
+    });
+    expect(dbMock.dbWrite.modelVersionShowcaseItem.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          imageId: 77,
+          source: 'Community',
+          position: null,
+          excluded: false,
+        }),
+        expect.objectContaining({ imageId: 1, source: 'Owner', excluded: true }),
+        expect.objectContaining({ imageId: 78, source: 'Community' }),
+      ],
+    });
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies only the newly featured author, keyed once per version and image', async () => {
+    await showcase.setVersionShowcase({
+      modelVersionId: VERSION,
+      site: 'red',
+      items: [{ imageId: 77 }, { imageId: 78 }],
+      userId: 5,
+      isModerator: false,
+    });
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 50,
+        type: 'model-version-showcase-featured',
+        key: 'model-version-showcase-featured:100:77',
+      })
+    );
   });
 });
 

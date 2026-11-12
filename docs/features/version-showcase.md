@@ -21,8 +21,9 @@ order. The table has no foreign keys; a row whose image or version is gone match
 The model's `coverImageId` (civitai.red) and `sfwCoverImageId` (civitai.com) are slot 1 of the
 latest published version's showcase for that site. Everything that already reads those columns
 follows: model cards, link previews, the models search document and the civitai.com listing. Every
-cover write, from the model editor, the com-face API or the showcase, goes through the same checks
-(`assertCoverChange` / `saveModelCovers` in `model-cover.service.ts`).
+cover write runs the same validation (`assertCoverImagesValid` in `model-cover.service.ts`): the
+showcase through `saveModelCovers`, and the model editor and the com-face API inside the editor's own
+save, which also refuses a save when either cover changed since it was read.
 
 - A cover may be a community image featured in that site's showcase.
 - On a mature model the civitai.com cover must be the creator's own image: it is what lists the
@@ -50,6 +51,7 @@ works with the flag off.
 ## Caches
 
 The version showcase cache (`getVersionShowcaseCache`, 1 hour) holds each version's rows and the community images that pass the
-filters. Post changes, bans, blocks, opt-outs, gallery rule changes and version merges refresh it,
-and clear any community cover that no longer qualifies. Every read and refresh fails open: if the
+filters. Post changes, bans, blocks, opt-outs and gallery rule changes refresh it and clear any
+community cover that no longer qualifies; a version merge moves its rows to the target version and
+refreshes it. A cover whose image was deleted stops being served at once. Every read and refresh fails open: if the
 showcase can't be read, the carousel and covers fall back to the creator's images.

@@ -14,13 +14,33 @@ const gallery = vi.hoisted(() => ({ settings: null as unknown }));
 vi.mock('~/server/services/model.service', () => ({
   getGallerySettingsByModelId: async () => gallery.settings,
 }));
-// The cache calls its lookup straight through, so what is tested is the lookup, not Redis.
+// A plain in-memory cache over the real lookup: entries stay until refreshed, like Redis does, so a
+// read that wrongly trusts the cache shows up as stale.
+const cacheStore = vi.hoisted(() => new Map<number, unknown>());
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  createCachedObject: (options: { lookupFn: (ids: number[], fromWrite?: boolean) => unknown }) => ({
-    fetch: (ids: number[]) => options.lookupFn(ids, true),
-    refresh: async () => undefined,
-  }),
+  createCachedObject: (options: {
+    lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<number, unknown>>;
+  }) => {
+    const load = async (ids: number[]) => {
+      if (!ids.length) return;
+      const records = await options.lookupFn(ids, true);
+      for (const id of ids) cacheStore.set(id, records[id]);
+    };
+    return {
+      fetch: async (ids: number[]) => {
+        await load(ids.filter((id) => !cacheStore.has(id)));
+        return Object.fromEntries(ids.map((id) => [id, cacheStore.get(id)]));
+      },
+      refresh: (ids: number[]) => load(ids),
+    };
+  },
+}));
+const saveModelCovers = vi.hoisted(() => vi.fn(async (_args: unknown) => true));
+vi.mock('~/server/services/model-cover.service', () => ({ saveModelCovers }));
+vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  preventReplicationLagBatch: vi.fn(async () => undefined),
 }));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -30,7 +50,12 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-const { getVersionShowcases } = await import('../version-showcase.service');
+const {
+  getVersionShowcases,
+  bustVersionShowcasesForUser,
+  getShowcaseCommunityCovers,
+  repointVersionShowcases,
+} = await import('../version-showcase.service');
 
 const CREATOR = 1;
 const MODEL = 10;
@@ -49,7 +74,9 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       id int PRIMARY KEY, username text, settings jsonb, "bannedAt" timestamp, "deletedAt" timestamp
     );
-    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, "userId" int NOT NULL, "coverImageId" int, "sfwCoverImageId" int
+    );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelVersionId" int,
@@ -75,6 +102,7 @@ beforeAll(async () => {
     INSERT INTO "User" (id, username) VALUES (${CREATOR}, 'creator');
     INSERT INTO "Model" VALUES (${MODEL}, ${CREATOR});
     INSERT INTO "ModelVersion" VALUES (${VERSION}, ${MODEL});
+    CREATE UNIQUE INDEX ON "ModelVersionShowcaseItem" ("modelVersionId", site, "imageId");
   `);
   // Integers typed as Prisma sends them.
   const INT4_OID = 23;
@@ -88,6 +116,21 @@ beforeAll(async () => {
     const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
     return (await db.query(sql.text, sql.values, { paramTypes })).rows;
   }) as never);
+  dbMock.dbRead.$queryRaw.mockImplementation(dbMock.dbWrite.$queryRaw.getMockImplementation());
+  // A batch runs its statements in order on the one PGlite connection.
+  dbMock.dbWrite.$executeRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const sql = Prisma.sql(strings, ...values);
+    const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
+    return (await db.query(sql.text, sql.values, { paramTypes })).affectedRows ?? 0;
+  }) as never);
+  dbMock.dbWrite.$transaction.mockImplementation((async (batch: Promise<unknown>[]) => {
+    const results = [];
+    for (const step of batch) results.push(await step);
+    return results;
+  }) as never);
   dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
     { id: VERSION, modelId: MODEL },
   ] as never);
@@ -96,10 +139,13 @@ afterAll(() => db.close());
 
 beforeEach(async () => {
   gallery.settings = null;
+  cacheStore.clear();
+  saveModelCovers.mockClear();
   await db.exec(`
     DELETE FROM "ModelVersionShowcaseItem"; DELETE FROM "Image"; DELETE FROM "Post";
     DELETE FROM "UserEngagement"; DELETE FROM "CreatorGalleryHiddenUser";
     DELETE FROM "User" WHERE id <> ${CREATOR};
+    UPDATE "Model" SET "coverImageId" = NULL, "sfwCoverImageId" = NULL;
   `);
 });
 
@@ -218,5 +264,74 @@ describe('version showcase community filter', () => {
       [removed]
     );
     expect(await served()).toEqual([clean]);
+  });
+});
+
+describe('when a featured image stops qualifying', () => {
+  it("a ban clears the model's community cover, and leaves a still-valid one", async () => {
+    const banned = await featured();
+    await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [banned, MODEL]);
+    await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [banned]);
+
+    await bustVersionShowcasesForUser(banned);
+
+    expect(saveModelCovers).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
+    );
+  });
+
+  it('leaves a community cover whose author is still in good standing', async () => {
+    const fine = await featured();
+    await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [fine, MODEL]);
+
+    await bustVersionShowcasesForUser(fine);
+
+    expect(saveModelCovers).not.toHaveBeenCalled();
+  });
+
+  it('a deleted image stops counting as a cover at once', async () => {
+    const id = await featured();
+    const before = await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: id }]);
+    await db.query(`DELETE FROM "Image" WHERE id = $1`, [id]);
+    const after = await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: id }]);
+
+    expect(before.size).toBe(1);
+    expect(after.size).toBe(0);
+  });
+
+  it("doesn't count a row featured on another model", async () => {
+    const id = await featured();
+    const covers = await getShowcaseCommunityCovers([{ modelId: MODEL + 1, imageId: id }]);
+    expect(covers.size).toBe(0);
+  });
+});
+
+describe('a version merge', () => {
+  it("moves the sources' rows to the target, keeping the target's own row on a clash", async () => {
+    await db.exec(`
+      INSERT INTO "ModelVersion" VALUES (201, ${MODEL}), (202, ${MODEL}) ON CONFLICT DO NOTHING;
+      INSERT INTO "ModelVersionShowcaseItem" ("modelVersionId", site, "imageId", source, position, "addedById") VALUES
+        (${VERSION}, 'red', 1, 'Owner', 0, ${CREATOR}),
+        (201, 'red', 1, 'Owner', 5, ${CREATOR}),
+        (201, 'red', 2, 'Community', 1, ${CREATOR}),
+        (202, 'red', 2, 'Community', 2, ${CREATOR}),
+        (202, 'com', 3, 'Community', 0, ${CREATOR});
+    `);
+
+    await repointVersionShowcases(VERSION, [201, 202]);
+
+    const { rows } = await db.query<{
+      modelVersionId: number;
+      site: string;
+      imageId: number;
+      position: number;
+    }>(
+      `SELECT "modelVersionId", site, "imageId", position FROM "ModelVersionShowcaseItem" ORDER BY site, "imageId"`
+    );
+    expect(rows).toEqual([
+      { modelVersionId: VERSION, site: 'com', imageId: 3, position: 0 },
+      { modelVersionId: VERSION, site: 'red', imageId: 1, position: 0 },
+      { modelVersionId: VERSION, site: 'red', imageId: 2, position: 2 },
+    ]);
   });
 });
