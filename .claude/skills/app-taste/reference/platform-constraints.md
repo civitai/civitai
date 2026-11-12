@@ -382,10 +382,20 @@ Two consequences, and the second is the general one:
   fleet apps are in this case, so the trap below still applies to them in full.
 
 Source-repo cloning landed in CLI 0.1.139. An older CLI clones the build repo
-for every app, so check `civitai --version` before trusting the first bullet.
+for every app. What counts is the CLI that made the CLONE, not the one you have
+now: re-running `app pull` in an existing build-repo checkout keeps syncing from
+the build repo, even on 0.1.139 and even when the app now has a source repo (the
+command only prints where the source repo is). Clone into a new directory to
+switch.
 
-Phase 0 question 1 (`git cat-file -t <live source sha>`) tells the two apart
-without knowing which kind of app it is.
+**Which repo you have** is read off the clone itself:
+`git -C <clone> remote get-url origin` ends in `civitai-apps-src/<slug>.git`
+for the source repo and `civitai-apps/<slug>.git` for the build repo. Phase 0 question 1
+(`git cat-file -t <live source sha>`) then says whether the clone is current. It
+needs the `Source commit` that `civitai app status` reports, and that field is
+only what the submitting CLI claimed. A submission that started from a git push
+leaves it empty. When status shows none, the remote URL still says which repo
+you have, but nothing here says whether the clone is current.
 
 The rest of this section is the build-repo case, measured 2026-09-03 doing
 phase 0 for `gen-matrix`, `panorama-360` and `playable-collections` (then the
@@ -447,7 +457,9 @@ A clone made by an **older** CLI still has the token in its remote URL. It is a
 write token for every app repo you can write to, not only this one. Running
 `civitai app pull` inside that clone strips the token from every remote that
 points at the app's repo and installs the helper. It does **not** rotate the
-token. Deleting the directory is still a fine way to dispose of a clone you
+token. One case exits with an error before stripping anything: an old
+build-repo clone of an app that has a source repo but no approved version right
+now. Deleting the directory is still a fine way to dispose of a clone you
 pulled by mistake.
 
 ### 12c. The CLI signature

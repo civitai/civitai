@@ -35,7 +35,8 @@ history), and `app pull` clones it. Every other app gets the **build repo**
 (`civitai-apps/<slug>`): right slug, right manifest version, a clean `main`, and
 **not** the source commit the app was built from, so nothing to branch off and no
 PR target. Those apps develop on GitHub, under a repo name not derivable from the
-slug. Question 1 below settles which one you have. Constraints §12 has the trap.
+slug. `git -C <clone> remote get-url origin` says which one you have
+(`civitai-apps-src/` or `civitai-apps/`). Constraints §12 has the trap.
 
 ```bash
 SLUG=app-requests
@@ -49,8 +50,10 @@ Then answer all five in writing before touching a file:
 1. **Is the clone current, and is it the DEV repo?** The check that settles both
    is `git cat-file -t <live source sha>` against the clone — a build repo fails
    it while every other signal looks right. Comparing the manifest `version`
-   alone passes on the build repo and proves nothing. A stale clone silently reverts
-   shipped work.
+   alone passes on the build repo and proves nothing. If `app status` shows no
+   source commit (a push-originated submission leaves it empty), only the remote
+   URL above answers the DEV-repo half; say that currency is unverified. A stale
+   clone silently reverts shipped work.
 2. **What does the PINNED SDK actually expose?** Read the installed `.d.ts`, not
    the monorepo source — they diverge by several minor versions.
 3. **How big is the live dataset?** A cap that never binds is not a constraint; a
