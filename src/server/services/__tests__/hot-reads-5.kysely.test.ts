@@ -227,24 +227,24 @@ describe('getHomeBlockById', () => {
     await read();
     expect(q.getHomeBlockRow.mock.calls).toEqual([[kyselyRead, ID]]);
     expect(q.getHomeBlockRow.mock.calls[0][0]).toBe(kyselyRead);
-    expect(dbMock.dbRead.homeBlock.findUniqueOrThrow).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.homeBlock.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.homeBlock.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.homeBlock.findUnique).not.toHaveBeenCalled();
   });
 
   it('a row missing on the replica falls back to the primary through Prisma', async () => {
     q.getHomeBlockRow.mockResolvedValue(undefined as never);
     await read();
-    expect(dbMock.dbWrite.homeBlock.findUniqueOrThrow.mock.calls[0][0]).toEqual({
+    expect(dbMock.dbWrite.homeBlock.findUnique.mock.calls[0][0]).toEqual({
       select: { id: true, metadata: true, type: true, userId: true, sourceId: true },
       where: { id: ID },
     });
-    expect(dbMock.dbRead.homeBlock.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.homeBlock.findUnique).not.toHaveBeenCalled();
   });
 
   it('a replica error falls back to the primary through Prisma', async () => {
     q.getHomeBlockRow.mockRejectedValue(new Error('replica down') as never);
     await read();
-    expect(dbMock.dbWrite.homeBlock.findUniqueOrThrow).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.homeBlock.findUnique).toHaveBeenCalledTimes(1);
   });
 });
 

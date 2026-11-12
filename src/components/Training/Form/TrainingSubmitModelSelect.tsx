@@ -18,8 +18,10 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { StudioOnlyModelsNotice } from '~/components/Training/TrainingStudioSwitch';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { blockedCustomModels } from '~/shared/constants/training.constants';
-import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import {
+  isTrainingModelBlocked,
+  useTrainingServiceStatus,
+} from '~/components/Training/training.utils';
 import type { TrainingServiceStatus } from '~/server/schema/training.schema';
 import {
   modelUnavailability,
@@ -286,9 +288,6 @@ export const ModelSelect = ({
   const { data: announcement } = trpc.training.getAnnouncement.useQuery();
 
   const { updateRun } = trainingStore;
-  // blockedCustomModels is already a string[]; wrapping it in another array made
-  // blockedModels a string[][], so .includes() never matched the locally-blocked models.
-  const blockedModels = status.blockedModels ?? blockedCustomModels;
 
   // Detect whether the user has tweaked the advanced training params away from the
   // defaults for the current base. Auto-derived length knobs (steps/checkpoints/repeats/
@@ -975,7 +974,7 @@ export const ModelSelect = ({
                     View base model on Civitai
                   </Anchor>
                 )}
-                {blockedModels.includes(formBaseModel) ? (
+                {isTrainingModelBlocked(status, formBaseModel) ? (
                   <AlertWithIcon
                     icon={<IconExclamationCircle />}
                     iconColor="default"

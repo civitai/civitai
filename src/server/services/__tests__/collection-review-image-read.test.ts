@@ -75,7 +75,7 @@ async function statementFor(
 
 // The rating clause's arm, not the acceptableMinor exception that also names the collection.
 const REVIEW_ARM =
-  /i\."nsfwLevel" = 0 AND EXISTS \(\s*SELECT 1 FROM "CollectionItem" rci[\s\S]*?rci\."collectionId" = \$(\d+)/;
+  /i\."nsfwLevel" = 0 AND \([\s\S]*?"ingestion" = \$\d+::"ImageIngestionStatus"[\s\S]*?\) AND EXISTS \(\s*SELECT 1 FROM "CollectionItem" rci[\s\S]*?rci\."collectionId" = \$(\d+)/;
 
 beforeEach(() => {
   vi.clearAllMocks();

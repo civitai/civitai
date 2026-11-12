@@ -181,6 +181,35 @@ describe('BlockManifestValidator', () => {
     }
   });
 
+  // INVARIANT GUARD (not regression coverage): zip saves go through the HOST save path
+  // (SAVE_IMAGE bytes, @civitai/app-sdk/save-zip) precisely so that an unverified app never needs a
+  // download or popup token. Pins that the unverified tier still refuses each of them, each
+  // with its own error, while the same manifest with only the allowed tokens passes.
+  it('INVARIANT GUARD: the unverified tier refuses allow-downloads and every popup token', () => {
+    const withSandbox = (sandbox: string) => ({
+      ...VALID_MANIFEST,
+      trustTier: 'unverified',
+      iframe: { ...VALID_MANIFEST.iframe, sandbox },
+    });
+    expect(
+      BlockManifestValidator.validate(withSandbox('allow-scripts allow-forms'), APP_CTX)
+    ).toEqual({
+      valid: true,
+    });
+    for (const token of ['allow-downloads', 'allow-popups', 'allow-popups-to-escape-sandbox']) {
+      const result = BlockManifestValidator.validate(
+        withSandbox(`allow-scripts ${token}`),
+        APP_CTX
+      );
+      expect(result.valid, token).toBe(false);
+      if (!result.valid) {
+        expect(result.errors, token).toContain(
+          `sandbox token "${token}" is not allowed for trustTier=unverified`
+        );
+      }
+    }
+  });
+
   it('M-POPUPS: still accepts allow-popups on the verified tier', () => {
     const verified = {
       ...VALID_MANIFEST,

@@ -287,7 +287,18 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     ? strings.join('?')
     : (strings as unknown as { sql: string }).sql;
 
-  if (sql.includes('"blockedFor" = CASE')) return moderatorBlock(values);
+  // `writeModeratorBlock`'s state read, after its UPDATE (which goes through `writeExec`).
+  if (sql.includes(' AS held')) {
+    const ids = (values.findLast(Array.isArray) as number[] | undefined) ?? [];
+    return store.images
+      .filter((i) => ids.includes(i.id))
+      .map((i) => ({
+        id: i.id,
+        held: i.blockedFor === BlockedReason.CSAM,
+        removedForCsam: i.blockedFor === BlockedReason.CSAM,
+        underReview: i.needsReview === 'csam',
+      }));
+  }
 
   if (sql.includes('FROM "CsamReport"')) return [];
 
@@ -371,6 +382,8 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
 
 function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
   const sql = strings.join('?');
+
+  if (sql.includes('"blockedFor" = CASE')) return moderatorBlock(values).length;
 
   if (sql.includes('INSERT INTO "ModActivity"')) {
     const [userId, entityType, activity] = values as [number, string, string];

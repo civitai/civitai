@@ -965,7 +965,12 @@ async function run(
   }
 
   if (route.op === 'info') {
-    const usage = await store.usage(ctx);
+    // The per-viewer figures are the ceiling the store charges this viewer's writes against
+    // (`store.viewerLimits`: in production their membership tier's); the app ceilings are fixed.
+    const [usage, viewerLimits] = await Promise.all([
+      store.usage(ctx),
+      store.viewerLimits(requireViewer(access)),
+    ]);
     const L = store.limits;
     return ok({
       collections: Object.fromEntries(
@@ -975,8 +980,8 @@ async function run(
         docBytes: DOC_STORE_BOUNDS.docBytes,
         appBytes: L.appBytes,
         appDocs: L.appDocs,
-        viewerBytes: L.userBytes,
-        viewerDocs: L.userDocs,
+        viewerBytes: viewerLimits.userBytes,
+        viewerDocs: viewerLimits.userDocs,
         listLimitMax: DOC_STORE_BOUNDS.listLimitMax,
         getManyMax: DOC_STORE_BOUNDS.getManyMax,
         rate: {

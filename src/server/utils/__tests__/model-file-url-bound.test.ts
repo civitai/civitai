@@ -124,6 +124,12 @@ describe('rule 1: the caller own upload prefix', () => {
     await expect(miss(r2Path(`imports/${ME}/x.bin`))).resolves.toBe('unrecognised-key');
   });
 
+  it('refuses the caller own temp training upload, which storage deletes after a week', async () => {
+    await expect(miss(r2Path(`training-images-temp/${ME}/data.abcd.zip`))).resolves.toBe(
+      'unrecognised-key'
+    );
+  });
+
   it('refuses an allowlisted bucket that new uploads do not land in', async () => {
     await expect(miss(`${R2}/civitai-prod/model/${ME}/x.bin`)).resolves.toBe('not-upload-bucket');
   });

@@ -381,6 +381,18 @@ describe('scanFilesFallbackJob fairness ordering', () => {
   });
 });
 
+describe('scanFilesFallbackJob and Training Data', () => {
+  it('never picks a Training Data zip, which has its own scan', async () => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+
+    await runJob(scanFilesFallbackJob);
+
+    expect(mockDbWrite.modelFile.findMany.mock.calls[0][0].where.type).toEqual({
+      not: 'Training Data',
+    });
+  });
+});
+
 describe('scanFilesFallbackJob per-run budget', () => {
   // Two files; the first submission burns PAST_BUDGET_MS of wall clock, so the
   // second must be refused admission rather than started.

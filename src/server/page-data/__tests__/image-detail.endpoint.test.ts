@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 'next';
 import { sessionCookieName } from '@civitai/auth';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
@@ -44,8 +44,9 @@ const h = vi.hoisted(() => ({
   seeds: vi.fn(),
 }));
 
+const bearer = vi.hoisted(() => ({ result: null as Record<string, unknown> | null }));
 vi.mock('~/server/auth/bearer-token', () => ({
-  getSessionFromBearerToken: vi.fn(async () => null),
+  getSessionFromBearerToken: vi.fn(async () => bearer.result),
 }));
 vi.mock('~/server/auth/session-client', () => ({
   // The session store answers for the fixture viewer with a REAL Date in the user, as a warm
@@ -55,7 +56,6 @@ vi.mock('~/server/auth/session-client', () => ({
     return user ? { user } : null;
   }),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -688,5 +688,43 @@ describe('page-data flushes its headers before the body', () => {
     expect(res.flushed).toBeUndefined();
     expect(body).toEqual({ error: 'Page data unavailable' });
     expectPrivateNoStore(res);
+  });
+});
+
+describe('page-data hands the bootstrap seeds the session lookup’s credential', () => {
+  afterEach(() => {
+    bearer.result = null;
+  });
+
+  it('passes a moderator session’s lookup context', async () => {
+    const { req, done } = startPageData({
+      ...ownerFixture,
+      user: { ...USERS.owner, isModerator: true },
+    });
+    await done;
+    expect(h.seeds).toHaveBeenCalledTimes(1);
+    expect(h.seeds.mock.calls[0][2]).toBe((req as { context?: unknown }).context);
+  });
+
+  it('passes the bearer credential the lookup recorded', async () => {
+    const credential = {
+      tokenScope: 1,
+      apiKeyId: 7,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 7 },
+    };
+    bearer.result = { user: { ...USERS.owner, isModerator: true }, ...credential };
+    const req = {
+      method: 'GET',
+      url: `/api/page-data/images/${ownerFixture.imageId}`,
+      headers: { host: ownerFixture.host, authorization: 'Bearer key' },
+      cookies: {},
+      query: { imageId: String(ownerFixture.imageId) },
+    };
+    const res = fakeResponse();
+    await handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
+    expect(h.seeds).toHaveBeenCalledTimes(1);
+    expect(h.seeds.mock.calls[0][2]).toBe((req as { context?: unknown }).context);
+    expect(h.seeds.mock.calls[0][2]).toMatchObject(credential);
   });
 });

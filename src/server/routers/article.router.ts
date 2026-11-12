@@ -101,7 +101,7 @@ export const articleRouter = router({
         sessionUser: ctx?.user,
         include: ['cosmetics'],
         // Uncached per viewer, so a flagged viewer may see decorations before launch.
-        eventDecorationViewer: ctx?.user,
+        eventDecorationViewer: eventViewerOf(ctx),
       })
     ),
   getCivitaiNews: publicProcedure

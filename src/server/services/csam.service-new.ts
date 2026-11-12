@@ -1,3 +1,4 @@
+import type { ReadableStream as WebReadableStream } from 'stream/web';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyV3Read } from '~/server/db/kyselyDb';
@@ -12,7 +13,9 @@ import { clickhouse } from '~/server/clickhouse/client';
 import {
   getImageUploadIpEvents,
   UPLOAD_REQUEST_IP_NOTE,
+  FEEDBACK_CAPTURE_UPLOAD_IP_NOTE,
 } from '~/server/services/image-upload-action.service';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob } from '~/utils/file-utils';
@@ -164,7 +167,7 @@ type CsamReportUserActivity = {
   ip: string;
   time: string;
   details?: {
-    type: 'post' | 'model-version' | 'image-upload-request';
+    type: 'post' | 'model-version' | 'image-upload-request' | 'feedback-capture-upload';
     id: number;
   };
 };
@@ -434,6 +437,7 @@ async function getImages(imageIds?: number[]) {
     where: { id: { in: imageIds } },
     select: {
       id: true,
+      userId: true,
       url: true,
       createdAt: true,
       name: true,
@@ -610,6 +614,10 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
+/** Filed with each feedback page capture in an image report, whoever the report's subject is. */
+export const FEEDBACK_CAPTURE_FILE_NOTE =
+  'Page capture submitted by a reporter: this file is a screenshot of a Civitai page that a user attached to a feedback report sent to Civitai. It may show content posted by an account other than the one who submitted it.';
+
 export function getReportedUserAdditionalInfo(
   email: string | null,
   userActivity: CsamReportUserActivity[]
@@ -619,6 +627,9 @@ export function getReportedUserAdditionalInfo(
       email ? `Email: ${email}` : null,
       userActivity.some((a) => a.details?.type === 'image-upload-request')
         ? UPLOAD_REQUEST_IP_NOTE
+        : null,
+      userActivity.some((a) => a.details?.type === 'feedback-capture-upload')
+        ? FEEDBACK_CAPTURE_UPLOAD_IP_NOTE
         : null,
     ]
       .filter(Boolean)
@@ -1382,6 +1393,8 @@ async function reportImages(claim: SendClaim) {
     const prompts = promptFileDetails((image.meta ?? {}) as Record<string, unknown>, {
       storedOnImage: true,
     });
+    if (isFeedbackCaptureOwner(image.userId))
+      prompts.additionalInfo.unshift(xmlText(FEEDBACK_CAPTURE_FILE_NOTE));
     fileDetailsOf.set(image.id, {
       fileDetails: {
         originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
@@ -2173,7 +2186,7 @@ async function getTrainingDataZipStream({
   if (!response.ok) throw new Error(`no training data exists for model version: ${versionId}`);
   if (!response.body) throw new Error(`no response body for model version: ${versionId}`);
   // Convert Web ReadableStream to Node.js Readable stream
-  return Readable.fromWeb(response.body as import('stream/web').ReadableStream);
+  return Readable.fromWeb(response.body as WebReadableStream);
 }
 
 function uploadStream({
@@ -2343,28 +2356,9 @@ export const userContentSections: {
 
 /**
  * Writes every comment `userId` wrote to `comments.json` in the CSAM bucket, beside their reports'
- * archives: the CommentV3 rows, then any CommentV2 row the mirror never copied. For accounts whose
- * reports were archived before `data.json` carried comments.
+ * archives. For accounts whose reports were archived before `data.json` carried comments.
  */
 export async function archiveUserComments(userId: number) {
-  const v2 = await dbRead.commentV2.findMany({ where: { userId }, orderBy: { id: 'asc' } });
-  const mirrored = v2.length
-    ? new Set(
-        (
-          await kyselyV3Read
-            .selectFrom('CommentV3')
-            .select('id')
-            .where(
-              'id',
-              'in',
-              v2.map((c) => c.id)
-            )
-            .execute()
-        ).map((c) => c.id)
-      )
-    : new Set<number>();
-  const unmirrored = v2.filter((c) => !mirrored.has(c.id));
-
   let comments = 0;
   async function* counted<T>(rows: AsyncIterable<T>) {
     for await (const row of rows) {
@@ -2382,12 +2376,11 @@ export async function archiveUserComments(userId: number) {
         ['userId', { value: userId }],
         ['archivedAt', { value: new Date().toISOString() }],
         ['comments', { items: counted(userCommentRows(userId)) }],
-        ['commentsV2NotInV3', { value: unmirrored }],
       ],
     }),
     uploadStream({ stream: sink, userId, filename: 'comments.json' }),
   ]);
-  return { userId, ...stored, comments: comments + unmirrored.length };
+  return { userId, ...stored, comments };
 }
 
 /**

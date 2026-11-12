@@ -41,7 +41,8 @@ accurate, but four of the seven have a cause that is not what the symptom sugges
       moderator uses to isolate the phishing text, and a select-all that ignored it would take good
       comments with it. It also reaches past the card's own `Show more` fold: the ids are posted from
       the selection rather than from the rendered checkboxes, so "select all 340" acts on 340 and not
-      on the five rows on screen.
+      on the five rows on screen. *(2026-11: Comments is now one list paged 50 at a time, and ticks
+      persist across pages; see `post-migration-backlog.md`.)*
 
 - [x] **Actioning a comment reloads the whole section.** It no longer reloads anything. The reload was
       the expensive one rather than the cheap one: every panel write called back into
@@ -1161,6 +1162,9 @@ reference for what needs ticking, including Post Reports.
       So no unsignalled capped list exists to find, which makes this almost certainly one of the two
       already paged. Closing on that rather than leaving it open on a question nobody needs to answer;
       reopen if the reporter names a third panel. Original note kept below.
+      *(2026-11: disclosing the cap did not answer it. Moderators reported User Lookup → Comments
+      still hid everything past the newest 50, and Chat Audit everything past 300 messages; both
+      now page.)*
       Two panels have since been paged — the one fixed in
       the 08-19 round, and the account image grid (numbered paging, 08-21) — so the reporter needs to
       confirm which they meant rather than anything needing building.

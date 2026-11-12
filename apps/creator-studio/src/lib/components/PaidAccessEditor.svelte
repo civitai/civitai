@@ -1,7 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { formatPricingAllowance, isAlreadyPriced, pricingAllowanceState } from '@civitai/buzz';
-  import GenerationOnlyHint from '$lib/components/monetization/GenerationOnlyHint.svelte';
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
@@ -216,9 +215,6 @@
         bind:value={usageControl}
         allowGenerationOnly={caps.canSetGenerationOnly}
       />
-      {#if !caps.canSetGenerationOnly}
-        <GenerationOnlyHint class="mt-2" />
-      {/if}
       {#if usageControl !== storedUsageControl}
         <div class="mt-3 flex items-center gap-3">
           <Button type="submit" size="sm">Save usage control</Button>

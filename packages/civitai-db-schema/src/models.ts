@@ -200,6 +200,8 @@ export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AppealCategory = "Account" | "Article" | "Model" | "Other";
 
+export type ImageAxisSource = "rated" | "moderator";
+
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
@@ -573,8 +575,6 @@ export interface User {
   roles?: UserRole[];
   membershipOverride?: UserMembershipOverride | null;
   links?: UserLink[];
-  comments?: Comment[];
-  commentReactions?: CommentReaction[];
   notificationSettings?: UserNotificationSettings[];
   pushSubscriptions?: PushSubscription[];
   pushSettings?: UserPushSetting[];
@@ -594,11 +594,8 @@ export interface User {
   appAccessReviewed?: AppAccessRequest[];
   questions?: Question[];
   answers?: Answer[];
-  commentsv2?: CommentV2[];
   questionReactions?: QuestionReaction[];
   answerReactions?: AnswerReaction[];
-  commentV2Reactions?: CommentV2Reaction[];
-  threadMutes?: ThreadMute[];
   commentsV3?: CommentV3[];
   commentV3Reactions?: CommentV3Reaction[];
   commentMutes?: CommentMute[];
@@ -1022,12 +1019,10 @@ export interface Model {
   saves?: SavedModel[];
   reports?: ModelReport[];
   engagements?: ModelEngagement[];
-  comments?: Comment[];
   interests?: ModelInterest[];
   licenses?: License[];
   reportStats?: ModelReportStat | null;
   hashes?: ModelHash[];
-  threads?: Thread[];
   resourceReviews?: ResourceReview[];
   metricsDaily?: ModelMetricDaily[];
   baseModelMetrics?: ModelBaseModelMetric[];
@@ -1380,6 +1375,7 @@ export interface ModActivity {
   entityId: number | null;
   createdAt: Date;
   host: string | null;
+  credential: string | null;
 }
 
 export interface ModThreadClaim {
@@ -1403,8 +1399,6 @@ export interface Report {
   statusSetAt: Date | null;
   statusSetBy: number | null;
   model?: ModelReport | null;
-  comment?: CommentReport | null;
-  commentV2?: CommentV2Report | null;
   commentV3?: CommentV3Report | null;
   image?: ImageReport | null;
   resourceReview?: ResourceReviewReport | null;
@@ -1438,20 +1432,6 @@ export interface ResourceReviewReport {
 export interface ModelReport {
   modelId: number;
   model?: Model;
-  reportId: number;
-  report?: Report;
-}
-
-export interface CommentReport {
-  commentId: number;
-  comment?: Comment;
-  reportId: number;
-  report?: Report;
-}
-
-export interface CommentV2Report {
-  commentV2Id: number;
-  commentV2?: CommentV2;
   reportId: number;
   report?: Report;
 }
@@ -1548,7 +1528,6 @@ export interface ResourceReview {
   details: string | null;
   userId: number;
   user?: User;
-  thread?: Thread | null;
   createdAt: Date;
   updatedAt: Date;
   exclude: boolean;
@@ -1664,7 +1643,6 @@ export interface Post {
   images?: Image[];
   tags?: TagsOnPost[];
   reactions?: PostReaction[];
-  thread?: Thread | null;
   helper?: PostHelper | null;
   stats?: PostStat | null;
   metrics?: PostMetric[];
@@ -1735,7 +1713,6 @@ export interface Image {
   acceptableMinor: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
-  thread?: Thread | null;
   tags?: TagsOnImageDetails[];
   tagVotes?: TagsOnImageVote[];
   tagComposites?: ImageTag[];
@@ -1787,6 +1764,7 @@ export interface Image {
   storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
+  axisRating?: ImageAxisRating | null;
 }
 
 export interface ImageTagForReview {
@@ -2439,7 +2417,6 @@ export interface AppBlockBuildAttempt {
 export interface AppListing {
   id: string;
   serialId: number;
-  thread?: Thread | null;
   kind: string;
   slug: string;
   name: string;
@@ -2993,39 +2970,6 @@ export interface AdToken {
   expiresAt: Date | null;
 }
 
-export interface Comment {
-  id: number;
-  content: string;
-  createdAt: Date;
-  updatedAt: Date;
-  nsfw: boolean;
-  tosViolation: boolean;
-  parent?: Comment | null;
-  parentId: number | null;
-  user?: User;
-  userId: number;
-  model?: Model;
-  modelId: number;
-  locked: boolean | null;
-  hidden: boolean | null;
-  pinnedAt: Date | null;
-  removedByAuthor: boolean;
-  comments?: Comment[];
-  reactions?: CommentReaction[];
-  reports?: CommentReport[];
-}
-
-export interface CommentReaction {
-  id: number;
-  commentId: number;
-  comment?: Comment;
-  userId: number;
-  user?: User;
-  reaction: ReviewReactions;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 export interface UserNotificationSettings {
   id: number;
   userId: number;
@@ -3088,7 +3032,6 @@ export interface Question {
   answers?: Answer[];
   metrics?: QuestionMetric[];
   rank?: QuestionRank | null;
-  thread?: Thread | null;
 }
 
 export interface QuestionMetric {
@@ -3114,7 +3057,6 @@ export interface Answer {
   answerFor?: Question | null;
   votes?: AnswerVote[];
   rank?: AnswerRank | null;
-  thread?: Thread | null;
 }
 
 export interface AnswerVote {
@@ -3134,86 +3076,6 @@ export interface AnswerMetric {
   crossCount: number;
   heartCount: number;
   commentCount: number;
-}
-
-export interface CommentV2 {
-  id: number;
-  content: string;
-  createdAt: Date;
-  updatedAt: Date;
-  nsfw: boolean;
-  tosViolation: boolean;
-  userId: number;
-  user?: User;
-  threadId: number;
-  thread?: Thread;
-  childThread?: Thread | null;
-  metadata: JsonValue | null;
-  hidden: boolean | null;
-  pinnedAt: Date | null;
-  reactionCount: number;
-  reactions?: CommentV2Reaction[];
-  reports?: CommentV2Report[];
-}
-
-export interface Thread {
-  id: number;
-  locked: boolean;
-  parentThreadId: number | null;
-  parentThread?: Thread | null;
-  rootThreadId: number | null;
-  rootThread?: Thread | null;
-  questionId: number | null;
-  question?: Question | null;
-  answerId: number | null;
-  answer?: Answer | null;
-  imageId: number | null;
-  image?: Image | null;
-  postId: number | null;
-  post?: Post | null;
-  reviewId: number | null;
-  review?: ResourceReview | null;
-  commentId: number | null;
-  comment?: CommentV2 | null;
-  modelId: number | null;
-  model?: Model | null;
-  articleId: number | null;
-  article?: Article | null;
-  bountyId: number | null;
-  bounty?: Bounty | null;
-  bountyEntryId: number | null;
-  bountyEntry?: BountyEntry | null;
-  clubPostId: number | null;
-  clubPost?: ClubPost | null;
-  comicProjectId: number | null;
-  comicChapterPosition: number | null;
-  comicChapter?: ComicChapter | null;
-  challengeId: number | null;
-  challenge?: Challenge | null;
-  model3dId: number | null;
-  model3d?: Model3D | null;
-  model3dReviewId: number | null;
-  model3dReview?: Model3DReview | null;
-  appListingId: number | null;
-  appListing?: AppListing | null;
-  crucibleId: number | null;
-  crucible?: Crucible | null;
-  storylineId: number | null;
-  storyline?: Storyline | null;
-  metadata: JsonValue;
-  commentCount: number;
-  comments?: CommentV2[];
-  directChildren?: Thread[];
-  children?: Thread[];
-  mutes?: ThreadMute[];
-}
-
-export interface ThreadMute {
-  userId: number;
-  user?: User;
-  threadId: number;
-  thread?: Thread;
-  mutedAt: Date;
 }
 
 export interface CommentTopic {
@@ -3249,7 +3111,6 @@ export interface CommentV3 {
   pinnedAt: Date | null;
   reactionCount: number;
   legacyV1Id: number | null;
-  removedByAuthor: boolean;
   reactions?: CommentV3Reaction[];
   reports?: CommentV3Report[];
   mutes?: CommentMute[];
@@ -3304,17 +3165,6 @@ export interface AnswerReaction {
   id: number;
   answer?: Answer;
   answerId: number;
-  user?: User;
-  userId: number;
-  reaction: ReviewReactions;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CommentV2Reaction {
-  id: number;
-  comment?: CommentV2;
-  commentId: number;
   user?: User;
   userId: number;
   reaction: ReviewReactions;
@@ -3539,6 +3389,42 @@ export interface EventTurfStock {
   userId: number;
   stock: number;
   refilledAt: Date;
+}
+
+export interface EventAwardResult {
+  id: number;
+  event: string;
+  sourceId: string;
+  kind: string;
+  team: string | null;
+  points: number;
+  at: Date;
+  inputs: JsonValue;
+  frozenAt: Date;
+  voidedAt: Date | null;
+}
+
+export interface FlagDay {
+  id: number;
+  event: string;
+  crucibleId: number;
+  startsAt: Date;
+  cutAt: Date;
+  closesAt: Date;
+  imageIds: number[];
+  createdAt: Date;
+}
+
+export interface EventTurfFlagSticker {
+  id: bigint;
+  event: string;
+  flagDayId: number;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  count: number;
+  createdAt: Date;
 }
 
 export interface CreatorMilestone {
@@ -3855,7 +3741,6 @@ export interface Article {
   lockedProperties: string[];
   isOfficial: boolean;
   status: ArticleStatus;
-  thread?: Thread | null;
   reactions?: ArticleReaction[];
   tags?: TagsOnArticle[];
   reports?: ArticleReport[];
@@ -4121,7 +4006,6 @@ export interface Bounty {
   entries?: BountyEntry[];
   benefactors?: BountyBenefactor[];
   engagements?: BountyEngagement[];
-  thread?: Thread | null;
   metrics?: BountyMetric[];
   rank?: BountyRank | null;
   stats?: BountyStat | null;
@@ -4142,7 +4026,6 @@ export interface BountyEntry {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   benefactors?: BountyBenefactor[];
-  thread?: Thread | null;
   reactions?: BountyEntryReaction[];
   metrics?: BountyEntryMetric[];
   rank?: BountyEntryRank | null;
@@ -4254,6 +4137,16 @@ export interface CsamQueueSetAside {
   outcome: CsamQueueSetAsideOutcome;
   csamReportId: number | null;
   moderatorId: number;
+  createdAt: Date;
+}
+
+export interface ImageDeferredBlockEffect {
+  imageId: number;
+  violationType: string | null;
+  notifyOwner: boolean;
+  reportReason: string | null;
+  reportIds: number[];
+  blockedBy: number | null;
   createdAt: Date;
 }
 
@@ -4574,7 +4467,6 @@ export interface ClubPost {
   coverImage?: Image | null;
   entityId: number | null;
   entityType: string | null;
-  thread?: Thread | null;
   reactions?: ClubPostReaction[];
   metrics?: ClubPostMetric[];
 }
@@ -5043,6 +4935,22 @@ export interface ImageAudioScan {
   completedAt: Date | null;
 }
 
+export interface ImageAxisRating {
+  imageId: number;
+  image?: Image;
+  source: ImageAxisSource;
+  sexualLevel: number | null;
+  sexualHighWater: number | null;
+  violenceLevel: number | null;
+  languageLevel: number | null;
+  rater: string | null;
+  raterVersion: string | null;
+  ratedAt: Date;
+  workflowId: string | null;
+  setBy: number | null;
+  updatedAt: Date;
+}
+
 export interface ScanLabelVote {
   itemId: number;
   userId: number;
@@ -5320,7 +5228,6 @@ export interface Challenge {
   createdAt: Date;
   updatedAt: Date;
   winners?: ChallengeWinner[];
-  threads?: Thread[];
   reports?: ChallengeReport[];
   engagements?: ChallengeEngagement[];
   standings?: ChallengeEntryStanding[];
@@ -6312,7 +6219,6 @@ export interface ComicChapter {
   createdAt: Date;
   updatedAt: Date;
   panels?: ComicPanel[];
-  thread?: Thread | null;
   reads?: ComicChapterRead[];
 }
 
@@ -6581,7 +6487,6 @@ export interface Model3D {
   engagements?: Model3DEngagement[];
   reports?: Model3DReport[];
   reviews?: Model3DReview[];
-  threads?: Thread[];
   collectionItems?: CollectionItem[];
   metric?: Model3DMetric | null;
 }
@@ -6644,7 +6549,6 @@ export interface Model3DReview {
   metadata: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
-  thread?: Thread | null;
   post?: Post | null;
   reports?: Model3DReviewReport[];
 }
@@ -6813,7 +6717,6 @@ export interface Storyline {
   followers?: StorylineFollow[];
   reports?: StorylineReport[];
   coverUploads?: StorylineCoverUpload[];
-  thread?: Thread | null;
 }
 
 export interface StorylineChapter {
@@ -7228,7 +7131,6 @@ export interface Crucible {
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];
-  thread?: Thread | null;
 }
 
 export interface CrucibleEngagement {

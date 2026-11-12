@@ -41,7 +41,9 @@
  *   · catalog MEMBERSHIP — `al.status` (approved-only), `al.kind`, `al.revision_of_id`,
  *     and, through the deploy gate, `al.app_block_id` (the join key onto `app_blocks`)
  *     plus `ab.current_version_deployed_at`;
- *   · a FILTER axis — `al.category`, `al.content_rating` (the maturity gate);
+ *   · a FILTER axis — `al.category`, `al.content_rating` (the maturity gate), and
+ *     `al.user_id` on the developer-filtered reads (the "More by this developer" rail, the
+ *     profile Apps tab and `getDeveloperTrackRecord`, which shares this tag);
  *   · a `sort_key` input — `al.name`, `al.created_at`, or the `app_listing_metrics`
  *     rollup.
  *

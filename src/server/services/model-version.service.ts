@@ -187,6 +187,10 @@ import {
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import {
   assertFileTypeChangeAllowed,
+  assertFormatChangeAllowed,
+  scanResetConflictMessage,
+  scanResetForFileChange,
+  scanResetWriteGuard,
   versionAcceptsNewTrainingData,
 } from '~/server/utils/model-file-replace';
 import {
@@ -756,9 +760,11 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
+  const patternLogIds = { entityType: 'ModelVersion', entityId: id, userId: actorUserId };
   await throwOnBlockedUserContent(data.description, {
     isModerator,
     surface: 'modelVersion',
+    ...patternLogIds,
   });
 
   // Name and trained words are scanned only where they DIFFER from the stored row.
@@ -780,6 +786,7 @@ export const upsertModelVersion = async ({
   await throwOnBlockedUserContent(changedVersionText(data, storedText), {
     isModerator,
     surface: 'modelVersion',
+    ...patternLogIds,
   });
   // Trigger words are part of the listing the .com face re-check reads (queued after commit).
   const trainedWordsChanged =
@@ -864,7 +871,11 @@ export const upsertModelVersion = async ({
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
-    await throwOnBlockedUserContent(data.description, { isModerator, surface: 'modelVersion' });
+    await throwOnBlockedUserContent(data.description, {
+      isModerator,
+      surface: 'modelVersion',
+      ...patternLogIds,
+    });
   }
 
   // Validate NSFW + restricted base model combination
@@ -1423,7 +1434,11 @@ export async function applyModelVersionContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedUserContent(description, { surface: 'modelVersion' });
+  await throwOnBlockedUserContent(description, {
+    surface: 'modelVersion',
+    entityType: 'ModelVersion',
+    entityId: id,
+  });
 
   let modelId: number;
   if (context) {
@@ -3233,7 +3248,9 @@ export async function bustModelLevelVersionCaches(modelIds: number | number[]) {
 export const bustMvCache = async (
   ids: number | number[],
   modelIds?: number | number[],
-  userId?: number
+  userId?: number,
+  /** `orchestrator: false` for a caller that busts the orchestrator itself, with its own pacing. */
+  { orchestrator = true }: { orchestrator?: boolean } = {}
 ) => {
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
@@ -3258,7 +3275,7 @@ export const bustMvCache = async (
     // Best-effort: a stale price on the model page is not worth failing an unpublish over.
     logToAxiom({ type: 'error', name: 'bust-paid-access-cache', message: 'gate row', error });
   }
-  await bustOrchestratorModelCache(versionIds, userId);
+  if (orchestrator) await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,
   // so a stale `images: []` entry from the publish race will hide the model
@@ -3825,7 +3842,10 @@ export const mergeVersions = async ({
           select: {
             id: true,
             type: true,
+            name: true,
             metadata: true,
+            virusScanResult: true,
+            pickleScanResult: true,
             modelVersion: { select: { uploadType: true, trainingStatus: true } },
           },
         });
@@ -3835,6 +3855,8 @@ export const mergeVersions = async ({
           const file = fileById.get(mapping.fileId);
           if (!file) throw throwBadRequestError('A file to update is not part of this merge.');
           assertFileTypeChangeAllowed(file, mapping.type);
+          const change = { type: mapping.type, format: mapping.metadata?.format };
+          assertFormatChangeAllowed(file, change, false);
 
           const updateData: Record<string, unknown> = {};
           if (mapping.type) updateData.type = mapping.type;
@@ -3843,13 +3865,22 @@ export const mergeVersions = async ({
               ...((file.metadata as Record<string, unknown>) ?? {}),
               ...mapping.metadata,
             };
+          Object.assign(updateData, scanResetForFileChange(file, change));
           if (Object.keys(updateData).length > 0) {
             const { count } = await tx.modelFile.updateMany({
-              where: { id: mapping.fileId, ...inMerge },
+              where: {
+                id: mapping.fileId,
+                ...inMerge,
+                ...scanResetWriteGuard(file, change),
+              },
               data: updateData,
             });
             if (count !== 1)
-              throw throwBadRequestError('A file to update is not part of this merge.');
+              throw throwBadRequestError(
+                Object.keys(scanResetWriteGuard(file, change)).length
+                  ? scanResetConflictMessage(file)
+                  : 'A file to update is not part of this merge.'
+              );
           }
         }
       }

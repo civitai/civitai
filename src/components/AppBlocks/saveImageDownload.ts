@@ -21,13 +21,28 @@
  *                 allowlist, so the download step is uniform.
  *   - `bytes`   — a file the block produced in its tab (an `ArrayBuffer`). Nothing
  *                 is fetched; the type is classified from the CONTENT
- *                 ({@link classifySaveBytes}) — the filename only picks JSON over
+ *                 ({@link classifySaveBytesContent}) — the filename only picks JSON over
  *                 plain text for text that parses as JSON — so only PNG / WebP /
  *                 JPEG / JSON / plain text can be saved, always under that type's
- *                 own extension. Rate-limited per host by {@link processSaveBytes}.
+ *                 own extension — plus a `.zip` that passes {@link validateSaveZip}
+ *                 (structure, names, types, declared sizes) and then
+ *                 {@link verifySaveZipInflate}. Rate-limited per host by {@link processSaveBytes}.
+ *
+ * The zip validator is `@civitai/app-sdk/save-zip` — the ONE copy, shared with the SDK's
+ * `createMockHost` so a block's tests accept and refuse the zips this host does. Its rules and their
+ * tests live there; a change to them is an app-sdk release plus a bump of the dependency here.
  */
 
 import { sniffImageFormat, type ImageMagicFormat } from '~/shared/utils/image-magic-bytes';
+import {
+  looksLikeSaveZip,
+  SAVE_ZIP_MAX_BYTES,
+  SAVE_ZIP_VERIFY_ABORTED_ERROR,
+  SaveZipVerifyAbortedError,
+  validateSaveZip,
+  verifySaveZipInflate,
+  type SaveZipDeflatedEntry,
+} from '@civitai/app-sdk/save-zip';
 
 /**
  * Civitai-owned image / orchestration-blob hostnames the download bridge may
@@ -79,9 +94,11 @@ export const SAVE_BYTES_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
  * fetches on the block's behalf in the unsandboxed top frame; without a cap a
  * hostile block could fire a burst of SAVE_IMAGEs and download-bomb the viewer's
  * tab (memory / bandwidth). The host gates on this and replies `busy` past it.
- * Covers the `url` / `imageId` variants only: a `bytes` save never awaits, so a
- * concurrency slot would be released before the next message arrived and bound
- * nothing — `bytes` has its own rolling-window limit ({@link admitSaveBytes}).
+ * Covers the `url` / `imageId` variants only. A non-zip `bytes` save's content
+ * check resolves at once, so a slot here would be released before the next
+ * message arrived and bound nothing — `bytes` has its own rolling-window limit
+ * ({@link admitSaveBytes}), and a ZIP save holds its own verify slot
+ * ({@link SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT}).
  */
 export const SAVE_IMAGE_MAX_CONCURRENT = 3;
 
@@ -91,6 +108,17 @@ export const SAVE_BYTES_WINDOW_MS = 10_000;
 export const SAVE_BYTES_MAX_PER_WINDOW = 5;
 /** Two max-size (50 MB) files per window, so a burst can't stack hundreds of MB of Blob copies in the viewer's tab. */
 export const SAVE_BYTES_MAX_BYTES_PER_WINDOW = 100 * 1024 * 1024; // 100 MB
+
+/** A zip's own per-file cap (the other types keep {@link SAVE_BYTES_MAX_BYTES}). */
+export const SAVE_BYTES_ZIP_MAX_BYTES = SAVE_ZIP_MAX_BYTES; // 256 MB
+/**
+ * The window byte budget a ZIP save is checked against: exactly one max-size zip per window, so a
+ * burst still cannot stack more than one 256 MB Blob copy in the viewer's tab. The count limit and
+ * window length are shared, and so is the window itself — every save (zip or not) is recorded in
+ * the same list, and a non-zip save is still checked against the 100 MB budget, so a zip followed
+ * by an image inside one window is `busy` until the zip ages out.
+ */
+export const SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW = SAVE_ZIP_MAX_BYTES; // 256 MB
 
 /** One accepted `bytes` save: when it was admitted and how large it was. */
 export type SaveBytesWindowEntry = { at: number; size: number };
@@ -106,6 +134,11 @@ const SAVE_BYTES_WINDOW_LIMITS: BytesWindowLimits = {
   windowMs: SAVE_BYTES_WINDOW_MS,
   maxPerWindow: SAVE_BYTES_MAX_PER_WINDOW,
   maxBytesPerWindow: SAVE_BYTES_MAX_BYTES_PER_WINDOW,
+};
+
+const SAVE_BYTES_ZIP_WINDOW_LIMITS: BytesWindowLimits = {
+  ...SAVE_BYTES_WINDOW_LIMITS,
+  maxBytesPerWindow: SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW,
 };
 
 /** The window's entries still inside `limits.windowMs` of `now`. */
@@ -398,6 +431,7 @@ const SAVE_BYTES_EXTENSION = {
   'image/jpeg': 'jpg',
   'application/json': 'json',
   'text/plain': 'txt',
+  'application/zip': 'zip',
 } as const;
 
 export type SaveBytesType = keyof typeof SAVE_BYTES_EXTENSION;
@@ -424,15 +458,47 @@ const SAVE_BYTES_IMAGE_TYPE = {
 export type SaveBytesImageType = (typeof SAVE_BYTES_IMAGE_TYPE)[keyof typeof SAVE_BYTES_IMAGE_TYPE];
 
 /**
- * Classify block-supplied bytes by CONTENT. The `filename` only chooses JSON over plain text, and
- * only for valid UTF-8 text that also parses as JSON; it can never make anything else saveable.
- * `null` = not a saveable type (GIF, archives, executables, binary). An empty buffer never gets
- * here: {@link resolveSaveImageRequest} refuses it.
+ * A classifier's verdict. A zip carries the deflated entries {@link verifySaveZipInflate} must
+ * still check, and a refused zip carries its specific reason.
  */
-export function classifySaveBytes(bytes: ArrayBuffer, filename = ''): SaveBytesType | null {
+export type SaveBytesClassification =
+  | { ok: true; type: Exclude<SaveBytesType, 'application/zip'> }
+  | { ok: true; type: 'application/zip'; deflated: SaveZipDeflatedEntry[] }
+  | { ok: false; error: string };
+
+/**
+ * Classify block-supplied bytes by CONTENT, with the refusal reason. Order:
+ *   1. PNG / WebP / JPEG magic bytes — so a PNG with a zip APPENDED is a PNG, saved as `.png`
+ *      (an image viewer opens it as the image; its trailing bytes are not unpacked by anything
+ *      that trusts the `.png` name).
+ *   2. a buffer that STARTS like a zip ({@link looksLikeSaveZip}: a local header at byte 0, or an
+ *      empty archive) is a zip candidate and must pass {@link validateSaveZip}; a candidate that
+ *      fails is refused with the zip's reason and never falls through to text. A zip with a prefix
+ *      (a self-extractor, a zip appended to anything but an image) does not start like a zip and
+ *      falls to step 3, where its NUL bytes refuse it.
+ *   3. UTF-8 text without NUL; JSON only when the filename ends `.json` and the text parses.
+ * The filename never makes anything saveable — `x.zip` holding text saves as `x.txt`.
+ */
+export function classifySaveBytesContent(
+  bytes: ArrayBuffer,
+  filename = ''
+): SaveBytesClassification {
   const u8 = new Uint8Array(bytes);
   const image = sniffSaveBytesImage(u8);
-  if (image) return image;
+  if (image) return { ok: true, type: image };
+  if (looksLikeSaveZip(u8)) {
+    const zip = validateSaveZip(bytes);
+    if (!zip.ok) return zip;
+    return { ok: true, type: 'application/zip', deflated: zip.deflated };
+  }
+  const text = classifySaveBytesText(u8, filename);
+  return text ? { ok: true, type: text } : { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
+}
+
+function classifySaveBytesText(
+  u8: Uint8Array,
+  filename: string
+): 'application/json' | 'text/plain' | null {
   if (u8.includes(0)) return null;
   let text: string;
   try {
@@ -488,32 +554,161 @@ export function sanitizeSaveBytesFilename(name: string | undefined | null): stri
   return sanitizeDownloadFilename((name ?? 'download').replace(/[?#]/g, '_'), 'download');
 }
 
-export type SaveBytesClassifier = (bytes: ArrayBuffer, filename?: string) => SaveBytesType | null;
+/** The classifier {@link prepareSaveBytes} runs; injectable so a test can count its calls. */
+export type SaveBytesClassifier = (
+  bytes: ArrayBuffer,
+  filename?: string
+) => SaveBytesClassification;
+
+/** An accepted `bytes` save. A zip also carries what {@link verifySaveBytesContent} must inflate. */
+export type PreparedSaveBytes =
+  | { ok: true; type: Exclude<SaveBytesType, 'application/zip'>; filename: string }
+  | { ok: true; type: 'application/zip'; filename: string; deflated: SaveZipDeflatedEntry[] };
+
+/**
+ * Is this buffer a ZIP CANDIDATE — the ONE place the zip-or-not choice is made? Decided on the
+ * first four bytes alone ({@link looksLikeSaveZip}; cheap, before the window check), so an over-50
+ * MB file that does not even start like a zip is too-large at once. The caps
+ * ({@link saveBytesLimits}) and the handler's one-zip-verify-in-flight gate both branch on it.
+ */
+export function isZipSaveCandidate(bytes: ArrayBuffer): boolean {
+  return looksLikeSaveZip(new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength)));
+}
+
+/**
+ * The caps this buffer is held to. A zip: the per-file {@link SAVE_BYTES_ZIP_MAX_BYTES} and the zip
+ * window budget; anything else: {@link SAVE_BYTES_MAX_BYTES} and the regular window budget.
+ */
+function saveBytesLimits(bytes: ArrayBuffer): { maxBytes: number; window: BytesWindowLimits } {
+  return isZipSaveCandidate(bytes)
+    ? { maxBytes: SAVE_BYTES_ZIP_MAX_BYTES, window: SAVE_BYTES_ZIP_WINDOW_LIMITS }
+    : { maxBytes: SAVE_BYTES_MAX_BYTES, window: SAVE_BYTES_WINDOW_LIMITS };
+}
 
 /** Size-cap, classify and name a `bytes` save — every refusal is the reply's error string. */
 export function prepareSaveBytes(
   req: { bytes: ArrayBuffer; filename?: string },
-  classify: SaveBytesClassifier = classifySaveBytes
-): { ok: true; type: SaveBytesType; filename: string } | { ok: false; error: string } {
-  if (req.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
+  classify: SaveBytesClassifier = classifySaveBytesContent
+): PreparedSaveBytes | { ok: false; error: string } {
+  if (req.bytes.byteLength > saveBytesLimits(req.bytes).maxBytes) {
     return { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR };
   }
   const filename = sanitizeSaveBytesFilename(req.filename);
-  const type = classify(req.bytes, filename);
-  if (!type) return { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
-  return { ok: true, type, filename: forceSaveBytesExtension(filename, type) };
+  const c = classify(req.bytes, filename);
+  if (!c.ok) return c;
+  const name = forceSaveBytesExtension(filename, c.type);
+  if (c.type === 'application/zip') {
+    return { ok: true, type: c.type, filename: name, deflated: c.deflated };
+  }
+  return { ok: true, type: c.type, filename: name };
 }
+
+declare const verifiedSaveBytesBrand: unique symbol;
+
+/**
+ * A `bytes` save that has passed EVERY content check, the zip inflate check included. Only
+ * {@link verifySaveBytesContent} makes one, and {@link downloadBytesAsBlob} takes nothing else — so
+ * a future caller cannot download a zip it did not verify (the type does not allow it).
+ */
+export type VerifiedSaveBytes = PreparedSaveBytes & { readonly [verifiedSaveBytesBrand]: true };
+
+export type SaveBytesVerification =
+  | { ok: true; save: VerifiedSaveBytes }
+  | { ok: false; error: string };
+
+/**
+ * The asynchronous last step of a `bytes` save, run by the host AFTER {@link processSaveBytes}
+ * accepted it and BEFORE the download: for a zip, {@link verifySaveZipInflate} (every deflated
+ * entry inflates to exactly its declared size and CRC-32); for every other type nothing. The window
+ * already recorded the save, so a zip refused here still counts against it — a hostile app that
+ * sends lying zips only uses up its own budget. Rejects with `SaveZipVerifyAbortedError` when
+ * `signal` fires; {@link verifySaveBytesBeforeDownload} is the deadline-bounded form the host calls.
+ */
+export async function verifySaveBytesContent(
+  bytes: ArrayBuffer,
+  prepared: PreparedSaveBytes,
+  signal?: AbortSignal
+): Promise<SaveBytesVerification> {
+  if (prepared.type === 'application/zip') {
+    const error = await verifySaveZipInflate(bytes, prepared.deflated, signal);
+    if (error) return { ok: false, error };
+  }
+  return { ok: true, save: prepared as VerifiedSaveBytes };
+}
+
+/**
+ * The host's deadline for one zip's content check: under the SDK's 30 s `SAVE_IMAGE` request
+ * timeout (a `'protocol'` request), with room for the postMessage round trip, so the block gets
+ * this host's reply rather than its own timeout.
+ */
+export const SAVE_BYTES_VERIFY_DEADLINE_MS = 25_000;
+export const SAVE_BYTES_VERIFY_TIMEOUT_ERROR = 'zip verification timed out';
+
+/**
+ * {@link verifySaveBytesContent} under a deadline, the same shape as `withDeadline` for
+ * GET_RESOURCE_FILE: at `deadlineMs` the check is aborted and the result is
+ * {@link SAVE_BYTES_VERIFY_TIMEOUT_ERROR} whether or not it has stopped yet; a later verdict is
+ * dropped. `signal` (the host unmounting) aborts it too, with `SAVE_ZIP_VERIFY_ABORTED_ERROR`.
+ * Never rejects for an abort.
+ */
+export async function verifySaveBytesBeforeDownload(
+  bytes: ArrayBuffer,
+  prepared: PreparedSaveBytes,
+  {
+    deadlineMs = SAVE_BYTES_VERIFY_DEADLINE_MS,
+    signal,
+  }: { deadlineMs?: number; signal?: AbortSignal } = {}
+): Promise<SaveBytesVerification> {
+  const controller = new AbortController();
+  const onOuterAbort = () => controller.abort();
+  if (signal?.aborted) return { ok: false, error: SAVE_ZIP_VERIFY_ABORTED_ERROR };
+  signal?.addEventListener('abort', onOuterAbort, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<SaveBytesVerification>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve({ ok: false, error: SAVE_BYTES_VERIFY_TIMEOUT_ERROR });
+    }, deadlineMs);
+  });
+  const running = verifySaveBytesContent(bytes, prepared, controller.signal).catch(
+    (err: unknown): SaveBytesVerification => {
+      if (err instanceof SaveZipVerifyAbortedError) {
+        return {
+          ok: false,
+          error: signal?.aborted ? SAVE_ZIP_VERIFY_ABORTED_ERROR : SAVE_BYTES_VERIFY_TIMEOUT_ERROR,
+        };
+      }
+      throw err;
+    }
+  );
+  try {
+    return await Promise.race([running, deadline]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onOuterAbort);
+  }
+}
+
+/**
+ * How many zip content checks one host runs at once. Each one inflates up to 1 GiB declared (twice:
+ * see `verifySaveZipInflate`) on the viewer's main thread's event loop, so a second zip while one is
+ * verifying replies `busy`. Only zip saves hold a slot: a non-zip `bytes` save's check resolves at
+ * once.
+ */
+export const SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT = 1;
 
 export const SAVE_BYTES_BUSY_ERROR = 'busy';
 
 /**
  * The whole host-side `bytes` decision, in the order that keeps a refused save cheap AND its error
  * accurate:
- *   1. the per-file size cap, on `byteLength` alone — FIRST, so an over-cap file always gets
+ *   1. the per-file size cap, on `byteLength` alone (256 MB for a buffer that starts like a zip,
+ *      50 MB otherwise) — FIRST, so an over-cap file always gets
  *      `file exceeds the maximum save size`, never `busy` (a file over the window budget can
  *      never fit the window, so answering `busy` would invite a retry that cannot succeed);
- *   2. window pre-check ({@link saveBytesWindowHasRoom}, non-recording, on `byteLength` alone) —
- *      once the window is full every further save is refused `busy` WITHOUT decoding/parsing it;
+ *   2. window pre-check ({@link saveBytesWindowHasRoom}, non-recording, on `byteLength` alone;
+ *      a zip against the 256 MB zip budget) — once the window is full every further save is
+ *      refused `busy` WITHOUT decoding/parsing it (a zip's central directory is never walked);
  *   3. {@link prepareSaveBytes} (classify, name; its own cap check is then a no-op);
  *   4. record it in the window ({@link admitSaveBytes}) — only a save that will download counts.
  * Returns the outcome and the window to store back.
@@ -522,28 +717,32 @@ export function processSaveBytes(
   req: { bytes: ArrayBuffer; filename?: string },
   recent: readonly SaveBytesWindowEntry[],
   now: number,
-  classify: SaveBytesClassifier = classifySaveBytes
+  classify: SaveBytesClassifier = classifySaveBytesContent
 ): {
-  result: { ok: true; type: SaveBytesType; filename: string } | { ok: false; error: string };
+  result: PreparedSaveBytes | { ok: false; error: string };
   recent: SaveBytesWindowEntry[];
 } {
   const size = req.bytes.byteLength;
-  if (size > SAVE_BYTES_MAX_BYTES) {
+  const { maxBytes, window: limits } = saveBytesLimits(req.bytes);
+  if (size > maxBytes) {
     return { result: { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR }, recent: [...recent] };
   }
-  if (!saveBytesWindowHasRoom(recent, now, size)) {
+  if (!saveBytesWindowHasRoom(recent, now, size, limits)) {
     return { result: { ok: false, error: SAVE_BYTES_BUSY_ERROR }, recent: [...recent] };
   }
   const prepared = prepareSaveBytes(req, classify);
   if (!prepared.ok) return { result: prepared, recent: [...recent] };
-  const admitted = admitSaveBytes(recent, now, size);
+  const admitted = admitSaveBytes(recent, now, size, limits);
   if (!admitted.ok) {
     return { result: { ok: false, error: SAVE_BYTES_BUSY_ERROR }, recent: admitted.recent };
   }
   return { result: prepared, recent: admitted.recent };
 }
 
-/** Build the Blob in the host frame with the CLASSIFIED type (never the caller's) and download it. */
-export function downloadBytesAsBlob(bytes: ArrayBuffer, type: SaveBytesType, filename: string) {
-  triggerBlobDownload(new Blob([bytes], { type }), filename);
+/**
+ * Build the Blob in the host frame with the CLASSIFIED type (never the caller's) and download it.
+ * Takes only a {@link VerifiedSaveBytes}, so the content check cannot be skipped.
+ */
+export function downloadBytesAsBlob(bytes: ArrayBuffer, save: VerifiedSaveBytes) {
+  triggerBlobDownload(new Blob([bytes], { type: save.type }), save.filename);
 }

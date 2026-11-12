@@ -565,6 +565,21 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 disabled={materialBlocked}
               />
 
+              {/* Public issue-tracker / support link. MATERIAL like the source link, and the
+                copy says so for the same reason. */}
+              <TextInput
+                label="Issue tracker"
+                description="Where users can report a problem or get help, shown as Support on your app's store page (optional). Any https:// link. Changing this needs moderator re-review before it goes live."
+                placeholder="https://github.com/your-org/your-app/issues"
+                value={values.issueTrackerUrl}
+                onChange={(e) => setField('issueTrackerUrl', e.currentTarget.value)}
+                error={errors.issueTrackerUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.issueTrackerUrlMax}
+                data-testid="apps-offsite-edit-issue-tracker"
+                data-material-field="issueTrackerUrl"
+                disabled={materialBlocked}
+              />
+
               {/* BETA DECLARATION — author-owned, TRIVIAL, and offered on BOTH kinds.
                 🔴 NO `data-material-field` ATTRIBUTE, AND NO `disabled={materialBlocked}`.
                 Both omissions are decisions, not oversights. That attribute is walked by a

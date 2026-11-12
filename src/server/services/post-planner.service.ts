@@ -184,7 +184,7 @@ export async function getPlannerPostDetail({
 
   const live = !!post.publishedAt && post.publishedAt <= new Date();
   const [resources, version, stats] = await Promise.all([
-    getPostResources({ id }),
+    getPostResources({ id, userId: user.id, isModerator: user.isModerator }),
     post.modelVersionId
       ? dbRead.modelVersion.findUnique({
           where: { id: post.modelVersionId },

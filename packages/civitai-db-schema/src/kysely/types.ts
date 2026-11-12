@@ -105,6 +105,7 @@ import type {
   TechniqueType,
   AppealStatus,
   AppealCategory,
+  ImageAxisSource,
   AuctionType,
   ModerationRuleAction,
   ChangelogType,
@@ -2640,40 +2641,10 @@ export type ComicReferenceImage = {
   position: Generated<number>;
   createdAt: Generated<Timestamp>;
 };
-export type Comment = {
-  id: Generated<number>;
-  content: string;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-  nsfw: Generated<boolean>;
-  tosViolation: Generated<boolean>;
-  parentId: number | null;
-  userId: number;
-  modelId: number;
-  locked: Generated<boolean | null>;
-  hidden: Generated<boolean | null>;
-  pinnedAt: Timestamp | null;
-  /**
-   * No longer set; only the reverse copy reads it. Kept until a migration drops it.
-   */
-  removedByAuthor: Generated<boolean>;
-};
 export type CommentMute = {
   userId: number;
   commentId: number;
   mutedAt: Generated<Timestamp>;
-};
-export type CommentReaction = {
-  id: Generated<number>;
-  commentId: number;
-  userId: number;
-  reaction: ReviewReactions;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-};
-export type CommentReport = {
-  commentId: number;
-  reportId: number;
 };
 export type CommentTopic = {
   entityType: CommentEntityType;
@@ -2686,32 +2657,6 @@ export type CommentTopicMute = {
   entityType: CommentEntityType;
   entityId: number;
   mutedAt: Generated<Timestamp>;
-};
-export type CommentV2 = {
-  id: Generated<number>;
-  content: string;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-  nsfw: Generated<boolean>;
-  tosViolation: Generated<boolean>;
-  userId: number;
-  threadId: number;
-  metadata: unknown | null;
-  hidden: Generated<boolean | null>;
-  pinnedAt: Timestamp | null;
-  reactionCount: Generated<number>;
-};
-export type CommentV2Reaction = {
-  id: Generated<number>;
-  commentId: number;
-  userId: number;
-  reaction: ReviewReactions;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-};
-export type CommentV2Report = {
-  commentV2Id: number;
-  reportId: number;
 };
 export type CommentV3 = {
   id: Generated<number>;
@@ -2732,7 +2677,6 @@ export type CommentV3 = {
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;
   legacyV1Id: number | null;
-  removedByAuthor: Generated<boolean>;
 };
 export type CommentV3Reaction = {
   id: Generated<number>;
@@ -3189,6 +3133,24 @@ export type EntityModeration = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type EventAwardResult = {
+  id: Generated<number>;
+  event: string;
+  sourceId: string;
+  kind: string;
+  team: string | null;
+  points: number;
+  /**
+   * When the award counts from: the Crucible's end, or the flag's cut.
+   */
+  at: Timestamp;
+  /**
+   * What the result was computed from, kept for audit.
+   */
+  inputs: unknown;
+  frozenAt: Generated<Timestamp>;
+  voidedAt: Timestamp | null;
+};
 export type EventCosmeticPlacement = {
   id: Generated<string>;
   event: string;
@@ -3219,6 +3181,17 @@ export type EventCosmeticScoreDaily = {
   modelLikes: Generated<number>;
   points: Generated<number>;
   updatedAt: Generated<Timestamp>;
+};
+export type EventTurfFlagSticker = {
+  id: Generated<string>;
+  event: string;
+  flagDayId: number;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  count: number;
+  createdAt: Generated<Timestamp>;
 };
 export type EventTurfSticker = {
   id: Generated<string>;
@@ -3351,6 +3324,23 @@ export type File = {
   entityId: number;
   entityType: string;
   metadata: unknown | null;
+};
+export type FlagDay = {
+  id: Generated<number>;
+  event: string;
+  crucibleId: number;
+  startsAt: Timestamp;
+  /**
+   * Random within the day's last hour, so nobody can time a last-second pile-on. Never sent to a
+   * client before it passes.
+   */
+  cutAt: Timestamp;
+  /**
+   * The end of the hour the cut falls in: public, unlike the cut.
+   */
+  closesAt: Timestamp;
+  imageIds: number[];
+  createdAt: Generated<Timestamp>;
 };
 export type GameFrameGame = {
   id: Generated<number>;
@@ -3558,6 +3548,38 @@ export type ImageAudioScan = {
   createdAt: Generated<Timestamp>;
   completedAt: Timestamp | null;
 };
+export type ImageAxisRating = {
+  imageId: number;
+  source: ImageAxisSource;
+  sexualLevel: number | null;
+  /**
+   * Highest sexualLevel any scan has rated; only a moderator lowers it.
+   */
+  sexualHighWater: number | null;
+  violenceLevel: number | null;
+  /**
+   * No rater produces a language axis yet.
+   */
+  languageLevel: number | null;
+  /**
+   * The rater's modelRef; null on a moderator row.
+   */
+  rater: string | null;
+  /**
+   * The rater checkpoint's sha256; null on a moderator row.
+   */
+  raterVersion: string | null;
+  /**
+   * The scan workflow's completion time; an older result never replaces a newer one.
+   */
+  ratedAt: Timestamp;
+  workflowId: string | null;
+  /**
+   * The moderator's user id on a moderator row.
+   */
+  setBy: number | null;
+  updatedAt: Generated<Timestamp>;
+};
 export type ImageCaption = {
   imageId: number;
   /**
@@ -3606,6 +3628,27 @@ export type ImageConnection = {
   imageId: number;
   entityId: number;
   entityType: string;
+};
+export type ImageDeferredBlockEffect = {
+  imageId: number;
+  /**
+   * The violation the moderator chose, if any; the notice states it.
+   */
+  violationType: string | null;
+  /**
+   * False for a re-block of an image already removed: only its reports are deferred.
+   */
+  notifyOwner: Generated<boolean>;
+  /**
+   * Open reports of this reason on the image are actioned at the close.
+   */
+  reportReason: string | null;
+  /**
+   * These reports are actioned at the close, if still open.
+   */
+  reportIds: Generated<number[]>;
+  blockedBy: number | null;
+  createdAt: Generated<Timestamp>;
 };
 export type ImageEngagement = {
   userId: number;
@@ -3903,6 +3946,10 @@ export type ModActivity = {
   entityId: number | null;
   createdAt: Generated<Timestamp>;
   host: string | null;
+  /**
+   * Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
+   */
+  credential: string | null;
 };
 export type Model = {
   id: Generated<number>;
@@ -6063,38 +6110,6 @@ export type TextScanPrompt = {
   createdById: number | null;
   createdAt: Generated<Timestamp>;
 };
-export type Thread = {
-  id: Generated<number>;
-  locked: Generated<boolean>;
-  parentThreadId: number | null;
-  rootThreadId: number | null;
-  questionId: number | null;
-  answerId: number | null;
-  imageId: number | null;
-  postId: number | null;
-  reviewId: number | null;
-  commentId: number | null;
-  modelId: number | null;
-  articleId: number | null;
-  bountyId: number | null;
-  bountyEntryId: number | null;
-  clubPostId: number | null;
-  comicProjectId: number | null;
-  comicChapterPosition: number | null;
-  challengeId: number | null;
-  model3dId: number | null;
-  model3dReviewId: number | null;
-  appListingId: number | null;
-  crucibleId: number | null;
-  storylineId: number | null;
-  metadata: Generated<unknown>;
-  commentCount: Generated<number>;
-};
-export type ThreadMute = {
-  userId: number;
-  threadId: number;
-  mutedAt: Generated<Timestamp>;
-};
 export type TipConnection = {
   transactionId: string;
   entityId: number;
@@ -6696,15 +6711,9 @@ export type DB = {
   ComicProjectReport: ComicProjectReport;
   ComicReference: ComicReference;
   ComicReferenceImage: ComicReferenceImage;
-  Comment: Comment;
   CommentMute: CommentMute;
-  CommentReaction: CommentReaction;
-  CommentReport: CommentReport;
   CommentTopic: CommentTopic;
   CommentTopicMute: CommentTopicMute;
-  CommentV2: CommentV2;
-  CommentV2Reaction: CommentV2Reaction;
-  CommentV2Report: CommentV2Report;
   CommentV3: CommentV3;
   CommentV3Reaction: CommentV3Reaction;
   CommentV3Report: CommentV3Report;
@@ -6743,8 +6752,10 @@ export type DB = {
   EntityMetric: EntityMetric;
   EntityMetricImage: EntityMetricImage;
   EntityModeration: EntityModeration;
+  EventAwardResult: EventAwardResult;
   EventCosmeticPlacement: EventCosmeticPlacement;
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
+  EventTurfFlagSticker: EventTurfFlagSticker;
   EventTurfSticker: EventTurfSticker;
   EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
@@ -6754,6 +6765,7 @@ export type DB = {
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;
+  FlagDay: FlagDay;
   GameFrameGame: GameFrameGame;
   GameFrameGameReport: GameFrameGameReport;
   GameFrameReportReceipt: GameFrameReportReceipt;
@@ -6767,12 +6779,14 @@ export type DB = {
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
   ImageAudioScan: ImageAudioScan;
+  ImageAxisRating: ImageAxisRating;
   ImageCaption: ImageCaption;
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;
   ImageCdnShopTakedown: ImageCdnShopTakedown;
   ImageConnection: ImageConnection;
+  ImageDeferredBlockEffect: ImageDeferredBlockEffect;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
   ImageMetaFlags: ImageMetaFlags;
@@ -6954,8 +6968,6 @@ export type DB = {
   Technique: Technique;
   TextScanHold: TextScanHold;
   TextScanPrompt: TextScanPrompt;
-  Thread: Thread;
-  ThreadMute: ThreadMute;
   TipConnection: TipConnection;
   Tool: Tool;
   TrustedSpokeDomain: TrustedSpokeDomain;

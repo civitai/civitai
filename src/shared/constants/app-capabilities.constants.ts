@@ -228,6 +228,10 @@ export const MATERIAL_LISTING_PATCH_FIELDS = [
   'name',
   'contentRating',
   'sourceRepoUrl',
+  // The issue-tracker / support link — an outbound link on a public page, so a change is
+  // re-reviewed like `sourceRepoUrl`'s. Staged on the shadow; only `applyApprovedRevision`
+  // publishes it.
+  'issueTrackerUrl',
 ] as const;
 
 /**

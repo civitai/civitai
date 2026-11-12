@@ -24,7 +24,9 @@ vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   updateFile,
 }));
 vi.mock('~/utils/storage-resolver', () => ({ registerFileLocation }));
-vi.mock('~/server/services/model-file-scan.service', () => ({
+const submitTrainingDataScanSafe = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/training-data-scan.service', () => ({ submitTrainingDataScanSafe }));
+vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createModelFileScanRequest,
   ModelFileScanSubmissionError: class extends Error {},
 }));
@@ -219,6 +221,54 @@ describe('the uploadDomain stamp on a training-data upload', () => {
 
     const [{ metadata }] = createFile.mock.calls[0];
     expect(metadata?.uploadDomain).toBeUndefined();
+  });
+});
+
+describe('the scan a new upload is sent to', () => {
+  const ctx = {
+    user: { id: 7, isModerator: false },
+    track: { ...track, entityChanges: vi.fn().mockResolvedValue(undefined) },
+    domain: 'green',
+  } as never;
+
+  it('sends a Training Data zip to its own scan, never the AIR scan', async () => {
+    await createFileHandler({ input: trainingInput, ctx });
+
+    expect(submitTrainingDataScanSafe).toHaveBeenCalledTimes(1);
+    expect(submitTrainingDataScanSafe).toHaveBeenCalledWith(
+      { fileId: 900, modelVersionId: 42, url: trainingInput.url },
+      'createFileHandler'
+    );
+    expect(createModelFileScanRequest).not.toHaveBeenCalled();
+  });
+
+  it('sends a model file to the AIR scan', async () => {
+    await createFileHandler({ input, ctx });
+
+    expect(createModelFileScanRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ fileId: 900, url: input.url })
+    );
+    expect(submitTrainingDataScanSafe).not.toHaveBeenCalled();
+  });
+
+  it('sends a Training Data zip uploaded over an older one to its own scan', async () => {
+    updateFile.mockResolvedValue({
+      id: 901,
+      type: 'Training Data',
+      url: trainingInput.url,
+      modelVersionId: 42,
+      replacedFileId: 900,
+      modelVersion: { modelId: 5, baseModel: 'Flux.1 D', model: { type: 'LORA', userId: 7 } },
+    });
+
+    await updateFileHandler({ input: { id: 900, url: trainingInput.url } as never, ctx });
+
+    expect(submitTrainingDataScanSafe).toHaveBeenCalledTimes(1);
+    expect(submitTrainingDataScanSafe).toHaveBeenCalledWith(
+      { fileId: 901, modelVersionId: 42, url: trainingInput.url },
+      'updateFileHandler'
+    );
+    expect(createModelFileScanRequest).not.toHaveBeenCalled();
   });
 });
 
