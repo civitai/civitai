@@ -31,7 +31,6 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
 
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
 import {
-  applyArticleContentChange,
   ARTICLE_TEXT_VERDICT_HASHED_SINCE,
   recomputeArticleIngestion,
 } from '~/server/services/article.service';
@@ -229,19 +228,7 @@ describe('the recompute counts a text verdict only for the text it judged', () =
 });
 
 describe('submitted text hashes to what the recompute compares', () => {
-  it('XGuard: the text an edit submits', async () => {
-    vi.mocked(submitTextModerationOrScan).mockImplementation(async ({ xguard }) => xguard());
-    article = {
-      ...OLD,
-      status: ArticleStatus.Published,
-      ingestion: ArticleIngestionStatus.Scanned,
-    };
-    await applyArticleContentChange({ id: ARTICLE, userId: AUTHOR, content: NEW.content });
-    const submitted = vi.mocked(submitTextModeration).mock.calls[0][0].content;
-    // createXGuardModerationRequest stores hashContent of the submitted text (no label overrides).
-    expect(hashContent(submitted)).toBe(xguardHash(NEW));
-  });
-
+  // XGuard: article-verdict-writer-hash.test.ts runs the real writer.
   it('text scan: the subject the article profile builds', async () => {
     const subject = (await getTextScanProfile('Article')?.load([ARTICLE]))?.get(ARTICLE);
     expect(subject).toBeDefined();
@@ -270,6 +257,14 @@ describe('the reconcile', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'article-verdict-resubmit-capped' })
     );
+  });
+
+  it('does not resubmit when the resubmit counter cannot be read', async () => {
+    row = xguardVerdict(OLD);
+    redisMock.sysRedis.incrBy.mockRejectedValue(new Error('redis unavailable'));
+    await reconcile();
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+    expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
   });
 
   it('does not resubmit a verdict that did not cover all of the text', async () => {

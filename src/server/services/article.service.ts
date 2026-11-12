@@ -2890,11 +2890,7 @@ export function articleHasText(title: string | null, content: string | null): bo
   return titleText.length > 0 || contentText.length > 0;
 }
 
-/**
- * Text verdicts written from here on carry a hash of the text they judged. A Succeeded row with no
- * comparable hash that is older than this is counted as before; a newer one is treated as a
- * verdict for other text.
- */
+/** Text verdicts older than this may not store a hash of the text they judged. */
 export const ARTICLE_TEXT_VERDICT_HASHED_SINCE = new Date('2026-11-11T00:00:00Z');
 
 /**
