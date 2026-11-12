@@ -192,6 +192,26 @@ describe('export queue lifecycle, run', () => {
     expect(await rowOf(1)).toMatchObject({ status: 'building', attempts: 2 });
   });
 
+  /**
+   * Deliberate: a resolveDeps() that throws (the Mongo client refusing its URL, say) is logged by
+   * name and code only, never by message: a driver parse error can quote the connection string,
+   * which carries credentials. Do not "improve" this to errorMessage(e).
+   */
+  it('logs a deps failure and skips the tick instead of throwing, without echoing the message', async () => {
+    await insert(1, 10, 'queued');
+    const secret = 'mongodb+srv://reader:hunter2@cluster0.example.net/prod';
+    const result = await runPersonalDataExports({
+      resolveDeps: async () => {
+        throw Object.assign(new Error(`bad url ${secret}`), { name: 'MongoParseError', code: 42 });
+      },
+    });
+    expect(result).toEqual({ built: 0, skipped: 'deps-failed' });
+    const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
+    expect(logged).toContain('deps failed, 1 export(s) waiting: MongoParseError');
+    expect(logged).not.toContain('hunter2');
+    expect(await rowOf(1)).toMatchObject({ status: 'queued', attempts: 0 });
+  });
+
   it('never leaves a row building when the build itself throws', async () => {
     await insert(1, 10, 'queued');
     const deps = {} as ExportDeps;

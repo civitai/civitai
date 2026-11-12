@@ -58,6 +58,7 @@ import type {
   GetUserSearchHydrationInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
+import { queueOwnedContentUpdate } from '~/server/search-index/user-content-reindex';
 import type {
   BadgeCosmetic,
   CardDecorationCosmetic,
@@ -531,6 +532,7 @@ export const completeOnboardingHandler = async ({
               .catch(handleLogError),
             bustUserCreator(id, { usernames: current?.username ? [current.username] : [] }),
           ]);
+          void queueOwnedContentUpdate(id);
         }
 
         // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on

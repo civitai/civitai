@@ -210,11 +210,15 @@ describe('paramDeviations', () => {
     expect(devs[2]).toMatchObject({ label: 'Shuffle tags', value: 'On', recommended: 'Off' });
   });
 
-  it('ignores fields the run cannot use — a locked TE rate, tag fields on captions', () => {
+  it('ignores fields the run cannot use — a locked TE rate, resolution, tag fields on captions', () => {
     const krea = run('krea2');
     expect(
       paramDeviations(krea, { ...defaultRunParams(krea), textEncoderLr: '0.001' }, 'caption')
     ).toEqual([]);
+    const sdxl = run('sdxl');
+    expect(paramDeviations(sdxl, { ...defaultRunParams(sdxl), resolution: '2048' }, 'tag')).toEqual(
+      []
+    );
     const z = run('zimage');
     expect(
       paramDeviations(

@@ -870,7 +870,13 @@ function getTimeRemaining(endAt: Date): string {
   return `${minutes} min`;
 }
 
-export default Page(CrucibleJudgePage, {
+// "Next crucible" and the suggested crucibles are client navigations to this same route, which keep
+// the page mounted. Keyed by id, each crucible starts with fresh judging state.
+function CrucibleJudgeRoute(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  return <CrucibleJudgePage key={props.id} {...props} />;
+}
+
+export default Page(CrucibleJudgeRoute, {
   getLayout: (page) => (
     <AppLayout scrollable={false} footer={false}>
       {page}
