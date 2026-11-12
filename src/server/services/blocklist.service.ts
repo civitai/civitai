@@ -501,7 +501,14 @@ export type BlockedContentKind = 'link' | 'pattern';
  */
 export type BlockedContentHit =
   | { kind: 'link'; index: number; matched: string[] }
-  | { kind: 'pattern'; index: number; matched: string; patternId: number };
+  | {
+      kind: 'pattern';
+      index: number;
+      matched: string;
+      patternId: number;
+      /** The `Blocklist` row `patternId` indexes into; null when the type has no row. */
+      listId: number | null;
+    };
 
 type UserText = string | null | undefined;
 
@@ -541,10 +548,12 @@ async function findBlockedText(
   const present = values.flatMap((value, index) => (value ? [{ value, index }] : []));
   if (!present.length) return [];
 
-  const [blockedDomains, blockedPatterns] = await Promise.all([
+  const [blockedDomains, patternList] = await Promise.all([
     getBlocklistData(BlocklistType.LinkDomain),
-    getBlocklistData(BlocklistType.MessagePattern),
+    getBlocklistDTO({ type: BlocklistType.MessagePattern }),
   ]);
+  const blockedPatterns = patternList.data;
+  const listId = patternList.id ?? null;
   const matchableDomains = exactEntries(blockedDomains);
 
   const hits: BlockedContentHit[] = [];
@@ -562,7 +571,13 @@ async function findBlockedText(
     for (const form of exemptFromPatterns ? [] : forms) {
       const patternId = findBlockedPatternId(form, blockedPatterns);
       if (patternId !== -1) {
-        hits.push({ kind: 'pattern', index, matched: blockedPatterns[patternId], patternId });
+        hits.push({
+          kind: 'pattern',
+          index,
+          matched: blockedPatterns[patternId],
+          patternId,
+          listId,
+        });
         break;
       }
     }
