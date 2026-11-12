@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+// vitest is the workspace root's dev dependency; package test files run from the root suite.
+// eslint-disable-next-line import/no-extraneous-dependencies
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBuzzClient } from './client';
 
