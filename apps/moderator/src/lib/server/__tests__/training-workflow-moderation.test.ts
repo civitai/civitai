@@ -1305,41 +1305,6 @@ describe('the pending queue is bounded and shared', () => {
     expect(chQuery).toHaveBeenCalledTimes(3);
   });
 
-  it('stops asking about a workflow only once two 404s a minute apart say it is gone', async () => {
-    ledgerOf(ids);
-    const rebuild = async () => {
-      invalidatePendingWorkflowGates();
-      await getPendingWorkflowGates();
-    };
-    route = () => new Response(null, { status: 404 });
-    await getPendingWorkflowGates();
-    await rebuild();
-    expect(readsOf(ids[0])).toBe(2); // one 404, or two close together, is not enough
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.now() + 61_000);
-    await rebuild();
-    await rebuild();
-    expect(readsOf(ids[0])).toBe(3);
-  });
-
-  it('forgets a 404 once the workflow answers again', async () => {
-    ledgerOf(ids);
-    const rebuild = async () => {
-      invalidatePendingWorkflowGates();
-      return getPendingWorkflowGates();
-    };
-    route = () => new Response(null, { status: 404 });
-    await getPendingWorkflowGates();
-    route = (url) => json(workflow({ id: byIdOf(url) }));
-    await rebuild();
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.now() + 61_000);
-    route = () => new Response(null, { status: 404 });
-    await rebuild();
-    route = (url) => json(workflow({ id: byIdOf(url) }));
-    expect((await rebuild()).items).toHaveLength(3);
-  });
-
   it('re-reads runs after its window, and the ledger only after the ledger window', async () => {
     ledgerOf(ids);
     route = (url) => json(workflow({ id: byIdOf(url) }));
@@ -1368,7 +1333,7 @@ describe('the pending queue is bounded and shared', () => {
     paused();
     expect(await countTrainingDataReview()).toBe(4);
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.now() + 2 * 60_000);
+    vi.setSystemTime(Date.now() + 90_000);
     expect(await countTrainingDataReview()).toBe(4);
     expect([readsOf(ids[0]), readsOf(V)]).toEqual([1, 1]);
     paused();

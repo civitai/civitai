@@ -1226,17 +1226,9 @@ const PENDING_READ_BUDGET_MS = 20_000;
  *  another replica can list a ruled run for up to this long. A partial build is never held. */
 const QUEUE_CACHE_MS = 30_000;
 /** The sidebar badge takes a build up to this old rather than start one on every refresh. */
-const BADGE_MAX_AGE_MS = 5 * 60_000;
+const BADGE_MAX_AGE_MS = 2 * 60_000;
 /** The ledger's candidate list. A just-submitted gate can take this long to appear. */
 const LEDGER_CACHE_MS = 2 * 60_000;
-/** A workflow answered 404/410 twice, at least `GONE_CONFIRM_MS` apart, is not asked again for
- *  `GONE_CACHE_MS`. One 404 is not enough: a front end mid-deploy answers 404 for everything, and
- *  holding that would show an empty queue and a 0 badge with no warning. */
-const GONE_CONFIRM_MS = 60_000;
-const GONE_CACHE_MS = 60 * 60_000;
-const GONE_CACHE_MAX = 10_000;
-const goneWorkflows = new Map<string, { first: number; confirmedAt?: number }>();
-
 type QueueRead =
   | { kind: 'gone' }
   | { kind: 'read'; reading: WorkflowReading }
@@ -1245,22 +1237,8 @@ type QueueRead =
 
 /** One queue row's workflow, through the manager read. Undefined when the orchestrator did not answer. */
 async function readForQueue(workflowId: string): Promise<QueueRead | undefined> {
-  const known = goneWorkflows.get(workflowId);
-  if (known?.confirmedAt !== undefined && Date.now() - known.confirmedAt < GONE_CACHE_MS)
-    return { kind: 'gone' };
   const loaded = await getManagerWorkflow(workflowId);
-  if (!loaded.ok) {
-    if (!loaded.gone) return undefined;
-    const now = Date.now();
-    if (known && now - known.first >= GONE_CONFIRM_MS) known.confirmedAt = now;
-    else if (!known) {
-      if (goneWorkflows.size >= GONE_CACHE_MAX)
-        goneWorkflows.delete(goneWorkflows.keys().next().value!);
-      goneWorkflows.set(workflowId, { first: now });
-    }
-    return { kind: 'gone' };
-  }
-  goneWorkflows.delete(workflowId);
+  if (!loaded.ok) return loaded.gone ? { kind: 'gone' } : undefined;
   const read = readTrainingWorkflow(workflowId, loaded.workflow);
   return read.ok ? { kind: 'read', reading: read.reading } : { kind: 'unreadable' };
 }
@@ -1359,10 +1337,9 @@ const ledgerCache = sharedBuild(
   (r) => !r.ok
 );
 
-/** Tests only — the ledger and gone caches outlive a ruling. */
+/** Tests only — the ledger cache outlives a ruling. */
 export function resetTrainingQueueCaches(): void {
   ledgerCache.clear();
-  goneWorkflows.clear();
 }
 
 /** Called after any accepted ruling, and by tests. */
