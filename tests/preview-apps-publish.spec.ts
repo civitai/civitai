@@ -31,7 +31,12 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *     pre-withdraw any leftover pending row before submitting.
  *   - submit only pushes to the REVIEW org (`civitai-apps-review/<slug>`), which
  *     deliberately has NO build webhook, plus a MinIO object + one dev-DB row —
- *     so it triggers NO Tekton build, NO `civitai-apps` Deployment, NO CF DNS.
+ *     so it creates NO `civitai-apps` Deployment and NO CF DNS. It CAN start an
+ *     automatic REVIEW PREVIEW build of the submission (when automatic review
+ *     previews are enabled and the submitter's daily build budget allows). This
+ *     spec neither waits for nor asserts that build, and the withdraw below ends
+ *     the preview. The manifest is built to pass that build's checks
+ *     (preview-app-block-manifest.ts).
  *   - We `withdrawPublishRequest` in `finally` so a mid-test failure still
  *     leaves no pending row and re-runs don't accumulate/collide.
  *

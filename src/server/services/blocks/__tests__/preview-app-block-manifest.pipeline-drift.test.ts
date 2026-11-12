@@ -12,15 +12,14 @@ import { previewAppBlockManifest } from '../../../../../tests/preview-app-block-
  *  1. the platform's submit-time validator (the approve-time one, run at submit), and
  *  2. the App Blocks build pipeline's own manifest check, which runs on the review build.
  *
- * (2) lives in the infrastructure repo, not here, so its rules are restated below as LITERALS.
- * Until this pin existed the smoke submissions passed (1) and failed (2) on every run, so the
- * review builds they trigger caught nothing.
+ * (2) is not in this repo, so its rules are restated below as LITERALS — copies, which nothing
+ * here links to the build itself; the build's own tests run its real check against this
+ * manifest's shape. Until this pin existed the smoke submissions passed (1) and failed (2) on
+ * every run, so the review builds they trigger caught nothing.
  *
  * Cross-repo pin. `SCHEMA_REQUIRED` is asserted here against the schema FILE, and the build
- * pipeline's own test (`app-blocks-validate-manifest-stamp.test.mjs`, beside the App Blocks build
- * pipeline in the infrastructure repo) asserts its required list against the same literal. A
- * change to the schema's required list therefore fails here first, and has to be made on both
- * sides.
+ * pipeline's own test asserts its required list against the same literal. A change to the
+ * schema's required list therefore fails here first, and has to be made on both sides.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
@@ -54,13 +53,6 @@ function fixture(): Record<string, unknown> {
 describe('preview e2e App Block manifest vs the build pipeline', () => {
   it('the schema required list is exactly the literal the build pipeline is pinned to', () => {
     expect([...(schema.required ?? [])].sort()).toEqual([...SCHEMA_REQUIRED].sort());
-  });
-
-  it('the build pipeline requires nothing beyond the schema (plus iframe on review builds)', () => {
-    // A field the pipeline demanded but the schema did not would fail the build of a submission
-    // the platform had already accepted (it did, for minApiVersion).
-    const allowed = new Set([...(schema.required ?? []), 'iframe']);
-    expect(PIPELINE_REVIEW_REQUIRED.filter((k) => !allowed.has(k))).toEqual([]);
   });
 
   it('carries every field the review build requires', () => {
