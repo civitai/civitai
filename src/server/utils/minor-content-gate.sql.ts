@@ -3,7 +3,8 @@ import { NsfwLevel } from '@civitai/shared';
 
 /**
  * SQL twin of `isMinorContentRestricted` (`@civitai/shared/minor-content-gate`): true when `minor`
- * holds and `nsfwLevel` is a restricted rating, an unknown rating included. Change the two together;
+ * holds and `nsfwLevel` is a restricted rating, an unknown rating included. `minor` must be a NOT NULL
+ * expression: a NULL there makes the result NULL. Change the two together;
  * `minor-content-gate.sql.test.ts` runs both over every rating.
  */
 export const minorContentRestrictedSql = ({

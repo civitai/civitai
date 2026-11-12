@@ -1578,20 +1578,26 @@ describe('flagged model gallery level', () => {
     mockDbWrite.model.findMany.mockResolvedValue([] as never);
     mockDbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
 
-    await copyGallerySettingsToAllModelsByUser({
-      settings: { level: 28, users: [], tags: [] },
-      userId: OWNER_ID,
-    });
+    try {
+      await copyGallerySettingsToAllModelsByUser({
+        settings: { level: 28, users: [], tags: [] },
+        userId: OWNER_ID,
+      });
 
-    const { rows: levels } = await pg.query<{ id: number; level: number }>(
-      `SELECT id, ("gallerySettings"->>'level')::int AS level FROM "Model" ORDER BY id`
-    );
-    expect(levels).toEqual([
-      { id: 1, level: 28 },
-      { id: 2, level: SFW },
-      { id: 3, level: SFW },
-      { id: 4, level: SFW },
-    ]);
-    await pg.close();
+      const { rows: levels } = await pg.query<{ id: number; level: number }>(
+        `SELECT id, ("gallerySettings"->>'level')::int AS level FROM "Model" ORDER BY id`
+      );
+      expect(levels).toEqual([
+        { id: 1, level: 28 },
+        { id: 2, level: SFW },
+        { id: 3, level: SFW },
+        { id: 4, level: SFW },
+      ]);
+    } finally {
+      mockDbWrite.$executeRaw.mockReset();
+      mockDbWrite.user.findUnique.mockReset();
+      mockDbWrite.model.findMany.mockReset();
+      await pg.close();
+    }
   });
 });

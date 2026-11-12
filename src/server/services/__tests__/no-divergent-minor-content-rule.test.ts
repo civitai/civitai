@@ -40,6 +40,9 @@ const RATING_COMPARES = [
   /<=\s*NsfwLevel\.PG13\b/,
   />\s*sfwBrowsingLevelsFlag\b/,
   /=\s*NsfwLevel\.PG13\s*;/,
+  // The same compares written with the level's number.
+  /(>=|<)\s*4\b/,
+  /(>|<=)\s*[23]\b/,
 ];
 
 const isComment = (line: string) => /^\s*(\/\/|\*|\/\*)/.test(line);
@@ -110,6 +113,7 @@ describe('the minor content rule has one definition', () => {
     ['a SQL keep', 'sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN TRUE END`;'],
     ['a ceiling', 'export const MINOR_HOST_CEILING = NsfwLevel.PG13;'],
     ['a two-line compare', 'const hide =\n  isMinor && level > NsfwLevel.PG13;'],
+    ['a compare by number', 'const hide = minor && level > 3;'],
   ])('catches %s', (_, snippet) => {
     expect(handWrittenMinorRatingCompares('x.ts', snippet)).not.toEqual([]);
   });

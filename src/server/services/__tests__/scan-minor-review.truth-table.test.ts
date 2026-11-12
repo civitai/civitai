@@ -78,7 +78,7 @@ const RATINGS: [number, boolean][] = [
 
 describe('the scan sends an image to minor review', () => {
   it.each(RATINGS)(
-    'with a resource flagged as a minor at rating %s: %s',
+    'resource arm: rating %s routes per the minor rule (%s)',
     async (nsfwLevel, expected) => {
       scan.tags = [{ name: 'scene', nsfwLevel }];
       scan.associatedMinor = true;
@@ -87,7 +87,7 @@ describe('the scan sends an image to minor review', () => {
   );
 
   it.each(RATINGS)(
-    'with an illustrated minor tag at rating %s: %s',
+    'tag arm: rating %s routes per the minor rule (%s)',
     async (nsfwLevel, expected) => {
       scan.tags = [
         { name: tagsNeedingReview[0], nsfwLevel },
@@ -98,7 +98,7 @@ describe('the scan sends an image to minor review', () => {
     }
   );
 
-  it.each(RATINGS)('with no minor signal at rating %s: never', async (nsfwLevel) => {
+  it.each(RATINGS)('no minor signal: rating %s is never routed', async (nsfwLevel) => {
     scan.tags = [{ name: 'scene', nsfwLevel }];
     scan.associatedMinor = false;
     expect(await minorReview()).toBe(false);
