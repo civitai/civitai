@@ -39,6 +39,28 @@ describe('probeVideoDimensions', () => {
     expect(getVideoMetadataMock).not.toHaveBeenCalled();
   });
 
+  // The probe runs on the system orchestrator token, so an absolute url is probed only when it is
+  // Civitai-hosted media by the metadata route's rule (isCivitaiMediaUrl has the full matrix).
+  it.each([
+    ['a third-party host', 'https://example.com/video.mp4'],
+    ['an object-store bucket host', 'https://some-bucket.s3.wasabisys.com/video.mp4'],
+    ['a Civitai subdomain', `https://files.civitai.com/${KEY}.mp4`],
+    ['the image CDN', `https://image.civitai.com/${KEY}/original=true/video.mp4`],
+  ])('skips %s without running the probe', async (_label, url) => {
+    getVideoMetadataMock.mockResolvedValue({ width: 640, height: 360, fps: 24, duration: '' });
+
+    expect(await probeVideoDimensions(url)).toBeNull();
+    expect(getVideoMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it('probes a video on the orchestrator', async () => {
+    const url = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.mp4';
+    getVideoMetadataMock.mockResolvedValue({ width: 640, height: 360, fps: 24, duration: '' });
+
+    expect(await probeVideoDimensions(url)).toEqual({ width: 640, height: 360 });
+    expect(getVideoMetadataMock).toHaveBeenCalledWith({ videoUrl: url });
+  });
+
   it('treats zero dimensions as no answer', async () => {
     getVideoMetadataMock.mockResolvedValue({ width: 0, height: 0, fps: 0, duration: '' });
 
