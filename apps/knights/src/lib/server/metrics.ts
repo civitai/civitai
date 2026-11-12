@@ -24,12 +24,14 @@ const ESCALATION_REASONS = [
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
+const TICK_FAILURE_STEPS = ['writeback', 'payout', 'yesno', 'reset', 'buzz_grant'] as const;
 
 export type VoteKind = (typeof VOTE_KINDS)[number];
 export type GoldSource = (typeof GOLD_SOURCES)[number];
 export type ResetTrigger = (typeof RESET_TRIGGERS)[number];
 export type BuzzOutcome = (typeof BUZZ_OUTCOMES)[number];
 export type ShopOutcome = (typeof SHOP_OUTCOMES)[number];
+export type TickFailureStep = (typeof TICK_FAILURE_STEPS)[number];
 
 type LabelValues = Record<string, readonly string[]>;
 
@@ -104,6 +106,11 @@ const unhandledErrors = counter(
   'knights_unhandled_errors_total',
   'Unhandled server errors caught by the SvelteKit handleError hook.'
 );
+const tickItemFailures = counter(
+  'knights_tick_item_failures_total',
+  'Items that failed inside a tick step and wait for the next tick, by step.',
+  { step: TICK_FAILURE_STEPS }
+);
 
 registerGauges(register, loadGaugeSnapshot);
 
@@ -137,6 +144,10 @@ export const metrics = {
     safely(() => hiddenChecksGraded.inc({ verdict: bounded(verdict, HIDDEN_VERDICTS) })),
   smite: () => safely(() => smites.inc()),
   unhandledError: () => safely(() => unhandledErrors.inc()),
+  tickItemFailures: (step: TickFailureStep, count: number) =>
+    safely(() => {
+      if (count > 0) tickItemFailures.inc({ step }, count);
+    }),
   notificationsSent: (kind: string, count: number) =>
     safely(() => {
       if (count > 0) notificationsSent.inc({ kind: bounded(kind, NOTIFY_KINDS) }, count);

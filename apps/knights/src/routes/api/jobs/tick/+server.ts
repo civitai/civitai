@@ -11,6 +11,7 @@ import { retryPendingPurchases } from '$lib/server/shop/purchase';
 import { settleHiddenChecks } from '$lib/server/hidden/settle';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { isJobRequest } from '$lib/server/jobs-auth';
+import { metrics, type TickFailureStep } from '$lib/server/metrics';
 import { applyPendingResolutions, escalateExpired } from '$lib/server/queue/queue.service';
 import { settleFinalItems } from '$lib/server/progression/progression';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -84,24 +85,38 @@ export const POST: RequestHandler = async ({ request }) => {
   const labels = await settle('label write-back', () =>
     runLabelPass(db, { now: new Date(), log: logToAxiom })
   );
+  // Only a step that throws fails the tick (a 500 pages). Items that failed inside a step are retried by the next tick, so
+  // they are counted and logged instead: one bad item would otherwise page for hours and hide a real tick outage.
   if (
     !expired.ok ||
     !writeBacks.ok ||
-    writeBacks.value.failed > 0 ||
     !progression.ok ||
-    progression.value.failed > 0 ||
     !hidden.ok ||
     !yesNo.ok ||
-    (yesNo.ok && yesNo.value.failed > 0) ||
     !smites.ok ||
     !resets.ok ||
-    resets.value.failed > 0 ||
     !conversions.ok ||
-    conversions.value.failed > 0 ||
     !purchases.ok ||
     !labels.ok
   ) {
     return json({ error: 'job failed' }, { status: 500 });
+  }
+  const itemFailures: Record<TickFailureStep, number> = {
+    writeback: writeBacks.value.failed ?? 0,
+    payout: progression.value.failed,
+    yesno: yesNo.value.failed,
+    reset: resets.value.failed,
+    buzz_grant: conversions.value.failed,
+  };
+  const failing = Object.entries(itemFailures).filter(([, count]) => count > 0);
+  if (failing.length > 0) {
+    for (const [step, count] of failing) metrics.tickItemFailures(step as TickFailureStep, count);
+    await logToAxiom({
+      type: 'warning',
+      name: 'knights-tick-item-failures',
+      message: 'Some items failed in the tick; the next tick retries them',
+      details: Object.fromEntries(failing),
+    });
   }
   return json({
     ...expired.value,
