@@ -960,7 +960,21 @@ describe('Forgejo client-side timeout routing', () => {
 
 describe('getPlatformAccountLogin', () => {
   beforeEach(() => {
-    // The login is memoised per module instance; every case starts from a fresh one.
+    // The login is memoised per module instance; every case starts from a fresh one. The env
+    // mock is re-registered because the describe above ends with `vi.doUnmock('~/env/server')`.
+    vi.resetModules();
+    vi.doMock('~/env/server', () => ({
+      env: {
+        FORGEJO_BASE_URL: 'https://forgejo.example',
+        FORGEJO_ADMIN_TOKEN: 'tok-test',
+        FORGEJO_API_TIMEOUT_MS: 15000,
+        FORGEJO_COMMIT_TIMEOUT_MS: 120000,
+      },
+    }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock('~/env/server');
     vi.resetModules();
   });
 
