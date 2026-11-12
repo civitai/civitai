@@ -1,7 +1,7 @@
-import { REDIS_KEYS } from '@civitai/redis';
+import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { TokenScope, tokenScopeMaskToList } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
-import { getRedis } from '$lib/server/redis';
+import { getSysRedis } from '$lib/server/redis';
 import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
 import { checkClientAccess, userHasRole } from './access';
 import { SYSTEM_USER_ID, SYSTEM_WORKLOAD_ROLE } from './constants';
@@ -149,14 +149,14 @@ export interface ExchangeRecord {
   exp: number;
 }
 
-const recordKey = (jti: string) => `${REDIS_KEYS.OAUTH.TOKEN_EXCHANGES}:${jti}` as const;
+const recordKey = (jti: string) => `${REDIS_SYS_KEYS.OAUTH.TOKEN_EXCHANGES}:${jti}` as const;
 
 type StringRedis = {
   set(key: string, value: string, opts: { EX: number }): Promise<unknown>;
   get(key: string): Promise<string | null>;
 };
 
-/** How long an exchange record read or write may wait (the cache client queues while reconnecting). */
+/** How long an exchange record read or write may wait (the client queues while reconnecting). */
 const RECORD_TIMEOUT_MS = 2000;
 
 function withTimeout<T>(op: Promise<T>): Promise<T> {
@@ -168,8 +168,8 @@ function withTimeout<T>(op: Promise<T>): Promise<T> {
 }
 
 function redisOrThrow(): StringRedis {
-  const redis = getRedis();
-  if (!redis) throw new Error('REDIS_URL is not configured');
+  const redis = getSysRedis();
+  if (!redis) throw new Error('REDIS_SYS_URL is not configured');
   return redis as unknown as StringRedis;
 }
 

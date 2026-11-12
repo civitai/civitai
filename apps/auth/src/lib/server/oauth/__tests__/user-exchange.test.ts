@@ -25,6 +25,7 @@ const h = await vi.hoisted(async () => {
     queries: [] as { table: string; where: [string, string, unknown][] }[],
     dbThrows: null as null | ((table: string) => boolean),
     redis: new Map<string, { value: string; ex: number }>(),
+    cacheRedis: new Map<string, string>(),
     redisGetThrows: false,
     redisGetHangs: false,
     redisSetThrows: false,
@@ -83,6 +84,15 @@ vi.mock('$lib/server/db/db', () => ({
 vi.mock('$lib/server/redis', async (orig) => ({
   ...(await orig<typeof RedisModule>()),
   getRedis: () => ({
+    async set(key: string, value: string) {
+      h.cacheRedis.set(key, value);
+      return 'OK';
+    },
+    async get(key: string) {
+      return h.cacheRedis.get(key) ?? null;
+    },
+  }),
+  getSysRedis: () => ({
     async set(key: string, value: string, opts: { EX: number }) {
       if (h.redisSetThrows) throw new Error('redis down');
       h.redis.set(key, { value, ex: opts.EX });
@@ -205,6 +215,7 @@ beforeEach(() => {
   h.queries = [];
   h.dbThrows = null;
   h.redis.clear();
+  h.cacheRedis.clear();
   h.redisGetThrows = false;
   h.redisGetHangs = false;
   h.redisSetThrows = false;
@@ -631,6 +642,15 @@ describe('user token exchange — the JWT', () => {
       exp: claims.exp,
     });
     expect(entry.ex).toBe((claims.exp as number) - (claims.iat as number) + 60);
+  });
+
+  // Introspection reads a missing record as inactive, so the record must live where keys are not
+  // evicted under memory pressure: the system Redis, not the cache. Don't move it back.
+  it('keeps the exchange record in the system Redis, not the cache', async () => {
+    const claims = decodeJwt(await minted({ caller: RELAY }));
+    const key = `oauth:xchg:${claims.jti}`;
+    expect([...h.cacheRedis.keys()]).toEqual([]);
+    expect(h.redis.has(key)).toBe(true);
   });
 
   it('logs the outcome without the subject token or the JWT', async () => {
