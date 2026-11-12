@@ -286,6 +286,12 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     },
   },
   appListing: {},
+  // Storyline text items: the thread opens with its visibility rule.
+  postText: {
+    assertVisible: async () => {
+      throw throwNotFoundError('Text not found');
+    },
+  },
 };
 
 export function commentSurface(entityType: string): CommentSurface {

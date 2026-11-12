@@ -6,6 +6,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { PG_INT4_MAX } from '~/server/common/constants';
 import { imageInputSchema } from '~/server/schema/image.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   STORYLINE_CAPTION_MAX_LENGTH,
   STORYLINE_CEILING_LEVELS,
@@ -64,6 +65,19 @@ export const setStorylineImageCaptionSchema = z.object({
   imageId: z.number().int().positive(),
   content: z.string().trim().max(STORYLINE_CAPTION_MAX_LENGTH),
 });
+
+export const addStorylineTextSchema = z.object({
+  postId: z.number().int().positive(),
+  /** Shares `Image.index`'s number space on the post: the item it follows, or the first index − 1. */
+  index: z.number().int().min(-PG_INT4_MAX).max(PG_INT4_MAX),
+});
+
+export const setStorylineTextSchema = z.object({
+  id: z.number().int().positive(),
+  content: getSanitizedStringSchema(),
+});
+
+export const storylineTextIdSchema = z.object({ id: z.number().int().positive() });
 
 export const storylinePostImageCaptionsSchema = z.object({ postId: z.number().int().positive() });
 

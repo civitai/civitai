@@ -170,6 +170,37 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     );
   });
 
+  it("puts a new image after a post's storyline text items, whatever index the client sent", async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce({ index: 8 } as never);
+    dbMock.dbWrite.image.aggregate.mockResolvedValueOnce({ _max: { index: 3 } } as never);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 2 } as never).catch(
+      () => null
+    );
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ index: 9 })
+    );
+  });
+
+  it('keeps the index the client sent on a post with no text items', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce(null as never);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 2 } as never).catch(
+      () => null
+    );
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ index: 2 })
+    );
+  });
+
   it('sends an upload to a judge-rated collection through the normal scan', async () => {
     dbMock.dbRead.post.findFirst.mockResolvedValue({
       userId: 5,

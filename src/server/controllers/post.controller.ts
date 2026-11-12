@@ -1,3 +1,5 @@
+import { getPostTextsForViewer } from '~/server/services/post-text.service';
+import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 import { increaseDate } from '~/utils/date-helpers';
@@ -669,7 +671,16 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
       viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
     });
 
-    return { ...post, publishedWithApp };
+    // Storyline text items, after the post's own visibility above.
+    const texts = ctx.features.storylineText
+      ? await getPostTextsForViewer({
+          postId: post.id,
+          browsingLevel: storylineReaderLevel(ctx, undefined),
+          seesAll: !!ctx.user && (ctx.user.id === post.user.id || !!ctx.user.isModerator),
+        })
+      : [];
+
+    return { ...post, publishedWithApp, texts };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

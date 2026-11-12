@@ -123,6 +123,7 @@ const DERIVED_BASES: Record<string, string> = {
   sharedStorageProcedure: 'publicProcedure',
   storylineMemberProcedure: 'protectedProcedure',
   storylineReadProcedure: 'publicProcedure',
+  storylineTextProcedure: 'guardedProcedure',
   storylineWriteProcedure: 'guardedProcedure',
 };
 

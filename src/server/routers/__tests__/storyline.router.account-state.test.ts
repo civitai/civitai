@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as StorylineService from '~/server/services/storyline.service';
+import type * as PostTextService from '~/server/services/post-text.service';
 import type * as StorylineCaptionService from '~/server/services/storyline-caption.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -33,6 +34,9 @@ const writers = vi.hoisted(() => ({
   removeStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
   setStorylineTakedown: vi.fn(async () => ({ id: 1 })),
   setStorylineImageCaption: vi.fn(async () => null),
+  addPostText: vi.fn(async () => ({ id: 1 })),
+  setPostText: vi.fn(async () => ({ id: 1 })),
+  deletePostText: vi.fn(async () => ({ id: 1 })),
 }));
 
 // Spread the real module and override only the writers: a hand-listed mock would couple this test
@@ -44,6 +48,12 @@ vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
 vi.mock('~/server/services/storyline-caption.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StorylineCaptionService>()),
   setStorylineImageCaption: writers.setStorylineImageCaption,
+}));
+vi.mock('~/server/services/post-text.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostTextService>()),
+  addPostText: writers.addPostText,
+  setPostText: writers.setPostText,
+  deletePostText: writers.deletePostText,
 }));
 
 import { storylineRouter } from '~/server/routers/storyline.router';
@@ -105,6 +115,9 @@ const WRITE_CALLS = [
     writer: writers.setStorylineImageCaption,
     input: { imageId: 40, content: 'A note' },
   },
+  { name: 'addText', writer: writers.addPostText, input: { postId: 12, index: 3 } },
+  { name: 'setText', writer: writers.setPostText, input: { id: 5, content: '<p>A note</p>' } },
+  { name: 'deleteText', writer: writers.deletePostText, input: { id: 5 } },
 ] as const;
 
 type ProcedureDef = { _def: { type: string; middlewares: unknown[] } };
@@ -135,7 +148,7 @@ function callerFor(user: Record<string, unknown> = {}) {
   return storylineRouter.createCaller({
     user: {
       id: 1,
-      permissions: ['storylines'],
+      permissions: ['storylines', 'storylineText'],
       isModerator: false,
       muted: false,
       bannedAt: null,

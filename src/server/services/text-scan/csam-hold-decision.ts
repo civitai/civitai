@@ -55,6 +55,7 @@ const REMOVABLE_ENTITY_TYPES = [
   'Post',
   'Model',
   'Article',
+  'PostText',
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
   (REMOVABLE_ENTITY_TYPES as readonly string[]).includes(type);
@@ -125,6 +126,10 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
         });
       return;
     }
+    case 'PostText':
+      // Its `csamHeld`, set with the hold, already keeps it from every reader; removing keeps it
+      // held. Only a dismissal clears it.
+      return;
     case 'Post':
       // Unpublish, not delete: the post and its images stay, and a republish restores it.
       await unpublishPostAsModerator({
@@ -307,6 +312,8 @@ export async function decideCsamHold(args: DecideArgs) {
         },
       });
       if (count === 0) throw throwConflictError('Hold already decided or missing.');
+      if (status === 'Dismissed' && hold.entityType === 'PostText')
+        await tx.postText.updateMany({ where: { id: hold.entityId }, data: { csamHeld: false } });
 
       // Records nothing and returns NULL on bad input rather than raising, so a bad record never undoes the
       // decision; it lands in `label_store.record_failure`.

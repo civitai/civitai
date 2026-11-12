@@ -1,3 +1,6 @@
+import { CacheTTL } from '~/server/common/constants';
+import { rateLimit } from '~/server/middleware.trpc';
+import { addPostText, deletePostText, setPostText } from '~/server/services/post-text.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   addOwnerChapterSchema,
@@ -14,6 +17,9 @@ import {
   setCanonChapterSchema,
   setFirstChapterSchema,
   setStorylineImageCaptionSchema,
+  addStorylineTextSchema,
+  setStorylineTextSchema,
+  storylineTextIdSchema,
   setStorylineTakedownSchema,
   storylineBranchChoiceSchema,
   getStorylineSchema,
@@ -81,6 +87,10 @@ import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 
 const storylineReadProcedure = publicProcedure.use(isFlagProtected('storylines'));
 const storylineWriteProcedure = guardedProcedure.use(isFlagProtected('storylines'));
+// Text items between a chapter's images, behind their own flag.
+const storylineTextProcedure = guardedProcedure
+  .use(isFlagProtected('storylines'))
+  .use(isFlagProtected('storylineText'));
 const storylineMemberProcedure = protectedProcedure.use(isFlagProtected('storylines'));
 
 export const storylineRouter = router({
@@ -106,6 +116,7 @@ export const storylineRouter = router({
       via: input.via,
       viewer: ctx.user,
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      withTexts: !!ctx.features.storylineText,
     })
   ),
 
@@ -272,6 +283,24 @@ export const storylineRouter = router({
     .input(setStorylineImageCaptionSchema)
     .mutation(({ input, ctx }) =>
       setStorylineImageCaption({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  addText: storylineTextProcedure
+    .input(addStorylineTextSchema)
+    .mutation(({ input, ctx }) => addPostText({ ...input, userId: ctx.user.id })),
+
+  // The editor saves 2 s after typing stops, and each save that changes the text bills a scan.
+  setText: storylineTextProcedure
+    .input(setStorylineTextSchema)
+    .use(rateLimit({ limit: 300, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) =>
+      setPostText({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  deleteText: storylineTextProcedure
+    .input(storylineTextIdSchema)
+    .mutation(({ input, ctx }) =>
+      deletePostText({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
 
   setFirstChapter: storylineWriteProcedure

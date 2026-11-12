@@ -333,7 +333,8 @@ export async function updatePostNsfwLevels(postIds: number[]): Promise<PostNsfwL
         COALESCE(p."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql('Post', 'p')}) "nsfwLevel"
       FROM "Post" p
       WHERE p.id IN (${Prisma.join(postIds)})
-        AND EXISTS (SELECT 1 FROM "Image" i WHERE i."postId" = p.id)
+        AND (EXISTS (SELECT 1 FROM "Image" i WHERE i."postId" = p.id)
+          OR EXISTS (SELECT 1 FROM "PostText" pt WHERE pt."postId" = p.id))
     )
     UPDATE "Post" p
     SET "nsfwLevel" = next."nsfwLevel"

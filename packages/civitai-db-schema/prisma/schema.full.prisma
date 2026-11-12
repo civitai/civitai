@@ -2104,6 +2104,7 @@ model Post {
   moderatorNsfwLevelBasis Int?
 
   images          Image[]
+  texts           PostText[]
   tags            TagsOnPost[]
   reactions       PostReaction[]
   helper          PostHelper?
@@ -5295,6 +5296,7 @@ enum CommentEntityType {
   appListing
   crucible
   storyline
+  postText
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -10844,6 +10846,29 @@ model ImageCaption {
   nsfwLevel Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Storylines: a text item in a post's reading order, between or around its images. `index` shares
+/// `Image.index`'s number space on the post; ties sort images first, then texts by id.
+model PostText {
+  id        Int      @id @default(autoincrement())
+  postId    Int
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  /// Who wrote it, the post's author when written. Not a relation, as `ImageCaption.userId`.
+  userId    Int
+  index     Int
+  /// Sanitized HTML.
+  content   String
+  /// The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned; reset to 0 by an edit).
+  nsfwLevel Int      @default(0)
+  /// The text scan refused it (poi / minor): never shown to readers. A clean, current verdict clears it.
+  refused   Boolean  @default(false)
+  /// Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
+  csamHeld  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId, index])
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and

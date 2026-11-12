@@ -11,7 +11,7 @@ const SCAN_FLOOR_ENTITY_TYPES: readonly string[] = [
   'Collection',
 ];
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
-const INTERNAL_ALIASES = new Set(['i', 'ic', 'em', 'd', 'ar', 'r']);
+const INTERNAL_ALIASES = new Set(['i', 'ic', 'em', 'd', 'ar', 'r', 'pt']);
 
 // Both apps inline these strings as raw SQL, so every input is checked against a closed set.
 function identifier(value: string) {
@@ -59,7 +59,10 @@ export function collectionTextFloorBucketText(alias: string, bucket: number) {
 }
 
 const imageLevelText: Record<DerivedNsfwEntityType, (alias: string) => string> = {
-  Post: (a) => `(SELECT bit_or(i."nsfwLevel") FROM "Image" i WHERE i."postId" = ${a}.id)`,
+  // A post's storyline text items rate it as its images do; a refused text is never shown, so it
+  // does not rate it.
+  Post: (a) =>
+    `(COALESCE((SELECT bit_or(i."nsfwLevel") FROM "Image" i WHERE i."postId" = ${a}.id), 0) | COALESCE((SELECT bit_or(pt."nsfwLevel") FROM "PostText" pt WHERE pt."postId" = ${a}.id AND pt.refused = FALSE), 0))`,
   Bounty: (a) =>
     `(SELECT bit_or(i."nsfwLevel") FROM "ImageConnection" ic JOIN "Image" i ON i.id = ic."imageId" WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${a}.id)`,
   BountyEntry: (a) =>
