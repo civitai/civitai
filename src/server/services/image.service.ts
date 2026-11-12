@@ -8623,8 +8623,6 @@ export async function resolveIngestionError({
       }).catch(() => undefined),
   });
 
-  const metadata = (image.metadata as ImageMetadata) ?? {};
-
   // Matched on what was read, so a block or ban landing after the replica read is not lifted.
   const { count } = await dbWrite.image.updateMany({
     where: {
@@ -8639,10 +8637,16 @@ export async function resolveIngestionError({
       ingestion: ImageIngestionStatus.Scanned,
       blockedFor: null,
       scannedAt: new Date(),
-      metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
     },
   });
   if (count === 0) throw throwBadRequestError('This image changed; reload and try again.');
+  // Merged in place, not from the replica row: that copy may predate metadata written since.
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "metadata" = COALESCE("metadata", '{}'::jsonb)
+      || jsonb_build_object('nsfwLevelReason', 'Moderator ingestion error review'::text)
+    WHERE id = ${id}
+  `;
   if (image.blockedFor != null) await dropBlockedImageDeleteQueue([id]);
   await imageMetadataCache.refresh(id);
 

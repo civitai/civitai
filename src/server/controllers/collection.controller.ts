@@ -906,7 +906,7 @@ export const setCollectionItemNsfwLevelHandler = async ({
     if (!permissions.manage)
       throw throwAuthorizationError('You do not have permission to manage this collection.');
 
-    return await setCollectionItemNsfwLevel({ ...input });
+    return await setCollectionItemNsfwLevel({ ...input, userId: user.id });
   } catch (error) {
     throw throwDbError(error);
   }

@@ -47,7 +47,4 @@ CREATE TABLE "ImageAxisRating" (
     ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- Migration-only: Prisma does not model partial indexes.
-CREATE INDEX "ImageAxisRating_rated_idx" ON "ImageAxisRating" ("imageId") WHERE "source" = 'rated';
-
 COMMIT;

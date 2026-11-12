@@ -26,6 +26,7 @@ const m = vi.hoisted(() => ({
   forkable: vi.fn(),
   reconstruct: vi.fn(),
   setProvenance: vi.fn<(...args: unknown[]) => Promise<boolean>>().mockResolvedValue(true),
+  createSource: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
 vi.mock('@civitai/auth', async (importOriginal) => ({
@@ -61,6 +62,11 @@ vi.mock('~/server/services/blocks/app-fork.service', async (importOriginal) => (
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   reconstructBundleFromForgejo: m.reconstruct,
+}));
+// The fork's source repo: its own service, pinned in `app-source-repo.service.test.ts`. Here only
+// what the start hands it (and that the start never depends on it).
+vi.mock('~/server/services/blocks/app-source-repo.service', () => ({
+  createForkSourceRepo: m.createSource,
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -281,6 +287,7 @@ beforeEach(async () => {
   m.summary.mockResolvedValue({ id: PARENT_LISTING, slug: PARENT_SLUG, name: PARENT_NAME });
   m.forkable.mockResolvedValue({ available: true, forkable: true });
   m.reconstruct.mockImplementation(async () => parentBundle());
+  m.createSource.mockResolvedValue({ kind: 'created' });
   setEnv({
     APP_FORK_SEED_S3_ENDPOINT: `https://${SEED_HOST}`,
     APP_FORK_SEED_S3_BUCKET: 'fork-seed-bucket-test',
@@ -521,6 +528,76 @@ describe('startAppFork — a successful start', () => {
     expect(forkSlug).not.toBe(seen[1]);
     expect(forkSlug).toMatch(/^pixel-garden-fork-[0-9a-f]{4}$/);
     expect(isValidForkSlug(forkSlug)).toBe(true);
+  });
+
+  it('creates the fork’s source repo with exactly the seed’s files, and the SESSION’s parent', async () => {
+    const result = await start();
+    expect(m.createSource).toHaveBeenCalledTimes(1);
+    const arg = m.createSource.mock.calls[0][0] as {
+      forkSlug: string;
+      userId: number;
+      files: Array<{ path: string; content: Buffer }>;
+      lineage: unknown;
+    };
+    expect(arg.forkSlug).toBe(result.forkSlug);
+    expect(arg.userId).toBe(FORKER_ID);
+    expect(arg.lineage).toEqual({
+      parentSlug: PARENT_SLUG,
+      parentCommitSha: APPROVED_SHA,
+      parentAppBlockId: PARENT_BLOCK,
+    });
+    // The same files the sandbox seed holds, byte for byte.
+    const zip = await JSZip.loadAsync(putBodies[0]);
+    const zipped = Object.keys(zip.files)
+      .filter((n) => !zip.files[n].dir)
+      .sort();
+    expect(arg.files.map((f) => f.path).sort()).toEqual(zipped);
+    for (const f of arg.files)
+      expect(f.content.equals(await zip.file(f.path)!.async('nodebuffer'))).toBe(true);
+  });
+
+  it('🔴 FORGERY: a parent manifest naming another parent changes nothing about the lineage', async () => {
+    m.reconstruct.mockImplementation(async () =>
+      parentBundle({
+        ...PARENT_FILES,
+        'block.manifest.json': JSON.stringify({
+          blockId: 'someone-elses-app',
+          name: PARENT_NAME,
+          version: '1.4.0',
+          forkOf: 'someone-elses-app',
+          'Forked-From-App': 'someone-elses-app',
+          'Forked-From-Commit': HEAD_SHA,
+        }),
+      })
+    );
+    await start();
+    expect((m.createSource.mock.calls[0][0] as { lineage: unknown }).lineage).toEqual({
+      parentSlug: PARENT_SLUG,
+      parentCommitSha: APPROVED_SHA,
+      parentAppBlockId: PARENT_BLOCK,
+    });
+  });
+
+  it('a source repo that never finishes holds the start only for the bounded wait', async () => {
+    const { __setForkSourceRepoWaitMsForTests } = await import(
+      '~/server/services/blocks/app-fork-start.service'
+    );
+    m.createSource.mockReturnValue(new Promise(() => undefined));
+    __setForkSourceRepoWaitMsForTests(25);
+    try {
+      // Would never settle if the start awaited the creation itself.
+      await expect(start()).resolves.toMatchObject({ parentName: PARENT_NAME });
+      expect(m.createSource).toHaveBeenCalledTimes(1);
+    } finally {
+      __setForkSourceRepoWaitMsForTests();
+    }
+  });
+
+  it('a source repo that could not be made never fails the start, nor releases its slug', async () => {
+    m.createSource.mockRejectedValue(new Error('git host down'));
+    const result = await start();
+    expect(result).toMatchObject({ parentName: PARENT_NAME });
+    expect(store.has(sessionKey(result.forkSlug))).toBe(true);
   });
 
   it('🔴 writes nothing to the database: no approvals, scopes, goods or entitlements are copied', async () => {

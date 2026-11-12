@@ -1318,9 +1318,7 @@ function EditDetail() {
             className="rounded-lg p-2"
             classNames={{ message: 'flex items-center justify-center gap-2' }}
           >
-            <Text align="center">
-              This image is waiting for manual review and will receive a rating at a later time.
-            </Text>
+            <Text align="center">This image is waiting to be rated.</Text>
           </Alert>
         )}
         {/* #endregion */}

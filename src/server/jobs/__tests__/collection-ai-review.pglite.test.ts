@@ -71,12 +71,17 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Rescan');
+    CREATE TABLE "Collection" (id int PRIMARY KEY, type text NOT NULL, metadata jsonb NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       url text NOT NULL DEFAULT 'abc',
       type text NOT NULL DEFAULT 'image',
       "nsfwLevel" int NOT NULL,
-      ingestion text NOT NULL DEFAULT 'Scanned',
+      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
+      "blockedFor" text,
+      "scanJobs" jsonb,
+      metadata jsonb,
       meta jsonb,
       "needsReview" text,
       "postId" int,
@@ -103,7 +108,7 @@ afterAll(() => db.close());
 beforeEach(async () => {
   reviewImage.mockReset();
   updateCollectionItemsStatus.mockReset();
-  await db.exec(`DELETE FROM "CollectionItem"; DELETE FROM "Image";`);
+  await db.exec(`DELETE FROM "CollectionItem"; DELETE FROM "Image"; DELETE FROM "Collection";`);
 });
 
 async function seed(items: { id: number; nsfwLevel: number }[]) {
@@ -250,5 +255,95 @@ describe('reviewCollection: an image flagged as a minor before its outcome is wr
       { status: 'ACCEPTED', ids: [2] },
       { status: 'REJECTED', ids: [1] },
     ]);
+  });
+});
+
+describe('reviewCollection: a collection whose judges apply the rating', () => {
+  const judgeRated = (ids: number[], extra = '') =>
+    db.exec(`
+      UPDATE "Image" SET "scanJobs" = '{"workflowId": "wf"}',
+        metadata = jsonb_build_object('judgeRating',
+          jsonb_build_object('collectionId', ${COLLECTION_ID}${extra}))
+      WHERE id IN (${ids.join(',')});
+    `);
+
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Collection" VALUES (${COLLECTION_ID}, 'Image', '{"judgesApplyBrowsingLevel": true}');
+    `);
+    reviewImage.mockResolvedValue({
+      observations: clean,
+      usage: { promptTokens: 1, completionTokens: 1 },
+    });
+  });
+
+  it('leaves an item no judge rated in REVIEW, unreviewed, and accepts the rated ones', async () => {
+    await seed([
+      { id: 1, nsfwLevel: PG },
+      { id: 2, nsfwLevel: PG },
+      { id: 3, nsfwLevel: PG },
+    ]);
+    await judgeRated([1, 3]);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(await claimedIds()).toEqual([1, 3]);
+    expect(statusWrites()).toEqual([{ status: 'ACCEPTED', ids: [1, 3] }]);
+    expect(reviewImage).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not classify an unrated item again on the next run', async () => {
+    await seed([
+      { id: 1, nsfwLevel: PG },
+      { id: 2, nsfwLevel: PG },
+    ]);
+    await judgeRated([1]);
+
+    await reviewCollection(COLLECTION_ID, config);
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(reviewImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not select a judge-rated item held for moderator review', async () => {
+    await seed([
+      { id: 1, nsfwLevel: PG },
+      { id: 2, nsfwLevel: PG },
+    ]);
+    await judgeRated([1, 2]);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 1`);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(await claimedIds()).toEqual([2]);
+    expect(statusWrites()).toEqual([{ status: 'ACCEPTED', ids: [2] }]);
+    expect(reviewImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not accept a judge-rated item held for review after it was classified', async () => {
+    await seed([
+      { id: 1, nsfwLevel: PG },
+      { id: 2, nsfwLevel: PG },
+    ]);
+    await judgeRated([1, 2]);
+    reviewImage.mockImplementationOnce(async () => {
+      await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 1`);
+      return { observations: clean, usage: { promptTokens: 1, completionTokens: 1 } };
+    });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(await claimedIds()).toEqual([2]);
+    expect(statusWrites()).toEqual([{ status: 'ACCEPTED', ids: [2] }]);
+  });
+
+  it('does not accept an item carrying only a legacy rating', async () => {
+    await seed([{ id: 1, nsfwLevel: PG }]);
+    await judgeRated([1], `, 'legacy', true`);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(reviewImage).not.toHaveBeenCalled();
+    expect(statusWrites()).toEqual([]);
   });
 });
