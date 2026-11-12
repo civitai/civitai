@@ -151,6 +151,7 @@ function ImageCard({
   onClick,
   isAlreadySubmitted,
   isChecking,
+  overlayLabel,
 }: {
   image: {
     id: number;
@@ -166,6 +167,7 @@ function ImageCard({
   onClick: () => void;
   isAlreadySubmitted: boolean;
   isChecking: boolean;
+  overlayLabel?: string;
 }) {
   const disabled = !isValid || isAlreadySubmitted;
 
@@ -323,6 +325,12 @@ function ImageCard({
           )}
         </HoverCard.Dropdown>
       </HoverCard>
+
+      {overlayLabel && (
+        <div className="absolute inset-x-0 bottom-0 rounded-b-md bg-black/70 px-1.5 py-1 text-center text-xs font-semibold text-red-300">
+          {overlayLabel}
+        </div>
+      )}
 
       {/* Selection Indicator */}
       {isSelected && !disabled && (
@@ -596,6 +604,22 @@ export default function CrucibleSubmitEntryModal({
       };
     }
 
+    if (image.ingestion === ImageIngestionStatus.Error) {
+      return {
+        isValid: false,
+        isAlreadySubmitted: false,
+        isChecking: false,
+        criteria: [
+          {
+            label: 'Content scan',
+            passes: false,
+            failReason: 'Processing failed. Upload it again, or try again later.',
+          },
+        ],
+        message: 'Processing failed',
+      };
+    }
+
     const isCompatibleNsfw = isNsfwLevelCompatible(image.nsfwLevel ?? 1, nsfwLevel);
     const matchesContentType = image.type === contentType;
     const isAlreadySubmitted = submittedImageIds.has(image.id);
@@ -780,13 +804,28 @@ export default function CrucibleSubmitEntryModal({
     const vanished = awaitingScan.filter(
       (id) => seenAwaitingScan.current.has(id) && !listedIds.has(id)
     );
+    const failed = images.filter(
+      (image) => awaitingScan.includes(image.id) && image.ingestion === ImageIngestionStatus.Error
+    );
     const settled = images.filter(
       (image) =>
         awaitingScan.includes(image.id) &&
-        !validateImage(image).isChecking &&
-        ineligibleReasonsById.has(image.id)
+        (image.ingestion === ImageIngestionStatus.Error ||
+          (!validateImage(image).isChecking && ineligibleReasonsById.has(image.id)))
     );
     if (!settled.length && !vanished.length) return;
+    // A generator submit reports its failures in one notice once the batch settles.
+    if (failed.length && !autoSubmit)
+      showErrorNotification({
+        title: 'Processing failed',
+        error: new Error(
+          `${
+            failed.length === 1 ? `Your ${noun}` : `${failed.length} ${nounPlural}`
+          } couldn't be processed. Upload ${
+            failed.length === 1 ? 'it' : 'them'
+          } again, or try again later.`
+        ),
+      });
     setAwaitingScan((prev) =>
       prev.filter((id) => !vanished.includes(id) && !settled.some((image) => image.id === id))
     );
@@ -1071,7 +1110,7 @@ export default function CrucibleSubmitEntryModal({
                 <>
                   <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
                     {images.map((image) => {
-                      const { isValid, isAlreadySubmitted, isChecking, criteria } =
+                      const { isValid, isAlreadySubmitted, isChecking, criteria, message } =
                         validateImage(image);
                       const isSelected = selectedImages.includes(image.id);
 
@@ -1092,6 +1131,9 @@ export default function CrucibleSubmitEntryModal({
                           onClick={() => toggleImage(image.id)}
                           isAlreadySubmitted={isAlreadySubmitted}
                           isChecking={isChecking}
+                          overlayLabel={
+                            image.ingestion === ImageIngestionStatus.Error ? message : undefined
+                          }
                         />
                       );
                     })}

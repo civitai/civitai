@@ -53,3 +53,59 @@ describe('getMyImages — published only', () => {
     });
   });
 });
+
+describe('getMyImages — entry drafts whose scan failed', () => {
+  const failedUpload = { id: 900, ingestion: 'Error' };
+  const listed = { id: 800, ingestion: 'Scanned' };
+  const errorQueryOf = () =>
+    findMany.mock.calls.map(([args]) => args).find((args) => args.where.ingestion === 'Error');
+
+  beforeEach(() => {
+    findMany.mockImplementation(async ({ where }) =>
+      where.ingestion === 'Error' ? [failedUpload] : [listed]
+    );
+  });
+
+  const listForEntry = (cursor?: number) =>
+    getMyImages({
+      userId: 42,
+      mediaTypes: [MediaType.video],
+      limit: 10,
+      publishedOnly: true,
+      includeEntryDrafts: true,
+      cursor,
+    });
+
+  it('lists an upload whose scan failed, newest first, so the modal can say so', async () => {
+    const { items } = await listForEntry();
+    expect(items.map((x) => x.id)).toEqual([900, 800]);
+    expect(items[0].ingestion).toBe('Error');
+  });
+
+  it("only from the caller's own unpublished entry-draft posts, not a failed image on a normal post", async () => {
+    await listForEntry();
+    expect(errorQueryOf()?.where).toMatchObject({
+      userId: 42,
+      type: { in: [MediaType.video] },
+      needsReview: null,
+      tosViolation: false,
+      post: { publishedAt: null, metadata: { path: ['crucibleEntryDraft'], equals: true } },
+    });
+  });
+
+  it('adds them to the first page only, so paging never repeats one', async () => {
+    const { items } = await listForEntry(800);
+    expect(items.map((x) => x.id)).toEqual([800]);
+    expect(errorQueryOf()).toBeUndefined();
+  });
+
+  it('leaves other published-only callers without failed uploads', async () => {
+    await getMyImages({
+      userId: 42,
+      mediaTypes: [MediaType.image],
+      limit: 10,
+      publishedOnly: true,
+    });
+    expect(errorQueryOf()).toBeUndefined();
+  });
+});

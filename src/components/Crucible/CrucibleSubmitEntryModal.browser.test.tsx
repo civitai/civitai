@@ -594,3 +594,45 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     );
   });
 });
+
+describe('CrucibleSubmitEntryModal — an upload whose scan fails', () => {
+  const props = {
+    crucibleId: 1,
+    crucibleName: 'Free first',
+    entryFee: 50,
+    entryLimit: 3,
+    freeEntriesPerUser: 1,
+    nsfwLevel: 1,
+    contentType: MediaType.image,
+    currentEntryCount: 0,
+  };
+
+  test('stays in the list marked "Processing failed", unselectable, and says so', async () => {
+    mocks.images = [];
+    const view = await renderModal();
+
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.images = [{ ...image(77), ingestion: ImageIngestionStatus.Pending }];
+    await view.rerender(<CrucibleSubmitEntryModal {...props} />);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(mocks.showErrorNotification, 'still scanning').not.toHaveBeenCalled();
+
+    mocks.images = [{ ...image(77), ingestion: ImageIngestionStatus.Error }];
+    await view.rerender(<CrucibleSubmitEntryModal {...props} />);
+
+    await vi.waitFor(() =>
+      expect(mocks.showErrorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Processing failed' })
+      )
+    );
+    expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
+    const tile = document
+      .querySelector<HTMLElement>('[data-testid="entry-media"][data-src="image-77"]')!
+      .closest<HTMLElement>('.group')!;
+    expect(tile.textContent).toContain('Processing failed');
+
+    tile.click();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(plainSubmit()?.disabled ?? true).toBe(true);
+  });
+});

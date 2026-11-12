@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { decreaseDate } from '~/utils/date-helpers';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
@@ -174,6 +175,7 @@ import { getSfwModelNames } from '~/server/services/model-sfw-face.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { showsSfwFace, withSfwModelNames } from '~/shared/utils/model-sfw-face';
 import {
+  entryDraftImageWhere,
   imageSelect,
   publishedImageWhere,
   publishedOrEntryDraftImageWhere,
@@ -7113,26 +7115,28 @@ export const getMyImages = async ({
   cursor = 0,
 }: GetMyImagesInput & { userId: number }) => {
   const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
+  // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
+  // over a crucible's maxClipSeconds before the user spends a click on them.
+  const select = {
+    id: true,
+    url: true,
+    meta: true,
+    metadata: true,
+    createdAt: true,
+    type: true,
+    nsfwLevel: true,
+    ingestion: true,
+  } satisfies Prisma.ImageSelect;
+  const type = {
+    in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
+  };
 
   try {
-    const media = await dbRead.image.findMany({
-      // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
-      // over a crucible's maxClipSeconds before the user spends a click on them.
-      select: {
-        id: true,
-        url: true,
-        meta: true,
-        metadata: true,
-        createdAt: true,
-        type: true,
-        nsfwLevel: true,
-        ingestion: true,
-      },
+    const mediaQuery = dbRead.image.findMany({
+      select,
       where: {
         userId,
-        type: {
-          in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
-        },
+        type,
         postId: { not: null },
         // Published-only callers render still-scanning images as pending rather than hiding them.
         ingestion: publishedOnly
@@ -7148,6 +7152,25 @@ export const getMyImages = async ({
       cursor: cursor ? { id: cursor } : undefined,
       orderBy: { id: 'desc' },
     });
+    // A failed scan drops an upload from the main query, so the entry modal would lose it
+    // without a word. Its own query, first page only: an OR on ingestion would stop the main
+    // query's semi-join on Post.
+    const failedEntryDraftsQuery =
+      publishedOnly && includeEntryDrafts && !cursor
+        ? dbRead.image.findMany({
+            select,
+            where: {
+              userId,
+              type,
+              ingestion: ImageIngestionStatus.Error,
+              createdAt: { gte: decreaseDate(new Date(), 7, 'days') },
+              ...entryDraftImageWhere(),
+            },
+            take: limit,
+            orderBy: { id: 'desc' },
+          })
+        : Promise.resolve([]);
+    const [media, failedEntryDrafts] = await Promise.all([mediaQuery, failedEntryDraftsQuery]);
 
     let nextCursor: number | undefined;
     if (media.length > limit) {
@@ -7156,7 +7179,9 @@ export const getMyImages = async ({
     }
 
     return {
-      items: media,
+      items: failedEntryDrafts.length
+        ? [...media, ...failedEntryDrafts].sort((a, b) => b.id - a.id)
+        : media,
       nextCursor,
     };
   } catch (error) {
