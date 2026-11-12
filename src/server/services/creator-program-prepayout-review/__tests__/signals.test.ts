@@ -22,7 +22,6 @@ const limits: PrepayoutLimits = {
 
 const ctx = (over: Partial<BatchContext> = {}): BatchContext => ({
   limits,
-  counterpartyMinimum: 400,
   payoutCutoffCents: 10_000,
   batchCreatorIds: new Set([1, 50]),
   ...over,
@@ -40,7 +39,6 @@ const clean = (over: Partial<CreatorMetrics> = {}): CreatorMetrics => ({
   })),
   priorPayoutsCents: [2_000, 1_800, 2_200],
   account: { muted: false, pendingRestriction: false },
-  warnedAt: null,
   ...over,
 });
 
@@ -77,28 +75,6 @@ describe('evaluateCreator', () => {
     [{ muted: false, pendingRestriction: true }, ['restricted']],
   ])('restricted: %j', (account, expected) => {
     expect(fired(clean({ account }))).toEqual(expected);
-  });
-
-  it.each([
-    [null, 400, []],
-    ['2026-11-03T00:00:00.000Z', 399, []],
-    ['2026-11-03T00:00:00.000Z', 400, ['warned-again']],
-  ])('warned-again: warnedAt %s, two-way %i', (warnedAt, twoWay, expected) => {
-    const metrics = clean({
-      warnedAt,
-      counterparties: [{ userId: 7, received: twoWay, sent: twoWay }],
-      bankable: 100_000,
-    });
-    expect(fired(metrics)).toEqual(expected);
-  });
-
-  it('warned-again stays off while the counterparty minimum is unset', () => {
-    const metrics = clean({
-      warnedAt: '2026-11-03T00:00:00.000Z',
-      counterparties: [{ userId: 7, received: 900, sent: 900 }],
-      bankable: 100_000,
-    });
-    expect(fired(metrics, ctx({ counterpartyMinimum: null }))).toEqual([]);
   });
 
   it.each([

@@ -47,7 +47,6 @@ vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: h.bear
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: h.hubSession,
   maybeRollHubCookie: h.roll,
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -200,7 +199,8 @@ describe('the page-data endpoint’s settings bootstrap request', () => {
   it('answers with every seed the settings bootstrap gives a server render', async () => {
     const seeds = await resolveSettingsBootstrapSeeds(
       { headers: { host: PUBLIC_HOST }, cookies: cookies(), url: '/images/101' } as never,
-      { user: USERS.owner } as never
+      { user: USERS.owner } as never,
+      {}
     );
     const { res, body } = await fetchPageData();
     expect(res.statusCode).toBe(200);

@@ -2,13 +2,13 @@ import classes from './PointPop.module.css';
 
 export type PointPop = { points: number; team: string; color?: string };
 
-// "+N Team", rising off a point on screen and then gone. Outside React on purpose: a pop outlives the
+// "+N Team points", rising off a point on screen and then gone. Outside React on purpose: a pop outlives the
 // button that caused it (a feed card scrolled away, a menu closed) and needs no state of its own.
 export function showPointPop({ points, team, color }: PointPop, at: { x: number; y: number }) {
   if (typeof document === 'undefined' || points <= 0) return;
   const el = document.createElement('div');
   el.className = classes.pop;
-  el.textContent = `+${points} ${team}`;
+  el.textContent = `+${points} ${team} points`;
   el.setAttribute('role', 'status');
   el.dataset.testid = 'event-point-pop';
   el.style.left = `${at.x}px`;

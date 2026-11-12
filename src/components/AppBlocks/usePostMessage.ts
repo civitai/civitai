@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
+import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema';
+import type { AppFeedbackRequestHint } from './appFeedbackDiagnostics';
+import {
+  failureFromHostMessage,
+  hostRefusal,
+  pushRecentError,
+  recentErrorsAt,
+  requestHintFromBlockMessage,
+  withRequestHint,
+} from './appFeedbackDiagnostics';
 import { buildBridgeNackReply } from './bridgeNackReply';
 import type { INVENTORY } from './hostHandlerParity';
 import { recordBridgeMessage } from './bridgeMessageBeacon';
@@ -168,6 +178,17 @@ interface UsePostMessageResult {
    * their own reply, and the series becomes complete.
    */
   reportNoToken: (type: string) => void;
+  /**
+   * The failed replies this bridge sent the app during the current app session (newest last,
+   * time-boxed), for the feedback report. Every reply goes through one primitive, so this sees
+   * the handlers' own error replies and the NACKs alike.
+   */
+  recentFailures: () => AppFeedbackRecentError[];
+  /**
+   * Record a request the host refused or rewrote in a handler, for the same report. For the
+   * handlers whose request has no reply to carry the failure (`NAVIGATE`).
+   */
+  noteHostEvent: (entry: AppFeedbackRecentError | null) => void;
 }
 
 const RATE_LIMIT_WINDOW_MS = 1000;
@@ -182,6 +203,8 @@ export const BRIDGE_BUDGET_EXEMPT_TYPES: ReadonlySet<keyof typeof INVENTORY> = n
   'TRACK_EVENT',
 ]);
 const DEDUP_WINDOW_MS = 5000;
+/** Requests awaiting a reply whose hint is kept; the oldest is dropped past this. */
+const REQUEST_HINTS_MAX = 32;
 
 /**
  * Separate budget for unsolicited-type NACKs.
@@ -310,6 +333,14 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
   const recentTimestampsRef = useRef<number[]>([]);
   const seenRequestIdsRef = useRef<Map<string, number>>(new Map());
   const nackTimestampsRef = useRef<number[]>([]);
+  const recentFailuresRef = useRef<AppFeedbackRecentError[]>([]);
+  const requestHintsRef = useRef<Map<string, AppFeedbackRequestHint>>(new Map());
+  // A host reused across apps without remounting starts a new app session: the old app's failures
+  // must not be attached to a report about the new one.
+  useEffect(() => {
+    recentFailuresRef.current = [];
+    requestHintsRef.current.clear();
+  }, [appBlockId]);
 
   /**
    * The single outbound primitive. `send` and the NACK paths both go through it so
@@ -324,6 +355,19 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       const targetOrigin = resolveOutboundTargetOrigin(expectedOrigin, opaqueOrigin);
       if (targetOrigin === null) return; // pinned mode, no origin: refuse to post
       iframe.contentWindow.postMessage({ type, payload }, targetOrigin);
+      try {
+        const requestId = extractRequestId({ payload });
+        const hint = requestId ? requestHintsRef.current.get(requestId) : undefined;
+        if (requestId) requestHintsRef.current.delete(requestId);
+        const failure = failureFromHostMessage(type, payload, Date.now());
+        if (failure)
+          recentFailuresRef.current = pushRecentError(
+            recentFailuresRef.current,
+            withRequestHint(failure, hint)
+          );
+      } catch {
+        // swallow — diagnostics must not affect the bridge
+      }
     },
     [iframeRef, expectedOrigin, opaqueOrigin]
   );
@@ -334,6 +378,10 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
    * and abort dispatch for that message, turning an observability feature into the
    * exact silent drop it exists to remove.
    */
+  const noteHostEvent = useCallback((entry: AppFeedbackRecentError | null) => {
+    if (entry) recentFailuresRef.current = pushRecentError(recentFailuresRef.current, entry);
+  }, []);
+
   const report = useCallback(
     (type: string, outcome: BridgeMessageOutcome) => {
       try {
@@ -341,8 +389,11 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       } catch {
         // swallow — observability must not affect the bridge
       }
+      // The drops that send the app no reply at all, so the reply tap cannot see them.
+      if (outcome === 'rate_limited' || outcome === 'deduped' || outcome === 'validator_rejected')
+        noteHostEvent(hostRefusal(type, outcome, Date.now()));
     },
-    [onOutcome, appBlockId, host]
+    [onOutcome, appBlockId, host, noteHostEvent]
   );
 
   const reportNoToken = useCallback(
@@ -438,6 +489,9 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
         // is awaiting), an unknown type, and the two types whose failure reply the
         // SDK validator would drop — so this cannot put junk on the wire.
         const unhandledRequestId = extractRequestId(data);
+        // With a requestId the NACK below carries the failure; without one nothing is sent back.
+        if (typeof unhandledRequestId !== 'string')
+          noteHostEvent(hostRefusal(data.type, unhandledOutcomeFor(data.type, host), now));
         if (typeof unhandledRequestId === 'string') {
           const nackWindow = nackTimestampsRef.current.filter(
             (t) => now - t < RATE_LIMIT_WINDOW_MS
@@ -501,9 +555,24 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       recentTimestampsRef.current = recentWindow;
 
       report(data.type, 'handled');
+      if (typeof payloadRequestId === 'string') {
+        try {
+          const hint = requestHintFromBlockMessage(data.type, data.payload);
+          const hints = requestHintsRef.current;
+          if (hint) {
+            if (hints.size >= REQUEST_HINTS_MAX) {
+              const oldest = hints.keys().next().value;
+              if (oldest != null) hints.delete(oldest);
+            }
+            hints.set(payloadRequestId, hint);
+          }
+        } catch {
+          // swallow — diagnostics must not affect the bridge
+        }
+      }
       for (const handler of subscribers) handler(data.payload);
     },
-    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock, host]
+    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock, host, noteHostEvent]
   );
 
   useEffect(() => {
@@ -526,5 +595,10 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
     };
   }, []);
 
-  return { send, onMessage, nack, reportNoToken };
+  const recentFailures = useCallback(
+    () => recentErrorsAt(recentFailuresRef.current, Date.now()),
+    []
+  );
+
+  return { send, onMessage, nack, reportNoToken, recentFailures, noteHostEvent };
 }

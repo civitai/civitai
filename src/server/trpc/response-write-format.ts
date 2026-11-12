@@ -3,6 +3,7 @@ import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { recordFastSuperjsonWrite } from '~/server/prom/trpc-fast-superjson.metrics';
 import { canDecodeDevalueResponse } from '~/server/utils/client-version-saturation';
 import { fastSuperjsonSerialize } from '~/server/trpc/superjson-fast-serialize';
+import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
 import { pickServerWriteSerialize, WRITE_DEVALUE } from '~/shared/utils/trpc-union-transformer';
 
 /**
@@ -61,6 +62,23 @@ export function pinResponseWriteToSuperjson(): void {
 }
 
 /**
+ * The `trpc-fast-superjson-shared-refs` flag: with it on, the fast walk also handles a payload
+ * that reaches one object at several paths (the feed procedures share a `user` and its cosmetics
+ * between a post and its images), which otherwise bails to a full `superjson.serialize`. Same
+ * output either way. Read at most once per 5s per process; unknown or a throw reads as off.
+ */
+let fastSuperjsonSharedRefsGate = createCachedFlagGate(() =>
+  isFliptSync(FLIPT_FEATURE_FLAGS.TRPC_FAST_SUPERJSON_SHARED_REFS)
+);
+
+/** Tests only: forget the cached flag read so the next write re-reads Flipt. */
+export function resetResponseWriteFlagGatesForTests() {
+  fastSuperjsonSharedRefsGate = createCachedFlagGate(() =>
+    isFliptSync(FLIPT_FEATURE_FLAGS.TRPC_FAST_SUPERJSON_SHARED_REFS)
+  );
+}
+
+/**
  * The server transformer's response write. devalue goes through the fail-open
  * `writeSerializeWithFallback` (superjson for a payload devalue cannot represent).
  *
@@ -74,6 +92,8 @@ export function pinResponseWriteToSuperjson(): void {
 export function responseWriteSerialize(data: unknown): unknown {
   const devalue = responseWritesDevalue();
   if (!devalue && isFliptSync(FLIPT_FEATURE_FLAGS.TRPC_FAST_SUPERJSON_WRITE) === true)
-    return fastSuperjsonSerialize(data, recordFastSuperjsonWrite);
+    return fastSuperjsonSerialize(data, recordFastSuperjsonWrite, {
+      sharedRefs: fastSuperjsonSharedRefsGate(),
+    });
   return pickServerWriteSerialize(devalue)(data);
 }

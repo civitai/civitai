@@ -11,6 +11,8 @@ import {
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
  * Two bootstrap members read the viewer's event cosmetic: the nav banners (whether the viewer
@@ -32,6 +34,17 @@ const h = vi.hoisted(() => ({
 }));
 // Wholesale: the reads under test, and the real module pulls in the whole event engine's I/O.
 vi.mock('~/server/services/event.service', () => h);
+// The bearer lookup: what getServerAuthSession records on the request it was given.
+const bearer = vi.hoisted(() => ({ result: null as Record<string, unknown> | null }));
+const hub = vi.hoisted(() => ({ result: null as Record<string, unknown> | null }));
+vi.mock('~/server/auth/bearer-token', () => ({
+  getSessionFromBearerToken: vi.fn(async () => bearer.result),
+}));
+vi.mock('~/server/auth/session-client', () => ({
+  getHubSession: vi.fn(async () => hub.result),
+  maybeRollHubCookie: vi.fn(async () => undefined),
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
@@ -59,7 +72,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   getLiveNow: vi.fn(async () => false),
 }));
 
-const { resolveSettingsBootstrapSeeds } = await import(
+const { resolveSettingsBootstrap, resolveSettingsBootstrapSeeds } = await import(
   '~/server/services/settings-bootstrap.service'
 );
 
@@ -84,7 +97,7 @@ afterEach(() => {
 
 describe('settings bootstrap: the event cosmetic is read once per request', () => {
   it('reads it once for the nav banners and the event seeds together', async () => {
-    const seeds = await resolveSettingsBootstrapSeeds(req, session);
+    const seeds = await resolveSettingsBootstrapSeeds(req, session, {});
 
     // Both members consumed the read: the banner shows its joined cta and the seed carries it.
     // Without these, a single call could mean one member simply stopped reading.
@@ -101,8 +114,108 @@ describe('settings bootstrap: the event cosmetic is read once per request', () =
   });
 
   it('does not share a read across requests', async () => {
-    await resolveSettingsBootstrapSeeds(req, session);
-    await resolveSettingsBootstrapSeeds(req, session);
+    await resolveSettingsBootstrapSeeds(req, session, {});
+    await resolveSettingsBootstrapSeeds(req, session, {});
     expect(h.getEventCosmetic).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('settings bootstrap: event visibility follows the request credential', () => {
+  const moderator = {
+    user: { id: USER_ID, username: 'mod', isModerator: true },
+  } as unknown as Session;
+  const scopedKey = {
+    apiKeyId: 7,
+    apiKeyType: ApiKeyType.User,
+    subject: { type: 'apiKey' as const, id: 7 },
+    tokenScope: TokenScope.UserRead,
+  };
+  const bannerShown = (seeds: Awaited<ReturnType<typeof resolveSettingsBootstrapSeeds>>) =>
+    !!seeds.navBanners?.some((b) => b.id === `event:${BIRTHDAY_2026_EVENT}`);
+  const seededViewers = () =>
+    (h.getViewerEventAccess.mock.calls as unknown[][]).map(
+      ([args]) => (args as { viewer?: unknown }).viewer
+    );
+
+  beforeEach(() => {
+    // Launched for nobody: only the flag's moderator shortcut lets anyone in.
+    testerFlag.reset({ public: false });
+    h.getViewerEventAccess.mockClear();
+  });
+
+  it('shows a moderator on a session the unlaunched event', async () => {
+    expect(bannerShown(await resolveSettingsBootstrapSeeds(req, moderator, {}))).toBe(true);
+    expect(seededViewers()).toContainEqual(expect.objectContaining({ isModerator: true }));
+  });
+
+  it('reads a moderator with no known credential as the user alone', async () => {
+    expect(bannerShown(await resolveSettingsBootstrapSeeds(req, moderator, null))).toBe(false);
+    expect(seededViewers().length).toBeGreaterThan(0);
+    for (const viewer of seededViewers())
+      expect(viewer).toEqual(expect.objectContaining({ isModerator: false }));
+  });
+
+  it('reads a moderator on a scoped key as the user alone', async () => {
+    expect(bannerShown(await resolveSettingsBootstrapSeeds(req, moderator, scopedKey))).toBe(false);
+    expect(seededViewers().length).toBeGreaterThan(0);
+    for (const viewer of seededViewers())
+      expect(viewer).toEqual(expect.objectContaining({ isModerator: false }));
+  });
+});
+
+describe('settings bootstrap: the credential comes from the session lookup', () => {
+  const moderatorUser = { id: USER_ID, username: 'mod', isModerator: true };
+  const bootstrapFor = (credential: Record<string, unknown> | 'session') => {
+    bearer.result = credential === 'session' ? null : { user: moderatorUser, ...credential };
+    hub.result = credential === 'session' ? { user: moderatorUser } : null;
+    return resolveSettingsBootstrap({
+      req: {
+        headers: {
+          host: 'civitai.com',
+          ...(credential === 'session' ? {} : { authorization: 'Bearer key' }),
+        },
+        cookies: {},
+        url: '/api/user/settings',
+      },
+      res: { setHeader: () => undefined, getHeader: () => undefined },
+    } as unknown as Parameters<typeof resolveSettingsBootstrap>[0]);
+  };
+  const viewers = () =>
+    (h.getViewerEventAccess.mock.calls as unknown[][]).map(
+      ([args]) => (args as { viewer?: unknown }).viewer
+    );
+
+  beforeEach(() => {
+    testerFlag.reset({ public: false });
+    h.getViewerEventAccess.mockClear();
+  });
+
+  it('reads a moderator on a scoped key as the user alone', async () => {
+    const seeds = await bootstrapFor({
+      tokenScope: TokenScope.UserRead,
+      apiKeyId: 7,
+      apiKeyType: ApiKeyType.User,
+      subject: { type: 'apiKey', id: 7 },
+    });
+    expect(seeds.navBanners?.some((b) => b.id === `event:${BIRTHDAY_2026_EVENT}`)).toBe(false);
+    expect(viewers().length).toBeGreaterThan(0);
+    for (const viewer of viewers()) expect(viewer).toMatchObject({ isModerator: false });
+  });
+
+  it('keeps a moderator on a session', async () => {
+    const seeds = await bootstrapFor('session');
+    expect(seeds.navBanners?.some((b) => b.id === `event:${BIRTHDAY_2026_EVENT}`)).toBe(true);
+    expect(viewers()).toContainEqual(expect.objectContaining({ isModerator: true }));
+  });
+
+  it('keeps a moderator on a full-access personal key', async () => {
+    const seeds = await bootstrapFor({
+      tokenScope: TokenScope.Full,
+      apiKeyId: 8,
+      apiKeyType: ApiKeyType.User,
+      subject: { type: 'apiKey', id: 8 },
+    });
+    expect(seeds.navBanners?.some((b) => b.id === `event:${BIRTHDAY_2026_EVENT}`)).toBe(true);
+    expect(viewers()).toContainEqual(expect.objectContaining({ isModerator: true }));
   });
 });

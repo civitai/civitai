@@ -122,8 +122,9 @@ const rawCalls = () =>
   }));
 const pick = () => rawCalls().find(({ sql }) => /FROM "Appeal" a/.test(sql))!;
 const updates = () => rawCalls().filter(({ sql }) => /UPDATE "Appeal"/.test(sql));
-// Every claim but the review-deadline close, which picks its own rows.
-const claims = () => updates().filter(({ sql }) => !/"entityRemovedAt" <= now\(\)/.test(sql));
+// Every claim but the two deadline closes, which pick their own rows.
+const claims = () =>
+  updates().filter(({ sql }) => !/"entityRemovedAt" <= now\(\)|"CsamQueueSetAside"/.test(sql));
 const voidUpdates = () => claims().filter(({ sql }) => /'Void'::"AppealStatus"/.test(sql));
 const removedUpdate = () => updates().find(({ sql }) => /"entityRemovedAt" = now\(\)/.test(sql));
 const idsIn = (values: unknown[]) => values.find((v) => Array.isArray(v)) as number[] | undefined;
@@ -161,6 +162,8 @@ beforeEach(() => {
     ...values: unknown[]
   ) => {
     const sql = strings.join('?');
+    // The dismissed-review close has its own suite (void-orphaned-appeals.behavior.test.ts).
+    if (/"CsamQueueSetAside"/.test(sql)) return Promise.resolve([]);
     if (/FROM "Appeal" a/.test(sql)) return Promise.resolve(orphans);
     if (/jsonb_array_elements/.test(sql))
       return Promise.resolve(

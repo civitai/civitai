@@ -3,12 +3,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
+import type * as RegionBlocking from '~/server/utils/region-blocking';
+import { NsfwLevel } from '~/server/common/enums';
 import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
 
-const { mockGetServerAuthSession, mockGetFeatureFlagsLazy, mockRateLimit } = vi.hoisted(() => ({
-  mockGetServerAuthSession: vi.fn(),
-  mockGetFeatureFlagsLazy: vi.fn(),
-  mockRateLimit: vi.fn(),
+const { mockGetServerAuthSession, mockGetFeatureFlagsLazy, mockRateLimit, mockRegionBlocked } =
+  vi.hoisted(() => ({
+    mockGetServerAuthSession: vi.fn(),
+    mockGetFeatureFlagsLazy: vi.fn(),
+    mockRateLimit: vi.fn(),
+    mockRegionBlocked: vi.fn(),
+  }));
+
+vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
+  ...(await importOriginal<typeof RegionBlocking>()),
+  isAPIAccessBlocked: mockRegionBlocked,
 }));
 
 vi.mock('~/server/utils/site-search-rate-limit', () => ({
@@ -33,8 +42,9 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 const fetchMock = vi.fn();
 
-async function post(path: string[], body: unknown) {
+async function post(path: string[], body: unknown, headers: Record<string, string> = {}) {
   const res = {
+    statusCode: 200,
     status: vi.fn().mockReturnThis(),
     end: vi.fn().mockReturnThis(),
     send: vi.fn().mockReturnThis(),
@@ -44,7 +54,8 @@ async function post(path: string[], body: unknown) {
   } as unknown as NextApiResponse;
   const req = {
     method: 'POST',
-    headers: { host: 'example.test' },
+    headers: { host: 'example.test', ...headers },
+    url: `/api/search/${path.join('/')}`,
     cookies: {},
     query: { path },
     body,
@@ -54,12 +65,14 @@ async function post(path: string[], body: unknown) {
   const spies = {
     json: res.json as any,
     status: res.status as any,
+    end: res.end as any,
     setHeader: res.setHeader as any,
   };
   const handler = (await import('~/pages/api/search/[...path]')).default;
   await handler(req, res);
   return {
-    status: spies.status.mock.calls.at(-1)?.[0],
+    status: spies.status.mock.calls.at(-1)?.[0] ?? res.statusCode,
+    ended: spies.end.mock.calls.at(-1)?.[0],
     body: spies.json.mock.calls.at(-1)?.[0],
     cacheControl: spies.setHeader.mock.calls
       .filter(([name]: [string]) => name === 'Cache-Control')
@@ -82,6 +95,7 @@ beforeEach(() => {
   mockGetServerAuthSession.mockResolvedValue(null);
   mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true });
   mockRateLimit.mockResolvedValue({ allowed: true });
+  mockRegionBlocked.mockReturnValue(false);
   setEnv({ NEXT_PUBLIC_SEARCH_HOST: 'http://search.test', SEARCH_TOKEN_API_KEY: 'server-key' });
 });
 afterEach(() => {
@@ -128,6 +142,15 @@ describe('POST /api/search/multi-search', () => {
     mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: false });
     await post(['multi-search'], { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] });
     expect(sentQueries()[0].filter).toEqual(['nsfwLevel=1 OR nsfwLevel=2']);
+  });
+
+  it('a client-sent verified-bot header does not lift the signed-out cap', async () => {
+    await post(
+      ['multi-search'],
+      { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] },
+      { 'x-civitai-verified-bot': 'googlebot' }
+    );
+    expect(sentQueries()[0].filter).toContain('nsfwLevel=1');
   });
 
   it('refuses an index the site does not search, without calling the backend', async () => {
@@ -243,6 +266,43 @@ describe('rate limit', () => {
     expect(res.body).toMatchObject({ code: 'too_many_requests' });
     expect(mockRateLimit).toHaveBeenCalledWith(expect.objectContaining({ userId: 42 }));
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('request policy', () => {
+  it('a blocked region gets a 451, and the backend is not called', async () => {
+    mockRegionBlocked.mockReturnValue(true);
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.status).toBe(451);
+    expect(String(res.ended)).toContain('not available in your region');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('nested images', () => {
+  it('a capped viewer never gets a model image above the cap', async () => {
+    const images = [
+      { id: 1, nsfwLevel: NsfwLevel.PG },
+      { id: 2, nsfwLevel: NsfwLevel.R },
+    ];
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [
+              { indexUid: MODELS_SEARCH_INDEX, hits: [{ id: 9, images, _formatted: { images } }] },
+            ],
+          })
+        )
+    );
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }],
+    });
+    const [hit] = res.body.results[0].hits;
+    expect(hit.images.map((image: { id: number }) => image.id)).toEqual([1]);
+    expect(hit._formatted.images.map((image: { id: number }) => image.id)).toEqual([1]);
   });
 });
 

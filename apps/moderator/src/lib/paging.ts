@@ -1,3 +1,5 @@
+import { TRANSCRIPT_AFTER, TRANSCRIPT_AROUND, TRANSCRIPT_BEFORE } from './chat-transcript-cursor';
+
 // Cursor and numbered paging both live in the URL, and anything invalidating a batch must clear
 // BOTH (`clearPaging`) — a stale param from the other scheme reopens a page of a dead query.
 // The cursor trail holds one entry per page past the first and its last entry is always the
@@ -53,4 +55,7 @@ export function clearPaging(params: URLSearchParams) {
   params.delete(CURSOR_VALUE_PARAM);
   params.delete(TRAIL_PARAM);
   params.delete(IMAGE_PAGE_PARAM);
+  params.delete(TRANSCRIPT_BEFORE);
+  params.delete(TRANSCRIPT_AFTER);
+  params.delete(TRANSCRIPT_AROUND);
 }

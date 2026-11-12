@@ -10,11 +10,12 @@ import type * as BuzzService from '~/server/services/buzz.service';
  * `requiresEmailVerification` decides nothing on its own — it reads a marker, and this is the only
  * place that marker is written. The gate is safe for the 7.1M accounts with no verified address
  * precisely because the marker can only be applied here, when this step first completes or when it
- * changes the address. A second writer, or this one stamping a bare re-submit, is what would make it
+ * sets a first address. A second writer, or this one stamping a bare re-submit, is what would make it
  * retroactive: `onboarding` is caller-supplied, so a re-submit is something any account can perform.
  *
  * Also covers the `emailVerified` carry-over: the flag attests to ONE address, so typing a different
- * one must clear it — and, because the column is `citext`, a case-only retype must NOT.
+ * one must clear it — and, because the column is `citext`, a case-only retype must NOT. An account that
+ * already has an address cannot replace it here at all.
  */
 
 const { mockAssertEmailAllowed, mockSend } = vi.hoisted(() => ({
@@ -194,21 +195,81 @@ describe('onboarding Profile step — email-verification stamp', () => {
     expect(stampWrites()).toHaveLength(0);
   });
 
-  it('DOES stamp a re-submit that changes the address', async () => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ emailVerified: VERIFIED_AT }));
+  it('DOES stamp a re-submit that sets a first address', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: null }));
 
     await runProfile(TYPED_EMAIL, { onboarding: OnboardingSteps.Profile });
 
     expect(stampWrites()[0].values).toEqual([true, USER_ID]);
   });
 
-  it('clears emailVerified and stamps when a verified account types a DIFFERENT address', async () => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ emailVerified: VERIFIED_AT }));
+  it('clears emailVerified and stamps when it sets a first address', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(
+      row({ email: null, emailVerified: VERIFIED_AT })
+    );
 
     await runProfile(TYPED_EMAIL);
 
-    expect(writtenData().emailVerified).toBeNull();
+    expect(writtenData()).toMatchObject({ email: TYPED_EMAIL, emailVerified: null });
     expect(stampWrites()[0].values).toEqual([true, USER_ID]);
+  });
+
+  /**
+   * 🔴 Replacing an address goes through Change email, which proves the new one before writing it.
+   * This step writes without that proof, so it may only set a first address.
+   */
+  it.each([
+    ['first completion', 0],
+    ['re-submit', OnboardingSteps.Profile],
+  ])('refuses a DIFFERENT address on an account that has one (%s)', async (_label, onboarding) => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ emailVerified: VERIFIED_AT }));
+
+    await expect(runProfile(TYPED_EMAIL, { onboarding })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('Change email'),
+    });
+
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+    expect(stampWrites()).toHaveLength(0);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('accepts the step with no email when the account already has one', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ emailVerified: VERIFIED_AT }));
+
+    await completeOnboardingHandler({
+      input: { step: OnboardingSteps.Profile, username: 'ada' },
+      ctx: ctx(),
+    } as Parameters<typeof completeOnboardingHandler>[0]);
+
+    expect(writtenData()).not.toHaveProperty('email');
+    expect(writtenData()).not.toHaveProperty('emailVerified');
+  });
+
+  it('mails the stored unverified address when the step sends no email', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row());
+
+    await completeOnboardingHandler({
+      input: { step: OnboardingSteps.Profile, username: 'ada' },
+      ctx: ctx(),
+    } as Parameters<typeof completeOnboardingHandler>[0]);
+
+    expect(stampWrites()[0].values).toEqual([true, USER_ID]);
+    expect(mockSend.mock.calls[0][0]).toMatchObject({ to: PROVIDER_EMAIL });
+  });
+
+  it('requires an email when the account has none', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: null }));
+
+    await expect(
+      completeOnboardingHandler({
+        input: { step: OnboardingSteps.Profile, username: 'ada' },
+        ctx: ctx({ email: null }),
+      } as Parameters<typeof completeOnboardingHandler>[0])
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+    expect(stampWrites()).toHaveLength(0);
   });
 
   it('leaves emailVerified alone when the address is unchanged', async () => {
@@ -231,6 +292,7 @@ describe('onboarding Profile step — email-verification stamp', () => {
 
     await runProfile('alice@example.test');
 
+    expect(writtenData()).not.toHaveProperty('email');
     expect(writtenData()).not.toHaveProperty('emailVerified');
     expect(stampWrites()[0].values).toEqual([false, USER_ID]);
     expect(mockAssertEmailAllowed).not.toHaveBeenCalled();
@@ -265,7 +327,7 @@ describe('onboarding Profile step — email-verification stamp', () => {
    * silently reverts the change when its link is clicked.
    */
   it('sends to the address just written, not to whatever a re-read returns', async () => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: 'stale@example.test' }));
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: null }));
     dbMock.dbRead.user.findUnique.mockResolvedValue(row({ email: 'stale@example.test' }));
 
     await runProfile(TYPED_EMAIL);
@@ -295,7 +357,7 @@ describe('onboarding Profile step — email-verification stamp', () => {
    * fix exists for.
    */
   it('mints the token for the address just written', async () => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: 'stale@example.test' }));
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: null }));
     dbMock.dbRead.user.findUnique.mockResolvedValue(row({ email: 'stale@example.test' }));
 
     await runProfile(TYPED_EMAIL);
@@ -307,10 +369,10 @@ describe('onboarding Profile step — email-verification stamp', () => {
    * 🔴 This procedure carries no per-send ceiling and the CALLER picks the recipient. Sending on every
    * address change made it an unmetered way to mail an arbitrary third party from Civitai's sending
    * domain — alternate two addresses and loop. `changed` is true at most once per account, so this
-   * path sends at most once. The banner's resend, which IS rate-limited, covers a mistyped address.
+   * path sends at most once.
    */
-  it('sends no mail when a re-submit merely changes the address', async () => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValue(row());
+  it('sends no mail when a re-submit sets a first address', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ email: null }));
 
     await runProfile(TYPED_EMAIL, { onboarding: OnboardingSteps.Profile });
 

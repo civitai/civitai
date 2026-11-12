@@ -282,6 +282,29 @@ describe('resolveResourceFileForUser: maturity runs after the download gate', ()
   });
 });
 
+describe('resolveResourceFileForUser: a mature model', () => {
+  // Answers with the model's nsfw only when the resolver selects it.
+  const matureModel = () =>
+    versionFindFirst.mockImplementation((async (args: {
+      select: { model: { select: Record<string, boolean> } };
+    }) => {
+      const row = version({ nsfwLevel: NsfwLevel.PG });
+      return args.select.model.select.nsfw ? { ...row, model: { ...row.model, nsfw: true } } : row;
+    }) as never);
+
+  it('is FORBIDDEN on a SFW ceiling even when its version is rated PG', async () => {
+    matureModel();
+    await expect(resolve()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('is served to a viewer whose ceiling allows mature content', async () => {
+    matureModel();
+    await expect(resolve(matureViewer, { canViewNsfw: true })).resolves.toMatchObject({
+      meta: { fileId: 10 },
+    });
+  });
+});
+
 describe('resolveResourceFileForUser: which file', () => {
   it('without fileId, the lowest id wins a tie even when it is not the first row', async () => {
     files = [

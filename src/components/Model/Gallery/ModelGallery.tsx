@@ -5,10 +5,7 @@ import { ImagesAsPostsInfinite } from '~/components/Image/AsPosts/ImagesAsPostsI
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import {
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { forcedMinorModelBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ModelById } from '~/types/router';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
@@ -35,7 +32,7 @@ export function ModelGallery(props: ModelGalleryProps) {
 
   const content = inView && <ImagesAsPostsInfinite source={{ kind: 'model', model }} {...rest} />;
   const forceMinorLevel = !!model.minor && !currentUser?.isModerator;
-  const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+  const minorBrowsingLevel = forcedMinorModelBrowsingLevel(!!currentUser);
 
   return (
     // The tour targets this wrapper, not the gallery's own heading: the heading

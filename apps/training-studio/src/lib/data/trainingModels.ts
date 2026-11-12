@@ -1319,12 +1319,14 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
+  // Not the main app's 32/32, which Anima LoRA creators report as too large: 16/16 here, 8/8 for
+  // characters (`NETWORK_SIZE_BY_LORA_TYPE`).
   anima: {
     epochs: 5,
     unetLr: 1e-4,
     textEncoderLr: 0,
-    networkDim: 32,
-    networkAlpha: 32,
+    networkDim: 16,
+    networkAlpha: 16,
     resolution: 1024,
     batchSize: 1,
     noiseOffset: 0,
@@ -1576,10 +1578,25 @@ function batchMaxForCard(cardType: string): number {
   return 1;
 }
 
+/** Network dim/alpha per LoRA type, by version key, over that version's `PARAM_DEFAULTS`. */
+const NETWORK_SIZE_BY_LORA_TYPE: Record<
+  string,
+  Partial<Record<string, Pick<RunParamDefaults, 'networkDim' | 'networkAlpha'>>>
+> = {
+  anima: { character: { networkDim: 8, networkAlpha: 8 } },
+};
+
 /** The advanced-param defaults for a chosen version (falls back to the card's primary version, then the
- *  modern-caption base — so a "Custom…" pick still gets sensible per-family values). */
-export function paramsForVersion(card: ModelCard, versionKey: string): RunParamDefaults {
-  return PARAM_DEFAULTS[versionKey] ?? PARAM_DEFAULTS[card.versions[0]!.key] ?? PARAM_FALLBACK;
+ *  modern-caption base — so a "Custom…" pick still gets sensible per-family values), sized for the
+ *  LoRA type where that version's network size depends on it. */
+export function paramsForVersion(
+  card: ModelCard,
+  versionKey: string,
+  loraType = ''
+): RunParamDefaults {
+  const key = PARAM_DEFAULTS[versionKey] ? versionKey : card.versions[0]!.key;
+  const defaults = PARAM_DEFAULTS[key] ?? PARAM_FALLBACK;
+  return { ...defaults, ...NETWORK_SIZE_BY_LORA_TYPE[key]?.[loraType] };
 }
 
 /**
@@ -1675,8 +1692,8 @@ export const teTrainingUnsupportedReason = (
     : `Text encoder training isn't supported for ${modelName}.`;
 };
 
-/** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
- *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */
+/** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets;
+ *  batch is capped per family; epochs are 1–20; LR is 0–1. Resolution mirrors the in-app trainer only. */
 export function paramBounds(card: ModelCard): Record<string, ParamBound> {
   const sdxl = SDXL_FAMILY.has(card.type);
   const video = card.media === 'video';
@@ -1688,7 +1705,8 @@ export function paramBounds(card: ModelCard): Record<string, ParamBound> {
     textEncoderLr: { min: 0, max: 1, step: 1e-5 },
     networkDim: { min: 1, max: netMax, step: 1 },
     networkAlpha: { min: 1, max: netMax, step: 1 },
-    // Video/audio resolution is fixed upstream; images range per family.
+    // The orchestrator's AI-Toolkit input declares no `resolution` and drops what we send, so no value
+    // here (SDXL's 2048 included) reaches the trainer. Widening these bounds would add nothing.
     resolution: video
       ? { min: 960, max: 960, step: 1 }
       : audio

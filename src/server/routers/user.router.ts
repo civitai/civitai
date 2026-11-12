@@ -178,6 +178,16 @@ export const userRouter = router({
     const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
     return getMyAppBuzzToday(ctx.user);
   }),
+  /** The running app's paused-at-the-cap state; `null` where apps or the upgrade prompt are off. */
+  getAppBuzzCap: protectedProcedure.meta({ blockApiKeys: true }).query(async ({ ctx }) => {
+    const { getMyAppBuzzCap } = await import('~/server/services/blocks/app-buzz-usage.service');
+    return getMyAppBuzzCap(ctx.user);
+  }),
+  /** Continue on your own Buzz past your plan's daily app cap, for the rest of the UTC day. */
+  optInAppBuzzToday: protectedProcedure.meta({ blockApiKeys: true }).mutation(async ({ ctx }) => {
+    const { optInAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
+    return optInAppBuzzToday(ctx.user);
+  }),
   getSearchHydration: publicProcedure
     .input(getUserSearchHydrationSchema)
     .query(getUserSearchHydrationHandler),
@@ -235,7 +245,7 @@ export const userRouter = router({
     .input(userUpdateSchema)
     .mutation(updateUserHandler),
   requestEmailChange: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserWrite })
+    .meta({ requiredScope: TokenScope.UserWrite, blockApiKeys: true })
     .input(requestEmailChangeSchema)
     .use(
       rateLimit({
@@ -301,7 +311,7 @@ export const userRouter = router({
     .input(toggleModelEngagementInput)
     .mutation(toggleNotifyModelHandler),
   completeOnboardingStep: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserWrite })
+    .meta({ requiredScope: TokenScope.UserWrite, blockApiKeys: true })
     .input(userOnboardingSchema)
     // Belt and braces on the ONE step that can send mail to a caller-chosen address. The handler only
     // sends on a first completion, so the primitive is closed there; this bounds the residual if that

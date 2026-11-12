@@ -1,6 +1,6 @@
 # CommentV3 Phase 5: post-flip cleanup
 
-Built 2026-11-09, not deployed; do not merge before the model flip's soak has ended.
+Built 2026-11-09, deployed 2026-11-10.
 
 Every surface reads and writes CommentV3 since the model flip (#8282). Phase 5 removes what the
 flips left behind, so that no live comment path reads or writes the old comment tables (`Comment`,
@@ -33,6 +33,8 @@ before the soak has really ended.
    take `commentIds` now, and the event engine's `comment-v2.ts` handler is gone.
 3. Right after the deploy, run the "Stored records" SQL under "Hand-run SQL" on both databases.
 4. Once the deploy is healthy, run the old comment purge.
+
+All four steps ran on prod on 2026-11-10.
 
 ## Live bugs fixed
 
@@ -102,7 +104,8 @@ before the soak has really ended.
 
 ## Kept, with reasons
 
-These stay until Phase 6's teardown:
+The Phase 5 state, superseded by Phase 6 (`docs/plans/comments-v3-phase6.md`). These stayed until
+Phase 6's teardown:
 
 - **The old tables and their rows**, and the mirror's trigger functions (Phase 6 drops them before
   the tables they take as row types).
@@ -119,17 +122,16 @@ These stay until Phase 6's teardown:
 
 ## Deferred after this PR (Group B)
 
-Still named for `CommentV2`, each needing a data or config change first; tracked in the checklist's
-"Deferred after Phase 5 (Group B)":
+Names still carrying `CommentV2`; tracked in the checklist's "Deferred after Phase 5 (Group B)".
+None blocks Phase 6.
 
-- **ClickHouse events stay `CommentV2_*`.** `reactions.type` is an enum with no CommentV3 value, and
-  changing it is a ClickHouse migration on a column a materialized view reads.
-- **Event points' `CommentV2:` source keys** (`events/points/hooks.ts`).
-- **Buzz entity type `'CommentV2'`:** `goodContent.reward.ts` and the labels in `src/utils/buzz.ts`
-  and `string-helpers.ts`, which name old transactions.
-- **`mode.ts`'s CommentV3 → CommentV2 rollout fallback**, until CommentV3 has its own rollout
-  config; removing it first stops comment scanning. Any CommentV3 rollout write, `null` included,
-  deletes the stored CommentV2 rollout, so `null` turns comment scanning off.
+- **`mode.ts`'s CommentV3 → CommentV2 rollout fallback** is removed in Phase 5.5, after CommentV3
+  was given its own rollout on 2026-11-10 (removing it first would have stopped comment scanning).
+  CommentV3 now reads only its own field, so a `null` write turns comment scanning off. Left:
+  delete the stale `Comment` and `CommentV2` fields of `system:text-scan:modes` once it deploys.
+- **Kept as permanent labels** (decided 2026-11-10), because each names stored history elsewhere:
+  ClickHouse `CommentV2_*` events, event points' `CommentV2:` source keys, and the Buzz entity
+  type `'CommentV2'`.
 
 ## Hand-run SQL
 
@@ -220,6 +222,6 @@ the mirror dropped, its deletes touch only the old tables.
 
 ## Phase 5.5 and what is left
 
-Phase 5.5 (its own PR, Briant 2026-11-09: the shared notification builder and exclusion helper),
-the prod-replica verifications and the remaining Phase 5 items are tracked in
+Phase 5.5 (its own PR, Briant 2026-11-09) holds the shared notification builder, the exclusion
+helper and the removal of the `mode.ts` fallback. The remaining items are tracked in
 `docs/comments-consolidation-checklist.md` → "Phase 5" and "Phase 5.5".

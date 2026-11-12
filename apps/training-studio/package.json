@@ -1,6 +1,6 @@
 {
   "name": "@civitai/training-studio-app",
-  "version": "0.0.45",
+  "version": "0.0.46",
   "private": true,
   "type": "module",
   "scripts": {
@@ -22,7 +22,7 @@
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
-    "@civitai/orchestration-client": "0.2.0",
+    "@civitai/orchestration-client": "0.2.3",
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",
     "@civitai/ui": "workspace:*",
@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "^5.3.2",
-    "@sveltejs/kit": "^2.43.2",
+    "@sveltejs/kit": "^2.70.2",
     "@sveltejs/vite-plugin-svelte": "^6.0.0",
     "@tailwindcss/vite": "^4.1.0",
     "@types/node": "^20.19.9",

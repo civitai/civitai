@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import type { EmbedInput } from '@/vector-sync/embedder';
 import { syncIds, type Domain, type DomainPayload } from '@/vector-sync/domain/sync';
 import { DomainSyncQueue } from '@/vector-sync/domain/queue';
+import { vectorSyncMetrics } from '@/vector-sync/metrics';
 import { contentRoute, OUTBOX_TOPIC, selectDomains } from '@/vector-sync/content/consumer';
 import type { VectorPoint } from '@/vector-sync/qdrant';
 
@@ -197,6 +198,56 @@ describe('one queue over several domains', () => {
     b.store.failNext = false;
     await q.flush();
     expect(commits).toEqual([[{ ...at, offset: '10' }]]);
+  });
+});
+
+describe('ingestion metrics', () => {
+  const value = async (
+    metric: {
+      get: () => Promise<{ values: { value: number; labels: object; metricName?: string }[] }>;
+    },
+    labels: Record<string, string>,
+    metricName?: string
+  ) =>
+    (await metric.get()).values.find(
+      (v) =>
+        (!metricName || v.metricName === metricName) &&
+        Object.entries(labels).every(([k, x]) => (v.labels as Record<string, unknown>)[k] === x)
+    )?.value ?? 0;
+
+  test('a flush counts its embeds, deletes and skips under its own domain', async () => {
+    const name = 'metrics-probe';
+    const { rows, getDocs, store, deps } = setup();
+    rows.set(1, doc('castle'));
+    store.points.set(2, { id: 2, vector: [1], payload: doc('gone') });
+    const q = new DomainSyncQueue([{ domain: domain(name, { getDocs }), deps }], async () => {});
+    const at = { topic: OUTBOX_TOPIC, partition: 0, offset: '1' };
+    const points = (outcome: string) => value(vectorSyncMetrics.points, { domain: name, outcome });
+
+    q.add(name, { id: 1 }, at);
+    q.add(name, { id: 2 }, at);
+    await q.flush();
+    expect([await points('embedded'), await points('deleted'), await points('updated')]).toEqual([
+      1, 1, 0,
+    ]);
+    expect(
+      await value(
+        vectorSyncMetrics.embedSeconds,
+        { domain: name },
+        'vector_sync_embed_duration_seconds_count'
+      )
+    ).toBe(1);
+
+    q.add(name, { id: 1 }, at);
+    await q.flush();
+    expect(await points('embedded')).toBe(1);
+    expect(await value(vectorSyncMetrics.skipped, { domain: name, reason: 'unchanged' })).toBe(1);
+
+    store.failNext = true;
+    rows.set(1, doc('castle', 4));
+    q.add(name, { id: 1 }, at);
+    await expect(q.flush()).rejects.toThrow('qdrant down');
+    expect(await value(vectorSyncMetrics.flushErrors, { domain: name })).toBe(1);
   });
 });
 

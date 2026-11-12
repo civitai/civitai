@@ -65,14 +65,27 @@ describe('orchestrator denylist — the predicate', () => {
     expect(isPlatformInternalStepType('chatCompletion')).toBe(false);
   });
 
-  // A raw `comfy` graph is denied on the app-reachable arms; the platform's own
-  // generation graph builds `comfy` steps without passing through this guard.
-  it('refuses a raw comfy step, in any casing, without touching customComfy', () => {
-    for (const t of ['comfy', 'Comfy', 'COMFY']) {
+  // A raw comfy graph, under either `$type`, is denied on the app-reachable arms; the
+  // platform's own steps of both types are built without passing through this guard.
+  it('refuses a raw comfy or customComfy step, in any casing', () => {
+    for (const t of ['comfy', 'Comfy', 'COMFY', 'customComfy', 'CustomComfy', 'CUSTOMCOMFY']) {
       expect(isPlatformInternalStepType(t)).toBe(true);
       expect(() => assertStepTypeAllowed(t)).toThrow(PlatformInternalStepTypeError);
     }
-    expect(isPlatformInternalStepType('customComfy')).toBe(false);
+  });
+
+  it('refuses a $type that is not ASCII letters and digits', () => {
+    for (const t of [
+      'cu\u017ftomComfy',
+      'custom Comfy',
+      'customComfy\u200b',
+      '\uff43omfy',
+      'x_guard_moderation',
+      'xGuard-Moderation',
+      'a.b',
+    ]) {
+      expect(() => assertStepTypeAllowed(t)).toThrow(PlatformInternalStepTypeError);
+    }
   });
 
   it('allows an ordinary generation type', () => {
@@ -123,6 +136,7 @@ describe('orchestrator denylist — the predicate', () => {
     expect([...PLATFORM_INTERNAL_STEP_TYPES].sort()).toEqual([
       'comfy',
       'comfyNodepackSnapshot',
+      'customComfy',
       'imageScanning',
       'mediaHash',
       'modelClamScan',

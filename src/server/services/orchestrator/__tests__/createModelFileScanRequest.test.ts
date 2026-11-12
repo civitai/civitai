@@ -264,6 +264,23 @@ describe('createModelFileScanRequest', () => {
       expect(submitCall.body.metadata).toEqual({ fileId: 1, modelVersionId: 10 });
     });
 
+    it('carries a scan-only marker in workflow.metadata when the rescan asks for one', async () => {
+      mockSubmitWorkflow.mockResolvedValue({
+        data: { id: 'wf-1' },
+        error: null,
+        response: { status: 200 },
+      });
+
+      await createModelFileScanRequest({ ...baseInput, op: 'scan-only-rescan' });
+
+      const submitCall = mockSubmitWorkflow.mock.calls[0][0];
+      expect(submitCall.body.metadata).toEqual({
+        fileId: 1,
+        modelVersionId: 10,
+        op: 'scan-only-rescan',
+      });
+    });
+
     it('registers a callback to /api/webhooks/model-file-scan-result', async () => {
       mockSubmitWorkflow.mockResolvedValue({
         data: { id: 'wf-1' },

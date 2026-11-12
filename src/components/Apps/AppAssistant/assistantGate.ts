@@ -77,6 +77,7 @@ export function createAssistantGate({
   openApp,
   feedback,
   cover,
+  onAppChanged,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
@@ -95,6 +96,8 @@ export function createAssistantGate({
   feedback?: { source: AppFeedbackSource; setStatus: SetFeedbackStatus };
   /** The store cover: what its offer reads and what its card's press does. Without it, no tool. */
   cover?: { offer: Omit<CoverArtDeps, 'nextId'>; press: CoverPressDeps };
+  /** Told after a call changed the open app's files (`createGateCore`): the source-repo save. */
+  onAppChanged?: (app: string) => void;
 } = {}): AssistantGate {
   const submitCards = submit ? createSubmitCards(submit) : null;
   const feedbackCards = feedback ? createFeedbackStatusCards(feedback) : null;
@@ -128,6 +131,7 @@ export function createAssistantGate({
       onReply?.();
     },
     openApp,
+    onAppChanged,
   });
 
   const set_checklist: ChatTool = { ...core.tools[SET_CHECKLIST], render: renderChecklist };

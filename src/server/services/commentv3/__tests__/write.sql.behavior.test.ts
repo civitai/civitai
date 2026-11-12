@@ -17,7 +17,6 @@ import {
   updateCommentContent,
 } from '~/server/services/commentv3/write.service';
 
-// Against real Postgres with the production triggers (path, counts, the mirror's deferred count).
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
 
 let pg: PGlite;
@@ -29,6 +28,7 @@ beforeAll(async () => {
   await pg.exec(migration('20261120120000_comment_v3_mirror'));
   await pg.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
   await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
+  await pg.exec(migration('20270102120000_comment_v3_teardown'));
   db = {
     query: async <R extends Record<string, unknown>>(sql: string, params?: unknown[]) =>
       (await pg.query<R>(sql, params)) as { rows: R[] },
@@ -258,18 +258,31 @@ describe('comment v3 writes', () => {
     await expect(post(34, 3, reply.id)).resolves.toMatchObject({ parentId: reply.id });
   });
 
-  // The old tables no longer follow CommentV3, so a write still reaching one (a cascade, a hand-run
-  // fix) must not copy its stale row back over the live comment.
-  it('a write to an old comment row leaves the CommentV3 comment as it is', async () => {
-    const live = await post(2, 1, undefined, 'live');
-    const thread = await one<{ id: number }>(
-      `INSERT INTO "Thread"("articleId") VALUES (2) RETURNING id`
-    );
+  it('counts reactions as they are added and removed, never below zero', async () => {
+    await pg.exec(`INSERT INTO "Article" VALUES (36)`);
+    const c = await post(36, 1);
+    const count = async () =>
+      (await one<{ n: number }>(`SELECT "reactionCount" AS n FROM "CommentV3" WHERE id = ${c.id}`))
+        .n;
     await pg.exec(
-      `INSERT INTO "CommentV2"(id, content, "userId", "threadId") VALUES (${live.id}, 'stale', 1, ${thread.id});
-       UPDATE "CommentV2" SET content = 'stale edit', hidden = true WHERE id = ${live.id}`
+      `INSERT INTO "CommentV3Reaction"("commentId", "userId", reaction) VALUES (${c.id}, 2, 'Like'), (${c.id}, 3, 'Heart')`
     );
-    expect(await getStoredComment(db, live.id)).toMatchObject({ content: 'live', hidden: false });
+    expect(await count()).toBe(2);
+    await pg.exec(`DELETE FROM "CommentV3Reaction" WHERE "commentId" = ${c.id} AND "userId" = 2`);
+    expect(await count()).toBe(1);
+    await pg.exec(`UPDATE "CommentV3" SET "reactionCount" = 0 WHERE id = ${c.id}`);
+    await pg.exec(`DELETE FROM "CommentV3Reaction" WHERE "commentId" = ${c.id}`);
+    expect(await count()).toBe(0);
+  });
+
+  it('never counts a topic below zero', async () => {
+    await pg.exec(`INSERT INTO "Article" VALUES (37)`);
+    const c = await post(37, 1);
+    await pg.exec(
+      `UPDATE "CommentTopic" SET "commentCount" = 0 WHERE "entityType" = 'article' AND "entityId" = 37`
+    );
+    await deleteComments(db, [c.id]);
+    expect(await commentCount(37)).toBe(0);
   });
 
   it('delete: a pinned comment kept as a tombstone loses its pin', async () => {
@@ -310,7 +323,7 @@ describe('20270101120000_comment_v3_old_table_triggers_off', () => {
     'ThreadMute',
   ];
   let old: PGlite;
-  // The old count trigger stays until Phase 6; only the mirror and the moderation scans go.
+  // 20270101120000 drops the mirror and moderation-scan triggers; the count triggers stay.
   const triggersOn = async (table: string) =>
     (
       await old.query<{ tgname: string }>(
@@ -363,5 +376,72 @@ describe('20270101120000_comment_v3_old_table_triggers_off', () => {
 
     const left = await Promise.all(OLD_TABLES.map(async (t) => [t, await triggersOn(t)]));
     expect(left).toEqual(OLD_TABLES.map((t) => [t, []]));
+  });
+});
+
+describe('20270102120000_comment_v3_teardown', () => {
+  let old: PGlite;
+  const ids = async (sql: string) =>
+    (await old.query<{ id: number }>(sql)).rows.map((r) => Number(r.id));
+
+  beforeAll(async () => {
+    old = new PGlite({ extensions: { ltree } });
+    await old.exec(FIXTURE);
+    await old.exec(migration('20261110120000_comment_v3_schema'));
+    await old.exec(migration('20261120120000_comment_v3_mirror'));
+    await old.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
+    await old.exec(migration('20261217120000_comment_v3_removed_by_author'));
+    await old.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
+    await old.exec(`
+      INSERT INTO "Thread"(id, "questionId") VALUES (1, 7);
+      INSERT INTO "Thread"(id, "rootThreadId", "parentThreadId") VALUES (2, 1, 1);
+      INSERT INTO "Thread"(id, "clubPostId") VALUES (3, 9);
+      INSERT INTO "CommentV2"(id, content, "userId", "threadId") VALUES
+        (900, 'question comment', 1, 1), (901, 'reply', 2, 2), (902, 'club post comment', 1, 3);
+      INSERT INTO "CommentV2Reaction"("commentId", "userId", reaction) VALUES (900, 3, 'Like'), (902, 3, 'Like');
+      INSERT INTO "CommentV2Report"("commentV2Id", "reportId") VALUES (901, 1);
+      INSERT INTO "KeyValue" VALUES ('comment-v3-parity:last', '{}'), ('unrelated', '{}');
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 1);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content) VALUES (950, 'article', 1, 1, 'kept');
+      INSERT INTO "CommentV3Reaction"("commentId", "userId", reaction) VALUES (950, 2, 'Like');
+      CREATE SCHEMA archive;
+      CREATE TABLE archive."CommentV2"(id integer);
+    `);
+    await old.exec(migration('20270102120000_comment_v3_teardown'));
+  });
+  afterAll(async () => {
+    await old.close();
+  });
+
+  it('drops the old tables, the parity row and removedByAuthor, and keeps the id sequence CommentV3 draws from', async () => {
+    const { rows } = await old.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_class WHERE relnamespace = 'public'::regnamespace
+         AND relname IN ('Thread', 'Comment', 'CommentV2', 'ThreadMute', 'CommentReaction',
+           'CommentV2Reaction', 'CommentReport', 'CommentV2Report')`
+    );
+    expect(rows[0].n).toBe(0);
+    expect((await old.query<{ key: string }>(`SELECT key FROM "KeyValue"`)).rows).toEqual([
+      { key: 'unrelated' },
+    ]);
+    expect(
+      await ids(
+        `SELECT 1 AS id FROM information_schema.columns WHERE table_name = 'CommentV3' AND column_name = 'removedByAuthor'`
+      )
+    ).toEqual([]);
+    expect(
+      await ids(`SELECT 1 AS id FROM pg_class WHERE relname = 'comment_shared_id_seq'`)
+    ).toEqual([1]);
+    expect(await ids(`SELECT 1 AS id FROM pg_namespace WHERE nspname = 'archive'`)).toEqual([]);
+  });
+
+  it('leaves CommentV3 and its reactions as they were', async () => {
+    expect(await ids(`SELECT id FROM "CommentV3"`)).toEqual([950]);
+    expect(await ids(`SELECT "commentId" AS id FROM "CommentV3Reaction"`)).toEqual([950]);
+  });
+
+  it('sets its lock timeout for its own transaction only', async () => {
+    expect(
+      (await old.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0].lock_timeout
+    ).toBe('0');
   });
 });

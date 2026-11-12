@@ -1,7 +1,50 @@
+##### LIBC VARIANT
+#
+# Which C library the image is built on and runs on. `musl` (the default) is the production
+# image: Alpine, exactly as before this build-arg existed. `glibc` builds the SAME source on
+# Debian bookworm-slim instead, for a measurement of the allocator/memcpy share of the Prisma
+# query engine's CPU (the engine is a native library loaded into the Node process, so it uses
+# whichever libc the image has). Nothing deploys a `glibc` image by default; it has to be built
+# on purpose with `--build-arg LIBC=glibc` (or `--opt build-arg:LIBC=glibc`) and tagged apart.
+#
+# Only the stage selected below is built: BuildKit skips stages nothing references, so a
+# default (musl) build never pulls the Debian base. Its layers are the same instructions on the
+# same base as before, except the deps stage's pnpm store cache, which is now per LIBC (see
+# there).
+#
+# Both variants pin the SAME Node patch (src/__tests__/node-version-consistency.test.ts), but
+# libc is NOT the only difference between them. The Node binary itself is a different build:
+# the Alpine image ships a separate musl build of Node (from Node's unofficial-builds, or
+# compiled from source), the Debian image ships the official glibc release build. Both bases
+# are pinned by digest, but the glibc runtime adds packages from an unpinned `apt-get install`
+# (the musl runtime adds none). And the userland (busybox vs coreutils, the OpenSSL build)
+# differs. So whole-process CPU is not a libc comparison; only the CPU of the Prisma engine's
+# own threads is.
+#
+# Prisma's generator uses its default `native` binary target, and `prisma generate` runs in
+# the deps stage on the selected base, so each variant generates (and ships) the engine for its
+# own libc: linux-musl-openssl-3.0.x or debian-openssl-3.0.x. No `binaryTargets` change is
+# needed, and the musl image does not carry a second engine. Native npm packages with per-libc
+# builds (sharp's @img/sharp-*, Next's swc, esbuild) resolve to the variant for the libc they are
+# installed and traced on, for the same reason: the deps, builder and runner stages always share
+# one libc. Their install-script output is kept apart too (the pnpm store is per LIBC, below).
+ARG LIBC=musl
+
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS base-musl
+RUN apk add --no-cache libc6-compat
+
+# openssl: Prisma detects the OpenSSL version to pick its engine and loads libssl at runtime;
+# the slim image ships neither (no libssl3 package). adduser is already in the slim image; it
+# is listed so the runner stage's `addgroup`/`adduser` lines, shared with Alpine, do not rely
+# on that.
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS base-glibc
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssl ca-certificates adduser && \
+    rm -rf /var/lib/apt/lists/*
+
 ##### DEPENDENCIES
 
-FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS deps
-RUN apk add --no-cache libc6-compat
+FROM base-${LIBC} AS deps
 WORKDIR /app
 
 # Enable corepack for pnpm
@@ -17,7 +60,21 @@ COPY packages ./packages
 COPY scripts ./scripts
 COPY patches ./patches
 
-RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+# The store cache is per LIBC. pnpm keeps the post-install state of every package whose build
+# script ran (its side-effects cache) in the store, keyed by platform, arch, Node major and the
+# dependency graph, but NOT by libc. With one store for both variants, a variant that misses
+# the cache runs e.g. @prisma/engines' postinstall (which downloads the engine for the libc it
+# runs on) and stores the result, and the other variant then imports that package as already
+# built and skips its script. Separate stores make that impossible. `ARG LIBC` must be declared
+# in this stage: a global ARG is not visible inside a stage, and without it `${LIBC}` expands
+# to "" and both variants would share one id again. (It is also in the install's environment,
+# where node-gyp-build reads `LIBC` to pick a prebuild; the value is the base's real libc.)
+# The musl id is `pnpm-store-musl`, not the old `pnpm-store`: there is no conditional in a
+# Dockerfile that keeps one variant's literal while changing the other's, and a fresh musl id
+# also guarantees production never reuses anything written to the shared store. The cost is
+# one cold store (re-download, re-run of the allowed build scripts) per build root.
+ARG LIBC
+RUN --mount=type=cache,id=pnpm-store-${LIBC},target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 ##### BUILDER
@@ -57,6 +114,11 @@ ENV SOURCE_COMMIT=$SOURCE_COMMIT
 # that pipeline runs the full `tsc` in a parallel task already. A build ARG is visible to the RUN
 # below as an environment variable; it is deliberately NOT an ENV, so it never reaches the image.
 ARG CIVITAI_SKIP_BUILD_TYPECHECK=""
+# This cache is deliberately shared by both LIBC variants (its id is its target path): it holds
+# Next's JS-level build caches, not native artifacts, and the Turbopack filesystem cache for
+# builds (`turbopackFileSystemCacheForBuild`) is not enabled. If that changes, give it a
+# per-LIBC id like the pnpm store above. The test pins the list of cache mounts and which are
+# per-LIBC, so a new one has to make the same choice.
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
@@ -174,7 +236,12 @@ COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 
-FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS runner
+# The runtime bases, one per LIBC (see the top of this file). The musl one is the bare Alpine
+# image, exactly what the runner stage used before (no libc6-compat: only the deps stage has it).
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runtime-musl
+FROM base-glibc AS runtime-glibc
+
+FROM runtime-${LIBC} AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

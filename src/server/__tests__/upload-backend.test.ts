@@ -44,20 +44,27 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 // Capture which s3 client/bucket the handler resolved so we can corroborate the
 // backend choice at the collaborator level (not just the response echo).
 const CHUNK_SIZE = vi.hoisted(() => 25 * 1024 * 1024);
-const { getUploadS3Client, getUploadBucket, getMultipartPutUrl } = vi.hoisted(() => ({
-  getUploadS3Client: vi.fn((backend: string) => ({ __client: backend })),
-  getUploadBucket: vi.fn((backend: string) => `bucket-${backend}`),
-  getMultipartPutUrl: vi.fn(async (key: string, _size: number, _s3: unknown, bucket: unknown) => ({
-    urls: [],
-    bucket: bucket ?? 'default-bucket',
-    key,
-    uploadId: 'test-upload-id',
-  })),
-}));
+const { getUploadS3Client, getUploadBucket, getMultipartPutUrl, getPutUrl, getCustomPutUrl } =
+  vi.hoisted(() => ({
+    getPutUrl: vi.fn(),
+    getCustomPutUrl: vi.fn(),
+    getUploadS3Client: vi.fn((backend: string) => ({ __client: backend })),
+    getUploadBucket: vi.fn((backend: string) => `bucket-${backend}`),
+    getMultipartPutUrl: vi.fn(
+      async (key: string, _size: number, _s3: unknown, bucket: unknown) => ({
+        urls: [],
+        bucket: bucket ?? 'default-bucket',
+        key,
+        uploadId: 'test-upload-id',
+      })
+    ),
+  }));
 vi.mock('~/utils/s3-utils', () => ({
   getUploadS3Client,
   getUploadBucket,
   getMultipartPutUrl,
+  getPutUrl,
+  getCustomPutUrl,
   getUploadChunkSize: () => CHUNK_SIZE,
 }));
 
@@ -118,6 +125,36 @@ beforeEach(() => {
   getUploadS3Client.mockClear();
   getUploadBucket.mockClear();
   getMultipartPutUrl.mockClear();
+  getPutUrl.mockClear();
+  getCustomPutUrl.mockClear();
+});
+
+// An object a file points at is written once. A single presigned PUT stays usable after the upload
+// finishes, and a key the client could name or repeat could be uploaded to again; a multipart session
+// under a fresh key cannot be written to once it completes.
+describe('upload handler — an upload is one multipart session under a fresh key', () => {
+  it.each([UploadType.Model, UploadType.TrainingImages, UploadType.Default])(
+    'a %s upload',
+    async (type) => {
+      const keys: string[] = [];
+      for (let i = 0; i < 2; i++) {
+        const req = makeReq(type);
+        req.body.key = `${type}/42/model.safetensors`;
+        const res = makeRes();
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toMatchObject({ uploadId: 'test-upload-id' });
+        keys.push(getMultipartPutUrl.mock.calls[i][0]);
+      }
+
+      expect(getPutUrl).not.toHaveBeenCalled();
+      expect(getCustomPutUrl).not.toHaveBeenCalled();
+      for (const key of keys)
+        expect(key).toMatch(new RegExp(`^${type}/42/model\\.[0-9a-f]{32}\\.safetensors$`));
+      expect(keys[0]).not.toBe(keys[1]);
+    }
+  );
 });
 
 describe('upload handler — model backend selection (b2-upload-default retired)', () => {

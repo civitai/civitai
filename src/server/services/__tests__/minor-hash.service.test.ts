@@ -1677,6 +1677,8 @@ describe('resolveMinorFlagAppeal', () => {
         resolvedReason: 'other',
         internalNotes: 'school uniform tag',
         userId: 7,
+        // Leaves the owner's pending lock review open: it is ruled on, and its owner told, on its own.
+        modelAppealKind: 'flag',
       })
     );
   });

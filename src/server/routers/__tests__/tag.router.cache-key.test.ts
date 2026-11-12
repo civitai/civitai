@@ -28,13 +28,15 @@ const middlewares = (
   }
 )._def.procedures.getAll._def.middlewares;
 
-async function readKey(mw: Middleware, input: unknown, adminTags?: boolean) {
+type User = { id: number; isModerator?: boolean } | undefined;
+
+async function readKey(mw: Middleware, input: unknown, adminTags?: boolean, user?: User) {
   redisFake.packed.get.mockClear();
   redisFake.packed.get.mockResolvedValue(null);
   await mw({
     input,
     // canCache false so the miss path stops at the read.
-    ctx: { cache: { canCache: false }, user: undefined, features: { adminTags } },
+    ctx: { cache: { canCache: false }, user, features: { adminTags } },
     next: async () => ({ ok: true, data: { x: 1 } }),
     path: 'tag.getAll',
   });
@@ -58,7 +60,8 @@ beforeAll(async () => {
   throw new Error('tag.getAll has no middleware reading a tag:getAll cache key');
 });
 
-const keyFor = (input: unknown, adminTags?: boolean) => readKey(cacheMiddleware, input, adminTags);
+const keyFor = (input: unknown, adminTags?: boolean, user?: User) =>
+  readKey(cacheMiddleware, input, adminTags, user);
 
 describe('tag.getAll cache key', () => {
   it.each(['excludedImageIds', 'excludedUserIds', 'excludedModelIds'] as const)(
@@ -83,5 +86,24 @@ describe('tag.getAll cache key', () => {
     const asAnon = await keyFor({ excludedTagIds: [7] }, undefined);
 
     expect(asAdmin).not.toBe(asAnon);
+  });
+
+  // With a modelId the handler answers per viewer (a draft model's tags are its owner's), so a
+  // key shared across viewers would serve one viewer's answer to another.
+  it('moves between viewers when a modelId is given', async () => {
+    const input = { modelId: 5 };
+    const keys = [
+      await keyFor(input),
+      await keyFor(input, undefined, { id: 1 }),
+      await keyFor(input, undefined, { id: 2 }),
+      await keyFor(input, undefined, { id: 2, isModerator: true }),
+    ];
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('stays shared across viewers without a modelId (control)', async () => {
+    const anon = await keyFor({ excludedTagIds: [7] });
+    const signedIn = await keyFor({ excludedTagIds: [7] }, undefined, { id: 1 });
+    expect(signedIn).toBe(anon);
   });
 });

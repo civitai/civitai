@@ -182,7 +182,8 @@ Open, with the evidence each audit produced:
 - [x] **Filter rows missing on five list panels** (2026-08-11 completes this). Reviews, Bounties and
       Reports were done by the 2026-08-10 filter work; **Comments** now has Retool's search on both
       lists, matched against the plain text rather than the stored HTML — searching the markup meant
-      "p" hit every row.
+      "p" hit every row. Since 2026-11 Comments pages 50 at a time (`/api/user-comments`), so its
+      search covers the loaded page only; the card states the account-wide total.
       Fixing it exposed a defect in the **existing** filter work, not just the new bar: `ListCard`
       renders its empty state *instead of* `children`, and every filter bar lived in `children` with a
       **filtered** count passed as `total`. So filtering down to zero matches hid the filter bar — the
@@ -282,7 +283,7 @@ Open, with the evidence each audit produced:
       "+N more" pointing at the Chat section. Collapsed by default — the chip is the signal, the ids are
       what you want once it has fired.
       🔴 **Found while wiring it: every existing chat link on this page 404'd.** `ChatContactPanel`
-      linked to `/retool/chat-audit/search?q=<id>`, and `search` is not one of the four tabs — the tab
+      linked to `/retool/chat-audit/search?q=<id>`, and `search` is not a tab route (the Search tab's route is `chats`) — the tab
       param is validated with `error(404)`, so following the ids the ticket asked for landed on Unknown
       tab. Both places now use `/retool/chat-audit/chats?chat=<id>`, the form `$lib/reports` already
       used. Verified on 43555: seven chat links, all resolving.
