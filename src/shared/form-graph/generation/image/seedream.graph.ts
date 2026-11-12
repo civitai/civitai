@@ -31,11 +31,6 @@ const seedreamVersionOptions = [
   { label: 'v4.5', value: seedreamVersionIds['v4.5'] },
   { label: 'v5.0 lite', value: seedreamVersionIds['v5.0-lite'] },
   { label: 'v5.0 pro', value: seedreamVersionIds['v5.0-pro'] },
-];
-
-/** Offered only with `seedream55` on: the orchestrator refuses v5.5 until its release. */
-const seedream55VersionOptions = [
-  ...seedreamVersionOptions,
   { label: 'v5.5', value: seedreamVersionIds['v5.5'], newUntil: new Date('2026-12-12') },
 ];
 
@@ -66,18 +61,16 @@ const AR = defFamily((resolution: string) =>
 
 export const seedream = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 7 }))
-  // Seedream is model-locked, so with the flag off a submitted v5.5 (absent from the options)
-  // is swapped for the default by checkpointDef rather than reaching the orchestrator.
-  .field('model', ({ _ext }) => {
-    const v55 = _ext.flags?.seedream55 === true;
-    return checkpointDef({
+  // Model-locked: a gated v5.5 falls back to the ecosystem default, so that default must stay a launched version.
+  .field('model', ({ _ext }) =>
+    checkpointDef({
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
-      versions: { options: v55 ? seedream55VersionOptions : seedreamVersionOptions },
-      defaultModelId: seedreamVersionIds[v55 ? 'v5.5' : 'v5.0-pro'],
-    });
-  })
+      versions: { options: seedreamVersionOptions },
+      defaultModelId: seedreamVersionIds['v5.5'],
+    })
+  )
   .field('resolution', ({ model }) =>
     modelIdOf(model) != null && versionsWithResolutionToggle.has(modelIdOf(model)!)
       ? RESOLUTION

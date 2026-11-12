@@ -834,7 +834,11 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
       customer: customerId,
       items: [{ price: priceId }],
       coupon: coupon.id,
-      cancel_at: dayjs().add(gift.monthsRemaining, 'month').unix(),
+      // Not cancel_at: one read off our clock lands a moment before Stripe's own period
+      // boundary, and Stripe then bills the first month as a proration line, which grants no
+      // Membership bonus. Ending after the first period is also what a failed cancel_at write
+      // below leaves behind: the months it never delivered are restored when it ends.
+      cancel_at_period_end: true,
       // Every invoice inside the window is $0, so no payment method is needed; if Stripe ever
       // computed a non-zero amount the sub parks as `incomplete` instead of charging.
       payment_behavior: 'default_incomplete',
@@ -861,6 +865,35 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
       stripeSubscriptionId: subscription.id,
     },
   });
+
+  if (gift.monthsRemaining > 1) {
+    // Stripe counts monthly periods from the anchor in UTC, clamping to the month's end, as
+    // dayjs does when adding from the same instant.
+    const cancelAt = dayjs
+      .unix(subscription.billing_cycle_anchor)
+      .utc()
+      .add(gift.monthsRemaining, 'month')
+      .unix();
+    await stripe.subscriptions
+      .update(subscription.id, {
+        // Alone: Stripe rejects cancel_at sent with cancel_at_period_end, and setting it
+        // replaces the period-end cancel.
+        cancel_at: cancelAt,
+        proration_behavior: 'none',
+      })
+      .catch((error) =>
+        log({
+          type: 'error',
+          stage: 'residual-cancel-at',
+          giftId: gift.id,
+          userId: gift.holderId,
+          stripeSubscriptionId: subscription.id,
+          message: `ends after its first month instead of ${gift.monthsRemaining}: ${String(
+            error
+          )}`,
+        })
+      );
+  }
 
   await invalidateSubscriptionCaches(gift.holderId);
 

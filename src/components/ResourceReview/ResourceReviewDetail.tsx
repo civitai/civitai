@@ -1,55 +1,23 @@
-import {
-  Anchor,
-  Badge,
-  Button,
-  Center,
-  CloseButton,
-  Container,
-  Divider,
-  Group,
-  Loader,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-} from '@mantine/core';
+import { Badge, Center, CloseButton, Group, Loader, Text } from '@mantine/core';
 import { truncate } from 'lodash-es';
-import { useRouter } from 'next/router';
 import { NavigateBack } from '~/components/BackButton/BackButton';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Meta } from '~/components/Meta/Meta';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ResourceReviewCarousel } from '~/components/ResourceReview/ResourceReviewCarousel';
 import { ResourceReviewComments } from '~/components/ResourceReview/ResourceReviewComments';
 import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
-import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { ReviewVerdictBadge } from '~/components/ResourceReview/ReviewVerdictBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
-import { PostSort } from '~/server/common/enums';
 import type { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
-import { formatDate } from '~/utils/date-helpers';
-import { getModelUrl, removeTags, slugit } from '~/utils/string-helpers';
+import { getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
-  const router = useRouter();
-  const isModelPage = !!router.query.id && !router.pathname.includes('/reviews');
-
   const { data, isLoading } = trpc.resourceReview.get.useQuery({ id: reviewId });
-  const browsingLevel = useBrowsingLevelDebounced();
-  const { data: relatedPosts, isLoading: loadingRelatedPosts } = trpc.post.getInfinite.useQuery(
-    {
-      username: data?.user.username,
-      modelVersionId: data?.modelVersion.id,
-      sort: PostSort.Newest,
-      browsingLevel,
-    },
-    { enabled: !!data }
-  );
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === data?.user.id);
@@ -105,6 +73,13 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     },
   };
 
+  const modelUrl = getModelWithVersionUrl(data);
+  const subText = (
+    <>
+      Reviewed {data.model.name} · {data.modelVersion.name} · <DaysFromNow date={data.createdAt} />
+    </>
+  );
+
   return (
     <>
       <Meta
@@ -118,117 +93,62 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         schema={metaSchema}
         deIndex={!data.details}
       />
-      <Container my="md" w="100%">
-        <Stack>
-          <Group justify="space-between" wrap="nowrap" align="center">
-            <Title order={3} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ whiteSpace: 'nowrap' }}>Review:</span>{' '}
-              <Anchor
-                component={Link}
-                href={getModelWithVersionUrl(data)}
-                lineClamp={1}
-                shallow={isModelPage}
-                inherit
-              >
-                {data.model.name} - {data.modelVersion.name}
-              </Anchor>
-            </Title>
-
-            <Group gap={4} wrap="nowrap">
-              <ResourceReviewMenu
-                size="lg"
-                reviewId={reviewId}
-                userId={data.user.id}
-                review={{
-                  ...data,
-                  details: data.details ?? '',
-                  modelVersionId: data.modelVersion.id,
-                }}
-              />
-              <NavigateBack url={getModelWithVersionUrl(data)}>
-                {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
-              </NavigateBack>
-            </Group>
-          </Group>
-          <Group gap="xs" align="center" justify="space-between">
-            <UserAvatar
-              user={data.user}
-              subText={<DaysFromNow date={data.createdAt} />}
-              subTextForce
-              badge={
-                data.user.id === data.model.userId ? (
-                  <Badge size="xs" color="violet">
-                    OP
-                  </Badge>
-                ) : null
-              }
-              size="lg"
-              spacing="xs"
-              withUsername
-              linkToProfile
-            />
-
-            {isThumbsUp ? (
-              <ThemeIcon color="success.5" size="xl" radius="md" variant="light">
-                <ThumbsUpIcon size={32} filled />
-              </ThemeIcon>
-            ) : isThumbsDown ? (
-              <ThemeIcon color="red" size="xl" radius="md" variant="light">
-                <ThumbsDownIcon size={32} />
-              </ThemeIcon>
-            ) : null}
-          </Group>
-        </Stack>
-      </Container>
-      {data.user.username && (
-        <ResourceReviewCarousel
-          userId={data.user.id}
-          modelVersionId={data.modelVersion.id}
-          reviewId={reviewId}
-          postId={data.postId}
-        />
-      )}
-      <Container pb="md" w="100%">
-        <Stack>
-          <Group gap={4}>
-            {!!relatedPosts?.items.length && (
-              <Text size="md" mr="xs" fw={500} lh="1.1">
-                Related posts
-              </Text>
-            )}
-            {loadingRelatedPosts && !relatedPosts ? (
-              <Loader type="dots" />
-            ) : (
-              relatedPosts?.items.map((post) => (
-                <Link
-                  key={post.id}
-                  href={`/posts/${post.id}/${post.title ? slugit(post.title) : ''}`}
-                  passHref
-                  legacyBehavior
-                >
-                  <Button
-                    component="a"
-                    variant="light"
-                    styles={{ root: { height: 'auto' }, label: { whiteSpace: 'normal' } }}
-                    size="compact-xs"
-                  >
-                    {post.title ? post.title : `From: ${formatDate(post.publishedAt as Date)}`}
-                  </Button>
-                </Link>
-              ))
-            )}
-          </Group>
-          <Divider />
-          {data.details && <RenderHtml html={data.details} withProfanityFilter />}
-
-          <Stack gap="xs">
-            <Title order={3}>
-              {commentCount.toLocaleString()} {commentCount === 1 ? 'Comment' : 'Comments'}
-            </Title>
-            <ResourceReviewComments reviewId={reviewId} userId={data.user.id} />
-          </Stack>
-        </Stack>
-      </Container>
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-solid border-gray-3 bg-white px-5 py-4 dark:border-dark-4 dark:bg-dark-7">
+        <div className="min-w-0">
+          <UserAvatar
+            user={data.user}
+            subText={subText}
+            subTextForce
+            badge={
+              data.user.id === data.model.userId ? (
+                <Badge size="xs" color="violet">
+                  OP
+                </Badge>
+              ) : null
+            }
+            size="md"
+            avatarSize={40}
+            spacing="xs"
+            withUsername
+            linkToProfile
+          />
+        </div>
+        <Group gap={12} wrap="nowrap" className="shrink-0">
+          {(isThumbsUp || isThumbsDown) && <ReviewVerdictBadge recommended={isThumbsUp} />}
+          <ResourceReviewMenu
+            size="lg"
+            reviewId={reviewId}
+            userId={data.user.id}
+            review={{
+              ...data,
+              details: data.details ?? '',
+              modelVersionId: data.modelVersion.id,
+            }}
+          />
+          <NavigateBack url={modelUrl}>
+            {({ onClick }) => <CloseButton onClick={onClick} size="lg" aria-label="Close" />}
+          </NavigateBack>
+        </Group>
+      </div>
+      <ResourceReviewCarousel
+        userId={data.user.id}
+        modelVersionId={data.modelVersion.id}
+        reviewId={reviewId}
+        postId={data.postId}
+      />
+      <div className="flex flex-col gap-4 p-5">
+        {data.details && (
+          <div className="text-[15px] leading-6 text-dark-9 dark:text-dark-0">
+            <RenderHtml html={data.details} withProfanityFilter />
+          </div>
+        )}
+        <div className="flex flex-col gap-2">
+          <Text fw={700} className="text-[15px]">
+            {commentCount.toLocaleString()} {commentCount === 1 ? 'comment' : 'comments'}
+          </Text>
+          <ResourceReviewComments reviewId={reviewId} userId={data.user.id} />
+        </div>
+      </div>
     </>
   );
 }

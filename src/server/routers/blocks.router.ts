@@ -3173,6 +3173,32 @@ export const blocksRouter = router({
     }),
 
   /**
+   * ONE-OFF, RE-RUNNABLE moderator-only backfill — give every fork (approved, or still being built
+   * in App Assistant) a source repo (`civitai-apps-src/<slug>`), seeded from its latest approved
+   * snapshot (or, for a fork with no version yet, from the parent's approved commit its sandbox was
+   * seeded from). A slug that has one is skipped before any write, so a second run writes nothing.
+   * `dryRun` lists what a real run would create, reading only the database and the fork sessions.
+   * See `backfillAppSourceRepos`.
+   */
+  backfillAppSourceRepos: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(1000).optional(),
+        dryRun: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Source repo backfill is restricted to civitai team');
+      }
+      const { backfillAppSourceRepos } = await import(
+        '~/server/services/blocks/app-source-repo.service'
+      );
+      return backfillAppSourceRepos({ limit: input.limit, dryRun: input.dryRun });
+    }),
+
+  /**
    * Reject a pending publish request. Reason is required
    * (≥`PUBLISH_REJECTION_REASON_MIN` — the shared `OFFSITE_MOD_REASON_MIN`, 3 —
    * chars) and shown to the dev inline on /apps/my-submissions.
@@ -9378,10 +9404,16 @@ export const blocksRouter = router({
    *   - INTENT: pull/sync here vs push instructions there.
    *   - COLLABORATOR PERMISSION: `read` here vs `write` there (see the note at the
    *     addCollaborator call below).
-   * Access gating IS identical (assertAppEditAccess + bannedAt + `approved`). It returns the
-   * raw { forgejoUsername, token, cloneUrl } the CLI assembles its git command from; the
-   * token is embedded in the returned cloneUrl exactly as getMyAppRepo does (the CLI
-   * documents the token-in-URL leakage caveat).
+   * Access gating for the BUILD repo IS identical (assertAppEditAccess + bannedAt + `approved`).
+   * It returns the raw { forgejoUsername, token, cloneUrl } the CLI assembles its git command
+   * from; the token is embedded in the returned cloneUrl exactly as getMyAppRepo does.
+   *
+   * SOURCE REPOS: when the app has a `civitai-apps-src/<slug>` repo the caller may use
+   * (`resolveSourceRepoAccess`), it also grants `write` there and returns `sourceHttpUrl`, which a
+   * current CLI clones instead of the build repo. That works BEFORE any approval and before any
+   * block exists (a fork, an App Assistant app): then `httpUrl` and `cloneUrl` name the source
+   * repo and `buildHttpUrl` is null. bannedAt and the developer terms are checked on that path
+   * too, before anything is provisioned.
    */
   getMyForgejoCloneInfo: protectedProcedure
     // Same SCOPE gate and same bit as getMyAppAnalytics above — but note the base
@@ -9452,23 +9484,89 @@ export const blocksRouter = router({
             where: { blockId: input.slug },
             select: { id: true, blockId: true, status: true, app: { select: { userId: true } } },
           });
-      if (!block) throw throwNotFoundError('App block not found');
-      // Owner OR accepted collaborator (see `assertAppEditAccess`).
-      await assertAppEditAccess(block, ctx.user!.id);
-      if (ctx.user!.bannedAt) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Account is not eligible for git access',
+      const userId = ctx.user!.id;
+      // A credential is never issued to a banned account, and a write credential only to one
+      // that accepted the developer terms — whichever repo it is for.
+      const assertEligible = async () => {
+        if (ctx.user!.bannedAt) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Account is not eligible for git access',
+          });
+        }
+        // Gated like getMyAppRepo although it grants only `read` on the build repo: the token it
+        // returns is the same push token, and an accepted collaborator already holds `write`.
+        const { assertAcceptedAppDeveloperTermsTrpc } = await import(
+          '~/server/services/blocks/app-developer-terms.service'
+        );
+        await assertAcceptedAppDeveloperTermsTrpc(userId);
+      };
+      const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const tokenedUrl = (forgejoUsername: string, token: string, httpUrl: string) =>
+        httpUrl.replace(/^https:\/\//, `https://${encodeURIComponent(forgejoUsername)}:${token}@`);
+
+      // SOURCE REPOS (`civitai-apps-src/<slug>`): a fork or an App Assistant app has one from its
+      // first day, before any approval, so `app pull` and `git push` work for it then. Access is
+      // `resolveSourceRepoAccess`: the bound block's owner and accepted collaborators, or before a
+      // block exists the repo's own owner. Nothing pushed there builds or files a request.
+      const sourceFor = async (slug: string) => {
+        const { resolveSourceRepoAccess, grantSourceRepoForPull } = await import(
+          '~/server/services/blocks/app-source-repo.service'
+        );
+        // Checked before an identity is provisioned, so a slug that is not the caller's never
+        // mints anything.
+        const access = await resolveSourceRepoAccess({ slug, userId });
+        if (!access.ok) return null;
+        const { ensureForgejoIdentity } = await import(
+          '~/server/services/blocks/dev-git-access.service'
+        );
+        const identity = await ensureForgejoIdentity(userId);
+        const granted = await grantSourceRepoForPull({
+          slug,
+          userId,
+          forgejoUsername: identity.forgejoUsername,
         });
+        return granted ? { ...identity, ...granted } : null;
+      };
+      const sourceOnly = (
+        slug: string,
+        source: { forgejoUsername: string; token: string; sourceHttpUrl: string }
+      ) => ({
+        notYetAvailable: false as const,
+        slug,
+        forgejoUsername: source.forgejoUsername,
+        token: source.token,
+        // An older CLI reads only `httpUrl` / `cloneUrl`: for an app with no build repo yet they
+        // name the source repo, which is the developer's to push to.
+        httpUrl: source.sourceHttpUrl,
+        cloneUrl: tokenedUrl(source.forgejoUsername, source.token, source.sourceHttpUrl),
+        sourceHttpUrl: source.sourceHttpUrl,
+        buildHttpUrl: null,
+      });
+
+      if (!block) {
+        // No block yet: the only repo there can be is a source repo the caller may use.
+        const slug = input.slug;
+        if (!slug) throw throwNotFoundError('App block not found');
+        // Not the caller's (or no such repo): the missing-block answer, before any other gate.
+        const { resolveSourceRepoAccess } = await import(
+          '~/server/services/blocks/app-source-repo.service'
+        );
+        if (!(await resolveSourceRepoAccess({ slug, userId })).ok)
+          throw throwNotFoundError('App block not found');
+        await assertEligible();
+        const source = await sourceFor(slug);
+        // The same answer as a missing block: a slug is not an oracle for someone else's repo.
+        if (!source) throw throwNotFoundError('App block not found');
+        return sourceOnly(slug, source);
       }
-      // Gated like getMyAppRepo although it grants only `read`: the token it returns is the same
-      // push token, and an accepted collaborator already holds `write` from accepting the invite.
-      const { assertAcceptedAppDeveloperTermsTrpc } = await import(
-        '~/server/services/blocks/app-developer-terms.service'
-      );
-      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
+      // Owner OR accepted collaborator (see `assertAppEditAccess`).
+      await assertAppEditAccess(block, userId);
+      await assertEligible();
       const slug = block.blockId;
       if (block.status !== 'approved') {
+        const source = await sourceFor(slug);
+        if (source) return sourceOnly(slug, source);
         return {
           notYetAvailable: true as const,
           slug,
@@ -9481,7 +9579,7 @@ export const blocksRouter = router({
         '~/server/services/blocks/dev-git-access.service'
       );
       const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
-      const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
+      const { forgejoUsername, token } = await ensureForgejoIdentity(userId);
       // Read is enough to pull/sync, so `read` is what this asks for. It is a
       // grant-AT-LEAST, not a set: `addCollaborator` reads the current level and
       // skips the PUT when it is already higher, so an author who got `write`
@@ -9496,12 +9594,10 @@ export const blocksRouter = router({
       // The read-then-write is not atomic, so a call racing getMyAppRepo can
       // still land on `read` — see the TOCTOU note on `addCollaborator`.
       await addCollaborator({ slug, username: forgejoUsername, permission: 'read' });
+      const source = await sourceFor(slug);
 
-      const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
-      const cloneUrl = `https://${encodeURIComponent(
-        forgejoUsername
-      )}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = tokenedUrl(forgejoUsername, token, httpUrl);
 
       return {
         notYetAvailable: false as const,
@@ -9510,6 +9606,9 @@ export const blocksRouter = router({
         token,
         httpUrl,
         cloneUrl,
+        // Set when the app also has a source repo: a current CLI clones that one instead.
+        sourceHttpUrl: source?.sourceHttpUrl ?? null,
+        buildHttpUrl: httpUrl,
       };
     }),
 });
@@ -12505,6 +12604,7 @@ async function estimatePassThroughStepWorkflow(opts: {
   const userId = await assertStepRequestAllowed(claims);
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
+  await assertBlockTrainingModelsAllowed([body]);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // The token mint is INSIDE the quote's catch on this path and outside it on
@@ -12719,6 +12819,7 @@ async function submitPassThroughStepWorkflow(opts: {
   // refund. A denylist the wire does not consult is decoration.
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
+  await assertBlockTrainingModelsAllowed([body]);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   await auditPassThroughPrompts({
@@ -13302,6 +13403,7 @@ async function estimateMultiStepWorkflow(opts: {
   const prepared = prepareMultiStepWorkflow(body);
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
+  await assertBlockTrainingModelsAllowed(prepared.steps);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
   // A mint failure is a missing quote here (`unavailable`), not a throw as on the
@@ -13385,6 +13487,7 @@ async function submitMultiStepWorkflow(opts: {
   const prepared = prepareMultiStepWorkflow(body);
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
+  await assertBlockTrainingModelsAllowed(prepared.steps);
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -14849,6 +14952,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           ...passThroughAuditContext(claims, userId, isGreen),
           steps: [body],
         });
+        await assertBlockTrainingModelsAllowed([body]);
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -15070,6 +15174,28 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
       log: { userId, source: 'app-blocks', appBlockId: claims.appBlockId },
     });
   }
+}
+
+/**
+ * The training-model rule for a training `$type` an app names itself (a pass-through
+ * `kind:'step'`, every step of a `kind:'workflow'`): the training service's status and the
+ * blocked and disabled base models, as `kind:'training'` applies them through
+ * `resolveBlockTrainingRun`. Called by each estimate and submit before any quote or reservation.
+ */
+async function assertBlockTrainingModelsAllowed(
+  steps: ReadonlyArray<{ $type: string; input: unknown }>
+): Promise<void> {
+  const { collectTrainingStepModels, trainingStepModelRefusal } = await import(
+    '~/server/services/blocks/block-training-model-check'
+  );
+  const collected = collectTrainingStepModels(steps);
+  if ('error' in collected) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: collected.error });
+  }
+  if (collected.models.length === 0) return;
+  const { getTrainingServiceStatus } = await import('~/server/services/training.service');
+  const refusal = trainingStepModelRefusal(collected.models, await getTrainingServiceStatus());
+  if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
 }
 
 function passThroughAuditContext(claims: BlockClaims, userId: number, isGreen: boolean) {

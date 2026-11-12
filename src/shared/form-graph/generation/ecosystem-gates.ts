@@ -19,21 +19,11 @@ import {
   type GateState,
 } from '~/shared/generation/gates';
 import type { GenerationCtx } from '~/shared/generation/context';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 type EcosystemGateExt = Pick<
   GenerationCtx,
-  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules' | 'flags'
+  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules'
 >;
-
-/**
- * Ecosystems that exist only for users with a feature flag. Without it the ecosystem is
- * `hidden`, exactly as a hiding gate rule would make it: dropped from the picker, and
- * refused by the ecosystem field's output schema on the server parse.
- */
-export const ECOSYSTEM_FEATURE_FLAGS: Readonly<Record<string, keyof FeatureAccess>> = {
-  MiniMaxH3Image: 'minimaxH3ImageGenerator',
-};
 
 /**
  * Resolve the unified gate state for the workflow's ecosystems — the
@@ -55,8 +45,6 @@ export function getEcosystemStates(
     states.set(key, pickStrongerGate(states.get(key), { state: selfHostedState }));
   for (const [key, res] of rulesToStates(ext.gateRules ?? []).ecosystems)
     states.set(key, pickStrongerGate(states.get(key), res));
-  for (const [key, flag] of Object.entries(ECOSYSTEM_FEATURE_FLAGS))
-    if (ext.flags?.[flag] !== true) states.set(key, { state: 'hidden' });
 
   const hiddenEcosystems = [...states].filter(([, r]) => r.state === 'hidden').map(([key]) => key);
   const hiddenSet = new Set(hiddenEcosystems);

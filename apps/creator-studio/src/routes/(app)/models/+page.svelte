@@ -164,6 +164,7 @@
     { value: 'both', label: 'On both sites' },
     { value: 'com', label: 'Only on civitai.com' },
     { value: 'red', label: 'Only on civitai.red' },
+    { value: 'com-face', label: 'Customized for civitai.com' },
   ];
   const feeOptions = [
     { value: '', label: 'All fees' },
