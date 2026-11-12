@@ -13,8 +13,6 @@ import type {
   TextScanSubject,
 } from '~/server/services/text-scan/types';
 
-// A workflow of its own, never a step of the scan's: the safety request stays as it was, and nothing
-// here can fail or rewrite a scan verdict or its retry.
 export const TEXT_CATEGORY_TAG = 'text-category';
 export const TEXT_CATEGORY_CALLBACK_PASS = 'category';
 const MAX_OUTPUT_TOKENS = 256;
@@ -83,6 +81,7 @@ type TextCategoryWorkflowMetadata = {
   categories?: string[];
 };
 
+// Separate workflow, not a scan step: the scan request must stay byte-identical.
 export async function submitTextCategoryScan({
   entityType,
   entityId,
@@ -173,28 +172,35 @@ export async function handleTextCategoryCallback(event: { workflowId: string; st
       !Array.isArray(categories)
     )
       return log('warning', 'callback for a workflow text-category does not own', ctx);
-    if (event.status !== 'succeeded') return log('warning', `workflow ${event.status}`, ctx);
 
     const profile = getTextScanProfile(entityType);
     if (!profile?.category) return log('warning', 'profile has no category hook', ctx);
+    const { write } = profile.category;
+
+    const subject = (await profile.load([entityId])).get(entityId);
+    if (!subject) return log('info', 'subject gone', ctx);
+    // An edit since submit has its own call in flight; this answer is about the old text.
+    if (metadata.textHash && textScanTextHash(subject) !== metadata.textHash)
+      return log('info', 'text changed since submit', ctx);
+    // From here the answer is about the current text, so no answer clears the old text's category.
+    const clear = async (message: string, extra: Record<string, unknown> = {}) => {
+      await write(entityId, null);
+      await log('info', `${message}; category cleared`, { ...ctx, ...extra });
+    };
+    if (event.status !== 'succeeded') return clear(`workflow ${event.status}`);
+    if (subject.notPublic) return clear('subject not public');
 
     const steps = (data.steps ?? []) as ChatCompletionStepLike[];
     const name = parseTextCategoryStep(
       steps.find((s) => s?.$type === 'chatCompletion'),
       categories
     );
-    if (!name) return log('warning', 'unusable output', ctx);
-
-    const subject = (await profile.load([entityId])).get(entityId);
-    if (!subject || subject.notPublic) return log('info', 'subject gone or not public', ctx);
-    // An edit since submit has its own call in flight; this answer is about the old text.
-    if (metadata.textHash && textScanTextHash(subject) !== metadata.textHash)
-      return log('info', 'text changed since submit', ctx);
+    if (!name) return clear('unusable output');
 
     const tag = (await getPickableCategories(profile.category)).find((t) => t.name === name);
-    if (!tag) return log('warning', 'category no longer offered', { ...ctx, name });
+    if (!tag) return clear('category no longer offered', { name });
 
-    await profile.category.write(entityId, tag.id);
+    await write(entityId, tag.id);
     await log('info', 'category written', { ...ctx, name, tagId: tag.id });
   } catch (error) {
     await log('error', 'callback failed', { workflowId, error: (error as Error).message }).catch(

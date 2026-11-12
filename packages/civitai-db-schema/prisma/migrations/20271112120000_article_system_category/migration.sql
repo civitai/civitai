@@ -1,12 +1,5 @@
--- Article.systemCategoryId: the article category the text scan's category call assigned, kept apart
--- from the author's pick (TagsOnArticle). Written by the category callback only; nothing reads it yet.
---
--- NOT AUTO-APPLIED: a human runs this file by hand (see CLAUDE.md -> Database), dev first, then
--- production. Until it exists, the category write fails, which the callback logs and drops. The safety
--- scan does not depend on it.
---
--- Additive and idempotent; safe to re-run. The foreign key is added NOT VALID and validated after, so
--- the lock on "Article" lasts only as long as the catalog change.
+-- Article.systemCategoryId: system-assigned category, separate from the author's pick (TagsOnArticle).
+-- Apply by hand BEFORE the code deploys (CLAUDE.md -> Database).
 
 SET lock_timeout = '5s';
 

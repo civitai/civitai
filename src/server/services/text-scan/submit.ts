@@ -362,6 +362,16 @@ export async function scanEntity({
     // Every gated label, not just the narrowed ones: an earlier verdict may carry a dropped label.
     for (const pass of gatedPasses)
       await clearStaleVerdict({ entityType, entityId, pass, subject });
+    await profile.category?.write(entityId, null).catch((e) =>
+      logToAxiom({
+        name: 'text-category',
+        type: 'error',
+        message: 'category clear threw',
+        entityType,
+        entityId,
+        error: (e as Error).message,
+      })
+    );
     return { status: 'skipped', reason: 'too-short' };
   }
 
@@ -391,8 +401,7 @@ export async function scanEntity({
       })
     );
   }
-  // Fires with each new main-pass submit, so an unchanged text is not re-classified; the retry
-  // cron's resubmits are skipped, since the first call already ran. Its errors stay out of `result`.
+  // Only on a new text: retry resubmits and unchanged texts keep the first call's answer.
   if (profile.category && result.status === 'submitted' && !first.variant && !fromRetry)
     await submitTextCategoryScan({
       entityType,

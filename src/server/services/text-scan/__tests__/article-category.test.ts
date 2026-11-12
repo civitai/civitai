@@ -68,6 +68,8 @@ const writes = () =>
       (sql as TemplateStringsArray).join('?').includes('systemCategoryId')
     );
 
+const writeArgs = () => writes().map(([, ...args]) => args);
+
 let textHash: string;
 
 beforeEach(async () => {
@@ -142,6 +144,18 @@ describe('scanEntity: the article category call', () => {
     expect(JSON.stringify(record())).toBe(baselineRecord);
   });
 
+  it('clears the category, and sends no call, when the text is now empty', async () => {
+    dbMock.dbWrite.article.findMany.mockResolvedValue([
+      { ...ARTICLE, title: '', content: '' },
+    ] as any);
+    expect(await scanEntity({ entityType: 'Article', entityId: 5 })).toEqual({
+      status: 'skipped',
+      reason: 'too-short',
+    });
+    expect(categoryCalls()).toHaveLength(0);
+    expect(writeArgs()).toEqual([[null, 5]]);
+  });
+
   it('is not re-sent by the retry cron', async () => {
     await scanEntity({ entityType: 'Article', entityId: 5, fromRetry: true });
     expect(submitted().filter((b) => b.tags?.includes('text-scan'))).toHaveLength(1);
@@ -193,10 +207,10 @@ describe('handleTextCategoryCallback', () => {
     ['malformed JSON', 'not json'],
     ['a name it was not offered', '{"category":"announcement"}'],
     ['no category', '{"nsfw":{"level":"none"}}'],
-  ])('writes nothing for %s', async (_, content) => {
+  ])('clears the category for %s', async (_, content) => {
     vi.mocked(getWorkflow).mockResolvedValue(categoryWorkflow(content));
     await callback();
-    expect(writes()).toHaveLength(0);
+    expect(writeArgs()).toEqual([[null, 5]]);
   });
 
   it('writes nothing when the text changed after submit', async () => {
@@ -206,10 +220,10 @@ describe('handleTextCategoryCallback', () => {
     expect(writes()).toHaveLength(0);
   });
 
-  it('writes nothing for a failed workflow', async () => {
+  it('clears the category for a failed workflow', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(categoryWorkflow('{"category":"story"}'));
     await callback('failed');
-    expect(writes()).toHaveLength(0);
+    expect(writeArgs()).toEqual([[null, 5]]);
   });
 
   it('a failing write resolves and never touches the scan record', async () => {
@@ -220,20 +234,20 @@ describe('handleTextCategoryCallback', () => {
     expect(em.updateMany).not.toHaveBeenCalled();
   });
 
-  it('writes nothing for an article that is no longer public', async () => {
+  it('clears the category for an article that is no longer public', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(categoryWorkflow('{"category":"story"}'));
     dbMock.dbWrite.article.findMany.mockResolvedValue([{ ...ARTICLE, status: 'Draft' }] as any);
     await callback();
-    expect(writes()).toHaveLength(0);
+    expect(writeArgs()).toEqual([[null, 5]]);
   });
 
-  it('writes nothing when the chosen category became adminOnly after submit', async () => {
+  it('clears the category when the chosen one became adminOnly after submit', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(categoryWorkflow('{"category":"story"}'));
     vi.mocked(getCategoryTags).mockResolvedValue(
       CATEGORIES.map((c) => (c.name === 'story' ? { ...c, adminOnly: true } : c))
     );
     await callback();
-    expect(writes()).toHaveLength(0);
+    expect(writeArgs()).toEqual([[null, 5]]);
   });
 
   it('writes nothing for a workflow without the text-category tag', async () => {

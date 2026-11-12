@@ -69,7 +69,8 @@ export type TextScanProfile = {
 
 export type TextScanCategoryHook = {
   tagType: CategoryTagType;
-  write: (entityId: number, tagId: number) => Promise<void>;
+  /** null clears it. */
+  write: (entityId: number, tagId: number | null) => Promise<void>;
 };
 
 export type TextScanOutput = {
