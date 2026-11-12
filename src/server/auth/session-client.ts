@@ -1,22 +1,15 @@
-import { createHash } from 'crypto';
 import type { Session } from '~/types/session';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import {
   createSessionClient,
   createSessionTokenClient,
   readSessionToken,
   type CookieSlot,
 } from '@civitai/auth';
-import { setSessionCookie, clearLegacyCookies, type CookieWritable } from './civ-cookie';
+import { setSessionCookie, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
 import { decodeTokenClaim } from './token-claims';
 import { refuseModerationAccountSession } from './moderation-account';
-import {
-  observeSessionLeg,
-  observeLegacyUpgrade,
-  observeSessionRollFailed,
-} from './session-metrics';
-import { logToAxiom } from '~/server/logging/client';
+import { observeSessionLeg, observeSessionRollFailed } from './session-metrics';
 
 // The main app's handle to the centralized auth hub (thin-session model — docs/main-app-auth-cutover.md).
 // Validation routes through this client (getHubSession) instead of next-auth's jwt()/session(); refresh +
@@ -101,90 +94,5 @@ export async function maybeRollHubCookie(
     setSessionCookie(res, fresh, { deviceCookie, host, slot, requestCookies });
   } catch {
     // best-effort — the current token is still valid; the user is unaffected
-  }
-}
-
-// One upgrade per legacy cookie per window, instead of one per REQUEST. Upgrading mints a NEW jti, and the
-// only thing that stopped it repeating was the client persisting the cookie we set — so a client that ignores
-// Set-Cookie (a scripted integration, a cookie-less HTTP client) re-minted on every request indefinitely, with
-// no age gate and no rate limit. Contrast maybeRollHubCookie above, which is both age-gated and jti-preserving.
-//
-// Skipping is safe: the caller already resolved this request's session from the legacy decode, so a skipped
-// upgrade costs the user nothing — the migration just happens on a later request. We key on a HASH of the
-// cookie and store no value, so the marker is not a credential.
-const LEGACY_UPGRADE_WINDOW_SECONDS = 10 * 60;
-
-async function claimLegacyUpgrade(legacyToken: string): Promise<boolean> {
-  try {
-    const fingerprint = createHash('sha256').update(legacyToken).digest('base64url');
-    const key = `${REDIS_SYS_KEYS.SESSION.LEGACY_UPGRADE_LOCK}:${fingerprint}` as const;
-    const claimed = await withSysReadDeadline(
-      sysRedis.set(key as never, '1', { NX: true, EX: LEGACY_UPGRADE_WINDOW_SECONDS })
-    );
-    return claimed !== null;
-  } catch {
-    // Fail OPEN: a sysRedis blip must not block migration off the legacy cookie. The pre-existing behaviour
-    // was to upgrade on every request, so degrading to that is not a regression.
-    return true;
-  }
-}
-
-/**
- * Upgrade-on-read (migration window): when a request authenticated via the LEGACY next-auth cookie, ask the hub
- * to exchange that cookie for a fresh civ-token and set it on this response — so the legacy user migrates to the
- * thin-session model, and the browser gets fully de-crudded of next-auth cookies, just by browsing (no need to
- * wait for a re-login/logout). The main app stays a pure consumer: it hands the hub the legacy cookie and gets a
- * civ-token back (only the hub can sign). Best-effort + fire-safe: any hub blip leaves the legacy cookie in place
- * (the user already has a resolved session THIS request) and the next request retries. `clearLegacyCookies` then
- * expires every legacy next-auth cookie (session + ancillary cruft). Drop alongside the legacy decode once the
- * old cookies age out.
- */
-export async function maybeUpgradeLegacySession(
-  legacyToken: string | undefined,
-  deviceCookie: string | undefined,
-  res: CookieWritable,
-  host?: string,
-  requestCookies?: Partial<Record<string, string | undefined>>
-): Promise<void> {
-  if (!HUB_ORIGIN || !legacyToken || typeof res.setHeader !== 'function') return;
-  if (!(await claimLegacyUpgrade(legacyToken))) {
-    observeLegacyUpgrade('deduped');
-    return;
-  }
-  try {
-    // Forward any existing civ-device so the hub reuses this browser's device set; for a pure legacy user (no
-    // civ-device yet) the hub mints one and returns it. Without this, the upgraded session had NO civ-device
-    // and so never appeared in the account switcher.
-    const result = await sessionTokenClient.exchangeLegacy(legacyToken, { deviceCookie });
-    const fresh = result?.token;
-    if (!fresh) {
-      observeLegacyUpgrade('no-token');
-      return;
-    }
-    // Each upgrade mints a NEW jti. A client that doesn't persist the cookie we set below re-enters this path
-    // on its very next request, so a sustained rate here is the session-hash growth driver — and nothing in
-    // redis can measure it (both the tracked value and its TTL are last-touch, not creation).
-    observeLegacyUpgrade('minted');
-    logToAxiom(
-      { name: 'legacy-session-upgraded', type: 'info', userId: decodeTokenClaim(fresh, 'sub') },
-      'auth'
-    ).catch(() => undefined);
-    // Set the civ-token + the device cookie (the hub's reused-or-minted device id) in lockstep — this also
-    // clears the legacy SESSION cookie.
-    setSessionCookie(res, fresh, { host, deviceCookie: result?.deviceId, requestCookies });
-    // … then de-crud every legacy next-auth cookie on the same response — the SESSION cookie (so the hybrid
-    // fallback can't re-resolve the stale legacy identity) AND the ancillary cruft (CSRF / callback-url /
-    // state / PKCE). setSessionCookie no longer clears the session cookie itself.
-    const existing = res.getHeader?.('Set-Cookie');
-    const all = Array.isArray(existing)
-      ? existing.map(String)
-      : existing != null
-      ? [String(existing)]
-      : [];
-    all.push(...clearLegacyCookies(host));
-    res.setHeader('Set-Cookie', all);
-  } catch {
-    observeLegacyUpgrade('failed');
-    // best-effort — the legacy session is still valid; the user is unaffected and the next request retries
   }
 }
