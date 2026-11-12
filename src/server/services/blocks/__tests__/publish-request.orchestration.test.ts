@@ -2776,7 +2776,7 @@ describe('approveRequest', () => {
     expect(ocArg.grants).toEqual([]);
   });
 
-  it('🔴 a review hold placed while the approve ran refuses at the final transaction: nothing is approved and no build starts', async () => {
+  it('🔴 a review hold that appears after the first check refuses at the approve claim: nothing is written and no build starts', async () => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue({
@@ -2810,7 +2810,19 @@ describe('approveRequest', () => {
 
     await expect(
       approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
-    ).rejects.toThrow(/placed while this approve was running/);
+    ).rejects.toThrow(/open review hold/);
+    // Refused at the claim, before the approve's first write; the claim is released all the same.
+    expect(
+      mockDbWrite.$executeRaw.mock.calls.some(
+        (c: unknown[]) =>
+          Array.isArray(c[0]) &&
+          (c[0] as string[]).join('?').includes('DELETE FROM app_publish_request_approve_claims')
+      )
+    ).toBe(true);
+    expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.oauthClient.update).not.toHaveBeenCalled();
+    expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
     expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
     expect(mockTriggerBuild).not.toHaveBeenCalled();
   });
@@ -2858,6 +2870,7 @@ describe('approveRequest', () => {
       reviewerUserId: 999,
       approvalNotes: 'Reviewed.',
       holdOverrideReason: OVERRIDE,
+      holdOverrideIds: [7],
     });
 
     expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledWith(

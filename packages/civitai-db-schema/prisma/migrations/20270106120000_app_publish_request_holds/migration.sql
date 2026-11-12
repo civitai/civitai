@@ -6,14 +6,21 @@
 -- this table is absent (approve is refused with a message naming the missing table); the review
 -- queue's hold badge fails open.
 --
--- ADDITIVE ONLY. One new, empty table and its indexes; no existing table, column or row changes,
+-- ADDITIVE ONLY. Two new, empty tables and their indexes; no existing table, column or row changes,
 -- and no foreign keys, so no lock is taken on any existing table. Idempotent (`IF NOT EXISTS`).
 --
 -- GRANTS: if new tables are not automatically granted in this environment, grant the role the
--- app writes with (its primary client) SELECT, INSERT and UPDATE on the table and USAGE on its
--- sequence. Every read and write goes through that client.
+-- app connects as SELECT, INSERT and UPDATE on app_publish_request_holds, USAGE on its id
+-- sequence, and SELECT, INSERT, UPDATE and DELETE on app_publish_request_approve_claims. The
+-- review queue also reads app_publish_request_holds through the read client's role (SELECT).
 --
--- Read-back after applying: SELECT to_regclass('public.app_publish_request_holds');  -- non-null
+-- Read-back after applying, as an owner (replace <app_role> with the role the app connects as):
+--   SELECT to_regclass('public.app_publish_request_holds'),
+--          to_regclass('public.app_publish_request_approve_claims');               -- both non-null
+--   SELECT has_table_privilege('<app_role>', 'app_publish_request_holds', 'SELECT,INSERT,UPDATE'),
+--          has_sequence_privilege('<app_role>', 'app_publish_request_holds_id_seq', 'USAGE'),
+--          has_table_privilege('<app_role>', 'app_publish_request_approve_claims',
+--                              'SELECT,INSERT,UPDATE,DELETE');                     -- all true
 
 BEGIN;
 
@@ -46,5 +53,16 @@ CREATE INDEX IF NOT EXISTS "app_publish_request_holds_request_idx"
   ON "app_publish_request_holds" ("publish_request_id");
 CREATE INDEX IF NOT EXISTS "app_publish_request_holds_slug_created_idx"
   ON "app_publish_request_holds" ("slug", "created_at" DESC);
+
+-- One row per app while an on-site approve that has passed its hold check is running; placing a
+-- hold is refused while a fresh row exists. Rows are deleted when the approve ends.
+CREATE TABLE IF NOT EXISTS "app_publish_request_approve_claims" (
+  "slug"               TEXT        PRIMARY KEY,
+  "publish_request_id" TEXT        NOT NULL,
+  "claimed_by_user_id" INTEGER     NOT NULL,
+  "claimed_at"         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS "app_publish_request_approve_claims_request_idx"
+  ON "app_publish_request_approve_claims" ("publish_request_id");
 
 COMMIT;

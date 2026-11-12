@@ -181,7 +181,12 @@ export function ReviewActionBar({
     publishRequestId: request.id,
     approvalNotes: approvalNotes.trim() || undefined,
     ...(mediaSplitDecision ? { mediaSplit: mediaSplitDecision } : {}),
-    ...(openHolds.length ? { holdOverrideReason: holdOverrideReason.trim() } : {}),
+    ...(openHolds.length
+      ? {
+          holdOverrideReason: holdOverrideReason.trim(),
+          holdOverrideIds: openHolds.map((h) => h.id),
+        }
+      : {}),
   });
 
   const approveLater = () => {

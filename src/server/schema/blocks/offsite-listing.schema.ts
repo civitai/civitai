@@ -10,6 +10,7 @@ import {
   validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import { holdReasonSchema, SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
+import { MAX_OPEN_HOLDS_PER_APP } from '~/shared/constants/publish-request-holds.constants';
 import { APP_LISTING_VISIBILITIES } from '~/shared/utils/app-listing-visibility';
 import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 import {
@@ -401,6 +402,7 @@ export const approveExternalRequestSchema = z.object({
   contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
   mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
   holdOverrideReason: holdReasonSchema.optional(),
+  holdOverrideIds: z.array(z.number().int().positive()).max(MAX_OPEN_HOLDS_PER_APP).optional(),
 });
 export type ApproveExternalRequestInput = z.infer<typeof approveExternalRequestSchema>;
 

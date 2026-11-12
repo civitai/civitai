@@ -1455,6 +1455,7 @@ export const appListingsRouter = router({
           contentRating: input.contentRating,
           mediaSplit: input.mediaSplit,
           holdOverrideReason: input.holdOverrideReason,
+          holdOverrideIds: input.holdOverrideIds,
         });
       } catch (err) {
         throw mapOffsiteError(err);

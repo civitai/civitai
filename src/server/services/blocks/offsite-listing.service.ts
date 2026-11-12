@@ -3461,6 +3461,8 @@ export async function approveExternalRequest(opts: {
   mediaSplit?: ListingMediaSplitDecision | null;
   /** Required to approve while the app has open review holds; recorded on each hold. */
   holdOverrideReason?: string | null;
+  /** The open holds the moderator was shown; an open hold not in this list refuses. */
+  holdOverrideIds?: number[] | null;
 }): Promise<ApproveExternalRequestResult> {
   const { publishRequestId, reviewerUserId } = opts;
   const approvalNotes = opts.approvalNotes ?? null;
@@ -3495,17 +3497,14 @@ export async function approveExternalRequest(opts: {
   const { checkHoldsBeforeApprove, resolveHoldsAtApprove } = await import(
     './publish-request-holds.service'
   );
-  const seenHoldIds = await checkHoldsBeforeApprove(dbWrite, {
+  const holdDecision = {
     slug: request.slug,
     overrideReason: opts.holdOverrideReason,
-  });
+    shownHoldIds: opts.holdOverrideIds,
+  };
+  await checkHoldsBeforeApprove(dbWrite, holdDecision);
   const resolveHolds = (tx: Prisma.TransactionClient) =>
-    resolveHoldsAtApprove(tx, {
-      slug: request.slug,
-      actorUserId: reviewerUserId,
-      overrideReason: opts.holdOverrideReason,
-      seenHoldIds,
-    });
+    resolveHoldsAtApprove(tx, { ...holdDecision, actorUserId: reviewerUserId });
   // Narrow once for the tx closures below (findUnique needs a non-null id).
   const appListingId = request.appListingId;
 
@@ -4954,12 +4953,14 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
   // changes the name, icon or cover (a missing result then reads `missing`, never "unchecked").
   // FAIL-SOFT on a failed READ, so the queue itself stays up; that one case shows no badge.
   const { listingEditQueueChecks } = await import('./app-listing-edit-impersonation.service');
-  const checks = await listingEditQueueChecks(page).catch(() => null);
   const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
-  const holdCounts = await getOpenHoldCountsBySlug(
-    dbRead,
-    page.map((r) => r.slug)
-  );
+  const [checks, holdCounts] = await Promise.all([
+    listingEditQueueChecks(page).catch(() => null),
+    getOpenHoldCountsBySlug(
+      dbRead,
+      page.map((r) => r.slug)
+    ),
+  ]);
   const items = page.map((r) => ({
     ...r,
     listingEditCheck: checks?.get(r.id) ?? null,

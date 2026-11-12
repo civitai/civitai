@@ -664,22 +664,22 @@ describe('approveExternalRequest — review holds', () => {
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
   });
 
-  it('🔴 a hold placed after the first check refuses inside the transaction; the request does not flip', async () => {
+  it('🔴 a hold that appears after the first check refuses inside the transaction; the request does not flip', async () => {
     stageConnectApprove();
     holdsTable([], [hold]);
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
-    ).rejects.toThrow(/placed while this approve was running/);
+    ).rejects.toThrow(/open review hold/);
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
 
-  it('🔴 a REVISION approve: a hold placed after the first check refuses inside its transaction', async () => {
+  it('🔴 a REVISION approve: a hold that appears after the first check refuses inside its transaction', async () => {
     stageConnectRevision(REQUESTED, JUSTIFIED);
     holdsTable([], [{ ...hold, slug: 'parent-slug' }]);
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD })
-    ).rejects.toThrow(/placed while this approve was running/);
+    ).rejects.toThrow(/open review hold/);
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
   });
@@ -691,6 +691,7 @@ describe('approveExternalRequest — review holds', () => {
       publishRequestId: 'alpr_c',
       reviewerUserId: MOD,
       holdOverrideReason: 'checked by hand, a false alarm',
+      holdOverrideIds: [7],
     });
     expect(mockWrite.appListingPublishRequest.updateMany).toHaveBeenCalled();
     const writes = mockWrite.$executeRaw.mock.calls.map((c) =>

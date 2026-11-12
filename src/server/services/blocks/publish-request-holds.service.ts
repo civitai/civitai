@@ -5,6 +5,7 @@ import {
   HOLD_REASON_MAX,
   HOLD_REASON_MIN,
   MAX_OPEN_HOLDS_PER_APP,
+  APPROVE_CLAIM_TTL_MINUTES,
 } from '~/shared/constants/publish-request-holds.constants';
 
 type RawClient = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
@@ -147,6 +148,16 @@ export async function placeHold(
     SELECT status FROM ${REQUEST_TABLE[input.kind]} WHERE id = ${input.publishRequestId}`;
   if (current?.status === 'approved')
     throw new PublishRequestHoldInputError('This request is already approved');
+  const [claim] = await tx.$queryRaw<{ n: number }[]>`
+    SELECT 1 AS n FROM app_publish_request_approve_claims
+    WHERE slug = ${request.slug}
+      AND claimed_at > now() - make_interval(mins => ${Prisma.raw(
+        String(APPROVE_CLAIM_TTL_MINUTES)
+      )})`;
+  if (claim)
+    throw new PublishRequestHoldInputError(
+      'A moderator is approving this app right now; the hold would not stop it. Check the request once the approve finishes.'
+    );
 
   const [{ n }] = await tx.$queryRaw<{ n: number }[]>`
     SELECT count(*)::int AS n FROM app_publish_request_holds
@@ -199,13 +210,36 @@ function heldError(holds: PublishRequestHold[], suffix: string) {
 }
 
 /**
- * The approve paths' first check, before any side effect. Returns the ids of the open holds the
- * moderator is overriding, which {@link resolveHoldsAtApprove} later requires to be the only ones.
+ * An approve may pass only the holds the moderator was shown (`shownHoldIds`, sent by the review
+ * page) and only with an override reason. A hold placed after the page loaded refuses.
  */
-export async function checkHoldsBeforeApprove(
-  db: RawClient,
-  input: { slug: string; overrideReason?: string | null }
-): Promise<number[]> {
+function assertHoldsOverridable(
+  holds: PublishRequestHold[],
+  input: { overrideReason?: string | null; shownHoldIds?: number[] | null }
+): string | null {
+  if (!holds.length) return null;
+  const shown = new Set(input.shownHoldIds ?? []);
+  const unseen = holds.filter((h) => !shown.has(h.id));
+  const clearOrOverride = 'Clear them, or approve with an override reason.';
+  if (unseen.length)
+    throw heldError(
+      unseen,
+      input.overrideReason
+        ? 'It was placed after this review was loaded; reload and review it.'
+        : clearOrOverride
+    );
+  if (!input.overrideReason) throw heldError(holds, clearOrOverride);
+  return assertReason(input.overrideReason, 'An override reason');
+}
+
+type ApproveHoldInput = {
+  slug: string;
+  overrideReason?: string | null;
+  shownHoldIds?: number[] | null;
+};
+
+/** The approve paths' first check, before any side effect. */
+export async function checkHoldsBeforeApprove(db: RawClient, input: ApproveHoldInput) {
   let holds: PublishRequestHold[];
   try {
     holds = await getOpenHoldsBySlug(db, [input.slug]);
@@ -215,37 +249,47 @@ export async function checkHoldsBeforeApprove(
       []
     );
   }
-  if (!holds.length) return [];
-  if (!input.overrideReason)
-    throw heldError(holds, 'Clear them, or approve with an override reason.');
-  assertReason(input.overrideReason, 'An override reason');
-  return holds.map((h) => h.id);
+  assertHoldsOverridable(holds, input);
 }
 
 /**
- * The approve paths' final check, inside the transaction that flips the request to approved.
- * Refuses on any open hold the moderator did not see at {@link checkHoldsBeforeApprove}; marks the
- * ones they did see overridden and records a ModActivity row for each.
+ * For an approve whose writes span outside I/O (on-site): re-checks the holds under the app lock
+ * and records that an approve is running, so {@link placeHold} refuses until
+ * {@link releaseApproveClaim}. A claim older than {@link APPROVE_CLAIM_TTL_MINUTES} is ignored, so
+ * a crashed approve does not block holds for long.
+ */
+export async function claimApprove(
+  tx: RawClient,
+  input: ApproveHoldInput & { publishRequestId: string; actorUserId: number }
+) {
+  await lockApp(tx, input.slug);
+  assertHoldsOverridable(await getOpenHoldsBySlug(tx, [input.slug]), input);
+  await tx.$executeRaw`
+    INSERT INTO app_publish_request_approve_claims
+      (slug, publish_request_id, claimed_by_user_id, claimed_at)
+    VALUES (${input.slug}, ${input.publishRequestId}, ${input.actorUserId}, now())
+    ON CONFLICT (slug) DO UPDATE SET publish_request_id = EXCLUDED.publish_request_id,
+      claimed_by_user_id = EXCLUDED.claimed_by_user_id, claimed_at = now()`;
+}
+
+export async function releaseApproveClaim(db: RawClient, publishRequestId: string) {
+  await db.$executeRaw`
+    DELETE FROM app_publish_request_approve_claims WHERE publish_request_id = ${publishRequestId}`;
+}
+
+/**
+ * The approve paths' final check, inside the transaction that flips the request to approved:
+ * refuses as {@link checkHoldsBeforeApprove} does, else marks the holds overridden and records a
+ * ModActivity row for each.
  */
 export async function resolveHoldsAtApprove(
   tx: RawClient,
-  input: {
-    slug: string;
-    actorUserId: number;
-    overrideReason?: string | null;
-    seenHoldIds: number[];
-  }
+  input: ApproveHoldInput & { actorUserId: number }
 ): Promise<number[]> {
   await lockApp(tx, input.slug);
   const holds = await getOpenHoldsBySlug(tx, [input.slug]);
-  if (!holds.length) return [];
-  const seen = new Set(input.seenHoldIds);
-  const unseen = holds.filter((h) => !seen.has(h.id));
-  if (unseen.length)
-    throw heldError(unseen, 'It was placed while this approve was running; review it first.');
-  if (!input.overrideReason)
-    throw heldError(holds, 'Clear them, or approve with an override reason.');
-  const reason = assertReason(input.overrideReason, 'An override reason');
+  const reason = assertHoldsOverridable(holds, input);
+  if (!reason) return [];
   const ids = holds.map((h) => h.id);
   await tx.$executeRaw`
     UPDATE app_publish_request_holds

@@ -4103,6 +4103,19 @@ model AppPublishRequestHold {
   @@map("app_publish_request_holds")
 }
 
+// While an on-site approve that passed its hold check is running, placing a hold on the app is
+// refused. RAW SQL ONLY (`publish-request-holds.service.ts`); same migration as the holds.
+// @no-type
+model AppPublishRequestApproveClaim {
+  slug             String   @id
+  publishRequestId String   @map("publish_request_id")
+  claimedByUserId  Int      @map("claimed_by_user_id")
+  claimedAt        DateTime @default(now()) @map("claimed_at") @db.Timestamptz(6)
+
+  @@index([publishRequestId], map: "app_publish_request_approve_claims_request_idx")
+  @@map("app_publish_request_approve_claims")
+}
+
 /// Per-block-instance, per-user settings (viewer preferences).
 /// FK CASCADE on subscription deletion and GDPR-user-delete.
 ///

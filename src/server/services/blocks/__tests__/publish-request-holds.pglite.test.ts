@@ -6,10 +6,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import {
   checkHoldsBeforeApprove,
+  claimApprove,
   clearHold,
   getOpenHoldCountsBySlug,
   placeHold,
   PublishRequestHeldError,
+  releaseApproveClaim,
   resolveHoldsAtApprove,
 } from '~/server/services/blocks/publish-request-holds.service';
 import { MAX_OPEN_HOLDS_PER_APP } from '~/shared/constants/publish-request-holds.constants';
@@ -77,7 +79,7 @@ beforeAll(async () => {
 afterAll(() => db.close());
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE app_publish_request_holds, app_block_publish_requests,
+    TRUNCATE app_publish_request_holds, app_publish_request_approve_claims, app_block_publish_requests,
       app_listing_publish_requests, "ModActivity" RESTART IDENTITY;
   `);
 });
@@ -133,11 +135,9 @@ describe('approve', () => {
 
   it('passes with no holds and writes nothing', async () => {
     await addRequest('pubreq_a', 'app-a');
-    expect(await checkHoldsBeforeApprove(raw, { slug: 'app-a' })).toEqual([]);
+    await expect(checkHoldsBeforeApprove(raw, { slug: 'app-a' })).resolves.toBeUndefined();
     expect(
-      await tx((t) =>
-        resolveHoldsAtApprove(t, { slug: 'app-a', actorUserId: HUMAN, seenHoldIds: [] })
-      )
+      await tx((t) => resolveHoldsAtApprove(t, { slug: 'app-a', actorUserId: HUMAN }))
     ).toEqual([]);
     expect((await db.query('SELECT 1 FROM "ModActivity"')).rows).toHaveLength(0);
   });
@@ -158,15 +158,9 @@ describe('approve', () => {
     await addRequest('pubreq_a', 'app-a');
     const h1 = await place('pubreq_a');
     const h2 = await place('pubreq_a');
-    const seen = await checkHoldsBeforeApprove(raw, { slug: 'app-a', overrideReason: OVERRIDE });
-    await tx((t) =>
-      resolveHoldsAtApprove(t, {
-        slug: 'app-a',
-        actorUserId: HUMAN,
-        overrideReason: OVERRIDE,
-        seenHoldIds: seen,
-      })
-    );
+    const decision = { slug: 'app-a', overrideReason: OVERRIDE, shownHoldIds: [h1.id, h2.id] };
+    await checkHoldsBeforeApprove(raw, decision);
+    await tx((t) => resolveHoldsAtApprove(t, { ...decision, actorUserId: HUMAN }));
     const { rows: holds } = await db.query<{
       cleared_kind: string;
       cleared_reason: string;
@@ -197,30 +191,26 @@ describe('approve', () => {
     ]);
   });
 
-  it('refuses at the final check a hold placed after the first check, even with an override', async () => {
+  it('🔴 an override passes only the holds the moderator was shown; one placed after refuses', async () => {
     await addRequest('pubreq_a', 'app-a');
+    const shown = await place('pubreq_a');
     await place('pubreq_a');
-    const seen = await checkHoldsBeforeApprove(raw, { slug: 'app-a', overrideReason: OVERRIDE });
-    await place('pubreq_a');
+    const decision = { slug: 'app-a', overrideReason: OVERRIDE, shownHoldIds: [shown.id] };
+    await expect(checkHoldsBeforeApprove(raw, decision)).rejects.toThrow(
+      /placed after this review was loaded/
+    );
     await expect(
-      tx((t) =>
-        resolveHoldsAtApprove(t, {
-          slug: 'app-a',
-          actorUserId: HUMAN,
-          overrideReason: OVERRIDE,
-          seenHoldIds: seen,
-        })
-      )
-    ).rejects.toThrow(/placed while this approve was running/);
+      tx((t) => resolveHoldsAtApprove(t, { ...decision, actorUserId: HUMAN }))
+    ).rejects.toThrow(/placed after this review was loaded/);
     expect((await getOpenHoldCountsBySlug(raw, ['app-a'])).get('app-a')).toBe(2);
     expect((await db.query('SELECT 1 FROM "ModActivity"')).rows).toHaveLength(0);
   });
 
   it('refuses a short override reason', async () => {
     await addRequest('pubreq_a', 'app-a');
-    await place('pubreq_a');
+    const h = await place('pubreq_a');
     await expect(
-      checkHoldsBeforeApprove(raw, { slug: 'app-a', overrideReason: 'ok.' })
+      checkHoldsBeforeApprove(raw, { slug: 'app-a', overrideReason: 'ok.', shownHoldIds: [h.id] })
     ).rejects.toThrow(/override reason/);
   });
 
@@ -246,5 +236,45 @@ describe('with the table absent', () => {
     } finally {
       await bare.close();
     }
+  });
+});
+
+describe('approve claim (on-site approves past their hold check)', () => {
+  const claim = (overrides: Record<string, unknown> = {}) =>
+    tx((t) =>
+      claimApprove(t, {
+        slug: 'app-a',
+        publishRequestId: 'pubreq_a',
+        actorUserId: HUMAN,
+        ...overrides,
+      })
+    );
+
+  it('🔴 refuses a new hold while an approve holds the claim, and allows it once released', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    await claim();
+    await expect(place('pubreq_a')).rejects.toThrow(/approving this app right now/);
+    await releaseApproveClaim(raw, 'pubreq_a');
+    await expect(place('pubreq_a')).resolves.toMatchObject({ slug: 'app-a' });
+  });
+
+  it('a claim left by a crashed approve stops blocking after it expires', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    await claim();
+    await db.query(
+      `UPDATE app_publish_request_approve_claims SET claimed_at = now() - interval '1 hour'`
+    );
+    await expect(place('pubreq_a')).resolves.toMatchObject({ slug: 'app-a' });
+  });
+
+  it('is refused, and takes no claim, when an open hold was not shown', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    await place('pubreq_a');
+    await expect(claim({ overrideReason: OVERRIDE, shownHoldIds: [] })).rejects.toThrow(
+      PublishRequestHeldError
+    );
+    expect((await db.query('SELECT 1 FROM app_publish_request_approve_claims')).rows).toHaveLength(
+      0
+    );
   });
 });

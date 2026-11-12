@@ -1022,7 +1022,12 @@ export function OffsiteReviewModalBody({
                     approvalNotes: approvalNotes.trim() || undefined,
                     contentRating: selectedRating,
                     ...(mediaSplit ? { mediaSplit } : {}),
-                    ...(openHolds.length ? { holdOverrideReason: holdOverrideReason.trim() } : {}),
+                    ...(openHolds.length
+                      ? {
+                          holdOverrideReason: holdOverrideReason.trim(),
+                          holdOverrideIds: openHolds.map((h) => h.id),
+                        }
+                      : {}),
                   })
                 }
                 disabled={busy || splitStateUnknown || holdBlocked}

@@ -293,7 +293,7 @@ export function onsiteRequestToUnifiedRow(
     submitter: req.submittedBy,
     submittedAt: toDate(reviewedAt ?? req.submittedAt),
     onReview: () => openOnsiteReview(req),
-    openHoldCount: (req as { openHoldCount?: number }).openHoldCount ?? 0,
+    openHoldCount: req.openHoldCount ?? 0,
     // Carried for code+media pairing + the combined surface.
     appBlockId: req.appBlockId,
     onsiteRequest: req,

@@ -1001,7 +1001,6 @@ export function authorizeBlockBridgeViewer(
   };
 }
 
-/** Middleware options for the buzz reads that share one refusal copy and count no refusals. */
 function mapHoldError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
   const name = (err as Error)?.name;
@@ -1014,6 +1013,7 @@ function mapHoldError(err: unknown): TRPCError {
   });
 }
 
+/** Middleware options for the buzz reads that share one refusal copy and count no refusals. */
 function buzzReadOptions(): BlockBridgeViewerOptions {
   return {
     scope: 'buzz:read:self',
@@ -3060,6 +3060,7 @@ export const blocksRouter = router({
           approvalNotes: input.approvalNotes,
           mediaSplit: input.mediaSplit,
           holdOverrideReason: input.holdOverrideReason,
+          holdOverrideIds: input.holdOverrideIds,
         });
       } catch (err) {
         throw new TRPCError({
