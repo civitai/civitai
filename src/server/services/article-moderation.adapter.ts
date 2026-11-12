@@ -81,8 +81,8 @@ export const articleModerationAdapter: ModerationAdapter = {
     // lock a link being created takes, so none outlives the block. The row is read FOR UPDATE, so
     // this writes from the row as it is now, and a write to it that starts later waits for this one.
     if (blocked) {
-      // Unpublished either way: the author submitted the judged text. Logged to see how often a
-      // block lands after the text changed; the notice below names no text.
+      // Unpublishes even when the verdict is for text the article no longer has, failing closed;
+      // the log counts how often that happens.
       const [text, verdict] = await Promise.all([
         dbWrite.article.findUnique({
           where: { id: entityId },
