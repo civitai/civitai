@@ -548,6 +548,30 @@ describe('the query audit and the browsing level', () => {
     expect(seen).toEqual([PG]);
   });
 
+  it("refuses when the service's spelling correction fails the audit", async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? 'minor' : false
+    );
+    const hydrated: number[][] = [];
+    h.fakeGetAllImages = async (args) => {
+      hydrated.push(args.ids);
+      return visibleOnly(new Set([101]))(args);
+    };
+    const track = { action: vi.fn().mockResolvedValue(undefined) };
+    const source: CandidateSource = async () => ({ ids: [101], correctedQuery: 'corrected' });
+    const result = await searchSemanticImages({
+      input: textQuery(),
+      user: VIEWER,
+      track,
+      candidateSource: source,
+    });
+    expect(result).toMatchObject({ items: [], correctedQuery: undefined });
+    expect(hydrated).toEqual([]);
+    expect(track.action).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'CSAM_Help_Triggered' })
+    );
+  });
+
   it("keeps a moderator's requested level", async () => {
     const { calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
