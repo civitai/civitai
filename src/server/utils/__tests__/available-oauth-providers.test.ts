@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { settleOrHung, startHungHttpServer } from './hung-http-server';
 
 // server-domain.ts validates the full server env at import (env.SERVER_DOMAIN_* etc.) — stub it so the unit
 // project can import the module without a real env. getAvailableOAuthProviders itself reads
@@ -65,5 +66,67 @@ describe('getAvailableOAuthProviders', () => {
     const { getAvailableOAuthProviders } = await import('../server-domain');
     expect(await getAvailableOAuthProviders()).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a COLD render against a hub that never answers still completes inside the fetch budget', async () => {
+    const server = await startHungHttpServer();
+    try {
+      process.env.AUTH_JWT_ISSUER = server.url;
+      const { getAvailableOAuthProviders } = await import('../server-domain');
+
+      const started = Date.now();
+      // 1.5 s budget + 500 ms slack.
+      expect(await settleOrHung(getAvailableOAuthProviders(), 2_000)).toEqual([]);
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(server.requests()).toBe(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('an EXPIRED list is served at once while the hub hangs; the refresh happens off the render path', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ providers: [{ id: 'github' }] }) }))
+    );
+    const { getAvailableOAuthProviders } = await import('../server-domain');
+    expect(await getAvailableOAuthProviders()).toEqual(['github']);
+    vi.unstubAllGlobals(); // back to the real fetch
+
+    const server = await startHungHttpServer();
+    const realNow = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(realNow + 11 * 60_000); // past the 10 min TTL
+    try {
+      process.env.AUTH_JWT_ISSUER = server.url;
+      expect(await settleOrHung(getAvailableOAuthProviders(), 100)).toEqual(['github']);
+    } finally {
+      now.mockRestore();
+      await server.close();
+    }
+  });
+
+  it('after a failed fetch, a cold render inside the back-off makes no second hub call', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { getAvailableOAuthProviders } = await import('../server-domain');
+
+    expect(await getAvailableOAuthProviders()).toEqual([]);
+    expect(await getAvailableOAuthProviders()).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('concurrent cold renders share ONE hub fetch', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ providers: [{ id: 'discord' }] }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { getAvailableOAuthProviders } = await import('../server-domain');
+
+    const results = await Promise.all([1, 2, 3].map(() => getAvailableOAuthProviders()));
+    expect(results).toEqual([['discord'], ['discord'], ['discord']]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
