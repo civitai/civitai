@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { StickerMotionEditor } from '~/components/Sticker/StickerMotionEditor';
 import { useStickerPlacementDraftStore as store } from '~/store/sticker-placement-draft.store';
@@ -224,13 +224,13 @@ describe('the timeline inside the image detail dialog', () => {
       if (!event.defaultPrevented && event.key === 'ArrowRight') carousel();
     };
     document.addEventListener('keydown', onCarouselKey, true);
+    onTestFinished(() => document.removeEventListener('keydown', onCarouselKey, true));
 
     await page.getByText('Movement').click();
     await userEvent.keyboard('{ArrowRight}');
 
     expect(video.currentTime).toBeCloseTo(0.1);
     expect(carousel).not.toHaveBeenCalled();
-    document.removeEventListener('keydown', onCarouselKey, true);
   });
 });
 
