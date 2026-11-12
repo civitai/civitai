@@ -172,6 +172,27 @@ describe('approve', () => {
       { cleared_kind: 'overridden', cleared_reason: OVERRIDE, cleared_by_user_id: HUMAN },
       { cleared_kind: 'overridden', cleared_reason: OVERRIDE, cleared_by_user_id: HUMAN },
     ]);
+    // The audit trail end to end: from each ModActivity row to its hold's reason and request.
+    const { rows: trail } = await db.query(
+      `SELECT h.cleared_kind, h.cleared_reason, h.publish_request_id, h.slug
+       FROM "ModActivity" m JOIN app_publish_request_holds h ON h.id = m."entityId"
+       WHERE m."entityType" = 'publishRequestHold' AND m.activity = 'publishRequestHoldOverride'
+       ORDER BY h.id`
+    );
+    expect(trail).toEqual([
+      {
+        cleared_kind: 'overridden',
+        cleared_reason: OVERRIDE,
+        publish_request_id: 'pubreq_a',
+        slug: 'app-a',
+      },
+      {
+        cleared_kind: 'overridden',
+        cleared_reason: OVERRIDE,
+        publish_request_id: 'pubreq_a',
+        slug: 'app-a',
+      },
+    ]);
     const { rows: acts } = await db.query(
       'SELECT "userId", activity, "entityType", "entityId" FROM "ModActivity" ORDER BY "entityId"'
     );
