@@ -10,8 +10,8 @@ Execution tracking lives in the companion checklist:
 Status: **proposal; decisions settled 2026-08-24, amended through 2026-10-20** (Briant). What
 changed after the 2026-08-25 merged design is listed under _Changes since 2026-08-25_ below.
 
-1. Questions & Answers comments are **not migrated** to CommentV3. Amended 2026-11-02 (Briant):
-   they are kept, archived in the `qa_archive` schema before `Thread` is dropped (Phase 6).
+1. Questions & Answers comments are **not migrated** to CommentV3. Amended 2026-11-11 (Briant): they
+   are not kept, and go with the tables in Phase 6 (the 2026-11-02 plan to archive them is dropped).
 2. The model page **keeps its current UI** for now — the migration swaps the storage under it,
    not the presentation (display depth 1, flat root+replies).
 3. Hard stored-depth cap of **20** with clamp-to-sibling: approved.
@@ -51,6 +51,11 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-11-10 — Phase 6 built, not deployed** (Briant; `docs/plans/comments-v3-phase6.md`). The old
+  comment tables, their models and their last readers go; migration
+  `20270102120000_comment_v3_teardown` drops the tables after the deploy. Decisions: the comments
+  never in CommentV3, on Q&A and club posts, are dropped with the tables, not archived (2026-11-10
+  and 2026-11-11); so the CSAM context reader and held-user comment archive read CommentV3 only.
 - **2026-11-09 — Phase 5 built, deployed 2026-11-10** (Briant; `docs/plans/comments-v3-phase5.md`). It
   takes Phase 5 together with Phase 6's "Transition code to remove": the old-row sync, the surface
   switches, the reverse copy (so there is no rollback to the old tables after it), the backfill
@@ -1086,7 +1091,7 @@ the entity row is already gone or held by an entity hard-delete — a comment in
 delete — nothing is inserted, the
 mirror skips the V3 write and the old-side write proceeds. The reverse race, entity delete → `Thread` cascade → mirror
 delete, must not collide with the partition cascade in the same statement (covered by
-`comment-v3-mirror.sql.behavior.test.ts`; the mirror's delete never hard-deletes a row with
+`comment-v3-mirror.sql.behavior.test.ts` until Phase 6 deleted it with the mirror; the mirror's delete never hard-deletes a row with
 replies or one a clamped reply answers, so the two cascades cannot collide on `parentId RESTRICT`). Both the mirror and the backfill resolve a `Thread` row to its
 `(entityType, entityId)` through the same `commentv3_thread_entity` function, so the two cannot
 disagree; comic chapter is the one entity that needs a join there (see the keying note above
@@ -1207,7 +1212,7 @@ particulars:
   `parentId` or `modelId` is refused: the path trigger is INSERT-only, so a move has no mirror.
 - The migration refuses to install where a v1 id above the floor is also a v2 id, which would
   otherwise fail that row's first touch on `CommentV3_pkey`.
-- `src/server/services/__tests__/comment-v3-mirror.sql.behavior.test.ts` runs the schema and
+- Deleted in Phase 6 with the mirror: `src/server/services/__tests__/comment-v3-mirror.sql.behavior.test.ts` ran the schema and
   mirror migrations on PGlite (session zone UTC+5, so an implicit timestamp cast shows) against a
   fixture of the old tables. It covers the rules above except the `SKIP LOCKED` yields, the re-apply
   after a copy, and anything that needs a second session (the delete-during-copy race, the
@@ -1631,7 +1636,8 @@ Also:
   remediation plan + its `production-plan.test.ts`, or the drift gate fails on a table that no
   longer exists.
 - `DROP SCHEMA archive CASCADE` — the ten purge-archive tables (334,004 threads / 281,426
-  comments / 5,868 reports; _Orphan purge_ step 8).
+  comments / 5,868 reports; _Orphan purge_ step 8). The held users' comments in it, their only copy,
+  were written to the CSAM bucket first (2026-11-11).
 - **Leave the `Comment`/`CommentV2` values in the `EntityType` pg enum permanently.** Removing a pg
   enum value requires a type rewrite across every column using it, and historical `UserStrike`,
   `Appeal`, `JobQueue`, `EntityCollaborator`, and `ModerationRule` rows carry those values. Instead:
@@ -1652,8 +1658,7 @@ mute check and block-hide alike.
 ### Explicitly not migrated
 
 - `clubPost` threads — clubs are dead code; rows (if any) are left behind and dropped with Thread.
-- `question`/`answer` — decided (decision 1): not migrated; archived in `qa_archive` before
-  Thread is dropped. The feature code, `QuestionAnswerComments.tsx` and
+- `question`/`answer` — decided (decision 1): not migrated; dropped with Thread. The feature code, `QuestionAnswerComments.tsx` and
   `question/answer.metrics.ts` included, is removed; the Q&A tables themselves stay.
 - Comments attached to orphaned Threads (all entity FKs null) — purged and archived 2026-10-19;
   the backfill still skips any that recur (inventory in _Orphaned-thread comments — decided_).

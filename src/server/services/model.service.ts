@@ -317,7 +317,10 @@ import {
   showsSfwFace,
 } from '~/shared/utils/model-sfw-face';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
-import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
+import {
+  updateModelNsfwLevels,
+  updateModelVersionNsfwLevels,
+} from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import {
@@ -6777,6 +6780,20 @@ export async function migrateResourceToCollection({
   if (filteredVersions.length <= 1)
     throw throwBadRequestError('Only models with more than one published version can be migrated');
 
+  // The civitai.com face goes with the version its cover is posted on: the rollup only counts a
+  // cover posted on the model's own versions.
+  const coverVersionId = model.sfwCoverImageId
+    ? (
+        await dbRead.image.findUnique({
+          where: { id: model.sfwCoverImageId },
+          select: { post: { select: { modelVersionId: true } } },
+        })
+      )?.post?.modelVersionId ?? null
+    : null;
+  const remainingVersions = filteredVersions.slice(1);
+  const faceMoves = remainingVersions.some((v) => v.id === coverVersionId);
+  const noFace = { sfwName: null, sfwDescription: null, sfwCoverImageId: null };
+
   const { collection, modelIds } = await dbWrite.$transaction(
     async (tx) => {
       // Create the collection
@@ -6794,14 +6811,13 @@ export async function migrateResourceToCollection({
         },
       });
 
-      const remainingVersions = filteredVersions.slice(1);
-
       // create a model for each remaining version
       const modelIds = [];
       for (const version of remainingVersions) {
         const newModel = await tx.model.create({
           data: {
             ...modelData,
+            ...(version.id === coverVersionId ? {} : noFace),
             name: truncateModelName(`${modelData.name} - ${version.name}`),
             meta: { ...((modelData.meta as ModelMeta) ?? {}), showcaseCollectionId: collection.id },
             gallerySettings:
@@ -6858,13 +6874,21 @@ export async function migrateResourceToCollection({
       // update the original model name to include the version
       await tx.model.update({
         where: { id: model.id },
-        data: { name: truncateModelName(`${model.name} - ${filteredVersions[0].name}`) },
+        data: {
+          name: truncateModelName(`${model.name} - ${filteredVersions[0].name}`),
+          ...(faceMoves ? noFace : {}),
+        },
       });
 
       return { collection, modelIds };
     },
     { timeout: 60000, maxWait: 10000 }
   );
+
+  // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
+  // each was given its version's stored level. Versions first: the model level reads them.
+  await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
+  await updateModelNsfwLevels(modelIds);
 
   // Set the showcase collection for the original model
   await setModelShowcaseCollection({

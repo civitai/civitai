@@ -9,7 +9,6 @@ import type {
 } from '@civitai/orchestration-client';
 import type { WorkflowStatus } from '@civitai/orchestration-client';
 import {
-  getConsumerBlobUploadUrl,
   getWorkflow as clientGetWorkflow,
   handleError,
   submitWorkflow as clientSubmitWorkflow,
@@ -33,6 +32,7 @@ import type {
 } from '~/server/schema/training.schema';
 import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import {
   deriveTrainingWorkflowState,
@@ -640,9 +640,12 @@ export async function updateTrainingWorkflowRecords(
 // Auto-label v2 (orchestrator workflows)
 //
 // These three functions replace the legacy zip → S3 → legacy job API pipeline.
-// Everything runs through the v2 consumer endpoints with the system token — the
-// work is billed to the system account so users pay nothing for tag/caption
-// runs, and the workflow isn't visible under the user's own token.
+// The upload URL is minted with the user's own orchestrator token, like every
+// consumer upload, so the upload is attributed to and processed for the user.
+// The workflow submit and poll run on the system token: the work is billed to the
+// system account so users pay nothing for tag/caption runs, and the workflow isn't
+// visible under the user's own token. The submit therefore accepts only
+// orchestrator-hosted media (assertCivitaiMediaUrls), as Training Studio's does.
 // =============================================================================
 
 type AutoLabelWorkflowMetadata = {
@@ -784,8 +787,8 @@ export function toOrchestratorError(error: unknown): never {
       // is exactly what surfaced ~11×/2h on training.submitAutoLabelWorkflow: a
       // transient orchestrator brownout mis-counted against our 500 SLO AND
       // non-retryable to the client. `toOrchestratorError` is only reached on a
-      // `!data` result from an orchestrator round-trip (getConsumerBlobUploadUrl /
-      // clientSubmitWorkflow / clientGetWorkflow), so a local/logic bug thrown
+      // `!data` result from an orchestrator round-trip (clientSubmitWorkflow /
+      // clientGetWorkflow), so a local/logic bug thrown
       // BEFORE the call never reaches here — only real upstream failures do.
       if (status === undefined || status >= 500)
         throw throwServiceUnavailableError(messages ?? null, error);
@@ -795,16 +798,22 @@ export function toOrchestratorError(error: unknown): never {
   }
 }
 
+/**
+ * The upload is the user's own media, so the URL is minted with their orchestrator token.
+ * `getUserToken` resolves the requesting user's token; it runs only once ownership is checked.
+ */
 export async function getAutoLabelUploadUrl({
   userId,
   modelId,
-}: GetAutoLabelUploadUrlInput & { userId: number }) {
+  getUserToken,
+}: GetAutoLabelUploadUrlInput & {
+  userId: number;
+  getUserToken: () => Promise<string>;
+}) {
   await assertModelOwnership(modelId, userId);
-  const { data, error } = await getConsumerBlobUploadUrl({
-    client: internalOrchestratorClient,
-  });
-  if (!data) toOrchestratorError(error);
-  return { uploadUrl: data.uploadUrl, expiresAt: data.expiresAt };
+  const token = await getUserToken();
+  const { uploadUrl, expiresAt } = await getConsumerBlobUploadUrlService({ token });
+  return { uploadUrl, expiresAt };
 }
 
 export async function submitAutoLabelWorkflow({
@@ -816,6 +825,8 @@ export async function submitAutoLabelWorkflow({
 }: SubmitAutoLabelWorkflowInput & { userId: number }) {
   await assertModelOwnership(modelId, userId);
   assertSafeMediaUrls(images.map((i) => i.mediaUrl));
+  // Submitted on the system token, so only orchestrator-hosted media, as Training Studio's submit.
+  assertCivitaiMediaUrls(images.map((i) => i.mediaUrl));
 
   const steps: WorkflowStepTemplate[] = images.map((img, index) => {
     const stepMetadata: AutoLabelStepMetadata = { filename: img.filename };

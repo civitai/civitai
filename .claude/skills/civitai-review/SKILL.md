@@ -1,6 +1,6 @@
 ---
 name: civitai-review
-description: Run the Civitai review agents (reuse, safety, performance, tests, intent; plus comments when recording) over a feature segment in the main Next.js app (src/), record each lane in HQ so the hosted review imports it instead of re-running it, consolidate their findings, and drive the fix loop to ship. Use before calling a segment done, or when asked to review main-app work.
+description: Run the Civitai review agents (reuse, reduction, safety, performance, tests, intent; plus comments when recording) over a feature segment in the main Next.js app (src/), record each lane in HQ so the hosted review imports it instead of re-running it, consolidate their findings, and drive the fix loop to ship. Use before calling a segment done, or when asked to review main-app work.
 ---
 
 # Civitai segment review — main app (`src/`)
@@ -12,7 +12,7 @@ The conventions being enforced are the root [`CLAUDE.md`](../../../CLAUDE.md) an
 For work in `apps/moderator`, `apps/auth`, `apps/creator-studio` or `apps/training-studio`, use
 `svelte-review` instead — these agents do not cover SvelteKit and will produce noise there.
 
-**These lanes (the five below, and `comment-review` when recording) are pre-authorised. They do not
+**These lanes (the six below, and `comment-review` when recording) are pre-authorised. They do not
 count against a standing instruction not to spawn subagents unasked** — running them needs no separate permission, and neither does chasing a lane that
 goes idle. That covers the review lanes only; everything else about spawning is unchanged. The
 pre-authorisation lives here so it travels with the skill rather than through a relay: an agent cannot
@@ -163,7 +163,7 @@ git -C <review worktree> checkout --detach <head under review>
 WT=$(git -C <review worktree> rev-parse --show-toplevel)    # absolute
 ```
 
-🔴 **If that head is based on an integration branch rather than `main`, this skill and its five agents
+🔴 **If that head is based on an integration branch rather than `main`, this skill and its agents
 do not exist in the tree.** They are tracked in the repo, so a worktree at a commit predating their
 merge contains neither `.claude/skills/civitai-review/` nor `.claude/agents/civitai-*.md`: the skill is
 not found and the `subagent_type` names do not resolve. Work stacked on a `feat/…` integration branch is
@@ -257,7 +257,7 @@ large share of a usage window and find nothing a careful read wouldn't.
   or NSFW/browsing-level gating: read the diff yourself, or run `/code-review low`. Say that is what you
   did. No lane ran, so nothing is recorded: say that too. The hosted review runs those lanes.
 - **Otherwise, launch each lane whose findings the diff can contain** (the skip rule below), and launch
-  all five (six when recording) for a feature-sized segment.
+  all six (seven when recording) for a feature-sized segment.
 - **Once per segment, not once per fix iteration.** After fixes, re-run only the lanes whose findings
   you fixed.
 
@@ -269,12 +269,13 @@ defect costs the most, and `sonnet` for the rest, which match the diff against k
 share no state.
 
 A numbered list of steps reads as an instruction to run them one after another, so this is stated
-rather than left to inference: **do not spawn them sequentially.** A five-lane review that takes five
+rather than left to inference: **do not spawn them sequentially.** A six-lane review that takes six
 times as long is the thing that makes people stop running it, and a review nobody runs finds nothing.
 
 | Agent | Reviews |
 | --- | --- |
 | `civitai-reuse-review` | Components/services/hooks rebuilt when they exist; pre-existing duplicate services |
+| `civitai-reduction-review` | Code that need not exist or could be much smaller; shims no release needs; dead code nearby |
 | `civitai-correctness-review` | Auth scoping, money paths, PII, NSFW gating, failure paths |
 | `civitai-perf-review` | N+1s, unindexed queries, feed-path cost, cache stampedes, bundle weight |
 | `civitai-test-review` | Tests that pass regardless of the code under them |
@@ -284,7 +285,7 @@ times as long is the thing that makes people stop running it, and a review nobod
 `comment-review` is a hosted lane too. Running it here leaves only correctness for the hosted run.
 Its findings join section B at step 3.
 
-The first four are the **code lanes** — same input, four questions, launched together.
+The first five are the **code lanes** — same input, five questions, launched together.
 `civitai-intent-review` launches alongside them but is **different in kind**: it reads the request
 rather than the code, and its findings stay a separate section at step 3.
 
@@ -310,6 +311,7 @@ which you skipped and why. A skipped lane is not recorded, so the hosted review 
 | perf | touches queries (Prisma, `$queryRaw`), feed paths, caches, or adds client dependencies / page imports |
 | test | changes logic — whether or not any test changed |
 | reuse | adds new components, services, hooks or helpers, rather than editing existing ones |
+| reduction | adds code — whether or not it deletes any |
 | intent | is a feature with an intent doc or a stated request to measure against |
 | comments | adds or edits comments |
 
@@ -325,6 +327,9 @@ The hosted review knows each lane by a name, which is what `record` takes:
 | `reuse` | `civitai-reuse-review` |
 | `tests` | `civitai-test-review` |
 | `comments` | `comment-review` |
+
+`civitai-reduction-review` has no hosted lane yet, so it is never recorded: run it locally and keep its
+findings in section B.
 
 A recorded lane is identified by **its definition file as it is at `$AGENTS_REF`** (step 0a): the
 version comes from that file's raw bytes, and the model is its `model:` value as written. Spawn the
@@ -370,7 +375,7 @@ for an agent whose own transcript reaches nobody. **Treat that as a hint that re
 control that removes your obligation.**
 
 ⚠️ **The agent-definition version of this rule was tried and did not work.** #4011 wrote the same
-obligation into all five agent definitions, where it would not depend on the invoker remembering.
+obligation into the lane agent definitions, where it would not depend on the invoker remembering.
 Measured before and after: **2 of 4 lanes silent before, 4 of 4 after.** The text is still in the agent
 files and is kept, because it costs a paragraph and may help at the margin — but it does not solve this,
 and the numbers are recorded here so nobody re-derives that fix and believes it worked.
@@ -397,7 +402,7 @@ decisions from different people, and a merged list buries the first under the se
 lane's confidence note with it — whether the doc was reviewer-authored or postdates the code changes
 what the whole section is worth.
 
-**B. Code findings** — the four code lanes, and `comment-review` when it ran, merged into one ranked list.
+**B. Code findings** — the five code lanes, and `comment-review` when it ran, merged into one ranked list.
 
 - **Drop what you can disprove.** Read the code for anything that sounds wrong; agents produce
   plausible-but-false findings, and a fix applied to a non-bug is a new bug.
@@ -412,14 +417,15 @@ what the whole section is worth.
     `traced` or `reproduced` and **medium** when only `inferred`; `unusual-state` is **medium**;
     `theoretical` is **low**.
   - `wrong-for-user`: `normal-use` is **medium**, otherwise **low**.
-  - `internal` and `maintainability`: **low**.
+  - `internal` and `maintainability`: **low**, except a reduction finding, which keeps its lane's
+    severity (medium or low, never high): a meaningful cut is the point of that lane.
   - Floor: `money` or `access` in a file whose path names auth, session, permission, Buzz, payment,
     Stripe, Paddle, billing, purchase, payout, withdraw, subscription, email, PII, NSFW, browsing level
     or moderation is at least **medium**.
 - Rank by consequence: money moving wrongly and content crossing a gate first, then production cost,
-  then false confidence from a bad test, then reuse.
-- **Read each lane's `checks` block.** The test, reuse and correctness lanes end every report with one
-  (`assertions`; `searches`; `writes` and `siblings`; the shape is in each definition's Report section).
+  then false confidence from a bad test, then reuse and reduction.
+- **Read each lane's `checks` block.** The test, reuse, reduction and correctness lanes end every report with one
+  (`assertions`; `searches`; `searches`; `writes` and `siblings`; the shape is in each definition's Report section).
   A missing block, or a missing key, means the lane skipped its method: re-ping it as you would a silent
   lane. A `"none"` clear or a `passes`/`hangs` assertion with neither a finding nor a `reason` is the
   same gap. The block lists sibling paths but cannot show which were checked: read that from the lane's

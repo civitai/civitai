@@ -2,7 +2,7 @@ import type { NextApiRequest } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/comment.schema';
+import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/commentv3.schema';
 import { POST_CREATE_RATE_LIMIT_KEY } from '~/server/schema/post.schema';
 import { isBucketCountable, usageLimitDefs } from '~/shared/constants/usage-limits';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
