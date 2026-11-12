@@ -6,6 +6,7 @@ import type { SessionUser } from '@civitai/auth';
 import { db } from '../db/db';
 import { getRedis, getSysRedis } from '../redis';
 import { shapeSessionUser } from './session-shape';
+import { withSysReadDeadline } from '../sys-read';
 import { SYSTEM_WORKLOAD_ROLE } from '../oauth/constants';
 
 // The auth hub is the SOLE PRODUCER of session-user data (docs/thin-session-token-design.md, "LOCKED
@@ -117,7 +118,7 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
     if (!sysRedis) {
       permissionsDegraded = true; // no sysRedis configured — can't derive; don't cache empty perms
     } else {
-      const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
+      const raw = await withSysReadDeadline(() => sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS));
       if (raw) {
         const map = JSON.parse(raw) as Record<string, number[]>;
         for (const [permKey, ids] of Object.entries(map)) {

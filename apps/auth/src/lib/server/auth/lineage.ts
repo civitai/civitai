@@ -2,6 +2,7 @@ import { familyId, type SessionClaims } from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { evalSys, getSysRedis } from '../redis';
 import { sessions } from './registry';
+import { withSysReadDeadline } from '../sys-read';
 
 // A family is every session descended from one sign-in on one browser (see @civitai/auth `familyClaims`).
 // These records let the hub tell a family is still in use, and end every family a browser signed in with.
@@ -25,10 +26,12 @@ const MARK_LIVE_SCRIPT = `
 /** Record that `family` was just used. Best-effort. */
 export async function markFamilyLive(family: string | undefined): Promise<void> {
   if (!family) return;
-  await evalSys(
-    MARK_LIVE_SCRIPT,
-    [REDIS_SYS_KEYS.SESSION.FAMILY_LIVE],
-    [family, String(Date.now()), String(FAMILY_LIVE_TTL_MS)]
+  await withSysReadDeadline(() =>
+    evalSys(
+      MARK_LIVE_SCRIPT,
+      [REDIS_SYS_KEYS.SESSION.FAMILY_LIVE],
+      [family, String(Date.now()), String(FAMILY_LIVE_TTL_MS)]
+    )
   ).catch(() => undefined);
 }
 
@@ -50,7 +53,11 @@ async function isFamilyLive(family: string): Promise<boolean> {
   const sys = getSysRedis();
   if (!sys) return true;
   try {
-    return (await sys.hGet<string>(REDIS_SYS_KEYS.SESSION.FAMILY_LIVE, family)) != null;
+    return (
+      (await withSysReadDeadline(() =>
+        sys.hGet<string>(REDIS_SYS_KEYS.SESSION.FAMILY_LIVE, family)
+      )) != null
+    );
   } catch {
     return true;
   }
