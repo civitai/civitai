@@ -93,6 +93,7 @@ const ENDPOINT_ROUTES = [
   '/api/auth/refresh',
   '/api/auth/switch',
   '/api/health',
+  '/api/ready',
   '/discord/link-role',
   '/favicon.svg',
   '/login/[provider]',
