@@ -106,9 +106,6 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 const deals = await import('~/server/services/creator-service-deal.service');
-const { dealOverdueCancelledChatLine } = await import(
-  '~/shared/utils/creator-service-deal-chat-line'
-);
 const { creatorServiceDealsJob } = await import('~/server/jobs/creator-service-deal-jobs');
 const reviews = await import('~/server/services/creator-service-dispute-review.service');
 const escrow = await import('~/server/services/creator-service-escrow.service');
@@ -1169,7 +1166,7 @@ describe('an overdue deal nothing was delivered for', () => {
       expect.objectContaining({
         userId: -1,
         chatId: 77,
-        content: dealOverdueCancelledChatLine({ dealId: id, days: 7 }),
+        content: `This deal was cancelled automatically because nothing was delivered within 7 days of the due date. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${id})`,
       })
     );
   });
@@ -1217,6 +1214,28 @@ describe('an overdue deal nothing was delivered for', () => {
     expect((await deal(fresh)).status).toBe('InRevision');
     expect(await deals.cancelOverdueServiceDeal(fresh)).toBe(false);
     expect(await deal(stale)).toMatchObject({ status: 'Cancelled', closeReason: 'overdue' });
+    expect(chat.createMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chatId: 77,
+        content: `This deal was cancelled automatically because the requested revision wasn't delivered within 7 days. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${stale})`,
+      })
+    );
+  });
+
+  it('stays cancelled and refunded when the chat line cannot be posted', async () => {
+    const id = await working();
+    await dueDaysAgo(id, 8);
+    chat.createMessage.mockRejectedValueOnce(new Error('chat down'));
+    expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 1 });
+    expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'overdue' });
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'overdue chat line could not be posted',
+        dealId: id,
+        error: 'chat down',
+      })
+    );
   });
 
   it('counts a second revision round from its own request', async () => {

@@ -978,6 +978,32 @@ export async function ensureApprovalTag(opts: {
   return { status: 'created', tag: decision.tag, fallbackFrom };
 }
 
+let platformAccountLogin: Promise<string> | null = null;
+
+/**
+ * The login of the account the admin token authenticates as: the account every platform commit
+ * (an approve's snapshot, a manifest edit) is pushed as, and so the `pusher` of their push
+ * webhooks. A developer pushes as their own `dev-<userId>` account and cannot push as this one.
+ *
+ * Read once per process. A failed read is not kept, so the next call asks again.
+ */
+export async function getPlatformAccountLogin(): Promise<string> {
+  platformAccountLogin ??= (async () => {
+    const me = await unwrap<{ login?: unknown }>(await fjFetch('/api/v1/user'));
+    const login = me?.login;
+    if (typeof login !== 'string' || login.length === 0) {
+      throw new Error('Forgejo /api/v1/user returned no login');
+    }
+    return login;
+  })();
+  try {
+    return await platformAccountLogin;
+  } catch (err) {
+    platformAccountLogin = null;
+    throw err;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 3 (git-push self-service) — per-user Forgejo identity provisioning.
 //

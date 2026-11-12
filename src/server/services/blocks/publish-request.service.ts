@@ -4470,7 +4470,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // publish request. These two writes are the durable proof that THIS sha
   // went through moderator review — the git-push webhook keys its
   // no-trust-on-push gate off `current_version_sha` (and, as a race backstop,
-  // an `approved` publish request with this `forgejoCommitSha`). Any push
+  // an `approved` publish request with this `forgejoCommitSha`). The webhook for
+  // THIS commit usually arrives before these writes; it recognises the commit
+  // from the `Publish-Request` trailer above and the pushing account. Any push
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
   await dbWrite.appBlock.update({
@@ -4580,11 +4582,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // approve supersedes are left to the sweep (`jobs/sweep-review-storage.ts`).
   void teardownReviewStorageForRequest(request.id);
 
-  // (6b) Supersede any OTHER request still 'pending' for this slug. If the
-  // git-push webhook raced ahead of (6) it may have parked a duplicate
-  // pending-review row for THIS approved sha; withdraw it (and any older
-  // pending submission) so the queue reflects that the slug is now approved.
-  // Scoped to NOT touch the row we just approved.
+  // (6b) Supersede any OTHER request still 'pending' for this slug so the queue
+  // reflects that the slug is now approved. Scoped to NOT touch the row we just
+  // approved. This does not stop the webhook from parking this approve's own
+  // commit as a second request, because a row the webhook writes after this
+  // update survives it. The webhook recognises that commit by its
+  // `Publish-Request` trailer and pusher (git-push.ts ownApproveCommitRequest).
   await dbWrite.appBlockPublishRequest.updateMany({
     where: { slug: request.slug, status: 'pending', NOT: { id: request.id } },
     data: { status: 'withdrawn' },
