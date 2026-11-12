@@ -42,6 +42,7 @@ import { CHAT_AUDIT_FLAG } from '~/server/common/chat-audit.constants';
 import type { EntityChangeRow } from '~/server/common/entity-change.constants';
 import { ENTITY_CHANGE_TRACKING_FLAG } from '~/server/common/entity-change.constants';
 import { isFlipt } from '~/server/flipt/client';
+import { backoffDelay } from '~/utils/backoff';
 
 /**
  * Whether the caller waits for the tracker to accept the row.
@@ -568,7 +569,8 @@ export class Tracker {
     let failure: Error | null = null;
 
     for (; attempt <= MAX_ATTEMPTS; attempt++) {
-      if (attempt > 1) await sleep(baseDelayMs * 2 ** (attempt - 2) + Math.random() * baseDelayMs);
+      if (attempt > 1)
+        await sleep(backoffDelay(attempt - 2, { baseMs: baseDelayMs, jitterMs: baseDelayMs }));
 
       try {
         const res = await fetch(url, {
