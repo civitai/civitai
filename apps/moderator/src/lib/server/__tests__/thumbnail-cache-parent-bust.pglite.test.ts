@@ -239,6 +239,19 @@ describe('moderator writes that change a custom thumbnail', () => {
   });
 });
 
+// The version showcase is cached for a day and filtered by level when it is built, so a re-rate has
+// to drop it for the image's post.
+describe('updateImageNsfwLevel and the post gallery caches', () => {
+  it("busts the caches of the image's post", async () => {
+    await db.query(`UPDATE "Image" SET "postId" = 42 WHERE "id" = $1`, [PLAIN_IMAGE_ID]);
+    vi.mocked(bustPostGalleryCaches).mockClear();
+
+    await updateImageNsfwLevel({ id: PLAIN_IMAGE_ID, nsfwLevel: 16, userId: 1 });
+
+    expect(bustPostGalleryCaches).toHaveBeenCalledWith([42]);
+  });
+});
+
 // A held owner's image is kept by the hold's delete trigger (the real migration, installed here),
 // blocked and taken out of its post: that post's gallery caches are as stale as for a delete.
 describe('an image delete on an image a hold marker keeps', () => {
