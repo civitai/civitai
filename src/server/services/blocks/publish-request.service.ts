@@ -3290,6 +3290,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // Push-originated requests (git-push webhook) carry an empty bundleKey
       // and this real sha — approve reconstructs the bundle from Forgejo at it.
       forgejoCommitSha: true,
+      // The submitting client's source claim, carried into the approve commit's trailers.
+      sourceCommit: true,
+      sourceDirty: true,
       submittedByUserId: true,
       appBlockId: true,
       // The reviewed file list, which the permission-hook pin below cross-checks with the bytes.
@@ -4425,7 +4428,19 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
 
   // (5) Atomic single-commit replacement of the repo contents on
   // civitai-apps/<slug>. This commit fires the git-push webhook.
-  const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
+  // The subject is unchanged; trailers map the snapshot to the request and to the developer's
+  // source (approve-provenance.ts). A push-originated request's pushed sha is `Pushed-Commit`,
+  // never `Source-Commit`: the latter is only ever the client's own claim.
+  const { buildApproveCommitMessage } = await import('./approve-provenance');
+  const commitMessage = buildApproveCommitMessage({
+    publishRequestId: request.id,
+    slug: request.slug,
+    version: request.version,
+    sourceCommit: request.sourceCommit,
+    sourceDirty: request.sourceDirty,
+    sourceRepo: (manifest as { repository?: unknown }).repository,
+    pushedCommit: request.bundleKey ? null : request.forgejoCommitSha,
+  });
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,
     files: filesForCommit,
@@ -4463,6 +4478,36 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       appBlockId,
     },
   });
+
+  // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag
+  // already names another commit, `approved-<request id>`; see decideVersionTag). Runs after the
+  // approval markers are durable and before the build trigger. LOG-AND-CONTINUE: a tag is a
+  // pointer for developers, and a Forgejo error here must never fail an approve whose code is
+  // committed or keep its build from starting.
+  try {
+    const { ensureApprovalTag } = await import('./forgejo.service');
+    const tagged = await ensureApprovalTag({
+      slug: request.slug,
+      version: request.version,
+      publishRequestId: request.id,
+      sha: forgejoCommitSha,
+      message: commitMessage,
+    });
+    if (tagged.status === 'skipped' || tagged.fallbackFrom) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] version tag (slug=${request.slug}, id=${request.id}): ${JSON.stringify(
+          tagged
+        )}`
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] version tag not created (slug=${request.slug}, id=${request.id}); ` +
+        `approve/deploy CONTINUES: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // (6b) FORK PROVENANCE — if this request carries a parent (server-written onto the REQUEST at
   // creation; 🔴 never read from `manifest`), stamp it onto the block and link this app's store
