@@ -1140,6 +1140,20 @@ function matureFilterFor(column: Prisma.Sql, allowed: MatureRatingsAllowed): Pri
 }
 
 /**
+ * The account behind a store row is still active: not banned, not deleted. The one owner rule
+ * for every store arm — the listing owner (`al.user_id`, inside {@link storeEligibilityWhere})
+ * and a sub-listing's author (`s.author_user_id`) — so a banned or deleted account's apps and
+ * items leave the store together. An `EXISTS`, not a join, so it can sit in any WHERE.
+ */
+export function storeOwnerEligibleWhere(userIdColumn: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`EXISTS (
+        SELECT 1 FROM "User" store_owner
+        WHERE store_owner.id = ${userIdColumn}
+          AND store_owner."bannedAt" IS NULL AND store_owner."deletedAt" IS NULL
+      )`;
+}
+
+/**
  * Every condition that makes a LISTING eligible for the store grid, over the aliases `al`
  * (the listing) and `ab` (its backing block). The parent arm and the sub-listing arm of the
  * catalog statement both apply this to the parent row, so a child can never be visible while
@@ -1157,6 +1171,8 @@ export function storeEligibilityWhere(args: {
       -- A shadow revision is status='draft' and the level gate can admit a draft, so this is
       -- what keeps a shadow's un-reviewed content out of the store.
       AND al.revision_of_id IS NULL
+      -- A banned or deleted owner's listings leave the store with them.
+      AND ${storeOwnerEligibleWhere(Prisma.sql`al.user_id`)}
       -- An onsite listing appears only once its block has deployed successfully at least once.
       AND (al.kind <> 'onsite' OR ab.current_version_deployed_at IS NOT NULL)
       AND (${args.kind}::text IS NULL OR al.kind = ${args.kind}::text)
@@ -1588,8 +1604,10 @@ export async function listAvailableListings(
   // deliberately outside the statement hash. See
   // {@link catalogPageCache}.
   //
-  // TTL = `CacheTTL.sm` (180s). Rows enter and leave only through moderator or owner
-  // actions, and every one of those paths calls `bustAppListingCatalogCache()`.
+  // TTL = `CacheTTL.sm` (180s). Moderator and owner actions on a listing call
+  // `bustAppListingCatalogCache()`. Banning or deleting the owner (or a sub-listing's
+  // author) also removes rows, through `storeOwnerEligibleWhere`, and those paths bust
+  // nothing: they are bounded by the TTL alone.
   //
   // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
   // no mutation to hang a bust on. It is NOT a redis-outage backstop: `queryCache` has no
@@ -1652,11 +1670,11 @@ export async function listAvailableListings(
       FROM app_sub_listings s
       JOIN app_listings al ON al.id = s.parent_listing_id
       JOIN app_sub_listing_parents sp ON sp.parent_listing_id = s.parent_listing_id
-      -- A banned or deleted author's items leave the store with them.
-      JOIN "User" au ON au.id = s.author_user_id AND au."bannedAt" IS NULL AND au."deletedAt" IS NULL
       LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
       LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
       WHERE ${eligibility(levelFilter)}
+        -- A banned or deleted author's items leave the store with them.
+        AND ${storeOwnerEligibleWhere(Prisma.sql`s.author_user_id`)}
         AND sp.enabled
         AND s.status = 'approved'
         -- An on-site child opens under the parent's run route, which serves only an approved
