@@ -12,7 +12,13 @@ import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
  * keeps the deadline, so the protection never depends on flag state existing.
  */
 export function fetchTimeoutsDisabled(): boolean {
-  return isFliptSync(FLIPT_FEATURE_FLAGS.OUTBOUND_FETCH_TIMEOUTS_OFF) === true;
+  // A flag read that fails for any reason keeps the deadline: it must never remove the
+  // protection, and never throw out of the fetch path it guards.
+  try {
+    return isFliptSync(FLIPT_FEATURE_FLAGS.OUTBOUND_FETCH_TIMEOUTS_OFF) === true;
+  } catch {
+    return false;
+  }
 }
 
 /** `AbortSignal.timeout(ms)`, unless the off-switch is thrown. */

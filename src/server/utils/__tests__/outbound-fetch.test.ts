@@ -5,10 +5,13 @@ import { settleOrHung, startHungHttpServer } from './hung-http-server';
 // `outboundFetch` is the bounded replacement for a bare server-side `fetch`. Its contract, against a
 // dependency that accepts the connection and never answers: the call rejects within its timeout,
 // a caller's own signal still works, and only an explicit off-switch removes the deadline.
-const flags = vi.hoisted(() => ({ values: new Map<string, boolean | null>() }));
+const flags = vi.hoisted(() => ({ values: new Map<string, boolean | null>(), throws: false }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFliptSync: (flag: string) => (flags.values.has(flag) ? flags.values.get(flag) : null),
+  isFliptSync: (flag: string) => {
+    if (flags.throws) throw new Error('flag client unavailable');
+    return flags.values.has(flag) ? flags.values.get(flag) : null;
+  },
 }));
 
 import { outboundFetch } from '~/server/utils/fetch-timeout';
@@ -20,7 +23,10 @@ beforeAll(async () => {
 afterAll(async () => {
   await server.close();
 });
-beforeEach(() => flags.values.clear());
+beforeEach(() => {
+  flags.values.clear();
+  flags.throws = false;
+});
 
 const settledAs = async (p: Promise<unknown>, ms: number) => {
   const r = await settleOrHung(
@@ -53,6 +59,13 @@ describe('outboundFetch against a server that never responds', () => {
     const controller = new AbortController();
     const call = outboundFetch(server.url, { timeoutMs: 250, signal: controller.signal });
     expect(await settledAs(call, 750)).toBe('TimeoutError');
+  });
+
+  it('a flag read that throws keeps the deadline and does not throw out of the call', async () => {
+    flags.throws = true;
+    expect(await settledAs(outboundFetch(server.url, { timeoutMs: 250 }), 750)).toBe(
+      'TimeoutError'
+    );
   });
 
   it('only the off-switch set to true removes the deadline', async () => {
