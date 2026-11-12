@@ -13,7 +13,13 @@ import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
-import { dismissGuide, dismissProgress, readNotices, type ProgressNotice } from '$lib/server/seen';
+import {
+  dismissGuide,
+  dismissProgress,
+  dismissWhatsNew,
+  readNotices,
+  type ProgressNotice,
+} from '$lib/server/seen';
 import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
@@ -34,6 +40,7 @@ import {
   getApprentice,
   getApprenticeProgress,
 } from '$lib/server/apprenticeship/apprenticeship.service';
+import { isReturningPlayer, whatsNewItems } from '$lib/whats-new';
 import { pickItem } from './next-item.server';
 import { apprenticePayload, progressPayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
@@ -133,6 +140,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     muted,
     resetNotice,
     notices,
+    whatsNew: seen.whatsNew ? { items: whatsNewItems(isReturningPlayer(status)) } : null,
     showGuide: seen.guide,
     progress: withRankPerks(seen.progress),
     ratingGuide: ratingGuide(),
@@ -341,6 +349,13 @@ export const actions: Actions = {
     const status = await requireMember(db, locals.user.id);
     if (!(await dismissGuide(seenStore, locals.user.id, status))) {
       return fail(500, { message: 'Could not dismiss the guide. Try again.', guideFailed: true });
+    }
+  },
+
+  dismissWhatsNew: async ({ locals }) => {
+    const status = await requireMember(db, locals.user.id);
+    if (!(await dismissWhatsNew(seenStore, locals.user.id, status))) {
+      return fail(500, { message: 'Could not close this. Try again.', whatsNewFailed: true });
     }
   },
 
