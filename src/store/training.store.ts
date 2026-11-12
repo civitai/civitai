@@ -2,7 +2,10 @@ import * as z from 'zod';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { trainingSettings } from '~/components/Training/Form/TrainingParams';
+import {
+  getTrainingSettingOverride,
+  trainingSettings,
+} from '~/components/Training/Form/TrainingParams';
 import type { constants } from '~/server/common/constants';
 import type {
   TrainingDetailsBaseModel,
@@ -282,8 +285,7 @@ export const getDefaultTrainingParams = (base: TrainingDetailsBaseModel, engine:
   return trainingSettings.reduce(
     (a, v) => ({
       ...a,
-      [v.name]:
-        v.overrides?.[base]?.all?.default ?? v.overrides?.[base]?.[engine]?.default ?? v.default,
+      [v.name]: getTrainingSettingOverride(v, base, engine).default ?? v.default,
     }),
     {} as TrainingDetailsParams
   );
