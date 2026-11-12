@@ -578,6 +578,23 @@ describe('startAppFork — a successful start', () => {
     });
   });
 
+  it('a source repo that never finishes holds the start for at most FORK_SOURCE_REPO_WAIT_MS', async () => {
+    m.createSource.mockReturnValue(new Promise(() => undefined));
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      let settled = false;
+      const started = start().then((r) => {
+        settled = true;
+        return r;
+      });
+      for (let i = 0; i < 20 && !settled; i++) await vi.advanceTimersByTimeAsync(1000);
+      expect(settled).toBe(true);
+      await expect(started).resolves.toMatchObject({ parentName: PARENT_NAME });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a source repo that could not be made never fails the start, nor releases its slug', async () => {
     m.createSource.mockRejectedValue(new Error('git host down'));
     const result = await start();

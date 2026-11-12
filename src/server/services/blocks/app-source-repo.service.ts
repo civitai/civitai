@@ -29,6 +29,7 @@
  */
 
 import JSZip from 'jszip';
+import type { SandboxClient } from '@civitai/app-assistant';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -134,7 +135,7 @@ async function insertSourceRepo(row: {
 async function recordAssistantSave(
   slug: string,
   tree: BlobTree,
-  sha: string,
+  sha: string | null,
   branch: string
 ): Promise<void> {
   await dbWrite.$executeRaw`UPDATE "app_source_repos"
@@ -264,7 +265,8 @@ async function creationGate(
 // One writer at a time per repo
 // ---------------------------------------------------------------------------
 
-const LOCK_TTL_SECONDS = 60;
+// Covers a sandbox export plus a commit at the git host's commit timeout; the holder releases it.
+const LOCK_TTL_SECONDS = 180;
 const LOCK_WAIT_MS = 30_000;
 const LOCK_POLL_MS = 500;
 
@@ -538,25 +540,33 @@ async function saveLocked(args: {
     throw lastError;
   };
 
-  const onMain = await commit(SOURCE_MAIN_BRANCH, plan.operations);
   const tree = treeOf(args.files);
+  // Once a save has gone to the assistant's branch, later saves follow it there, so the branch
+  // stays the assistant's COMPLETE history; a save planned against that tree and committed to
+  // `main` would land on `main` without the files only the branch holds. They return to `main`
+  // once `main` holds every file of the assistant's last save (the developer merged the branch).
+  const onSideBranch =
+    row.lastAssistantBranch === ASSISTANT_BRANCH &&
+    !mainHolds(
+      treeFromMap(await forgejo.listRepoTree(args.slug, SOURCE_MAIN_BRANCH, FORGEJO_SOURCE_ORG)),
+      baseline
+    );
+  const onMain = onSideBranch
+    ? ({ kind: 'conflict', status: 0 } as const)
+    : await commit(SOURCE_MAIN_BRANCH, plan.operations);
   if (onMain.kind === 'committed') {
     await recordAssistantSave(args.slug, tree, onMain.sha, SOURCE_MAIN_BRANCH);
     return { kind: 'committed', sha: onMain.sha, branch: SOURCE_MAIN_BRANCH, conflict: false };
   }
 
-  // `main` has a change of the developer's to a file this save also changes: keep both.
+  // `main` has a change of the developer's to a file this save also changes, or the assistant's
+  // history is already on its branch: keep both.
   const branchHead = await forgejo.getBranchHead(FORGEJO_SOURCE_ORG, args.slug, ASSISTANT_BRANCH);
   const base = branchHead ? ASSISTANT_BRANCH : SOURCE_MAIN_BRANCH;
   const current = treeFromMap(await forgejo.listRepoTree(args.slug, base, FORGEJO_SOURCE_ORG));
   const side = planReplaceCommit(current, args.files);
   if (!side.operations.length) {
-    await recordAssistantSave(
-      args.slug,
-      tree,
-      branchHead ?? row.lastAssistantCommitSha ?? '',
-      base
-    );
+    await recordAssistantSave(args.slug, tree, branchHead ?? row.lastAssistantCommitSha, base);
     return { kind: 'unchanged' };
   }
   const onSide = await commit(base, side.operations, branchHead ? undefined : ASSISTANT_BRANCH);
@@ -569,6 +579,11 @@ async function saveLocked(args: {
   await recordAssistantSave(args.slug, tree, onSide.sha, ASSISTANT_BRANCH);
   log('info', 'assistant save went to its branch', { slug: args.slug, sha: onSide.sha });
   return { kind: 'committed', sha: onSide.sha, branch: ASSISTANT_BRANCH, conflict: true };
+}
+
+/** Whether `main` holds every file of `tree` with the same bytes. */
+function mainHolds(main: BlobTree, tree: BlobTree): boolean {
+  return Object.entries(tree).every(([path, sha]) => main[path] === sha);
 }
 
 /** The entries of a zip, files only. */
@@ -612,6 +627,17 @@ export async function saveAssistantSourceFromSandbox(args: {
       return minted.token;
     },
   });
+  // The export is read HOLDING the slug's lock, as the commit is: two saves whose exports were read
+  // in one order and committed in the other would let the older files commit last and roll the
+  // newer save back (every blob it names would still match).
+  const result = await withSourceRepoLock(args.app, () => exportAndSave(client, args));
+  return result ?? { kind: 'busy' };
+}
+
+async function exportAndSave(
+  client: SandboxClient,
+  args: { userId: number; app: string }
+): Promise<AssistantSaveResult> {
   const sandboxes = await client.list();
   const sandbox = sandboxes.find((s) => s.app === args.app && s.state === 'running');
   if (!sandbox) return { kind: 'not-running' };
@@ -624,7 +650,7 @@ export async function saveAssistantSourceFromSandbox(args: {
     throw err;
   }
   if (!files.length) return { kind: 'unchanged' };
-  return saveAssistantFiles({ slug: args.app, userId: args.userId, files });
+  return saveLocked({ slug: args.app, userId: args.userId, files });
 }
 
 // ---------------------------------------------------------------------------

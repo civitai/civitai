@@ -622,6 +622,41 @@ describe('🔴 a developer push and an assistant save — neither side is lost',
     expect(git.branch(SRC, 'my-app')!.files['a.ts']).toBe('a-dev');
   });
 
+  it('after a save went to the branch, a later NON-conflicting save follows it there, until main catches up', async () => {
+    await start();
+    git.devPush(SRC, 'my-app', { 'a.ts': 'a-dev' });
+    // Save 1 changes a.ts (conflict) and adds h.ts: it goes to the branch.
+    await svc.saveAssistantFiles({
+      slug: 'my-app',
+      userId: OWNER,
+      files: files({ 'a.ts': 'a2', 'b.ts': 'b1', 'h.ts': 'h1' }),
+    });
+    // Save 2 changes only g.ts, which main would accept: it still goes to the branch, so the
+    // branch is the assistant's whole history and main never gets g.ts without h.ts.
+    const second = await svc.saveAssistantFiles({
+      slug: 'my-app',
+      userId: OWNER,
+      files: files({ 'a.ts': 'a2', 'b.ts': 'b1', 'h.ts': 'h1', 'g.ts': 'g1' }),
+    });
+    expect(second).toMatchObject({ branch: ASSISTANT_BRANCH, conflict: true });
+    expect(git.branch(SRC, 'my-app')!.files).toEqual({ 'a.ts': 'a-dev', 'b.ts': 'b1' });
+    expect(git.branch(SRC, 'my-app', ASSISTANT_BRANCH)!.files).toEqual({
+      'a.ts': 'a2',
+      'b.ts': 'b1',
+      'h.ts': 'h1',
+      'g.ts': 'g1',
+    });
+    // The developer merges the branch: main now holds the assistant's last tree.
+    git.devPush(SRC, 'my-app', { 'a.ts': 'a2', 'h.ts': 'h1', 'g.ts': 'g1' });
+    const third = await svc.saveAssistantFiles({
+      slug: 'my-app',
+      userId: OWNER,
+      files: files({ 'a.ts': 'a2', 'b.ts': 'b2', 'h.ts': 'h1', 'g.ts': 'g1' }),
+    });
+    expect(third).toMatchObject({ branch: 'main', conflict: false });
+    expect(git.branch(SRC, 'my-app')!.files['b.ts']).toBe('b2');
+  });
+
   it('two saves of one app at once: the second waits for the lock and does not conflict', async () => {
     await start();
     const [x, y] = await Promise.all([

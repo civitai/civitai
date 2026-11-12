@@ -83,6 +83,9 @@ import {
 /** How long a fork session (and so a fork's claim to its parent) is kept. */
 export const FORK_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
+/** The longest a fork start waits for the fork's source repo to be created. */
+export const FORK_SOURCE_REPO_WAIT_MS = 5_000;
+
 /** The sandbox service's own seed caps (`SEED_MAX_BYTES`, `SEED_MAX_ENTRIES`). */
 export const FORK_SEED_MAX_BYTES = 25 * 1024 * 1024;
 export const FORK_SEED_MAX_FILES = 5000;
@@ -585,7 +588,9 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
     // named in its trailers is THIS session's (server-resolved), never anything in the manifest.
     // Best-effort and never throws: the fork starts whether or not the repo could be made, and
     // the source-repo backfill makes one that is missing.
-    await import('~/server/services/blocks/app-source-repo.service')
+    // Waited on for at most FORK_SOURCE_REPO_WAIT_MS: a slow git host must not hold the start (the
+    // creation carries on, and the backfill covers one that never finishes).
+    const sourceRepo = import('~/server/services/blocks/app-source-repo.service')
       .then(({ createForkSourceRepo }) =>
         createForkSourceRepo({
           forkSlug,
@@ -599,6 +604,10 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
         })
       )
       .catch(() => undefined);
+    await Promise.race([
+      sourceRepo,
+      new Promise((resolve) => setTimeout(resolve, FORK_SOURCE_REPO_WAIT_MS).unref?.()),
+    ]);
     return { forkSlug, parentName: parent.name, parentListingId: parent.id, seed };
   } catch (err) {
     // Release the reservation: nothing will ever be created under it. And the seed object, if it
