@@ -261,7 +261,6 @@ async function notifyOwnerOfResolverOutcome(
   runId: string,
   result: ResolverOutcome
 ) {
-  // The outcome is already decided and written; a failed notice must not change it.
   try {
     const model = await dbWrite.model.findUnique({
       where: { id: modelId },
@@ -347,7 +346,6 @@ export async function enforcePrePublishGate({
   const decision = await evaluatePrePublishGate(modelId, gatedVersionIds, {
     requestedAt: new Date(requestedAt),
   });
-  // A pass for a later date is checked again when that date comes, so an edit in between is seen.
   const deferred = decision.outcome === 'pass' && !!publishedAt && publishedAt > new Date();
   const summary = await logDecision(modelId, runId, decision, previous, deferred);
   const gate: PrePublishGateMeta = {

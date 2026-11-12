@@ -7611,8 +7611,6 @@ export const publishPrivateModel = async (
     `;
     if (stillPublished.length !== versionIds.length)
       throw throwAuthorizationError('You are not authorized to publish this model version');
-    // The model goes public with every version published by now, including one published since the
-    // gate read the list.
     if (gateJudgedVersionIds) {
       const published = await tx.$queryRaw<{ id: number }[]>`
         SELECT id FROM "ModelVersion" WHERE "modelId" = ${modelId} AND status = 'Published'

@@ -1,9 +1,8 @@
 import { Prisma } from '@prisma/client';
 
 // A version the gate held, or one a moderator declined since: only a moderator publishes it. One
-// definition, read both from a version's meta and in the database. A decline is known by its
-// timestamp, which every decline writes (its reason is optional).
-// "decliendAt" (sic) is the key the version decline writes in model-version.controller.ts; do not correct the spelling.
+// definition, read both from a version's meta and in the database. Any decline key marks a decline.
+// Both spellings must stay: the version decline writes "decliendAt".
 const DECLINE_KEYS = ['declinedReason', 'declinedAt', 'decliendAt'] as const;
 
 export function isVersionMetaHeld(meta: unknown) {

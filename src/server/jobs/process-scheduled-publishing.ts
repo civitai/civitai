@@ -60,7 +60,6 @@ const noFailedScanFileSql = (versionId: string) => Prisma.sql`
 `;
 
 // A scheduled version on a gated base model goes live only once the pre-publish gate passed it.
-// The gate runs before a publish can schedule anything; this keeps a row it never saw from going out.
 // Both arguments are SQL identifiers spliced in raw: pass literals only.
 export const prePublishGatePassedSql = (versionAlias: string, metaExpr: string) => {
   const version = Prisma.raw(versionAlias);
