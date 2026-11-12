@@ -8,9 +8,10 @@
 -- selects it and the code may deploy before or after this runs.
 --
 -- A nullable column with no default is a catalog-only change: no table rewrite, existing rows
--- untouched. Nothing indexes it. Idempotent; safe to re-run.
+-- untouched. Nothing indexes it. The short lock_timeout keeps a waiting ALTER from queueing
+-- every query on "Image" behind it; on a timeout nothing is applied, so re-run it. Idempotent.
 
 BEGIN;
-SET LOCAL lock_timeout = '5s';
+SET LOCAL lock_timeout = '2s';
 ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "nsfwAxes" INTEGER;
 COMMIT;
