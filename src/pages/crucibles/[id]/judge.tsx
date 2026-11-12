@@ -38,6 +38,7 @@ import { CrucibleJudgeStreak } from '~/components/Crucible/CrucibleJudgeStreak';
 import { CrucibleJudgingDoneState } from '~/components/Crucible/CrucibleJudgingDoneState';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
+import { watchMemoryKey } from '~/components/Crucible/judge-watch-memory';
 import { CrucibleJudgingBriefing } from '~/components/Crucible/CrucibleJudgingBriefing';
 import { hasSeenBriefing, markBriefingSeen } from '~/components/Crucible/judging-briefing';
 import { getPairProgress } from '~/components/Crucible/judging-progress';
@@ -106,8 +107,6 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   } | null>(null);
 
   const { skippedPairs, skip, recordVote } = useJudgeSkipList();
-  // One judging session per visit to this page: leaving and coming back means watching in full again.
-  const [judgingSessionId] = useState(() => crypto.randomUUID());
 
   // Read after mount: localStorage doesn't exist during server rendering.
   const [briefingOpen, setBriefingOpen] = useState(false);
@@ -162,7 +161,6 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       crucibleId: id,
       browsingLevel,
       skippedPairs: skippedPairs.length > 0 ? skippedPairs : undefined,
-      judgingSessionId,
     },
     {
       enabled: canRequestPairs,
@@ -220,7 +218,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setVoteError(null);
         refetchPair();
       } else if (error.message.includes('Watch at least')) {
-        // The session idled out while this pair was open, so its shortened watch no longer holds.
+        // The repeat watch changed while this pair was open (e.g. the config moved); refetch it.
         showErrorNotification({ error: new Error(error.message) });
         refetchPair();
       } else {
@@ -287,7 +285,6 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
           winnerEntryId: winnerId,
           loserEntryId: loserId,
           ...watched,
-          judgingSessionId,
         });
 
         setSessionVotes((prev) => prev + 1);
@@ -310,7 +307,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setIsVoting(false);
       }
     },
-    [pair, id, submitVoteMutation, refetchPair, refetchProgress, recordVote, judgingSessionId]
+    [pair, id, submitVoteMutation, refetchPair, refetchProgress, recordVote]
   );
 
   // Retry last vote attempt
@@ -601,6 +598,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                   isLoading={isPairPending || isVoting}
                   disabled={isVoting || isPairPlaceholder || !!voteError}
                   minViewSeconds={crucible.minViewSeconds}
+                  watchMemoryKey={watchMemoryKey(currentUser.id, id)}
                   onVote={handleVote}
                   onSkip={handleSkip}
                   footerStart={

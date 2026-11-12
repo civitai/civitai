@@ -101,8 +101,7 @@ import {
   getVotedPairsKey,
 } from '~/server/services/crucible-redis-keys';
 import {
-  getCrucibleJudgingConfig,
-  recordSessionVote,
+  getJudgeEntryVotesKey,
   resolveWatchSeconds,
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
@@ -2417,10 +2416,6 @@ function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateS
   return `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 
-function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
-}
-
 const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /**
@@ -3122,7 +3117,6 @@ export const getJudgingPair = async ({
   excludeEntryIds,
   skippedPairs = [],
   browsingLevel,
-  judgingSessionId,
   isGreen = false,
   isModerator = false,
   blockedCreatorIds,
@@ -3252,7 +3246,6 @@ export const getJudgingPair = async ({
   const [leftSeconds, rightSeconds] = await resolveWatchSeconds({
     crucibleId,
     userId,
-    sessionId: judgingSessionId,
     minViewSeconds: crucible.minViewSeconds,
     entryIds: [left.id, right.id],
   });
@@ -3285,7 +3278,6 @@ export const submitVote = async ({
   loserEntryId,
   winnerWatchedMs,
   loserWatchedMs,
-  judgingSessionId,
   userId,
   blockedCreatorIds,
 }: SubmitVoteSchema & {
@@ -3333,7 +3325,6 @@ export const submitVote = async ({
   const [winnerSeconds, loserSeconds] = await resolveWatchSeconds({
     crucibleId,
     userId,
-    sessionId: judgingSessionId,
     minViewSeconds: crucible.minViewSeconds,
     entryIds: [winnerEntryId, loserEntryId],
   });
@@ -3464,16 +3455,6 @@ export const submitVote = async ({
     ),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
-    crucible.minViewSeconds &&
-      getCrucibleJudgingConfig().then(({ sessionIdleSeconds }) =>
-        recordSessionVote({
-          crucibleId,
-          userId,
-          sessionId: judgingSessionId,
-          entryIds: [winnerEntryId, loserEntryId],
-          idleSeconds: sessionIdleSeconds,
-        })
-      ),
   ]);
 
   // Note: Pair was already marked as voted atomically at the start of this function

@@ -32,7 +32,6 @@ const voteInput = {
   crucibleId: 1,
   winnerEntryId: 2,
   loserEntryId: 3,
-  judgingSessionId: 'session',
 } as Parameters<typeof submitVoteHandler>[0]['input'];
 const pairInput = { crucibleId: 1, browsingLevel: 1 } as Parameters<
   typeof getJudgingPairHandler

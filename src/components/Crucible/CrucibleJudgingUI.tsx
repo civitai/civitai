@@ -28,6 +28,11 @@ import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import {
+  browserStorage,
+  readWatchedMs,
+  rememberWatchedMs,
+} from '~/components/Crucible/judge-watch-memory';
+import {
   accumulatePlaybackMs,
   CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS,
   playsToEnd,
@@ -84,7 +89,7 @@ export type CrucibleJudgingUIProps = {
   disabled?: boolean;
   /**
    * Playback each clip needs before either vote unlocks. Null or absent means no rule. Overridden
-   * per side by `pair.watchSeconds`, which shortens a clip already judged this session.
+   * per side by `pair.watchSeconds`, which shortens a clip this judge already voted on in the crucible.
    */
   minViewSeconds?: number | null;
   onVote: (winnerId: number, loserId: number, watched: WatchedMs) => void;
@@ -100,6 +105,11 @@ export type CrucibleJudgingUIProps = {
    * playing clip paused, and no playback counted. The sequence starts once this turns false.
    */
   paused?: boolean;
+  /**
+   * Where this judge's watch progress in the crucible is kept, so a clip watched before a reload
+   * or a break is not owed again. Absent: progress lasts only while the pair is on screen.
+   */
+  watchMemoryKey?: string;
   className?: string;
 };
 
@@ -114,6 +124,7 @@ export function CrucibleJudgingUI({
   footerStart,
   footerEnd,
   paused = false,
+  watchMemoryKey,
   className,
 }: CrucibleJudgingUIProps) {
   // The tree's shape never depends on this, only the animation values: a structural switch would
@@ -123,7 +134,10 @@ export function CrucibleJudgingUI({
   const [plusOne, setPlusOne] = useState<{ side: Side; id: number } | null>(null);
   const plusOneTimer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => () => clearTimeout(plusOneTimer.current), []);
-  const [watchedMs, setWatchedMs] = useState<Record<Side, number>>(emptyWatched);
+  // Tagged with its pair, so a new pair never reads (or remembers) the last pair's playback.
+  const [watchedState, setWatchedState] = useState<
+    { pairKey: string | null } & Record<Side, number>
+  >({ pairKey: null, ...emptyWatched });
   const [playedThrough, setPlayedThrough] = useState<Record<Side, boolean>>(notPlayedThrough);
   const [reachedEnd, setReachedEnd] = useState<Record<Side, boolean>>(notPlayedThrough);
   const [durations, setDurations] = useState<Record<Side, number | null>>(noDurations);
@@ -144,8 +158,20 @@ export function CrucibleJudgingUI({
     if (on) setSoundBlockedPairKey(null);
   }, []);
   const handleSoundBlocked = useCallback(() => setSoundBlockedPairKey(pairKey), [pairKey]);
+  const leftId = pair?.left.id;
+  const rightId = pair?.right.id;
+  // Read in render, not an effect, so playback reported before an effect runs adds to it.
+  const remembered = useMemo<Record<Side, number>>(() => {
+    if (!watchMemoryKey || leftId == null || rightId == null) return emptyWatched;
+    const storage = browserStorage();
+    return {
+      left: readWatchedMs(storage, watchMemoryKey, leftId),
+      right: readWatchedMs(storage, watchMemoryKey, rightId),
+    };
+  }, [watchMemoryKey, leftId, rightId]);
+  const watchedMs: Record<Side, number> =
+    watchedState.pairKey === pairKey ? watchedState : remembered;
   useEffect(() => {
-    setWatchedMs(emptyWatched);
     setPlayedThrough(notPlayedThrough);
     setReachedEnd(notPlayedThrough);
     setDurations(noDurations);
@@ -185,20 +211,46 @@ export function CrucibleJudgingUI({
   // totals so a judge who plays a clip by hand is counted rather than fought.
   const isVideoPair =
     pair?.left.image.type === MediaType.video && pair?.right.image.type === MediaType.video;
-  // The gate opens at the rule, but a clip only a little longer still plays on to its end.
+  // The gate opens at the rule, but a clip only a little longer still plays on to its end, unless
+  // the judge watched some of it on an earlier visit and is only topping it up.
   const playbackDone = (side: Side) =>
-    sideDone(side) && (reachedEnd[side] || !playsToEnd(durations[side], ruleSeconds(side)));
+    sideDone(side) &&
+    (reachedEnd[side] || remembered[side] > 0 || !playsToEnd(durations[side], ruleSeconds(side)));
   const sequencing = isVideoPair && mediaReady && !(playbackDone('left') && playbackDone('right'));
   const autoplaySide: Side | null =
     paused || !sequencing ? null : !playbackDone('left') ? 'left' : 'right';
   const voteLocked = isDisabled || !mediaReady || !watchGateOpen;
 
-  const handleWatched = useCallback((side: Side, ms: number, durationSeconds: number) => {
-    setWatchedMs((prev) => (ms > prev[side] ? { ...prev, [side]: ms } : prev));
-    setDurations((prev) =>
-      prev[side] === durationSeconds ? prev : { ...prev, [side]: durationSeconds }
-    );
-  }, []);
+  // A clip's playback this visit counts on top of what was remembered from earlier visits.
+  const handleWatched = useCallback(
+    (side: Side, ms: number, durationSeconds: number) => {
+      setWatchedState((prev) => {
+        const current = prev.pairKey === pairKey ? prev : { pairKey, ...remembered };
+        const total = remembered[side] + ms;
+        return total > current[side] ? { ...current, [side]: total } : current;
+      });
+      setDurations((prev) =>
+        prev[side] === durationSeconds ? prev : { ...prev, [side]: durationSeconds }
+      );
+    },
+    [pairKey, remembered]
+  );
+
+  // Whole seconds until the rule is met, so frequent playback updates write rarely and a partial
+  // watch is never rounded up.
+  const memoryMs = (side: Side) =>
+    sideDone(side) ? reportedMs(side) : Math.floor(watchedMs[side] / 1000) * 1000;
+  const leftMemoryMs = memoryMs('left');
+  const rightMemoryMs = memoryMs('right');
+  // Only once this pair has reported playback: until then `playedThrough` can still be the last
+  // pair's, which would remember a clip nobody watched as done.
+  const playbackOnThisPair = watchedState.pairKey === pairKey;
+  useEffect(() => {
+    if (!watchMemoryKey || !playbackOnThisPair || leftId == null || rightId == null) return;
+    const storage = browserStorage();
+    rememberWatchedMs(storage, watchMemoryKey, leftId, leftMemoryMs);
+    rememberWatchedMs(storage, watchMemoryKey, rightId, rightMemoryMs);
+  }, [watchMemoryKey, playbackOnThisPair, leftId, rightId, leftMemoryMs, rightMemoryMs]);
 
   const handleReachedEnd = useCallback((side: Side) => {
     setReachedEnd((prev) => (prev[side] ? prev : { ...prev, [side]: true }));
