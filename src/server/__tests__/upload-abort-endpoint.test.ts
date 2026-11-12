@@ -495,9 +495,8 @@ describe('/api/upload/abort — file size', () => {
 });
 
 describe('/api/upload/abort — a malformed body is a 400, not a 500', () => {
-  // The mock reproduces the SDK serializer's throw for a missing UploadId, so the first case
-  // fails on the pre-fix handler with a 500 (classifier `other`). The others fail there
-  // because the old handler called S3 at all.
+  // Mirrors the SDK serializer's throw for a missing UploadId, so a handler that reaches S3
+  // without the guard fails with a 500.
   const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
 
   beforeEach(() => {

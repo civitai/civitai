@@ -257,10 +257,9 @@ describe('/api/upload/complete — error classification', () => {
 
 describe('/api/upload/complete — a malformed body is a 400, not a 500', () => {
   /**
-   * A client that omits `uploadId` used to get a 500: the SDK serializer throws
-   * `TypeError: Expected a non-null value for UploadId` before any request is sent, and
-   * the classifier has no class for it. The mock reproduces that throw so this fails on
-   * the pre-fix handler (500) rather than passing on an unconditional 200 stub.
+   * The mock throws the SDK serializer's `TypeError: Expected a non-null value for
+   * UploadId` for a null UploadId, as the real SDK does before any request is sent, so a
+   * handler that reaches S3 without the guard returns 500 instead of passing on a stub.
    */
   const reqWithBody = (overrides: Record<string, unknown>) => {
     const req = makeReq();

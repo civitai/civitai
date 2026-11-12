@@ -88,8 +88,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
         userId,
         type,
         backend,
-        // Which fields failed, and the object key when it was valid — what the old 500 row
-        // carried and this one must not lose.
+        // `key` only when valid: an invalid one is not a trustworthy object key.
         invalid: (['bucket', 'key', 'uploadId'] as const).filter(
           (f) => !isNonEmptyString({ bucket, key, uploadId }[f])
         ),
