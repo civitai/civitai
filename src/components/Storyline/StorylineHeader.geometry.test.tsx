@@ -78,4 +78,29 @@ describe("an owner's empty storyline header", () => {
 
     expect(wordLineCounts(heading)).toEqual(TITLE.split(' ').map((w) => [w, 1]));
   });
+
+  test.each<[string, Viewport]>([
+    ['desktop', { width: 1280, height: 900 }],
+    ['phone', { width: 390, height: 844 }],
+  ])('shows every action label in full at %s width', async (_name, viewport) => {
+    await renderAtViewport(
+      <Container size="lg">
+        <StorylineHeader
+          storyline={emptyOwnedStoryline}
+          startLink={null}
+          lastPostId={null}
+          terms={null}
+        />
+      </Container>,
+      viewport
+    );
+    const labels = [...document.querySelectorAll('header .mantine-Button-label')] as HTMLElement[];
+    expect(labels.map((l) => l.textContent)).toEqual(
+      expect.arrayContaining(['Write chapter 1', "Use a post you've published"])
+    );
+    // A clipped label is wider than the box Mantine gives it.
+    expect(labels.filter((l) => l.scrollWidth > l.clientWidth).map((l) => l.textContent)).toEqual(
+      []
+    );
+  });
 });
