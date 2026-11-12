@@ -313,12 +313,23 @@ describe('approve claim (on-site approves past their hold check)', () => {
     await expect(place('pubreq_a')).resolves.toMatchObject({ slug: 'app-a' });
   });
 
-  it('🔴 releasing an earlier claim never removes the one a later approve holds', async () => {
+  it('🔴 a second approve of the app is refused while the first holds the claim, and cannot release it', async () => {
     await addRequest('pubreq_a', 'app-a');
     const first = await claim();
-    await claim();
-    await releaseApproveClaim(raw, first);
+    await expect(claim()).rejects.toThrow(/Another approve of this app is already running/);
+    await releaseApproveClaim(raw, { slug: 'app-a', token: 'not-the-first-token' });
     await expect(place('pubreq_a')).rejects.toThrow(/approving this app right now/);
+    await releaseApproveClaim(raw, first);
+    await expect(claim()).resolves.toMatchObject({ slug: 'app-a' });
+  });
+
+  it('an expired claim is replaced by the next approve', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    await claim();
+    await db.query(
+      `UPDATE app_publish_request_approve_claims SET claimed_at = now() - interval '1 hour'`
+    );
+    await expect(claim()).resolves.toMatchObject({ slug: 'app-a' });
   });
 
   it('a claim left by a crashed approve stops blocking after it expires', async () => {

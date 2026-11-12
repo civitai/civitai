@@ -129,6 +129,16 @@ export async function getOpenHoldCountsBySlug(
   return counts;
 }
 
+async function liveClaimExists(tx: RawClient, slug: string): Promise<boolean> {
+  const rows = await tx.$queryRaw<{ n: number }[]>`
+    SELECT 1 AS n FROM app_publish_request_approve_claims
+    WHERE slug = ${slug}
+      AND claimed_at > now() - make_interval(mins => ${Prisma.raw(
+        String(APPROVE_CLAIM_TTL_MINUTES)
+      )})`;
+  return rows.length > 0;
+}
+
 /** Run inside a transaction: the app lock it takes is what orders it against an approve. */
 export async function placeHold(
   tx: RawClient,
@@ -154,12 +164,7 @@ export async function placeHold(
     SELECT status FROM ${REQUEST_TABLE[input.kind]} WHERE id = ${input.publishRequestId}`;
   if (current?.status === 'approved')
     throw new PublishRequestHoldInputError('This request is already approved');
-  const [claim] = await tx.$queryRaw<{ n: number }[]>`
-    SELECT 1 AS n FROM app_publish_request_approve_claims
-    WHERE slug = ${request.slug}
-      AND claimed_at > now() - make_interval(mins => ${Prisma.raw(
-        String(APPROVE_CLAIM_TTL_MINUTES)
-      )})`;
+  const claim = await liveClaimExists(tx, request.slug);
   if (claim)
     throw new PublishRequestHoldInputError(
       'A moderator is approving this app right now; the hold would not stop it. Check the request once the approve finishes.'
@@ -250,8 +255,10 @@ export async function checkHoldsBeforeApprove(db: RawClient, input: ApproveHoldI
   try {
     holds = await getOpenHoldsBySlug(db, [input.slug]);
   } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[publish-request-holds] hold read failed; refusing approve', err);
     throw new PublishRequestHeldError(
-      `Could not read this app's review holds, so approve is refused: ${(err as Error).message}`,
+      "Could not read this app's review holds, so approve is refused. Try again, or ask an engineer to check the review-holds tables.",
       []
     );
   }
@@ -270,6 +277,12 @@ export async function claimApprove(
 ): Promise<ApproveClaim> {
   await lockApp(tx, input.slug);
   assertHoldsOverridable(await getOpenHoldsBySlug(tx, [input.slug]), input);
+  // Under the app lock: a live claim means another approve of this app is running.
+  if (await liveClaimExists(tx, input.slug))
+    throw new PublishRequestHeldError(
+      'Another approve of this app is already running. Wait for it to finish, then reload.',
+      []
+    );
   const token = randomUUID();
   await tx.$executeRaw`
     INSERT INTO app_publish_request_approve_claims
