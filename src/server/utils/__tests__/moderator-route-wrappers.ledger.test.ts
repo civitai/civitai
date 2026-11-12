@@ -190,7 +190,7 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
     'App Blocks author submit (CLI): moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
   'download/[...key]': FULL_CREDENTIAL,
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
-  'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'download/training/[modelVersionId]': FULL_CREDENTIAL,
   'download/vault/[vaultItemId]':
     'moderators may download a vault copy of a file that failed its scan; the caller’s own vault only',
   'search/[...path]':
@@ -205,6 +205,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'v1/block-tokens/index': 'install token mint; moderators may mint for model slots',
   'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',
   'v1/me': 'reports the flag',
+  'v1/model-files/[id]/tensor-metadata':
+    'moderator rights from a bearer credential follow the download credential gate',
   'v1/model-versions/[id]': 'moderators also see unpublished versions',
   'v1/model-versions/[id]/gifts/[giftId]': 'owner-or-moderator gift revoke',
   'v1/model-versions/[id]/gifts/[giftId]/claims': 'owner-or-moderator gift claimer list',
