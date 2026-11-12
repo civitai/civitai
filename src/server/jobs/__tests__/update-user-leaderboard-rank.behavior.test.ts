@@ -10,7 +10,8 @@ vi.mock('~/server/jobs/job', () => ({
   createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
     name,
     cron,
-    run: () => fn({ on: vi.fn() }),
+    // The real `run` returns { result, cancel }; keep that shape.
+    run: () => ({ result: fn({ on: vi.fn() }), cancel: vi.fn() }),
   }),
   getJobDate: vi.fn(async () => [new Date(0), vi.fn()]),
 }));
@@ -93,7 +94,7 @@ describe('update-user-leaderboard-rank', () => {
   it('rebuilds the other boards when one is not populated, carrying its previous day', async () => {
     await unpopulateB();
 
-    await job.run({});
+    await job.run({}).result;
 
     expect(await rankOf(A_USER)).toBe(4);
     expect(await rankOf(B_USER)).toBe(7);
@@ -112,7 +113,7 @@ describe('update-user-leaderboard-rank', () => {
              UPDATE "KeyValue" SET value = to_jsonb((current_date - 2)::text)
                WHERE key = 'leaderboard:populated:board-b';`);
 
-    await job.run({});
+    await job.run({}).result;
 
     expect(await rankOf(A_USER)).toBe(4);
     expect(await rankOf(B_USER)).toBe(8);
@@ -124,7 +125,7 @@ describe('update-user-leaderboard-rank', () => {
     await q(`UPDATE "KeyValue" SET value = to_jsonb((current_date - 1)::text)
                WHERE key = 'leaderboard:populated:board-b';`);
 
-    await job.run({});
+    await job.run({}).result;
 
     expect(await rankOf(B_USER)).toBe(7);
   });
@@ -133,7 +134,7 @@ describe('update-user-leaderboard-rank', () => {
     await q(`UPDATE "KeyValue" SET value = to_jsonb((current_date + 1)::text)
                WHERE key = 'leaderboard:populated:board-b';`);
 
-    await job.run({});
+    await job.run({}).result;
 
     expect(await rankOf(B_USER)).toBe(6);
   });
@@ -144,7 +145,7 @@ describe('update-user-leaderboard-rank', () => {
              UPDATE "KeyValue" SET value = to_jsonb((current_date + 1)::text)
                WHERE key = 'leaderboard:populated:board-b';`);
 
-    await job.run({});
+    await job.run({}).result;
 
     expect(await rankOf(B_USER)).toBe(7);
   });
@@ -152,7 +153,7 @@ describe('update-user-leaderboard-rank', () => {
   it('rebuilds as before when no board has a query', async () => {
     await q(`UPDATE "Leaderboard" SET active = false;`);
 
-    await job.run({});
+    await job.run({}).result;
 
     expect(await rankOf(A_USER)).toBe(4);
   });
@@ -164,7 +165,7 @@ describe('update-user-leaderboard-rank', () => {
              UPDATE "KeyValue" SET value = to_jsonb((current_date - 8)::text)
                WHERE key = 'leaderboard:populated:board-b';`);
 
-    await job.run({});
+    await job.run({}).result;
 
     expect(await rankOf(A_USER)).toBe(4);
     expect(await rankOf(B_USER)).toBeNull();
@@ -176,34 +177,34 @@ describe('update-user-leaderboard-rank', () => {
 
     const write = dbMock.dbWrite as unknown as Record<string, ReturnType<typeof vi.fn>>;
     write.$transaction.mockRejectedValueOnce(new Error('connection lost'));
-    await expect(job.run({})).rejects.toThrow('connection lost');
+    await expect(job.run({}).result).rejects.toThrow('connection lost');
     expect(await rankOf(A_USER)).toBe(5);
 
-    await job.run({});
+    await job.run({}).result;
     expect(await rankOf(A_USER)).toBe(4);
   });
 
   it('does not rebuild again once today is built', async () => {
-    await job.run({});
+    await job.run({}).result;
     expect(await rankOf(A_USER)).toBe(4);
 
     await q(`UPDATE "LeaderboardResult" SET position = 2
              WHERE "userId" = ${A_USER} AND date = current_date`);
-    await job.run({});
+    await job.run({}).result;
 
     expect(await rankOf(A_USER)).toBe(4);
   });
 
   it('leaves a partial day unmarked, so a board that lands later is picked up', async () => {
     await unpopulateB();
-    await job.run({});
+    await job.run({}).result;
     expect(await rankOf(B_USER)).toBe(7);
 
     await q(`INSERT INTO "LeaderboardResult" ("leaderboardId", date, "userId", position)
                VALUES ('board-b', current_date, ${B_USER}, 6);
              UPDATE "KeyValue" SET value = to_jsonb(current_date::text)
                WHERE key = 'leaderboard:populated:board-b';`);
-    await job.run({});
+    await job.run({}).result;
 
     expect(await rankOf(B_USER)).toBe(6);
   });
@@ -214,7 +215,7 @@ describe('update-user-leaderboard-rank', () => {
     await q(`DELETE FROM "LeaderboardResult";
              UPDATE "KeyValue" SET value = to_jsonb((current_date - 1)::text);`);
 
-    const outcome = await job.run({}).catch((e: Error) => e);
+    const outcome = await job.run({}).result.catch((e: Error) => e);
 
     expect(await rankOf(A_USER)).toBe(5);
     expect(await rankOf(B_USER)).toBe(7);
