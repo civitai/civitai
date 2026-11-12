@@ -104,7 +104,8 @@ All four steps ran on prod on 2026-11-10.
 
 ## Kept, with reasons
 
-These stay until Phase 6's teardown:
+The Phase 5 state, superseded by Phase 6 (`docs/plans/comments-v3-phase6.md`). These stayed until
+Phase 6's teardown:
 
 - **The old tables and their rows**, and the mirror's trigger functions (Phase 6 drops them before
   the tables they take as row types).

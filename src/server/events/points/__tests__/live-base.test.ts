@@ -81,6 +81,9 @@ function fakeRedis() {
 const EVENT = { name: 'e', startDate: new Date('2026-11-01T00:00:00.000Z') };
 const keys = eventSeasonKeys(EVENT.name, 'live');
 
+// Before the season's end both cuts are the same.
+const settledAt = (cut: Date) => ({ cut, removeCut: cut });
+
 const totals = (
   hat: Record<string, number>,
   team: Record<string, number> = {},
@@ -120,7 +123,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      settledAt(cutAt(NEW_CUT)),
       // a: 10 + 5 settled = 15, unchanged; b: corrected down; c: came from live only; gone: removed.
       totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 }, { '1': 20 })
     );
@@ -133,7 +136,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      { cut: cutAt(NEW_CUT), removeCut: new Date(cutAt(NEW_CUT).getTime() + 3_600_000) },
       totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 }, {}, { 'view:a': 3 })
     );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: '15', b: '4', c: '1' });
@@ -150,6 +153,7 @@ describe('resetLiveBase', () => {
         // The counts move with the points: a reader never pairs new counts with the old cut.
         `rename ${keys.base('count')}:next ${keys.base('count')}`,
         `set ${keys.cut} ${NEW_CUT}`,
+        `set ${keys.removeCut} ${cutAt(NEW_CUT).getTime() + 3_600_000}`,
       ],
     ]);
     // No staging key survives.
@@ -163,7 +167,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      settledAt(cutAt(NEW_CUT)),
       totals({ a: 15 })
     );
     expect(fake.hashes.get(keys.base('count'))).toEqual({ [COUNT_BASE_MARK]: '1' });
@@ -179,7 +183,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      settledAt(cutAt(NEW_CUT)),
       totals({ a: 15 })
     );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: '15' });
@@ -192,7 +196,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      new Date((NEW_CUT - 1) * LIVE_BUCKET_MS + 60_000),
+      settledAt(new Date((NEW_CUT - 1) * LIVE_BUCKET_MS + 60_000)),
       totals({ a: 15, b: 5, c: 1 })
     );
     expect(fake.strings.get(keys.cut)).toBe(String(NEW_CUT));
@@ -206,7 +210,7 @@ describe('resetLiveBase', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      cutAt(NEW_CUT),
+      settledAt(cutAt(NEW_CUT)),
       totals({ a: 3, b: 4 })
     );
     expect(changed.sort()).toEqual(['a', 'b']);
@@ -229,7 +233,13 @@ describe('resetLiveBase', () => {
         modelLikes: 0,
       },
     ]);
-    await resetLiveBase(fake.redis as unknown as RefereeRedis, EVENT, 'live', cutAt(NEW_CUT), t);
+    await resetLiveBase(
+      fake.redis as unknown as RefereeRedis,
+      EVENT,
+      'live',
+      settledAt(cutAt(NEW_CUT)),
+      t
+    );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ '1:7:claimed': '6' });
     expect(fake.hashes.get(keys.base('owner'))).toEqual({ '1': '6' });
     expect(fake.hashes.get(keys.base('count'))).toEqual({
@@ -444,7 +454,7 @@ describe('settles that fail for hours, then catch up', () => {
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
-      new Date(newCut * LIVE_BUCKET_MS),
+      settledAt(new Date(newCut * LIVE_BUCKET_MS)),
       totals({ a: settled })
     );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: String(settled) });

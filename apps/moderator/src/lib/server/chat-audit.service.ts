@@ -402,10 +402,21 @@ const chatMessageRead = (chatId: number) =>
     .where('cm.chatId', '=', chatId)
     .where('cm.userId', '!=', SYSTEM_USER_ID);
 
-// The transcript. Chat-scoped, so it rides the (chatId, id) index.
+// Compared in SQL: `createdAt` is timestamp WITHOUT time zone. Our client reads it as UTC, but pg sends
+// a Date parameter as local time with an offset, which Postgres drops against this column — so a JS
+// round trip shifts it by the host's offset.
+const anchorKey = (id: number) => sql`(SELECT "createdAt", id FROM "ChatMessage" WHERE id = ${id})`;
+
+/** A page of a transcript, either side of a message: `before` reads older, `after` newer. */
+export type TranscriptCursor = { before?: number; after?: number };
+
+// The transcript, a page at a time. Ordered by (createdAt, id), not id: the (chatId, id) index is
+// partial (`deletedAt IS NULL`) and this read includes deleted rows, so by id the planner walks the
+// primary key backwards past every other chat's rows — far slower on an old page of a long chat than
+// reading the chat through (chatId, userId) and sorting.
 //
 // System rows are excluded: 274,106 of them are `contentType = 'Embed'` whose content is a raw JSON
-// blob, which rendered verbatim attributed to "civitai" and ate slots in the cap.
+// blob, which rendered verbatim attributed to "civitai" and ate slots in the page.
 //
 // Deleted rows are INCLUDED. `deletedAt` hides a message from both participants and keeps the row for
 // moderation, so a report filed about a message the sender then removed pointed at a transcript that
@@ -413,26 +424,49 @@ const chatMessageRead = (chatId: number) =>
 export async function getTranscript(
   reader: Reader,
   chatId: number,
+  cursor: TranscriptCursor = {},
   limit = 300
 ): Promise<{
   rows: ChatMessageRow[];
-  truncated: boolean;
+  hasOlder: boolean;
+  hasNewer: boolean;
   /** Every edit per message, oldest first. */
   edits: Record<number, MessageEdit[]>;
   /** A history source could not be read, so a message may have more versions than `edits` holds — and
    *  one with none is unknown, not unrecorded. */
   editsPartial: boolean;
 }> {
-  if (!isInt4Id(chatId)) return { rows: [], truncated: false, edits: {}, editsPartial: false };
+  const empty = { rows: [], hasOlder: false, hasNewer: false, edits: {}, editsPartial: false };
+  if (!isInt4Id(chatId)) return empty;
+
+  // A cursor from another chat, or one since removed, reads as no cursor: the latest page.
+  const anchorId = cursor.before ?? cursor.after;
+  const anchor =
+    anchorId && isInt4Id(anchorId)
+      ? await dbRead
+          .selectFrom('ChatMessage')
+          .select('id')
+          .where('id', '=', anchorId)
+          .where('chatId', '=', chatId)
+          .executeTakeFirst()
+      : undefined;
+  const newer = !!anchor && cursor.before === undefined;
 
   const rows = await chatMessageRead(chatId)
-    // Newest first so the cap drops the OLDEST; reversed here for reading order.
-    .orderBy('cm.createdAt', 'desc')
+    .$if(!!anchor, (qb) =>
+      qb.where(
+        sql<boolean>`(cm."createdAt", cm.id) ${sql.raw(newer ? '>' : '<')} ${anchorKey(anchor!.id)}`
+      )
+    )
+    .orderBy('cm.createdAt', newer ? 'asc' : 'desc')
+    .orderBy('cm.id', newer ? 'asc' : 'desc')
     .limit(limit + 1)
     .execute();
 
-  const truncated = rows.length > limit;
-  const page = rows.slice(0, limit).reverse();
+  const more = rows.length > limit;
+  const page = newer ? rows.slice(0, limit) : rows.slice(0, limit).reverse();
+  const hasOlder = newer ? true : more;
+  const hasNewer = newer ? more : !!anchor;
   const edited = page.filter((r) => r.editedAt);
   if (page.length) await recordChatReads(reader, [{ chatId }]);
 
@@ -445,7 +479,8 @@ export async function getTranscript(
   ]);
   return {
     rows: page,
-    truncated,
+    hasOlder,
+    hasNewer,
     edits: mergeEdits(recorded ?? {}, logged ?? {}),
     editsPartial: recorded === null || logged === null,
   };
@@ -736,7 +771,14 @@ export async function getChatMembers(chatId: number): Promise<ChatMemberRow[]> {
   return rows.map((r) => ({ ...r, status: String(r.status) }));
 }
 
-export type UserMessages = { rows: ChatMessageWithChat[]; chats: number; truncated: boolean };
+export type UserMessages = {
+  rows: ChatMessageWithChat[];
+  chats: number;
+  /** More, older messages exist past this page. */
+  truncated: boolean;
+  /** This page starts past the newest. */
+  hasNewer: boolean;
+};
 
 /**
  * `getUserMessages` keyed by id, for User Lookup — which has resolved the account already and must not
@@ -758,7 +800,7 @@ export async function getUserMessagesById(
   userId: number,
   limit = 50
 ): Promise<UserMessages> {
-  if (!isInt4Id(userId)) return { rows: [], chats: 0, truncated: false };
+  if (!isInt4Id(userId)) return { rows: [], chats: 0, truncated: false, hasNewer: false };
 
   const [rows, distinct] = await Promise.all([
     dbRead
@@ -788,12 +830,19 @@ export async function getUserMessagesById(
 
   const page = rows.slice(0, limit);
   await recordUserMessageReads(reader, page);
-  return { truncated: rows.length > limit, chats: Number(distinct?.n ?? 0), rows: page };
+  return {
+    truncated: rows.length > limit,
+    hasNewer: false,
+    chats: Number(distinct?.n ?? 0),
+    rows: page,
+  };
 }
 
+/** `before`: a message id; the page continues with the account's messages older than it. */
 export async function getUserMessages(
   reader: Reader,
   username: string,
+  before?: number,
   limit = 100
 ): Promise<UserMessages | null> {
   const name = username.replace(/^@/, '');
@@ -802,6 +851,18 @@ export async function getUserMessages(
   // usernames — `discord.gg` is the commonest DM-spam string on the site — and rendering those as an
   // account with no messages tells a moderator the opposite of the truth.
   if (!(await usernameExists(name))) return null;
+
+  // A cursor that is not one of this account's messages reads as no cursor: the newest page.
+  const anchor =
+    before && isInt4Id(before)
+      ? await dbRead
+          .selectFrom('ChatMessage as cm')
+          .innerJoin('User as u', 'u.id', 'cm.userId')
+          .select('cm.id')
+          .where('cm.id', '=', before)
+          .where('u.username', '=', name)
+          .executeTakeFirst()
+      : undefined;
 
   // `chats` counts over the whole account, not over the page. Deriving it from the newest 100 rows
   // understated a 458-chat DM blast as 12 — and breadth is the number that separates a chatty user
@@ -823,7 +884,11 @@ export async function getUserMessages(
       ])
       .where('u.username', '=', name)
       .where('cm.userId', '!=', SYSTEM_USER_ID)
+      .$if(!!anchor, (qb) =>
+        qb.where(sql<boolean>`(cm."createdAt", cm.id) < ${anchorKey(anchor!.id)}`)
+      )
       .orderBy('cm.createdAt', 'desc')
+      .orderBy('cm.id', 'desc')
       .limit(limit + 1)
       .execute(),
     dbRead
@@ -837,7 +902,12 @@ export async function getUserMessages(
 
   const page = rows.slice(0, limit);
   await recordUserMessageReads(reader, page);
-  return { truncated: rows.length > limit, chats: Number(distinct?.n ?? 0), rows: page };
+  return {
+    truncated: rows.length > limit,
+    hasNewer: !!anchor,
+    chats: Number(distinct?.n ?? 0),
+    rows: page,
+  };
 }
 
 /** Does this chat exist at all? Separates "empty conversation" from "no such chat" — a shared link with

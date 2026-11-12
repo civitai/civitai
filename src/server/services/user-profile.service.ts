@@ -318,7 +318,7 @@ export const setShowcaseSections = async ({
 }: SetShowcaseSectionsSchema & { userId: number }) => {
   await throwOnBlockedUserContent(
     sections.flatMap(({ title, button }) => [title, button?.label, button?.url]),
-    { surface: 'userProfile' }
+    { surface: 'userProfile', entityType: 'UserProfile', entityId: userId, userId }
   );
 
   const current = await dbWrite.userProfile.upsert({
@@ -393,7 +393,7 @@ export const updateUserProfile = async ({
       ...(socialLinks?.map((link) => link.url) ?? []),
       ...(sponsorshipLinks?.map((link) => link.url) ?? []),
     ],
-    { isModerator, surface: 'userProfile' }
+    { isModerator, surface: 'userProfile', entityType: 'UserProfile', entityId: userId, userId }
   );
 
   // `sessionUserId` is what populates the `default*`/`sfw*` fields compared below — they are
