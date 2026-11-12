@@ -37,6 +37,8 @@ import {
   resolveListingAccess,
 } from '~/server/services/blocks/app-access.service';
 import { notifyAppFeedbackReporter } from '~/server/services/blocks/app-feedback-notify';
+import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 import {
   OWNER_NEW_FEEDBACK_SQL,
   OWNER_VISIBLE_FEEDBACK_SQL,
@@ -417,6 +419,81 @@ export type OwnerFeedbackDto = {
   ownerFlaggedAt: Date | null;
 };
 
+/**
+ * The upstream of an app that is a fork. `upstreamSlug` / `upstreamVersion` are named only while
+ * the parent is an approved, publicly visible listing, so a hidden or removed parent reads the
+ * same as an unknown one; `forkedAtCommit` is the parent commit the fork's own repo started at.
+ */
+export type AppFeedbackForkOrigin = {
+  upstreamSlug: string | null;
+  upstreamVersion: string | null;
+  forkedAtCommit: string | null;
+};
+
+export type OwnerFeedbackListItem = OwnerFeedbackDto & { forkOf: AppFeedbackForkOrigin | null };
+
+/**
+ * Fork provenance never changes once written, so it is read with the list rather than stamped on
+ * each row. Cosmetic: any failure (an unapplied fork migration included) reads as "not a fork".
+ */
+export async function readFeedbackForkOrigin(
+  seatListingId: string
+): Promise<AppFeedbackForkOrigin | null> {
+  try {
+    const rows = await dbRead.$queryRaw<
+      Array<{
+        parentBlockId: string | null;
+        forkedAtCommit: string | null;
+        parentListingId: string | null;
+      }>
+    >(Prisma.sql`
+      SELECT ab."fork_of_app_block_id" AS "parentBlockId",
+             ab."fork_of_commit_sha" AS "forkedAtCommit",
+             al."fork_of_listing_id" AS "parentListingId"
+      FROM "app_listings" al
+      LEFT JOIN "app_blocks" ab ON ab."id" = al."app_block_id"
+      WHERE al."id" = ${seatListingId}
+      LIMIT 1
+    `);
+    const row = rows[0];
+    if (!row || (!row.parentBlockId && !row.forkedAtCommit && !row.parentListingId)) return null;
+    const unnamed: AppFeedbackForkOrigin = {
+      upstreamSlug: null,
+      upstreamVersion: null,
+      forkedAtCommit: row.forkedAtCommit,
+    };
+    if (!row.parentListingId) return unnamed;
+    const [parent, visibility] = await Promise.all([
+      dbRead.appListing.findUnique({
+        where: { id: row.parentListingId },
+        select: { slug: true, status: true },
+      }),
+      readListingVisibility(row.parentListingId, dbRead),
+    ]);
+    const isPublic =
+      parent?.status === 'approved' &&
+      visibility.available &&
+      (visibility.visibility === null || visibility.visibility === 'public');
+    if (!parent || !isPublic) return unnamed;
+    const version =
+      row.parentBlockId && row.forkedAtCommit
+        ? await dbRead.appBlockPublishRequest.findFirst({
+            where: {
+              appBlockId: row.parentBlockId,
+              status: 'approved',
+              forgejoCommitSha: row.forkedAtCommit,
+            },
+            orderBy: { reviewedAt: 'desc' },
+            select: { version: true },
+          })
+        : null;
+    return { ...unnamed, upstreamSlug: parent.slug, upstreamVersion: version?.version ?? null };
+  } catch (err) {
+    noteDegradedRead('app-feedback-fork-origin-degraded', err);
+    return null;
+  }
+}
+
 function isSurface(value: unknown): value is AppFeedbackSurface {
   return typeof value === 'string' && (APP_FEEDBACK_SURFACES as readonly string[]).includes(value);
 }
@@ -469,7 +546,7 @@ export async function listAppFeedbackForListing({
 }: {
   userId: number;
   input: ListAppFeedbackForListingInput;
-}): Promise<{ items: OwnerFeedbackDto[]; nextCursor: number | undefined }> {
+}): Promise<{ items: OwnerFeedbackListItem[]; nextCursor: number | undefined }> {
   const seatListingId = await resolveInboxListingId(input.appListingId, userId);
   const conditions = [
     ...ownerVisibleSql([seatListingId]),
@@ -500,8 +577,9 @@ export async function listAppFeedbackForListing({
     LIMIT ${input.limit + 1}
   `);
   const page = rows.slice(0, input.limit);
+  const forkOf = page.length ? await readFeedbackForkOrigin(seatListingId) : null;
   return {
-    items: page.map(toOwnerFeedbackDto),
+    items: page.map((row) => ({ ...toOwnerFeedbackDto(row), forkOf })),
     nextCursor: rows.length > input.limit ? page[page.length - 1].id : undefined,
   };
 }

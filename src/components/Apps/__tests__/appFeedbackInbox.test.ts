@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSetOwnerStatusInput,
   feedbackEnvironmentLine,
+  feedbackForkLabel,
   feedbackRowMeta,
   feedbackSourceLabel,
   INBOX_EMPTY_MESSAGE,
@@ -140,7 +141,7 @@ describe('feedbackRowMeta — "version live when sent" and surface', () => {
         appBlockSha: '3f9c2ab81d0e',
         surface: 'page',
       })
-    ).toEqual(['v1.4.0 (3f9c2ab)', 'App page']);
+    ).toEqual(['v1.4.0 (platform commit 3f9c2ab)', 'App page']);
   });
 
   it('the model-slot surface has its own label', () => {
@@ -158,16 +159,20 @@ describe('feedbackRowMeta — "version live when sent" and surface', () => {
         appSourceDirty: false,
         surface: 'page',
       })
-    ).toEqual(['v1.4.0 (07ee091)', 'source 05c2d58', 'App page']);
+    ).toEqual([
+      'v1.4.0 (platform commit 07ee091)',
+      'reported source 05c2d58 (unverified)',
+      'App page',
+    ]);
   });
 
   it('says "uncommitted changes" only on a known-dirty tree, never on an unknown one', () => {
     const commit = '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901';
     expect(feedbackSourceLabel({ appSourceCommit: commit, appSourceDirty: true })).toBe(
-      'source 05c2d58, uncommitted changes'
+      'reported source 05c2d58 (unverified, uncommitted changes)'
     );
     expect(feedbackSourceLabel({ appSourceCommit: commit, appSourceDirty: null })).toBe(
-      'source 05c2d58'
+      'reported source 05c2d58 (unverified)'
     );
     expect(feedbackSourceLabel({ appSourceCommit: null, appSourceDirty: true })).toBeNull();
   });
@@ -175,7 +180,7 @@ describe('feedbackRowMeta — "version live when sent" and surface', () => {
   it('a sha with no version still identifies the build', () => {
     expect(
       feedbackRowMeta({ appBlockVersion: null, appBlockSha: 'abcdef0123', surface: null })
-    ).toEqual(['build abcdef0']);
+    ).toEqual(['platform commit abcdef0']);
   });
 
   it('nothing known → nothing rendered', () => {
@@ -312,5 +317,24 @@ describe('feedbackEnvironmentLine', () => {
     expect(feedbackEnvironmentLine({ browser: { family: 'other' } })).toBe('Other browser');
     expect(feedbackEnvironmentLine({})).toBeNull();
     expect(feedbackEnvironmentLine(null)).toBeNull();
+  });
+});
+
+describe('feedbackForkLabel', () => {
+  it('names a public upstream, its version and the commit the fork started at', () => {
+    expect(
+      feedbackForkLabel({
+        upstreamSlug: 'cool-app',
+        upstreamVersion: '1.2.0',
+        forkedAtCommit: '3f9c2ab81d0e3f9c2ab81d0e3f9c2ab81d0e3f9c',
+      })
+    ).toBe('Forked from cool-app v1.2.0 (at 3f9c2ab)');
+  });
+
+  it('a hidden upstream is not named; not a fork is null', () => {
+    expect(
+      feedbackForkLabel({ upstreamSlug: null, upstreamVersion: null, forkedAtCommit: null })
+    ).toBe('Forked from another app');
+    expect(feedbackForkLabel(null)).toBeNull();
   });
 });

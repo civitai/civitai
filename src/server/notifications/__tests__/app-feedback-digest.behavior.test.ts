@@ -152,6 +152,7 @@ beforeAll(async () => {
   await db.exec(migration('20260813180000_feedback'));
   await db.exec(migration('20260911120000_feedback_triage'));
   for (const part of appListingMigrationParts()) await db.exec(part);
+  await db.exec(migration('20270104120000_feedback_app_source_commit'));
   // After the migrations, so their own DDL resolves names as written; from here on an unqualified
   // `now()` is the pinned clock.
   await db.exec(`SET search_path = public, pg_catalog;`);

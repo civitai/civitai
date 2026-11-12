@@ -219,7 +219,7 @@ describe('the inbox lists what the server returned, newest first', () => {
     expect(byId('reporter', NEWEST.id).element().getAttribute('href')).toBe('/user/mira_dev');
     await expect
       .element(byId('meta', NEWEST.id))
-      .toHaveTextContent('v1.4.0 (3f9c2ab) · App page · Oct 8, 2026');
+      .toHaveTextContent('v1.4.0 (platform commit 3f9c2ab) · App page · Oct 8, 2026');
     await expect.element(byId('meta', OLDER.id)).toHaveTextContent('v1.3.2 · Model page');
     await expect.element(byId('status', NEWEST.id)).toHaveTextContent('New');
     await expect.element(byId('status', OLDER.id)).toHaveTextContent('Acknowledged');

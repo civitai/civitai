@@ -16,7 +16,7 @@ import type { PGlite } from '@electric-sql/pglite';
 // The moderator spoke's harness: the REAL `Feedback` migrations (the manual-apply app-block one
 // included) applied to an in-process Postgres. Relative, because `~` does not reach `apps/`.
 import {
-  freshAppFeedbackDb,
+  freshAppFeedbackSourceDb,
   seedUser,
 } from '../../../../../apps/moderator/src/lib/server/__tests__/feedback-pglite.harness';
 
@@ -80,6 +80,7 @@ const {
   modListAppFeedback,
   modListConditions,
   modSetAppFeedbackHidden,
+  readFeedbackForkOrigin,
   resolveAppFeedbackTarget,
   setAppFeedbackOwnerStatus,
   toOwnerFeedbackDto,
@@ -910,6 +911,77 @@ describe('listAppFeedbackForListing', () => {
   });
 });
 
+describe('readFeedbackForkOrigin — the upstream of a fork', () => {
+  const FORKED_AT = '3f9c2ab81d0e3f9c2ab81d0e3f9c2ab81d0e3f9c';
+  const forkRow = { parentBlockId: 'blk_up', forkedAtCommit: FORKED_AT, parentListingId: 'apl_up' };
+  beforeEach(() => {
+    STATUS['apl_up'] = { status: 'approved', name: 'Up', appBlock: null, slug: 'up-app' } as never;
+    dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({ version: '1.2.0' });
+  });
+
+  it('a listing that is not a fork has none', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([
+      { parentBlockId: null, forkedAtCommit: null, parentListingId: null },
+    ]);
+    expect(await readFeedbackForkOrigin(PARENT)).toBeNull();
+  });
+
+  it('names a public upstream and the version whose commit the fork started at', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([forkRow]);
+    expect(await readFeedbackForkOrigin(PARENT)).toStrictEqual({
+      upstreamSlug: 'up-app',
+      upstreamVersion: '1.2.0',
+      forkedAtCommit: FORKED_AT,
+    });
+    expect(dbMock.dbRead.appBlockPublishRequest.findFirst).toHaveBeenCalledWith({
+      where: { appBlockId: 'blk_up', status: 'approved', forgejoCommitSha: FORKED_AT },
+      orderBy: { reviewedAt: 'desc' },
+      select: { version: true },
+    });
+  });
+
+  it.each([
+    ['not approved', () => ((STATUS['apl_up'] as { status: string }).status = 'suspended')],
+    [
+      'not public',
+      () =>
+        mocks.readListingVisibility.mockResolvedValue({ available: true, visibility: 'testers' }),
+    ],
+    [
+      'of unknown visibility',
+      () => mocks.readListingVisibility.mockResolvedValue({ available: false, visibility: null }),
+    ],
+    ['deleted', () => delete STATUS['apl_up']],
+  ])('an upstream that is %s is not named', async (_label, arrange) => {
+    arrange();
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([forkRow]);
+    expect(await readFeedbackForkOrigin(PARENT)).toStrictEqual({
+      upstreamSlug: null,
+      upstreamVersion: null,
+      forkedAtCommit: FORKED_AT,
+    });
+  });
+
+  it('any read failure reads as not a fork', async () => {
+    dbMock.dbRead.$queryRaw.mockRejectedValueOnce(new Error('column does not exist'));
+    expect(await readFeedbackForkOrigin(PARENT)).toBeNull();
+  });
+
+  it('every listed row carries it', async () => {
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([
+        { ...ownerRow, id: 30 },
+        { ...ownerRow, id: 20 },
+      ])
+      .mockResolvedValueOnce([forkRow]);
+    const res = await listAppFeedbackForListing({
+      userId: OWNER,
+      input: { appListingId: PARENT, limit: 50 },
+    });
+    expect(res.items.map((i) => i.forkOf?.upstreamSlug)).toEqual(['up-app', 'up-app']);
+  });
+});
+
 describe('owner writes', () => {
   const statusInput = {
     id: 901,
@@ -1343,7 +1415,7 @@ describe('hasAnyAppFeedbackForListing — authz parity with listForListing', () 
 });
 
 /**
- * The same two functions against REAL rows: `freshAppFeedbackDb()` applies the actual `Feedback`
+ * The same two functions against REAL rows: `freshAppFeedbackSourceDb()` applies the actual `Feedback`
  * migrations to PGlite, and `$queryRaw` runs each `Prisma.Sql` as the parameterised statement the
  * driver would send. Access resolution stays on the db mock above (only the raw SQL is under test).
  */
@@ -1353,7 +1425,7 @@ describe('hasAnyAppFeedbackForListing — real SQL on PGlite, against listForLis
   let banned: number;
 
   beforeEach(async () => {
-    pg = await freshAppFeedbackDb();
+    pg = await freshAppFeedbackSourceDb();
     // The harness's stand-in `User` has only id + username; the visibility predicate reads
     // `bannedAt`, which the real table has.
     await pg.exec('ALTER TABLE "User" ADD COLUMN "bannedAt" TIMESTAMP(3)');

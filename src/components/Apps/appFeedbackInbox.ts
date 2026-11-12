@@ -87,22 +87,27 @@ const SURFACE_LABELS: Readonly<Record<AppFeedbackSurface, string>> = Object.free
 });
 
 /**
- * The developer's own commit for the build the report was sent from, e.g. "source 05c2d58" or
- * "source 05c2d58, uncommitted changes". `appBlockSha` is the platform's sha, which names nothing
- * in the developer's tree. A NULL dirty flag is unknown, so it claims neither clean nor dirty.
+ * The commit the developer's own CLI reported at submit, e.g. "reported source 05c2d58
+ * (unverified)" or "reported source 05c2d58 (unverified, uncommitted changes)". Nothing confirms the
+ * bundle was built from it, and it may exist only on the developer's machine. A NULL dirty flag is
+ * unknown, so it claims neither clean nor dirty.
  */
 export function feedbackSourceLabel(row: {
   appSourceCommit?: string | null;
   appSourceDirty?: boolean | null;
 }): string | null {
   if (!row.appSourceCommit) return null;
-  const commit = `source ${row.appSourceCommit.slice(0, 7)}`;
-  return row.appSourceDirty === true ? `${commit}, uncommitted changes` : commit;
+  const sha = row.appSourceCommit.slice(0, 7);
+  return row.appSourceDirty === true
+    ? `reported source ${sha} (unverified, uncommitted changes)`
+    : `reported source ${sha} (unverified)`;
 }
 
 /**
- * Version/sha, source commit and surface, e.g. ["v1.4.0 (3f9c2ab)", "source 05c2d58", "App page"];
- * the caller appends the date.
+ * Version, platform commit, reported source commit and surface, e.g.
+ * ["v1.4.0 (platform commit 3f9c2ab)", "reported source 05c2d58 (unverified)", "App page"]; the
+ * caller appends the date. The platform commit is the release commit in the app's platform repo,
+ * which the owner can check out from a `civitai app pull` clone.
  */
 export function feedbackRowMeta(row: {
   appBlockVersion: string | null;
@@ -111,12 +116,8 @@ export function feedbackRowMeta(row: {
   appSourceDirty?: boolean | null;
   surface: AppFeedbackSurface | null;
 }): string[] {
-  const sha = row.appBlockSha ? row.appBlockSha.slice(0, 7) : null;
-  const version = row.appBlockVersion
-    ? `v${row.appBlockVersion}${sha ? ` (${sha})` : ''}`
-    : sha
-    ? `build ${sha}`
-    : null;
+  const sha = row.appBlockSha ? `platform commit ${row.appBlockSha.slice(0, 7)}` : null;
+  const version = row.appBlockVersion ? `v${row.appBlockVersion}${sha ? ` (${sha})` : ''}` : sha;
   const surface = row.surface ? SURFACE_LABELS[row.surface] : null;
   return [version, feedbackSourceLabel(row), surface].filter(
     (part): part is string => part !== null
@@ -168,6 +169,26 @@ export function feedbackEnvironmentLine(env: AppFeedbackEnvironment | null): str
     (part): part is string => part !== null
   );
   return parts.length ? parts.join(' · ') : null;
+}
+
+/** Under the inbox: where the two commits on a row come from. */
+export const INBOX_COMMITS_NOTE =
+  "The platform commit is this release's commit in the app's platform repo: clone it with `civitai app pull <slug>`, then `git checkout <sha>`. The reported source commit is what the developer's CLI said at submit; nothing verifies it.";
+
+/** A fork's upstream, e.g. "Forked from cool-app v1.2.0 (at 3f9c2ab)"; `null` for no fork. */
+export function feedbackForkLabel(
+  fork: {
+    upstreamSlug: string | null;
+    upstreamVersion: string | null;
+    forkedAtCommit: string | null;
+  } | null
+): string | null {
+  if (!fork) return null;
+  const upstream = fork.upstreamSlug
+    ? `${fork.upstreamSlug}${fork.upstreamVersion ? ` v${fork.upstreamVersion}` : ''}`
+    : 'another app';
+  const at = fork.forkedAtCommit ? ` (at ${fork.forkedAtCommit.slice(0, 7)})` : '';
+  return `Forked from ${upstream}${at}`;
 }
 
 export const RECENT_ERRORS_HEADING = 'Recent app errors and host refusals before this report';

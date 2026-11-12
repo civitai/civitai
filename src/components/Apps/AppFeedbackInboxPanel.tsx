@@ -18,6 +18,8 @@ import type { InboxActionError, InboxStatusFilter } from '~/components/Apps/appF
 import {
   buildSetOwnerStatusInput,
   feedbackEnvironmentLine,
+  feedbackForkLabel,
+  INBOX_COMMITS_NOTE,
   feedbackRowMeta,
   INBOX_STATUS_FILTERS,
   inboxActionError,
@@ -33,7 +35,7 @@ import {
   recentErrorLine,
   reporterLabel,
 } from '~/components/Apps/appFeedbackInbox';
-import type { OwnerFeedbackDto } from '~/server/services/blocks/app-feedback.service';
+import type { OwnerFeedbackListItem } from '~/server/services/blocks/app-feedback.service';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -52,6 +54,10 @@ export function AppFeedbackInboxPanel({ appListingId }: { appListingId: string }
           {INBOX_PRIVACY_NOTE}
         </Text>
       </Alert>
+
+      <Text size="xs" c="dimmed" data-testid="app-feedback-commits-note">
+        {INBOX_COMMITS_NOTE}
+      </Text>
 
       <SegmentedControl
         value={filter}
@@ -113,7 +119,7 @@ function FeedbackRow({
   onRefresh,
 }: {
   appListingId: string;
-  item: OwnerFeedbackDto;
+  item: OwnerFeedbackListItem;
   onRefresh: () => void;
 }) {
   const utils = trpc.useUtils();
@@ -147,6 +153,7 @@ function FeedbackRow({
   const busy = setStatus.isPending || flag.isPending;
   const meta = feedbackRowMeta(item);
   const environment = feedbackEnvironmentLine(item.environment);
+  const fork = feedbackForkLabel(item.forkOf ?? null);
   const testId = (part: string) => `app-feedback-${part}-${item.id}`;
 
   return (
@@ -191,6 +198,12 @@ function FeedbackRow({
         <Text size="sm" style={{ whiteSpace: 'pre-wrap' }} data-testid={testId('message')}>
           {item.message}
         </Text>
+
+        {fork && (
+          <Text size="xs" c="dimmed" data-testid={testId('fork')}>
+            {fork}
+          </Text>
+        )}
 
         {environment && (
           <Text size="xs" c="dimmed" data-testid={testId('environment')}>
