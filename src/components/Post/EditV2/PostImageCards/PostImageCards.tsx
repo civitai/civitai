@@ -6,7 +6,6 @@ import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV
 import { AddedImage } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import { BlockedImage } from '~/components/Post/EditV2/PostImageCards/BlockedImage';
 import { ErrorImage } from '~/components/Post/EditV2/PostImageCards/ErrorImage';
-import { MusicCard } from '~/components/Post/EditV2/PostImageCards/MusicCard';
 import { PendingImage } from '~/components/Post/EditV2/PostImageCards/PendingImage';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -67,11 +66,7 @@ export function PostImageCards() {
 function PostImageCard({ image }: { image: ControlledImage }) {
   switch (image.type) {
     case 'added':
-      return image.data.type === MediaType.audio ? (
-        <MusicCard image={image.data} />
-      ) : (
-        <AddedImage image={image.data} />
-      );
+      return <AddedImage image={image.data} />;
     case 'blocked':
       return <BlockedImage image={image.data} />;
     case 'resolving':

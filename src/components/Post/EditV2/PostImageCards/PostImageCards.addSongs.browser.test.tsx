@@ -30,12 +30,10 @@ vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
 vi.mock('~/store/generation-graph.store', () => ({
   generationGraphPanel: { open: mocks.open, setView: mocks.setView },
 }));
-vi.mock('~/components/Post/EditV2/PostImageCards/MusicCard', async (orig) => ({
-  ...(await orig<object>()),
-  MusicCard: () => <div>song card</div>,
-}));
 vi.mock('~/components/Post/EditV2/PostImageCards/AddedImage', () => ({
-  AddedImage: () => <div>image card</div>,
+  AddedImage: ({ image }: { image: { type: string } }) => (
+    <div>{image.type === 'audio' ? 'song card' : 'image card'}</div>
+  ),
 }));
 
 // eslint-disable-next-line import/first

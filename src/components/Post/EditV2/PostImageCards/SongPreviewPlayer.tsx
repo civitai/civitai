@@ -1,11 +1,18 @@
 import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
+import { useAudioPeaks } from '~/components/Audio/useAudioPeaks';
+import { WaveformBars } from '~/components/Audio/WaveformBars';
 import { EdgeAudio } from '~/components/EdgeMedia/EdgeAudio';
+import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { formatPlaybackTime } from '~/utils/audio-player';
 
 const SEEK_STEP_SECONDS = 5;
+const WAVEFORM_BARS = 48;
 
-/** Play/pause, a seekable progress bar and the length of a stored song. */
+/**
+ * Play/pause, a seekable waveform and the length of a stored song. The waveform is decoded once
+ * the player nears the viewport; until then, or when decoding fails, a plain progress bar stands in.
+ */
 export function SongPreviewPlayer({
   src,
   duration: storedDuration,
@@ -14,6 +21,9 @@ export function SongPreviewPlayer({
   duration?: number;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const sliderRef = useRef<HTMLDivElement>(null);
+  const { url } = useEdgeUrl(src, { type: 'audio' });
+  const peaks = useAudioPeaks(url, WAVEFORM_BARS, sliderRef);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(storedDuration ?? 0);
@@ -64,7 +74,8 @@ export function SongPreviewPlayer({
         {playing ? <IconPlayerPauseFilled size={14} /> : <IconPlayerPlayFilled size={14} />}
       </button>
       <div
-        className="group flex h-7 min-w-0 flex-1 cursor-pointer touch-none items-center"
+        ref={sliderRef}
+        className="group flex h-8 min-w-0 flex-1 cursor-pointer touch-none items-center"
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
           seekFromPointer(e);
@@ -86,9 +97,17 @@ export function SongPreviewPlayer({
         aria-valuenow={Math.round(currentTime)}
         aria-valuetext={`${formatPlaybackTime(currentTime)} of ${formatPlaybackTime(duration)}`}
       >
-        <div className="h-1 w-full overflow-hidden rounded-full bg-black/15 transition-[height] group-hover:h-1.5 dark:bg-white/35">
-          <div className="h-full bg-[#E64980]" style={{ width: `${progress}%` }} />
-        </div>
+        {peaks ? (
+          <WaveformBars peaks={peaks} progress={progress / 100} />
+        ) : (
+          <div className="h-1 w-full overflow-hidden rounded-full bg-black/15 transition-[height] group-hover:h-1.5 dark:bg-white/35">
+            <div
+              data-testid="song-progress-fill"
+              className="h-full bg-[#E64980]"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        )}
       </div>
       <span className="shrink-0 text-xs text-gray-6 dark:text-dark-2">
         {formatPlaybackTime(duration)}

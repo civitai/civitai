@@ -1,65 +1,11 @@
 import { ActionIcon } from '@mantine/core';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
-import pLimit from 'p-limit';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAudioPeaks } from '~/components/Audio/useAudioPeaks';
+import { formatPlaybackTime } from '~/utils/audio-player';
 
 const WAVEFORM_BARS = 160;
-
-// Cap concurrent decodes — each one fetches the full source and holds a
-// large decoded buffer in memory. Without this, a page with many WAVs can
-// kick off N parallel fetches/decodes and pin a lot of memory at once.
-const decodeLimit = pLimit(2);
-
-// Persist computed peaks per source so re-mounting a card (pagination,
-// scrolling in/out of view) doesn't trigger a second download+decode.
-const peaksCache = new Map<string, number[] | null>();
-
-const formatTime = (seconds: number) => {
-  if (!isFinite(seconds) || seconds < 0) return '0:00';
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-};
-
-let cachedAudioContext: AudioContext | null = null;
-const getAudioContext = () => {
-  if (cachedAudioContext) return cachedAudioContext;
-  const Ctx =
-    (window as unknown as { AudioContext?: typeof AudioContext }).AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!Ctx) return null;
-  cachedAudioContext = new Ctx();
-  return cachedAudioContext;
-};
-
-/**
- * Decode the source audio into a fixed number of normalized peak values.
- * Skips decode if AudioContext is unavailable (older browsers / SSR) — caller
- * falls back to a flat bar UI.
- */
-async function computePeaks(src: string, buckets: number): Promise<number[] | null> {
-  const ctx = getAudioContext();
-  if (!ctx) return null;
-
-  const response = await fetch(src);
-  if (!response.ok) return null;
-  const arrayBuffer = await response.arrayBuffer();
-  // decodeAudioData detaches the ArrayBuffer in Safari, so clone before.
-  const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
-
-  const channel = decoded.getChannelData(0);
-  const blockSize = Math.max(1, Math.floor(channel.length / buckets));
-  const peaks = new Array<number>(buckets).fill(0);
-  for (let i = 0; i < buckets; i++) {
-    const start = i * blockSize;
-    let sum = 0;
-    for (let j = 0; j < blockSize; j++) sum += Math.abs(channel[start + j] ?? 0);
-    peaks[i] = sum / blockSize;
-  }
-  const max = Math.max(...peaks, 1e-6);
-  return peaks.map((p) => p / max);
-}
 
 type AudioWaveformProps = {
   src: string;
@@ -80,63 +26,10 @@ export function AudioWaveform({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [peaks, setPeaks] = useState<number[] | null>(() => peaksCache.get(src) ?? null);
+  const peaks = useAudioPeaks(src, buckets, containerRef);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  // Gate decoding on visibility so off-screen cards (paginated lists, scrolled
-  // areas) don't pull and decode the full audio file until they're in view.
-  const [hasBeenVisible, setHasBeenVisible] = useState(() => peaksCache.has(src));
-
-  useEffect(() => {
-    if (hasBeenVisible) return;
-    const node = containerRef.current;
-    if (!node) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      setHasBeenVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setHasBeenVisible(true);
-            observer.disconnect();
-            return;
-          }
-        }
-      },
-      { rootMargin: '200px' }
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [hasBeenVisible]);
-
-  // Decode peaks once per src. Failures (CORS, codec, no AudioContext) leave
-  // peaks=null and the canvas falls back to evenly spaced bars. Decoding is
-  // bounded by `decodeLimit` and skipped entirely until the card has been
-  // visible at least once.
-  useEffect(() => {
-    if (!hasBeenVisible) return;
-    if (peaksCache.has(src)) {
-      setPeaks(peaksCache.get(src) ?? null);
-      return;
-    }
-    let cancelled = false;
-    setPeaks(null);
-    decodeLimit(() => computePeaks(src, buckets))
-      .then((p) => {
-        peaksCache.set(src, p);
-        if (!cancelled) setPeaks(p);
-      })
-      .catch(() => {
-        peaksCache.set(src, null);
-        if (!cancelled) setPeaks(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [src, buckets, hasBeenVisible]);
 
   const progress = duration > 0 ? Math.min(1, currentTime / duration) : 0;
 
@@ -267,7 +160,7 @@ export function AudioWaveform({
   }, []);
 
   const timeLabel = useMemo(
-    () => `${formatTime(currentTime)} / ${formatTime(duration)}`,
+    () => `${formatPlaybackTime(currentTime)} / ${formatPlaybackTime(duration)}`,
     [currentTime, duration]
   );
 

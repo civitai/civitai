@@ -2,7 +2,7 @@ import { Alert, Button, Text } from '@mantine/core';
 import type { PostEditMediaDetail } from '~/components/Post/EditV2/PostEditProvider';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { CustomCard } from '~/components/Post/EditV2/PostImageCards/CustomCard';
-import { SongGlyphTile } from '~/components/Post/EditV2/PostImageCards/MusicCard';
+import { SongGlyphTile } from '~/components/Post/EditV2/PostImageCards/SongCover';
 
 export function BlockedImage({ image }: { image: PostEditMediaDetail }) {
   const { showPreview } = usePostPreviewContext();
