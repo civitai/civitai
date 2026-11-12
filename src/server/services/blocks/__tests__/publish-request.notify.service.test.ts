@@ -107,12 +107,15 @@ vi.mock('~/env/server', () => ({
   },
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({ newUlid: () => 'ULID000' }));
+const { mockValidateSubmission } = vi.hoisted(() => ({
+  mockValidateSubmission: vi.fn(async (..._a: unknown[]) => ({ valid: true, errors: [] })),
+}));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
   BlockManifestValidator: {
     validate: () => ({ valid: true, errors: [] }),
     // approveRequest now calls the async submission gate (validate + settings-
     // pattern ReDoS check); this suite exercises the always-valid path.
-    validateSubmission: async () => ({ valid: true, errors: [] }),
+    validateSubmission: mockValidateSubmission,
   },
 }));
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
@@ -223,6 +226,16 @@ describe('approveRequest — submitter notification (post-commit, best-effort)',
     expect(arg.userId).toBe(SUBMITTER);
     expect(arg.key).toBe('app-block-approved:req_appr_1');
     expect(arg.details).toMatchObject({ slug: 'cool-app', name: 'Cool App', version: '1.2.0' });
+  });
+
+  it('🔴 approve re-validates with the issue-tracker link LENIENT (a stored legacy `bugs` warns, never refuses)', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(pendingApproveRow());
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+    expect(mockValidateSubmission).toHaveBeenCalled();
+    expect(mockValidateSubmission.mock.calls[0][2]).toMatchObject({
+      strictIssueTrackerLink: false,
+    });
   });
 
   it('is BEST-EFFORT: a notify failure is swallowed and the approve still resolves', async () => {

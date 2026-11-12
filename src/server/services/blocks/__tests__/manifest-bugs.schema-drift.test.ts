@@ -33,27 +33,28 @@ const APP_CTX = {
   allowedOrigins: ['https://blocks.civitai.com'],
 };
 
-function errorsFor(extra: Record<string, unknown>): string[] {
-  const res = BlockManifestValidator.validate(
-    {
-      blockId: 'my-app',
-      version: '1.0.0',
-      name: 'My App',
-      contentRating: 'g',
-      renderMode: 'iframe',
-      trustTier: 'unverified',
-      scopes: ['models:read:self'],
-      iframe: {
-        src: 'https://blocks.civitai.com/test',
-        minHeight: 200,
-        maxHeight: null,
-        resizable: true,
-        sandbox: 'allow-scripts',
-      },
-      ...extra,
+function manifestWith(extra: Record<string, unknown>): Record<string, unknown> {
+  return {
+    blockId: 'my-app',
+    version: '1.0.0',
+    name: 'My App',
+    contentRating: 'g',
+    renderMode: 'iframe',
+    trustTier: 'unverified',
+    scopes: ['models:read:self'],
+    iframe: {
+      src: 'https://blocks.civitai.com/test',
+      minHeight: 200,
+      maxHeight: null,
+      resizable: true,
+      sandbox: 'allow-scripts',
     },
-    APP_CTX
-  );
+    ...extra,
+  };
+}
+
+function errorsFor(extra: Record<string, unknown>): string[] {
+  const res = BlockManifestValidator.validate(manifestWith(extra), APP_CTX);
   return res.valid ? [] : res.errors;
 }
 
@@ -135,6 +136,56 @@ describe('BlockManifestValidator — bugs', () => {
         validateIssueTrackerUrl(value).ok
       );
     }
+  });
+});
+
+/**
+ * 🔴 STRICT ONLY ON A NEW SUBMISSION. A manifest stored before the `bugs` rule existed (an
+ * object, an http link, a port) must stay approvable and editable: on approve, the in-app
+ * editor and git-push re-validation, a non-conforming `bugs` is a WARNING and yields no link —
+ * never a refusal. Every other rule still refuses in lenient mode.
+ */
+describe('BlockManifestValidator — bugs outside a new submission (lenient)', () => {
+  const LENIENT = { strictIssueTrackerLink: false } as const;
+  const lenient = (extra: Record<string, unknown>) =>
+    BlockManifestValidator.validate(manifestWith(extra), APP_CTX, LENIENT);
+
+  it.each([
+    ['an object', { url: 'https://example.com/s' }, NOT_A_STRING],
+    ['an http string', 'http://example.com/bugs', null],
+    ['a string with a port', 'https://example.com:8080/bugs', 'bugs must not specify a port'],
+  ])('ACCEPTS %s with a warning naming it, and no error', (_label, bugs, firstPart) => {
+    const res = lenient({ bugs });
+    expect(res.valid).toBe(true);
+    expect(res.warnings ?? []).toHaveLength(1);
+    const warning = (res.warnings ?? [])[0];
+    expect(warning).toContain('bugs');
+    if (firstPart) expect(warning.startsWith(firstPart)).toBe(true);
+    expect(warning.endsWith(' — ignored: the store shows no Support link')).toBe(true);
+  });
+
+  it('a valid string carries no warning', () => {
+    expect(lenient({ bugs: 'https://example.com/bugs' })).toEqual({ valid: true });
+  });
+
+  it('POSITIVE CONTROL: the DEFAULT (a new submission) still refuses the same object', () => {
+    expect(errorsFor({ bugs: { url: 'https://example.com/s' } })).toEqual([NOT_A_STRING]);
+  });
+
+  it('lenient mode relaxes ONLY bugs: another bad field still refuses', () => {
+    const res = lenient({ bugs: { url: 'x' }, repository: 'http://github.com/o/r' });
+    expect(res.valid).toBe(false);
+    if (!res.valid) expect(res.errors.join(' | ')).toContain('repository');
+  });
+
+  it('validateSubmission passes the option through', async () => {
+    const res = await BlockManifestValidator.validateSubmission(
+      manifestWith({ bugs: { url: 'https://example.com/s' } }),
+      APP_CTX,
+      LENIENT
+    );
+    expect(res.valid).toBe(true);
+    expect(res.warnings ?? []).toHaveLength(1);
   });
 });
 

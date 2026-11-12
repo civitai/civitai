@@ -87,6 +87,10 @@ function sqlText(q: unknown): string {
 const missingColumn = () =>
   Object.assign(new Error('column "issue_tracker_url" does not exist'), { code: '42703' });
 
+/** A transient fault — NOT a missing column, so it must never read as "no column". */
+const connectionLost = () =>
+  Object.assign(new Error('Connection terminated unexpectedly'), { code: 'P1001' });
+
 /**
  * Arm a client's raw reads of the column: `values` maps listing id → stored link; an id not in
  * it reads as no row. `missing` makes every statement naming the column raise 42703.
@@ -94,12 +98,13 @@ const missingColumn = () =>
 function armTracker(
   client: typeof mockRead,
   values: Record<string, string | null>,
-  opts: { missing?: boolean } = {}
+  opts: { missing?: boolean; transient?: boolean } = {}
 ) {
   // Tagged-template calls: `(strings, ...values)`, the listing id being the first value.
   client.$queryRaw.mockImplementation(async (q: unknown, ...vals: unknown[]) => {
     if (!sqlText(q).includes('issue_tracker_url')) return [];
     if (opts.missing) throw missingColumn();
+    if (opts.transient) throw connectionLost();
     const id = vals[0] as string;
     return id in values ? [{ issueTrackerUrl: values[id] }] : [];
   });
@@ -294,6 +299,36 @@ describe('the revision round trip carries the issue-tracker link', () => {
     // …and the only statement that named the column was the probe, before the transaction.
     expect(trackerQueriesOnWrite()).toBe(1);
     expect(trackerWrites()).toEqual([]);
+  });
+
+  it('🔴 a TRANSIENT probe error fails the approve — the reviewed link is not silently dropped', async () => {
+    // Read as "no column", the apply would copy every other scalar and skip the link, so a
+    // moderator-approved Support change would vanish with a success response.
+    armApprove();
+    armTracker(mockWrite, {}, { transient: true });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_rev', reviewerUserId: MOD })
+    ).rejects.toThrow();
+    // Nothing was applied: the live parent was not rewritten without its link.
+    expect(
+      mockWrite.appListing.update.mock.calls.some(
+        (c: unknown[]) => (c[0] as { where: { id: string } }).where.id === 'apl_parent'
+      )
+    ).toBe(false);
+    expect(trackerWrites()).toEqual([]);
+  });
+
+  it('🔴 a TRANSIENT probe error fails beginListingRevision — no shadow without the live link', async () => {
+    // Read as "no column", the shadow would be minted WITHOUT the parent's link, and the
+    // later approve (column readable again) would CLEAR the live link.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    armTracker(mockRead, { apl_parent: LIVE_TRACKER });
+    armTracker(mockWrite, {}, { transient: true });
+    armShadowOpen();
+    await expect(beginListingRevision({ listingId: 'apl_parent', userId: OWNER })).rejects.toThrow(
+      'Connection terminated'
+    );
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
   });
 });
 
