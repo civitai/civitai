@@ -56,14 +56,20 @@ async function measure(containerWidth: number) {
   // Where the pixels land inside the element box, given its object-fit.
   const fit = getComputedStyle(img).objectFit === 'cover' ? Math.max : Math.min;
   const scale = fit(box.width / natural.width, box.height / natural.height);
+  const paintedWidth = natural.width * scale;
+  const paintedHeight = natural.height * scale;
+  // object-position decides where the content sits inside the box; the box itself always equals the wrapper.
+  const [posX, posY] = getComputedStyle(img)
+    .objectPosition.split(' ')
+    .map((v) => parseFloat(v) / 100);
   return {
     wrapper,
     wrapperEl,
     painted: {
-      width: natural.width * scale,
-      height: natural.height * scale,
-      centerX: box.left + box.width / 2,
-      centerY: box.top + box.height / 2,
+      width: paintedWidth,
+      height: paintedHeight,
+      centerX: box.left + (box.width - paintedWidth) * posX + paintedWidth / 2,
+      centerY: box.top + (box.height - paintedHeight) * posY + paintedHeight / 2,
     },
   };
 }
