@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Audit from '~/utils/metadata/audit';
 import type * as Blocklist from '~/server/services/blocklist.service';
@@ -48,6 +49,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
 import { auditPostImageMeta } from '~/utils/metadata/audit';
 
 /**
@@ -310,16 +312,21 @@ describe('resolveScanOutcome with a collection judge rating', () => {
 
   it('keeps a legacy rating (no judge recorded) as the floor', async () => {
     scanTagLevel = R;
-    const legacy = {
-      judgeRating: {
-        userId: null,
-        nsfwLevel: X,
-        ratedAt: '2025-01-02T03:04:05',
-        legacy: true,
-        collectionId: 10,
-      },
-    };
-    const { outcome, row } = await scan(await arrange({ nsfwLevel: X, metadata: legacy }));
+    const image = await arrange({ nsfwLevel: X });
+    // The legacy rating is the one the self-heal and the backfill write, built by their shared
+    // helper against this row, so the fixture can't drift from the seed. The collection-rating
+    // test's "a rescan that rates lower…" case reproduces the floor SQL against the same seed.
+    await pgliteRaw(db).executeRaw`
+      UPDATE "Image" SET metadata = ${legacyJudgeRatingSeedSql('Image', Prisma.sql`10`)}
+      WHERE id = ${ID}
+    `;
+    const { rows } = await db.query<{ metadata: { judgeRating: { legacy: boolean } } }>(
+      `SELECT metadata FROM "Image" WHERE id = $1`,
+      [ID]
+    );
+    expect(rows[0].metadata.judgeRating).toMatchObject({ legacy: true, nsfwLevel: X });
+
+    const { outcome, row } = await scan(image);
 
     expect(row.nsfwLevel).toBe(X);
     expect(outcome.nsfwLevel).toBe(X);

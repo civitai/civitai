@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { batchProcessor } from '~/server/db/db-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
+import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
@@ -11,7 +13,9 @@ import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
  * judge-rating floor (`metadata.judgeRating`, honoured by `resolveScanOutcome`) is deployed; a
  * run refuses until the primary's `update_nsfw_levels_new` carries that floor.
  *
- * Writes, per image: `ingestion = 'Rescan'`, a `JobQueue` `ImageScan` row, and, when the image has a
+ * Writes, per image: `ingestion = 'Rescan'` and a `JobQueue` `ImageScan` row (or `Error` and no
+ * queue row for an image already at the rescan retry limit, which the scan would never re-send;
+ * the dry run counts these as `cohorts.outOfRetries`), and, when the image has a
  * single browsing level and no judge rating yet, a legacy `metadata.judgeRating` carrying that level
  * (`ratedAt` null: when it was applied is not recorded), so the level the judges applied stays a
  * floor under the rescan. Nothing else.
@@ -40,6 +44,8 @@ const inJudgeCollection = inCollectionPost(true);
 const scannedNoJobs = Prisma.sql`(i.ingestion = 'Scanned'::"ImageIngestionStatus" AND i."scanJobs" IS NULL)`;
 const pendingManual = Prisma.sql`(i.ingestion = 'PendingManualAssignment'::"ImageIngestionStatus")`;
 const inScope = Prisma.sql`(${inJudgeCollection} AND (${scannedNoJobs} OR ${pendingManual}))`;
+// The scan never re-sends a Rescan image at the retry limit; such an image is marked Error instead.
+const outOfRetries = Prisma.sql`COALESCE((i."scanJobs"->>'retryCount')::int, 0) >= ${IMAGE_RESCAN_RETRY_LIMIT}`;
 const hasScannerTags = Prisma.sql`EXISTS (
   SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi.source != 'User'::"TagSource"
 )`;
@@ -48,14 +54,17 @@ const idFilter = (ids?: number[]) =>
   ids ? Prisma.sql`AND i.id IN (${Prisma.join(ids)})` : Prisma.empty;
 
 async function countCohorts(ids?: number[]) {
-  const [row] = await dbRead.$queryRaw<{ scannedNoJobs: number; pendingManual: number }[]>`
+  const [row] = await dbRead.$queryRaw<
+    { scannedNoJobs: number; pendingManual: number; outOfRetries: number }[]
+  >`
     SELECT
       count(*) FILTER (WHERE ${scannedNoJobs})::int AS "scannedNoJobs",
-      count(*) FILTER (WHERE ${pendingManual})::int AS "pendingManual"
+      count(*) FILTER (WHERE ${pendingManual})::int AS "pendingManual",
+      count(*) FILTER (WHERE ${outOfRetries})::int AS "outOfRetries"
     FROM "Image" i
     WHERE ${inScope} ${idFilter(ids)}
   `;
-  return row ?? { scannedNoJobs: 0, pendingManual: 0 };
+  return row ?? { scannedNoJobs: 0, pendingManual: 0, outOfRetries: 0 };
 }
 
 /**
@@ -123,38 +132,34 @@ async function floorMigrationApplied() {
   return row?.applied === true;
 }
 
-/** Queues one batch; returns how many rows were still in scope and queued. */
+/**
+ * Queues one batch; returns how many rows were still in scope and queued, and how many were out of
+ * rescan retries and marked Error instead. Both get the legacy seed.
+ */
 async function queueBatch(batch: number[]) {
-  // The scope is checked again on write, so a row that changed since the read is skipped. The
-  // legacy rating keeps the level the judges applied as the floor under the rescan.
-  const updated = await dbWrite.$queryRaw<{ id: number }[]>`
+  // The scope is checked again on write, so a row that changed since the read is skipped.
+  const updated = await dbWrite.$queryRaw<{ id: number; ingestion: string }[]>`
     UPDATE "Image" i SET
-      ingestion = 'Rescan'::"ImageIngestionStatus",
-      "metadata" = CASE
-        WHEN i."nsfwLevel" IN (1, 2, 4, 8, 16) AND NOT COALESCE(i."metadata" ? 'judgeRating', false)
-        THEN COALESCE(i."metadata", '{}'::jsonb) || jsonb_build_object('judgeRating', jsonb_build_object(
-          'userId', NULL,
-          'nsfwLevel', i."nsfwLevel",
-          'ratedAt', NULL,
-          'legacy', true,
-          'collectionId', p."collectionId"
-        ))
-        ELSE i."metadata"
+      "metadata" = ${legacyJudgeRatingSeedSql('i', Prisma.sql`p."collectionId"`)},
+      ingestion = CASE WHEN ${outOfRetries}
+        THEN 'Error'::"ImageIngestionStatus"
+        ELSE 'Rescan'::"ImageIngestionStatus"
       END
     FROM "Post" p
     WHERE p.id = i."postId" AND i.id IN (${Prisma.join(batch)}) AND ${inScope}
       AND i."needsReview" IS NULL
-    RETURNING i.id
+    RETURNING i.id, i.ingestion::text AS ingestion
   `;
-  if (updated.length) {
+  const queued = updated.filter((r) => r.ingestion === 'Rescan').map((r) => r.id);
+  if (queued.length) {
     await dbWrite.$executeRaw`
       INSERT INTO "JobQueue" (type, "entityType", "entityId")
       SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", id
-      FROM unnest(ARRAY[${Prisma.join(updated.map((r) => r.id))}]::int[]) AS id
+      FROM unnest(ARRAY[${Prisma.join(queued)}]::int[]) AS id
       ON CONFLICT DO NOTHING
     `;
   }
-  return updated.length;
+  return { queued: queued.length, markedError: updated.length - queued.length };
 }
 
 export default WebhookEndpoint(async (req, res) => {
@@ -179,7 +184,7 @@ export default WebhookEndpoint(async (req, res) => {
     floorMigrationApplied(),
   ]);
   console.log(
-    `rescan-judge-collection-images: scannedNoJobs=${cohorts.scannedNoJobs} pendingManual=${cohorts.pendingManual} heldForReview=${heldForReview} floorMigrationApplied=${floorApplied} dryRun=${dryRun}`
+    `rescan-judge-collection-images: scannedNoJobs=${cohorts.scannedNoJobs} pendingManual=${cohorts.pendingManual} outOfRetries=${cohorts.outOfRetries} heldForReview=${heldForReview} floorMigrationApplied=${floorApplied} dryRun=${dryRun}`
   );
   if (dryRun) {
     const [wide, controls] = await Promise.all([countWide(), scopeControls()]);
@@ -203,6 +208,7 @@ export default WebhookEndpoint(async (req, res) => {
       .json({ error: 'Some in-scope images are held for moderator review', heldForReview });
 
   let queued = 0;
+  let markedError = 0;
   await batchProcessor({
     params: { batchSize: BATCH_SIZE, concurrency, ids: await inScopeIds(ids) },
     runContext: res,
@@ -210,12 +216,13 @@ export default WebhookEndpoint(async (req, res) => {
     processor: async ({ batch, batchNumber, batchCount }) => {
       if (!batch.length) return;
       const count = await queueBatch(batch);
-      queued += count;
+      queued += count.queued;
+      markedError += count.markedError;
       console.log(
-        `rescan-judge-collection-images: batch ${batchNumber} of ${batchCount}: queued ${count}`
+        `rescan-judge-collection-images: batch ${batchNumber} of ${batchCount}: queued ${count.queued} markedError ${count.markedError}`
       );
     },
   });
 
-  return res.status(200).json({ dryRun, cohorts, queued });
+  return res.status(200).json({ dryRun, cohorts, queued, markedError });
 });

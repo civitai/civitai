@@ -2,7 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { Prisma } from '@prisma/client';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
+import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 
 /**
  * The rescan endpoint's real SQL against an in-process Postgres: it touches only images posted to
@@ -164,7 +167,7 @@ describe('rescan-judge-collection-images: dry run', () => {
     expect(statusCode).toBe(200);
     expect(body).toEqual({
       dryRun: true,
-      cohorts: { scannedNoJobs: 1, pendingManual: 1 },
+      cohorts: { scannedNoJobs: 1, pendingManual: 1, outOfRetries: 0 },
       heldForReview: 0,
       floorMigrationApplied: true,
       // 106 and 107 carry the same markers in a collection without the flag.
@@ -208,6 +211,29 @@ describe('rescan-judge-collection-images: dry run', () => {
 });
 
 describe('rescan-judge-collection-images: a run', () => {
+  it('marks an in-scope image out of rescan retries as Error, seeded and not queued', async () => {
+    await db.exec(
+      `UPDATE "Image" SET "scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT}}' WHERE id = 102`
+    );
+    await db.exec(`UPDATE "Image" SET "nsfwLevel" = 2 WHERE id = 102`);
+
+    const dry = await call({});
+    expect(dry.body.cohorts).toEqual({ scannedNoJobs: 1, pendingManual: 1, outOfRetries: 1 });
+
+    const { body } = await call({ dryRun: 'false' });
+
+    expect(body).toMatchObject({ queued: 1, markedError: 1 });
+    expect(await rescanned()).toEqual([101]);
+    const row = (await snapshot()).find((r) => r.id === 102) as unknown as {
+      ingestion: string;
+      queued: number;
+      metadata: { judgeRating: { legacy: boolean; nsfwLevel: number } };
+    };
+    expect(row.ingestion).toBe('Error');
+    expect(row.queued).toBe(0);
+    expect(row.metadata.judgeRating).toMatchObject({ legacy: true, nsfwLevel: 2 });
+  });
+
   it('refuses to start, writing nothing, until the tag recompute carries the judge floor', async () => {
     await installTagRecompute({ withFloor: false });
     const before = await snapshot();
@@ -280,6 +306,12 @@ describe('rescan-judge-collection-images: a run', () => {
 
   it('queues both cohorts and nothing else, keeping the applied level as a floor', async () => {
     const before = await snapshot();
+    // The seed the run must write, from the shared helper against the row as it stands.
+    const [{ metadata: seeded }] = (await raw.queryRaw`
+      SELECT ${legacyJudgeRatingSeedSql('i', Prisma.sql`p."collectionId"`)} AS metadata
+      FROM "Image" i JOIN "Post" p ON p.id = i."postId" WHERE i.id = 101
+    `) as { metadata: { judgeRating: Record<string, unknown> } }[];
+    expect(seeded.judgeRating).toMatchObject({ legacy: true, nsfwLevel: X, ratedAt: null });
 
     const { statusCode, body } = await call({ dryRun: 'false' });
 
@@ -297,15 +329,7 @@ describe('rescan-judge-collection-images: a run', () => {
         scanJobs: null,
         blockedFor: null,
         nsfwLevel: X,
-        metadata: {
-          judgeRating: {
-            userId: null,
-            nsfwLevel: X,
-            ratedAt: null,
-            legacy: true,
-            collectionId: JUDGE_COLLECTION,
-          },
-        },
+        metadata: seeded,
         queued: 1,
       },
       // Unrated: no level to keep.
@@ -385,9 +409,10 @@ describe('rescan-judge-collection-images: a run', () => {
     const updates = dbMock.dbWrite.$queryRaw.mock.calls
       .map(([strings, ...values]) => ({ text: (strings as TemplateStringsArray).join(''), values }))
       .filter(({ text }) => text.includes('UPDATE "Image"'));
-    expect(updates.map(({ values }) => (values[0] as { values: unknown[] }).values.length)).toEqual(
-      [500, 500, 201]
-    );
+    // The id list is the largest interpolated value list in each UPDATE.
+    const batchSize = (values: unknown[]) =>
+      Math.max(...values.map((v) => (v as { values?: unknown[] })?.values?.length ?? 0));
+    expect(updates.map(({ values }) => batchSize(values))).toEqual([500, 500, 201]);
     expect((await rescanned()).length).toBe(1201);
   });
 
