@@ -41,7 +41,7 @@ const b64url = (buf) =>
 // Compact-serialize a next-auth v4 session JWE: dir + A256GCM, with the AAD set
 // to the ASCII base64url(protected header) per RFC 7516. Byte-for-byte the same
 // shape jose's EncryptJWT produces (verified: jose.jwtDecrypt round-trips this
-// output), so @civitai/auth's decodeLegacySessionCookie accepts it unchanged.
+// output), so the app's preview decoder (src/server/auth/preview-session-cookie.ts) accepts it.
 function encryptJWE(payload, key) {
   const header = b64url(Buffer.from(JSON.stringify({ alg: 'dir', enc: 'A256GCM' }), 'utf8'));
   const iv = randomBytes(12);
@@ -58,8 +58,8 @@ const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https => __Sec
 // Short-lived on purpose: the cookie only needs to outlive one Lighthouse pipeline run.
 const MAX_AGE_S = 2 * 60 * 60;
 
-// Mint the legacy next-auth v4 session JWE WITHOUT next-auth (removed); the app still accepts it via
-// @civitai/auth's decodeLegacySessionCookie. dir/A256GCM with an HKDF-derived key — mirrors that decoder.
+// Mint the legacy next-auth v4 session JWE WITHOUT next-auth (removed); the app accepts it on a preview
+// (IS_PREVIEW=true and DATABASE_ENVIRONMENT=non-production) only, via src/server/auth/preview-session-cookie.ts. dir/A256GCM with an HKDF-derived key.
 const ENC_INFO = 'NextAuth.js Generated Encryption Key';
 const derivedKey = (secret) => new Uint8Array(hkdfSync('sha256', secret, '', ENC_INFO, 32));
 

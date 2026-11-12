@@ -46,7 +46,6 @@ vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async (id: number) => ({ id, bannedAt: null })) },
 }));
 vi.mock('~/server/http/orchestrator/api-key-spend', async (importOriginal) => ({

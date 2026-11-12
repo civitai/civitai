@@ -21,10 +21,7 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
   not a 500.
 - [x] 🛠️ **`AUTH_ADMIN_USER_IDS` is set on the hub** (comma-separated, e.g. `1,5`). It's **fail-closed** —
   unset = `/admin` (the TrustedSpokeDomain editor) is locked for everyone.
-- [ ] 🛠️ **`AUTH_INTERNAL_TOKEN` is IDENTICAL on the hub and the main app.** Besides cache-invalidation it
-  now also gates the new **legacy-exchange** upgrade-on-read endpoint (`POST /api/auth/oauth/legacy-exchange`).
-  Missing/mismatched is **not** a hard break — the main app silently skips the upgrade and legacy users keep
-  working via the read-only legacy decode — but legacy cookies then won't actively migrate to civ-token.
+- [ ] 🛠️ **`AUTH_INTERNAL_TOKEN` is IDENTICAL on the hub and the main app.** Service secret for cache-invalidation and the hub calls an app makes on a user's behalf.
 - [x] 🛠️ **`AUTH_JWT_AUDIENCE` is UNSET everywhere** (esp. on consumers like `advertising.civitai.com`). The
   hub emits no `aud`; if a consumer sets it, jose rejects every hub token.
 - [x] 🛠️ **`AUTH_COOKIE_DOMAIN`** is correct per env (prod hub `.civitai.com`; a single-color/preview env its
@@ -90,10 +87,7 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
   anonymous.
 - [ ] 👁️ **`fetch failed` 500s on search endpoints** (`/api/v1/images`, `/api/v1/models`) → this is the
   **search backend** (`SEARCH_HOST`/`FEED_IMAGE_HOST`), *not* auth — verify search reachability per env.
-- [ ] 👁️ **Legacy-cookie migration is happening** → the count of requests still authenticating via the legacy
-  cookie should TREND DOWN as upgrade-on-read swaps each one for a civ-token on first page load. A flat
-  legacy count = the exchange is failing (check `AUTH_INTERNAL_TOKEN` parity + hub reachability); legacy auth
-  still works regardless (read-only decode), it just isn't migrating.
+- [x] 👁️ **Legacy-cookie migration is happening** (retired: the old cookie is no longer read in production).
 
 ## Phase 5 — Cleanup
 
@@ -101,9 +95,11 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
   `"Civitai"`, `"IDM"` — see the OauthClient review). Eyeball in Retool first.
 - [ ] 🧹 **Sunset the legacy forwarders** (`/api/auth/oauth/[...path]`, the discovery/JWKS forwarders) once
   legacy clients have re-pointed at the hub.
-- [ ] 🧹 **Drop the whole legacy-cookie path together once old cookies have aged out** (≥30d past cutover, when
-  the legacy-auth count from Phase 4 hits ~zero): the hub `legacy-exchange` route + `legacy-cookie.ts` decode,
-  the main app's `getLegacySession` / `maybeUpgradeLegacySession`, and the `clearLegacy*` cookie helpers.
+- [x] 🧹 **Dropped the legacy-cookie read path** (≥30d past cutover): the hub `legacy-exchange` route,
+  the `@civitai/auth` decode, and the main app's upgrade-on-read. The `clearLegacy*` helpers stay, so a stale
+  cookie is still expired on logout. PR previews keep a test sign-in on that cookie format
+  (`src/server/auth/preview-session-cookie.ts`: only with `IS_PREVIEW=true` and
+  `DATABASE_ENVIRONMENT=non-production`, and the session is the user embedded in the cookie).
 - [x] 🧹 **Deleted the dead `civ-token` AES endpoint** (`src/server/auth/civ-token.ts` +
   `src/pages/api/auth/civ-token.ts`) — caller-less legacy swap helper. Kept `civToken.schema.ts`
   (`EncryptedDataSchema` is still type-referenced by `AccountProvider.tsx`). `NEXTAUTH_SECRET` stays — it's the

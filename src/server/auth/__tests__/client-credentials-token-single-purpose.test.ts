@@ -26,7 +26,6 @@ vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => null),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: {
     getSessionUserById: vi.fn(async (id: number) => ({
       id,
