@@ -759,18 +759,6 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
 /** Log event for an unrated scan that would take the newer minor review routing. */
 export const UNRATED_MINOR_REVIEW_EVENT = 'unrated-minor-review-candidate';
 
-function unratedMinorReviewArms(signals: {
-  resource: boolean;
-  tag: boolean;
-  prompt: () => boolean;
-}) {
-  const arms: ('resource' | 'tag' | 'prompt')[] = [];
-  if (signals.resource) arms.push('resource');
-  if (signals.tag) arms.push('tag');
-  if (signals.prompt()) arms.push('prompt');
-  return arms;
-}
-
 async function auditScanResults(args: {
   imageId: number;
   userId: number;
@@ -830,12 +818,12 @@ async function auditScanResults(args: {
   if (associatedEntities.minor && minorRestrictedScan) minorReview = true;
 
   // Log, without routing, when an unrated scan would take the newer minor review routing.
-  if (nsfwLevel === 0 && !minorReview && !poiReview)
-    for (const arm of unratedMinorReviewArms({
-      resource: !!associatedEntities.minor,
-      tag: minorTags.length > 0 && adultTags.length === 0,
-      prompt: () => includesInappropriate({ prompt, negativePrompt }, true) === 'minor',
-    }))
+  if (nsfwLevel === 0 && !minorReview && !poiReview) {
+    const arms = [
+      ...(associatedEntities.minor ? ['resource'] : []),
+      ...(minorTags.length > 0 && adultTags.length === 0 ? ['tag'] : []),
+    ];
+    for (const arm of arms)
       logToAxiom({
         name: UNRATED_MINOR_REVIEW_EVENT,
         type: 'info',
@@ -843,6 +831,7 @@ async function auditScanResults(args: {
         arm,
         at: new Date().toISOString(),
       }).catch(() => null);
+  }
 
   // The capture account is no one's new account: its captures get only the content keys.
   if (!minorReview && !poiReview && !tagReview && nsfw && !isFeedbackCaptureOwner(args.userId)) {

@@ -4,6 +4,7 @@ import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as ImageService from '~/server/services/image.service';
 import { NsfwLevel } from '~/server/common/enums';
 import { styleTags, tagsNeedingReview } from '~/libs/tags';
+import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 
 /**
  * The scan logs, and never routes, an unrated scan that would take the newer minor review routing.
@@ -91,6 +92,7 @@ async function run(s: Scan) {
 
 const minorTag = tagsNeedingReview[0];
 const styleTag = styleTags[0];
+const poiTag = poiWords[0];
 
 const CASES: [string, Scan, { minorReview: boolean; arms: string[] }][] = [
   [
@@ -110,10 +112,35 @@ const CASES: [string, Scan, { minorReview: boolean; arms: string[] }][] = [
     },
     { minorReview: false, arms: ['tag'] },
   ],
+  // The prompt check is gated by the general NSFW flag, not the minor rule: not counted.
   [
     'unrated, prompt',
     { tags: [{ name: 'scene', nsfwLevel: 0 }], associatedMinor: false, promptMinor: true },
-    { minorReview: false, arms: ['prompt'] },
+    { minorReview: false, arms: [] },
+  ],
+  // Already routed, or not a candidate: nothing logged.
+  [
+    'unrated, minor tag without a style tag',
+    { tags: [{ name: minorTag, nsfwLevel: 0 }], associatedMinor: false, promptMinor: false },
+    { minorReview: true, arms: [] },
+  ],
+  [
+    'unrated, minor and adult tags',
+    {
+      tags: [
+        { name: minorTag, nsfwLevel: 0 },
+        { name: styleTag, nsfwLevel: 0 },
+        { name: 'adult', nsfwLevel: 0 },
+      ],
+      associatedMinor: false,
+      promptMinor: false,
+    },
+    { minorReview: false, arms: [] },
+  ],
+  [
+    'unrated, resource on an image routed to the person queue',
+    { tags: [{ name: poiTag, nsfwLevel: 0 }], associatedMinor: true, promptMinor: false },
+    { minorReview: false, arms: [] },
   ],
   [
     'unrated, no signal',
