@@ -4401,9 +4401,9 @@ export type ModelVersionShowcaseItem = {
   position: number | null;
   excluded: Generated<boolean>;
   /**
-   * The image's author removed it; kept so the owner can't add it back.
+   * The image's author or a moderator removed it; kept so the owner can't add it back.
    */
-  removedByContributor: Generated<boolean>;
+  removed: Generated<boolean>;
   addedById: number;
   createdAt: Generated<Timestamp>;
 };

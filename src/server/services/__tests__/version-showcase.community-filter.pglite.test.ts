@@ -56,6 +56,7 @@ const {
   getShowcaseCommunityCovers,
   repointVersionShowcases,
 } = await import('../version-showcase.service');
+const { getImagesForModelVersion } = await import('../image.service');
 
 const CREATOR = 1;
 const MODEL = 10;
@@ -83,7 +84,8 @@ beforeAll(async () => {
       "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public'
     );
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, name text, url text NOT NULL DEFAULT '',
+      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
+      name text, url text NOT NULL DEFAULT '',
       "nsfwLevel" int NOT NULL, width int, height int, hash text, type text NOT NULL DEFAULT 'image',
       metadata jsonb, meta jsonb, "hideMeta" boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
@@ -96,7 +98,7 @@ beforeAll(async () => {
     CREATE TABLE "CreatorGalleryHiddenUser" ("creatorId" int, "userId" int);
     CREATE TABLE "ModelVersionShowcaseItem" (
       "modelVersionId" int, site text, "imageId" int, source text, position smallint,
-      excluded boolean NOT NULL DEFAULT false, "removedByContributor" boolean NOT NULL DEFAULT false,
+      excluded boolean NOT NULL DEFAULT false, "removed" boolean NOT NULL DEFAULT false,
       "addedById" int, "createdAt" timestamp DEFAULT now()
     );
     INSERT INTO "User" (id, username) VALUES (${CREATOR}, 'creator');
@@ -259,10 +261,9 @@ describe('version showcase community filter', () => {
   it("drops a row the image's author removed", async () => {
     const clean = await featured();
     const removed = await featured();
-    await db.query(
-      `UPDATE "ModelVersionShowcaseItem" SET "removedByContributor" = true WHERE "imageId" = $1`,
-      [removed]
-    );
+    await db.query(`UPDATE "ModelVersionShowcaseItem" SET "removed" = true WHERE "imageId" = $1`, [
+      removed,
+    ]);
     expect(await served()).toEqual([clean]);
   });
 });
@@ -333,5 +334,42 @@ describe('a version merge', () => {
       { modelVersionId: VERSION, site: 'red', imageId: 1, position: 0 },
       { modelVersionId: VERSION, site: 'red', imageId: 2, position: 2 },
     ]);
+  });
+});
+
+// showcaseImageConditions restates the owner showcase's own filters for someone else's image. The
+// owner query varies by viewer, so the two are not one SQL fragment; this keeps them from drifting.
+describe('the community filter and the owner showcase drop the same images', () => {
+  const cases: [string, string][] = [
+    ['blocked', `"blockedFor" = 'tos'`],
+    ['waiting on review', `"needsReview" = 'minor'`],
+    ['an accepted minor', `"acceptableMinor" = true`],
+    ['unrated', `"nsfwLevel" = 0`],
+    ['not yet scanned', `ingestion = 'Pending'`],
+    ['a TOS violation', `"tosViolation" = true`],
+    ['mature on a restricted base model', `"nsfwLevel" = 4, "modelRestricted" = true`],
+  ];
+
+  it.each(cases)('%s', async (_name, change) => {
+    // An owner image and a community image, each with the same problem, beside clean controls.
+    await db.query(
+      `INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES (900, $1, $2, now())`,
+      [CREATOR, VERSION]
+    );
+    await db.query(
+      `INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", index) VALUES (901, $1, 900, 1, 0), (902, $1, 900, 1, 1)`,
+      [CREATOR]
+    );
+    await db.query(`UPDATE "Image" SET ${change} WHERE id = 902`);
+    const clean = await featured();
+    const bad = await featured();
+    await db.query(`UPDATE "Image" SET ${change} WHERE id = $1`, [bad]);
+
+    const owner = await getImagesForModelVersion({
+      modelVersionIds: [VERSION],
+      imagesPerVersion: 20,
+    });
+    expect(owner.map((image) => image.id)).toEqual([901]);
+    expect(await served()).toEqual([clean]);
   });
 });

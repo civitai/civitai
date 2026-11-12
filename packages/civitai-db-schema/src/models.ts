@@ -1100,7 +1100,7 @@ export interface ModelVersionShowcaseItem {
   source: string;
   position: number | null;
   excluded: boolean;
-  removedByContributor: boolean;
+  removed: boolean;
   addedById: number;
   createdAt: Date;
 }
