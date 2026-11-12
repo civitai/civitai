@@ -9,6 +9,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ssrClientOnlySectionsOn } from '~/server/utils/ssr-client-only-sections';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isNumber } from '~/utils/type-guards';
+import { isNotFoundError, rethrowSsrError } from '~/server/utils/ssr-not-found';
 
 export default function PostDetailPage({
   postId,
@@ -78,8 +79,10 @@ export const getServerSideProps = createServerSideProps({
         suppressAds: !post.publishedAt,
       };
     } catch (error) {
+      // Only a missing post is a 404; a failed lookup must not tell anyone the post does not exist.
+      if (isNotFoundError(error)) return { notFound: true };
       console.error('Error fetching post detail:', error);
-      return { notFound: true };
+      rethrowSsrError(ctx.res, error);
     }
   },
 });

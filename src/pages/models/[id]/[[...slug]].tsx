@@ -195,6 +195,7 @@ import {
 } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+import { isNotFoundError, nullIfNotFound } from '~/server/utils/ssr-not-found';
 
 import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -211,12 +212,6 @@ import { TrainingAuditMenuItem } from '~/components/Moderation/TrainingAuditMenu
 const RAIL_ACTIVATE_WIDTH = 1440;
 
 const NOT_FOUND = Symbol('model-not-found');
-
-const isNotFoundError = (error: unknown) => {
-  // `code` at the top level is a server-side `TRPCError`; `data.code` is a `TRPCClientError`.
-  const err = error as { code?: string; data?: { code?: string } } | null | undefined;
-  return err?.code === 'NOT_FOUND' || err?.data?.code === 'NOT_FOUND';
-};
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -237,7 +232,8 @@ export const getServerSideProps = createServerSideProps({
       modelVersionId,
       userId: session?.user?.id,
       isModerator: session?.user?.isModerator,
-    }).catch(() => null);
+      // Only a missing model reads as "no version": a failed lookup must not become a 404.
+    }).catch(nullIfNotFound(ctx.res));
     const modelVersionIdParsed = modelVersionId ?? version?.id;
 
     if (!modelVersionIdParsed && !session?.user?.isModerator) {

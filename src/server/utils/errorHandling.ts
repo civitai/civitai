@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 // this repo's pnpm layout, so importing it directly fails to resolve.
 import { DatabaseError } from 'pg';
 import { TRPCError } from '@trpc/server';
+import { isDbUnavailableError } from '@civitai/db/db-errors';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
 import { clickhouseFailSoftCounter } from '~/server/prom/client';
@@ -184,6 +185,11 @@ export function isDriverAuthoredMessage(message: string, e: unknown): boolean {
  * `GENERIC_CLIENT_ERROR_BY_STATUS`.
  */
 export const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
+  // Unreachable database / no pooled connection in time: transient, so a retryable 503. Never
+  // with the driver's message — a 503 is not masked on the wire, and these name the host.
+  P1001: 'SERVICE_UNAVAILABLE',
+  P1002: 'SERVICE_UNAVAILABLE',
+  P1017: 'SERVICE_UNAVAILABLE',
   P1008: 'TIMEOUT',
   P2000: 'BAD_REQUEST',
   P2001: 'NOT_FOUND',
@@ -209,7 +215,7 @@ export const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P2021: 'INTERNAL_SERVER_ERROR',
   P2022: 'INTERNAL_SERVER_ERROR',
   P2023: 'INTERNAL_SERVER_ERROR',
-  P2024: 'TIMEOUT',
+  P2024: 'SERVICE_UNAVAILABLE',
   P2025: 'NOT_FOUND',
   P2026: 'INTERNAL_SERVER_ERROR',
   P2027: 'INTERNAL_SERVER_ERROR',
@@ -219,16 +225,39 @@ export const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P2034: 'INTERNAL_SERVER_ERROR',
 };
 
+/** What a client is told when the database is unreachable: never the driver's text. */
+export const DB_UNAVAILABLE_MESSAGE = 'This service is temporarily unavailable. Please try again.';
+
+function prismaKnownToTrpcError(error: Prisma.PrismaClientKnownRequestError) {
+  const code = prismaErrorToTrpcCode[error.code] ?? 'INTERNAL_SERVER_ERROR';
+  return new TRPCError({
+    code,
+    message: code === 'SERVICE_UNAVAILABLE' ? DB_UNAVAILABLE_MESSAGE : error.message,
+    cause: error,
+  });
+}
+
+/**
+ * A server-fault TRPCError whose cause is an unreachable database (or no pooled connection in time)
+ * as a retryable SERVICE_UNAVAILABLE; `undefined` for anything else. Only INTERNAL_SERVER_ERROR and
+ * TIMEOUT are re-mapped: a code a handler chose on purpose (NOT_FOUND, …) is left alone.
+ */
+export function toDbUnavailableError(error: TRPCError): TRPCError | undefined {
+  if (error.code !== 'INTERNAL_SERVER_ERROR' && error.code !== 'TIMEOUT') return undefined;
+  if (!isDbUnavailableError(error)) return undefined;
+  return new TRPCError({
+    code: 'SERVICE_UNAVAILABLE',
+    message: DB_UNAVAILABLE_MESSAGE,
+    cause: error.cause ?? error,
+  });
+}
+
 export function throwDbError(error: unknown) {
   // Always log to console
   if (error instanceof TRPCError) {
     throw error;
   } else if (error instanceof Prisma.PrismaClientKnownRequestError)
-    throw new TRPCError({
-      code: prismaErrorToTrpcCode[error.code] ?? 'INTERNAL_SERVER_ERROR',
-      message: error.message,
-      cause: error,
-    });
+    throw prismaKnownToTrpcError(error);
   else if (error instanceof Prisma.PrismaClientValidationError)
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
@@ -255,12 +284,7 @@ export function throwInternalServerError(error: unknown) {
 export const handleTRPCError = (error: Error): TRPCError => {
   const isTrpcError = error instanceof TRPCError;
   if (!isTrpcError) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError)
-      throw new TRPCError({
-        code: prismaErrorToTrpcCode[error.code] ?? 'INTERNAL_SERVER_ERROR',
-        message: error.message,
-        cause: error,
-      });
+    if (error instanceof Prisma.PrismaClientKnownRequestError) throw prismaKnownToTrpcError(error);
     else if (error instanceof Prisma.PrismaClientValidationError)
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',

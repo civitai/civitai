@@ -1,7 +1,9 @@
 // App shim: primary pg pools. Calls the app-side getClient factory (which owns the monolith's DB
 // topology + env), injects the debug logger, and owns the process globals + Next build guard. Re-exports
 // the pool instances for existing call sites.
+import { withPgReplicaFallback } from '@civitai/db/replica-fallback';
 import { getClient, type AugmentedPool } from '~/server/db/db-helpers';
+import { replicaFallbackFor } from '~/server/db/replica-fallback';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 
@@ -27,10 +29,12 @@ if (!env.IS_BUILD) {
   const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
   const write = (globalThis.globalPgWrite ??= getClient({ log }));
   pgDbWrite = write;
-  pgDbRead = globalThis.globalPgRead ??= singleClient
-    ? write
-    : getClient({ instance: 'primaryRead', log });
-  pgDbReadLong = globalThis.globalPgReadLong ??= singleClient
-    ? write
-    : getClient({ instance: 'primaryReadLong', log });
+  // Replica pools fall back to the primary only while DATABASE_REPLICA_FALLBACK is on.
+  const readPool = (instance: 'primaryRead' | 'primaryReadLong') => {
+    const pool = getClient({ instance, log });
+    const fallback = replicaFallbackFor(instance);
+    return fallback ? withPgReplicaFallback(pool, () => write, fallback) : pool;
+  };
+  pgDbRead = globalThis.globalPgRead ??= singleClient ? write : readPool('primaryRead');
+  pgDbReadLong = globalThis.globalPgReadLong ??= singleClient ? write : readPool('primaryReadLong');
 }

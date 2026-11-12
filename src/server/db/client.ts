@@ -3,6 +3,7 @@
 // guard, and re-exports dbRead/dbWrite for existing call sites.
 import { createPrismaClients, type PrismaClients } from '@civitai/db/client';
 import { env } from '~/env/server';
+import { replicaFallbackFor } from '~/server/db/replica-fallback';
 import { logToAxiom } from '~/server/logging/client';
 import { withServableProfilePictures } from '~/server/db/servable-profile-picture.extension';
 
@@ -17,6 +18,8 @@ const make = (): PrismaClients => {
   const base = createPrismaClients({
     onSlowQuery: ({ query, duration, target }) =>
       logToAxiom({ query, duration, target }, 'db-logs'),
+    // Undefined (nothing wired) unless DATABASE_REPLICA_FALLBACK is on.
+    replicaFallback: replicaFallbackFor('dbRead'),
   });
   return withServableProfilePictures(base, (error) => {
     logToAxiom({
