@@ -77,11 +77,16 @@ const run = async () => {
   const sent = mockIngestImage.mock.calls.map(
     ([args]) => (args as unknown as { image: { id: number } }).image.id
   );
+  // Reads ids from the job's one prune statement; the cap test below is its positive control.
   const pruned = mockDbWrite.$executeRaw.mock.calls
     .filter(([strings]) =>
       (strings as unknown as string[]).join('').includes('DELETE FROM "JobQueue"')
     )
-    .flatMap((call) => call.slice(1).find(Array.isArray) as number[]);
+    .flatMap((call) => {
+      const ids = call.slice(1).find(Array.isArray);
+      if (!ids) throw new Error('JobQueue DELETE without an id array: update this extractor');
+      return ids as number[];
+    });
   return { sent: sent.sort(), pruned: pruned.sort() };
 };
 
@@ -117,5 +122,27 @@ describe('ingest-images — Error retries by failure class', () => {
   it('prunes a Transient failure past its retry cap', async () => {
     rows.push(errorRow(5, { minutesAgo: 20, failureClass: 'transient', retryCount: 30 }));
     expect(await run()).toEqual({ sent: [], pruned: [5] });
+  });
+
+  it('re-sends an Unknown failure once its hour is up', async () => {
+    rows.push(errorRow(6, { minutesAgo: 65, failureReason: 'something odd' }));
+    expect(await run()).toEqual({ sent: [6], pruned: [] });
+  });
+
+  it('re-sends a row stamped Transient by the webhook after 15 minutes', async () => {
+    rows.push(errorRow(7, { minutesAgo: 20, failureClass: 'transient' }));
+    expect(await run()).toEqual({ sent: [7], pruned: [] });
+  });
+
+  it('gives a reclassified row the Transient cap, past the Unknown one', async () => {
+    rows.push(
+      errorRow(8, {
+        minutesAgo: 20,
+        failureClass: 'unknown',
+        failureReason: 'No provider supports this job',
+        retryCount: 12,
+      })
+    );
+    expect(await run()).toEqual({ sent: [8], pruned: [] });
   });
 });
