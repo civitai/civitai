@@ -30,6 +30,10 @@
 
       nodeVersion = lib.trim (builtins.readFile ./.nvmrc);
       nodeMajor = lib.head (lib.splitString "." nodeVersion);
+      # shortcut: .nvmrc is 24.22.3 (the 2026-11-11 security release) but the locked
+      # nixpkgs-unstable ships nodejs_24 24.22.2, so `checks.toolchain-pins` (N2)
+      # stays red until `nix flake update nixpkgs` lands a nodejs_24 equal to
+      # .nvmrc. Remove this note once the lock catches up.
       nodejs = pkgs."nodejs_${nodeMajor}";
 
       packageJson = builtins.fromJSON (builtins.readFile ./package.json);

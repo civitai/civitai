@@ -13,7 +13,7 @@
 # read from node_modules at startup; nothing is fetched at runtime, so the pod needs no egress.
 
 ##### deps — install only this app (lean, frozen) ##############################
-FROM node:24.22.2-alpine3.24@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8 AS deps
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS deps
 RUN apk add --no-cache libc6-compat && corepack enable && corepack prepare pnpm@10.28.1 --activate
 WORKDIR /app
 
@@ -40,7 +40,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     --config.inject-workspace-packages=true /app/deploy
 
 ##### runtime ###################################################################
-FROM node:24.22.2-alpine3.24@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8 AS runtime
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S nodejs -g 1001 && adduser -S nodeapp -u 1001

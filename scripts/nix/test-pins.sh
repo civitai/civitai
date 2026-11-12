@@ -154,7 +154,7 @@ prisma_check() { # <dir> <flake-prisma-version> <flake-engine-commit>
 # locked nixpkgs can lag; see flake.nix). Kept as literals rather than read
 # back out of flake.nix on purpose: a test that derives its expectation from the
 # thing under test cannot fail.
-REAL_NODE=24.22.2
+REAL_NODE=24.22.3
 REAL_PNPM=10.34.5
 REAL_PRISMA=6.13.0
 REAL_COMMIT=361e86d0ea4987e9f53a565309b3eed797a6bcbd
