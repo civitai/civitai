@@ -323,8 +323,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // those writes land (both reads here can also trail them on a replica). An
   // `approved` publish request for (slug, sha) is the same durable proof of
   // moderator approval, so treat it as the in-flight approved deploy too
-  // (no-op). A direct attacker push has neither marker. Neither check closes the
-  // race on its own; ownApproveCommitRequest below does.
+  // (no-op). A direct attacker push has neither marker.
   const approvedForThisSha = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'approved', forgejoCommitSha: sha },
     select: { id: true },
@@ -333,10 +332,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(200).json({ ok: true, slug, sha, deploy: 'already-approved' });
     return;
   }
-  // The two checks above see approveRequest's markers only once they are written, and this
-  // webhook usually arrives before that (see ownApproveCommitRequest). Recognise the approve's own
-  // commit from the commit itself, so it is never recorded as a second, unreviewed request for
-  // the version being approved.
+  // The markers above trail approveRequest's writes; recognise its own commit directly.
   const approvingRequestId = await ownApproveCommitRequest({ slug, sha, payload });
   if (approvingRequestId) {
     res.status(200).json({
