@@ -405,6 +405,13 @@ describe('processImageScanningWorkflow', () => {
       expect.objectContaining({ ingestion: 'Scanned' })
     );
   });
+
+  it('still stores the axes when a side effect after the verdict fails', async () => {
+    pipeline.applyIngestionSideEffects.mockRejectedValueOnce(new Error('side effect down'));
+    await expect(deliver('succeeded', withRating(ratingV2()))).resolves.toBeUndefined();
+
+    expect(mockWriteAxes).toHaveBeenCalledWith(expect.objectContaining({ imageId: 7 }));
+  });
 });
 
 const detection = (ageBand: string, isMinor: boolean) => ({

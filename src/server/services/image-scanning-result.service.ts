@@ -322,8 +322,6 @@ export async function processImageScanningWorkflow({
     await recordImageScanningResult({ workflowId, imageId, scan, startedAt, completedAt });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     await applyIngestionSideEffects({ image, outcome });
-    // Last, so even a failure here cannot cost the scan its side effects.
-    if (scan.axes) await writeRatedAxes({ imageId, axes: scan.axes, workflowId, completedAt });
   } catch (error) {
     logToAxiom(
       {
@@ -339,6 +337,15 @@ export async function processImageScanningWorkflow({
       },
       'webhooks'
     ).catch(() => null);
+  }
+
+  // Its own try: a failed side effect must not cost the image its axes, nor the axes the scan.
+  if (scan.axes) {
+    try {
+      await writeRatedAxes({ imageId, axes: scan.axes, workflowId, completedAt });
+    } catch {
+      // writeRatedAxes logs its own failures.
+    }
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.
