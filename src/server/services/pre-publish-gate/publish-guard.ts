@@ -4,6 +4,9 @@ import {
   PRE_PUBLISH_REVIEW_BASE_MODELS,
   requiresPrePublishReview,
 } from '~/server/common/constants';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { dbWrite } from '~/server/db/client';
+import { GATE_REFUSAL_MESSAGES } from '~/server/services/pre-publish-gate/messages';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 
 /**
@@ -91,4 +94,17 @@ export async function isLinkTargetOfLiveGatedVersion(
     LIMIT 1
   `;
   return !!hit;
+}
+
+/** The gate judged a live version as not mature; an owner can't make its model mature afterwards. */
+export async function assertOwnerMayMarkMature(modelId: number) {
+  const live = await dbWrite.modelVersion.findFirst({
+    where: {
+      modelId,
+      status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
+      baseModel: { in: [...PRE_PUBLISH_REVIEW_BASE_MODELS] },
+    },
+    select: { id: true },
+  });
+  if (live) throw throwBadRequestError(GATE_REFUSAL_MESSAGES.nsfw);
 }
