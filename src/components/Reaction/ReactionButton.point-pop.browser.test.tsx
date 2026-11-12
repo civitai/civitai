@@ -77,7 +77,7 @@ describe('the point pop', () => {
     await page.viewport(1280, 720);
     // The middle button: a pop anchored to the row's start, or to the first button, misses it.
     const { button, pop } = await pressAndPop(9101, 'Heart reaction');
-    expect(pop.textContent).toBe('+15 Yellow');
+    expect(pop.textContent).toBe('+15 Yellow points');
     expect(Math.abs(centreX(pop) - centreX(button))).toBeLessThanOrEqual(2);
   });
 
