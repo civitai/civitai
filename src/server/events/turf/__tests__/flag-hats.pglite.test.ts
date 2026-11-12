@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 /**
  * Hats on today's flags, against real rows: a placement spends 1, 5 or 10 from the player's normal
@@ -66,6 +67,7 @@ const FLAGS = {
 
 let db: PGlite;
 let config: object | null;
+let dayId: number;
 const hatsLeft = async () =>
   (
     await db.query<{ stock: number }>(`SELECT stock FROM "EventTurfStock" WHERE "userId" = $1`, [
@@ -97,15 +99,16 @@ beforeAll(async () => {
     INSERT INTO "Post" VALUES (1, '2026-10-01', 'Public');
     INSERT INTO "Cosmetic" VALUES (11, 'ContentDecoration', '{"event":"e","team":"Blue"}');
   `);
-  await db.exec(
-    readFileSync(
-      path.resolve(
-        __dirname,
-        '../../../../../packages/civitai-db-schema/prisma/migrations/20270104120000_flag_race_flags/migration.sql'
-      ),
-      'utf8'
-    )
-  );
+  for (const m of ['20270103120000_event_award_result', '20270104120000_flag_race_flags'])
+    await db.exec(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          `../../../../../packages/civitai-db-schema/prisma/migrations/${m}/migration.sql`
+        ),
+        'utf8'
+      )
+    );
 });
 afterAll(async () => db.close());
 
@@ -120,7 +123,9 @@ beforeEach(async () => {
     INSERT INTO "Image" (id, "userId", "postId") VALUES (${FLAG}, ${OWNER_OFF}, 1), (${NOT_FLAG}, ${OWNER_OFF}, 1);
     INSERT INTO "FlagDay" (event, "crucibleId", "startsAt", "cutAt", "closesAt", "imageIds")
       VALUES ('e', 1, '2026-11-14T16:03:00Z', '${CUT.toISOString()}', '2026-11-15T16:00:00Z', ARRAY[${FLAG}]);
+    DELETE FROM "EventAwardResult";
   `);
+  dayId = (await db.query<{ id: number }>(`SELECT id FROM "FlagDay"`)).rows[0].id;
   const raw = pgliteRaw(db);
   kysely.read.mockReset().mockImplementation(raw.queryRaw);
   kysely.write.mockReset().mockImplementation(raw.queryRaw);
@@ -167,6 +172,15 @@ describe('hats on a flag', () => {
     expect(await hatsLeft()).toBeUndefined();
   });
 
+  it('refuses a player whose hats would count for nobody, and spends none', async () => {
+    await db.query(`UPDATE "User" SET flags = $1 WHERE id = $2`, [
+      UserFlag.ExcludeFromEventPoints,
+      PLACER,
+    ]);
+    await expect(add(1)).rejects.toThrow(/can't add hats to flags/);
+    expect(await hatsLeft()).toBeUndefined();
+  });
+
   it('refuses a count other than 1, 5 or 10', async () => {
     await expect(add(3)).rejects.toThrow(/1, 5 or 10/);
   });
@@ -197,5 +211,17 @@ describe('the shared flag summary', () => {
     const closed = await getFlagSummary('e', CUT);
     expect(closed).toMatchObject({ closed: true, cutAt: CUT });
     expect(closed?.flags[0].winners).toEqual(['Blue']);
+  });
+
+  it('names the team the freeze paid, even if a later recount would differ', async () => {
+    await add(5);
+    await db.query(
+      `INSERT INTO "EventAwardResult" (event, "sourceId", kind, team, points, at, inputs)
+       VALUES ('e', $1, 'flag', NULL, 0, $2, '{}'), ('e', $3, 'flag', 'Pink', 10, $2, '{}')`,
+      [`flag:${dayId}:${FLAG}`, CUT, `flag:${dayId}:${FLAG}:Pink`]
+    );
+    // The recount says Blue; the freeze paid Pink (say, before an exclusion): the badge says Pink.
+    const closed = await getFlagSummary('e', new Date(CUT.getTime() + 3_600_000));
+    expect(closed?.flags[0].winners).toEqual(['Pink']);
   });
 });

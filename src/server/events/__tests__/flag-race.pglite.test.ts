@@ -47,7 +47,7 @@ const HOME = 77;
 const END = new Date('2026-11-14T16:00:00Z');
 const SWAP = new Date('2026-11-14T16:03:00Z');
 // The settle after the next day's cut.
-const SETTLE = new Date('2026-11-15T16:00:30Z');
+const SETTLE = new Date('2026-11-15T16:05:00Z');
 const POT = {
   steps: [{ from: new Date('2026-11-01T00:00:00Z'), perPerson: 100, upTo: 2, after: 50 }],
   cap: 1_000,
@@ -460,6 +460,8 @@ describe('the flag freeze', () => {
     await hats(day.id, 11, 201, 'Blue', 1, SWAP);
     setFlags(FLAGS);
     expect(await freezeEventAwards(EVENT, new Date(day.cutAt.getTime() - 1))).toBe(0);
+    // Nor in the minute after it, while a placement that started before the cut may still commit.
+    expect(await freezeEventAwards(EVENT, new Date(day.cutAt.getTime() + 30_000))).toBe(0);
     expect(await freezeEventAwards(EVENT, SETTLE)).toBeGreaterThan(0);
   });
 });

@@ -8,6 +8,9 @@ import { imageVisible, ownerActive } from '~/server/events/turf/turf-sql';
 import { logToAxiom } from '~/server/logging/client';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 
+/** The award kind of a frozen flag result in EventAwardResult. */
+export const FLAG_KIND = 'flag';
+
 /** The event tag that makes a Crucible a flag Crucible: its top places become the next day's flags. */
 export const flagCrucibleTag = (event: string) => `${event}-flag`;
 
@@ -155,17 +158,24 @@ export type FlagTally = {
 export async function flagTally(
   event: { startDate: Date },
   day: Pick<FlagDayRow, 'id' | 'cutAt'>,
-  db: typeof dbRead | typeof dbWrite = dbRead
+  db: typeof dbRead | typeof dbWrite = dbRead,
+  imageId?: number
 ): Promise<FlagTally> {
+  const oneFlag = imageId === undefined ? Prisma.empty : Prisma.sql`AND s."imageId" = ${imageId}`;
+  // Summed per player first, so each player's eligibility is read once, not once per placement.
   const rows = await db.$queryRaw<
-    { imageId: number; team: string; hats: number; players: number }[]
+    { imageId: number; team: string | null; hats: number; players: number }[]
   >`
-    SELECT s."imageId", s.team, SUM(s.count)::int AS hats,
-      COUNT(DISTINCT s."userId")::int AS players
-    FROM "EventTurfFlagSticker" s JOIN "User" u ON u.id = s."userId"
-    WHERE s."flagDayId" = ${day.id} AND s."createdAt" < ${day.cutAt}
-      AND ${eventPlayerEligibleSql(event.startDate)}
-    GROUP BY GROUPING SETS ((s."imageId", s.team), (s."imageId"))
+    SELECT p."imageId", p.team, SUM(p.hats)::int AS hats, COUNT(DISTINCT p."userId")::int AS players
+    FROM (
+      SELECT s."imageId", s.team, s."userId", SUM(s.count) AS hats
+      FROM "EventTurfFlagSticker" s
+      WHERE s."flagDayId" = ${day.id} AND s."createdAt" < ${day.cutAt} ${oneFlag}
+      GROUP BY s."imageId", s.team, s."userId"
+    ) p
+    JOIN "User" u ON u.id = p."userId"
+    WHERE ${eventPlayerEligibleSql(event.startDate)}
+    GROUP BY GROUPING SETS ((p."imageId", p.team), (p."imageId"))
   `;
   const tally: FlagTally = { hats: new Map(), players: new Map() };
   for (const r of rows) {

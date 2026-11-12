@@ -40,6 +40,7 @@ import { markTurfWatched, pushTurfCounts, type TurfPush } from '~/server/events/
 import { readFlagRaceConfig, type FlagsConfig } from '~/server/events/scoring/award-results';
 import { imageVisible, ownerActive } from '~/server/events/turf/turf-sql';
 import {
+  FLAG_KIND,
   currentFlagDay,
   flagCrucibleTag,
   flagPot,
@@ -488,6 +489,14 @@ export async function placeFlagHats(
   const day = await currentFlagDay(event.name, now);
   if (!day?.imageIds.includes(imageId)) throw throwBadRequestError("This image isn't a flag today");
   if (now >= day.cutAt) throw throwBadRequestError('This flag has closed');
+  // Only players eligible for event points count on a flag (flagTally): refuse the rest rather than
+  // take hats that count for nobody.
+  const [placer] = await dbWrite.$queryRaw<{ eligible: boolean }[]>`
+    SELECT ${eventPlayerEligibleSql(
+      event.startDate
+    )} AS eligible FROM "User" u WHERE u.id = ${userId}
+  `;
+  if (!placer?.eligible) throw throwBadRequestError("Your account can't add hats to flags yet");
 
   const [image] = await dbWrite.$queryRaw<
     { ownerId: number; visible: boolean; ownerActive: boolean }[]
@@ -517,7 +526,7 @@ export async function placeFlagHats(
     await spend();
   });
   // The placer's own view: fresh, where the shared summary may lag by its TTL.
-  const tally = await flagTally(event, day, dbWrite);
+  const tally = await flagTally(event, day, dbWrite, imageId);
   return flagStanding(imageId, tally, flags.pot, now, false);
 }
 
@@ -568,6 +577,22 @@ function flagStanding(
   };
 }
 
+/** Per flag of a frozen day, the teams its freeze paid (none when nobody placed); empty if not frozen. */
+async function frozenFlagWinners(event: string, flagDayId: number) {
+  const rows = await dbWrite.$queryRaw<{ sourceId: string; team: string | null }[]>`
+    SELECT "sourceId", team FROM "EventAwardResult"
+    WHERE event = ${event} AND kind = ${FLAG_KIND} AND "sourceId" LIKE ${`flag:${flagDayId}:%`}
+  `;
+  const winners = new Map<number, string[]>();
+  for (const r of rows) {
+    const imageId = Number(r.sourceId.split(':')[2]);
+    const list = winners.get(imageId) ?? [];
+    if (r.team) list.push(r.team);
+    winners.set(imageId, list.sort());
+  }
+  return winners;
+}
+
 /**
  * Today's flags with their hat counts, for the home row's badges: the same for every viewer, so it
  * is cached briefly here and at the edge. The counts are flagTally's, which the freeze pays from.
@@ -590,14 +615,21 @@ export async function getFlagSummary(
   ]);
   if (!event || !day) return null;
   const closed = now >= day.cutAt;
-  const tally = await flagTally(event, day);
+  // Closed, it must agree with the freeze: read the primary, as the freeze does, and name the teams
+  // the freeze paid once it has run.
+  const tally = await flagTally(event, day, closed ? dbWrite : dbRead);
+  const paid = closed ? await frozenFlagWinners(eventName, day.id) : undefined;
   const at = closed ? day.cutAt : now;
   const summary: FlagSummary = {
     flagDayId: day.id,
     closed,
     cutAt: closed ? day.cutAt : null,
     closesAt: day.closesAt,
-    flags: day.imageIds.map((imageId) => flagStanding(imageId, tally, config.pot, at, closed)),
+    flags: day.imageIds.map((imageId) => {
+      const standing = flagStanding(imageId, tally, config.pot, at, closed);
+      const frozen = paid?.get(imageId);
+      return frozen ? { ...standing, winners: frozen } : standing;
+    }),
   };
   const value: CachedFlagSummary = { summary, cutAtMs: day.cutAt.getTime() };
   await sysRedis
@@ -1148,7 +1180,6 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   return { images: counts.size, turf: kept.size, dropped, set, removed: mapChanged.length - set };
 }
 
-/** Every event whose turf may still change: running, or in the finalize window after it. */
 // Apart from the reconcile so a failed swap can't stop the turf pass, and the next pass retries it.
 async function swapFlagDayFor(event: TurfEvent, now: Date) {
   try {
@@ -1161,6 +1192,20 @@ async function swapFlagDayFor(event: TurfEvent, now: Date) {
   }
 }
 
+/**
+ * Swaps in each running event's next flag day as soon as its flag Crucible has finished. Called by
+ * the every-minute Crucible finalize job as well as the turf reconcile; a swap already made is a
+ * no-op.
+ */
+export async function swapAllFlagDays(now = new Date()) {
+  for (const def of await loadEvents()) {
+    if (!def.turf || now < def.startDate || now >= def.endDate) continue;
+    const event = await getTurfEvent(def.name, now);
+    if (event) await swapFlagDayFor(event, now);
+  }
+}
+
+/** Every event whose turf may still change: running, or in the finalize window after it. */
 export async function reconcileAllTurf(now = new Date()) {
   const results = [];
   // Each event reconciles from when its turn comes, not when the run began (see reconcileTurf).

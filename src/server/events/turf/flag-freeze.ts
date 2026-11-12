@@ -1,10 +1,18 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import type { FlagsConfig } from '~/server/events/scoring/award-results';
-import { flagPot, flagTally, flagWinners, type FlagDayRow } from '~/server/events/turf/flag-day';
+import {
+  FLAG_KIND,
+  flagPot,
+  flagTally,
+  flagWinners,
+  type FlagDayRow,
+} from '~/server/events/turf/flag-day';
 import { getTurfEvent, turfCatchUpAt } from '~/server/events/turf/turf.service';
 
-export const FLAG_KIND = 'flag';
+// A placement checks the cut when it starts and is stamped then, so it may commit just after the cut.
+// The freeze waits this long past the cut so no such hat is left out of what it pays.
+export const FLAG_FREEZE_GRACE_MS = 60_000;
 
 const leanOf = (lean: FlagsConfig['lean'], multiplier: number) =>
   lean === 'none' ? 1 : lean === 'sqrt' ? Math.sqrt(multiplier) : multiplier;
@@ -24,7 +32,8 @@ export async function freezeFlagDays(
   if (!flags.on) return 0;
   const days = await dbWrite.$queryRaw<FlagDayRow[]>`
     SELECT id, "crucibleId", "startsAt", "cutAt", "closesAt", "imageIds" FROM "FlagDay" f
-    WHERE f.event = ${event.name} AND f."cutAt" <= ${now} AND cardinality(f."imageIds") > 0
+    WHERE f.event = ${event.name} AND f."cutAt" <= ${new Date(now.getTime() - FLAG_FREEZE_GRACE_MS)}
+      AND cardinality(f."imageIds") > 0
       AND NOT EXISTS (SELECT 1 FROM "EventAwardResult" r WHERE r.event = f.event
         AND r."sourceId" = 'flag:' || f.id || ':' || f."imageIds"[1])
   `;
