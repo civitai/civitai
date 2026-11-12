@@ -67,7 +67,7 @@
   </div>
   {#if whatsNew}
     <WhatsNewDialog
-      items={whatsNew.items}
+      copy={whatsNew}
       message={page.form?.whatsNewFailed ? page.form.message : null}
       submitting={dismissingWhatsNew}
       submit={submitWhatsNew}

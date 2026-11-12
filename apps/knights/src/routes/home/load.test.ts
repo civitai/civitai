@@ -91,9 +91,29 @@ describe("home: what's new", () => {
     expect(page.whatsNew.items.at(-1).link).toEqual({ text: 'Codex', href: '/codex' });
   });
 
+  it('welcomes a newcomer without talking about changes they never saw', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
+    seenStore.get.mockResolvedValue(null);
+    const { whatsNew } = await run();
+    expect(whatsNew).toMatchObject({
+      eyebrow: 'Before you begin',
+      title: 'Welcome to the Knights of New Order',
+      lead: "Here's how the Order works:",
+    });
+    expect(whatsNew.items.map((item: { lead: string }) => item.lead)).toContain('Climb the ranks.');
+    expect(JSON.stringify(whatsNew)).not.toMatch(/\bnew\b(?! Order)|changed/i);
+  });
+
   it('gives a returning player the first item about their kept rank and XP', async () => {
     seenStore.get.mockResolvedValue({ rank: 'Knight', level: 12, guide: true });
-    expect((await run()).whatsNew.items[0].lead).toBe('Your rank and XP came with you.');
+    const { whatsNew } = await run();
+    expect(whatsNew).toMatchObject({
+      eyebrow: "What's new",
+      title: 'Welcome to the new Knights of New Order',
+      lead: "The Order has a new home. Here's what changed:",
+    });
+    expect(whatsNew.items[0].lead).toBe('Your rank and XP came with you.');
+    expect(whatsNew.items.map((item: { lead: string }) => item.lead)).toContain('Climb higher.');
   });
 
   it('does not offer it once seen, nor to someone who has not joined', async () => {

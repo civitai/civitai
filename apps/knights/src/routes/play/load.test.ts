@@ -580,6 +580,7 @@ describe("play load: what's new", () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
     const page = await run();
     expect(page.whatsNew.items[0].lead).toBe('Your rank and XP came with you.');
+    expect(page.whatsNew.title).toBe('Welcome to the new Knights of New Order');
     expect(page.showGuide).toBe(false);
   });
 
@@ -589,6 +590,7 @@ describe("play load: what's new", () => {
     getApprentice.mockResolvedValue({ kind: 'exhausted', progress: {} });
     const page = await run();
     expect(page.whatsNew.items[0].lead).toBe('You start as an Acolyte.');
+    expect(page.whatsNew.title).toBe('Welcome to the Knights of New Order');
     expect(page.showGuide).toBe(false);
   });
 

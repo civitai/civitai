@@ -40,7 +40,7 @@ import {
   getApprentice,
   getApprenticeProgress,
 } from '$lib/server/apprenticeship/apprenticeship.service';
-import { isReturningPlayer, whatsNewItems } from '$lib/whats-new';
+import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import { pickItem } from './next-item.server';
 import { apprenticePayload, progressPayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
@@ -140,7 +140,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     muted,
     resetNotice,
     notices,
-    whatsNew: seen.whatsNew ? { items: whatsNewItems(isReturningPlayer(status)) } : null,
+    whatsNew: seen.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
     showGuide: seen.guide,
     progress: withRankPerks(seen.progress),
     ratingGuide: ratingGuide(),

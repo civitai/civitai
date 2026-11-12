@@ -8,7 +8,7 @@ import { railFor } from '$lib/server/rail-runtime';
 import { requireMember } from '$lib/server/membership';
 import { dismissWhatsNew, readNotices } from '$lib/server/seen';
 import { seenStore } from '$lib/server/seen-runtime';
-import { isReturningPlayer, whatsNewItems } from '$lib/whats-new';
+import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import type { Actions, PageServerLoad } from './$types';
 
 // The recap card and the fervor position are extras: a failed read leaves them out instead of failing the home page.
@@ -50,7 +50,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     daily,
     recap,
     fervorPosition: rail?.standing?.position ?? null,
-    whatsNew: status && seen?.whatsNew ? { items: whatsNewItems(isReturningPlayer(status)) } : null,
+    whatsNew: status && seen?.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
   };
 };
 

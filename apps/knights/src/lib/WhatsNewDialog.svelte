@@ -2,21 +2,16 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { modal } from '$lib/modal';
-  import {
-    ANNOUNCEMENT_URL,
-    WHATS_NEW_LEAD,
-    WHATS_NEW_TITLE,
-    type WhatsNewItem,
-  } from '$lib/whats-new';
+  import { ANNOUNCEMENT_URL, type WhatsNew } from '$lib/whats-new';
   import './overlay.css';
 
   let {
-    items,
+    copy,
     message,
     submitting,
     submit,
   }: {
-    items: WhatsNewItem[];
+    copy: WhatsNew;
     message: string | null;
     submitting: boolean;
     submit: SubmitFunction;
@@ -44,12 +39,12 @@
   >
     <span class="handle" aria-hidden="true"></span>
     <div class="scroll">
-      <p class="ov-eyebrow">What's new</p>
-      <h2 id="whats-new-title">{WHATS_NEW_TITLE}</h2>
-      <p class="intro">{WHATS_NEW_LEAD}</p>
+      <p class="ov-eyebrow">{copy.eyebrow}</p>
+      <h2 id="whats-new-title">{copy.title}</h2>
+      <p class="intro">{copy.lead}</p>
       <div class="rule" aria-hidden="true"><span class="gem"></span></div>
       <ul>
-        {#each items as item (item.lead)}
+        {#each copy.items as item (item.lead)}
           <li>
             <span class="mark" aria-hidden="true"></span>
             <p>
