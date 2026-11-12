@@ -42,6 +42,12 @@ describe('minor content rule', () => {
     }
   });
 
+  it('the numeric ceiling covers rated levels only: an unrated rating passes it but not the rule', () => {
+    expect(0 <= MINOR_CONTENT_MAX_LEVEL).toBe(true);
+    expect(isMinorRestrictedLevel(0)).toBe(true);
+    expect(minorContentBrowsingLevelsFlag & 0).toBe(0);
+  });
+
   it('holds minor content to the safe-for-work levels, as before the gates shared the rule', () => {
     expect(minorContentBrowsingLevelsFlag).toBe(sfwBrowsingLevelsFlag);
     expect(MINOR_CONTENT_MAX_LEVEL).toBe(PG13);

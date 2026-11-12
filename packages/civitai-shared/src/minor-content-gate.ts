@@ -24,7 +24,11 @@ export function isMinorContentRestricted(content: {
 
 const minorAllowedLevels = browsingLevels.filter((level) => !isMinorRestrictedLevel(level));
 
-/** The highest single rating content tied to a minor may carry; the ceiling form of the rule. */
+/**
+ * The highest single rating content tied to a minor may carry; the ceiling form of the rule. It
+ * covers rated levels only: an unrated (0) rating passes a `<=` compare against it, so a gate that
+ * caps by this ceiling must refuse unrated content on its own, as the remix and storyline gates do.
+ */
 export const MINOR_CONTENT_MAX_LEVEL: number = Math.max(...minorAllowedLevels);
 
 /** The browsing levels content tied to a minor may be shown at; the flag form of the rule. */
