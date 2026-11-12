@@ -1,6 +1,6 @@
 # Batch composer: ratings before the posts exist
 
-Status: proposal, awaiting a decision. Task 868mh9m4m.
+Status: proposal, awaiting a decision.
 
 Testers asked to see each image's rating in the `/posts/batch` grid once it is scanned, as the post
 editor shows it. Today the grid can't: the composer uploads to S3 and keeps the keys in an IndexedDB
