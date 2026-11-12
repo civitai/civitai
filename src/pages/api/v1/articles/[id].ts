@@ -103,7 +103,14 @@ export default MixedAuthEndpoint(async function handler(
       publicArticle.bannerImage = undefined;
     }
 
-    return res.status(200).json(publicArticle);
+    // The page reads more of each content image to guard it; the documented payload keeps these three.
+    const contentImages = publicArticle.contentImages.map(({ id, url, ingestion }) => ({
+      id,
+      url,
+      ingestion,
+    }));
+
+    return res.status(200).json({ ...publicArticle, contentImages });
   } catch (e) {
     // getArticleById throws NOT_FOUND for a missing / non-visible article →
     // handleEndpointError maps it to a 404.
