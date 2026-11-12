@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * The public model API (`/api/v1/models`, `/api/v1/models/[id]`) and the model-version API
@@ -15,29 +17,14 @@ const VERSION_ID = 42;
 const MODEL_ID = 7;
 const USER_ID = 5;
 
-const {
-  mockDbRead,
-  mockGetFilesForModelVersionCache,
-  mockCancellableQuery,
-  mockRedisGet,
-  mockImagesCache,
-} = vi.hoisted(() => ({
-  mockDbRead: {
-    recommendedResource: { findMany: vi.fn() },
-    modelFile: { findMany: vi.fn() },
-    modelMetric: { findMany: vi.fn() },
-    modelVersionMetric: { findMany: vi.fn() },
-    modelVersion: { findMany: vi.fn() },
-    model: { findFirst: vi.fn(), findMany: vi.fn() },
-    $queryRaw: vi.fn(),
-  },
-  mockRedisGet: vi.fn(),
-  mockGetFilesForModelVersionCache: vi.fn(),
-  mockCancellableQuery: vi.fn(),
-  mockImagesCache: vi.fn(),
-}));
+const { mockGetFilesForModelVersionCache, mockCancellableQuery, mockImagesCache } = vi.hoisted(
+  () => ({
+    mockGetFilesForModelVersionCache: vi.fn(),
+    mockCancellableQuery: vi.fn(),
+    mockImagesCache: vi.fn(),
+  })
+);
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: { cancellableQuery: mockCancellableQuery },
   pgDbWrite: {},
@@ -93,18 +80,6 @@ vi.mock('~/server/redis/caches', () => ({
   userBasicCache: { fetch: vi.fn().mockResolvedValue({}), bust: vi.fn() },
   userModelCountCache: { fetch: vi.fn(), bust: vi.fn() },
 }));
-// The package, not `importOriginal`: the shim connects real clients when it loads. Same spread as
-// the global mock in src/__tests__/setup.ts.
-vi.mock('~/server/redis/client', async () => ({
-  ...(await import('@civitai/redis/client')),
-  ...(await import('~/server/redis/sys-read-deadline')),
-  redis: {
-    packed: { get: async () => null, set: async () => undefined },
-    get: mockRedisGet,
-    set: vi.fn(async () => undefined),
-  },
-  sysRedis: {},
-}));
 
 import { getModelsWithVersions, holdShowcaseImages } from '~/server/services/model.service';
 import { dataForModelsCache } from '~/server/redis/caches';
@@ -128,13 +103,14 @@ const ALL_IDS = [1, 2, 3, 4];
 
 /** The model row as `getGallerySettingsByModelId` reads it on a settings-cache miss. */
 function storedModel(row: { minor?: boolean; sfwOnly?: boolean; gallerySettings: unknown }) {
-  mockDbRead.model.findFirst.mockResolvedValue({
-    id: MODEL_ID,
-    userId: USER_ID,
-    minor: false,
-    sfwOnly: false,
-    ...row,
-  });
+  for (const db of [dbMock.dbRead, dbMock.dbWrite])
+    db.model.findFirst.mockResolvedValue({
+      id: MODEL_ID,
+      userId: USER_ID,
+      minor: false,
+      sfwOnly: false,
+      ...row,
+    } as never);
 }
 
 function primeOneModel(flags: { minor: boolean; sfwOnly: boolean }) {
@@ -177,12 +153,12 @@ function primeOneModel(flags: { minor: boolean; sfwOnly: boolean }) {
       ],
     },
   } as never);
-  mockDbRead.$queryRaw.mockResolvedValue([]);
-  mockDbRead.modelMetric.findMany.mockResolvedValue([]);
-  mockDbRead.modelVersionMetric.findMany.mockResolvedValue([]);
-  mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
-  mockDbRead.recommendedResource.findMany.mockResolvedValue([]);
-  mockDbRead.modelFile.findMany.mockResolvedValue([]);
+  dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+  dbMock.dbRead.modelMetric.findMany.mockResolvedValue([]);
+  dbMock.dbRead.modelVersionMetric.findMany.mockResolvedValue([]);
+  dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
+  dbMock.dbRead.recommendedResource.findMany.mockResolvedValue([]);
+  dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
   mockGetFilesForModelVersionCache.mockResolvedValue({
     [VERSION_ID]: {
       modelVersionId: VERSION_ID,
@@ -222,7 +198,7 @@ async function servedByVersionApi() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockRedisGet.mockResolvedValue(null);
+  redisMock.redis.get.mockResolvedValue(null);
 });
 
 describe('/api/v1/models — a minor or SFW-only model', () => {
@@ -242,12 +218,12 @@ describe('/api/v1/models — a minor or SFW-only model', () => {
     primeOneModel({ minor: false, sfwOnly: false });
     storedModel({ gallerySettings: { level: 1 } });
     expect(await servedByModelsApi()).toEqual(ALL_IDS);
-    expect(mockDbRead.model.findFirst).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
   });
 
   it('holds a flagged row whose cached settings predate the flag', async () => {
     primeOneModel({ minor: true, sfwOnly: false });
-    mockRedisGet.mockResolvedValue(
+    redisMock.redis.get.mockResolvedValue(
       JSON.stringify({
         hiddenTags: [],
         hiddenUsers: [],
@@ -262,7 +238,7 @@ describe('/api/v1/models — a minor or SFW-only model', () => {
 
   it('serves SFW with a warning, and does not throw, when the settings read fails', async () => {
     primeOneModel({ minor: true, sfwOnly: false });
-    mockRedisGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
     expect(await servedByModelsApi()).toEqual(SFW_IDS);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -286,7 +262,7 @@ describe('/api/v1/model-versions — the hold as the version API calls it', () =
   });
 
   it('serves SFW with a warning, and does not throw, when the settings read fails', async () => {
-    mockRedisGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
     expect(await servedByVersionApi()).toEqual(SFW_IDS);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'warning', name: 'showcase-hold-settings-read' })
@@ -305,7 +281,7 @@ describe('/api/v1/model-versions — the hold as the version API calls it', () =
   });
 
   it('serves an unflagged row whole on a stale held settings entry', async () => {
-    mockRedisGet.mockResolvedValue(
+    redisMock.redis.get.mockResolvedValue(
       JSON.stringify({
         hiddenTags: [],
         hiddenUsers: [],

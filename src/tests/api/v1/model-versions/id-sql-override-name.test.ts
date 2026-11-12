@@ -18,6 +18,7 @@ void redisMock;
  */
 
 let db: PGlite;
+const mockHold = vi.hoisted(() => vi.fn(async (byVersion: unknown) => byVersion));
 
 vi.mock('~/server/services/model-visibility.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVisibility>()),
@@ -32,7 +33,7 @@ vi.mock('~/server/services/training-data-restricted.service', () => ({
 }));
 vi.mock('~/server/services/model.service', () => ({
   getVaeFiles: async () => [],
-  holdShowcaseImages: async (byVersion: unknown) => byVersion,
+  holdShowcaseImages: mockHold,
 }));
 vi.mock('~/server/services/image.service', () => ({ getImagesForModelVersion: async () => [] }));
 vi.mock('~/server/services/paid-access.service', () => ({
@@ -148,5 +149,29 @@ describe('GET /api/v1/model-versions/{id} — the raw SQL carries overrideName',
     expect(byId[12].name).toBe('creator-picked.safetensors');
     expect(byId[11].overrideName).toBeNull();
     expect(byId[11].name).not.toBe('creator-picked.safetensors');
+  });
+});
+
+describe('GET /api/v1/model-versions/{id} — the raw SQL carries the model flags to the showcase hold', () => {
+  afterAll(async () => {
+    await db.exec(`UPDATE "Model" SET minor = false, "sfwOnly" = false WHERE id = 7`);
+  });
+
+  it.each([
+    { minor: true, sfwOnly: false },
+    { minor: false, sfwOnly: true },
+    { minor: false, sfwOnly: false },
+  ])('passes minor=$minor, sfwOnly=$sfwOnly from the row, and serves neither', async (flags) => {
+    await db.exec(
+      `UPDATE "Model" SET minor = ${flags.minor}, "sfwOnly" = ${flags.sfwOnly} WHERE id = 7`
+    );
+    mockHold.mockClear();
+    const { statusCode, body } = await getVersion();
+    expect(statusCode).toBe(200);
+    expect(mockHold).toHaveBeenCalledTimes(1);
+    const models = mockHold.mock.calls[0][1] as Map<number, unknown>;
+    expect(models.get(VERSION_ID)).toEqual({ modelId: 7, ...flags });
+    expect(body.model).not.toHaveProperty('minor');
+    expect(body.model).not.toHaveProperty('sfwOnly');
   });
 });

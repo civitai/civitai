@@ -109,6 +109,7 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
   createModelVersionPostFromTraining: vi.fn(),
   publishModelVersionsWithEarlyAccess: vi.fn(),
+  purgePublicModelShowcaseEdgeCache: vi.fn(),
 }));
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: mockTrackModActivity,

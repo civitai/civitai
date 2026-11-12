@@ -9,33 +9,13 @@ import { NsfwLevel } from '~/server/common/enums';
  * returns it. The hold itself is covered in model.service.v1-showcase-hold.test.ts.
  */
 
-const {
-  mockGetVaeFiles,
-  mockGetImages,
-  mockGetPaidAccess,
-  mockFindUnique,
-  mockFileFindFirst,
-  mockHold,
-} = vi.hoisted(() => ({
+const { mockGetVaeFiles, mockGetImages, mockGetPaidAccess, mockHold } = vi.hoisted(() => ({
   mockGetVaeFiles: vi.fn(),
   mockGetImages: vi.fn(),
   mockGetPaidAccess: vi.fn(),
-  mockFindUnique: vi.fn(),
-  mockFileFindFirst: vi.fn(),
   mockHold: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => {
-  const stub = {
-    modelVersion: { findUnique: mockFindUnique },
-    // by-hash/[hash] resolves the version through modelFile.findFirst.
-    modelFile: { findFirst: mockFileFindFirst },
-    $queryRaw: vi.fn(),
-  };
-  // The page module's transitive graph reaches for several named exports of this
-  // client; a partial mock makes Vitest throw on the first one it can't find.
-  return { dbRead: stub, dbWrite: stub, dbKV: stub, dbReadLong: stub, dbReadReplica: stub };
-});
 // The metric-privacy read (`prepareModelVersionResponse`) is a Kysely statement; no row is a version
 // with no privacy inputs, as the Prisma `null` was.
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
