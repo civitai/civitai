@@ -11,6 +11,11 @@ import { handleLogError, isClientAbortError } from '~/server/utils/errorHandling
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
+import {
+  checkDownloadCredential,
+  DOWNLOAD_SCOPE_REFUSED,
+} from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
@@ -50,9 +55,15 @@ export default PublicEndpoint(
     if (ip && ipBlacklist.includes(ip)) return forbidden(req, res);
 
     const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
-    if (!!session?.user) {
+    const credential = await checkDownloadCredential(req, session?.user, {
+      route: '/api/download/attachments/[fileId]',
+      requiredScope: TokenScope.ModelsRead,
+    });
+    if (credential.refuse) return res.status(403).json(DOWNLOAD_SCOPE_REFUSED);
+    const user = credential.effectiveUser;
+    if (!!user) {
       const userBlacklist = parseUserBlocklist(await getDownloadBlocklistValue('user-blacklist'));
-      if (userBlacklist.includes(session.user.id.toString())) return forbidden(req, res);
+      if (userBlacklist.includes(user.id.toString())) return forbidden(req, res);
     }
 
     const queryResults = schema.safeParse(req.query);
@@ -65,14 +76,14 @@ export default PublicEndpoint(
 
     const file = await getFileWithPermission({
       fileId,
-      userId: session?.user?.id,
-      isModerator: session?.user?.isModerator,
+      userId: user?.id,
+      isModerator: user?.isModerator,
     });
 
     if (!file) return notFound(req, res, 'File not found');
 
     // Handle unauthenticated downloads
-    const userId = session?.user?.id;
+    const userId = user?.id;
     if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
       if (req.headers['content-type'] === 'application/json')
         return res.status(401).json({ error: 'Unauthorized' });

@@ -45,6 +45,21 @@ export function credentialKind(
 }
 
 /**
+ * Whether `userId` holds an EntityAccess grant on the version. One id per call: the batch form
+ * decides owned Private ids differently. A failed lookup counts as no grant.
+ */
+export async function hasVersionGrant(userId: number, modelVersionId: number): Promise<boolean> {
+  // Imported here so the mini route's module graph does not take on common.service.
+  const { hasEntityAccess } = await import('~/server/services/common.service');
+  const access = await hasEntityAccess({
+    entityType: 'ModelVersion',
+    entityIds: [modelVersionId],
+    userId,
+  }).catch(() => []);
+  return !!access[0]?.hasAccess;
+}
+
+/**
  * Classifies the caller of the epoch arm for a Private version, logs it, and answers whether they
  * are refused. `enforce` refuses `anonymous` and `other`; `enforce-anon` refuses only a request
  * that carries no credential at all.
@@ -55,32 +70,28 @@ export async function evaluateMiniEpochCaller({
   modelVersionId,
   ownerId,
   mode,
+  scopeRefused,
+  pick,
 }: {
   req: NextApiRequest;
   user: Session['user'] | undefined;
   modelVersionId: number;
   ownerId: number;
   mode: Exclude<MiniEpochGateMode, 'off'>;
+  /** The bearer credential lacks the route's scope: a signed-in caller is classed `other`. */
+  scopeRefused: boolean;
+  /** How the training file was chosen: by id, or as the primary file, hidden from the caller or not. */
+  pick: 'by-id' | 'primary' | 'hidden-primary';
 }): Promise<{ callerClass: MiniEpochCallerClass; withhold: boolean }> {
   const orchestrator = matchesOrchestratorServiceToken(req);
 
   let callerClass: MiniEpochCallerClass;
-  if (user?.id && user.id === ownerId) callerClass = 'owner';
+  if (user?.id && scopeRefused) callerClass = 'other';
+  else if (user?.id && user.id === ownerId) callerClass = 'owner';
   else if (user?.isModerator) callerClass = 'moderator';
   else if (orchestrator) callerClass = 'orchestrator';
   else if (!user?.id) callerClass = 'anonymous';
-  else {
-    // One id per call: the batch form decides owned Private ids differently. A failed lookup
-    // counts as no grant, so `log` still serves and `enforce` withholds. Imported here so the mini
-    // route's module graph does not take on common.service.
-    const { hasEntityAccess } = await import('~/server/services/common.service');
-    const access = await hasEntityAccess({
-      entityType: 'ModelVersion',
-      entityIds: [modelVersionId],
-      userId: user.id,
-    }).catch(() => []);
-    callerClass = access[0]?.hasAccess ? 'grantee' : 'other';
-  }
+  else callerClass = (await hasVersionGrant(user.id, modelVersionId)) ? 'grantee' : 'other';
 
   const resolvedAs = credentialKind(req, user, orchestrator);
   const wouldRefuse = callerClass === 'anonymous' || callerClass === 'other';
@@ -94,6 +105,7 @@ export async function evaluateMiniEpochCaller({
     name: 'mini-epoch-caller',
     mode,
     modelVersionId,
+    pick,
     authHeader: !!req.headers?.authorization,
     resolvedAs,
     callerClass,

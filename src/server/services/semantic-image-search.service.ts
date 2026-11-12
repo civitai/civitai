@@ -7,11 +7,14 @@ import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/servi
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
-import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
-  nsfwBrowsingLevelsArray,
-  publicBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+  recordRefusal,
+  resolveSemanticBrowsingLevel,
+  semanticQueryRefusal,
+  type QueryTracker,
+} from '~/server/services/semantic-query-guard';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -35,18 +38,24 @@ const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
   notFoundMessage: 'Image not found',
 });
 
+const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
+
 export async function searchSemanticImages({
   input,
   user,
   domain,
+  track,
   candidateSource = searchServiceCandidates,
 }: {
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
   user?: SessionUser;
   domain?: DomainColor;
+  track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
+  const browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+
   const [hidden, addonData, blockedTags, userIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),
@@ -67,9 +76,18 @@ export async function searchSemanticImages({
   if (strip.emptyResult) return { items: [], nextCursor: undefined, correctedQuery: undefined };
   const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
-  const addons = resolveBrowsingSettingsAddons(addonData, input.browsingLevel, {
+  const addons = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
     isModerator: user?.isModerator,
   });
+  const refusalOf = async (text: string) => {
+    const refusal = await semanticQueryRefusal(text, {
+      browsingLevel,
+      disablePoi: addons.disablePoi,
+    });
+    recordRefusal(track, refusal, text, 'images_semantic');
+    return refusal;
+  };
+  if (input.query && (await refusalOf(input.query))) return emptyPage();
   const excludedUserIds = [
     ...new Set(
       [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
@@ -88,7 +106,7 @@ export async function searchSemanticImages({
   const filter: CandidateFilter = {
     gate: {
       kind: 'level',
-      nsfwLevels: Flags.instanceToArray(input.browsingLevel || publicBrowsingLevelsFlag),
+      nsfwLevels: Flags.instanceToArray(browsingLevel),
     },
     tagIds,
     anyOf: { baseModels: input.baseModels, type: input.types },
@@ -120,7 +138,7 @@ export async function searchSemanticImages({
         ids,
         limit: ids.length,
         sort: ImageSort.Newest,
-        browsingLevel: input.browsingLevel,
+        browsingLevel,
         ...filters,
         excludedUserIds,
         disablePoi: addons.disablePoi,
@@ -146,9 +164,15 @@ export async function searchSemanticImages({
     : { text: input.query ?? '' };
 
   let correctedQuery: string | undefined;
+  let correctedReviewed: boolean | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await candidateSource({ query, filter, offset, limit });
+      // The service embeds its spelling correction, not the text audited above.
+      if (correctedReviewed === undefined && result.correctedQuery !== undefined)
+        correctedReviewed =
+          result.correctedQuery === input.query || !(await refusalOf(result.correctedQuery));
+      if (correctedReviewed === false) return [];
       correctedQuery ??= result.correctedQuery;
       return result.ids;
     },
@@ -157,5 +181,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
+  if (correctedReviewed === false) return emptyPage();
   return { ...page, correctedQuery };
 }

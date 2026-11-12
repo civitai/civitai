@@ -1,4 +1,5 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
+import { isMinorRestrictedLevel } from '@civitai/shared/minor-content-gate';
 import { dbWrite } from '~/server/db/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
@@ -755,6 +756,9 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
   ];
 }
 
+/** Log event for an unrated scan that would take the newer minor review routing. */
+export const UNRATED_MINOR_REVIEW_EVENT = 'unrated-minor-review-candidate';
+
 async function auditScanResults(args: {
   imageId: number;
   userId: number;
@@ -790,10 +794,16 @@ async function auditScanResults(args: {
   const adultTags = tags.filter((tag) => tag.name === 'adult');
   const cartoonTags = tags.filter((tag) => styleTags.includes(tag.name));
 
+  // An unrated scan keeps its earlier minor review routing for now: the minor content rule's
+  // unrated arm does not reach this queue yet.
+  const minorRestrictedScan = nsfwLevel !== 0 && isMinorRestrictedLevel(nsfwLevel);
+
   const tagReview = reviewTags.length > 0;
   let poiReview = poiTags.length > 0;
   let minorReview =
-    minorTags.length > 0 && adultTags.length === 0 && (cartoonTags.length === 0 || nsfw);
+    minorTags.length > 0 &&
+    adultTags.length === 0 &&
+    (cartoonTags.length === 0 || minorRestrictedScan);
   let newUserReview = false;
 
   const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
@@ -805,7 +815,23 @@ async function auditScanResults(args: {
   // nsfw — a sfw image with a poi/minor resource is still flagged (below) but
   // not queued for moderator review.
   if (associatedEntities.poi && nsfw) poiReview = true;
-  if (associatedEntities.minor && nsfw) minorReview = true;
+  if (associatedEntities.minor && minorRestrictedScan) minorReview = true;
+
+  // Log, without routing, when an unrated scan would take the newer minor review routing.
+  if (nsfwLevel === 0 && !minorReview && !poiReview) {
+    const arms = [
+      ...(associatedEntities.minor ? ['resource'] : []),
+      ...(minorTags.length > 0 && adultTags.length === 0 ? ['tag'] : []),
+    ];
+    for (const arm of arms)
+      logToAxiom({
+        name: UNRATED_MINOR_REVIEW_EVENT,
+        type: 'info',
+        imageId: args.imageId,
+        arm,
+        at: new Date().toISOString(),
+      }).catch(() => null);
+  }
 
   // The capture account is no one's new account: its captures get only the content keys.
   if (!minorReview && !poiReview && !tagReview && nsfw && !isFeedbackCaptureOwner(args.userId)) {
