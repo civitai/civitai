@@ -511,6 +511,32 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(mockTriggerBuild).not.toHaveBeenCalled();
   });
 
+  it('🔴 a push to the SOURCE org (civitai-apps-src/<slug>) files nothing and builds nothing (403)', async () => {
+    // Everything else about this push would park a pending request: a valid signature, `main`,
+    // an approved block under the same slug, a new sha and a valid manifest (the test above shows
+    // the same body under civitai-apps/ does park). Only the org differs, so the 403 is the gate's.
+    const res = makeRes();
+    await invoke(
+      signedReq(pushBody({ after: NEW_SHA, fullName: `civitai-apps-src/${SLUG}` })),
+      res
+    );
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({
+      error: 'Unexpected or missing repository org',
+      fullName: `civitai-apps-src/${SLUG}`,
+    });
+    expect(mockGetRawFile).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+  });
+
+  it('control for the source-org case: the same push under civitai-apps/ parks a pending request', async () => {
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    expect(mockPubReqCreate).toHaveBeenCalledTimes(1);
+  });
+
   it('503s when the pipeline flag is off (kill switch) before any DB work', async () => {
     state.flagEnabled = false;
     const res = makeRes();

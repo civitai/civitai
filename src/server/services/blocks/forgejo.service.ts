@@ -26,9 +26,21 @@ import {
   versionTagName,
   type ExistingTag,
 } from '~/server/services/blocks/approve-provenance';
+import { FORGEJO_SOURCE_ORG } from '~/shared/constants/app-source-repo.constants';
 
 export const FORGEJO_ORG = 'civitai-apps';
 const FORGEJO_REVIEW_ORG = 'civitai-apps-review';
+/**
+ * The developer-facing SOURCE repos (`civitai-apps-src/<slug>`): the git history of forks and of
+ * App Assistant apps, which the developer can pull and push. Nothing here ever builds or files a
+ * publish request: no push webhook is attached to these repos, and the push webhook's org gate
+ * (`parseExpectedRepo` in `git-push.ts`) answers 403 for any org but {@link FORGEJO_ORG}.
+ * Defined with no I/O around it, so a caller whose tests mock this module still names it.
+ */
+export { FORGEJO_SOURCE_ORG };
+
+/** The orgs whose collaborator rows the developer-access helpers may change. */
+export type CollaboratorOrg = typeof FORGEJO_ORG | typeof FORGEJO_SOURCE_ORG;
 
 /**
  * Public URL pointer for the in-review repo of a slug. Used by the
@@ -246,12 +258,14 @@ type PermissionRead =
   | { kind: 'unknown'; raw: string }
   | { kind: 'unreadable'; reason: string };
 
-async function readCollaboratorPermission(slug: string, username: string): Promise<PermissionRead> {
+async function readCollaboratorPermission(
+  slug: string,
+  username: string,
+  org: CollaboratorOrg = FORGEJO_ORG
+): Promise<PermissionRead> {
   try {
     const res = await fjFetch(
-      `/api/v1/repos/${FORGEJO_ORG}/${slug}/collaborators/${encodeURIComponent(
-        username
-      )}/permission`
+      `/api/v1/repos/${org}/${slug}/collaborators/${encodeURIComponent(username)}/permission`
     );
     if (!res.ok) {
       // 404 here means the USER or the REPO does not exist (measured) — never
@@ -338,11 +352,14 @@ export async function addCollaborator(opts: {
   slug: string;
   username: string;
   permission?: GrantablePermission;
+  /** Defaults to the build org; the source-repo flow passes {@link FORGEJO_SOURCE_ORG}. */
+  org?: CollaboratorOrg;
 }): Promise<AddCollaboratorResult> {
   const requested = opts.permission ?? 'write';
   const requestedRank = COLLABORATOR_PERMISSION_RANK[requested];
+  const org = opts.org ?? FORGEJO_ORG;
 
-  const current = await readCollaboratorPermission(opts.slug, opts.username);
+  const current = await readCollaboratorPermission(opts.slug, opts.username, org);
 
   if (current.kind === 'known') {
     const currentRank = COLLABORATOR_PERMISSION_RANK[current.permission];
@@ -388,7 +405,7 @@ export async function addCollaborator(opts: {
   }
 
   const res = await fjFetch(
-    `/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/collaborators/${encodeURIComponent(opts.username)}`,
+    `/api/v1/repos/${org}/${opts.slug}/collaborators/${encodeURIComponent(opts.username)}`,
     {
       method: 'PUT',
       body: JSON.stringify({ permission: requested }),
@@ -428,9 +445,15 @@ export async function addCollaborator(opts: {
  * read exists there only to implement grant-AT-LEAST (never downgrade); a revoke has
  * no level to preserve. Deliberately NOT symmetric — do not "fix" it by adding one.
  */
-export async function removeCollaborator(opts: { slug: string; username: string }): Promise<void> {
+export async function removeCollaborator(opts: {
+  slug: string;
+  username: string;
+  org?: CollaboratorOrg;
+}): Promise<void> {
   const res = await fjFetch(
-    `/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/collaborators/${encodeURIComponent(opts.username)}`,
+    `/api/v1/repos/${opts.org ?? FORGEJO_ORG}/${opts.slug}/collaborators/${encodeURIComponent(
+      opts.username
+    )}`,
     { method: 'DELETE' }
   );
   if (!res.ok && res.status !== 204 && res.status !== 404) {
@@ -1250,4 +1273,134 @@ export async function getReviewRepoHeadSha(slug: string): Promise<string> {
     throw new Error(`in-review repo ${FORGEJO_REVIEW_ORG}/${slug} has no main HEAD`);
   }
   return branch.commit.id;
+}
+
+// ---------------------------------------------------------------------------
+// Source repos (`civitai-apps-src/<slug>`) — the developer's own history of a fork or an App
+// Assistant app. See `app-source-repo.service.ts`.
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensure the `civitai-apps-src` org and its `<slug>` repo exist. Idempotent: the org POST and the
+ * repo POST both treat 409 / 422 as "already exists". The repo is created with `auto_init`, so
+ * `main` exists for the first contents-API commit (Forgejo refuses a commit to a missing branch).
+ *
+ * Returns whether THIS call created the repo (a 201), so the caller seeds only a repo it made.
+ *
+ * 🔴 `private: true`, as for the review repos (see `ensureReviewRepo`): the repo holds unreviewed
+ * source, keyed by a guessable slug. Access is the explicit collaborator rows only.
+ *
+ * 🔴 No webhook is attached. A push here must never file a publish request or build; the push
+ * webhook's org gate rejects this org as a second line, should a hook ever be added by hand.
+ */
+export async function ensureSourceRepo(slug: string): Promise<{ created: boolean }> {
+  const orgRes = await fjFetch('/api/v1/orgs', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: FORGEJO_SOURCE_ORG,
+      full_name: 'Civitai Apps — developer source',
+      description:
+        'The git history of forked and App Assistant apps. Pushing here never builds or submits anything.',
+      visibility: 'private',
+    }),
+  });
+  if (!orgRes.ok && orgRes.status !== 422 && orgRes.status !== 409) {
+    const body = await orgRes.text().catch(() => '');
+    throw new Error(`Forgejo source org create ${orgRes.status}: ${body.slice(0, 240)}`);
+  }
+  const repoRes = await fjFetch(
+    `/api/v1/orgs/${FORGEJO_SOURCE_ORG}/repos`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        name: slug,
+        description: `Source of ${slug}. Pushing here never builds or submits a version.`,
+        private: true,
+        auto_init: true,
+        default_branch: 'main',
+      }),
+    },
+    commitTimeoutMs()
+  );
+  if (repoRes.status === 409 || repoRes.status === 422) return { created: false };
+  if (!repoRes.ok) {
+    const body = await repoRes.text().catch(() => '');
+    throw new Error(`Forgejo source repo create ${repoRes.status}: ${body.slice(0, 240)}`);
+  }
+  return { created: true };
+}
+
+/** The commit a branch points at, or `null` when the branch (or the repo) does not exist. */
+export async function getBranchHead(
+  org: string,
+  slug: string,
+  branch: string
+): Promise<string | null> {
+  const res = await fjFetch(`/api/v1/repos/${org}/${slug}/branches/${encodeURIComponent(branch)}`);
+  if (res.status === 404) return null;
+  const info = await unwrap<{ commit?: { id?: string } }>(res);
+  return info?.commit?.id ?? null;
+}
+
+/** One contents-API change. `sha` is the blob the caller expects to replace or delete. */
+export type FileOperation =
+  | { operation: 'create'; path: string; content: Buffer }
+  | { operation: 'update'; path: string; content: Buffer; sha: string }
+  | { operation: 'delete'; path: string; sha: string };
+
+export type CommitIdentity = { name: string; email: string };
+
+export type CommitOperationsResult =
+  | { kind: 'committed'; sha: string }
+  /**
+   * Forgejo refused the change as stale: a blob `sha` no longer matches the branch, a `create`
+   * names a path that now exists, or an `update`/`delete` names one that is gone. Nothing was
+   * written. Gitea 1.22 answers these 422 (and 404 for a missing path); a 409 is also read here.
+   */
+  | { kind: 'conflict'; status: number };
+
+/**
+ * Commit exactly `operations` onto `branch` (or onto a NEW branch `newBranch` cut from `branch`)
+ * in one commit, with the author and committer given.
+ *
+ * Unlike {@link commitFiles} this does not list the tree and does not turn every path into an
+ * update: the caller says which blob each change replaces, and Forgejo checks it. That check is
+ * the compare-and-set the source-repo writer relies on, so a change the developer pushed to a
+ * file is never overwritten by a writer that had not seen it — the commit is refused instead.
+ */
+export async function commitOperations(opts: {
+  org: string;
+  slug: string;
+  branch: string;
+  newBranch?: string;
+  operations: FileOperation[];
+  message: string;
+  author: CommitIdentity;
+}): Promise<CommitOperationsResult> {
+  const res = await fjFetch(
+    `/api/v1/repos/${opts.org}/${opts.slug}/contents`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        branch: opts.branch,
+        ...(opts.newBranch ? { new_branch: opts.newBranch } : {}),
+        message: opts.message,
+        author: opts.author,
+        committer: opts.author,
+        files: opts.operations.map((op) => ({
+          operation: op.operation,
+          path: op.path,
+          ...(op.operation === 'delete' ? {} : { content: op.content.toString('base64') }),
+          ...(op.operation === 'create' ? {} : { sha: op.sha }),
+        })),
+      }),
+    },
+    commitTimeoutMs()
+  );
+  if (res.status === 404 || res.status === 409 || res.status === 422) {
+    await res.text().catch(() => '');
+    return { kind: 'conflict', status: res.status };
+  }
+  const result = await unwrap<{ commit: { sha: string } }>(res);
+  return { kind: 'committed', sha: result.commit.sha };
 }

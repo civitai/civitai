@@ -22,10 +22,12 @@
  * `forgejoCommitSha`: the commit the platform itself wrote on approve. Never a branch HEAD, which
  * an unreviewed push can move.
  *
- * 🔴 NOTHING ELSE IS INHERITED. This module writes no database row at all: no approvals, no
+ * 🔴 NOTHING ELSE IS INHERITED. This module writes no database row of its own: no approvals, no
  * scopes, no goods catalog, no entitlements, no fee accruals. Paid goods stay in the fork's CODE
  * and can sell only after the fork's own publish review approves them. Pinned by the
- * "no database writes" test.
+ * "no database writes" test. The one row a start leads to is the fork's SOURCE REPO record,
+ * written by `app-source-repo.service.ts` (`createForkSourceRepo`): the fork's own git repo,
+ * seeded with the same files as the sandbox seed, which builds nothing and grants nothing.
  *
  * The session lives in sysRedis (`REDIS_SYS_KEYS.BLOCKS.FORK_SESSION`) for 30 days — longer than
  * the sandbox service keeps an unused app (14 days) — so a fork published within its life gets
@@ -40,6 +42,7 @@ import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 import {
@@ -80,6 +83,14 @@ import {
 /** How long a fork session (and so a fork's claim to its parent) is kept. */
 export const FORK_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
+/** The longest a fork start waits for the fork's source repo to be created. */
+export const FORK_SOURCE_REPO_WAIT_MS = 5_000;
+let forkSourceRepoWaitMs = FORK_SOURCE_REPO_WAIT_MS;
+/** Tests only: a shorter wait, so the bound is exercised with real timers. */
+export function __setForkSourceRepoWaitMsForTests(ms: number = FORK_SOURCE_REPO_WAIT_MS) {
+  forkSourceRepoWaitMs = ms;
+}
+
 /** The sandbox service's own seed caps (`SEED_MAX_BYTES`, `SEED_MAX_ENTRIES`). */
 export const FORK_SEED_MAX_BYTES = 25 * 1024 * 1024;
 export const FORK_SEED_MAX_FILES = 5000;
@@ -96,59 +107,9 @@ const MANIFEST_PATH = 'block.manifest.json';
 // The seed's contents
 // ---------------------------------------------------------------------------
 
-/** Top-level directories that hold dependencies or build output, never source. */
-const BUILD_OUTPUT_DIRS = new Set([
-  'dist',
-  'build',
-  'out',
-  '.next',
-  '.turbo',
-  '.vercel',
-  '.cache',
-  '.output',
-  'coverage',
-]);
-
-const SSH_KEY_RE = /^id_(rsa|dsa|ecdsa|ed25519)(_sk)?(\.pub)?$/;
-const KEY_FILE_RE = /\.(pem|key|p12|pfx|p8|ppk|jks|keystore)$/i;
-/** Files that commonly hold a registry token, a password or a cloud credential. */
-const CREDENTIAL_FILES = new Set([
-  '.npmrc',
-  '.yarnrc',
-  '.yarnrc.yml',
-  '.netrc',
-  '.pypirc',
-  '.git-credentials',
-  '.dev.vars',
-  '.pgpass',
-  '.htpasswd',
-  'credentials.json',
-]);
-/** Directories that hold credentials wholesale. */
-const CREDENTIAL_DIRS = new Set(['.ssh', '.aws', '.docker', '.gnupg', '.kube']);
-
-/**
- * Why `path` is left out of a fork's seed, or `null` to keep it. Secrets (`.env*`, keys,
- * the common credential files and directories), git metadata, dependencies (`node_modules` at any
- * depth) and top-level build output. A superset of what the sandbox service itself skips.
- *
- * ⚠ A DENYLIST, SO NOT A GUARANTEE: a secret in a file with an ordinary name (a hard-coded token
- * in `src/config.ts`) is copied like any other source. What the fork receives is the parent's
- * APPROVED source, which a moderator has reviewed; this list only removes the usual places a
- * credential sits beside it.
- */
-export function forkSeedExclusionReason(path: string): string | null {
-  const segments = path.split('/').filter(Boolean);
-  const base = segments[segments.length - 1] ?? '';
-  if (segments.some((s) => s === '.git')) return 'git';
-  if (segments.some((s) => s.startsWith('.env'))) return 'env';
-  if (segments.some((s) => s === 'node_modules')) return 'dependencies';
-  if (segments.length > 1 && BUILD_OUTPUT_DIRS.has(segments[0])) return 'build-output';
-  if (KEY_FILE_RE.test(base) || SSH_KEY_RE.test(base)) return 'key';
-  if (CREDENTIAL_FILES.has(base) || segments.some((s) => CREDENTIAL_DIRS.has(s)))
-    return 'credentials';
-  return null;
-}
+// The exclusion list lives in its own module (no I/O) so the source-repo writer applies the same
+// one; re-exported here for this module's existing callers and tests.
+export { forkSeedExclusionReason };
 
 export type ForkSeedZip = {
   buffer: Buffer;
@@ -157,6 +118,8 @@ export type ForkSeedZip = {
   files: string[];
   /** Paths left out. */
   excluded: string[];
+  /** The kept files themselves, in archive order: what the fork's source repo is seeded with. */
+  entries: Array<{ path: string; content: Buffer }>;
 };
 
 /**
@@ -222,6 +185,7 @@ export async function buildForkSeedZip(
     sha256: createHash('sha256').update(buffer).digest('hex'),
     files: kept.map((f) => f.path),
     excluded,
+    entries: kept,
   };
 }
 
@@ -625,6 +589,30 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
         EX: FORK_SESSION_TTL_SECONDS,
       })
     );
+    // The fork's own git repo, seeded with exactly the files its sandbox starts from. The parent
+    // named in its trailers is THIS session's (server-resolved), never anything in the manifest.
+    // Best-effort and never throws: the fork starts whether or not the repo could be made, and
+    // the source-repo backfill makes one that is missing.
+    // Waited on for at most FORK_SOURCE_REPO_WAIT_MS: a slow git host must not hold the start (the
+    // creation carries on, and the backfill covers one that never finishes).
+    const sourceRepo = import('~/server/services/blocks/app-source-repo.service')
+      .then(({ createForkSourceRepo }) =>
+        createForkSourceRepo({
+          forkSlug,
+          userId: user.id,
+          files: seedZip.entries,
+          lineage: {
+            parentSlug: parentBlock.blockId,
+            parentCommitSha,
+            parentAppBlockId: parentBlock.id,
+          },
+        })
+      )
+      .catch(() => undefined);
+    await Promise.race([
+      sourceRepo,
+      new Promise((resolve) => setTimeout(resolve, forkSourceRepoWaitMs).unref?.()),
+    ]);
     return { forkSlug, parentName: parent.name, parentListingId: parent.id, seed };
   } catch (err) {
     // Release the reservation: nothing will ever be created under it. And the seed object, if it
