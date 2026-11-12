@@ -234,14 +234,14 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, ctx }) => {
-    if (!features?.imageSearch)
-      return { redirect: { destination: '/search/models', permanent: false } };
-    if (features.feedSearch)
+    if (features?.feedSearch)
       return {
         redirect: {
           destination: await imageFeedUrlFromLegacySearch(ctx.query, resolveTagIds),
           permanent: false,
         },
       };
+    if (!features?.imageSearch)
+      return { redirect: { destination: '/search/models', permanent: false } };
   },
 });

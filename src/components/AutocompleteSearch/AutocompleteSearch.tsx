@@ -72,7 +72,6 @@ import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/co
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { getSearchRefusal } from '~/components/Search/search-refusal';
-import { includesInappropriate } from '~/utils/metadata/audit';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
@@ -152,9 +151,11 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   const pathname = usePathname();
   const currentSection = pathname.split('/')[1] || 'models';
   // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
+  // Feed search answers images from the semantic search on its own, so either flag offers Images.
+  const imageSearchOn = !!features.imageSearch || !!features.feedSearch;
   const searchTarget = resolveSearchTarget(
     targetData.find((t) => t.value === currentSection)?.value ?? 'models',
-    features
+    { imageSearch: imageSearchOn }
   );
   useEffect(() => {
     // A navigation is not the switch the carry exists for. The input's blur handler empties the
@@ -187,7 +188,7 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   // blanks the label when the target is not one of these.
   const enabledTargets = targetData.filter(
     ({ value }) =>
-      (features.imageSearch ? true : value !== 'images') &&
+      (imageSearchOn ? true : value !== 'images') &&
       (features.bounties ? true : value !== 'bounties') &&
       (features.articles ? true : value !== 'articles') &&
       (features.toolSearch ? true : value !== 'tools') &&
@@ -304,10 +305,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   // Search v3: on a feed that answers `?query=`, the bar filters that feed as you type.
   const filtersFeedInPlace =
-    !!features.feedSearch &&
-    !!features.imageSearch &&
-    indexNameProp === 'images' &&
-    router.pathname === '/images';
+    !!features.feedSearch && indexNameProp === 'images' && router.pathname === '/images';
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
@@ -332,11 +330,16 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     [benignPhrases, debouncedSearch]
   );
 
-  const isIllegalSearch = useMemo(() => {
-    if (!debouncedSearch) return false;
-    const illegalSearch = includesInappropriate({ prompt: auditedSearch });
-    return illegalSearch === 'minor';
-  }, [debouncedSearch, auditedSearch]);
+  const refusal = useMemo(
+    () =>
+      getSearchRefusal({
+        text: debouncedSearch,
+        auditedText: auditedSearch,
+        disablePoi: !!browsingSettingsAddons.settings.disablePoi,
+      }),
+    [debouncedSearch, auditedSearch, browsingSettingsAddons.settings.disablePoi]
+  );
+  const isIllegalSearch = refusal === 'illegal';
 
   // Check profanity in search query (only if not illegal and domain is green)
   const profanityAnalysis = useCheckProfanity(debouncedSearch, {
@@ -346,12 +349,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isProfaneSearch = profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {
-    const refusal = getSearchRefusal({
-      text: debouncedSearch,
-      auditedText: auditedSearch,
-      disablePoi: !!browsingSettingsAddons.settings.disablePoi,
-    });
-
     if (refusal === 'illegal') {
       return [
         {
@@ -442,18 +439,11 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     showSfwFace,
     filtersFeedInPlace,
     debouncedSearch,
-    auditedSearch,
+    refusal,
     isProfaneSearch,
     domainColor,
-    browsingSettingsAddons.settings.disablePoi,
   ]);
-  const blockedQuery =
-    !!getSearchRefusal({
-      text: debouncedSearch,
-      auditedText: auditedSearch,
-      disablePoi: !!browsingSettingsAddons.settings.disablePoi,
-    }) ||
-    (isProfaneSearch && domainColor === 'green');
+  const blockedQuery = !!refusal || (isProfaneSearch && domainColor === 'green');
   const feedSearch = useFeedSearchSync({
     enabled: filtersFeedInPlace,
     debouncedSearch,
@@ -515,7 +505,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   // Not the refined `query`: `parseQuery` has already stripped the `#tag`/`@user` tokens out of it.
   const searchPageUrl = () =>
-    (features.feedSearch && features.imageSearch && buildFeedSearchUrl(indexName, search)) ||
+    (features.feedSearch && buildFeedSearchUrl(indexName, search)) ||
     buildSearchPageUrl(indexName, search);
 
   const handleSubmit = () => {
@@ -542,8 +532,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // The explicit clear — the input's clear button. The user asked for the text to go, so the
   // carrier goes with it.
   const handleClear = () => {
-    feedSearch.markTyped();
     setSearch('');
+    feedSearch.markTyped();
     onClear?.();
   };
 

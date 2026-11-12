@@ -13,7 +13,7 @@ const idleInput: SemanticImageSearchInput = { query: '', browsingLevel: 0, limit
 export function useImageFeedSearchQuery() {
   const features = useFeatureFlags();
   const { query } = useImageQueryParams();
-  if (!features.feedSearch || !features.imageSearch) return undefined;
+  if (!features.feedSearch) return undefined;
   return normalizeFeedQuery(query.query);
 }
 

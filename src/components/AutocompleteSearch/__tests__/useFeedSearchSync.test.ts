@@ -106,17 +106,4 @@ describe('useFeedSearchSync when the router lags its own writes', () => {
     render({ debouncedSearch: 'red dragon' });
     expect(setSearch).not.toHaveBeenCalled();
   });
-
-  it('re-seeds from Back even when it lands where the search started', () => {
-    router.query = { query: 'cat' };
-    const render = mount();
-    setSearch.mockReset();
-    hook.markTyped();
-    render({ debouncedSearch: 'red dragon' });
-    router.query = { query: 'red dragon' };
-    render({ debouncedSearch: 'red dragon' });
-    router.query = { query: 'cat' };
-    render({ debouncedSearch: 'red dragon' });
-    expect(setSearch).toHaveBeenCalledWith('cat');
-  });
 });

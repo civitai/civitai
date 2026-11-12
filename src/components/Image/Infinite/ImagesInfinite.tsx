@@ -27,6 +27,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { toSemanticImageSearchInput } from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
+import type { SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import {
   useImageFeedSearchQuery,
@@ -78,7 +79,25 @@ export default function ImagesInfinite(props: ImagesInfiniteProps) {
   );
 }
 
-export function ImagesInfiniteContent({
+export function ImagesInfiniteContent(props: ImagesInfiniteProps) {
+  return props.searchable ? <SearchableImagesFeed {...props} /> : <ImagesFeed {...props} />;
+}
+
+// Only a feed that can be searched pays for the flag lookup and the query checks.
+function SearchableImagesFeed(props: ImagesInfiniteProps) {
+  const query = useImageFeedSearchQuery();
+  // A ?query= can arrive by link or redirect, past the search bar's own checks.
+  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
+  return <ImagesFeed {...props} feedSearch={{ query, refusal, profanityMatches }} />;
+}
+
+type FeedSearch = {
+  query?: string;
+  refusal?: SearchRefusal;
+  profanityMatches: string[];
+};
+
+function ImagesFeed({
   withTags,
   filters: filterOverrides = {},
   showEof = false,
@@ -89,20 +108,18 @@ export function ImagesInfiniteContent({
   emptyMessage,
   disableStoreFilters = false,
   landscapeSpan,
-  searchable,
+  searchable: _searchable,
+  feedSearch,
   ...imageProviderProps
-}: ImagesInfiniteProps) {
+}: ImagesInfiniteProps & { feedSearch?: FeedSearch }) {
   const features = useFeatureFlags();
   const imageFilters = useImageFilters(filterType);
   const { query: rawSearchQuery, ...computedFilters } = removeEmpty({
     ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
     withTags,
   });
-  const featureSearchQuery = useImageFeedSearchQuery();
-  const requestedSearch = searchable && rawSearchQuery ? featureSearchQuery : undefined;
-  // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(requestedSearch, 'images_semantic');
-  const searchQuery = refusal ? undefined : requestedSearch;
+  const refusal = rawSearchQuery ? feedSearch?.refusal : undefined;
+  const searchQuery = rawSearchQuery && !refusal ? feedSearch?.query : undefined;
   // Stabilize identity so effects/query keys only fire on real content change.
   const filtersRef = useRef(computedFilters);
   if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
@@ -251,7 +268,10 @@ export function ImagesInfiniteContent({
     />
   );
 
-  if (refusal) return <SearchRefusalNotice refusal={refusal} profanityMatches={profanityMatches} />;
+  if (refusal)
+    return (
+      <SearchRefusalNotice refusal={refusal} profanityMatches={feedSearch?.profanityMatches} />
+    );
 
   return (
     <>

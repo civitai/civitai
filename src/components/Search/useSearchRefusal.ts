@@ -13,7 +13,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
  */
 export function useSearchRefusal(
   text: string | undefined,
-  index: string
+  index?: string
 ): { refusal?: SearchRefusal; profanityMatches: string[] } {
   const benignPhrases = useBenignPhrases();
   const browsingSettingsAddons = useBrowsingSettingsAddons();

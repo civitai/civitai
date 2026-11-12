@@ -442,7 +442,10 @@ const featureFlags = createFeatureFlags({
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
   // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
-  // Images first; needs `imageSearch` too. Dark: Flipt is its only switch, and off is the rollback.
+  // Images first. The switch between the old and the new search on its own (it opens the semantic
+  // search procedure without `imageSearch`), so a Flipt rollout moves people over; off is the old UI.
+  // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
+  // rollout splits signed-in users only.
   feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.

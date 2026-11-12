@@ -31,11 +31,8 @@ import { constants } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
 import type { UiState } from 'instantsearch.js';
-import { includesInappropriate } from '~/utils/metadata/audit';
-import { useDomainColor } from '~/hooks/useDomainColor';
-import { useCheckProfanity } from '~/hooks/useCheckProfanity';
-import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
+import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 import classes from './SearchLayout.module.scss';
 import clsx from 'clsx';
 
@@ -116,8 +113,7 @@ export function SearchLayout({
   const ctx = useMemo(() => ({ sidebarOpen, setSidebarOpen }), [sidebarOpen]);
 
   const router = useRouter();
-  const { trackSearch, trackAction } = useTrackEvent();
-  const domainColor = useDomainColor();
+  const { trackSearch } = useTrackEvent();
 
   // State to track the current InstantSearch query
   const [instantSearchQuery, setInstantSearchQuery] = useState('');
@@ -146,63 +142,9 @@ export function SearchLayout({
     setInstantSearchQuery(query);
   }, []);
 
-  const benignPhrases = useBenignPhrases();
-
-  const isIllegalSearch = useMemo(() => {
-    if (!searchQuery) return false;
-
-    // Detection reads the whitelisted copy; the query sent to Meili stays the raw text.
-    const illegalSearch = includesInappropriate({ prompt: benignPhrases.strip(searchQuery) });
-    return illegalSearch === 'minor';
-  }, [searchQuery, benignPhrases]);
-
-  // Track illegal search separately to avoid side effects in useMemo
-  useEffect(() => {
-    if (!searchQuery || !isIllegalSearch) return;
-    // Hold the event until the benign lists arrive. Before then `strip` is the identity
-    // function, so a moderator-whitelisted query still reads as illegal here — and firing a
-    // CSAM tracking event for it is exactly the false positive this work exists to remove.
-    // The gate itself still applies while loading; only the side effect waits.
-    if (!benignPhrases.settled) return;
-
-    const { sortBy: index } = parsedQuery || {};
-    trackAction({
-      type: 'CSAM_Help_Triggered',
-      details: {
-        query: searchQuery,
-        index,
-      },
-    }).catch(() => undefined);
-  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy, benignPhrases.settled]);
-
-  // Check profanity in search query
-  const profanityAnalysis = useCheckProfanity(searchQuery, {
-    enabled: domainColor === 'green' && !isIllegalSearch && !!searchQuery,
-  });
-
-  // Track profanity search separately to avoid side effects in useMemo
-  useEffect(() => {
-    if (!searchQuery || !profanityAnalysis.hasProfanity || domainColor !== 'green') return;
-
-    const { sortBy: index } = parsedQuery || {};
-
-    trackAction({
-      type: 'ProfanitySearch',
-      details: {
-        query: searchQuery,
-        index,
-        matches: profanityAnalysis.matches,
-      },
-    }).catch(() => undefined);
-  }, [
-    searchQuery,
-    domainColor,
-    profanityAnalysis.hasProfanity,
-    profanityAnalysis.matches.length,
-    parsedQuery?.sortBy,
-  ]);
-
-  const isProfaneSearch = profanityAnalysis.hasProfanity;
+  // The search pages refuse only these two, as they always have; the feed refuses more.
+  const { refusal, profanityMatches } = useSearchRefusal(searchQuery, parsedQuery?.sortBy);
+  const shownRefusal = refusal === 'illegal' || refusal === 'profanity' ? refusal : undefined;
   const isSearchUnavailable = useSearchAvailabilityStore((state) => state.unavailable);
 
   return (
@@ -223,13 +165,10 @@ export function SearchLayout({
           scrollable={isMobile ? !sidebarOpen : true}
           left={leftSidebar}
         >
-          {isIllegalSearch || isProfaneSearch ? (
+          {shownRefusal ? (
             <SearchLayout.Root>
               <SearchLayout.Content>
-                <SearchRefusalNotice
-                  refusal={isIllegalSearch ? 'illegal' : 'profanity'}
-                  profanityMatches={profanityAnalysis.matches}
-                />
+                <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />
               </SearchLayout.Content>
             </SearchLayout.Root>
           ) : (
