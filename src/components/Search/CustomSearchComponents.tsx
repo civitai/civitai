@@ -342,6 +342,13 @@ export const CustomSearchBox = forwardRef<
     if (text !== query && canSearch) refine(text);
   };
 
+  // On mobile the box sits in the header's search overlay, and the blur is what closes it (and, with
+  // `submitOnly`, what searches), so Enter there leaves through the blur.
+  const submitSearch = () => {
+    if (isMobile) blurInput();
+    if (!isMobile || !submitOnly) refineSearch(search);
+  };
+
   useEffect(() => {
     if (!submitOnly) refineSearch(debouncedSearch);
   }, [debouncedSearch]);
@@ -368,11 +375,10 @@ export const CustomSearchBox = forwardRef<
         if (submitOnly) refineSearch(search);
         onSearchDone?.(e);
       }}
-      onSubmit={onSearchDone}
       ref={inputRef}
       onKeyDown={getHotkeyHandler([
         ['esc', blurInput],
-        ['Enter', () => refineSearch(search)],
+        ['Enter', submitSearch],
       ])}
       rightSection={
         !isMobile && (

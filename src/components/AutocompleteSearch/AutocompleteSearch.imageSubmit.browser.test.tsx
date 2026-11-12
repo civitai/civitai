@@ -7,15 +7,35 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 const state = vi.hoisted(() => ({
   semanticSearches: [] as unknown[],
+  meiliQueries: [] as string[],
+  pathname: '/images',
 }));
 
 vi.mock('next/navigation', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  return { ...actual, usePathname: () => '/images' };
+  return { ...actual, usePathname: () => state.pathname };
 });
 // The module builds a Meili client at IMPORT time; faked so it can never send.
 vi.mock('@meilisearch/instant-meilisearch', () => ({
-  instantMeiliSearch: () => ({ search: async () => ({ results: [] }) }),
+  instantMeiliSearch: () => ({
+    search: async (requests: readonly { params?: { query?: string } }[]) => {
+      for (const request of requests)
+        if (request.params?.query) state.meiliQueries.push(request.params.query);
+      return {
+        results: requests.map((request) => ({
+          hits: [],
+          nbHits: 0,
+          page: 0,
+          nbPages: 0,
+          hitsPerPage: 20,
+          processingTimeMS: 0,
+          query: request.params?.query ?? '',
+          params: '',
+          exhaustiveNbHits: true,
+        })),
+      };
+    },
+  }),
 }));
 // The semantic image search is the paid call this file guards.
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -78,6 +98,8 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 beforeEach(() => {
   state.semanticSearches = [];
+  state.meiliQueries = [];
+  state.pathname = '/images';
   push.mockClear();
 });
 
@@ -139,4 +161,25 @@ describe('AutocompleteSearch on the Images target', () => {
     await userEvent.keyboard('{Enter}');
     await expect.poll(() => state.semanticSearches.length).toBeGreaterThan(0);
   });
+});
+
+// The control for the header: off the Images target the dropdown still queries as the user types,
+// so `submitOnly` is scoped to images rather than switched on for every target.
+test('AutocompleteSearch on the Models target queries as the user types', async () => {
+  state.pathname = '/models';
+  renderWithProviders(
+    <ContainerProvider containerName="main">
+      <div style={{ width: 640, padding: 16 }}>
+        <AutocompleteSearch />
+      </div>
+    </ContainerProvider>
+  );
+  await expect
+    .element(page.getByRole('textbox', { name: 'Search category' }))
+    .toHaveValue('Models');
+
+  const input = page.getByPlaceholder('Search Civitai');
+  await userEvent.click(input);
+  await userEvent.type(input, 'rainy neon street');
+  await expect.poll(() => state.meiliQueries).toContain('rainy neon street');
 });

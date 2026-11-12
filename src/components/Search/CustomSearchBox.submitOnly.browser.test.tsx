@@ -25,11 +25,17 @@ const { CustomSearchBox } = await import('~/components/Search/CustomSearchCompon
 // Longer than the box's 300 ms debounce, so a per-keystroke search would have gone out by then.
 const PAST_DEBOUNCE_MS = 700;
 
-/** Records every non-empty query the box sends: each one is a paid search for the images index. */
+/**
+ * Records every non-empty query the box sends: each one is a paid search for the images index.
+ * `requests` counts the client calls, which tells two refines InstantSearch merged into one call
+ * apart from two calls.
+ */
 function createRecordingClient() {
   const queries: string[] = [];
+  const counts = { requests: 0 };
   const searchClient = {
     search(requests: readonly { params?: { query?: string } }[]) {
+      if (requests.some((request) => request.params?.query)) counts.requests++;
       for (const request of requests) if (request.params?.query) queries.push(request.params.query);
       return Promise.resolve({
         results: requests.map((request) => ({
@@ -46,14 +52,14 @@ function createRecordingClient() {
       });
     },
   } as unknown as InstantSearchProps['searchClient'];
-  return { searchClient, queries };
+  return { searchClient, queries, counts };
 }
 
-function renderBox(submitOnly: boolean) {
+function renderBox(submitOnly: boolean, onSearchDone?: () => void, isMobile = true) {
   const client = createRecordingClient();
   renderWithProviders(
     <InstantSearch searchClient={client.searchClient} indexName="images_v6">
-      <CustomSearchBox isMobile submitOnly={submitOnly} />
+      <CustomSearchBox isMobile={isMobile} submitOnly={submitOnly} onSearchDone={onSearchDone} />
     </InstantSearch>
   );
   return client;
@@ -79,6 +85,33 @@ describe('CustomSearchBox submitOnly', () => {
 
     await userEvent.keyboard('{Enter}');
     await expect.poll(() => client.queries).toEqual(['rainy neon street']);
+  });
+
+  // `onSearchDone` is what closes the mobile header overlay, so Enter has to reach it — once, and
+  // without the blur it goes through sending the search a second time.
+  test('Enter on mobile closes the overlay after one search', async () => {
+    const onSearchDone = vi.fn();
+    const client = renderBox(true, onSearchDone);
+    await typeQuery('rainy neon street');
+
+    await userEvent.keyboard('{Enter}');
+    await expect.poll(() => onSearchDone).toHaveBeenCalledTimes(1);
+    await pause(PAST_DEBOUNCE_MS);
+    expect(onSearchDone).toHaveBeenCalledTimes(1);
+    expect(client.queries).toEqual(['rainy neon street']);
+    expect(client.counts.requests).toBe(1);
+  });
+
+  // Desktop Enter keeps focus, so no blur searches for it: Enter has to search on its own.
+  test('Enter on desktop sends one search and keeps the box focused', async () => {
+    const client = renderBox(true, undefined, false);
+    await typeQuery('rainy neon street');
+
+    await userEvent.keyboard('{Enter}');
+    await expect.poll(() => client.queries).toEqual(['rainy neon street']);
+    await pause(PAST_DEBOUNCE_MS);
+    expect(client.counts.requests).toBe(1);
+    await expect.element(page.getByPlaceholder('Search...')).toHaveFocus();
   });
 
   test('searches once on blur with a changed query', async () => {

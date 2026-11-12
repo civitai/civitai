@@ -28,7 +28,10 @@ import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsear
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
-import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
+import {
+  isImageSearchIndex,
+  withSemanticImageSearch,
+} from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
@@ -302,7 +305,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [debouncedSearch] = useDebouncedValue(search, 300);
   // Each image search is an embedding plus a Qdrant query: the dropdown never runs one as the user
   // types. Enter (or the search row) opens the search page, which runs it once.
-  const submitOnly = indexNameProp === 'images';
+  const submitOnly = isImageSearchIndex(searchIndexMap[indexNameProp]);
 
   const { trackSearch, trackAction } = useTrackEvent();
   // The resilient search client swallows Meili comm errors (so they never reach
