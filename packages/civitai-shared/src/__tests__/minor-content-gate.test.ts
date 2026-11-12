@@ -9,11 +9,11 @@ import {
 
 const { PG, PG13, R, X, XXX, Blocked } = NsfwLevel;
 
-// The rule as it stood before the gates shared it. Every row is a value a caller relied on.
+// The rule's values. An unrated (0) rating is restricted for minor content, like a missing one.
 const LEVELS: [string, number | null | undefined, boolean][] = [
   ['unknown (null)', null, true],
   ['unknown (undefined)', undefined, true],
-  ['unrated', 0, false],
+  ['unrated', 0, true],
   ['PG', PG, false],
   ['PG-13', PG13, false],
   ['PG and PG-13', PG | PG13, false],

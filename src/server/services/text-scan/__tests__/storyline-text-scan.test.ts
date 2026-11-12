@@ -373,12 +373,12 @@ describe('applyStorylineTextScan', () => {
   });
 });
 
-// RESTRICT site of the minor content rule. Expected values are the rule as it stood before the
-// gates shared it.
+// RESTRICT site of the minor content rule: a minor at a missing, unrated or mature title rating
+// takes the storyline down.
 describe('applyStorylineTextScan minor content truth table', () => {
   it.each([
     [true, undefined, true],
-    [true, 0, false],
+    [true, 0, true],
     [false, 0, false],
     [true, NsfwLevel.PG, false],
     [true, NsfwLevel.PG13, false],

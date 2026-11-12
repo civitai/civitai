@@ -1549,6 +1549,7 @@ describe('flagged model gallery level', () => {
 
   it.each([
     [{ minor: true, sfwOnly: false }, undefined, SFW],
+    [{ minor: true, sfwOnly: false }, 0, SFW],
     [{ minor: true, sfwOnly: false }, 1, 1],
     [{ minor: true, sfwOnly: false }, 31, SFW],
     [{ minor: true, sfwOnly: false }, 28, SFW],

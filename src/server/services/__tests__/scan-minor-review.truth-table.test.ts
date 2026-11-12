@@ -69,6 +69,7 @@ async function minorReview() {
 
 const { PG, PG13, R, X, XXX } = NsfwLevel;
 const RATINGS: [number, boolean][] = [
+  // An unrated scan keeps its earlier routing: the rule's unrated arm does not reach this queue yet.
   [0, false],
   [PG, false],
   [PG13, false],
