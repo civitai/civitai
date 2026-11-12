@@ -518,7 +518,7 @@ export async function runEventPointsReferee(
   const rows = await queryReferee(event, window, deadline);
   // Before the snapshot: if an award source can't be read, the settle stops here and the last good
   // base stands, rather than publishing totals that are missing awards.
-  await freezeEventAwards(event);
+  await freezeEventAwards(event, now);
   // A preview's cut never passes the start, so no award reaches its base.
   const awards = await loadTeamAwards(event, window.cut);
   await writeDailySnapshot(event, window, rows);

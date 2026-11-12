@@ -3400,6 +3400,29 @@ export interface EventAwardResult {
   voidedAt: Date | null;
 }
 
+export interface FlagDay {
+  id: number;
+  event: string;
+  crucibleId: number;
+  startsAt: Date;
+  cutAt: Date;
+  closesAt: Date;
+  imageIds: number[];
+  createdAt: Date;
+}
+
+export interface EventTurfFlagSticker {
+  id: bigint;
+  event: string;
+  flagDayId: number;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  count: number;
+  createdAt: Date;
+}
+
 export interface CreatorMilestone {
   key: string;
   track: string;

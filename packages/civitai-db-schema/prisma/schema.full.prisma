@@ -5739,6 +5739,41 @@ model EventAwardResult {
   @@unique([event, sourceId])
 }
 
+/// One day of the Flag Race: the flags a finished Crucible's accepted top places became, and when
+/// they stop taking hats. Written once by the swap; `imageIds` is in rank order.
+model FlagDay {
+  id         Int      @id @default(autoincrement())
+  event      String
+  crucibleId Int
+  startsAt   DateTime @db.Timestamptz(3)
+  /// Random within the day's last hour, so nobody can time a last-second pile-on. Never sent to a
+  /// client before it passes.
+  cutAt      DateTime @db.Timestamptz(3)
+  /// The end of the hour the cut falls in: public, unlike the cut.
+  closesAt   DateTime @db.Timestamptz(3)
+  imageIds   Int[]
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([event, crucibleId])
+  @@index([event, startsAt])
+}
+
+/// Hats spent on a flag. Not an EventTurfSticker: flags stack without limit and never count toward
+/// normal Turf. `count` is how many hats one placement spent.
+model EventTurfFlagSticker {
+  id         BigInt   @id @default(autoincrement())
+  event      String
+  flagDayId  Int
+  imageId    Int
+  userId     Int
+  team       String
+  cosmeticId Int
+  count      Int
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([flagDayId, imageId, team, userId, createdAt])
+}
+
 /// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
 model CreatorMilestone {
   key          String                 @id
