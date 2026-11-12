@@ -24,11 +24,32 @@ const RULE_MODULES = [
   'src/server/utils/minor-content-gate.sql.ts',
 ];
 
-/** Permissive sites, by file:line. */
+/**
+ * Permissive sites, by file, the exact compare they keep, and how many times it appears there. Keyed
+ * by text rather than line, so an unrelated edit above one does not fail the guard.
+ */
+const ACCEPT_CASE = 'CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END';
 const PERMIT_SITES = [
-  'src/server/services/image.service.ts:1323',
-  'apps/moderator/src/lib/server/image-moderation.service.ts:134',
+  { file: 'src/server/services/image.service.ts', snippet: ACCEPT_CASE, count: 1 },
+  {
+    file: 'apps/moderator/src/lib/server/image-moderation.service.ts',
+    snippet: ACCEPT_CASE,
+    count: 1,
+  },
 ];
+
+/**
+ * The flagged compares in one file, less the permissive sites listed for it. Only the listed compare
+ * itself is exempt: it is cut out of the text first, so anything else on its line is still checked.
+ */
+function unlistedCompares(file: string, text: string, permits = PERMIT_SITES) {
+  const kept = permits
+    .filter((p) => p.file === file)
+    .reduce((t, p) => t.split(p.snippet).join(''), text);
+  return handWrittenMinorRatingCompares(file, kept);
+}
+
+const occurrences = (text: string, snippet: string) => text.split(snippet).length - 1;
 
 const ROOTS = ['src', 'apps/moderator/src', 'apps/event-engine/src', 'packages'];
 
@@ -88,24 +109,48 @@ const files = ROOTS.flatMap((root) => walk(path.join(repoRoot, root))).map((full
 describe('the minor content rule has one definition', () => {
   it('scans the trees the gates live in', () => {
     const scanned = new Set(files.map((f) => f.rel));
-    for (const file of [...RULE_MODULES, ...PERMIT_SITES.map((s) => s.split(':')[0])])
+    for (const file of [...RULE_MODULES, ...PERMIT_SITES.map((s) => s.file)])
       expect(scanned.has(file), `${file} is not scanned`).toBe(true);
   });
 
   it('no gate compares a minor rating by hand outside the rule', () => {
     const found = files
       .filter((f) => !RULE_MODULES.includes(f.rel))
-      .flatMap((f) => handWrittenMinorRatingCompares(f.rel, f.text))
-      .filter((site) => !PERMIT_SITES.includes(site));
+      .flatMap((f) => unlistedCompares(f.rel, f.text));
     expect(found, 'call isMinorContentRestricted / minorContentRestrictedSql instead').toEqual([]);
   });
 
-  it('each permissive site is still where the list says', () => {
-    for (const site of PERMIT_SITES) {
-      const [file] = site.split(':');
+  it('each permissive site is still in its file, exactly as many times as listed', () => {
+    for (const { file, snippet, count } of PERMIT_SITES) {
       const text = files.find((f) => f.rel === file)!.text;
-      expect(handWrittenMinorRatingCompares(file, text), `${site} moved`).toContain(site);
+      expect(occurrences(text, snippet), `${file}: ${snippet}`).toBe(count);
     }
+  });
+
+  const permitted = [`const accept = sql\`"minor" = ${ACCEPT_CASE}\`;`, 'const other = 1;'].join(
+    '\n'
+  );
+  const permits = [{ file: 'x.ts', snippet: ACCEPT_CASE, count: 1 }];
+
+  it('a permissive site that moves down a line still passes', () => {
+    expect(handWrittenMinorRatingCompares('x.ts', permitted)).toEqual(['x.ts:1']);
+    expect(unlistedCompares('x.ts', permitted, permits)).toEqual([]);
+    expect(unlistedCompares('x.ts', `// a new line above\n${permitted}`, permits)).toEqual([]);
+  });
+
+  it('a hand compare on the same line as a permissive site still fails', () => {
+    const sameLine = `const accept = sql\`"minor" = ${ACCEPT_CASE}\` && level >= NsfwLevel.R;`;
+    expect(unlistedCompares('x.ts', sameLine, permits)).toEqual(['x.ts:1']);
+  });
+
+  it('counts a second copy of a permissive compare', () => {
+    expect(occurrences(permitted, ACCEPT_CASE)).toBe(1);
+    expect(occurrences(`${permitted}\n${permitted}`, ACCEPT_CASE)).toBe(2);
+  });
+
+  it('a hand compare planted beside a permissive site still fails', () => {
+    const planted = `${permitted}\nconst hide = minor && level >= NsfwLevel.R;`;
+    expect(unlistedCompares('x.ts', planted, permits)).toEqual(['x.ts:3']);
   });
 
   it.each([
