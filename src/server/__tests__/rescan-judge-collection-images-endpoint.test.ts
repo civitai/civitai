@@ -6,7 +6,8 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
  * The rescan endpoint's real SQL against an in-process Postgres: it touches only images posted to
- * a judge-rated collection that never went through the scan, and writes only the scan queue.
+ * a judge-rated collection that are Scanned without scanJobs or PendingManualAssignment, and writes
+ * only the scan queue.
  * Ids are invented.
  */
 
@@ -30,7 +31,7 @@ const PLAIN_COLLECTION = 2;
 const JUDGE_POST = 10;
 const PLAIN_POST = 20;
 
-// In scope: 101 never scanned, 102 pending manual assignment.
+// In scope: 101 Scanned without scanJobs, 102 pending manual assignment.
 // Out of scope: 103 scanned normally, 104 blocked, 105 pending scan, 106/107 in a plain collection.
 const IN_SCOPE = [101, 102];
 
@@ -139,7 +140,7 @@ describe('rescan-judge-collection-images', () => {
     expect(statusCode).toBe(200);
     expect(body).toEqual({
       dryRun: true,
-      cohorts: { neverScanned: 1, pendingManual: 1 },
+      cohorts: { scannedNoJobs: 1, pendingManual: 1 },
       controls: { inScope: 'included', outOfScope: 'excluded' },
     });
     expect(await snapshot()).toEqual(before);
