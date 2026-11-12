@@ -63,6 +63,7 @@ const cleanCover = {
   blockedFor: null,
   poi: false,
   minor: false,
+  acceptableMinor: false,
 };
 
 /** What Prisma returns for `select`: only the selected keys, so an unselected field reads undefined. */
@@ -491,6 +492,7 @@ describe.each(['list', 'detail'] as const)('public collection cover (%s)', (endp
     ['blockedFor empty string', { blockedFor: '' }],
     ['poi', { poi: true }],
     ['minor', { minor: true }],
+    ['acceptableMinor', { acceptableMinor: true }],
     ['rated above the browsing level', { nsfwLevel: NsfwLevel.R }],
     ['rated Blocked', { nsfwLevel: NsfwLevel.Blocked }],
     ['rated with Blocked among its levels', { nsfwLevel: NsfwLevel.PG | NsfwLevel.Blocked }],

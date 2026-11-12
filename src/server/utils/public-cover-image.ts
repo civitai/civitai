@@ -18,14 +18,14 @@ export const publicCoverImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   blockedFor: true,
   poi: true,
   minor: true,
+  acceptableMinor: true,
 });
 
 export type PublicCoverImage = Prisma.ImageGetPayload<{ select: typeof publicCoverImageSelect }>;
 
 /**
- * Whether a collection cover may be shown on the public API at `browsingLevel`: the same visibility
- * rules as the public image endpoints. Each check must positively pass, so a field the query did not
- * select hides the cover rather than showing it.
+ * Whether a collection cover may be shown on the public API at `browsingLevel`. Each check must
+ * positively pass, so a field the query did not select hides the cover rather than showing it.
  */
 export function isPublicCoverImage(
   image: PublicCoverImage | null | undefined,
@@ -36,11 +36,11 @@ export function isPublicCoverImage(
     image.ingestion === ImageIngestionStatus.Scanned &&
     image.scannedAt != null &&
     image.tosViolation === false &&
-    image.needsReview == null &&
-    image.blockedFor == null &&
+    image.needsReview === null &&
+    image.blockedFor === null &&
     image.poi === false &&
     image.minor === false &&
-    typeof image.nsfwLevel === 'number' &&
+    image.acceptableMinor === false &&
     image.nsfwLevel > 0 &&
     Flags.hasFlag(browsingLevel, image.nsfwLevel) &&
     (image.type === MediaType.image || image.type === MediaType.video)

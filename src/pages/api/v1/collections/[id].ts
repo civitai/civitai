@@ -84,8 +84,7 @@ export default MixedAuthEndpoint(async function handler(
     // maps it to the same 404.
     const collection = await getCollectionById({ input: { id } });
 
-    // getCollectionById returns only a cover that passes the servable-cover check, without the
-    // fields the public check needs, so read those for that cover.
+    // getCollectionById's cover select lacks fields the public check reads.
     const cover = collection.image
       ? await dbRead.image.findUnique({
           where: { id: collection.image.id },
