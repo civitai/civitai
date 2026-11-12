@@ -25,6 +25,7 @@ const h = vi.hoisted(() => {
       vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
     includesPoi: vi.fn<(prompt?: string) => string | false>(),
     includesMinor: vi.fn<(prompt?: string) => boolean>(),
+    isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
   };
 });
 
@@ -62,6 +63,10 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isFlipt: h.isFlipt,
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => {
   const actual = await importOriginal<typeof ImageService>();
@@ -101,6 +106,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 }));
 
 import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
+import { anchorBrowsingLevel } from '~/server/services/semantic-query-guard';
 import type { CandidateSource } from '~/server/services/semantic-search-client';
 
 const VIEWER = { id: 500, isModerator: false } as SessionUser;
@@ -139,6 +145,7 @@ beforeEach(() => {
   h.includesInappropriate.mockReset().mockReturnValue(false);
   h.includesPoi.mockReset().mockReturnValue(false);
   h.includesMinor.mockReset().mockReturnValue(false);
+  h.isFlipt.mockReset().mockResolvedValue(false);
 });
 
 describe('a stale index cannot surface a hidden image', () => {
@@ -421,6 +428,58 @@ describe('filters', () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({ input: textQuery({ browsingLevel: 0 }), candidateSource: source });
     expect(calls[0].filter.gate.nsfwLevels.length).toBeGreaterThan(0);
+  });
+});
+
+describe('"more like this" never rates above its anchor', () => {
+  const PG13 = 2;
+  const R = 4;
+  const X = 8;
+  const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
+
+  it.each([
+    ['a PG anchor, for a viewer at every level', ALL_LEVELS, PG, PG],
+    ['an R anchor, for a viewer at every level', ALL_LEVELS, R, PG | PG13 | R],
+    ['an X anchor, for a viewer at PG and PG13', PG | PG13, X, PG | PG13],
+    ['an anchor with no level, for a viewer at every level', ALL_LEVELS, undefined, PG | PG13],
+    ['an anchor at level 0, for a viewer at every level', ALL_LEVELS, 0, PG | PG13],
+    ['an anchor with no level, for an X-only viewer', X, undefined, PG],
+  ])('caps %s', (_name, viewer, anchor, expected) => {
+    expect(anchorBrowsingLevel(viewer, anchor)).toBe(expected);
+  });
+
+  const run = (anchorLevel: number | undefined, user: SessionUser) => {
+    const { source, calls } = rankedSource([101]);
+    const seen: unknown[] = [];
+    h.fakeGetAllImages = async (args) => {
+      seen.push((args as { browsingLevel?: number }).browsingLevel);
+      return {
+        items: args.ids.map((id) => ({ id, nsfwLevel: id === ANCHOR ? anchorLevel : PG })),
+        nextCursor: undefined,
+      };
+    };
+    return searchSemanticImages({
+      input: input({ imageId: ANCHOR, browsingLevel: ALL_LEVELS }),
+      user,
+      candidateSource: source,
+    }).then(() => ({ gate: calls[0].filter.gate.nsfwLevels, hydrated: seen.slice(1) }));
+  };
+
+  it('narrows a PG13 viewer to PG from a PG anchor, in the index filter and in hydration', async () => {
+    const { gate, hydrated } = await run(PG, VIEWER);
+    expect(gate).toEqual([PG]);
+    expect(hydrated).toEqual([PG]);
+  });
+
+  it('leaves a moderator at every level', async () => {
+    const { gate } = await run(PG, { id: 501, isModerator: true } as SessionUser);
+    expect(gate).toEqual([1, 2, 4, 8, 16]);
+  });
+
+  it('lifts the cap when the kill switch is on', async () => {
+    h.isFlipt.mockResolvedValue(true);
+    const { gate } = await run(PG, VIEWER);
+    expect(gate).toEqual([PG, PG13]);
   });
 });
 

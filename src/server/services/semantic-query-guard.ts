@@ -20,6 +20,19 @@ export function resolveSemanticBrowsingLevel(requested: number | undefined, user
   return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
 }
 
+/**
+ * "More like this" never rates above its anchor: the viewer's levels at or below the anchor's.
+ * An anchor with no usable level falls back to the safe levels, never the viewer's full range.
+ */
+export function anchorBrowsingLevel(viewerLevel: number, anchorNsfwLevel: number | undefined) {
+  const atOrBelow = anchorNsfwLevel
+    ? Flags.arrayToInstance(Flags.instanceToArray(viewerLevel).filter((l) => l <= anchorNsfwLevel))
+    : 0;
+  return (
+    atOrBelow || Flags.intersection(viewerLevel, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag
+  );
+}
+
 /** The search gates' query audit, run on the server; any failure refuses. */
 export async function semanticQueryRefusal(
   query: string,
