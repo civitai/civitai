@@ -677,7 +677,15 @@ describe('getTrainingReviewQueue', () => {
     expect(queue.workflowFilterUnavailable).toBe(true);
   });
 
-  it('says the newest were not checked when there are more Paused versions than one build reads', async () => {
+  it('lists a run it cannot make sense of as unchecked, not as answered', async () => {
+    db([version(1)], [file(11, 1, W1)]);
+    route = () => json({ ...workflow({ id: W1 }), steps: [] });
+    const queue = await getTrainingReviewQueue();
+    expect(queue.items.map((i) => [i.id, i.checked])).toEqual([[1, false]]);
+    expect(queue.workflowFilterUnavailable).toBe(true);
+  });
+
+  it('says the oldest were not checked when there are more Paused versions than one build reads', async () => {
     db(
       Array.from({ length: MAX_PAUSED_VERSIONS + 1 }, (_, n) => version(n + 1)),
       []
@@ -710,6 +718,43 @@ describe('getTrainingReviewQueue', () => {
       route = () => {
         throw new TypeError('fetch failed');
       };
+      expect(await countTrainingDataReview()).toBeNull();
+    });
+
+    it.each([
+      [
+        'the version list is truncated',
+        () => {
+          // No training files: every row drops as gone, so only truncation is partial.
+          db(
+            Array.from({ length: MAX_PAUSED_VERSIONS + 1 }, (_, n) => version(n + 1)),
+            []
+          );
+          gates([]);
+          route = () => new Response(null, { status: 599 });
+        },
+      ],
+      [
+        'a gate could not be checked',
+        () => {
+          gates([GATE]);
+          route = () => new Response(null, { status: 599 });
+        },
+      ],
+      [
+        'the gate candidates are truncated',
+        () => {
+          gates(
+            Array.from(
+              { length: MAX_PENDING_CANDIDATES + 1 },
+              (_, n) => `${n + 1}-20261005123456789`
+            )
+          );
+          route = () => new Response(null, { status: 404 });
+        },
+      ],
+    ])('is unknown when %s', async (_, arrange) => {
+      arrange();
       expect(await countTrainingDataReview()).toBeNull();
     });
 

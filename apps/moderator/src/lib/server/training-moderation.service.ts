@@ -375,7 +375,7 @@ export type TrainingReviewQueue = {
   items: TrainingReviewRow[];
   /** At least one row could not be checked; those are listed unchecked. */
   workflowFilterUnavailable: boolean;
-  /** More Paused versions than one build reads; the newest were not checked. */
+  /** More Paused versions than one build reads; the oldest were not checked. */
   truncated: boolean;
 };
 
@@ -410,7 +410,9 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
     .select(['mv.id', 'mv.name', 'mv.createdAt', 'm.id as modelId', 'm.name as modelName'])
     .where('mv.trainingStatus', '=', 'Paused')
-    .orderBy('mv.id', 'asc')
+    // Newest kept when over the cap: rows whose workflow is gone stay Paused forever and pile up at
+    // the old end, where they would crowd out every live gate.
+    .orderBy('mv.id', 'desc')
     .limit(MAX_PAUSED_VERSIONS + 1)
     .execute();
   const truncated = fetched.length > MAX_PAUSED_VERSIONS;
@@ -458,7 +460,7 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
           // HTTP failures arrive in `error`, not as a throw; only a 404/410 means the run is gone.
           if (error || !data) return isGoneStatus(response?.status ?? 0) ? 'gone' : undefined;
           const read = readTrainingWorkflow(row.workflowId, data);
-          return { underReview: read.ok && read.reading.underReview };
+          return read.ok ? { underReview: read.reading.underReview } : undefined;
         },
         {
           concurrency: PENDING_READ_CONCURRENCY,
@@ -657,6 +659,9 @@ export async function moderateTrainingData(input: {
   });
 
   const synced = await notifyTrainingWebhook(input.modelVersionId, workflowId, workflow.status);
+  // Again: a build during the webhook still saw the version Paused and under review.
+  invalidatePendingWorkflowGates();
+  invalidateTrainingReviewQueue();
   if (!synced) {
     logToAxiom({
       name: 'training-data-moderation',
@@ -1176,6 +1181,8 @@ export async function moderateTrainingWorkflow(
     after = reread?.ok ? reread.reading.moderationStatus : undefined;
     if (after !== undefined && after !== UNDER_REVIEW) break;
   }
+  // Again: a build during the re-reads still saw the run under review, and would hold it.
+  invalidatePendingWorkflowGates();
 
   const log = {
     name: 'training-workflow-moderation',

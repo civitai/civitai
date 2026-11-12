@@ -8,14 +8,18 @@
 
   let { data }: { data: PageData } = $props();
 
-  const underReview = $derived(data.items.filter((item: TrainingReviewRow) => item.underReview).length);
+  const underReview = $derived(
+    data.items.filter((item: TrainingReviewRow) => item.underReview).length
+  );
+  const partial = $derived(data.workflowFilterUnavailable || data.truncated);
 </script>
 
 <header class="page-header">
   <h1>Training Data Review</h1>
   <p>Training runs the orchestrator paused for a moderator to approve or deny the dataset.</p>
   <p class="text-sm text-dark-2">
-    {underReview.toLocaleString()} model {underReview === 1 ? 'version' : 'versions'} under review.
+    {partial ? 'At least ' : ''}{underReview.toLocaleString()} model
+    {underReview === 1 ? 'version' : 'versions'} under review.
     Under review first, then the other paused versions; oldest first within each.
   </p>
 </header>
@@ -28,12 +32,16 @@
 {/if}
 {#if data.truncated}
   <p class="mb-4 text-sm text-amber-200">
-    More paused versions than one load checks — the newest were not checked.
+    More paused versions than one load checks — the oldest were not checked.
   </p>
 {/if}
 
 {#if data.items.length === 0}
-  <p class="text-sm text-dark-2">Nothing waiting for review.</p>
+  <p class="text-sm text-dark-2">
+    {data.truncated
+      ? 'Nothing live among the paused versions checked — the oldest were not checked.'
+      : 'Nothing waiting for review.'}
+  </p>
 {:else}
   <ul class="flex flex-col gap-3">
     {#each data.items as item (item.id)}
