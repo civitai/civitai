@@ -480,12 +480,17 @@ export function registerOtelShutdown(
     for (const r of results) if (r.status === 'rejected') onError(r.reason);
   };
 
+  let signalFlush: Promise<void> | undefined;
+
   const run = async (reason: string): Promise<void> => {
     log(`[otel] shutting down telemetry on ${reason}`);
+    // Wait for the signal's flush FIRST. It took the batch out of the processor's buffer,
+    // and a shutdown started while that export is in flight finds the buffer empty and
+    // can resolve before the export does. (settleAll never rejects.)
+    if (signalFlush) await signalFlush;
     await settleAll(targets.map((t) => () => t.shutdown()));
   };
 
-  let signalFlush: Promise<void> | undefined;
   const flushOnSignal = (signal: string): Promise<void> =>
     (signalFlush ??= (async () => {
       log(`[otel] flushing telemetry on ${signal}`);
