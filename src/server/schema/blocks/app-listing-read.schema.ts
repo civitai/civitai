@@ -78,8 +78,25 @@ export const listAppListingsSchema = z.object({
    * `app-store-sub-listings` flag. Only the `/apps` store grid asks.
    */
   includeSubListings: z.boolean().optional(),
+  /**
+   * Only this developer's listings: the listing page's "More by this developer" rail and the
+   * profile Apps tab. It narrows the store predicate (`storeEligibilityWhere`), so a listing
+   * is returned exactly when this viewer could find it in the store anyway.
+   */
+  userId: z.number().int().positive().optional(),
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
+
+/** `appListings.getDeveloperTrackRecord` — whose record. */
+export const getDeveloperTrackRecordSchema = z.object({
+  userId: z.number().int().positive(),
+});
+
+/**
+ * A developer's store track record: how many of their listings this viewer could find in the
+ * store, and the counted reviews (recommend + not recommend) on those listings.
+ */
+export type DeveloperTrackRecord = { appCount: number; reviewCount: number };
 
 /**
  * REST-query variant of {@link listAppListingsSchema} for the public
