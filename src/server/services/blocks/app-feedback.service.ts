@@ -9,7 +9,9 @@ import {
 } from '~/server/notifications/app-feedback.notifications';
 import { APP_LISTING_OWNER_SQL } from '~/server/notifications/comment.notifications';
 import type {
+  AppFeedbackEnvironment,
   AppFeedbackOwnerStatusFilter,
+  AppFeedbackRecentError,
   AppFeedbackSurface,
   AppFeedbackTarget,
   CreateAppFeedbackInput,
@@ -20,7 +22,12 @@ import type {
   ModSetAppFeedbackHiddenInput,
   SetAppFeedbackOwnerStatusInput,
 } from '~/server/schema/app-feedback.schema';
-import { APP_FEEDBACK_SURFACES } from '~/server/schema/app-feedback.schema';
+import {
+  APP_FEEDBACK_RECENT_ERRORS_MAX,
+  APP_FEEDBACK_SURFACES,
+  appFeedbackEnvironmentSchema,
+  appFeedbackRecentErrorSchema,
+} from '~/server/schema/app-feedback.schema';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
@@ -30,6 +37,9 @@ import {
   resolveListingAccess,
 } from '~/server/services/blocks/app-access.service';
 import { notifyAppFeedbackReporter } from '~/server/services/blocks/app-feedback-notify';
+import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 import {
   OWNER_NEW_FEEDBACK_SQL,
   OWNER_VISIBLE_FEEDBACK_SQL,
@@ -71,6 +81,8 @@ export type ResolvedAppFeedbackTarget = {
   appName: string;
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  /** The running AppBlock's row id; `null` for an off-site app. */
+  appBlockId: string | null;
 };
 
 export type AppFeedbackTargetResolution =
@@ -115,7 +127,7 @@ export async function resolveAppFeedbackTarget(
       select: {
         status: true,
         name: true,
-        appBlock: { select: { version: true, currentVersionSha: true } },
+        appBlock: { select: { id: true, version: true, currentVersionSha: true } },
       },
     }),
     resolveStoreVisibilityScope({ user }),
@@ -158,9 +170,90 @@ export async function resolveAppFeedbackTarget(
       appName: listing.name,
       appBlockVersion: block?.version ?? null,
       appBlockSha: block?.currentVersionSha ?? null,
+      appBlockId: block?.id ?? null,
     },
   };
 }
+
+export type AppSourceCommit = { appSourceCommit: string | null; appSourceDirty: boolean | null };
+
+const UNKNOWN_SOURCE: AppSourceCommit = { appSourceCommit: null, appSourceDirty: null };
+
+/**
+ * The developer's own `sourceCommit` / `sourceDirty` for the build that is serving: the approved
+ * publish request whose platform commit is the block's current one, the same link the git-push
+ * webhook uses. No current sha, or no request carrying it, is unknown: a guess from the version
+ * string could name a different submission of the same version.
+ */
+export async function resolveLiveSourceCommit(target: {
+  appBlockId: string | null;
+  appBlockSha: string | null;
+}): Promise<AppSourceCommit> {
+  if (!target.appBlockId || !target.appBlockSha) return UNKNOWN_SOURCE;
+  const row = await dbRead.appBlockPublishRequest.findFirst({
+    where: {
+      appBlockId: target.appBlockId,
+      status: 'approved',
+      forgejoCommitSha: target.appBlockSha,
+    },
+    orderBy: { reviewedAt: 'desc' },
+    select: { sourceCommit: true, sourceDirty: true },
+  });
+  return row
+    ? { appSourceCommit: row.sourceCommit, appSourceDirty: row.sourceDirty }
+    : UNKNOWN_SOURCE;
+}
+
+/**
+ * 🔴 `appSourceCommit` / `appSourceDirty` ARE MANUAL-APPLY, NO-TYPE COLUMNS, written and read only
+ * here, in raw SQL, each degrading when the column is not there yet. As Prisma fields they would
+ * be named by the feedback create's RETURNING and by every read, and app feedback would fail
+ * outright between this deploy and the migration. So a report is always created first and the
+ * source commit added to it best-effort; until the migration is applied it is simply not kept.
+ */
+async function writeFeedbackSourceCommit(id: number, source: AppSourceCommit): Promise<void> {
+  if (source.appSourceCommit === null && source.appSourceDirty === null) return;
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Feedback"
+      SET "appSourceCommit" = ${source.appSourceCommit}, "appSourceDirty" = ${source.appSourceDirty}
+      WHERE "id" = ${id}
+    `;
+  } catch (err) {
+    if (!isMissingColumnError(err))
+      noteDegradedRead('app-feedback-source-commit-write-failed', err);
+  }
+}
+
+/** The source commit of each row, by id; a row missing from the map is unknown. Never throws. */
+export async function readFeedbackSourceCommits(
+  ids: readonly number[],
+  db: typeof dbRead = dbRead
+): Promise<Map<number, AppSourceCommit>> {
+  if (ids.length === 0) return new Map();
+  try {
+    const rows = await db.$queryRaw<
+      Array<{ id: number; appSourceCommit: string | null; appSourceDirty: boolean | null }>
+    >(Prisma.sql`
+      SELECT f.id, f."appSourceCommit", f."appSourceDirty"
+      FROM "Feedback" f
+      WHERE f.id IN (${Prisma.join([...ids])})
+    `);
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        { appSourceCommit: r.appSourceCommit ?? null, appSourceDirty: r.appSourceDirty ?? null },
+      ])
+    );
+  } catch (err) {
+    if (!isMissingColumnError(err))
+      noteDegradedRead('app-feedback-source-commit-read-degraded', err);
+    return new Map();
+  }
+}
+
+const withSource = <T extends { id: number }>(rows: T[], sources: Map<number, AppSourceCommit>) =>
+  rows.map((row) => ({ ...row, ...(sources.get(row.id) ?? UNKNOWN_SOURCE) }));
 
 export async function getAppFeedbackEligibility(user: SessionUser, target: AppFeedbackTarget) {
   const resolved = await resolveAppFeedbackTarget(user, target);
@@ -255,7 +348,10 @@ export async function createAppFeedback({
   });
   if (recent >= APP_FEEDBACK_PER_LISTING_DAILY_CAP) throwRateLimitError(APP_FEEDBACK_CAP_MESSAGE);
 
-  return dbWrite.feedback.create({
+  // Stamped now: the live submission changes on the next approve, so it cannot be recovered later.
+  const source = await resolveLiveSourceCommit(resolved.target);
+
+  const created = await dbWrite.feedback.create({
     data: {
       userId: user.id,
       area: APP_BLOCK_FEEDBACK_AREA,
@@ -267,6 +363,8 @@ export async function createAppFeedback({
     },
     select: { id: true },
   });
+  await writeFeedbackSourceCommit(created.id, source);
+  return created;
 }
 
 export const APP_FEEDBACK_NO_ACCESS_MESSAGE = "You do not have access to this app's feedback";
@@ -341,7 +439,11 @@ export type OwnerFeedbackRow = {
   createdAt: Date;
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  appSourceCommit: string | null;
+  appSourceDirty: boolean | null;
   surface: string | null;
+  recentErrors: unknown;
+  environment: unknown;
   ownerStatus: string | null;
   ownerStatusAt: Date | null;
   ownerFlaggedAt: Date | null;
@@ -356,14 +458,115 @@ export type OwnerFeedbackDto = {
   reporter: { id: number; username: string | null };
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  /** The developer's commit for the live build, as their CLI claimed it at submit. */
+  appSourceCommit: string | null;
+  /** `null` = unknown, which is not `false` (clean). */
+  appSourceDirty: boolean | null;
   surface: AppFeedbackSurface | null;
+  /** Failed replies to the app's SDK calls before the report, oldest first. Untrusted text. */
+  recentErrors: AppFeedbackRecentError[];
+  /** Browser family/major, window size, app route. Client-reported. */
+  environment: AppFeedbackEnvironment | null;
   ownerStatus: FeedbackOwnerStatus | null;
   ownerStatusAt: Date | null;
   ownerFlaggedAt: Date | null;
 };
 
+/**
+ * The upstream of an app that is a fork. `upstreamSlug` / `upstreamVersion` are named only while
+ * the parent is an approved, publicly visible listing, so a hidden or removed parent reads the
+ * same as an unknown one; `forkedAtCommit` is the parent commit the fork's own repo started at.
+ */
+export type AppFeedbackForkOrigin = {
+  upstreamSlug: string | null;
+  upstreamVersion: string | null;
+  forkedAtCommit: string | null;
+};
+
+export type OwnerFeedbackListItem = OwnerFeedbackDto & { forkOf: AppFeedbackForkOrigin | null };
+
+/**
+ * Fork provenance never changes once written, so it is read with the list rather than stamped on
+ * each row. Cosmetic: any failure (an unapplied fork migration included) reads as "not a fork".
+ */
+export async function readFeedbackForkOrigin(
+  seatListingId: string
+): Promise<AppFeedbackForkOrigin | null> {
+  try {
+    const rows = await dbRead.$queryRaw<
+      Array<{
+        parentBlockId: string | null;
+        forkedAtCommit: string | null;
+        parentListingId: string | null;
+      }>
+    >(Prisma.sql`
+      SELECT ab."fork_of_app_block_id" AS "parentBlockId",
+             ab."fork_of_commit_sha" AS "forkedAtCommit",
+             al."fork_of_listing_id" AS "parentListingId"
+      FROM "app_listings" al
+      LEFT JOIN "app_blocks" ab ON ab."id" = al."app_block_id"
+      WHERE al."id" = ${seatListingId}
+      LIMIT 1
+    `);
+    const row = rows[0];
+    if (!row || (!row.parentBlockId && !row.forkedAtCommit && !row.parentListingId)) return null;
+    const unnamed: AppFeedbackForkOrigin = {
+      upstreamSlug: null,
+      upstreamVersion: null,
+      forkedAtCommit: row.forkedAtCommit,
+    };
+    if (!row.parentListingId) return unnamed;
+    const [parent, visibility] = await Promise.all([
+      dbRead.appListing.findUnique({
+        where: { id: row.parentListingId },
+        select: { slug: true, status: true },
+      }),
+      readListingVisibility(row.parentListingId, dbRead),
+    ]);
+    const isPublic =
+      parent?.status === 'approved' &&
+      visibility.available &&
+      (visibility.visibility === null || visibility.visibility === 'public');
+    if (!parent || !isPublic) return unnamed;
+    const version =
+      row.parentBlockId && row.forkedAtCommit
+        ? await dbRead.appBlockPublishRequest.findFirst({
+            where: {
+              appBlockId: row.parentBlockId,
+              status: 'approved',
+              forgejoCommitSha: row.forkedAtCommit,
+            },
+            orderBy: { reviewedAt: 'desc' },
+            select: { version: true },
+          })
+        : null;
+    return { ...unnamed, upstreamSlug: parent.slug, upstreamVersion: version?.version ?? null };
+  } catch (err) {
+    noteDegradedRead('app-feedback-fork-origin-degraded', err);
+    return null;
+  }
+}
+
 function isSurface(value: unknown): value is AppFeedbackSurface {
   return typeof value === 'string' && (APP_FEEDBACK_SURFACES as readonly string[]).includes(value);
+}
+
+/**
+ * `context.recentErrors` re-validated on the way out: it was written by a client, so a row is read
+ * entry by entry and anything outside the schema (or past the cap) is dropped, not shown.
+ */
+export function readRecentErrors(value: unknown): AppFeedbackRecentError[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, APP_FEEDBACK_RECENT_ERRORS_MAX).flatMap((entry) => {
+    const parsed = appFeedbackRecentErrorSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+/** `context.environment` re-validated on the way out; anything outside the schema reads as none. */
+export function readEnvironment(value: unknown): AppFeedbackEnvironment | null {
+  const parsed = appFeedbackEnvironmentSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 /**
@@ -378,8 +581,12 @@ export function toOwnerFeedbackDto(row: OwnerFeedbackRow): OwnerFeedbackDto {
     reporter: { id: row.reporterId, username: row.reporterUsername },
     appBlockVersion: row.appBlockVersion,
     appBlockSha: row.appBlockSha,
+    appSourceCommit: row.appSourceCommit,
+    appSourceDirty: row.appSourceDirty,
     // `context` is a client claim; only a value from the closed set is shown, never used for authz.
     surface: isSurface(row.surface) ? row.surface : null,
+    recentErrors: readRecentErrors(row.recentErrors),
+    environment: readEnvironment(row.environment),
     ownerStatus: row.ownerStatus as FeedbackOwnerStatus | null,
     ownerStatusAt: row.ownerStatusAt,
     ownerFlaggedAt: row.ownerFlaggedAt,
@@ -392,14 +599,14 @@ export async function listAppFeedbackForListing({
 }: {
   userId: number;
   input: ListAppFeedbackForListingInput;
-}): Promise<{ items: OwnerFeedbackDto[]; nextCursor: number | undefined }> {
+}): Promise<{ items: OwnerFeedbackListItem[]; nextCursor: number | undefined }> {
   const seatListingId = await resolveInboxListingId(input.appListingId, userId);
   const conditions = [
     ...ownerVisibleSql([seatListingId]),
     ...ownerStatusSql(input.ownerStatus),
     ...cursorSql(input.cursor, seatListingId),
   ];
-  const rows = await dbRead.$queryRaw<OwnerFeedbackRow[]>(Prisma.sql`
+  const rows = await dbRead.$queryRaw<Omit<OwnerFeedbackRow, keyof AppSourceCommit>[]>(Prisma.sql`
     SELECT
       f.id,
       f.message,
@@ -407,6 +614,8 @@ export async function listAppFeedbackForListing({
       f."appBlockVersion",
       f."appBlockSha",
       f.context->>'surface' AS surface,
+      f.context->'recentErrors' AS "recentErrors",
+      f.context->'environment' AS "environment",
       f."ownerStatus",
       f."ownerStatusAt",
       f."ownerFlaggedAt",
@@ -419,8 +628,10 @@ export async function listAppFeedbackForListing({
     LIMIT ${input.limit + 1}
   `);
   const page = rows.slice(0, input.limit);
+  const sources = await readFeedbackSourceCommits(page.map((r) => r.id));
+  const forkOf = page.length ? await readFeedbackForkOrigin(seatListingId) : null;
   return {
-    items: page.map(toOwnerFeedbackDto),
+    items: withSource(page, sources).map((row) => ({ ...toOwnerFeedbackDto(row), forkOf })),
     nextCursor: rows.length > input.limit ? page[page.length - 1].id : undefined,
   };
 }
@@ -575,6 +786,8 @@ type ModFeedbackRow = {
   appListingId: string | null;
   appBlockVersion: string | null;
   appBlockSha: string | null;
+  appSourceCommit: string | null;
+  appSourceDirty: boolean | null;
   ownerStatus: string | null;
   ownerStatusAt: Date | null;
   ownerStatusById: number | null;
@@ -597,11 +810,20 @@ type ModFeedbackRow = {
 function readContext(context: unknown): {
   surface: AppFeedbackSurface | null;
   modelId: number | null;
+  recentErrors: AppFeedbackRecentError[];
+  environment: AppFeedbackEnvironment | null;
 } {
-  const ctx = (context ?? {}) as { surface?: unknown; modelId?: unknown };
+  const ctx = (context ?? {}) as {
+    surface?: unknown;
+    modelId?: unknown;
+    recentErrors?: unknown;
+    environment?: unknown;
+  };
   return {
     surface: isSurface(ctx.surface) ? ctx.surface : null,
     modelId: typeof ctx.modelId === 'number' && Number.isInteger(ctx.modelId) ? ctx.modelId : null,
+    recentErrors: readRecentErrors(ctx.recentErrors),
+    environment: readEnvironment(ctx.environment),
   };
 }
 
@@ -610,7 +832,7 @@ export async function modListAppFeedback(input: ModListAppFeedbackInput) {
   // The PRIMARY, not a replica: the moderator tab refetches this right after a hide/unhide and must
   // read its own write. Moderator-only, over a small table.
   // LEFT joins from the listing on, so a row whose listing was deleted still lists.
-  const rows = await dbWrite.$queryRaw<ModFeedbackRow[]>(Prisma.sql`
+  const rows = await dbWrite.$queryRaw<Omit<ModFeedbackRow, keyof AppSourceCommit>[]>(Prisma.sql`
     SELECT
       f.id,
       f.message,
@@ -659,8 +881,13 @@ export async function modListAppFeedback(input: ModListAppFeedbackInput) {
     LIMIT ${input.limit + 1}
   `);
   const page = rows.slice(0, input.limit);
+  // The replica is enough here: the source commit is written once, with the row, and never moves.
+  const sources = await readFeedbackSourceCommits(page.map((r) => r.id));
   return {
-    items: page.map(({ context, ...row }) => ({ ...row, ...readContext(context) })),
+    items: withSource(page, sources).map(({ context, ...row }) => ({
+      ...row,
+      ...readContext(context),
+    })),
     nextCursor: rows.length > input.limit ? page[page.length - 1].id : undefined,
   };
 }

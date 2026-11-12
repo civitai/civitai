@@ -2846,6 +2846,12 @@ model Feedback {
   /// The block version live when the feedback was sent, stamped server-side. NULL for off-site apps.
   appBlockVersion     String?
   appBlockSha         String?
+  // The developer's own build provenance of the submission that was live when the feedback was
+  // sent, copied from `AppBlockPublishRequest.sourceCommit` / `sourceDirty`: an unverified client
+  // claim, NULL = unknown (never "clean"). CHECK `Feedback_app_source_columns_check`. No-type:
+  // raw SQL only, in app-feedback.service.ts, so the deploy and the migration can land in either order.
+  appSourceCommit     String?  // @no-type
+  appSourceDirty      Boolean? // @no-type
 
   /// Owner (developer) status, SEPARATE from the moderator `status` / `triageNote` / `handledBy`
   /// columns above so an owner can never move moderator triage. NULL = new to the developer; otherwise
