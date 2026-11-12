@@ -35,6 +35,7 @@ import {
   SERVICE_DEAL_CANCELLATION_RESPONSE_MS,
   SERVICE_DEAL_DISPUTE_WINDOW_MS,
   SERVICE_DEAL_LATE_CANCEL_AFTER_MS,
+  SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS,
   SERVICE_DEAL_OPEN_STATUSES,
   SERVICE_SFW_MAX_NSFW_LEVEL,
   isMatureServiceLevel,
@@ -55,7 +56,10 @@ import {
   dealViewerRole,
   nextDealDeadline,
 } from '~/shared/utils/creator-service-deal-view';
-import { dealAcceptedChatLine } from '~/shared/utils/creator-service-deal-chat-line';
+import {
+  dealAcceptedChatLine,
+  dealOverdueCancelledChatLine,
+} from '~/shared/utils/creator-service-deal-chat-line';
 
 /**
  * The Creator Services deal state machine. Every transition is ONE conditional UPDATE whose WHERE
@@ -706,18 +710,29 @@ export const openServiceDealDispute = async ({
 export const assertDealText = (text: string | null | undefined) =>
   throwOnBlockedUserContent(text, { surface: 'creator-service-deal' });
 
-type Timed = { status: ServiceDealStatus; column: string; after: number };
+type Timed = {
+  label: string;
+  statuses: readonly ServiceDealStatus[];
+  /** When the deal's clock started; it runs out `after` later. */
+  clock: Prisma.Sql;
+  after: number;
+  /** A test the index can use, implied by the clock having run out. */
+  narrow?: Prisma.Sql;
+};
+
+const column = (name: string) => Prisma.raw(`"${name}"`);
 
 async function sweep(
-  { status, column, after }: Timed,
+  { label, statuses, clock, after, narrow }: Timed,
   limit: number,
   move: (dealId: number) => Promise<boolean>
 ) {
   const due = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT "id" FROM "ServiceDeal"
-    WHERE "status" = ${status}::"ServiceDealStatus"
-      AND ${Prisma.raw(`"${column}"`)} + ${ms(after)} <= now()
-    ORDER BY ${Prisma.raw(`"${column}"`)}
+    WHERE "status" IN (${statusList(statuses)})
+      ${narrow ? Prisma.sql`AND ${narrow}` : Prisma.empty}
+      AND ${clock} + ${ms(after)} <= now()
+    ORDER BY ${clock}
     LIMIT ${limit}::int`;
 
   let moved = 0;
@@ -728,7 +743,7 @@ async function sweep(
       logToAxiom({
         name: 'creator-service-deal',
         type: 'error',
-        message: `${status} sweep failed`,
+        message: `${label} sweep failed`,
         dealId: id,
         error: (error as Error)?.message,
       }).catch(() => null);
@@ -782,16 +797,81 @@ export const autoCancelServiceDeal = (dealId: number) =>
     refund: true,
   });
 
+/**
+ * An undelivered round's clock: the due date, or for a revision the request that opened it, since a
+ * revision keeps the original due date and an on-time delivery must not become an instant refund.
+ * Accepted has no RevisionRequested event, so its clock is the due date.
+ */
+const overdueClock = Prisma.sql`GREATEST("dueAt", (
+  SELECT max(e."createdAt") FROM "ServiceDealEvent" e
+  WHERE e."dealId" = "ServiceDeal"."id" AND e."type" = 'RevisionRequested'::"ServiceDealEventType"))`;
+
+const OVERDUE_DAYS = SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS / 86_400_000;
+
+/**
+ * A seller who never delivers the current round. Under the deal's lock, as `deliverServiceDeal` is,
+ * so the clock's event read sees a revision request that committed while this waited.
+ */
+export async function cancelOverdueServiceDeal(dealId: number) {
+  const moved = await transitionDeal({
+    dealId,
+    from: ['Accepted', 'InRevision'],
+    to: 'Cancelled',
+    actorId: -1,
+    event: 'Cancelled',
+    comment: 'overdue',
+    lock: true,
+    where: Prisma.sql`${overdueClock} + ${ms(SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS)} <= now()`,
+    set: Prisma.sql`, "closeReason" = 'overdue'`,
+    refund: true,
+  });
+  if (moved) await postOverdueChatLine(dealId);
+  return moved;
+}
+
+async function postOverdueChatLine(dealId: number) {
+  try {
+    const [row] = await dbWrite.$queryRaw<{ chatId: number | null }[]>`
+      SELECT "chatId" FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+    if (!row?.chatId) return;
+    await createMessage({
+      userId: -1,
+      chatId: row.chatId,
+      contentType: 'Markdown',
+      content: dealOverdueCancelledChatLine({ dealId, days: OVERDUE_DAYS }),
+    });
+  } catch (error) {
+    // The deal is cancelled and refunded either way.
+    logToAxiom({
+      name: 'creator-service-deal',
+      type: 'error',
+      message: 'overdue chat line could not be posted',
+      dealId,
+      error: (error as Error)?.message,
+    }).catch(() => null);
+  }
+}
+
 export const expireServiceDeals = ({ limit = 100 } = {}) =>
   sweep(
-    { status: 'Requested', column: 'requestedAt', after: SERVICE_DEAL_ACCEPT_WINDOW_MS },
+    {
+      label: 'Requested',
+      statuses: ['Requested'],
+      clock: column('requestedAt'),
+      after: SERVICE_DEAL_ACCEPT_WINDOW_MS,
+    },
     limit,
     expireServiceDeal
   );
 
 export const autoCompleteServiceDeals = ({ limit = 100 } = {}) =>
   sweep(
-    { status: 'Delivered', column: 'deliveredAt', after: SERVICE_DEAL_AUTO_COMPLETE_MS },
+    {
+      label: 'Delivered',
+      statuses: ['Delivered'],
+      clock: column('deliveredAt'),
+      after: SERVICE_DEAL_AUTO_COMPLETE_MS,
+    },
     limit,
     autoCompleteServiceDeal
   );
@@ -799,12 +879,26 @@ export const autoCompleteServiceDeals = ({ limit = 100 } = {}) =>
 export const autoCancelServiceDeals = ({ limit = 100 } = {}) =>
   sweep(
     {
-      status: 'CancellationRequested',
-      column: 'cancellationRequestedAt',
+      label: 'CancellationRequested',
+      statuses: ['CancellationRequested'],
+      clock: column('cancellationRequestedAt'),
       after: SERVICE_DEAL_CANCELLATION_RESPONSE_MS,
     },
     limit,
     autoCancelServiceDeal
+  );
+
+export const cancelOverdueServiceDeals = ({ limit = 100 } = {}) =>
+  sweep(
+    {
+      label: 'Overdue',
+      statuses: ['Accepted', 'InRevision'],
+      clock: overdueClock,
+      after: SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS,
+      narrow: Prisma.sql`"dueAt" + ${ms(SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS)} <= now()`,
+    },
+    limit,
+    cancelOverdueServiceDeal
   );
 
 const dealUserSelect = { id: true, username: true, image: true } as const;

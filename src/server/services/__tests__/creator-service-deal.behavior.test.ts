@@ -1114,6 +1114,113 @@ describe('cancellation requests', () => {
   });
 });
 
+describe('an overdue deal nothing was delivered for', () => {
+  const working = async (buyerId = BUYER) => {
+    const { id } = await request({ buyerId });
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    return id;
+  };
+  const dueDaysAgo = (id: number, days: number) =>
+    q(`UPDATE "ServiceDeal" SET "dueAt" = now() - make_interval(days => ${days}) WHERE id = $1`, [
+      id,
+    ]);
+  /** A revision round opened `days` ago, on a deal whose due date passed long before. */
+  const inRevision = async (days: number, buyerId = BUYER) => {
+    const id = await working(buyerId);
+    await deliver(id);
+    await deals.requestServiceDealRevision({ dealId: id, userId: buyerId, comment: 'tweak' });
+    await dueDaysAgo(id, 30);
+    await q(
+      `UPDATE "ServiceDealEvent" SET "createdAt" = now() - make_interval(days => ${days})
+       WHERE "dealId" = $1 AND type = 'RevisionRequested'`,
+      [id]
+    );
+    return id;
+  };
+
+  it('is cancelled 7 days past due and refunded once, with a line in the deal chat', async () => {
+    const id = await working();
+    await dueDaysAgo(id, 8);
+    expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 1 });
+    expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'overdue' });
+    expect((await deal(id)).settledAt).not.toBeNull();
+    expect((await legs(id)).filter((l) => l.leg === 'Refund')).toEqual([
+      expect.objectContaining({ amount: PRICE }),
+    ]);
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(await events(id)).toEqual(['Requested', 'Held', 'Accepted', 'Cancelled', 'Refunded']);
+    expect(chat.createMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        userId: -1,
+        chatId: 77,
+        content: expect.stringContaining('within 7 days of the due date'),
+      })
+    );
+  });
+
+  it('refunds once however many times the sweep runs', async () => {
+    const id = await working();
+    await dueDaysAgo(id, 8);
+    await deals.cancelOverdueServiceDeals();
+    expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 0 });
+    expect(await deals.cancelOverdueServiceDeal(id)).toBe(false);
+    await escrow.sweepServiceDealRefunds();
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect((await legs(id)).filter((l) => l.leg === 'Refund')).toHaveLength(1);
+  });
+
+  it('is left alone until 7 days past due', async () => {
+    const early = await working();
+    const late = await working(STRANGER);
+    await dueDaysAgo(early, 6);
+    await dueDaysAgo(late, 8);
+    expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 1 });
+    expect((await deal(early)).status).toBe('Accepted');
+    expect(await deals.cancelOverdueServiceDeal(early)).toBe(false);
+    expect((await deal(late)).status).toBe('Cancelled');
+  });
+
+  it('leaves a late delivery alone: the buyer has something to review', async () => {
+    const delivered = await working();
+    await dueDaysAgo(delivered, 8);
+    await deliver(delivered);
+    const undelivered = await working(STRANGER);
+    await dueDaysAgo(undelivered, 8);
+    expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 1 });
+    expect((await deal(delivered)).status).toBe('Delivered');
+    expect(await deals.cancelOverdueServiceDeal(delivered)).toBe(false);
+    expect((await deal(undelivered)).status).toBe('Cancelled');
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  // The revision keeps the original due date, so it counts from the request instead.
+  it('gives a revision round 7 days from its request, not from the old due date', async () => {
+    const fresh = await inRevision(6);
+    const stale = await inRevision(8, STRANGER);
+    expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 1 });
+    expect((await deal(fresh)).status).toBe('InRevision');
+    expect(await deals.cancelOverdueServiceDeal(fresh)).toBe(false);
+    expect(await deal(stale)).toMatchObject({ status: 'Cancelled', closeReason: 'overdue' });
+  });
+
+  it('never touches a deal in dispute or waiting on a cancellation answer', async () => {
+    const disputed = await working();
+    await deals.requestServiceDealCancellation({ dealId: disputed, userId: BUYER, reason: 'r' });
+    await deals.respondServiceDealCancellation({ dealId: disputed, userId: SELLER, agree: false });
+    const asked = await working(STRANGER);
+    await deals.requestServiceDealCancellation({ dealId: asked, userId: STRANGER, reason: 'r' });
+    for (const id of [disputed, asked]) await dueDaysAgo(id, 30);
+    const control = await inRevision(8);
+    expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 1 });
+    expect((await deal(disputed)).status).toBe('Disputed');
+    expect((await deal(asked)).status).toBe('CancellationRequested');
+    expect(await deals.cancelOverdueServiceDeal(disputed)).toBe(false);
+    expect(await deals.cancelOverdueServiceDeal(asked)).toBe(false);
+    expect((await deal(control)).status).toBe('Cancelled');
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('open deals per offering', () => {
   it('counts only open deals, by the same definition the cap uses', async () => {
     const open = (await request()).id;
