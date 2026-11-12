@@ -88,7 +88,6 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
         userId,
         type,
         backend,
-        // `key` only when valid: an invalid one is not a trustworthy object key.
         invalid: (['bucket', 'key', 'uploadId'] as const).filter(
           (f) => !isNonEmptyString({ bucket, key, uploadId }[f])
         ),
