@@ -36,6 +36,7 @@ import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
 import { checkMatureSafeBitDrift } from '~/server/jobs/check-mature-safe-bit-drift';
+import { resolvePrePublishGates } from '~/server/jobs/resolve-pre-publish-gates';
 import { reconcileVaultStorage } from '~/server/jobs/reconcile-vault-storage';
 import { reconcileCollectionCollaboration } from '~/server/jobs/reconcile-collection-collaboration';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
@@ -257,6 +258,7 @@ export const jobs: Job[] = [
   reconcileVaultStorage,
   reconcileRestrictedImages,
   checkMatureSafeBitDrift,
+  resolvePrePublishGates,
   reconcileCollectionCollaboration,
   clearVaultItems,
   reconcileWildcardSetsJob,

@@ -36,6 +36,7 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { modelsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { PRE_PUBLISH_REVIEW_BASE_MODELS } from '~/server/common/constants';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -230,6 +231,8 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
       AND (m.meta->>'cannotPublish') IS NULL
       AND ${notRemovedWithOwnerSql('m.meta')}
       AND (mv.meta->>'needsReview')  IS NULL
+      -- Fine-tunes of these publish only through the pre-publish gate.
+      AND mv."baseModel" NOT IN (${Prisma.join([...PRE_PUBLISH_REVIEW_BASE_MODELS])})
     ORDER BY mv.id, p."publishedAt" ASC
     ${limit ? Prisma.sql`LIMIT ${limit}` : Prisma.empty}
   `);

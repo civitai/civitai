@@ -3,6 +3,7 @@ import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import type { TextScanFlags } from '~/server/services/text-scan/flag-snapshot';
+import type { PrePublishGateMeta } from '~/server/services/pre-publish-gate/types';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
@@ -532,6 +533,10 @@ export type ModelMeta = Partial<{
    * text does not act on them again, while edited text is judged afresh.
    */
   modelRulesCleared: { ruleIds: number[]; textHash: string };
+  /** The pre-publish gate's latest run for this model (services/pre-publish-gate). */
+  prePublishGate: PrePublishGateMeta;
+  /** Set while a moderator holds this model for the pre-publish gate; only the hold and release write it. */
+  prePublishHold: boolean;
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   // Legacy: read as `true` = hide, otherwise inherit. Saves now write `metricVisibility` and clear these.

@@ -217,7 +217,9 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setLinkedComponentsSchema)
     .use(isOwnerOrModerator)
-    .mutation(async ({ input }) => setLinkedComponents(input)),
+    .mutation(async ({ input, ctx }) =>
+      setLinkedComponents({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   addLinkedComponent: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(addLinkedComponentSchema)

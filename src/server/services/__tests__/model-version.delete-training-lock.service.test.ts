@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Mock scaffold mirrors model-version.deregister.service.test.ts.
@@ -78,8 +78,16 @@ function versionDeleted() {
   });
 }
 
+/** Whether a live version on a gated base model links to the one being deleted. */
+let linkedFromLiveGated = false;
+
 function stubVersion(trainingStatus: string | null) {
-  mockDbWrite.$queryRaw.mockResolvedValue([{ trainingStatus }] as never);
+  mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+    strings.join('?').includes('"RecommendedResource"')
+      ? linkedFromLiveGated
+        ? [{ id: 1 }]
+        : []
+      : [{ trainingStatus }]) as never);
   mockDbWrite.modelFile.findMany.mockResolvedValue([
     {
       url: 'https://s3.us-west-004.backblazeb2.com/civitai-modelfiles/default/7/data.zip',
@@ -138,5 +146,27 @@ describe('deleteVersionById — training run lock', () => {
     await deleteVersionById({ id: VERSION_ID, isModerator: true });
 
     expect(versionDeleted()).toBe(true);
+  });
+
+  describe('a version that a live gated version links to as a component', () => {
+    afterEach(() => {
+      linkedFromLiveGated = false;
+    });
+
+    it('refuses an owner deleting it', async () => {
+      stubVersion(null);
+      linkedFromLiveGated = true;
+      await expect(deleteVersionById({ id: VERSION_ID, isModerator: false })).rejects.toThrow(
+        /links to as a component/
+      );
+      expect(versionDeleted()).toBe(false);
+    });
+
+    it('lets a moderator delete it (control)', async () => {
+      stubVersion(null);
+      linkedFromLiveGated = true;
+      await deleteVersionById({ id: VERSION_ID, isModerator: true });
+      expect(versionDeleted()).toBe(true);
+    });
   });
 });

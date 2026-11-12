@@ -72,7 +72,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL,
-      "publishedAt" timestamp(3), availability text
+      "publishedAt" timestamp(3), availability text, "baseModel" text
     );
     CREATE TABLE "ModelFile" (
       id serial PRIMARY KEY, "modelVersionId" int NOT NULL,

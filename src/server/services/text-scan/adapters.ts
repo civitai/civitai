@@ -40,3 +40,6 @@ export const retiredModelRulesAdapter: ModerationAdapter = {
 export const imageCaptionTextScanAdapter = createTextScanAdapter('ImageCaption', {
   applyTextScan: applyImageCaptionTextScan,
 });
+
+/** Read only by the pre-publish gate, which publishes or holds; the verdict alone is recorded here. */
+export const modelPrePublishTextScanAdapter = createTextScanAdapter('ModelPrePublish', {});

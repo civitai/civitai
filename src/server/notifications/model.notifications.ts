@@ -5,6 +5,12 @@ import {
   createNotificationProcessor,
   notBlockedBetween,
 } from '~/server/notifications/base.notifications';
+import {
+  GATE_HELD_MESSAGE,
+  GATE_REFUSAL_MESSAGES,
+  GATE_UNFINISHED_MESSAGE,
+} from '~/server/services/pre-publish-gate/messages';
+import type { GateRefusal } from '~/server/services/pre-publish-gate/types';
 import { getDisplayName, slugit, withDefiniteArticle } from '~/utils/string-helpers';
 
 const modelDownloadMilestones = [5, 10, 20, 50, 100, 500] as const;
@@ -406,6 +412,26 @@ export const modelNotifications = createNotificationProcessor({
       message: `We were unable to publish your model version: ${details.displayName} due to insufficient funds. Please remove early access or purchase more Buzz to publish.`,
       url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
     }),
+  },
+  // A publish that waited for the pre-publish checks ended without going live. Only the fixed texts
+  // the owner sees when publishing are shown, chosen here from the outcome.
+  'pre-publish-gate-result': {
+    displayName: 'Model publish checks',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => {
+      const outcome = details.outcome as 'refused' | 'held' | 'unfinished';
+      const text =
+        outcome === 'held'
+          ? GATE_HELD_MESSAGE
+          : outcome === 'refused'
+          ? GATE_REFUSAL_MESSAGES[details.refusal as GateRefusal] ?? GATE_UNFINISHED_MESSAGE
+          : GATE_UNFINISHED_MESSAGE;
+      return {
+        message: `${details.modelName}: ${text}`,
+        url: `/models/${details.modelId}`,
+      };
+    },
   },
   'model-hash-fix': {
     displayName: 'Model Hash Fix',

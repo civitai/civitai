@@ -29,6 +29,7 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'Collection',
   'Storyline',
   'ImageCaption',
+  'ModelPrePublish',
   'ModelRules',
 ] as const satisfies readonly TextScanEntityType[];
 
@@ -39,6 +40,14 @@ export const TEXT_SCAN_ENTITY_TYPES = [
  */
 export type TextScanRollout = { shadow: number; active: number };
 export type TextScanRollouts = Partial<Record<TextScanEntityType, TextScanRollout>>;
+
+/**
+ * An entity type's rollout. ModelPrePublish is fully active until set: the pre-publish gate holds
+ * every model it cannot scan.
+ */
+export const rolloutFor = (rollouts: TextScanRollouts, entityType: TextScanEntityType) =>
+  rollouts[entityType] ??
+  (entityType === 'ModelPrePublish' ? { shadow: 0, active: 100 } : undefined);
 
 export const ROLLOUT_CACHE_MS = 15_000;
 
@@ -109,7 +118,7 @@ export async function getTextScanMode(
   try {
     if (!(await isTextScanEnabled())) return 'off';
     const rollouts = await getTextScanRollouts();
-    return modeForBucket(rollouts[entityType], textScanBucket(entityType, entityId));
+    return modeForBucket(rolloutFor(rollouts, entityType), textScanBucket(entityType, entityId));
   } catch {
     return 'off';
   }

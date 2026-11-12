@@ -105,9 +105,10 @@ describe('publishPrivateModelHandler — rule enforcement', () => {
 
     await run(isModerator);
 
-    expect(mockPublishPrivateModel).toHaveBeenCalledWith(expect.anything(), {
-      enforceModelRules: enforce,
-    });
+    expect(mockPublishPrivateModel).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ enforceModelRules: enforce })
+    );
   });
 });
 

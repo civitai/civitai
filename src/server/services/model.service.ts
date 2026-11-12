@@ -51,6 +51,7 @@ import {
   readPostModelVersionIdsViaKysely,
   readPostModelVersionIdsViaPrisma,
 } from '~/server/services/hot-reads-7.reads';
+import { assertGatedVersionsJudged } from '~/server/services/pre-publish-gate/publish-guard';
 import { readDownedModel } from '~/server/services/model-takedown-lock';
 import {
   planReciprocalAssociations,
@@ -4851,7 +4852,7 @@ export async function applyModelContentChange({
   return true;
 }
 
-const publishedModelSelect = {
+export const publishedModelSelect = {
   id: true,
   name: true,
   description: true,
@@ -4900,6 +4901,7 @@ export const publishModelById = async ({
   republishing,
   enforceModelRules,
   refuseRemovedWithOwner,
+  gateJudgedVersionIds,
 }: PublishModelSchema & {
   /**
    * The meta to write. A builder gets the stored meta as it is under the publish's lock; plain meta
@@ -4911,6 +4913,8 @@ export const publishModelById = async ({
   enforceModelRules?: boolean;
   /** Refuse a model a content wipe kept: only a moderator may publish it. */
   refuseRemovedWithOwner?: boolean;
+  /** An owner's publish: the versions the pre-publish gate judged. Moderators skip the gate. */
+  gateJudgedVersionIds?: number[];
 }) => {
   // The literal-rules check below may write, so a blocked model is refused before it.
   const snapshot =
@@ -4970,6 +4974,8 @@ export const publishModelById = async ({
       if (refuseRemovedWithOwner && isRemovedWithOwner(stored))
         throw throwAuthorizationError('You are not authorized to publish this model');
       if (stored?.cannotPublish) throw cannotPublishError();
+      if (gateJudgedVersionIds && versionIds?.length)
+        await assertGatedVersionsJudged(tx, versionIds, gateJudgedVersionIds);
       const writtenMeta =
         typeof meta === 'function' ? meta(stored) : withStoredPublishKeys(meta ?? {}, stored);
       // A held model must not be overwritten by a publish that raced the hold. Moderators and
@@ -7490,7 +7496,14 @@ export const privateModelFromTraining = async ({
 
 export const publishPrivateModel = async (
   { modelId, publishVersions, isModerator }: PublishPrivateModelInput & { isModerator?: boolean },
-  { enforceModelRules }: { enforceModelRules?: boolean } = {}
+  {
+    enforceModelRules,
+    gateJudgedVersionIds,
+  }: {
+    enforceModelRules?: boolean;
+    /** An owner's publish: the versions the pre-publish gate judged. Moderators skip the gate. */
+    gateJudgedVersionIds?: number[];
+  } = {}
 ) => {
   // Primary: the stored meta decides the publish gates and the cannotPromote value restored.
   const model = await dbWrite.model.findUnique({
@@ -7598,6 +7611,18 @@ export const publishPrivateModel = async (
     `;
     if (stillPublished.length !== versionIds.length)
       throw throwAuthorizationError('You are not authorized to publish this model version');
+    // The model goes public with every version published by now, including one published since the
+    // gate read the list.
+    if (gateJudgedVersionIds) {
+      const published = await tx.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "ModelVersion" WHERE "modelId" = ${modelId} AND status = 'Published'
+      `;
+      await assertGatedVersionsJudged(
+        tx,
+        published.map((v) => v.id),
+        gateJudgedVersionIds
+      );
+    }
 
     // Availability + demotion to null flip unconditionally; the publish
     // bump to `now` is routed through the anti-bump SQL guard below so an

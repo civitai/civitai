@@ -2370,6 +2370,23 @@ enum TextScanHoldStatus {
 }
 
 // A text-scan verdict held for a moderator. Partial indexes Prisma cannot model live in the text_scan_hold migrations.
+/// One row per pre-publish gate check (services/pre-publish-gate): the evidence a gated base
+/// model's fine-tune was reviewed before it went public. Plain ids, so it outlives the model.
+model ModelPublishCheck {
+  id             Int      @id @default(autoincrement())
+  modelId        Int
+  modelVersionId Int?
+  runId          String
+  check          String
+  outcome        String
+  detail         Json?
+  /// The moderator for a release; null for the system.
+  actorId        Int?
+  createdAt      DateTime @default(now())
+
+  @@index([modelId, createdAt(sort: Desc)])
+}
+
 model TextScanHold {
   id           Int                @id @default(autoincrement())
   entityType   String

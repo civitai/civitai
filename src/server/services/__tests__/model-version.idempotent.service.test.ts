@@ -213,6 +213,14 @@ describe('toggleModelVersionEngagement', () => {
   });
 });
 
+/** No version links to the ones a merge reads: the link lookup answers empty, the rest as given. */
+const withNoLinks =
+  (rows: (...args: never[]) => unknown) =>
+  (strings: TemplateStringsArray, ...values: unknown[]) =>
+    strings.join('?').includes('"RecommendedResource"')
+      ? Promise.resolve([])
+      : (rows as (...a: unknown[]) => unknown)(strings, ...values);
+
 // ---------------------------------------------------------------------------
 // Fix 5 — mergeVersions empty-array guard
 // ---------------------------------------------------------------------------
@@ -278,7 +286,10 @@ describe('mergeVersions file remaps', () => {
     }))
   );
   const tx = new Proxy(
-    { $queryRaw: versionRows, modelFile: { findMany: fileFindMany, updateMany: fileUpdateMany } },
+    {
+      $queryRaw: withNoLinks(versionRows),
+      modelFile: { findMany: fileFindMany, updateMany: fileUpdateMany },
+    },
     {
       get(target, key) {
         if (key in target) return target[key as keyof typeof target];
@@ -482,7 +493,7 @@ describe('mergeVersions training runs', () => {
     throw new Error(PAST_CHECKS);
   });
   const tx = {
-    $queryRaw: versionRows,
+    $queryRaw: withNoLinks(versionRows),
     modelFile: {
       findFirst: datasetFindFirst,
       findMany: vi.fn(() => Promise.resolve([])),
@@ -810,5 +821,103 @@ describe('assertUserEarlyAccessLimits', () => {
     await expect(
       assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7 })
     ).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeVersions into a live version of a pre-publish-review base model
+// ---------------------------------------------------------------------------
+describe('mergeVersions into a live version of a pre-publish-review base model', () => {
+  const OWNER = 7;
+  const TARGET = 100;
+  const SOURCE = 101;
+  // Only the row lock answers; any later step stops the run with this marker.
+  const PAST_LOCK = 'reached the steps after the row lock';
+  let target: { status: string; baseModel: string };
+  /** Whether a live gated version links to the source being merged away. */
+  let sourceIsLinked = false;
+  const tx = new Proxy(
+    {
+      $queryRaw: vi.fn(async (strings: TemplateStringsArray) =>
+        strings.join('?').includes('"RecommendedResource"')
+          ? sourceIsLinked
+            ? [{ id: 1 }]
+            : []
+          : [
+              {
+                id: TARGET,
+                name: 'v1',
+                trainingStatus: null,
+                publishedAt: null,
+                initialPublishedAt: null,
+                ...target,
+              },
+              {
+                id: SOURCE,
+                name: 'v2',
+                status: 'Draft',
+                trainingStatus: null,
+                baseModel: target.baseModel,
+                publishedAt: null,
+                initialPublishedAt: null,
+              },
+            ]
+      ),
+    },
+    {
+      get(t, key) {
+        if (key in t) return t[key as keyof typeof t];
+        throw new Error(PAST_LOCK);
+      },
+    }
+  );
+
+  beforeEach(() => {
+    sourceIsLinked = false;
+    mockDbRead.model.findUniqueOrThrow.mockImplementation((async () => ({
+      userId: OWNER,
+      modelVersions: [TARGET, SOURCE].map((id) => ({
+        id,
+        name: `v${id}`,
+        description: '',
+        status: id === TARGET ? target.status : 'Draft',
+        monetization: null,
+        meta: null,
+      })),
+    })) as never);
+    mockDbWrite.paidAccess.findMany.mockResolvedValue([]);
+    mockDbWrite.$transaction.mockImplementation(async (fn: (client: unknown) => unknown) => fn(tx));
+  });
+
+  const merge = () =>
+    mergeVersions({
+      modelId: 1,
+      targetVersionId: TARGET,
+      sourceVersionIds: [SOURCE],
+      fileTypeMappings: [],
+      appendDescriptions: false,
+      userId: OWNER,
+    } as any);
+
+  it.each(['Published', 'Scheduled'])(
+    'refuses a merge into a %s Fibo 2.0 version',
+    async (status) => {
+      target = { status, baseModel: 'Fibo 2.0' };
+      await expect(merge()).rejects.toThrowError(/Create a new version/);
+    }
+  );
+
+  it.each([
+    ['a draft Fibo 2.0 version', { status: 'Draft', baseModel: 'Fibo 2.0' }],
+    ['a published version on another base model', { status: 'Published', baseModel: 'SDXL 1.0' }],
+  ])('lets a merge into %s go on (control)', async (_l, t) => {
+    target = t;
+    await expect(merge()).rejects.toThrowError(PAST_LOCK);
+  });
+
+  it('refuses merging away a version that a live gated version links to', async () => {
+    target = { status: 'Draft', baseModel: 'SDXL 1.0' };
+    sourceIsLinked = true;
+    await expect(merge()).rejects.toThrowError(/can't be merged away/);
   });
 });

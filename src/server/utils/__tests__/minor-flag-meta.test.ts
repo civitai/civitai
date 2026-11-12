@@ -101,6 +101,26 @@ describe('stripMinorHashMeta', () => {
     ).toEqual({});
   });
 
+  it("hides the pre-publish gate state and a moderator's hold, and refuses both from an owner save", () => {
+    const gate = {
+      state: 'passed',
+      runId: 'r',
+      scope: 'version',
+      versionIds: [1],
+      requestedAt: '',
+    };
+    expect(stripMinorHashMeta({ prePublishGate: gate, prePublishHold: true } as ModelMeta)).toEqual(
+      {}
+    );
+    expect(
+      stripModerationOwnedMeta({
+        prePublishGate: gate,
+        prePublishHold: true,
+        nsfw: true,
+      } as ModelMeta)
+    ).toEqual({ nsfw: true });
+  });
+
   it('hides a restricted-verdict lead and its rulings from every client', () => {
     expect(
       stripMinorHashMeta({

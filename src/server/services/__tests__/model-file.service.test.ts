@@ -527,3 +527,154 @@ describe('createFile — a second Training Data file on a Training Studio versio
     expect(createdVisibility()).toBe('Public');
   });
 });
+
+describe('createFile — new weights on a live version of a pre-publish-review base model', () => {
+  const create = (isModerator = false) =>
+    modelFileService.createFile({
+      name: 'v2.safetensors',
+      url: 'https://bucket/modelVersion/5/v2.safetensors',
+      sizeKB: 1,
+      type: 'Model',
+      modelVersionId: 5,
+      select: { id: true },
+      userId: 1,
+      isModerator,
+    });
+  /** The version as the caller's read saw it, and as it is under the create's lock. */
+  const version = (
+    read: { status: string; baseModel: string },
+    locked: { status: string; baseModel: string } = read
+  ) => {
+    mockDbWrite.modelVersion.findFirst.mockResolvedValue({ id: 5, ...read } as never);
+    mockDbWrite.$queryRaw.mockResolvedValue([locked] as never);
+  };
+
+  beforeEach(() => {
+    mockDbWrite.modelFile.create.mockResolvedValue({ id: 78 } as never);
+  });
+
+  it.each(['Published', 'Scheduled'])(
+    "refuses the owner's new file on a %s Fibo 2.0 version",
+    async (status) => {
+      version({ status, baseModel: 'Fibo 2.0' });
+      await expect(create()).rejects.toThrowError(/Create a new version/);
+      expect(mockDbWrite.modelFile.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses it when the version was published after the caller read it a draft', async () => {
+    version(
+      { status: 'Draft', baseModel: 'Fibo 2.0' },
+      { status: 'Published', baseModel: 'Fibo 2.0' }
+    );
+    await expect(create()).rejects.toThrowError(/Create a new version/);
+    expect(mockDbWrite.modelFile.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a draft Fibo 2.0 version', { status: 'Draft', baseModel: 'Fibo 2.0' }, false],
+    [
+      'a published version on another base model',
+      { status: 'Published', baseModel: 'SDXL 1.0' },
+      false,
+    ],
+    [
+      'a moderator, on a published Fibo 2.0 version',
+      { status: 'Published', baseModel: 'Fibo 2.0' },
+      true,
+    ],
+  ])('adds the file for %s (control)', async (_l, v, isModerator) => {
+    version(v);
+    await create(isModerator);
+    expect(mockDbWrite.modelFile.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('updateFile — showing or retyping a file on a live version of a pre-publish-review base model', () => {
+  const OWNER = 1;
+  const row = (
+    file: { type?: string; visibility?: string },
+    version: { status: string; baseModel: string }
+  ) => ({
+    id: 90,
+    name: 'v2.safetensors',
+    overrideName: null,
+    url: 'https://bucket/modelVersion/5/v2.safetensors',
+    type: 'Model',
+    visibility: 'Public',
+    metadata: {},
+    modelVersionId: 5,
+    sizeKB: 1,
+    ...file,
+    modelVersion: {
+      modelId: 3,
+      uploadType: 'Created',
+      trainingStatus: null,
+      model: { type: 'LORA', userId: OWNER },
+      ...version,
+    },
+  });
+  /** The file and its version as the caller's read saw them; the lock sees the same version. */
+  const stored = (
+    file: { type?: string; visibility?: string },
+    version: { status: string; baseModel: string }
+  ) => {
+    mockDbWrite.modelFile.findUnique.mockResolvedValue(row(file, version) as never);
+    mockDbWrite.$queryRaw.mockResolvedValue([version] as never);
+  };
+  const live = { status: 'Published', baseModel: 'Fibo 2.0' };
+
+  beforeEach(() => {
+    mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 } as never);
+  });
+
+  it("refuses the owner's Private file being made Public", async () => {
+    stored({ visibility: 'Private' }, live);
+    await expect(
+      modelFileService.updateFile({ id: 90, visibility: 'Public', userId: OWNER } as never)
+    ).rejects.toThrowError(/Create a new version/);
+    expect(mockDbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each(['Archive', 'Config'])(
+    "refuses the owner's %s file being retyped as Model",
+    async (type) => {
+      stored({ type }, live);
+      await expect(
+        modelFileService.updateFile({ id: 90, type: 'Model', userId: OWNER } as never)
+      ).rejects.toThrowError(/Create a new version/);
+      expect(mockDbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses it when the version was published after the caller read it a draft', async () => {
+    mockDbWrite.modelFile.findUnique.mockResolvedValue(
+      row({ visibility: 'Private' }, { status: 'Draft', baseModel: 'Fibo 2.0' }) as never
+    );
+    mockDbWrite.$queryRaw.mockResolvedValue([live] as never);
+    await expect(
+      modelFileService.updateFile({ id: 90, visibility: 'Public', userId: OWNER } as never)
+    ).rejects.toThrowError(/Create a new version/);
+    expect(mockDbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a moderator', live, { userId: 999, isModerator: true }],
+    ['the owner, on a draft', { status: 'Draft', baseModel: 'Fibo 2.0' }, { userId: OWNER }],
+    [
+      'the owner, on another base model',
+      { status: 'Published', baseModel: 'SDXL 1.0' },
+      { userId: OWNER },
+    ],
+  ])('lets %s make the file Public (control)', async (_l, version, who) => {
+    stored({ visibility: 'Private' }, version);
+    await modelFileService.updateFile({ id: 90, visibility: 'Public', ...who } as never);
+    expect(mockDbWrite.modelFile.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the owner hide a file on the live version (control)', async () => {
+    stored({ visibility: 'Public' }, live);
+    await modelFileService.updateFile({ id: 90, visibility: 'Private', userId: OWNER } as never);
+    expect(mockDbWrite.modelFile.updateMany).toHaveBeenCalledTimes(1);
+  });
+});

@@ -51,9 +51,11 @@ vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), create
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
 }));
+const { mockFindOfficialFileByHash } = vi.hoisted(() => ({ mockFindOfficialFileByHash: vi.fn() }));
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
   markFileReplaced: mockMarkReplaced,
+  findOfficialFileByHash: mockFindOfficialFileByHash,
 }));
 // Keep the real paid-access module (which reads REDIS_KEYS.CACHES.PAID_ACCESS at import) out of the graph.
 vi.mock('~/server/services/paid-access.service', () => ({
@@ -67,8 +69,13 @@ vi.mock('~/server/services/paid-access.service', () => ({
   bustModelSaleCache: vi.fn(),
 }));
 
-import { addLinkedComponent } from '~/server/services/model-version.service';
+import {
+  addLinkedComponent,
+  linkOfficialFileByHash,
+  setLinkedComponents,
+} from '~/server/services/model-version.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { constants } from '~/server/common/constants';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -265,5 +272,254 @@ describe('addLinkedComponent auto-pick (no targetFileId — public path unchange
     const createArg = mockDbWrite.recommendedResource.create.mock.calls[0][0];
     expect(createArg.data.settings.fileId).toBe(9);
     expect(result.fileId).toBe(9);
+  });
+});
+
+describe('linking a component to a live version of a pre-publish-review base model', () => {
+  /**
+   * The edited (source) version as its lock reads it, and which link targets the target rule's
+   * query allows (that SQL is covered against Postgres in publish-guard.sql.behavior.test.ts).
+   */
+  const source = (status: string, baseModel = 'Fibo 2.0', allowedTargets = [777, 31]) =>
+    mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('FOR SHARE')
+        ? [{ status, baseModel }]
+        : allowedTargets.map((id) => ({ id }))) as never);
+  const REFUSED = /Create a new version/;
+
+  beforeEach(() => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue(ownFile);
+    mockDbWrite.recommendedResource.findMany.mockResolvedValue([]);
+    // The caller's own file on version 777, as the ownership check reads it.
+    mockDbWrite.modelFile.findMany.mockResolvedValue([
+      { id: 555, modelVersionId: 777, modelVersion: { model: { userId: CALLER } } },
+    ] as never);
+  });
+
+  const add = (isModerator = false) =>
+    addLinkedComponent({ ...baseInput, targetFileId: 555, isModerator });
+  const set = (isModerator = false) =>
+    setLinkedComponents({
+      id: 10,
+      components: [{ resourceId: 777, settings: { isLinkedComponent: true, fileId: 555 } }],
+      userId: CALLER,
+      isModerator,
+    } as never);
+
+  it.each(['Published', 'Scheduled'])(
+    "refuses the owner's add on a %s Fibo 2.0 version",
+    async (status) => {
+      source(status);
+      await expect(add()).rejects.toThrowError(REFUSED);
+      expect(mockDbWrite.recommendedResource.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it("refuses the owner's replace of a file with a link on a published Fibo 2.0 version", async () => {
+    source('Published');
+    // The target file to link, and the source version's own VAE file it replaces.
+    mockDbRead.modelFile.findUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: number };
+    }) => (where.id === 9 ? { modelVersionId: 10, type: 'VAE' } : ownFile)) as never);
+    await expect(
+      addLinkedComponent({ ...baseInput, targetFileId: 555, replaceFileId: 9 })
+    ).rejects.toThrowError(REFUSED);
+    expect(mockDbWrite.recommendedResource.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses the owner's set on a published Fibo 2.0 version", async () => {
+    source('Published');
+    await expect(set()).rejects.toThrowError(REFUSED);
+    expect(mockDbWrite.recommendedResource.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a moderator, on a published Fibo 2.0 version', 'Published', 'Fibo 2.0', true],
+    ['the owner, on a draft Fibo 2.0 version', 'Draft', 'Fibo 2.0', false],
+    ['the owner, on a published version of another base model', 'Published', 'SDXL 1.0', false],
+  ])('lets %s add and set links (control)', async (_l, status, baseModel, isModerator) => {
+    source(status, baseModel);
+    await add(isModerator);
+    expect(mockDbWrite.recommendedResource.create).toHaveBeenCalledTimes(1);
+    await set(isModerator);
+    expect(mockDbWrite.recommendedResource.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('setLinkedComponents — which rows and files an owner may write', () => {
+  const OTHER_VERSIONS_ROW = 42;
+  beforeEach(() => {
+    // Off the gated base, so only row scope and file ownership are in play here.
+    mockDbWrite.$queryRaw.mockResolvedValue([{ status: 'Draft', baseModel: 'SDXL 1.0' }] as never);
+    // Version 10's own link rows: one, id 7, to file 555.
+    mockDbWrite.recommendedResource.findMany.mockResolvedValue([
+      { id: 7, settings: { isLinkedComponent: true, fileId: 555 } },
+    ] as never);
+    mockDbWrite.recommendedResource.updateMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: number; sourceId: number };
+    }) => {
+      // Row 7 is version 10's; row 42 is another version's. Matches as Postgres would.
+      const sourceOf: Record<number, number> = { 7: 10, [OTHER_VERSIONS_ROW]: 11 };
+      const source = sourceOf[where.id];
+      return { count: source !== undefined && (where.sourceId ?? source) === source ? 1 : 0 };
+    }) as never);
+    mockDbWrite.modelFile.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] } };
+    }) =>
+      [
+        { id: 555, modelVersionId: 777, modelVersion: { model: { userId: CALLER } } },
+        { id: 666, modelVersionId: 888, modelVersion: { model: { userId: 999 } } },
+      ].filter((f) => where.id.in.includes(f.id))) as never);
+  });
+  const set = (
+    components: { id?: number; resourceId: number; fileId: number }[],
+    isModerator = false
+  ) =>
+    setLinkedComponents({
+      id: 10,
+      components: components.map(({ id, resourceId, fileId }) => ({
+        id,
+        resourceId,
+        settings: { isLinkedComponent: true, fileId, componentType: 'VAE' },
+      })),
+      userId: CALLER,
+      isModerator,
+    } as never);
+
+  it("refuses an update naming another version's link row, and leaves it as it was", async () => {
+    await expect(
+      set([{ id: OTHER_VERSIONS_ROW, resourceId: 777, fileId: 555 }])
+    ).rejects.toThrowError(/not on this version/);
+    expect(mockDbWrite.recommendedResource.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: OTHER_VERSIONS_ROW, sourceId: 10 } })
+    );
+  });
+
+  it("updates the version's own link row (control)", async () => {
+    await set([{ id: 7, resourceId: 777, fileId: 555 }]);
+    expect(mockDbWrite.recommendedResource.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the owner's new link to a file they do not own", async () => {
+    await expect(set([{ resourceId: 888, fileId: 666 }])).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockDbWrite.recommendedResource.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a file that is not on the version the link names', async () => {
+    await expect(set([{ resourceId: 888, fileId: 555 }])).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+  });
+
+  it("lets the owner link their own file, and a moderator link anyone's (control)", async () => {
+    await set([{ resourceId: 777, fileId: 555 }]);
+    await set([{ resourceId: 888, fileId: 666 }], true);
+    expect(mockDbWrite.recommendedResource.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps an unchanged link to a file the owner does not own, such as an official one (control)', async () => {
+    mockDbWrite.recommendedResource.findMany.mockResolvedValue([
+      { id: 7, settings: { isLinkedComponent: true, fileId: 666 } },
+    ] as never);
+    await set([{ id: 7, resourceId: 888, fileId: 666 }]);
+    expect(mockDbWrite.recommendedResource.updateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('linkOfficialFileByHash onto a live version of a pre-publish-review base model', () => {
+  const OFFICIAL_FILE = {
+    ...ownFile,
+    id: 4242,
+    modelVersionId: 31,
+    modelVersion: { model: { userId: constants.system.officialUserId } },
+  };
+  beforeEach(() => {
+    mockFindOfficialFileByHash.mockResolvedValue({
+      versionId: 31,
+      fileId: 4242,
+      componentType: 'VAE',
+      modelId: 30,
+      modelName: 'Official VAE',
+      versionName: 'v1',
+    });
+    mockDbRead.modelFile.findUnique.mockResolvedValue(OFFICIAL_FILE as never);
+  });
+  // The official version 31 is an allowed target.
+  const source = (status: string) =>
+    mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('FOR SHARE')
+        ? [{ status, baseModel: 'Fibo 2.0' }]
+        : [{ id: 31 }]) as never);
+  const link = (isModerator: boolean) =>
+    linkOfficialFileByHash({
+      id: 10,
+      sha256: 'ab'.repeat(32),
+      userId: CALLER,
+      isModerator,
+    } as never);
+
+  it("refuses the owner's link on a published Fibo 2.0 version", async () => {
+    source('Published');
+    await expect(link(false)).rejects.toThrowError(/Create a new version/);
+    expect(mockDbWrite.recommendedResource.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a moderator, on a published Fibo 2.0 version', 'Published', true],
+    ['the owner, on a draft Fibo 2.0 version', 'Draft', false],
+  ])('links the official file for %s (control)', async (_l, status, isModerator) => {
+    source(status);
+    await link(isModerator);
+    expect(mockDbWrite.recommendedResource.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the targets a version on a pre-publish-review base model may link to', () => {
+  const draftLinking = (allowedTargets: number[]) =>
+    mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('FOR SHARE')
+        ? [{ status: 'Draft', baseModel: 'Fibo 2.0' }]
+        : allowedTargets.map((id) => ({ id }))) as never);
+  beforeEach(() => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue(ownFile);
+    mockDbWrite.recommendedResource.findMany.mockResolvedValue([]);
+    mockDbWrite.modelFile.findMany.mockResolvedValue([
+      { id: 555, modelVersionId: 777, modelVersion: { model: { userId: CALLER } } },
+    ] as never);
+  });
+
+  it('refuses an add, and a set, whose target the rule does not allow, on a draft', async () => {
+    draftLinking([]);
+    await expect(addLinkedComponent({ ...baseInput, targetFileId: 555 })).rejects.toThrowError(
+      /official components or other reviewed versions/
+    );
+    await expect(
+      setLinkedComponents({
+        id: 10,
+        components: [{ resourceId: 777, settings: { isLinkedComponent: true, fileId: 555 } }],
+        userId: CALLER,
+      } as never)
+    ).rejects.toThrowError(/official components or other reviewed versions/);
+    expect(mockDbWrite.recommendedResource.create).not.toHaveBeenCalled();
+  });
+
+  it('links an allowed target on a draft (control)', async () => {
+    draftLinking([777]);
+    await addLinkedComponent({ ...baseInput, targetFileId: 555 });
+    expect(mockDbWrite.recommendedResource.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a moderator link any target (control)', async () => {
+    draftLinking([]);
+    await addLinkedComponent({ ...baseInput, targetFileId: 555, isModerator: true });
+    expect(mockDbWrite.recommendedResource.create).toHaveBeenCalledTimes(1);
   });
 });

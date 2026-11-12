@@ -1,4 +1,11 @@
 import { Prisma } from '@prisma/client';
+import { isVersionMetaHeld } from '~/server/services/pre-publish-gate/held';
+import {
+  assertGatedVersionsJudged,
+  disallowedLinkTargets,
+  isLinkTargetOfLiveGatedVersion,
+  LINK_TARGET_REFUSAL,
+} from '~/server/services/pre-publish-gate/publish-guard';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
 import {
@@ -32,6 +39,7 @@ import {
   isNonCommercialBaseModel,
   notCommerciallyAvailableMessage,
   nsfwRestrictedBaseModels,
+  requiresPrePublishReview,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -655,6 +663,23 @@ function assertOwnerBaseModelChange(
     );
 }
 
+function assertOwnerGatedBaseModelChange(
+  stored: { status: ModelStatus; baseModel: string; meta: unknown },
+  next: string | undefined
+) {
+  if (!next || next === stored.baseModel) return;
+  const live = stored.status === ModelStatus.Published || stored.status === ModelStatus.Scheduled;
+  const wasGated = requiresPrePublishReview(stored.baseModel);
+  if (live && !wasGated && requiresPrePublishReview(next))
+    throw throwBadRequestError(
+      `To use ${next}, create a new version instead of changing this one.`
+    );
+  if (wasGated && (live || isVersionMetaHeld(stored.meta)))
+    throw throwBadRequestError(
+      `The base model of this version can't be changed. Create a new version instead.`
+    );
+}
+
 /** Turbo is an ecosystem opt-in: a turbo block or default turbo LoRA is refused where the ecosystem has no turbo defaults. */
 export function assertRecommendedSettingsForType(
   settings: ModelVersionUpsertInput['settings'],
@@ -891,6 +916,18 @@ export const upsertModelVersion = async ({
         ', '
       )}`
     );
+  }
+
+  // The pre-publish gate keys on the base model. A public or scheduled version moved onto a gated
+  // one would skip it, and a version moved off one would leave the gate's hold or a public showcase
+  // it judged behind.
+  // Run again under the row lock: a publish can land between this read and the write.
+  if (!isModerator && editsExistingVersion) {
+    const existing = await dbWrite.modelVersion.findUnique({
+      where: { id: id as number },
+      select: { status: true, baseModel: true, meta: true },
+    });
+    if (existing) assertOwnerGatedBaseModelChange(existing, data.baseModel);
   }
 
   // Non-commercial base models (e.g. Ideogram) can't be monetized — reject any
@@ -1213,10 +1250,11 @@ export const upsertModelVersion = async ({
             name: string;
             trainedWords: string[];
             trainingStatus: TrainingStatus | null;
+            meta: unknown;
           } & PublishState & { baseModel: string })[]
         >`
           SELECT name, "trainedWords", "trainingStatus", "baseModel", status, "publishedAt",
-            "initialPublishedAt"
+            "initialPublishedAt", meta
           FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
         `;
         if (storedText && locked && !sameVersionText(locked, storedText))
@@ -1227,6 +1265,7 @@ export const upsertModelVersion = async ({
         if (!isModerator && locked) {
           assertOwnerTrainingStatusChange(locked.trainingStatus, data.trainingStatus);
           assertOwnerBaseModelChange(locked, data.baseModel);
+          assertOwnerGatedBaseModelChange(locked, data.baseModel);
         }
 
         const updated = await tx.modelVersion.update({
@@ -1656,6 +1695,10 @@ export const deleteVersionById = async ({
       throw throwBadRequestError(
         "This version's training run is in progress, under review or denied, so it can't be deleted."
       );
+    if (!isModerator && (await isLinkTargetOfLiveGatedVersion(tx, [id])))
+      throw throwBadRequestError(
+        "A version that a published version links to as a component can't be deleted."
+      );
 
     // Snapshot URLs + hashes inside the tx — must read before the cascade nukes
     // the ModelFile / ModelFileHash rows.
@@ -2059,9 +2102,12 @@ export const publishModelVersionById = async ({
   meta,
   republishing,
   enforceTakedown,
+  gateJudgedVersionIds,
 }: PublishVersionInput & {
   meta?: ModelVersionMeta;
   republishing?: boolean;
+  /** An owner's publish: the versions the pre-publish gate judged. Moderators skip the gate. */
+  gateJudgedVersionIds?: number[];
   /** Refuse a version, or a version of a model, a moderator took down: true for everyone but moderators. Required, so no caller skips it by omission. */
   enforceTakedown: boolean;
 }) => {
@@ -2145,6 +2191,7 @@ export const publishModelVersionById = async ({
       const downed = await readDownedVersion(tx, id, 'update');
       if (enforceTakedown && downed)
         throw throwAuthorizationError('You are not authorized to publish this model version');
+      if (gateJudgedVersionIds) await assertGatedVersionsJudged(tx, [id], gateJudgedVersionIds);
       // Under the lock: a replica read can still show a version the owner just published as Draft.
       const [stored] = await tx.$queryRaw<{ status: ModelStatus }[]>`
         SELECT status FROM "ModelVersion" WHERE id = ${id}
@@ -3421,37 +3468,105 @@ export async function getLinkedVaeIds(sourceVersionIds: number[]): Promise<Map<n
   return map;
 }
 
-export const setLinkedComponents = async ({ id, components }: SetLinkedComponentsInput) => {
+async function assertOwnsLinkedFiles(
+  components: { resourceId: number; settings: { fileId: number } }[],
+  userId: number
+) {
+  if (!components.length) return;
+  const files = await dbWrite.modelFile.findMany({
+    where: { id: { in: components.map((c) => c.settings.fileId) } },
+    select: {
+      id: true,
+      modelVersionId: true,
+      modelVersion: { select: { model: { select: { userId: true } } } },
+    },
+  });
+  const byId = new Map(files.map((f) => [f.id, f]));
+  for (const { resourceId, settings } of components) {
+    const file = byId.get(settings.fileId);
+    if (!file || file.modelVersionId !== resourceId || file.modelVersion.model.userId !== userId)
+      throw throwAuthorizationError('You do not own the file you are trying to link');
+  }
+}
+
+/**
+ * A linked component is served as the version's own file. The pre-publish gate judged a live
+ * version on a gated base model with what it served then, so new components there need a new
+ * version. Under a share lock, a publish waits for this write, or this sees the version it published.
+ */
+async function assertLinkedComponentsEditable(
+  tx: Prisma.TransactionClient,
+  versionId: number,
+  targetVersionIds: number[]
+) {
+  const [version] = await tx.$queryRaw<{ status: ModelStatus; baseModel: string }[]>`
+    SELECT status, "baseModel" FROM "ModelVersion" WHERE id = ${versionId} FOR SHARE
+  `;
+  const live =
+    version?.status === ModelStatus.Published || version?.status === ModelStatus.Scheduled;
+  if (live && requiresPrePublishReview(version.baseModel))
+    throw throwBadRequestError(
+      `Components can't be linked to a published ${version.baseModel} version. Create a new version instead.`
+    );
+  if (
+    requiresPrePublishReview(version?.baseModel) &&
+    (await disallowedLinkTargets(tx, targetVersionIds)).length
+  )
+    throw throwBadRequestError(LINK_TARGET_REFUSAL);
+}
+
+export const setLinkedComponents = async ({
+  id,
+  components,
+  userId,
+  isModerator,
+}: SetLinkedComponentsInput & { userId: number; isModerator?: boolean }) => {
   const existing = await dbWrite.recommendedResource.findMany({
     where: {
       sourceId: id,
       settings: { path: ['isLinkedComponent'], equals: true },
     },
-    select: { id: true },
+    select: { id: true, settings: true },
   });
+  const storedFileId = new Map(
+    existing.map((x) => [x.id, (x.settings as LinkedComponentSettings | null)?.fileId])
+  );
+  // As addLinkedComponent: an owner links only files they own. A link kept as it is, such as one
+  // to an official file, is not checked again.
+  if (!isModerator)
+    await assertOwnsLinkedFiles(
+      components.filter((c) => c.id == null || storedFileId.get(c.id) !== c.settings.fileId),
+      userId
+    );
 
   const existingIds = existing.map((x) => x.id);
   const inputIds = components.map((c) => c.id).filter(isDefined);
   const toDelete = existingIds.filter((eid) => !inputIds.includes(eid));
 
-  await dbWrite.$transaction([
-    ...(toDelete.length > 0
-      ? [dbWrite.recommendedResource.deleteMany({ where: { id: { in: toDelete }, sourceId: id } })]
-      : []),
-    ...components.map((component) =>
-      dbWrite.recommendedResource.upsert({
-        where: { id: component.id ?? -1 },
-        create: {
-          resourceId: component.resourceId,
-          sourceId: id,
-          settings: component.settings,
-        },
-        update: {
-          settings: component.settings,
-        },
-      })
-    ),
-  ]);
+  await dbWrite.$transaction(async (tx) => {
+    if (!isModerator)
+      await assertLinkedComponentsEditable(
+        tx,
+        id,
+        components.map((c) => c.resourceId)
+      );
+    if (toDelete.length > 0)
+      await tx.recommendedResource.deleteMany({ where: { id: { in: toDelete }, sourceId: id } });
+    for (const component of components) {
+      if (component.id == null) {
+        await tx.recommendedResource.create({
+          data: { resourceId: component.resourceId, sourceId: id, settings: component.settings },
+        });
+        continue;
+      }
+      const { count } = await tx.recommendedResource.updateMany({
+        where: { id: component.id, sourceId: id },
+        data: { settings: component.settings },
+      });
+      if (count === 0)
+        throw throwBadRequestError('A linked component to update is not on this version.');
+    }
+  });
 
   const source = await dbWrite.modelVersion.findUnique({
     where: { id },
@@ -3582,14 +3697,17 @@ export const addLinkedComponent = async (
     select: { id: true },
   });
 
-  const result = existing
-    ? await dbWrite.recommendedResource.update({
-        where: { id: existing.id },
-        data: { settings },
-      })
-    : await dbWrite.recommendedResource.create({
-        data: { sourceId: input.id, resourceId, settings },
-      });
+  const result = await dbWrite.$transaction(async (tx) => {
+    if (!isModerator) await assertLinkedComponentsEditable(tx, input.id, [resourceId]);
+    return existing
+      ? tx.recommendedResource.update({
+          where: { id: existing.id },
+          data: { settings },
+        })
+      : tx.recommendedResource.create({
+          data: { sourceId: input.id, resourceId, settings },
+        });
+  });
 
   // Quarantine the now-redundant local file instead of hard-deleting it: bytes
   // are retained for 30 days (restorable) and freed later by the
@@ -3792,6 +3910,23 @@ export const mergeVersions = async ({
       if (runs.length !== new Set([targetVersionId, ...sourceVersionIds]).size)
         throw throwNotFoundError('One or more versions to merge no longer exist.');
       baseModelByVersion = new Map(runs.map((r) => [r.id, r.baseModel]));
+      // A live version on a gated base model serves its linked components; one of them merged away
+      // would leave it serving whatever the link points at next.
+      if (await isLinkTargetOfLiveGatedVersion(tx, sourceVersionIds))
+        throw throwBadRequestError(
+          "A version that a published version links to as a component can't be merged away."
+        );
+      // The pre-publish gate judged a live version on a gated base model with the weights it had.
+      const targetRun = runs.find((r) => r.id === targetVersionId);
+      if (
+        targetRun &&
+        (targetRun.status === ModelStatus.Published ||
+          targetRun.status === ModelStatus.Scheduled) &&
+        requiresPrePublishReview(targetRun.baseModel)
+      )
+        throw throwBadRequestError(
+          `Versions can't be merged into a published ${targetRun.baseModel} version. Create a new version instead.`
+        );
       const sourceRuns = runs.filter((r) => sourceVersionIds.includes(r.id));
       const lockedSource = sourceRuns.find(
         (r) => r.trainingStatus && versionRemovalLockedTrainingStatuses.includes(r.trainingStatus)
@@ -4214,7 +4349,9 @@ export const linkOfficialFileByHash = async (
     modelName: match.modelName,
     versionName: match.versionName,
     isRequired: true,
+    // The official account owns the target file, which passes the target-ownership check; the
+    // caller's own role decides whether a live version on a gated base model may take the link.
     userId: constants.system.officialUserId,
-    isModerator: true,
+    isModerator: !!input.isModerator,
   });
 };

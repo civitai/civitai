@@ -24,6 +24,7 @@ const {
   readTextScanLabelModes,
   getTextScanCsamMode,
   readTextScanCsamMode,
+  rolloutFor,
 } = await import('~/server/services/text-scan/mode');
 const { isTextScanEntityType } = await import('~/server/services/text-scan/profiles');
 
@@ -345,5 +346,18 @@ describe('csam mode', () => {
       throw new Error('logger broke');
     });
     expect(await getTextScanCsamMode()).toBe('off');
+  });
+});
+
+describe('ModelPrePublish rollout', () => {
+  it('is fully active when no rollout is set, so the pre-publish gate never skips its scan', () => {
+    expect(rolloutFor({}, 'ModelPrePublish')).toEqual({ shadow: 0, active: 100 });
+  });
+
+  it('takes a rollout set for it', () => {
+    expect(rolloutFor({ ModelPrePublish: { shadow: 100, active: 0 } }, 'ModelPrePublish')).toEqual({
+      shadow: 100,
+      active: 0,
+    });
   });
 });

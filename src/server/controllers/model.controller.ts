@@ -155,7 +155,12 @@ import {
   updateModelById,
   queueModelEarlyAccessReindex,
   upsertModel,
+  publishedModelSelect,
 } from '~/server/services/model.service';
+import {
+  enforcePrePublishGate,
+  recordModeratorRelease,
+} from '~/server/services/pre-publish-gate/gate.service';
 import { getOfficialModelIds } from '~/server/services/resource-select.service';
 import {
   closeAppealsDeletedByOwner,
@@ -906,7 +911,10 @@ export const publishModelHandler = async ({
 }: {
   input: PublishModelSchema;
   // Narrowed so `/api/mod/model/republish` can run the same path with its own actor and tracker.
-  ctx: Pick<ProtectedContext, 'user' | 'track'>;
+  ctx: Pick<ProtectedContext, 'user' | 'track'> & {
+    /** The pre-publish gate resolver re-asking a waiting publish. */
+    prePublishGateRunId?: string;
+  };
 }) => {
   try {
     const model = await dbRead.model.findUnique({
@@ -950,6 +958,26 @@ export const publishModelHandler = async ({
     });
     await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
 
+    let gateJudgedVersionIds: number[] | undefined;
+    if (!isModerator) {
+      const gate = await enforcePrePublishGate({
+        modelId: input.id,
+        versionIds: input.versionIds,
+        scope: 'model',
+        publishedAt: input.publishedAt,
+        runId: ctx.prePublishGateRunId,
+      });
+      if (gate && gate.outcome !== 'pass')
+        return {
+          ...(await dbWrite.model.findUniqueOrThrow({
+            where: { id: input.id },
+            select: publishedModelSelect,
+          })),
+          prePublishGate: gate.outcome,
+        };
+      gateJudgedVersionIds = gate?.versionIds ?? [];
+    }
+
     const updatedModel = await publishModelById({
       ...input,
       meta: (stored) => {
@@ -967,9 +995,17 @@ export const publishModelHandler = async ({
       republishing,
       enforceModelRules: !isModerator,
       refuseRemovedWithOwner: !isModerator,
+      gateJudgedVersionIds,
     });
     // Held for review: not published, so no publish side effects below.
     if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
+    if (isModerator)
+      await recordModeratorRelease({
+        modelId: input.id,
+        versionIds: input.versionIds,
+        actorId: ctx.user.id,
+        releasesModel: true,
+      });
 
     await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');
@@ -2629,7 +2665,7 @@ export const publishPrivateModelHandler = async ({
   ctx,
 }: {
   input: PublishPrivateModelInput;
-  ctx: ProtectedContext;
+  ctx: Pick<ProtectedContext, 'user'> & { prePublishGateRunId?: string };
 }) => {
   try {
     const { id: userId } = ctx.user;
@@ -2660,12 +2696,38 @@ export const publishPrivateModelHandler = async ({
       isModerator: ctx.user.isModerator,
     });
 
+    const privateVersionIds = (
+      await dbWrite.modelVersion.findMany({
+        where: { modelId: model.id, status: ModelStatus.Published },
+        select: { id: true },
+      })
+    ).map((v) => v.id);
+    let gateJudgedVersionIds: number[] | undefined = ctx.user.isModerator ? undefined : [];
+    if (!ctx.user.isModerator && privateVersionIds.length) {
+      const gate = await enforcePrePublishGate({
+        modelId: model.id,
+        versionIds: privateVersionIds,
+        scope: 'private',
+        runId: ctx.prePublishGateRunId,
+        publishVersions: input.publishVersions,
+      });
+      if (gate && gate.outcome !== 'pass') return { held: true, prePublishGate: gate.outcome };
+      gateJudgedVersionIds = gate?.versionIds ?? [];
+    }
+
     const { versionIds, held } = await publishPrivateModel(
       { ...input, isModerator: ctx.user.isModerator },
-      { enforceModelRules: !ctx.user.isModerator }
+      { enforceModelRules: !ctx.user.isModerator, gateJudgedVersionIds }
     );
     // The hold refreshed the caches itself and nothing went public, so no publish side effects.
     if (held) return { held };
+    if (ctx.user.isModerator)
+      await recordModeratorRelease({
+        modelId: model.id,
+        versionIds,
+        actorId: ctx.user.id,
+        releasesModel: true,
+      });
     await dataForModelsCache.refresh(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([

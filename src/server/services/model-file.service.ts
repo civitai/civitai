@@ -1,7 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { deleteUnlessHeld, modelRowHeldSql } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
-import { CacheTTL, constants, KEY_VALUE_KEYS } from '~/server/common/constants';
+import {
+  CacheTTL,
+  constants,
+  KEY_VALUE_KEYS,
+  requiresPrePublishReview,
+} from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
 import { purgeCache } from '~/server/cloudflare/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -202,17 +207,47 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   )
     file.visibility = ModelFileVisibility.Private;
 
-  const result = await dbWrite.modelFile.create({
-    data: {
-      ...file,
-      rawScanResult: file.rawScanResult !== null ? file.rawScanResult : Prisma.JsonNull,
-      modelVersionId: data.modelVersionId,
-    },
-    select,
+  const result = await dbWrite.$transaction(async (tx) => {
+    if (!isModerator) {
+      const [locked] = await lockedVersionState(tx, data.modelVersionId);
+      if (locked) assertLiveGatedVersionKeepsFiles(locked, 'add');
+    }
+    return tx.modelFile.create({
+      data: {
+        ...file,
+        rawScanResult: file.rawScanResult !== null ? file.rawScanResult : Prisma.JsonNull,
+        modelVersionId: data.modelVersionId,
+      },
+      select,
+    });
   });
   await deleteFilesForModelVersionCache(data.modelVersionId);
 
   return result;
+}
+
+/**
+ * The pre-publish gate judged a live version on a gated base model with the files it could serve
+ * then, so new or newly shown weights there need a new version, which the gate judges.
+ */
+function assertLiveGatedVersionKeepsFiles(
+  version: { status: ModelStatus; baseModel: string },
+  op: 'add' | 'change'
+) {
+  const live = version.status === ModelStatus.Published || version.status === ModelStatus.Scheduled;
+  if (live && requiresPrePublishReview(version.baseModel))
+    throw throwBadRequestError(
+      op === 'add'
+        ? `Files can't be added to a published ${version.baseModel} version. Create a new version instead.`
+        : `Files on a published ${version.baseModel} version can't be made public or change type. Create a new version instead.`
+    );
+}
+
+/** Under a share lock, a publish waits for this write, or this sees the version it published. */
+function lockedVersionState(tx: Prisma.TransactionClient, modelVersionId: number) {
+  return tx.$queryRaw<{ status: ModelStatus; baseModel: string }[]>`
+    SELECT status, "baseModel" FROM "ModelVersion" WHERE id = ${modelVersionId} FOR SHARE
+  `;
 }
 
 export async function updateFile({
@@ -324,21 +359,38 @@ export async function updateFile({
     inputData.visibility = ModelFileVisibility.Private;
 
   const typeChanged = inputData.type !== undefined && inputData.type !== modelFile.type;
+  // Showing a hidden file, or retyping one, serves weights the gate did not judge with the version.
+  const exposes =
+    !isModerator &&
+    requiresPrePublishReview(modelFile.modelVersion?.baseModel) &&
+    (typeChanged ||
+      (inputData.visibility !== undefined &&
+        inputData.visibility !== modelFile.visibility &&
+        inputData.visibility !== ModelFileVisibility.Private));
+  if (exposes) assertLiveGatedVersionKeepsFiles(modelFile.modelVersion, 'change');
   // The file kind can change the version's AIR (a diffusion model or UNet), and the bust after the
   // write derives only the new one. Never throws.
   if (typeChanged) await bustOrchestratorModelCache(modelFile.modelVersionId);
 
   const scanReset = scanResetForFileChange(modelFile, change);
-  const { count } = await dbWrite.modelFile.updateMany({
-    // A sent type writes only over the type `typeChanged` was judged against: an edit from a stale
-    // tab would otherwise change it back with no bust.
-    where: {
-      id,
-      ...(inputData.type !== undefined && { type: modelFile.type }),
-      ...scanResetWriteGuard(modelFile, change),
-    },
-    data: { ...inputData, metadata, ...scanReset },
-  });
+  const write = (db: Prisma.TransactionClient) =>
+    db.modelFile.updateMany({
+      // A sent type writes only over the type `typeChanged` was judged against: an edit from a stale
+      // tab would otherwise change it back with no bust.
+      where: {
+        id,
+        ...(inputData.type !== undefined && { type: modelFile.type }),
+        ...scanResetWriteGuard(modelFile, change),
+      },
+      data: { ...inputData, metadata, ...scanReset },
+    });
+  const { count } = exposes
+    ? await dbWrite.$transaction(async (tx) => {
+        const [locked] = await lockedVersionState(tx, modelFile.modelVersionId);
+        if (locked) assertLiveGatedVersionKeepsFiles(locked, 'change');
+        return write(tx);
+      })
+    : await write(dbWrite);
   // Replaced, deleted or retyped since the lookup above, or a new verdict on a relabel: nothing was
   // written.
   if (count === 0) {

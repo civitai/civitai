@@ -121,6 +121,10 @@ import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
+import {
+  enforcePrePublishGate,
+  recordModeratorRelease,
+} from '~/server/services/pre-publish-gate/gate.service';
 import { scanModelAndRules } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -850,7 +854,10 @@ export const publishModelVersionHandler = async ({
   ctx,
 }: {
   input: PublishVersionInput;
-  ctx: ProtectedContext;
+  ctx: Pick<ProtectedContext, 'user' | 'track'> & {
+    /** The pre-publish gate resolver re-asking a waiting publish. */
+    prePublishGateRunId?: string;
+  };
 }) => {
   try {
     const version = await getVersionById({
@@ -902,6 +909,20 @@ export const publishModelVersionHandler = async ({
       isModerator: ctx.user.isModerator,
     });
 
+    let gateJudgedVersionIds: number[] | undefined;
+    if (!ctx.user.isModerator) {
+      const gate = await enforcePrePublishGate({
+        modelId: version.modelId,
+        versionIds: [input.id],
+        scope: 'version',
+        publishedAt: input.publishedAt,
+        runId: ctx.prePublishGateRunId,
+      });
+      if (gate && gate.outcome !== 'pass')
+        return { id: input.id, modelId: version.modelId, held: true, prePublishGate: gate.outcome };
+      gateJudgedVersionIds = gate?.versionIds ?? [];
+    }
+
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
@@ -924,6 +945,7 @@ export const publishModelVersionHandler = async ({
       meta,
       republishing,
       enforceTakedown: !ctx.user.isModerator,
+      gateJudgedVersionIds,
     });
     let held = false;
     if (literalHold) {
@@ -948,6 +970,12 @@ export const publishModelVersionHandler = async ({
     scanModelAndRules(updatedVersion.modelId, { rules: false });
     // The takedown refreshed the caches, and the model is no longer live to announce or reindex.
     if (held) return { ...updatedVersion, held };
+    if (ctx.user.isModerator)
+      await recordModeratorRelease({
+        modelId: version.modelId,
+        versionIds: [input.id],
+        actorId: ctx.user.id,
+      });
 
     await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');

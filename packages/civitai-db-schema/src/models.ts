@@ -1834,6 +1834,18 @@ export interface TextScanPrompt {
   createdAt: Date;
 }
 
+export interface ModelPublishCheck {
+  id: number;
+  modelId: number;
+  modelVersionId: number | null;
+  runId: string;
+  check: string;
+  outcome: string;
+  detail: JsonValue | null;
+  actorId: number | null;
+  createdAt: Date;
+}
+
 export interface TextScanHold {
   id: number;
   entityType: string;

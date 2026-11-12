@@ -4272,6 +4272,20 @@ export type ModelPermissionSnapshot = {
   allowDerivatives: boolean;
   allowDifferentLicense: boolean;
 };
+export type ModelPublishCheck = {
+  id: Generated<number>;
+  modelId: number;
+  modelVersionId: number | null;
+  runId: string;
+  check: string;
+  outcome: string;
+  detail: unknown | null;
+  /**
+   * The moderator for a release; null for the system.
+   */
+  actorId: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ModelReport = {
   modelId: number;
   reportId: number;
@@ -6844,6 +6858,7 @@ export type DB = {
   ModelMetricDaily: ModelMetricDaily;
   ModelOwnership: ModelOwnership;
   ModelPermissionSnapshot: ModelPermissionSnapshot;
+  ModelPublishCheck: ModelPublishCheck;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;
   ModelSelfGeneration: ModelSelfGeneration;

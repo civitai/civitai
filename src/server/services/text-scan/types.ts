@@ -37,6 +37,7 @@ export type TextScanEntityType =
   | 'Collection'
   | 'Storyline'
   | 'ImageCaption'
+  | 'ModelPrePublish'
   | 'ModelRules';
 
 export type TextScanField = { heading: string; text: string | null | undefined };

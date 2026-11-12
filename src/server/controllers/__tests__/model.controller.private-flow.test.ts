@@ -56,7 +56,7 @@ describe('publishPrivateModelHandler', () => {
 
       expect(mockPublishPrivateModel).toHaveBeenCalledWith(
         expect.objectContaining({ modelId: MODEL_ID, isModerator: isMod }),
-        { enforceModelRules: !isMod }
+        expect.objectContaining({ enforceModelRules: !isMod })
       );
     }
   );

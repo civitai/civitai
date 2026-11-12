@@ -64,6 +64,8 @@ const MODERATION_SECRET_META_KEYS = [
   'textScanFlags',
   'modelRules',
   'modelRulesCleared',
+  'prePublishGate',
+  'prePublishHold',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 // Server-owned keys that are also hidden from clients. Client meta can't write them at all

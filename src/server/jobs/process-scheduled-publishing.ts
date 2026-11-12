@@ -3,7 +3,11 @@ import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { constants, POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
+import {
+  constants,
+  POST_MINIMUM_SCHEDULE_MINUTES,
+  PRE_PUBLISH_REVIEW_BASE_MODELS,
+} from '~/server/common/constants';
 import { uniq, uniqBy } from 'lodash-es';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -55,6 +59,21 @@ const noFailedScanFileSql = (versionId: string) => Prisma.sql`
   )
 `;
 
+// A scheduled version on a gated base model goes live only once the pre-publish gate passed it.
+// The gate runs before a publish can schedule anything; this keeps a row it never saw from going out.
+// Both arguments are SQL identifiers spliced in raw: pass literals only.
+export const prePublishGatePassedSql = (versionAlias: string, metaExpr: string) => {
+  const version = Prisma.raw(versionAlias);
+  const meta = Prisma.raw(metaExpr);
+  return Prisma.sql`(
+    COALESCE(${version}."baseModel", '') NOT IN (${Prisma.join([
+    ...PRE_PUBLISH_REVIEW_BASE_MODELS,
+  ])})
+    -- COALESCE: a model with no gate record yields NULL, which must count as not passed.
+    OR COALESCE(${meta}->'prePublishGate'->'passedVersionIds' @> to_jsonb(${version}.id), false)
+  )`;
+};
+
 /** Scheduled models due by `now`. */
 export const scheduledModelsDueSql = (now: Date) => Prisma.sql`
   SELECT id, "userId"
@@ -63,6 +82,11 @@ export const scheduledModelsDueSql = (now: Date) => Prisma.sql`
     AND "publishedAt" <= ${now}
     AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('meta')}
+    AND NOT EXISTS (
+      SELECT 1 FROM "ModelVersion" gv
+      WHERE gv."modelId" = "Model".id AND gv.status = 'Scheduled'
+        AND NOT ${prePublishGatePassedSql('gv', '"Model".meta')}
+    )
 `;
 
 /** Scheduled versions due by `now` that have a file, with their early access. */
@@ -91,6 +115,7 @@ export const scheduledVersionsDueSql = (now: Date) => Prisma.sql`
     AND ${notRemovedWithOwnerSql('m.meta')}
     AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf."modelVersionId" = mv.id)
     AND ${noFailedScanFileSql('mv.id')}
+    AND ${prePublishGatePassedSql('mv', 'm.meta')}
 `;
 
 /** Unpublished posts by the model's owner on a scheduled version due by `now`. */
@@ -105,6 +130,7 @@ export const scheduledPostsDueSql = (now: Date) => Prisma.sql`
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('m.meta')}
     AND ${noFailedScanFileSql('mv.id')}
+    AND ${prePublishGatePassedSql('mv', 'm.meta')}
 `;
 
 // DB clock, truncated: sync_model_to_metric drops a lastVersionAt later than NOW(), and the

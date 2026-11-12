@@ -1201,6 +1201,13 @@ function getLicenseRestrictedNsfwLevels(license: LicenseDetails | undefined): Ns
   return [];
 }
 
+// Base models whose fine-tunes stay unpublished until the pre-publish gate passes (services/pre-publish-gate).
+export const PRE_PUBLISH_REVIEW_BASE_MODELS: readonly string[] = ['Fibo 2.0'];
+
+export function requiresPrePublishReview(baseModel?: string | null): boolean {
+  return !!baseModel && PRE_PUBLISH_REVIEW_BASE_MODELS.includes(baseModel);
+}
+
 // Base models that use licenses with NSFW restrictions
 export const nsfwRestrictedBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
   .filter(([, license]) => getLicenseRestrictedNsfwLevels(license).length > 0)
