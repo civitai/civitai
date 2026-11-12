@@ -234,6 +234,49 @@ describe('vault/[vaultItemId]', () => {
   });
 });
 
+describe('vault/[vaultItemId], a moderator and a taken-down model', () => {
+  const run = (caller: typeof h.caller) =>
+    call(vaultRoute, { vaultItemId: '31', type: 'model' }, caller);
+  const moderator = { id: MODERATOR_ID, isModerator: true };
+
+  beforeEach(() => {
+    // Only moderators are served a vault copy of a taken-down model's file.
+    dbMock.dbRead.modelVersion.findUnique.mockImplementation((async (args: {
+      include?: { model?: unknown };
+    }) => ({
+      id: 9,
+      usageControl: 'Download',
+      ...(args.include?.model ? { model: { status: 'Published', mode: 'TakenDown' } } : {}),
+    })) as never);
+  });
+
+  it.each([null, 'enforce'])(
+    'is not served it by a VaultRead-only personal key (flag %s)',
+    async (variant) => {
+      h.variant = variant;
+      const { status, served } = await run({
+        user: moderator,
+        context: personalKey(TokenScope.VaultRead),
+      });
+      expect(served).toBeUndefined();
+      expect(status).toBe(404);
+    }
+  );
+
+  it.each([null, 'enforce'])(
+    'is served it by a full-scope personal key or a cookie session (flag %s)',
+    async (variant) => {
+      h.variant = variant;
+      expect((await run({ user: moderator, context: personalKey(TokenScope.Full) })).served).toBe(
+        'https://example.invalid/vault.safetensors'
+      );
+      expect((await run({ user: moderator })).served).toBe(
+        'https://example.invalid/vault.safetensors'
+      );
+    }
+  );
+});
+
 describe('attachments/[fileId]', () => {
   const run = (caller: typeof h.caller) => call(attachmentRoute, { fileId: '8' }, caller);
 
