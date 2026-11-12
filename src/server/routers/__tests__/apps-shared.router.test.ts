@@ -2683,7 +2683,9 @@ describe('shared `data` local moderation', () => {
     );
 
     it('a PATTERN hit follows user-content-pattern-enforce, as title/body does: recorded, not rejected, while it is off', async () => {
-      mockFindBlocked.mockResolvedValue([{ kind: 'pattern', index: 1, matched: 'scam phrase' }]);
+      mockFindBlocked.mockResolvedValue([
+        { kind: 'pattern', index: 1, matched: 'scam phrase', patternId: 0, listId: null },
+      ]);
       await expect(appendData({ note: 'a scam phrase here' })).resolves.toMatchObject({
         key: expect.any(String),
       });
@@ -2697,7 +2699,9 @@ describe('shared `data` local moderation', () => {
 
     it('…and rejected, without a Report row, once user-content-pattern-enforce is on', async () => {
       mockGetFliptBoolean.mockResolvedValue(true);
-      mockFindBlocked.mockResolvedValue([{ kind: 'pattern', index: 1, matched: 'scam phrase' }]);
+      mockFindBlocked.mockResolvedValue([
+        { kind: 'pattern', index: 1, matched: 'scam phrase', patternId: 0, listId: null },
+      ]);
       await expect(appendData({ note: 'a scam phrase here' })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
         message: 'Content flagged for review',

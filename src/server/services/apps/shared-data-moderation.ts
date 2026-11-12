@@ -120,9 +120,9 @@ export interface SharedTextHit {
   matched: string;
   /**
    * What matched, in PLATFORM-AUTHORED terms only — never a substring of the leaf: the category
-   * name (`minor`), the list word (`poi`), the blocklist entry (`pattern`), the audit trigger's
-   * category (`audit_regex`, e.g. `profanity`), the cap (`overflow`), or `''` (`link`: the list
-   * does not report which entry matched, only the user's URL). An enforce-mode record stores this in
+   * name (`minor`), the list word (`poi`), a `blocklist:<id>#<position>` reference (`pattern`),
+   * the audit trigger's category (`audit_regex`, e.g. `profanity`), the cap (`overflow`), or `''`
+   * (`link`: the list does not report which entry matched, only the user's URL). An enforce-mode record stores this in
    * place of `matched`.
    */
   label: string;
@@ -155,6 +155,11 @@ export const SHARED_DATA_FULL_AUDIT_BUDGET = 32;
 const AUDIT_BUDGET_EXCEEDED = Symbol('audit-budget-exceeded');
 /** `auditLeaf`'s answer for a leaf longer than the audit will read at all. */
 const LEAF_TOO_LONG = Symbol('leaf-too-long');
+/** `blocklist:<Blocklist.id>#<entry position>`, what a pattern hit records in place of the entry. */
+function patternRef(hit: { listId: number | null; patternId: number }) {
+  return `blocklist:${hit.listId ?? '?'}#${hit.patternId}`;
+}
+
 /** A hit: the matched word as the input carried it, and the trigger's platform category. */
 type AuditLeafMatch = { matched: string; label: string };
 type AuditLeafResult = AuditLeafMatch | null | typeof AUDIT_BUDGET_EXCEEDED | typeof LEAF_TOO_LONG;
@@ -246,8 +251,8 @@ export async function classifySharedTexts(
         hit.kind === 'link'
           ? // `matched` here is the user's URLs as written: user text.
             { category: 'link', matched: hit.matched.join(','), label: '', leaf }
-          : // The blocklist ENTRY that matched (a substring rule) — platform-authored.
-            { category: 'pattern', matched: hit.matched, label: hit.matched, leaf }
+          : // A reference to the entry, never its text: the entry is moderation policy.
+            { category: 'pattern', matched: patternRef(hit), label: patternRef(hit), leaf }
       );
     }
     const audit = audits[index];

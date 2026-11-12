@@ -49,7 +49,9 @@ import {
   SANDBOX_SERVER_LABEL,
   chosenAppOf,
   createAppFeedbackSource,
+  createSourceSaveScheduler,
 } from '@civitai/app-assistant';
+import { saveAppSource } from '~/components/Apps/AppAssistant/appSourceSave';
 import { appChatOf, appOfChat, rememberAppChat } from '~/components/Apps/AppAssistant/appChats';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { mostRecentApp } from '~/components/Apps/AppAssistant/appLifecycle';
@@ -438,6 +440,18 @@ export function AppAssistantWorkspace({
   const utils = trpc.useUtils();
   const trpcUtils = useRef(utils);
   trpcUtils.current = utils;
+  // Each change the assistant makes to the open app's files is committed to the app's source repo
+  // (its git history) once the reply pauses. On the server runner the runner saves; the page only
+  // hears of the calls, so it saves nothing then.
+  const remoteRunnerRef = useRef(remoteRunner);
+  remoteRunnerRef.current = remoteRunner;
+  const sourceSaves = useMemo(() => createSourceSaveScheduler({ save: saveAppSource }), []);
+  useEffect(
+    () => () => {
+      void sourceSaves.flush();
+    },
+    [sourceSaves]
+  );
   const gate = useMemo(
     () =>
       createAssistantGate({
@@ -453,6 +467,9 @@ export function AppAssistantWorkspace({
         },
         // A chat changes only the app it made or chose: a new chat never builds over the open one.
         openApp: () => live.current.active?.app ?? null,
+        onAppChanged: (app) => {
+          if (!remoteRunnerRef.current) sourceSaves.changed(app);
+        },
         // The open app's review and user feedback, through My builds' own reads as the user; a status
         // changes only when the user presses its card. (On the server runner the runner reads it.)
         feedback: {
@@ -481,7 +498,7 @@ export function AppAssistantWorkspace({
           onAttached: () => void trpcUtils.current.appListings.getMyListingForApp.invalidate(),
         }),
       }),
-    [appTools, tokens]
+    [appTools, tokens, sourceSaves]
   );
   // What was verified belongs to the sandbox it was verified in, and so does a Submit for review offer.
   useEffect(() => {

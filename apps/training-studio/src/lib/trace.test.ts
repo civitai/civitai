@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { followTrace, interpretTraceLine, traceLossPoints, tracePath } from './trace';
+import { followTrace, interpretTraceLine, traceLogText, traceLossPoints, tracePath } from './trace';
 
 describe('traceLossPoints', () => {
   it('reads every tqdm redraw on a concatenated log line, skipping ones without a loss', () => {
@@ -146,5 +146,17 @@ describe('followTrace', () => {
     await vi.advanceTimersByTimeAsync(0);
     controller.abort();
     await assertion;
+  });
+});
+
+describe('traceLogText', () => {
+  it('keeps every line, loss readings included, under its epoch header', () => {
+    const loss = '{"type":"loss","step":3,"loss":0.12}';
+    expect(
+      traceLogText([
+        { epoch: 1, lines: ['{"type":"log","message":"loading"}', loss] },
+        { epoch: 2, lines: ['plain text'] },
+      ])
+    ).toBe(`=== Epoch 1 ===\nloading\n${loss}\n\n=== Epoch 2 ===\nplain text\n`);
   });
 });

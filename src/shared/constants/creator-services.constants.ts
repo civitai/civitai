@@ -6,6 +6,11 @@ const HOUR = 3_600_000;
 export const SERVICE_DEAL_ACCEPT_WINDOW_MS = 48 * HOUR;
 /** How long past the due date before the buyer may cancel without the seller's agreement. */
 export const SERVICE_DEAL_LATE_CANCEL_AFTER_MS = 24 * HOUR;
+/**
+ * How long past the due date an undelivered deal waits before it is cancelled and refunded with no
+ * one acting. A revision round counts from its request instead, since a revision keeps the due date.
+ */
+export const SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS = 7 * 24 * HOUR;
 /** Unanswered cancellation requests are granted after this. */
 export const SERVICE_DEAL_CANCELLATION_RESPONSE_MS = 48 * HOUR;
 /** A delivery the buyer neither accepts nor sends back completes on its own after this. */

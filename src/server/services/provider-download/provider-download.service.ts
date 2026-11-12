@@ -4,6 +4,7 @@ import { countProviderDownload } from '~/server/prom/provider-download.metrics';
 import {
   checkGenerationFetch,
   type GenerationFetchRefusal,
+  type GenerationFetchResult,
   type GenerationFetchSelectors,
 } from '~/server/services/download-link/generation-fetch.service';
 import { takeProviderDownload } from '~/server/services/provider-download/provider-download.limiter';
@@ -59,6 +60,8 @@ const REFUSAL_STATUS: Record<GenerationFetchRefusal, number> = {
   'unsupported-file': 400,
 };
 
+export type ProviderServed = { ok: true; url: string } | ({ ok: false } & ProviderRefusal);
+
 /**
  * The file a provider asked for, as a short-lived URL, recorded as a `GenerationFetch` carrying
  * the provider. Never resolves a session.
@@ -77,13 +80,28 @@ export async function serveProviderDownload({
   modelVersionId: number;
   fileId?: number;
   selectors: GenerationFetchSelectors;
-}): Promise<{ ok: true; url: string } | ({ ok: false } & ProviderRefusal)> {
+}): Promise<ProviderServed> {
   const check = await checkGenerationFetch({
     modelVersionId,
     fileId,
     principal: { kind: 'provider', provider },
     selectors,
   });
+  return serveProviderFetch({ req, res, provider, check });
+}
+
+/** Answers a provider principal's `checkGenerationFetch` result, however its file was chosen. */
+export async function serveProviderFetch({
+  req,
+  res,
+  provider,
+  check,
+}: {
+  req: NextApiRequest;
+  res: NextApiResponse;
+  provider: string;
+  check: GenerationFetchResult;
+}): Promise<ProviderServed> {
   if (!check.ok) {
     countProviderDownload(provider, 'refused_gate', 'unknown');
     return { ok: false, status: REFUSAL_STATUS[check.error], body: { error: check.error } };

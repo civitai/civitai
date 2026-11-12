@@ -47,7 +47,6 @@ vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: h.bear
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: h.hubSession,
   maybeRollHubCookie: h.roll,
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({

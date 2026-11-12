@@ -5,6 +5,8 @@ import type * as MeilisearchClient from '~/server/meilisearch/client';
 import type * as PromClient from '~/server/prom/client';
 import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
+import type * as BlocklistService from '~/server/services/blocklist.service';
+import type * as Audit from '~/utils/metadata/audit';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import type { SessionUser } from '~/types/session';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -18,8 +20,25 @@ const h = vi.hoisted(() => {
   return {
     queryWithTimeout: vi.fn(),
     fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
+    stripBenignPhrases: vi.fn(async (text: string) => text),
+    includesInappropriate:
+      vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
+    includesPoi: vi.fn<(prompt?: string) => string | false>(),
+    includesMinor: vi.fn<(prompt?: string) => boolean>(),
+    isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
   };
 });
+
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlocklistService>()),
+  stripBenignPhrases: h.stripBenignPhrases,
+}));
+vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
+  ...(await importOriginal<typeof Audit>()),
+  includesInappropriate: h.includesInappropriate,
+  includesPoi: h.includesPoi,
+  includesMinor: h.includesMinor,
+}));
 
 vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
@@ -44,6 +63,10 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isFlipt: h.isFlipt,
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => {
   const actual = await importOriginal<typeof ImageService>();
@@ -83,6 +106,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 }));
 
 import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
+import { anchorBrowsingLevel } from '~/server/services/semantic-query-guard';
 import type { CandidateSource } from '~/server/services/semantic-search-client';
 
 const VIEWER = { id: 500, isModerator: false } as SessionUser;
@@ -117,6 +141,11 @@ function visibleOnly(visible: Set<number>) {
 beforeEach(() => {
   h.fakeGetAllImages = undefined;
   h.queryWithTimeout.mockReset().mockRejectedValue(new Error('stop here'));
+  h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
+  h.includesInappropriate.mockReset().mockReturnValue(false);
+  h.includesPoi.mockReset().mockReturnValue(false);
+  h.includesMinor.mockReset().mockReturnValue(false);
+  h.isFlipt.mockReset().mockResolvedValue(false);
 });
 
 describe('a stale index cannot surface a hidden image', () => {
@@ -367,6 +396,14 @@ describe('filters', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("leaves the viewer's hidden tags, users and images out of the Qdrant filter", async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
+    expect(calls[0].filter).not.toHaveProperty('excludedTagIds');
+    expect(calls[0].filter).not.toHaveProperty('excludedUserIds');
+    expect(calls[0].filter).not.toHaveProperty('excludedIds');
+  });
+
   it('bounds the posted date', async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({
@@ -391,6 +428,212 @@ describe('filters', () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({ input: textQuery({ browsingLevel: 0 }), candidateSource: source });
     expect(calls[0].filter.gate.nsfwLevels.length).toBeGreaterThan(0);
+  });
+});
+
+describe('"more like this" never rates above its anchor', () => {
+  const PG13 = 2;
+  const R = 4;
+  const X = 8;
+  const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
+
+  it.each([
+    ['a PG anchor, for a viewer at every level', ALL_LEVELS, PG, PG],
+    ['an R anchor, for a viewer at every level', ALL_LEVELS, R, PG | PG13 | R],
+    ['an X anchor, for a viewer at PG and PG13', PG | PG13, X, PG | PG13],
+    ['an anchor with no level, for a viewer at every level', ALL_LEVELS, undefined, PG | PG13],
+    ['an anchor at level 0, for a viewer at every level', ALL_LEVELS, 0, PG | PG13],
+    ['an anchor with no level, for an X-only viewer', X, undefined, PG],
+  ])('caps %s', (_name, viewer, anchor, expected) => {
+    expect(anchorBrowsingLevel(viewer, anchor)).toBe(expected);
+  });
+
+  const run = (anchorLevel: number | undefined, user: SessionUser) => {
+    const { source, calls } = rankedSource([101]);
+    const seen: unknown[] = [];
+    h.fakeGetAllImages = async (args) => {
+      seen.push((args as { browsingLevel?: number }).browsingLevel);
+      return {
+        items: args.ids.map((id) => ({ id, nsfwLevel: id === ANCHOR ? anchorLevel : PG })),
+        nextCursor: undefined,
+      };
+    };
+    return searchSemanticImages({
+      input: input({ imageId: ANCHOR, browsingLevel: ALL_LEVELS }),
+      user,
+      candidateSource: source,
+    }).then(() => ({ gate: calls[0].filter.gate.nsfwLevels, hydrated: seen.slice(1) }));
+  };
+
+  it('narrows a PG13 viewer to PG from a PG anchor, in the index filter and in hydration', async () => {
+    const { gate, hydrated } = await run(PG, VIEWER);
+    expect(gate).toEqual([PG]);
+    expect(hydrated).toEqual([PG]);
+  });
+
+  it('leaves a moderator at every level', async () => {
+    const { gate } = await run(PG, { id: 501, isModerator: true } as SessionUser);
+    expect(gate).toEqual([1, 2, 4, 8, 16]);
+  });
+
+  it('lifts the cap when the kill switch is on', async () => {
+    h.isFlipt.mockResolvedValue(true);
+    const { gate } = await run(PG, VIEWER);
+    expect(gate).toEqual([PG, PG13]);
+  });
+});
+
+describe('the query audit and the browsing level', () => {
+  const MOD = { id: 501, isModerator: true } as SessionUser;
+  const SAFE = 1 | 2;
+  const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
+  const textQuery = (over: Partial<SemanticImageSearchInput> = {}) =>
+    input({ imageId: undefined, query: 'q', ...over });
+  const run = (over: Partial<SemanticImageSearchInput>, user: SessionUser = VIEWER) => {
+    const { source, calls } = rankedSource([101]);
+    const track = { action: vi.fn().mockResolvedValue(undefined) };
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    return searchSemanticImages({
+      input: textQuery(over),
+      user,
+      track,
+      candidateSource: source,
+    }).then((result) => ({ result, calls, track }));
+  };
+
+  it('refuses a query the audit flags as minor, before asking the index, and records it', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { result, calls, track } = await run({});
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+    expect(track.action).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'CSAM_Help_Triggered' })
+    );
+  });
+
+  it('refuses a minor query for a moderator too', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('audits the query as NSFW when the resolved level includes an NSFW level', async () => {
+    await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
+  });
+
+  it('audits the query as before at the safe levels', async () => {
+    await run({ browsingLevel: SAFE }, MOD);
+    expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), false);
+  });
+
+  it('audits the text left after the benign phrases are stripped', async () => {
+    h.stripBenignPhrases.mockResolvedValue('stripped');
+    const { result } = await run({});
+    expect(h.includesInappropriate).toHaveBeenLastCalledWith(
+      { prompt: 'stripped' },
+      expect.any(Boolean)
+    );
+    expect(result.items.map((x) => x.id)).toEqual([101]);
+  });
+
+  it('refuses when the benign list cannot be read', async () => {
+    h.stripBenignPhrases.mockRejectedValue(new Error('redis down'));
+    const { result, calls, track } = await run({});
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+    expect(track.action).not.toHaveBeenCalled();
+  });
+
+  it('refuses any flagged verdict, for a moderator without the POI add-on too', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+    expect(track.action).not.toHaveBeenCalled();
+  });
+
+  it('records a minor match that a POI verdict came back ahead of', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    h.includesMinor.mockReturnValue(true);
+    const { result, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items).toEqual([]);
+    expect(track.action).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'CSAM_Help_Triggered' })
+    );
+  });
+
+  it('refuses a person-of-interest query when the add-on disables them', async () => {
+    h.includesPoi.mockReturnValue('someone');
+    const { result, calls } = await run({});
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('clamps a non-moderator to the safe levels, in the index filter and in hydration', async () => {
+    const seen: unknown[] = [];
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = async (args) => {
+      seen.push((args as { browsingLevel?: number }).browsingLevel);
+      return visibleOnly(new Set([101]))(args);
+    };
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: ALL_LEVELS }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2]);
+    expect(seen).toEqual([SAFE]);
+    expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), false);
+  });
+
+  it.each([
+    ['R and X', 4 | 8],
+    ['XXX alone', 16],
+  ])('gives a non-moderator who asks only for %s the public level', async (_name, level) => {
+    const seen: unknown[] = [];
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = async (args) => {
+      seen.push((args as { browsingLevel?: number }).browsingLevel);
+      return visibleOnly(new Set([101]))(args);
+    };
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: level }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
+    expect(seen).toEqual([PG]);
+  });
+
+  it("refuses when the service's spelling correction fails the audit", async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? 'minor' : false
+    );
+    const hydrated: number[][] = [];
+    h.fakeGetAllImages = async (args) => {
+      hydrated.push(args.ids);
+      return visibleOnly(new Set([101]))(args);
+    };
+    const track = { action: vi.fn().mockResolvedValue(undefined) };
+    const source: CandidateSource = async () => ({ ids: [101], correctedQuery: 'corrected' });
+    const result = await searchSemanticImages({
+      input: textQuery(),
+      user: VIEWER,
+      track,
+      candidateSource: source,
+    });
+    expect(result).toMatchObject({ items: [], correctedQuery: undefined });
+    expect(hydrated).toEqual([]);
+    expect(track.action).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'CSAM_Help_Triggered' })
+    );
+  });
+
+  it("keeps a moderator's requested level", async () => {
+    const { calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
   });
 });
 

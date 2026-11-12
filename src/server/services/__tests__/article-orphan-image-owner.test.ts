@@ -357,6 +357,8 @@ const PART_OF_THE_IMAGE: Record<string, string> = {
   imageResourceNew: 'resources detected in it',
   imageTagsForReview: 'tags queued for review on it',
   caption: 'its storyline caption',
+  axisRating: 'its rating axes',
+  trackLyrics: 'its lyrics, when it is a song',
 };
 
 describe('unusedAuthorImage', () => {

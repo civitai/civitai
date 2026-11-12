@@ -454,7 +454,14 @@ describe('materialEditBlockedReason', () => {
       'name',
       'contentRating',
       'sourceRepoUrl',
+      'issueTrackerUrl',
     ]);
+  });
+
+  it('names the issue tracker among the locked fields, on both kinds', () => {
+    const offsite = materialEditBlockedReason(makeCtx({ status: 'removed' }))!;
+    const onsite = materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite' }))!;
+    for (const copy of [offsite, onsite]) expect(copy).toMatch(/issue tracker/i);
   });
 });
 
@@ -702,14 +709,14 @@ describe('🔴 materialEditBlockedReason — role-aware, and pinned as WHOLE str
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
   const OWNER_COPY =
-    'This app is unpublished, so its name, App URL, source repository and content rating ' +
+    'This app is unpublished, so its name, App URL, source repository, issue tracker and content rating ' +
     'are locked. Changing any of them needs moderator review, and an unpublished listing ' +
     'has no way to reach it. Republish the app from the Publishing tab first, then edit ' +
     'those fields — the edit is staged for review. Tagline, description and category can ' +
     'be edited now.';
 
   const EDITOR_COPY =
-    'This app is unpublished, so its name, App URL, source repository and content rating ' +
+    'This app is unpublished, so its name, App URL, source repository, issue tracker and content rating ' +
     'are locked. Changing any of them needs moderator review, and an unpublished listing ' +
     "has no way to reach it. The app's owner has to republish it before those fields can " +
     'be edited — the Publishing tab that does it is theirs, not yours. Tagline, ' +

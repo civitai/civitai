@@ -159,7 +159,18 @@ export const handle: Handle = async ({ event, resolve }) => {
     }).catch(() => undefined);
     return new Response(null, { status: 403, headers: { 'cache-control': 'no-store' } });
   }
-  if (webSession && webSession.status !== 'ok') {
+  if (webSession && webSession.status !== 'ok' && webSession.reason === 'unavailable') {
+    // The web session could not be resolved right now, so whether one exists is unknown: answer from
+    // neither, and keep the sheet cookie for when it can be.
+    return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
+  }
+  // Only a missing or invalid web session falls back to the sheet. `host-cookie` is a real web
+  // session, so it takes the usual redirect below.
+  if (
+    webSession &&
+    webSession.status !== 'ok' &&
+    (webSession.reason === 'no-session' || webSession.reason === 'invalid')
+  ) {
     // Two sheet cookies (one set from elsewhere on the domain) answer as an invalid session.
     // Counted by the parser's own rule: the name before the first '=', trimmed.
     const sheetCookies = cookieHeader

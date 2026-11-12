@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as FliptClient from '~/server/flipt/client';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * Regression coverage for `GET /api/v1/model-versions/mini/[id]`.
@@ -41,14 +42,20 @@ const {
   mockGetShouldChargeForResources,
   mockGetFeaturedModels,
   mockIsFlipt,
+  mockRefreshBlobs,
+  mockGetOrchestratorToken,
   currentUser,
+  serviceToken,
 } = vi.hoisted(() => ({
+  mockGetOrchestratorToken: vi.fn(),
   mockIsFlipt: vi.fn(),
+  mockRefreshBlobs: vi.fn(),
   mockQueryRaw: vi.fn(),
   mockResolveCanGenerateForVersions: vi.fn(),
   mockGetShouldChargeForResources: vi.fn(),
   mockGetFeaturedModels: vi.fn(),
   currentUser: { value: undefined as undefined | Record<string, unknown> },
+  serviceToken: { value: false },
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -64,6 +71,17 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: mockIsFlipt,
+}));
+
+vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
+  refreshBlobsService: mockRefreshBlobs,
+}));
+vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
+  getOrchestratorToken: mockGetOrchestratorToken,
+}));
+vi.mock('~/server/auth/orchestrator-service-token', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  matchesOrchestratorServiceToken: () => serviceToken.value,
 }));
 
 vi.mock('~/server/services/model.service', () => ({
@@ -318,6 +336,7 @@ function lastAirArgs() {
 beforeEach(() => {
   vi.clearAllMocks();
   currentUser.value = undefined;
+  serviceToken.value = false;
   mockQueryRaw.mockReset();
   mockResolveCanGenerateForVersions.mockResolvedValue(
     new Map([[VERSION_ID, { canGenerate: true }]])
@@ -693,16 +712,18 @@ describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch pa
     expect(body.hashes.SHA256).toBe(TRAINING_FILE.hashes.SHA256);
   });
 
-  it('an authenticated non-owner still gets the epoch url', async () => {
+  // Asked for by id, a file the caller may not see is answered as one that does not exist.
+  it('an authenticated non-owner asking for the training file by id gets the unknown-file 404', async () => {
     currentUser.value = { id: OTHER_USER_ID };
     const { status, body } = await run(
       [TRAINING_FILE, SAFETENSOR],
       { modelFileId: String(TRAINING_FILE.id) },
       { availability: 'Private' }
     );
-    expect(status).toBe(200);
-    expect(body.downloadUrls[0]).toBe(EPOCH_URL);
-    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(status).toBe(404);
+    expect(body).toEqual({
+      error: `Model file ${TRAINING_FILE.id} not found in version ${VERSION_ID}`,
+    });
   });
 
   it('the epoch url is the orchestrator url, NOT a download-route url', async () => {
@@ -1289,5 +1310,262 @@ describe('content-hash download url (download-hash-urls flag)', () => {
     );
 
     expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is signed again', () => {
+  const BLOB_ID = '7FB5XC5NQWH0NCJRB6C5XVSY0.safetensors';
+  const blobUrl = (exp: string) =>
+    `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=stored&exp=${exp}`;
+  const EXPIRED = blobUrl('2026-11-04T11:06:26Z');
+  const FRESH = `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=fresh&exp=2099-01-01T00:00:00Z`;
+  /** The archived Training Data placeholder a model scan names by id: its url is the dataset zip. */
+  const placeholder = (modelUrl: string) => ({
+    ...TRAINING_FILE,
+    id: 3350379,
+    type: 'Training Data',
+    url: 'https://backblaze.example/training-images.zip',
+    name: 'training_data.zip',
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: { version: 2, epochs: [{ epochNumber: 5, modelUrl }] },
+    },
+  });
+  // Call 3 = the listing check's read of the Training Data row.
+  const runPlaceholder = (modelUrl: string) => {
+    mockQueryRaw.mockReset();
+    const pending = run(
+      [SAFETENSOR, placeholder(modelUrl)],
+      { modelFileId: '3350379' },
+      { availability: 'Private' }
+    );
+    mockQueryRaw.mockResolvedValueOnce([
+      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+    ]);
+    return pending;
+  };
+
+  const CACHE_KEY = `packed:caches:epoch-blob-resigned-url:${OWNER_ID}:${BLOB_ID}`;
+  const cacheControl = (res: NextApiResponse) =>
+    (res.setHeader as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'Cache-Control'
+    )?.[1];
+
+  beforeEach(() => {
+    currentUser.value = { id: OWNER_ID };
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'refreshed', url: FRESH }]);
+    mockGetOrchestratorToken.mockImplementation(async (userId: number) => `owner-token-${userId}`);
+    redisMock.redis.packed.get.mockResolvedValue(null);
+  });
+
+  it('serves a freshly signed url, never the stored one, for the file a scan names', async () => {
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
+    expect(mockRefreshBlobs).toHaveBeenCalledWith({
+      token: `owner-token-${OWNER_ID}`,
+      blobIds: [BLOB_ID],
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it('marks a freshly signed url private and uncacheable', async () => {
+    const { res } = await runPlaceholder(EXPIRED);
+
+    expect(cacheControl(res)).toBe('private, no-store');
+  });
+
+  it.each([
+    ['the refresh says nothing', { blobId: BLOB_ID, status: 'unknown' }],
+    ['the blob is missing', { blobId: BLOB_ID, status: 'gone', reason: 'missing' }],
+  ])('sets no cache header when it keeps the stored url (%s)', async (_, result) => {
+    mockRefreshBlobs.mockResolvedValue([result]);
+
+    const { res, body } = await runPlaceholder(blobUrl('2099-01-01T00:00:00Z'));
+
+    expect(body.downloadUrls).toEqual([blobUrl('2099-01-01T00:00:00Z')]);
+    expect(cacheControl(res)).toBeUndefined();
+  });
+
+  it('keeps a freshly signed url for five minutes, per owner and blob', async () => {
+    await runPlaceholder(EXPIRED);
+
+    expect(redisMock.redis.packed.get).toHaveBeenCalledWith(CACHE_KEY);
+    expect(redisMock.redis.packed.set).toHaveBeenCalledWith(CACHE_KEY, FRESH, { EX: 300 });
+  });
+
+  it('serves a cached signature without asking the orchestrator', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(FRESH);
+
+    const { res, body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(cacheControl(res)).toBe('private, no-store');
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
+    expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
+  });
+
+  it('signs again when the cached signature is about to expire', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(
+      blobUrl(new Date(Date.now() + 60_000).toISOString())
+    );
+
+    const { body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['blocked', { blobId: BLOB_ID, status: 'gone', reason: 'blocked' }, 404],
+    ['missing', { blobId: BLOB_ID, status: 'gone', reason: 'missing' }, 404],
+    ['unknown', { blobId: BLOB_ID, status: 'unknown' }, 200],
+  ])('caches no %s answer, so the blob is asked about again', async (_, result, expected) => {
+    mockRefreshBlobs.mockResolvedValue([result]);
+
+    const { status } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(expected);
+    const writes = redisMock.redis.packed.set.mock.calls.filter(([key]) => key === CACHE_KEY);
+    expect(writes).toEqual([]);
+  });
+
+  it.each([
+    ['the owner', { id: OWNER_ID }, false],
+    ['a moderator', { id: 1, isModerator: true }, true],
+  ])('only a moderator skips the per-pod token cache (%s)', async (_, user, bypassCache) => {
+    currentUser.value = user;
+
+    await runPlaceholder(EXPIRED);
+
+    expect(mockGetOrchestratorToken).toHaveBeenCalledWith(OWNER_ID, undefined, { bypassCache });
+  });
+
+  it.each([
+    ['the refresh rejects', () => mockRefreshBlobs.mockRejectedValue(new Error('down'))],
+    ['the token mint throws', () => mockGetOrchestratorToken.mockRejectedValue(new Error('no'))],
+    ['the cache read rejects', () => redisMock.redis.packed.get.mockRejectedValue(new Error('x'))],
+  ])('serves the stored url when %s', async (label, fail) => {
+    fail();
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(200);
+    // A failed cache read is only a miss: the url is still signed again.
+    expect(body.downloadUrls).toEqual([label === 'the cache read rejects' ? FRESH : EXPIRED]);
+  });
+
+  it('serves the stored url when the refresh hangs, and aborts it', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      mockRefreshBlobs.mockImplementation((args: { signal: AbortSignal }) => {
+        signal = args.signal;
+        return new Promise(() => undefined);
+      });
+
+      const pending = runPlaceholder(EXPIRED);
+      await vi.advanceTimersByTimeAsync(3000);
+      const { status, body } = await pending;
+
+      expect(status).toBe(200);
+      expect(body.downloadUrls).toEqual([EXPIRED]);
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('signs again a stored url that has not expired yet', async () => {
+    const { body } = await runPlaceholder(blobUrl('2099-01-01T00:00:00Z'));
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+  });
+
+  it('answers 404 for a blocked blob even while the stored url is valid', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'blocked' }]);
+
+    const { status } = await runPlaceholder(blobUrl('2099-01-01T00:00:00Z'));
+
+    expect(status).toBe(404);
+  });
+
+  it('serves a stored url that is still valid when the orchestrator cannot find the blob', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'missing' }]);
+    const valid = blobUrl('2099-01-01T00:00:00Z');
+
+    const { status, body } = await runPlaceholder(valid);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([valid]);
+  });
+
+  it('answers 404 when the orchestrator says the blob is gone and the stored url has expired', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'missing' }]);
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('downloadUrls');
+  });
+
+  it('serves the stored url when the refresh says nothing about the blob', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'unknown' }]);
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EXPIRED]);
+  });
+
+  it.each([
+    ['an anonymous caller', undefined],
+    ['a signed-in stranger', { id: OTHER_USER_ID }],
+  ])('neither serves nor signs it for %s asking by id', async (_, user) => {
+    currentUser.value = user;
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('downloadUrls');
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('signs it again for the orchestrator service token with the gate off', async () => {
+    currentUser.value = undefined;
+    serviceToken.value = true;
+
+    const { body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
+    expect(mockRefreshBlobs).toHaveBeenCalledWith(
+      expect.objectContaining({ token: `owner-token-${OWNER_ID}` })
+    );
+  });
+
+  it('is not signed for a taken-down model, whose url is withheld', async () => {
+    mockQueryRaw.mockReset();
+    const pending = run(
+      [SAFETENSOR, placeholder(EXPIRED)],
+      { modelFileId: '3350379' },
+      { availability: 'Private', modelMode: 'TakenDown' }
+    );
+    mockQueryRaw.mockResolvedValueOnce([
+      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+    ]);
+    const { body } = await pending;
+
+    expect(body.downloadUrls).toEqual([]);
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('leaves a job-asset epoch url alone, without asking the orchestrator', async () => {
+    const { body } = await run([TRAINING_FILE], {}, { availability: 'Private' });
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
   });
 });

@@ -79,7 +79,12 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
-import { viewerCanSeeImageMedia, withoutMedia } from '~/server/utils/image-media-visibility';
+import {
+  canViewImageMedia,
+  keepCrawlerAnswerOutOfEdgeCache,
+  viewerCanSeeImageMedia,
+  withoutMedia,
+} from '~/server/utils/image-media-visibility';
 import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
 import { eventViewerOf } from '~/server/events/event-viewer';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
@@ -87,6 +92,8 @@ import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-sc
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
+  CollectionItemStatus,
+  CollectionMode,
   EntityType,
   ReportReason,
   ReportStatus,
@@ -382,7 +389,20 @@ export const getImagesForModelVersionHandler = async ({
   ctx: Context;
 }) => {
   if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
-  return getImagesForModelVersionCache([input.id]);
+  const byVersion = await getImagesForModelVersionCache([input.id]);
+  // Any version id can be asked for, so the cap applies per image.
+  keepCrawlerAnswerOutOfEdgeCache(ctx);
+  return Object.fromEntries(
+    Object.entries(byVersion).map(([versionId, entry]) => [
+      versionId,
+      {
+        ...entry,
+        images: entry.images.filter((image) =>
+          canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } })
+        ),
+      },
+    ])
+  );
 };
 
 /**
@@ -1209,7 +1229,7 @@ export const getEntitiesCoverImageHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getEntityCoverImage({
+    const covers = await getEntityCoverImage({
       ...input,
       include: ['tags'],
       viewer: ctx.user,
@@ -1217,6 +1237,11 @@ export const getEntitiesCoverImageHandler = async ({
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
       eventDecorationViewer: eventViewerOf(ctx),
     });
+    // Any entity id can be asked for, so each cover is held to the request's cap like a single image.
+    keepCrawlerAnswerOutOfEdgeCache(ctx);
+    return covers.filter((cover) =>
+      canViewImageMedia(ctx, { nsfwLevel: cover.nsfwLevel, user: { id: cover.userId } })
+    );
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1295,6 +1320,21 @@ export async function updateImageAcceptableMinorHandler({
       isModerator,
     });
     if (!permissions.manage) throw throwAuthorizationError();
+
+    if (!isModerator) {
+      // A contest entry its own image's owner submitted, judged by someone else.
+      const item = await dbRead.collectionItem.findFirst({
+        where: {
+          collectionId,
+          imageId: input.id,
+          status: { not: CollectionItemStatus.REJECTED },
+          collection: { mode: CollectionMode.Contest },
+        },
+        select: { addedById: true, image: { select: { userId: true } } },
+      });
+      if (!item?.addedById || item.addedById !== item.image?.userId || item.addedById === userId)
+        throw throwAuthorizationError();
+    }
 
     const image = await updateImageAcceptableMinor(input);
     return image;

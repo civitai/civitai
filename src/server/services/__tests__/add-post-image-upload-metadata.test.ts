@@ -170,6 +170,21 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     );
   });
 
+  it('sends an upload to a judge-rated collection through the normal scan', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({
+      userId: 5,
+      collection: { metadata: { judgesApplyBrowsingLevel: true } },
+    } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user } as never).catch(() => null);
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(createImage).mock.calls[0][0] as Record<string, unknown>;
+    expect(args.skipIngestion).toBeFalsy();
+  });
+
   it('creates a server-minted url without the client url flag', async () => {
     dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
     dbMock.dbRead.image.findFirst.mockResolvedValue(null);

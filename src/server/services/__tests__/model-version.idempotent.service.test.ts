@@ -336,6 +336,47 @@ describe('mergeVersions file remaps', () => {
     );
   });
 
+  it('sends a file a merge makes loadable back to the scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({
+        type: 'Config',
+        name: 'a.ckpt',
+        virusScanResult: 'Success',
+        pickleScanResult: 'Success',
+      }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, type: 'Model' }])).rejects.toThrow(PAST_REMAP);
+
+    expect(fileUpdateMany.mock.calls[0][0].data).toMatchObject({ pickleScanResult: 'Pending' });
+  });
+
+  it("refuses a merge a format the file's name does not have", async () => {
+    fileFindMany.mockResolvedValue([storedFile({ name: 'a.safetensors' })]);
+
+    await expect(merge([{ fileId: FILE, metadata: { format: 'PickleTensor' } }])).rejects.toThrow(
+      "A file's format must match its file name."
+    );
+    expect(fileUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('sends a loadable file whose format a merge changes back to the scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({
+        name: 'pack.zip',
+        metadata: { format: 'Other' },
+        virusScanResult: 'Success',
+        pickleScanResult: 'Success',
+      }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, metadata: { format: 'Diffusers' } }])).rejects.toThrow(
+      PAST_REMAP
+    );
+
+    expect(fileUpdateMany.mock.calls[0][0].data).toMatchObject({ pickleScanResult: 'Pending' });
+  });
+
   it('sends training data relabelled in a merge back to the model-file scan', async () => {
     fileFindMany.mockResolvedValue([
       storedFile({ type: 'Training Data', virusScanResult: 'Success' }),

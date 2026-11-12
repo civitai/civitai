@@ -263,8 +263,9 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   scan and quote actions are reached through `/api/testing/chat-completion-scan`. `composeEntities`
   and `sampleShadow` read any entity's text and author, so they are refused there (403) and only the
   attributed, audited moderator endpoint `/api/mod/text-scan` serves them. Like every moderator
-  endpoint it takes a moderator's session or full-access personal API key. That endpoint also
-  attributes prompt and config writes to the signed-in moderator.
+  endpoint it takes a moderator's session or full-access personal API key. Prompt, config and mode
+  writes are refused on the testing route too: only that endpoint serves them, attributed to the
+  signed-in moderator.
 - Dry runs reproduce the web-search pass with `pass: "web-search"` on `scanEntity`, `batchEntities`,
   `scanTexts`, `quoteEntities` and `quoteTexts` (Model only). It asks only for `poi` and `minor`, with the
   `civitai:web_search` tool, through the same prompt composition and step builder production uses, so

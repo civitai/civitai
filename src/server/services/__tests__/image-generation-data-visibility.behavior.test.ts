@@ -355,6 +355,19 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees(OTHER)).toBe(false);
   });
 
+  it.each(['Pending', 'Error'])(
+    'does not serve a manager of that collection an image whose ingestion is %s',
+    async (state) => {
+      await seed({ image: { ingestion: `'${state}'` }, post: { '"collectionId"': '7' } });
+      await db.exec(
+        `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[])`
+      );
+      expect(await sees({ userId: MANAGER })).toBe(false);
+      expect(await sees(SELF)).toBe(true);
+      expect(await sees(MOD)).toBe(true);
+    }
+  );
+
   it("does not serve it to a manager when the post's author does not own the image", async () => {
     // Another user's unreviewed image in OWNER's post: OWNER chose the collection, not its owner.
     await seed({

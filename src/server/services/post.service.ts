@@ -42,7 +42,6 @@ import {
   refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
@@ -1690,20 +1689,11 @@ export const addPostImage = async ({
 
   const post = await dbRead.post.findFirst({
     where: { id: props.postId },
-    select: {
-      userId: true,
-      collection: {
-        select: {
-          metadata: true,
-        },
-      },
-    },
+    select: { userId: true },
   });
 
   if (!post) throw throwNotFoundError(`No post with id ${props.postId}`);
   if (post.userId !== user.id) throw throwAuthorizationError();
-
-  const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
 
   // Idempotency guard: if the same (postId, url) pair was just saved — e.g. by
   // a retried mutation or a duplicated client submission — return the existing
@@ -1755,7 +1745,6 @@ export const addPostImage = async ({
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
-    skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
     clientUrl: serverMintedUrl ? undefined : true,
   });
 

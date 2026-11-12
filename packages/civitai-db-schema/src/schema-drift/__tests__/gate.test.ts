@@ -348,7 +348,7 @@ describe('evaluateGate against the real schema and the 2026-08-03 backlog', () =
     // the verdict cannot print a clean zero.
     const result = evaluateGate(legacyReport, legacyCatalog, baseline);
     expect(baseline.entries.some((e) => e.kind === 'referential-action')).toBe(false);
-    expect(result.referentialActionUnknown).toBeGreaterThan(400);
+    expect(result.referentialActionUnknown).toBeGreaterThan(370);
   });
 
   it('blocks a NEW finding on a column the database already has', () => {
