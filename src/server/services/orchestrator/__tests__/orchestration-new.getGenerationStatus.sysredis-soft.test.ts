@@ -131,7 +131,7 @@ describe('buildGenerationContext — kill switch and gate rules on a sysRedis fa
 
     expect(result.status).toEqual({ mode: 'disabled', message: 'maintenance' });
     expect(result.externalCtx.selfHostedMode).toBe('memberOnly');
-    expect(result.externalCtx.gateRules.map((r) => r.id)).toEqual(['r1']);
+    expect(result.externalCtx.gateRules?.map((r) => r.modelVersionIds)).toEqual([[123]]);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
@@ -144,7 +144,7 @@ describe('buildGenerationContext — kill switch and gate rules on a sysRedis fa
 
     expect(result.status).toEqual({ mode: 'disabled', message: 'maintenance' });
     // ...and the last-known hidden model stays gated.
-    expect(result.externalCtx.gateRules.map((r) => r.id)).toEqual(['r1']);
+    expect(result.externalCtx.gateRules?.map((r) => r.modelVersionIds)).toEqual([[123]]);
   });
 
   it('sysRedis down with nothing read before: refused with a clear error, never enabled', async () => {

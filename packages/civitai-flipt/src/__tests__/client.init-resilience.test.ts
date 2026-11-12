@@ -6,12 +6,13 @@ import type * as FliptSdk from '@flipt-io/flipt-client-js';
 
 const evaluateBoolean = vi.fn(() => ({ enabled: true }));
 const close = vi.fn();
-const makeClient = () => ({
-  evaluateBoolean,
-  evaluateVariant: vi.fn(),
-  refresh: async () => {},
-  close,
-});
+// Typed against the SDK's real node client, so a method it does not have fails the typecheck
+// rather than passing against a fake. The real poller is pinned by client.init-race.real-sdk.test.ts.
+const lifecycle = { refresh: async () => false, close } satisfies Pick<
+  FliptNodeClient,
+  'refresh' | 'close'
+>;
+const makeClient = () => ({ evaluateBoolean, evaluateVariant: vi.fn(), ...lifecycle });
 const init = vi.fn();
 
 vi.mock('@flipt-io/flipt-client-js', async (importOriginal) => ({
@@ -19,7 +20,7 @@ vi.mock('@flipt-io/flipt-client-js', async (importOriginal) => ({
   FliptClient: { init: (...args: unknown[]) => init(...args) },
 }));
 
-import { createFliptClient } from '../client';
+import { createFliptClient, type FliptNodeClient } from '../client';
 
 const config = {
   url: 'http://flipt.test',

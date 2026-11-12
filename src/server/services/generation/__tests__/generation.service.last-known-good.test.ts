@@ -24,9 +24,9 @@ const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
 /** The `served` field of the sysredis-fail-open warnings logged so far. */
 const servedLogs = () =>
   loggingMock.logToAxiom.mock.calls
-    .map(([payload]: [Record<string, unknown>]) => payload)
+    .map((call: unknown[]) => call[0] as Record<string, unknown> | undefined)
     .filter((payload) => payload?.name === 'sysredis-fail-open')
-    .map((payload) => payload.served);
+    .map((payload) => payload?.served);
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
