@@ -1,14 +1,4 @@
-import {
-  Anchor,
-  Center,
-  Divider,
-  Group,
-  List,
-  Stack,
-  Text,
-  ThemeIcon,
-  UnstyledButton,
-} from '@mantine/core';
+import { Divider, Group, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 
 import { Alert } from '@mantine/core';
@@ -25,13 +15,11 @@ import {
   searchAvailability,
   useSearchAvailabilityStore,
 } from '~/components/Search/search-availability.store';
-import Link from 'next/link';
 import type { SearchIndex } from '~/components/Search/parsers/base';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { Configure, InstantSearch, useInstantSearch } from 'react-instantsearch';
 import { SEARCH_HITS_PER_PAGE } from '~/components/Search/search.constants';
-import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
-import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
+import { searchBoxFor } from '~/components/Search/CustomSearchComponents';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
 import * as z from 'zod';
@@ -42,10 +30,8 @@ import { constants } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
 import type { UiState } from 'instantsearch.js';
-import { includesInappropriate } from '~/utils/metadata/audit';
-import { useDomainColor } from '~/hooks/useDomainColor';
-import { useCheckProfanity } from '~/hooks/useCheckProfanity';
-import { useBenignPhrases } from '~/hooks/useBenignPhrases';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
+import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 import classes from './SearchLayout.module.scss';
 import clsx from 'clsx';
 
@@ -91,10 +77,6 @@ function SearchStateMonitor({ onQueryChange }: { onQueryChange: (query: string) 
   return null;
 }
 
-function renderSearchComponent(props: RenderSearchComponentProps) {
-  return <CustomSearchBox {...props} />;
-}
-
 const searchQuerySchema = z.looseObject({
   query: z.string().trim().optional(),
   sortBy: z.string().optional(),
@@ -126,8 +108,7 @@ export function SearchLayout({
   const ctx = useMemo(() => ({ sidebarOpen, setSidebarOpen }), [sidebarOpen]);
 
   const router = useRouter();
-  const { trackSearch, trackAction } = useTrackEvent();
-  const domainColor = useDomainColor();
+  const { trackSearch } = useTrackEvent();
 
   // State to track the current InstantSearch query
   const [instantSearchQuery, setInstantSearchQuery] = useState('');
@@ -156,63 +137,9 @@ export function SearchLayout({
     setInstantSearchQuery(query);
   }, []);
 
-  const benignPhrases = useBenignPhrases();
-
-  const isIllegalSearch = useMemo(() => {
-    if (!searchQuery) return false;
-
-    // Detection reads the whitelisted copy; the query sent to Meili stays the raw text.
-    const illegalSearch = includesInappropriate({ prompt: benignPhrases.strip(searchQuery) });
-    return illegalSearch === 'minor';
-  }, [searchQuery, benignPhrases]);
-
-  // Track illegal search separately to avoid side effects in useMemo
-  useEffect(() => {
-    if (!searchQuery || !isIllegalSearch) return;
-    // Hold the event until the benign lists arrive. Before then `strip` is the identity
-    // function, so a moderator-whitelisted query still reads as illegal here — and firing a
-    // CSAM tracking event for it is exactly the false positive this work exists to remove.
-    // The gate itself still applies while loading; only the side effect waits.
-    if (!benignPhrases.settled) return;
-
-    const { sortBy: index } = parsedQuery || {};
-    trackAction({
-      type: 'CSAM_Help_Triggered',
-      details: {
-        query: searchQuery,
-        index,
-      },
-    }).catch(() => undefined);
-  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy, benignPhrases.settled]);
-
-  // Check profanity in search query
-  const profanityAnalysis = useCheckProfanity(searchQuery, {
-    enabled: domainColor === 'green' && !isIllegalSearch && !!searchQuery,
-  });
-
-  // Track profanity search separately to avoid side effects in useMemo
-  useEffect(() => {
-    if (!searchQuery || !profanityAnalysis.hasProfanity || domainColor !== 'green') return;
-
-    const { sortBy: index } = parsedQuery || {};
-
-    trackAction({
-      type: 'ProfanitySearch',
-      details: {
-        query: searchQuery,
-        index,
-        matches: profanityAnalysis.matches,
-      },
-    }).catch(() => undefined);
-  }, [
-    searchQuery,
-    domainColor,
-    profanityAnalysis.hasProfanity,
-    profanityAnalysis.matches.length,
-    parsedQuery?.sortBy,
-  ]);
-
-  const isProfaneSearch = profanityAnalysis.hasProfanity;
+  // The search pages refuse only these two, as they always have; the feed refuses more.
+  const { refusal, profanityMatches } = useSearchRefusal(searchQuery, parsedQuery?.sortBy);
+  const shownRefusal = refusal === 'illegal' || refusal === 'profanity' ? refusal : undefined;
   const isSearchUnavailable = useSearchAvailabilityStore((state) => state.unavailable);
 
   return (
@@ -229,136 +156,14 @@ export function SearchLayout({
         <Configure hitsPerPage={SEARCH_HITS_PER_PAGE} attributesToHighlight={[]} />
         <SearchStateMonitor onQueryChange={handleQueryChange} />
         <AppLayout
-          renderSearchComponent={renderSearchComponent}
+          renderSearchComponent={searchBoxFor(indexName)}
           scrollable={isMobile ? !sidebarOpen : true}
           left={leftSidebar}
         >
-          {isIllegalSearch ? (
+          {shownRefusal ? (
             <SearchLayout.Root>
               <SearchLayout.Content>
-                <Center>
-                  <Stack maw={750} align="center" justify="center" className="h-full">
-                    <Stack align="center" gap={0}>
-                      <IconAlertTriangle size={42} color="red" />
-                      <Text weight={700} size="xl" c="red">
-                        Warning
-                      </Text>
-                    </Stack>
-                    <Text align="center">
-                      Your search may be for{' '}
-                      <Text span weight={700} c="red">
-                        illegal and abusive sexual material involving minors
-                      </Text>
-                      .
-                    </Text>
-                    <Text align="center">
-                      Viewing, sharing, or creating such content is a{' '}
-                      <Text span weight={700}>
-                        serious crime
-                      </Text>
-                      . If you feel worried about your sexual thoughts about anyone under 18,{' '}
-                      <Text span weight={700}>
-                        free, confidential, and anonymous help is available
-                      </Text>
-                      :
-                    </Text>
-                    <List spacing="xs" size="md" center>
-                      <List.Item>
-                        <Text span weight={700}>
-                          Phone (UK)
-                        </Text>{' '}
-                        Stop It Now! helpline —{' '}
-                        <Text span weight={700}>
-                          0808 1000 900
-                        </Text>
-                        <br />
-                        <Text size="xs" c="dimmed">
-                          (no caller ID saved)
-                        </Text>
-                      </List.Item>
-                      <List.Item>
-                        <Text span weight={700}>
-                          Online Support (global)
-                        </Text>{' '}
-                        <Anchor
-                          href="https://www.stopitnow.org.uk/self-help/concerned-about-your-own-thoughts-or-behaviour/?utm_source=civitai&utm_medium=warning_message&utm_campaign=civitai_warning"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          Get Help
-                        </Anchor>{' '}
-                        – self-help tools, live chat, and secure email
-                      </List.Item>
-                    </List>
-                    <Text align="center" c="dimmed" size="sm" mt="md">
-                      We strictly enforce our{' '}
-                      <Anchor href="/content/tos#content-policies" target="_blank">
-                        Terms of Service
-                      </Anchor>
-                      . Abuse will be reported and may lead to criminal investigation. Visit our{' '}
-                      <Anchor href="/safety" target="_blank">
-                        Safety Center
-                      </Anchor>{' '}
-                      for more information.
-                    </Text>
-                    <Anchor component={Link} href="/" mt="md">
-                      <Text size="md">Go Back ↩︎</Text>
-                    </Anchor>
-                  </Stack>
-                </Center>
-              </SearchLayout.Content>
-            </SearchLayout.Root>
-          ) : isProfaneSearch ? (
-            <SearchLayout.Root>
-              <SearchLayout.Content>
-                <Center>
-                  <Stack maw={750} align="center" justify="center" className="h-full">
-                    <Stack align="center" gap={0}>
-                      <IconAlertTriangle size={42} color="orange" />
-                      <Text weight={700} size="xl" c="orange">
-                        Content Policy Violation
-                      </Text>
-                    </Stack>
-                    <Text align="center">
-                      Your search contains{' '}
-                      <Text span weight={700} c="orange">
-                        inappropriate content
-                      </Text>{' '}
-                      that violates our community guidelines.
-                    </Text>
-                    {profanityAnalysis.matches.length > 0 && (
-                      <Text align="center" c="dimmed" size="sm">
-                        Flagged terms: {profanityAnalysis.matches.join(', ')}
-                      </Text>
-                    )}
-                    <Text align="center">
-                      Our family-friendly environment requires all searches to comply with our{' '}
-                      <Text span weight={700}>
-                        content policies
-                      </Text>
-                      . Please refine your search terms to find appropriate content.
-                    </Text>
-                    <Text align="center" c="dimmed" size="sm" mt="md">
-                      We maintain strict{' '}
-                      <Anchor href="/content/tos#content-policies" target="_blank">
-                        community standards
-                      </Anchor>{' '}
-                      to ensure a safe environment for all users. Visit our{' '}
-                      <Anchor href="/safety" target="_blank">
-                        Safety Center
-                      </Anchor>{' '}
-                      for more information about our policies.
-                    </Text>
-                    <Stack mt="lg" align="center" gap={4}>
-                      <Anchor component={Link} href="/" variant="subtle">
-                        <Text size="md">Go Home ↩︎</Text>
-                      </Anchor>
-                      <Text c="dimmed" size="sm">
-                        or modify your search above
-                      </Text>
-                    </Stack>
-                  </Stack>
-                </Center>
+                <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />
               </SearchLayout.Content>
             </SearchLayout.Root>
           ) : (

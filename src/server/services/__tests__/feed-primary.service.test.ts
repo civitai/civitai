@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  feedFliptContext,
   feedHydrateQuery,
   hydrateWithReadRescue,
   reasonLabel,
@@ -145,17 +144,6 @@ describe('reasonLabel', () => {
     expect(reasonLabel('offset>20000')).toBe('offset>20000');
     expect(reasonLabel('sort:Random')).toBe('sort');
     expect(reasonLabel('types:image,foo')).toBe('types');
-  });
-});
-
-describe('feedFliptContext', () => {
-  it('matches the shape of the request-path context for the fields the search input carries', () => {
-    expect(feedFliptContext({})).toEqual({ isLoggedIn: 'false' });
-    expect(feedFliptContext({ currentUserId: 6, isModerator: true })).toEqual({
-      userId: '6',
-      isModerator: 'true',
-      isLoggedIn: 'true',
-    });
   });
 });
 

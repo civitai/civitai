@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.486",
+  "version": "5.1.488",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -280,7 +280,7 @@
     "lru-cache": "^11.2.2",
     "mantine-react-table": "^2.0.0-beta.9",
     "meilisearch": "0.33.0",
-    "mongodb": "^6.22.0",
+    "mongodb": "^7.8.0",
     "motion": "^11.11.17",
     "msgpackr": "^1.10.2",
     "next": "16.4.5",
@@ -322,9 +322,6 @@
     "sass": "^1.82.0",
     "semver": "^7.6.0",
     "sharp": "^0.35.5",
-    "slate": "^0.94.1",
-    "slate-history": "^0.93.0",
-    "slate-react": "^0.95.0",
     "slugify": "^1.6.5",
     "socket.io-client": "^4.5.4",
     "source-map": "^0.7.4",

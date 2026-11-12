@@ -42,6 +42,7 @@ import { useSearchFocusHotkeys } from '~/hooks/useSearchFocusHotkeys';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
+import { isImageSearchIndex } from '~/components/Search/semanticImageSearchClient';
 import { uniqBy } from 'lodash-es';
 import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
@@ -315,8 +316,12 @@ export const BrowsingLevelFilter = ({
 
 export const CustomSearchBox = forwardRef<
   { focus: () => void },
-  SearchBoxProps & RenderSearchComponentProps
->(({ isMobile, onSearchDone, ...props }, ref) => {
+  SearchBoxProps &
+    RenderSearchComponentProps & {
+      /** Search on Enter or on blur, never as the user types — for an index where each search is costly. */
+      submitOnly?: boolean;
+    }
+>(({ isMobile, onSearchDone, submitOnly, ...props }, ref) => {
   const currentUser = useCurrentUser();
   const { query, refine } = useSearchBox({ ...props });
   const [search, setSearch] = useState(query);
@@ -333,14 +338,20 @@ export const CustomSearchBox = forwardRef<
     focus: focusInput,
   }));
 
+  const refineSearch = (text: string) => {
+    const canSearch = currentUser?.isModerator || !getBlockedNsfwWords(text).length;
+    if (text !== query && canSearch) refine(text);
+  };
+
+  // On mobile the box sits in the header's search overlay, and the blur is what closes it and
+  // searches, so Enter there leaves through the blur.
+  const submitSearch = () => {
+    if (isMobile) blurInput();
+    else refineSearch(search);
+  };
+
   useEffect(() => {
-    const canSearch = !currentUser?.isModerator
-      ? !getBlockedNsfwWords(debouncedSearch).length
-      : true;
-    if (debouncedSearch !== query && canSearch) {
-      refine(debouncedSearch);
-      // config.refine(getBlockedPromptFilters(debouncedSearch));
-    }
+    if (!submitOnly) refineSearch(debouncedSearch);
   }, [debouncedSearch]);
 
   useEffect(() => {
@@ -361,10 +372,16 @@ export const CustomSearchBox = forwardRef<
       onChange={(e) => setSearch(e.target.value)}
       value={search}
       placeholder="Search..."
-      onBlur={onSearchDone}
+      onBlur={(e) => {
+        if (submitOnly) refineSearch(search);
+        onSearchDone?.(e);
+      }}
       onSubmit={onSearchDone}
       ref={inputRef}
-      onKeyDown={getHotkeyHandler([['esc', blurInput]])}
+      onKeyDown={getHotkeyHandler([
+        ['esc', blurInput],
+        ...(submitOnly ? [['Enter', submitSearch] as [string, () => void]] : []),
+      ])}
       rightSection={
         !isMobile && (
           <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
@@ -404,6 +421,19 @@ export const CustomSearchBox = forwardRef<
 });
 
 CustomSearchBox.displayName = 'CustomSearchBox';
+
+function renderSearchBox(props: RenderSearchComponentProps) {
+  return <CustomSearchBox {...props} />;
+}
+
+function renderSubmitOnlySearchBox(props: RenderSearchComponentProps) {
+  return <CustomSearchBox {...props} submitOnly />;
+}
+
+/** The search page's box for an index: an image search runs on submit only. */
+export function searchBoxFor(indexName: string) {
+  return isImageSearchIndex(indexName) ? renderSubmitOnlySearchBox : renderSearchBox;
+}
 
 export function DateRangeRefinement({ title, ...props }: RangeInputProps & { title: string }) {
   const { start: active, range, refine } = useRange({ ...props });

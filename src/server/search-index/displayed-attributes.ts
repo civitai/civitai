@@ -79,8 +79,8 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   'isOfficial',
   // Written by the OTHER writer into this same index: `src/pages/api/mod/search/models-update.ts`
   // pushes `{ id, flags }`, so `flags` is a top-level key this list must account for even though
-  // `models.search-index.ts` never emits it. No models filterable entry references it
-  // (`flags.promptNsfw` belongs to `imagesFilterableAttributes`) and no consumer reads it off a hit.
+  // `models.search-index.ts` never emits it. No models filterable entry references it and no
+  // consumer reads it off a hit.
   'flags',
   // Sort-only AND filter-only: `insight.qualityScore` is in both `modelsSortableAttributes` and
   // `modelsFilterableAttributes`, and no consumer reads it off a hit — the resource-intent matcher

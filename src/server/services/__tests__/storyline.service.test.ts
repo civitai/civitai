@@ -5071,6 +5071,51 @@ describe('a storyline started from an image', () => {
       expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
     });
 
+    describe('when an unwritten storyline from this image already exists', () => {
+      beforeEach(() => {
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+          Promise.resolve(
+            strings.join('?').includes('"sparkImageId" =') ? [{ id: 9, title: 'First try' }] : []
+          )) as never);
+      });
+
+      it('returns it with the title and terms just chosen, rescanning the new title', async () => {
+        await expect(
+          createStoryline({
+            sparkImageId: 77,
+            title: 'Second try',
+            maxNsfwLevel: NsfwLevel.X,
+            whoCanContinue: 'Collaborators',
+            userId: OWNER,
+          })
+        ).resolves.toEqual({ id: 9, rootChapterId: null });
+        expect(w.storyline.create).not.toHaveBeenCalled();
+        expect(w.storyline.update).toHaveBeenCalledExactlyOnceWith({
+          where: { id: 9 },
+          data: { title: 'Second try', maxNsfwLevel: NsfwLevel.X, whoCanContinue: 'Collaborators' },
+        });
+        expect(scanEntityInBackground).toHaveBeenCalledExactlyOnceWith({
+          entityType: 'Storyline',
+          entityId: 9,
+        });
+      });
+
+      it('still starts a new one when a published post is chapter 1', async () => {
+        w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+        w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+        await expect(
+          createStoryline({
+            sparkImageId: 77,
+            postId: 500,
+            title: 't',
+            maxNsfwLevel: NsfwLevel.R,
+            userId: OWNER,
+          })
+        ).resolves.toEqual({ id: 10, rootChapterId: 20 });
+        expect(w.storyline.create).toHaveBeenCalledOnce();
+      });
+    });
+
     it('tells event points once chapter 1 is written with the spark', async () => {
       w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
       w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);

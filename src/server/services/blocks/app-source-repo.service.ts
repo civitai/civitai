@@ -2,30 +2,16 @@
  * App Blocks SOURCE REPOS — `civitai-apps-src/<slug>` on the platform git host: the git history of
  * a forked or App Assistant app, which its developer can `civitai app pull` and `git push`.
  *
- * What a source repo is NOT: a build input, or a way to submit. Nothing reads it to build, no push
- * webhook is attached to it, the push webhook's org gate refuses its org (`git-push.ts`), and the
- * build repo of approved snapshots (`civitai-apps/<slug>`) is untouched. A version still reaches
- * review only by a submit, and is built only from the platform's own snapshot.
- *
- * Writers:
- *   - fork start (`app-fork-start.service.ts`) seeds the fork's repo with the parent's approved
- *     files, the `Forked-From-*` trailers resolved from the server's own fork session;
- *   - App Assistant saves ({@link saveAssistantSourceFromSandbox}): each save is one commit,
- *     written by the assistant on behalf of the user, on `main` when it does not overwrite anything
- *     the developer pushed, else on {@link ASSISTANT_BRANCH} (see `planAssistantCommit`);
- *   - the backfill ({@link backfillAppSourceRepos});
- *   - the developer, by `git push` with their own platform git identity.
+ * Not a build input and not a way to submit: no push webhook is attached, the push webhook's org
+ * gate refuses this org (`git-push.ts`), and builds read only the platform's own snapshot in
+ * `civitai-apps/<slug>`.
  *
  * Access ({@link resolveSourceRepoAccess}) mirrors the build repo's: the app block's owner and its
  * accepted collaborators once a block is bound to the repo, and before that the repo's owner (the
- * user who forked or built it). Banned accounts are refused at every credential hand-out, and the
- * ban, a seat removal and an ownership transfer remove the git host's collaborator row
- * (`app-repo-access.ts`, `user.service.ts` toggleBan).
+ * user who forked or built it).
  *
- * 🔴 FEATURE-OFF UNTIL ITS MIGRATION RUNS. The table (`20270105120000_app_source_repos`) is
- * applied by hand; every read here degrades to "no source repo" while it is missing
- * ({@link readSourceRepo}), and every write path does nothing, so fork start, App Assistant and
- * `civitai app pull` behave exactly as before.
+ * 🔴 Off until migration `20270105120000_app_source_repos` is applied by hand: every read treats a
+ * missing table as "no source repo" ({@link readSourceRepo}).
  */
 
 import JSZip from 'jszip';
@@ -77,10 +63,6 @@ const log = (type: 'info' | 'warning' | 'error', message: string, data: Record<s
   logToAxiom({ name: 'app-source-repo', type, message, ...data }, 'webhooks').catch(
     () => undefined
   );
-
-// ---------------------------------------------------------------------------
-// The table — raw SQL only, guarded
-// ---------------------------------------------------------------------------
 
 /**
  * Read a slug's source-repo row. A missing table reads as `{ available: false }` (the feature is
@@ -152,10 +134,6 @@ async function bindSourceRepo(slug: string, appBlockId: string): Promise<void> {
       SET "app_block_id" = ${appBlockId}, "updated_at" = now()
     WHERE "slug" = ${slug} AND "app_block_id" IS NULL`;
 }
-
-// ---------------------------------------------------------------------------
-// Access
-// ---------------------------------------------------------------------------
 
 type BlockForAccess = { id: string; blockId: string; app: { userId: number } | null };
 
@@ -261,10 +239,6 @@ async function creationGate(
   return othersPending ? { ok: false } : { ok: true, block: null };
 }
 
-// ---------------------------------------------------------------------------
-// One writer at a time per repo
-// ---------------------------------------------------------------------------
-
 // Covers a sandbox export plus a commit at the git host's commit timeout; the holder releases it.
 const LOCK_TTL_SECONDS = 180;
 const LOCK_WAIT_MS = 30_000;
@@ -322,10 +296,6 @@ export async function grantSourceRepoForPull(args: {
     sourceHttpUrl: sourceRepoHttpUrl(env.FORGEJO_PUBLIC_URL, FORGEJO_SOURCE_ORG, args.slug),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Creating and seeding
-// ---------------------------------------------------------------------------
 
 export type EnsureSourceRepoResult =
   | { kind: 'created'; row: SourceRepoRow; seedSha: string | null }
@@ -448,10 +418,6 @@ export async function createForkSourceRepo(args: {
   }
 }
 
-// ---------------------------------------------------------------------------
-// App Assistant saves
-// ---------------------------------------------------------------------------
-
 export type AssistantSaveResult =
   | { kind: 'committed'; sha: string; branch: string; conflict: boolean }
   | { kind: 'unchanged' }
@@ -467,18 +433,10 @@ const COMMIT_ATTEMPTS = 2;
  * Commit one App Assistant save of `files` to `slug`'s source repo for `userId`, creating the repo
  * on the app's first save. Holds the slug's lock.
  *
- * 🔴 THE CONCURRENCY DECISION — a developer push and an assistant save never lose either side:
- *   1. the save is planned against the tree the platform LAST WROTE for the assistant
- *      (`assistant_tree`), and touches only the files the assistant changed since;
- *   2. every change names the blob it replaces, and the git host refuses the whole commit when
- *      `main` disagrees (`commitOperations`), so a file the developer changed in between is never
- *      overwritten, and a file only the developer changed is never in the commit;
- *   3. on that refusal the save is committed to {@link ASSISTANT_BRANCH} instead, as the
- *      assistant's complete tree: `main` keeps the developer's work, the branch keeps the
- *      assistant's, and the developer merges when they choose;
- *   4. a developer push that races the commit is refused as non-fast-forward by git itself
- *      (`git pull`, then push again): the host serialises the two writes;
- *   5. a transient failure (5xx, a timeout) is tried once more with the same plan.
+ * 🔴 A developer push and an assistant save never lose either side: the save is planned against the
+ * tree the platform last wrote for the assistant, and every operation names the blob it replaces,
+ * so a file the developer changed makes the git host refuse the commit rather than overwrite it.
+ * A refused save is committed to {@link ASSISTANT_BRANCH} instead.
  */
 export async function saveAssistantFiles(args: {
   slug: string;
@@ -653,10 +611,6 @@ async function exportAndSave(
   return saveLocked({ slug: args.app, userId: args.userId, files });
 }
 
-// ---------------------------------------------------------------------------
-// Ban
-// ---------------------------------------------------------------------------
-
 /**
  * Remove a banned user's collaborator rows from every source repo they could reach: the repos
  * they own (unbound rows) and those of every app block they own or hold an accepted seat on.
@@ -700,10 +654,6 @@ export async function revokeSourceRepoAccessForUser(userId: number): Promise<num
   }
   return revoked;
 }
-
-// ---------------------------------------------------------------------------
-// Backfill
-// ---------------------------------------------------------------------------
 
 export type BackfillCandidate = {
   slug: string;
