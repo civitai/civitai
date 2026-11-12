@@ -533,7 +533,7 @@ describe.each(['list', 'detail'] as const)('public collection cover (%s)', (endp
 
   it('narrows the browsing level for a restricted region', async () => {
     mockIsRegionRestricted.mockReturnValue(true);
-    const query = endpoint === 'list' ? { nsfw: 'true' } : {};
+    const query: Record<string, string> = endpoint === 'list' ? { nsfw: 'true' } : {};
 
     const pg13 = await requestCollection(
       endpoint,
@@ -552,7 +552,7 @@ describe.each(['list', 'detail'] as const)('public collection cover (%s)', (endp
 });
 
 describe.each(['list', 'detail'] as const)('held gallery level on the cover (%s)', (endpoint) => {
-  const query = endpoint === 'list' ? { nsfw: 'true' } : {};
+  const query: Record<string, string> = endpoint === 'list' ? { nsfw: 'true' } : {};
 
   it('withholds a cover above the held level of its post', async () => {
     mockGetHeldLevelsByPost.mockResolvedValue(new Map([[7, { level: NsfwLevel.PG13 }]]));
