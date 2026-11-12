@@ -17,8 +17,10 @@ import { previewAppBlockManifest } from '../../../../../tests/preview-app-block-
  * review builds they trigger caught nothing.
  *
  * Cross-repo pin. `SCHEMA_REQUIRED` is asserted here against the schema FILE, and the build
- * pipeline's own test asserts its required list against the same literal. A change to the
- * schema's required list therefore fails here first, and has to be made on both sides.
+ * pipeline's own test (`app-blocks-validate-manifest-stamp.test.mjs`, beside the App Blocks build
+ * pipeline in the infrastructure repo) asserts its required list against the same literal. A
+ * change to the schema's required list therefore fails here first, and has to be made on both
+ * sides.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');

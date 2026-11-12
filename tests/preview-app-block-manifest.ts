@@ -12,6 +12,8 @@
  * so the smoke also proves that a minimal valid manifest builds:
  *  - no `iframe.src` (server-owned; the platform stamps it),
  *  - no `minApiVersion` (optional and informational in `public/schemas/app-block/v1.json`).
+ * It does declare a surface (a `page`): the build refuses a manifest with neither a non-empty
+ * `targets[]` nor a `page{}`, and a real app always has one.
  */
 export function previewAppBlockManifest(args: { slug: string; name: string }) {
   return {
@@ -26,5 +28,6 @@ export function previewAppBlockManifest(args: { slug: string; name: string }) {
       resizable: true,
       sandbox: 'allow-scripts allow-forms',
     },
+    page: { path: '/', title: args.name },
   };
 }
