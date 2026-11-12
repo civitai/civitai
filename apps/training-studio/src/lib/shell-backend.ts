@@ -18,6 +18,7 @@ import type {
 } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
 import { parseServiceStatus } from '$lib/service-status-core';
+import type { DatasetRatingCount } from '$lib/dataset-rating';
 import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { UploadError, uploadProblem } from '$lib/upload';
@@ -161,6 +162,16 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw await startFailure(res, `Training could not start (${res.status})`);
     const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
     return { workflowIds, failure };
+  },
+
+  datasetRating: async (blobIds) => {
+    const res = await fetch('/api/dataset-rating', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ blobIds }),
+    });
+    if (!res.ok) throw new Error(`Dataset rating failed (${res.status})`);
+    return (await res.json()) as DatasetRatingCount;
   },
 
   listEditGenerations: async () =>

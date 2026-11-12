@@ -60,6 +60,7 @@ import {
 } from '$lib/service-status-core';
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
+import { isMatureRating, type DatasetRating, type StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
 import type { TrainingTextCheck } from '$lib/training-text';
 
@@ -135,6 +136,11 @@ export interface SubmitOptions {
   /** The training service status read just before the submit. A run on a blocked model is refused
    *  before any orchestrator call; omitted, only an `isBlockedCustomModel` base is refused. */
   status?: TrainingServiceStatus | null;
+  /** Set when the v2 rating decides dataset maturity for this user: an image with a stored v2 rating is
+   *  counted by it, every other image by its upload rating, as before. */
+  datasetRating?: DatasetRating;
+  /** Told how each dataset maturity count was made, for the run's log line. */
+  onMatureCount?: (count: MatureCount) => void;
 }
 
 /** Why a run can't start right now — training is off, or its model is blocked — or null when it can. */
@@ -515,24 +521,37 @@ async function assertCustomModelTrainable(
 }
 
 /** Refuse, before anything is charged, a run whose dataset is mature but carries no confirm: the client's
- *  own mature count is not trusted. Every run of a sweep shares its dataset, so it is rated once. */
+ *  own mature count is not trusted. Under the v2 rating a confirm is dropped (no Yellow) when a clean count
+ *  finds nothing mature, since Review may have sent it before its own count answered. Every run of a sweep
+ *  shares its dataset, so it is rated once. Returns the runs as they will be charged. */
 async function assertMatureAcked(
   client: OrchestratorClient,
-  runs: TrainingRunInput[]
-): Promise<void> {
-  const counts = new Map<string, Promise<number>>();
+  runs: TrainingRunInput[],
+  opts: Pick<SubmitOptions, 'datasetRating' | 'onMatureCount'> = {}
+): Promise<TrainingRunInput[]> {
+  const counts = new Map<string, Promise<MatureCount>>();
+  const resolved: TrainingRunInput[] = [];
   for (const run of runs) {
-    if (run.matureAck === true) continue;
+    const acked = run.matureAck === true;
+    if (acked && !opts.datasetRating) {
+      resolved.push(run);
+      continue;
+    }
     const airs = [...new Set(run.items.map((item) => item.air))].sort();
     const key = airs.join('\n');
     if (!counts.has(key))
       counts.set(
         key,
-        countMatureBlobs(client, airs).then((r) => r.mature)
+        countMatureBlobs(client, airs, opts.datasetRating).then((r) => {
+          opts.onMatureCount?.(r);
+          return r;
+        })
       );
-    const mature = await counts.get(key)!;
-    if (mature > 0) throw new MatureAckRequiredError(mature);
+    const { mature, failed } = await counts.get(key)!;
+    if (!acked && mature > 0) throw new MatureAckRequiredError(mature);
+    resolved.push(acked && mature === 0 && failed === 0 ? { ...run, matureAck: false } : run);
   }
+  return resolved;
 }
 
 export interface SubmittedBatch {
@@ -565,7 +584,7 @@ export async function submitTrainingBatch(
     const unavailable = unavailableRunMessage(run, opts.status);
     if (unavailable) throw new TrainingBatchValidationError(unavailable);
   }
-  await assertMatureAcked(client, runs);
+  const charged = await assertMatureAcked(client, runs, opts);
 
   // Every run's trigger word is checked before ANY submit, so a refused batch never part-charges. A
   // sweep repeats one trigger word across runs; each distinct one is checked once.
@@ -582,7 +601,7 @@ export async function submitTrainingBatch(
 
   const workflowIds: string[] = [];
   try {
-    for (const run of runs) workflowIds.push(await submitTraining(client, run, opts));
+    for (const run of charged) workflowIds.push(await submitTraining(client, run, opts));
   } catch (err) {
     opts.onRunError?.(err, workflowIds.length);
     if (workflowIds.length === 0) throw err;
@@ -636,21 +655,47 @@ const PROBE_TTL_MS = 10 * 60 * 1000;
 const PROBE_CACHE_MAX = 200;
 const probeCache = new Map<string, { at: number; count: Promise<number> }>();
 
-/** How many of a dataset's blobs were rated R or above, from each blob's X-NSFW-Level header. Never
- *  send a workflowId on these HEADs. */
+export interface MatureCount {
+  images: number;
+  mature: number;
+  /** HEADs that failed: those images count as not mature, and the count is never cached. */
+  failed: number;
+  /** Images counted by a stored v2 rating; the rest were counted from X-NSFW-Level. */
+  rated: number;
+  /** Blob ids the caller can read that have no stored v2 rating yet (always empty without a rating). */
+  unratedKeys: string[];
+}
+
+/** How many of a dataset's blobs are mature. Each blob's X-NSFW-Level header counts R and above;
+ *  with `rating`, a blob the caller can read that has a stored v2 rating is counted by that instead.
+ *  Never send a workflowId on these HEADs. */
 async function countMatureBlobs(
   client: OrchestratorClient,
-  airs: string[]
-): Promise<{ mature: number; failed: number }> {
+  airs: string[],
+  rating?: DatasetRating
+): Promise<MatureCount> {
+  const stored: Map<string, StoredRating> = rating
+    ? await rating.read(airs.map(trainingBlobKey)).catch(() => new Map())
+    : new Map();
   let next = 0;
   let mature = 0;
   let failed = 0;
+  let rated = 0;
+  const unratedKeys: string[] = [];
   const worker = async () => {
     while (next < airs.length) {
       const air = airs[next++];
       try {
         const { response } = await headBlob({ client, path: { blobId: blobIdFromAir(air) } });
         if (!response?.ok) failed++;
+        // Only for a blob this caller's HEAD could read: the cache is shared across users.
+        const v2 = rating && response?.ok ? stored.get(trainingBlobKey(air)) : undefined;
+        if (v2) {
+          rated++;
+          if (isMatureRating(v2, rating!.matureLevel)) mature++;
+          continue;
+        }
+        if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
         const level = response?.headers.get('x-nsfw-level')?.toLowerCase();
         if (level && MATURE_NSFW_LEVELS.has(level)) mature++;
       } catch {
@@ -659,26 +704,42 @@ async function countMatureBlobs(
     }
   };
   await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, airs.length) }, worker));
-  return { mature, failed };
+  return { images: airs.length, mature, failed, rated, unratedKeys };
+}
+
+/** A dataset's mature count for Review, the same count the submit makes. */
+export function countDatasetMature(
+  client: OrchestratorClient,
+  airs: string[],
+  rating?: DatasetRating
+): Promise<MatureCount> {
+  return countMatureBlobs(client, [...new Set(airs)].sort(), rating);
 }
 
 /** Called only after the caller's own token read the workflow, so a cached count never leaks across
- *  users. Blobs are immutable, so the quote and the submit share one probe; a probe with a failed HEAD
- *  isn't kept, so the next quote or the submit rates the dataset again. */
+ *  users. Blobs are immutable, so the quote and the submit share one probe; a probe with a failed HEAD,
+ *  or (under the v2 rating) with images not yet rated, isn't kept, so the next quote or the submit counts
+ *  the dataset again. Counts with and without the v2 rating, and at each setting, are kept apart. */
 function sourceMatureCount(
   client: OrchestratorClient,
   workflowId: string,
-  airs: string[]
+  airs: string[],
+  rating?: DatasetRating,
+  onMatureCount?: (count: MatureCount) => void
 ): Promise<number> {
   const now = Date.now();
-  const hit = probeCache.get(workflowId);
+  const key = rating ? `${workflowId}\nv2:${rating.matureLevel}` : workflowId;
+  const hit = probeCache.get(key);
   if (hit && now - hit.at < PROBE_TTL_MS) return hit.count;
   if (probeCache.size >= PROBE_CACHE_MAX) probeCache.delete(probeCache.keys().next().value!);
-  const count = countMatureBlobs(client, airs).then(({ mature, failed }) => {
-    if (failed > 0 && probeCache.get(workflowId)?.count === count) probeCache.delete(workflowId);
+  const count = countMatureBlobs(client, airs, rating).then((counted) => {
+    onMatureCount?.(counted);
+    const { mature, failed, unratedKeys } = counted;
+    if ((failed > 0 || unratedKeys.length > 0) && probeCache.get(key)?.count === count)
+      probeCache.delete(key);
     return mature;
   });
-  probeCache.set(workflowId, { at: now, count });
+  probeCache.set(key, { at: now, count });
   return count;
 }
 
@@ -688,7 +749,7 @@ function sourceMatureCount(
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  { callbacks, traceMode = 'events', status }: SubmitOptions
+  { callbacks, traceMode = 'events', status, datasetRating, onMatureCount }: SubmitOptions
 ): Promise<{
   body: WorkflowTemplate;
   steps: number | undefined;
@@ -752,7 +813,7 @@ async function buildContinuation(
   const matureCount =
     typeof srcMeta.matureCount === 'number' && srcMeta.matureCount > 0
       ? srcMeta.matureCount
-      : await sourceMatureCount(client, opts.workflowId, airs);
+      : await sourceMatureCount(client, opts.workflowId, airs, datasetRating, onMatureCount);
   const matureUnlock = matureCount > 0 && opts.matureAck === true;
   const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
   // Lineage always points at the IMMEDIATE parent — a copied-through sourceWorkflowId from the

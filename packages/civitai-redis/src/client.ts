@@ -2587,6 +2587,11 @@ export const REDIS_SYS_KEYS = {
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
     // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
     STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
+    // Training Studio's v2 image rating per dataset blob (packed), key :<raterModel>:<blobId lowercased>.
+    // Blobs are immutable.
+    STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
+    // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
+    STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
