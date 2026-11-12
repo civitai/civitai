@@ -118,6 +118,21 @@ describe('collectPage', () => {
     expect(page.nextCursor).toBe(90);
   });
 
+  it('keeps an id once when a later round repeats it', async () => {
+    // Tied scores reorder between requests: the second round starts with an id the first returned.
+    const rounds = [
+      [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      [3, 10, 11],
+    ];
+    const candidates = async () => rounds.shift() ?? [];
+    const visible = new Set([1, 3, 10, 11]);
+    const hydrate = async (ids: number[]) =>
+      ids.filter((id) => visible.has(id)).map((id) => ({ id }));
+
+    const page = await collectPage({ candidates, hydrate, offset: 0, limit: 3 });
+    expect(page.items.map((x) => x.id)).toEqual([1, 3, 10]);
+  });
+
   it('stops paging at the candidate offset cap', async () => {
     const { candidates, calls } = ranked(5000);
     const hydrate = async (ids: number[]) => ids.map((id) => ({ id }));

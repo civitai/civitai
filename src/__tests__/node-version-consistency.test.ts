@@ -40,8 +40,8 @@ import { describe, expect, it } from 'vitest';
  *     and asserting it would have produced a red gate nobody could fix in the change
  *     that tripped it. The flake.lock bump to the 2026-08-18 nixpkgs made
  *     `nodejs_24` exactly 24.19.0, and `flake.nix` now DERIVES its Node major by
- *     reading this `.nvmrc` rather than naming one. It can still lag: the 24.22.1
- *     security bump landed before nixpkgs carried 24.22.1 (see `flake.nix`).
+ *     reading this `.nvmrc` rather than naming one. It can still lag whenever a
+ *     security bump lands before nixpkgs carries it.
  *
  *     Why it still does not belong in this file: answering "which Node does the dev
  *     shell provide?" means evaluating Nix, which a Vitest suite cannot do. The

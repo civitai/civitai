@@ -5,17 +5,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { buildApproveCommitMessage } from '~/server/services/blocks/approve-provenance';
 
 /**
- * The git-push webhook must recognise approveRequest's OWN commit, whatever order the webhook and
- * approveRequest's writes land in.
+ * The git-push webhook must recognise approveRequest's OWN commit before approveRequest's markers
+ * are written.
  *
- * approveRequest commits the reviewed bundle, THEN stamps `app_blocks.current_version_sha` and the
- * approved publish request. Forgejo fires this webhook while the commit call is still in flight,
- * so the webhook usually runs before those writes. Both marker checks then miss, and the approve's
- * own commit used to be recorded as a second, unreviewed `pending` request for the same version.
- * The approve's supersede withdrew that row when it was written first; when the webhook wrote it
- * AFTER the supersede it stayed pending, and a moderator approved the duplicate.
- *
- * Every test here runs in that ordering: the markers are NOT written (current_version_sha is the
+ * Every test here sets up that ordering: the markers are NOT written (current_version_sha is the
  * previous version's sha, no approved request has the new sha), and the request being approved
  * is still `pending` on the primary.
  */

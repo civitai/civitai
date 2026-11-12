@@ -1,7 +1,4 @@
 import { env } from '~/env/server';
-import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 import {
@@ -13,7 +10,6 @@ import {
   writeLastGood,
 } from '~/server/services/feed-primary-degrade';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
-import { withSpan } from '~/server/utils/otel-helpers';
 import {
   CURSOR_UNPARSED,
   DEEP_OFFSET,
@@ -31,21 +27,23 @@ const HUB_ROUTES = new Set(['union-walk', 'union-gather', 'empty']);
 
 const requestCounter = registerCounterWithLabels({
   name: 'feed_primary_requests_total',
-  help: 'Image-feed searches answered by the feed service instead of Meilisearch, by outcome',
+  help: 'Image-feed page requests on the feed service, by outcome',
   labelNames: ['outcome', 'reason', 'route'] as const,
 });
 
-const meiliOffCounter = registerCounterWithLabels({
+// Named when this answer replaced a Meilisearch fallback behind a flag; the name is kept so the
+// dashboards reading it keep their history.
+const unservedAnswerCounter = registerCounterWithLabels({
   name: 'feed_primary_meili_off_total',
-  help: 'Image-feed requests the feed service did not serve, answered without Meilisearch',
+  help: 'Image-feed requests the feed service did not serve, by the answer they got instead',
   labelNames: ['answer', 'reason', 'route'] as const,
 });
 /** `answer`: empty (an empty page), unavailable (a retryable 503) or refused (a 400). */
-export const countMeiliOff = (
+export const countUnservedAnswer = (
   answer: 'empty' | 'unavailable' | 'refused',
   reason: string,
   route: FeedPrimaryRoute
-) => meiliOffCounter.inc({ answer, reason: reasonLabel(reason), route });
+) => unservedAnswerCounter.inc({ answer, reason: reasonLabel(reason), route });
 
 /** Which caller asked: the site's image feed or the public REST images endpoint. */
 export type FeedPrimaryRoute = 'website' | 'rest';
@@ -206,20 +204,6 @@ export function feedHydrateQuery<
   return { ...rest, ids, limit: ids.length, period: 'AllTime', throwOnStatementTimeout: true };
 }
 
-/** Truthful subset of the request-path Flipt context (feature-flags.service.ts) built
- *  from what the search input carries, so segments on userId/isModerator can match. */
-export function feedFliptContext(input: {
-  currentUserId?: number;
-  isModerator?: boolean;
-}): Record<string, string> {
-  if (!input.currentUserId) return { isLoggedIn: 'false' };
-  return {
-    userId: String(input.currentUserId),
-    isModerator: String(!!input.isModerator),
-    isLoggedIn: 'true',
-  };
-}
-
 export async function serveFromFeed<T extends { id: number }>(
   input: CapturableSearchInput,
   deps: FeedPrimaryDeps<T>
@@ -331,26 +315,6 @@ export async function serveFromFeed<T extends { id: number }>(
 
 export function feedPrimaryAvailable() {
   return !!env.FEED_SERVICE_URL;
-}
-
-/**
- * FEED_SERVICE_MEILI_OFF for this viewer: the image feed never reads Meilisearch. Only with a feed
- * service configured, since without one there is nothing else to answer from.
- *
- * Once the feeds index is retired this is true without reading the flag: a flag read that fails
- * returns false, and false would send the request to an index nothing writes any more. Without a
- * feed service the readers of that index answer empty instead (see refuseRetiredIndexRead).
- */
-export async function isMeiliOff(input: { currentUserId?: number; isModerator?: boolean }) {
-  if (!feedPrimaryAvailable()) return false;
-  if (isRetiredSearchIndex(METRICS_IMAGES_SEARCH_INDEX)) return true;
-  return withSpan('image:flipt:meiliOff', () =>
-    getFliptBoolean(
-      FLIPT_FEATURE_FLAGS.FEED_SERVICE_MEILI_OFF,
-      input.currentUserId?.toString() || 'anonymous',
-      feedFliptContext(input)
-    )
-  );
 }
 
 export function fetchFeedPrimary(query: string, timeoutMs: number) {
