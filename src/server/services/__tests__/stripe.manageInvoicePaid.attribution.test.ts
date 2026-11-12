@@ -321,7 +321,9 @@ describe('manageInvoicePaid — membership bonus needs a billed month', () => {
     expect(mockRecordMembershipPaymentReward).toHaveBeenCalledTimes(1);
   });
 
-  it('keys each gifted month on its invoice, so a redelivery or a re-minted residual cannot grant month one twice', async () => {
+  // The Buzz service dedupes on externalTransactionId; this pins that the key is the invoice, so a
+  // redelivered invoice repeats it and a re-minted residual's first invoice does not.
+  it('uses the invoice id as the bonus idempotency key', async () => {
     const gifted = (id: string, subscription: string) =>
       fakeInvoice({
         id,

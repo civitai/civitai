@@ -1053,13 +1053,14 @@ describe('honorGiftResidualsForUser', () => {
     });
     afterEach(() => vi.useRealTimers());
 
+    // Any end date sent with the create is read off our clock, which is the bug.
     const effectiveCancelAt = () => {
       const created = mockStripe.subscriptions.create.mock.calls[0][0];
+      expect(created.cancel_at).toBeUndefined();
       const update = mockStripe.subscriptions.update.mock.calls.find(
         ([id, args]: [string, any]) => id === 'sub_residual' && 'cancel_at' in args
       );
       if (update) return update[1].cancel_at;
-      if (created.cancel_at != null) return created.cancel_at;
       return created.cancel_at_period_end ? anchor.add(1, 'month').unix() : null;
     };
 
@@ -1087,7 +1088,10 @@ describe('honorGiftResidualsForUser', () => {
 
       await expect(honorGiftResidualsForUser({ userId: 2 })).resolves.toEqual({ minted: 1 });
 
-      expect(mockStripe.subscriptions.create.mock.calls[0][0].cancel_at_period_end).toBe(true);
+      // The fallback: no end date of our own, and Stripe ends it after the first period.
+      const created = mockStripe.subscriptions.create.mock.calls[0][0];
+      expect(created.cancel_at).toBeUndefined();
+      expect(created.cancel_at_period_end).toBe(true);
       expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -1131,7 +1135,6 @@ describe('honorGiftResidualsForUser', () => {
     );
     const [, options] = mockStripe.subscriptions.create.mock.calls[0];
     expect(options.idempotencyKey).toBe('gift_gift_1_residual_m2');
-    expect(options.idempotencyKey).not.toBe(completed.stripeCouponId);
   });
 
   it('does nothing when no months are owed', async () => {
