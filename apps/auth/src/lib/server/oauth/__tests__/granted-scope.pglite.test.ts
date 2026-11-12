@@ -10,8 +10,8 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * What the consent screen counts as already granted to an app: the remembered consent, else the
- * user's newest live refresh token for that app. It decides which permissions are labelled "New".
+ * What the consent screen counts as already granted to an app: the remembered consent combined with
+ * every live refresh token the user holds for that app. It decides which permissions are labelled "New".
  */
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
@@ -112,17 +112,21 @@ afterEach(async () => {
 });
 
 describe('getGrantedScope', () => {
-  it('is the remembered consent when there is one, over a refresh token', async () => {
+  it('combines the remembered consent with a live refresh token', async () => {
+    await consent(USER, CLIENT, 0b0011);
+    await apiKey({ scope: 0b0101 });
+    await expect(granted()).resolves.toBe(0b0111);
+  });
+
+  it('is the remembered consent alone when there is no live refresh token', async () => {
     await consent(USER, CLIENT, 3);
-    await apiKey({ scope: 15 });
     await expect(granted()).resolves.toBe(3);
   });
 
-  it('falls back to the newest live refresh token when nothing was remembered', async () => {
-    await apiKey({ scope: 1, createdAt: new Date(NOW.getTime() - 3 * HOUR) });
-    await apiKey({ scope: 5, createdAt: new Date(NOW.getTime() - HOUR) });
-    await apiKey({ scope: 3, createdAt: new Date(NOW.getTime() - 2 * HOUR) });
-    await expect(granted()).resolves.toBe(5);
+  it('combines every live refresh token, not just the newest', async () => {
+    await apiKey({ scope: 0b0011, createdAt: new Date(NOW.getTime() - 2 * HOUR) });
+    await apiKey({ scope: 0b0101, createdAt: new Date(NOW.getTime() - HOUR) });
+    await expect(granted()).resolves.toBe(0b0111);
   });
 
   it('counts a refresh token with no expiry as live', async () => {
@@ -149,6 +153,12 @@ describe('getGrantedScope', () => {
   it('ignores an expired refresh token', async () => {
     await apiKey({ scope: 15, expiresAt: new Date(NOW.getTime() - 1) });
     await expect(granted()).resolves.toBeNull();
+  });
+
+  it('leaves an expired refresh token out of the combination', async () => {
+    await apiKey({ scope: 0b0001 });
+    await apiKey({ scope: 0b1000, expiresAt: new Date(NOW.getTime() - 1) });
+    await expect(granted()).resolves.toBe(0b0001);
   });
 
   it('ignores access tokens and other key types', async () => {
