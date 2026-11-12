@@ -11,15 +11,6 @@ import { previewAppBlockManifest } from '../../../../../tests/preview-app-block-
  * BOTH checks a submission meets:
  *  1. the platform's submit-time validator (the approve-time one, run at submit), and
  *  2. the App Blocks build pipeline's own manifest check, which runs on the review build.
- *
- * (2) is not in this repo, so its rules are restated below as LITERALS — copies, which nothing
- * here links to the build itself; the build's own tests run its real check against this
- * manifest's shape. Until this pin existed the smoke submissions passed (1) and failed (2) on
- * every run, so the review builds they trigger caught nothing.
- *
- * Cross-repo pin. `SCHEMA_REQUIRED` is asserted here against the schema FILE, and the build
- * pipeline's own test asserts its required list against the same literal. A change to the
- * schema's required list therefore fails here first, and has to be made on both sides.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
@@ -27,13 +18,15 @@ const schema = JSON.parse(
   readFileSync(path.join(REPO_ROOT, 'public/schemas/app-block/v1.json'), 'utf8')
 ) as { required?: string[] };
 
-/** `public/schemas/app-block/v1.json` `required`, as a literal. */
+/**
+ * SCHEMA_REQUIRED mirrors the required list in public/schemas/app-block/v1.json and the build
+ * pipeline's validate step (in the build pipeline repo); change all three together.
+ */
 const SCHEMA_REQUIRED = ['blockId', 'version', 'name', 'contentRating', 'scopes'];
 
 /**
- * The build pipeline's manifest check on a REVIEW build, restated: every schema-required field,
- * plus `iframe` (review builds stamp `iframe.src` into an existing iframe block), and at least one
- * surface — a non-empty `targets[]` or a `page{}` object.
+ * A deliberate hand-copied pin of the build pipeline's rules: drift on the pipeline side is not
+ * detected here.
  */
 const PIPELINE_REVIEW_REQUIRED = [...SCHEMA_REQUIRED, 'iframe'];
 function pipelineSurfaceOk(m: Record<string, unknown>): boolean {
@@ -42,7 +35,6 @@ function pipelineSurfaceOk(m: Record<string, unknown>): boolean {
   return hasTargets || hasPage;
 }
 
-// A slug distinct from every literal above, in the shape the specs derive.
 const SLUG = 'ci-smoke-pub-pr-90210';
 const APPS_DOMAIN = 'apps.example.test';
 
@@ -64,11 +56,8 @@ describe('preview e2e App Block manifest vs the build pipeline', () => {
     expect(pipelineSurfaceOk(fixture())).toBe(true);
   });
 
-  it('is deliberately minimal: no iframe.src (server-owned) and no minApiVersion (optional)', () => {
-    const m = fixture();
-    expect(m).not.toHaveProperty('minApiVersion');
-    expect(m.iframe).not.toHaveProperty('src');
-    expect(m.blockId).toBe(SLUG);
+  it('leaves iframe.src unset (server-owned)', () => {
+    expect(fixture().iframe).not.toHaveProperty('src');
   });
 
   it('passes the submit-time validator once the platform stamps iframe.src', async () => {

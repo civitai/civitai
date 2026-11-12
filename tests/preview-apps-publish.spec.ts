@@ -101,8 +101,6 @@ type PendingList = { items: PendingItem[]; nextCursor: string | null };
 // Bundle whose manifest OMITS iframe.src and which contains NO Dockerfile —
 // exactly the shape the DX change is meant to accept.
 async function buildBundleBase64(): Promise<string> {
-  // NOTE: no `iframe.src`. The rest must be approvable (submit runs the approve-time manifest
-  // validator) AND pass the build pipeline's manifest check — see preview-app-block-manifest.ts.
   const manifest = previewAppBlockManifest({
     slug: SLUG,
     name: 'CI Smoke — publish DX (omits iframe.src)',
