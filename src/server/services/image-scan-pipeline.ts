@@ -743,7 +743,7 @@ export async function resolveScanOutcome({
   if (ingestion === ImageIngestionStatus.NotFound) {
     const [row] = await dbWrite.$queryRaw<{ ingestion?: ImageIngestionStatus }[]>`
       SELECT "ingestion" FROM "Image" WHERE id = ${image.id}
-    `;
+    `.catch(() => []); // the verdict has landed: a failed read-back must not turn it into a scan error
     ingestion = row?.ingestion ?? ingestion;
   }
   if (scanLevel !== NsfwLevel.Blocked && !image.nsfwLevelLocked) {

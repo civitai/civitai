@@ -396,6 +396,30 @@ describe('resolveScanOutcome with a collection judge rating', () => {
       expect(outcome.ingestion).toBe('Scanned');
     });
 
+    it('keeps the landed verdict when the read-back fails', async () => {
+      scanTagLevel = PG13;
+      const passthrough = vi
+        .mocked(dbMock.dbWrite.$queryRaw)
+        .getMockImplementation() as unknown as (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => Promise<unknown>;
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        if (strings.join('').includes('SELECT "ingestion" FROM "Image"')) throw new Error('boom');
+        return passthrough(strings, ...values);
+      }) as never);
+
+      const { outcome, row } = await scan(
+        await arrange({ nsfwLevel: PG13, ingestion: 'NotFound' })
+      );
+
+      expect(row).toMatchObject({ ingestion: 'NotFound' });
+      expect(outcome.ingestion).toBe('NotFound');
+    });
+
     it('is still blocked by an audit block', async () => {
       vi.mocked(auditPostImageMeta).mockReturnValueOnce({
         success: false,
