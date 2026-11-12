@@ -564,6 +564,9 @@ const featureFlags = createFeatureFlags({
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
+  // The Flag Race: the badge on the home flag row and adding hats to a flag. Testers get it before
+  // launch; it goes public when the first flags swap in. The row itself is gated by its block's featureFlag.
+  flagRace: { availability: ['mod'], fliptKey: 'birthday2026-flag-race' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -714,7 +717,7 @@ const featureFlags = createFeatureFlags({
   // Raw orchestrator-blob AIR resources in the generator (Training Studio
   // "generate with this epoch" handoff) — gates both server acceptance and the
   // /generate?air= form entry (form-graph/generation/ingestion.ts).
-  generationAirResources: { availability: ['user'] },
+  generationAirResources: { availability: ['mod'] },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
   // 3D Models — split flags: feed (view/comment/review) vs generator (create).
   // Both mod-only at launch; Flipt key allows broadening without a code change.

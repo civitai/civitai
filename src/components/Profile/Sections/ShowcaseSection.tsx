@@ -21,9 +21,8 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   // computed from `!coverImages.length`, so a refused query would take the entire
   // Showcase section off the profile — and it would stay off, since each render sends
   // the same list. Clamped, a showcase longer than the bound just shows its first
-  // `MAX_ENTITIES_COVER_IMAGE` items. `addEntityToShowcase` truncates to 32, but
-  // `userProfile.update` does not bound `showcaseItems`, so a stored showcase is not
-  // guaranteed to be short.
+  // `MAX_ENTITIES_COVER_IMAGE` items. Both write paths now cap a showcase at 32, but one
+  // stored before `userProfile.update` was bounded can still be longer.
   const entities = useMemo(() => showcaseItems.slice(0, MAX_ENTITIES_COVER_IMAGE), [showcaseItems]);
   const {
     data: _coverImages,

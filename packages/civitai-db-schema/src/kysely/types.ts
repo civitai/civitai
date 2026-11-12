@@ -3182,6 +3182,17 @@ export type EventCosmeticScoreDaily = {
   points: Generated<number>;
   updatedAt: Generated<Timestamp>;
 };
+export type EventTurfFlagSticker = {
+  id: Generated<string>;
+  event: string;
+  flagDayId: number;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  count: number;
+  createdAt: Generated<Timestamp>;
+};
 export type EventTurfSticker = {
   id: Generated<string>;
   event: string;
@@ -3313,6 +3324,23 @@ export type File = {
   entityId: number;
   entityType: string;
   metadata: unknown | null;
+};
+export type FlagDay = {
+  id: Generated<number>;
+  event: string;
+  crucibleId: number;
+  startsAt: Timestamp;
+  /**
+   * Random within the day's last hour, so nobody can time a last-second pile-on. Never sent to a
+   * client before it passes.
+   */
+  cutAt: Timestamp;
+  /**
+   * The end of the hour the cut falls in: public, unlike the cut.
+   */
+  closesAt: Timestamp;
+  imageIds: number[];
+  createdAt: Generated<Timestamp>;
 };
 export type GameFrameGame = {
   id: Generated<number>;
@@ -6726,6 +6754,7 @@ export type DB = {
   EventAwardResult: EventAwardResult;
   EventCosmeticPlacement: EventCosmeticPlacement;
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
+  EventTurfFlagSticker: EventTurfFlagSticker;
   EventTurfSticker: EventTurfSticker;
   EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
@@ -6735,6 +6764,7 @@ export type DB = {
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;
+  FlagDay: FlagDay;
   GameFrameGame: GameFrameGame;
   GameFrameGameReport: GameFrameGameReport;
   GameFrameReportReceipt: GameFrameReportReceipt;

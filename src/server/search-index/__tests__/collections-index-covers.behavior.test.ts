@@ -63,6 +63,8 @@ const MODEL_ITEM_DRAFT_VERSION = 44;
 const MODEL_ITEM_SCHEDULED_VERSION = 45;
 const MODEL_ITEM_PRIVATE_POST = 46;
 const POST_ITEM_REMOVAL_REASON = 47;
+const OWN_RESTRICTED_R = 48;
+const OWN_RESTRICTED_PG = 49;
 
 beforeAll(async () => {
   pg = new PGlite();
@@ -90,7 +92,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, name text, url text NOT NULL DEFAULT 'u',
       "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type text DEFAULT 'image',
       poi boolean DEFAULT false, minor boolean DEFAULT false, index int,
-      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text
+      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int, "modelVersionId" int, "publishedAt" timestamp,
@@ -271,6 +274,12 @@ beforeAll(async () => {
       (17, ${MODEL3D_ITEM_PUBLISHED}, NULL, 36, ${OWNER}),
       (21, ${SHARED_UPLOAD_OWNER_ADDED}, 111, NULL, ${OWNER}),
       (22, ${SHARED_UPLOAD_STRANGER_ADDED}, 111, NULL, ${STRANGER});
+    INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", "modelRestricted") VALUES
+      (126, ${STRANGER}, 1, 4, true), (127, ${STRANGER}, 1, 1, true);
+    INSERT INTO "Collection" (id, "userId", "imageId") VALUES
+      (${OWN_RESTRICTED_R}, ${OWNER}, 126), (${OWN_RESTRICTED_PG}, ${OWNER}, 127);
+    INSERT INTO "CollectionItem" (id, "collectionId", "imageId") VALUES
+      (900, ${OWN_RESTRICTED_R}, 126), (901, ${OWN_RESTRICTED_PG}, 127);
   `);
 });
 afterAll(() => pg.close());
@@ -293,6 +302,11 @@ const pull = async (id: number) => {
 describe('collections search index covers', () => {
   it("indexes a collection's own cover a stranger could see (control)", async () => {
     expect((await pull(OWN_PUBLISHED)).cover).toBe(100);
+  });
+
+  it('indexes no own R cover on a restricted base model, and keeps a PG one (control)', async () => {
+    expect(await pull(OWN_RESTRICTED_R)).toMatchObject({ cover: null, itemCovers: [] });
+    expect((await pull(OWN_RESTRICTED_PG)).cover).toBe(127);
   });
 
   it.each([

@@ -13,6 +13,7 @@
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
   import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
@@ -132,6 +133,7 @@
 
   let starting = $state(false);
   let startError = $state('');
+  let filesProcessing = $state(false);
 
   // Moderators can switch training off on the main app; the flow's banner carries their message.
   const trainingDisabled = $derived(serviceStatus.value?.available === false);
@@ -450,20 +452,21 @@
   } | null>(null);
   let spendDialogOpen = $state(false);
 
-  function start() {
-    // total == null means a quote is in flight or failed — never submit without a shown price
-    // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
-    if (
-      starting ||
+  // total == null means a quote is in flight or failed — never submit without a shown price
+  // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
+  const startBlocked = $derived(
+    starting ||
       trainingDisabled ||
-      blockedMessage ||
+      !!blockedMessage ||
       total == null ||
       (needsAttestation && !attestSfw) ||
       ackMissing ||
-      imagesProblem ||
+      !!imagesProblem ||
       uploadingImage
-    )
-      return;
+  );
+
+  function start() {
+    if (startBlocked) return;
     if (spend && !spend.matureYellow) {
       confirmSpend = spend;
       spendDialogOpen = true;
@@ -477,6 +480,7 @@
     spendDialogOpen = false;
     starting = true;
     startError = '';
+    filesProcessing = false;
     try {
       await onStart(
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
@@ -488,7 +492,8 @@
       );
     } catch (e) {
       if (e instanceof MatureAckRequiredError) refusedMature = e.matureCount;
-      startError = e instanceof Error ? e.message : 'Could not start training';
+      if (e instanceof FilesProcessingError) filesProcessing = true;
+      else startError = e instanceof Error ? e.message : 'Could not start training';
     } finally {
       starting = false;
     }
@@ -1048,14 +1053,7 @@
     <Button
       class="mt-4 w-full"
       onclick={start}
-      disabled={starting ||
-        trainingDisabled ||
-        !!blockedMessage ||
-        total == null ||
-        (needsAttestation && !attestSfw) ||
-        ackMissing ||
-        !!imagesProblem ||
-        uploadingImage}
+      disabled={startBlocked}
     >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
@@ -1070,6 +1068,11 @@
       </p>
     {:else if blockedMessage}
       <p class="mt-2 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
+    {:else if filesProcessing}
+      <div class="mt-2 flex flex-col items-center gap-2">
+        <p class="text-center font-mono text-xs text-dark-2">{FILES_PROCESSING_MESSAGE}</p>
+        <Button variant="outline" size="sm" disabled={startBlocked} onclick={start}>Try again</Button>
+      </div>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if imagesProblem}

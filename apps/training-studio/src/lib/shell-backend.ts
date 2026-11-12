@@ -18,6 +18,7 @@ import type {
 } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
 import { parseServiceStatus } from '$lib/service-status-core';
+import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { UploadError, uploadProblem } from '$lib/upload';
 import { AUTO_LABEL_UNAVAILABLE_CODE, AutoLabelRefusedError } from '$lib/autolabel-errors';
@@ -52,7 +53,9 @@ async function startFailure(res: Response, fallback: string): Promise<Error> {
   const body = (await res.json().catch(() => null)) as {
     message?: string;
     matureCount?: unknown;
+    code?: unknown;
   } | null;
+  if (body?.code === FILES_PROCESSING_CODE) return new FilesProcessingError();
   if (res.status === 409 && typeof body?.matureCount === 'number' && body.matureCount > 0)
     return new MatureAckRequiredError(body.matureCount);
   return new Error(body?.message || fallback);

@@ -205,9 +205,16 @@ describe('requestTurfSync', () => {
 
 const visibleOf = (sql: string) =>
   sql.slice(sql.indexOf(' p."publishedAt"'), sql.indexOf('"blockedFor" IS NULL'));
+// The whole contestEntry fragment: the contest check and the running flag Crucible check.
 const contestOf = (sql: string) => {
-  const at = sql.indexOf('EXISTS ( SELECT 1 FROM "CollectionItem"');
-  return at < 0 ? '' : sql.slice(at, sql.indexOf(')', sql.indexOf("'Contest'", at)) + 1);
+  const at = sql.indexOf('(EXISTS ( SELECT 1 FROM "CollectionItem"');
+  if (at < 0) return '';
+  let depth = 0;
+  for (let i = at; i < sql.length; i++) {
+    if (sql[i] === '(') depth++;
+    else if (sql[i] === ')' && --depth === 0) return sql.slice(at, i + 1);
+  }
+  return '';
 };
 const OWNER_ALLOWS_TURF =
   'EXISTS (SELECT 1 FROM "User" ow WHERE ow.id = i."userId" AND ow."bannedAt" IS NULL AND ow."deletedAt" IS NULL AND (ow.settings -> ? ->> ?) IS DISTINCT FROM \'true\')';
