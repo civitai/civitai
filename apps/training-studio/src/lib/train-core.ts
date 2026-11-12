@@ -26,6 +26,7 @@ import {
   forEachPooled,
   isTrainingDataNotReady,
   isFlux2,
+  queryRecentWorkflows,
   resolveCurrencies,
   type OrchestratorClient,
 } from './orchestrator-core';
@@ -124,6 +125,13 @@ export interface TrainingRunInput {
   /** The user ticked Review's mature-dataset confirm: the run unlocks mature content at submit and is
    *  charged in Yellow (after Blue when `currencies` spends Blue). */
   matureAck?: boolean;
+  /**
+   * One per run per Start attempt, minted by the flow (`newSubmitKey`) and REUSED when the user
+   * starts the same batch again. It rides on the workflow as a tag, so a submit whose response was
+   * lost can be found instead of charged a second time. Absent (an older client), nothing can be
+   * reconciled and a submit is sent as before.
+   */
+  submitKey?: string;
   meta: TrainingStudioMeta;
 }
 
@@ -289,6 +297,23 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
 // (for finding it). This prefix is the one place the tag shape is written and matched.
 const NAME_TAG_PREFIX = 'name:';
 
+/** The tag a submit key rides on; hex only, so it needs no escaping anywhere. */
+const SUBMIT_KEY_TAG_PREFIX = 'submit:';
+const SUBMIT_KEY = /^[0-9a-f]{16,64}$/;
+/** A submit that has not answered in this long is abandoned and reconciled by its key. */
+export const SUBMIT_TIMEOUT_MS = 30_000;
+const SUBMIT_LOOKUP_TIMEOUT_MS = 10_000;
+
+/** The id of the training workflow already submitted under `key`, if any. Throws when it can't tell. */
+async function findSubmittedRun(client: OrchestratorClient, key: string) {
+  const items = await queryRecentWorkflows(
+    client,
+    [CIVITAI_TAG, TRAINING_TAG, `${SUBMIT_KEY_TAG_PREFIX}${key}`],
+    { signal: AbortSignal.timeout(SUBMIT_LOOKUP_TIMEOUT_MS) }
+  );
+  return items.find((w) => w.id)?.id ?? undefined;
+}
+
 /** Submit one real training workflow; returns its id. Charges Buzz — the single write in the flow. A
  *  `callbacks` entry registers the orchestrator push that emits live `workflow-update` signals for this run. */
 export async function submitTraining(
@@ -298,26 +323,63 @@ export async function submitTraining(
 ): Promise<string> {
   const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
   const slug = run.meta.name ? slugify(run.meta.name) : '';
-  const { data, error, response } = await submitWorkflow({
-    client,
-    body: {
-      tags: slug
-        ? [CIVITAI_TAG, TRAINING_TAG, `${NAME_TAG_PREFIX}${slug}`]
-        : [CIVITAI_TAG, TRAINING_TAG],
-      metadata: metadata as Record<string, unknown>,
-      ...trainingSteps(run, traceMode, run.matureAck === true),
-      ...(callbacks ? { callbacks } : {}),
-    },
-    query: { wait: 0 },
-  });
-  if (!data?.id && isTrainingDataNotReady(error, response?.status))
-    throw new FilesProcessingError();
-  if (!data?.id)
-    throw new TrainingSubmitError(
-      chargeFailureReason(describeSubmitError(error), run.matureAck === true),
-      response?.status
-    );
-  return data.id;
+  const key = run.submitKey && SUBMIT_KEY.test(run.submitKey) ? run.submitKey : undefined;
+
+  // A second Start of the same batch (the user retrying after an error) returns the run the first
+  // one created rather than charging again. If we cannot ask, we do not submit: fail closed.
+  if (key) {
+    let existing: string | undefined;
+    try {
+      existing = await findSubmittedRun(client, key);
+    } catch {
+      throw new TrainingSubmitError(
+        'the training service did not respond, so nothing was started',
+        undefined
+      );
+    }
+    if (existing) return existing;
+  }
+
+  const tags = [CIVITAI_TAG, TRAINING_TAG];
+  if (slug) tags.push(`${NAME_TAG_PREFIX}${slug}`);
+  if (key) tags.push(`${SUBMIT_KEY_TAG_PREFIX}${key}`);
+
+  let result: Awaited<ReturnType<typeof submitWorkflow>> | undefined;
+  let thrown: unknown;
+  try {
+    result = await submitWorkflow({
+      client,
+      body: {
+        tags,
+        metadata: metadata as Record<string, unknown>,
+        ...trainingSteps(run, traceMode, run.matureAck === true),
+        ...(callbacks ? { callbacks } : {}),
+      },
+      query: { wait: 0 },
+      signal: AbortSignal.timeout(SUBMIT_TIMEOUT_MS),
+    });
+  } catch (err) {
+    thrown = err;
+  }
+  const data = result?.data as { id?: string | null } | undefined;
+  const error = result?.error;
+  const status = result?.response?.status;
+  if (data?.id) return data.id;
+  if (!thrown && isTrainingDataNotReady(error, status)) throw new FilesProcessingError();
+
+  // No answer, a timeout, or a 5xx: the orchestrator may have created (and charged) the workflow
+  // anyway. Look for it by key before reporting a failure the user would answer by retrying.
+  const mayHaveLanded =
+    thrown !== undefined || status === undefined || status >= 500 || status === 408;
+  if (key && mayHaveLanded) {
+    const landed = await findSubmittedRun(client, key).catch(() => undefined);
+    if (landed) return landed;
+  }
+  if (thrown !== undefined) throw thrown;
+  throw new TrainingSubmitError(
+    chargeFailureReason(describeSubmitError(error), run.matureAck === true),
+    status
+  );
 }
 
 /** The step and charge fields of a training submit; the readiness whatif sends the same. */
