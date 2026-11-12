@@ -7062,7 +7062,7 @@ export const blocksRouter = router({
       // 🔴 ALWAYS SET (audit 🔴-1). When the block sends no key we MINT one
       // server-side instead of leaving `externalId` undefined. The double-charge
       // this closes is server-side and unconditional: `submitWorkflow` retries the
-      // real submit up to 3× with no per-attempt timeout, and a 502/504 AFTER the
+      // real submit up to 3× (5xx, network failure, timed-out attempt), and a 502/504 AFTER the
       // orchestrator created + charged the workflow makes each retry create another
       // one. Gating `externalId` on a client key closed nothing in practice — NO
       // shipped client sends one. Minted ONCE here (not per attempt): the body built

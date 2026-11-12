@@ -134,7 +134,7 @@ import { normalizeText } from '~/utils/normalize-text';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata, asResourceValue } from '~/shared/utils/resource.utils';
 import { anyTipEligible } from '~/shared/utils/creator-tip';
-import { randomInt } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
@@ -2160,7 +2160,10 @@ export async function generateFromGraph({
       }),
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
-      externalId,
+      // Always an idempotency key: the form sends one per click, an API caller may send none,
+      // and without one a retried attempt (5xx, timeout) could create a second, charged workflow.
+      // Minted once here, so every retry of this submit carries the same key.
+      externalId: externalId || randomUUID(),
       ...(boostDownloads ? { downloadPriority } : {}),
       ...(boostRequired ? { tier: BOOST_TO_LOAD_BODY.tier } : {}),
     },
@@ -2168,8 +2171,26 @@ export async function generateFromGraph({
 
   await assertWorkflowOwner(workflow, userId, token);
 
-  // Format and return response
-  const [formatted] = await formatGenerationResponse2([workflow], user, { acceptBoostRequired });
+  // Format and return response. From here on the orchestrator has ACCEPTED (and charged for) the
+  // workflow, so a failure must not become a 500: the user would read it as "nothing submitted"
+  // and click again — a second charge. If the resource enrichment fails (a DB / cache lookup), the
+  // reply is the workflow without it; the queue's own poll fills the rest in.
+  const formatted = await formatGenerationResponse2([workflow], user, { acceptBoostRequired })
+    .then(([first]) => first)
+    .catch(async (error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'generation-submit-reply-enrichment-failed',
+        workflowId: workflow.id,
+        userId,
+        message: (error as Error)?.message,
+      }).catch(() => undefined);
+      const [bare] = await formatGenerationResponse2([workflow], user, {
+        acceptBoostRequired,
+        skipResourceEnrichment: true,
+      });
+      return bare;
+    });
   const priced = await downloadWhatIf;
   attachEstimatedPreparation(
     formatted.steps,
@@ -3298,7 +3319,15 @@ export async function updateWorkflow({
 export async function formatGenerationResponse2(
   workflows: Workflow[],
   user?: { id?: number; isModerator?: boolean; tier?: string },
-  { acceptBoostRequired = false }: { acceptBoostRequired?: boolean } = {}
+  {
+    acceptBoostRequired = false,
+    skipResourceEnrichment = false,
+  }: {
+    acceptBoostRequired?: boolean;
+    /** Format without the resource lookup (resources then carry no enriched fields). For a reply
+     *  that must not fail after a submit was accepted — see `generateFromGraph`. */
+    skipResourceEnrichment?: boolean;
+  } = {}
 ): Promise<NormalizedWorkflow[]> {
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
@@ -3327,7 +3356,9 @@ export async function formatGenerationResponse2(
     new Map(allResourceRefs.map((r) => [`${r.id}_${r.epoch ?? ''}`, r])).values()
   );
   const enrichedResources =
-    uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, { user, acceptBoostRequired }) : [];
+    uniqueRefs.length > 0 && !skipResourceEnrichment
+      ? await getResourceData(uniqueRefs, { user, acceptBoostRequired })
+      : [];
 
   // Format each workflow
   return workflows.map((workflow) => {
