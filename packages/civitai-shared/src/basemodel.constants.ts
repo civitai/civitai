@@ -240,6 +240,7 @@ export const ECO = {
   // MiniMax's image model. Its own ecosystem, not a MiniMaxH3 version: separate weights, and
   // H3 video LoRAs do not apply to it.
   MiniMaxH3Image: 97,
+  Fibo2: 99,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -964,6 +965,15 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'MOSS Image',
     familyId: 29,
     sortOrder: 272,
+  },
+
+  // Bria AI
+  {
+    id: ECO.Fibo2,
+    key: 'Fibo2',
+    displayName: 'Fibo 2.0',
+    familyId: 30,
+    sortOrder: 273,
   },
 
   // Audio ecosystems
@@ -2483,6 +2493,7 @@ export const BM = {
   MossImage: 117,
   MiniMaxH3Image: 118,
   GeminiOmni: 119,
+  Fibo2: 120,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2916,6 +2927,14 @@ export const licenses: LicenseRecord[] = [
     poweredBy: 'MiniMax-H3-Image',
     requiresSameLicense: true,
   },
+  {
+    id: 56,
+    // Bria publishes the weights under CC BY-NC 4.0 and sells commercial use separately.
+    name: 'Bria Fibo License (CC BY-NC 4.0)',
+    url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+    poweredBy: 'Powered by Bria AI',
+    nonCommercial: true,
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -3069,6 +3088,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 29,
     name: 'OpenMOSS',
     description: "OpenMOSS's image generation models",
+  },
+  {
+    id: 30,
+    name: 'Bria AI',
+    description: "Bria AI's image generation and editing models",
   },
 ];
 
@@ -3235,6 +3259,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.MossImage,
     licenseId: 13,
+  },
+  {
+    id: BM.Fibo2,
+    name: 'Fibo 2.0',
+    description: "Bria AI's Fibo 2.0 text-to-image and image editing model",
+    type: 'image',
+    ecosystemId: ECO.Fibo2,
+    // Remove at launch.
+    hidden: true,
+    licenseId: 56,
   },
   {
     id: BM.Flux3Video,

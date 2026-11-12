@@ -911,6 +911,13 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy: 'MiniMax-H3-Image',
     requiresSameLicense: true,
   },
+  'bria fibo': {
+    // Same as licence 56 in basemodel.constants.
+    url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+    name: 'Bria Fibo License (CC BY-NC 4.0)',
+    poweredBy: 'Powered by Bria AI',
+    nonCommercial: true,
+  },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
     // the published text.
@@ -1052,6 +1059,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.3 Klein': baseLicenses['flux kommunity'],
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'MOSS Image': baseLicenses['apache 2.0'],
+  'Fibo 2.0': baseLicenses['bria fibo'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux2 dev nc'],
   'Flux.2 Klein 9B': baseLicenses['flux nc'],
