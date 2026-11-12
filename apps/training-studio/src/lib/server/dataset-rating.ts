@@ -27,6 +27,15 @@ export const DATASET_RATING_CONCURRENCY = 2;
 /** Per user per UTC day, across pods: images sent to the rater, and Review's count requests. */
 export const DATASET_RATING_DAILY_CALLS = 3000;
 export const DATASET_RATING_DAILY_LOOKUPS = 300;
+/** Per user per UTC day: dataset files Review reads to see whether they're ready to train. */
+export const UPLOAD_READINESS_DAILY_PROBES = 20_000;
+
+type DailyKind = 'calls' | 'lookups' | 'probes';
+const DAILY_LIMITS: Record<DailyKind, number> = {
+  calls: DATASET_RATING_DAILY_CALLS,
+  lookups: DATASET_RATING_DAILY_LOOKUPS,
+  probes: UPLOAD_READINESS_DAILY_PROBES,
+};
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING;
 const DAILY_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_DAILY;
@@ -34,20 +43,20 @@ const DAILY_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_DAILY;
 const cacheKey = (blobId: string) =>
   `${KEY}:${RATER_MODEL}:${blobId.trim().toLowerCase()}` as const;
 
-const dailyKey = (kind: 'calls' | 'lookups', userId: number) =>
+const dailyKey = (kind: DailyKind, userId: number) =>
   `${DAILY_KEY}:${kind}:${userId}:${new Date().toISOString().slice(0, 10)}` as const;
 
 /** Take up to `want` units of today's `kind` allowance for this user: how many were granted, and the
  *  day's key they were taken from (a give-back must go to that day, not the day it finishes on). A
  *  Redis failure grants none, which leaves images on their upload rating. */
 async function claimAllowance(
-  kind: 'calls' | 'lookups',
+  kind: DailyKind,
   userId: number,
   want: number
 ): Promise<{ granted: number; key: ReturnType<typeof dailyKey> }> {
   const key = dailyKey(kind, userId);
   if (want <= 0) return { granted: 0, key };
-  const limit = kind === 'calls' ? DATASET_RATING_DAILY_CALLS : DATASET_RATING_DAILY_LOOKUPS;
+  const limit = DAILY_LIMITS[kind];
   try {
     const redis = getSysRedis();
     const total = await redis.incrBy(key, want);
@@ -60,12 +69,18 @@ async function claimAllowance(
   }
 }
 
-export async function claimDaily(
-  kind: 'calls' | 'lookups',
+export async function claimDaily(kind: DailyKind, userId: number, want: number): Promise<number> {
+  return (await claimAllowance(kind, userId, want)).granted;
+}
+
+/** Like claimDaily, with a way to give back units the caller didn't use (to the day they were claimed on). */
+export async function claimDailyReturnable(
+  kind: DailyKind,
   userId: number,
   want: number
-): Promise<number> {
-  return (await claimAllowance(kind, userId, want)).granted;
+): Promise<{ granted: number; giveBack: (n: number) => Promise<void> }> {
+  const { granted, key } = await claimAllowance(kind, userId, want);
+  return { granted, giveBack: (n) => returnDaily(key, Math.min(n, granted)) };
 }
 
 async function returnDaily(key: ReturnType<typeof dailyKey>, n: number): Promise<void> {

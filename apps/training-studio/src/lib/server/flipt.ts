@@ -75,3 +75,18 @@ export async function flagVariant(flag: string, user: SessionUser): Promise<stri
     return null;
   }
 }
+
+/** Kill switch for Review's wait on dataset files. On unless the flag exists and is off for this user: off
+ *  leaves only the submit's own refusal. */
+export const UPLOAD_READINESS_FLAG = 'trainingStudioUploadReadiness';
+
+export async function isUploadReadinessOn(user: SessionUser): Promise<boolean> {
+  try {
+    const flipt = getFlipt();
+    await flipt.ensureInitialized();
+    return flipt.isEnabledSync(UPLOAD_READINESS_FLAG, String(user.id), fliptContext(user)) ?? true;
+  } catch (error) {
+    console.warn('[training-studio] upload readiness flag eval failed', error);
+    return true;
+  }
+}

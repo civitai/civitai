@@ -19,6 +19,7 @@ import type {
 import type { EpochArchive } from '$lib/orchestrator-core';
 import { parseServiceStatus } from '$lib/service-status-core';
 import type { DatasetRatingCount } from '$lib/dataset-rating';
+import type { ReadinessCheck, ReadinessProbe } from '$lib/upload-readiness';
 import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { UploadError, uploadProblem } from '$lib/upload';
@@ -83,6 +84,16 @@ async function postFor(path: string, body: unknown, fallback: string) {
   });
   if (!res.ok) throw new Error(await messageOf(res, fallback));
   return (await res.json()) as { workflowId: string };
+}
+
+async function postReadiness<T>(body: unknown): Promise<T> {
+  const res = await fetch('/api/dataset-readiness', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Dataset readiness failed (${res.status})`);
+  return (await res.json()) as T;
 }
 
 export const shellBackend: StudioBackend = {
@@ -173,6 +184,9 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(`Dataset rating failed (${res.status})`);
     return (await res.json()) as DatasetRatingCount;
   },
+
+  datasetReadiness: (blobIds) => postReadiness<ReadinessProbe>({ blobIds }),
+  datasetReadyToTrain: (run) => postReadiness<ReadinessCheck>({ run }),
 
   listEditGenerations: async () =>
     (

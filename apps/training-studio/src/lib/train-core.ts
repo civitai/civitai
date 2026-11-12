@@ -320,6 +320,26 @@ export async function submitTraining(
   return data.id;
 }
 
+/** Whether the orchestrator would take this run's dataset now, from a whatif of the real submit body (never
+ *  charges). False only when it answers that a file isn't ready; null for any other answer. */
+export async function trainingDataReady(
+  client: OrchestratorClient,
+  run: TrainingRunInput
+): Promise<boolean | null> {
+  try {
+    validateRun(run, 'run');
+  } catch {
+    return null;
+  }
+  const { data, error, response } = await submitWorkflow({
+    client,
+    body: { steps: [buildStep(run, 'events')], ...chargeFields(run.currencies, false) },
+    query: { whatif: true },
+  });
+  if (data) return true;
+  return isTrainingDataNotReady(error, response?.status) ? false : null;
+}
+
 // Unauthorized (expired token), request timeout, rate limited.
 const TRANSIENT_CLIENT_STATUSES = new Set([401, 408, 429]);
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
   import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
@@ -32,6 +32,8 @@
   import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
   import { JUNK_TAGS } from '$lib/autolabel-exclude';
+  import type { TrainingRunPayload } from '$lib/backend';
+  import { watchReadiness, type ReadinessView } from './uploadReadiness';
 
   let {
     prices,
@@ -154,6 +156,55 @@
   const reviewMatureCount = $derived(
     ratedMature?.key === datasetKey ? ratedMature.count : matureCount
   );
+
+  // Review holds Start until the orchestrator would take every dataset file, for the dataset it was made for.
+  let readiness = $state<{ key: string; view: ReadinessView } | null>(null);
+  let readinessRound = $state(0);
+  $effect(() => {
+    if (step !== 3) return;
+    const be = backend();
+    if (!be.datasetReadiness || !be.datasetReadyToTrain) return;
+    const ids = datasetBlobIds;
+    const key = datasetKey;
+    void readinessRound;
+    return watchReadiness(ids, {
+      probe: (blobIds) => be.datasetReadiness!(blobIds),
+      check: (run) => be.datasetReadyToTrain!(run),
+      buildRun: () => untrack(readinessRun),
+      onView: (view) => (readiness = { key, view }),
+    });
+  });
+  const readinessView = $derived<ReadinessView>(
+    readiness?.key === datasetKey ? readiness.view : { kind: 'off' }
+  );
+
+  /** The first run as the submit would send it, for the readiness whatif. */
+  function readinessRun(): TrainingRunPayload | undefined {
+    const run = selection?.runs[0];
+    const params = run && runParams[runParamsKey(run)];
+    if (!selection || !run || !params) return undefined;
+    const edit = trainsPairs ? { items: pairItems(pairs), pairs: readyPairs.length } : undefined;
+    return buildTrainingRuns(
+      selection,
+      images,
+      runTrigger,
+      reviewName,
+      [{ run, params }],
+      samplePrompts,
+      ['yellow', 'blue'],
+      labelMode,
+      edit
+    )[0];
+  }
+
+  function removeDatasetFiles(blobIds: string[]) {
+    const gone = new Set(blobIds);
+    if (trainsPairs)
+      pairs = pairs.filter(
+        (p) => !gone.has(p.before.blobId ?? '') && !gone.has(p.after?.blobId ?? '')
+      );
+    else images = images.filter((i) => !gone.has(i.blobId ?? ''));
+  }
 
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
   const datasetLabels = $derived.by(() => {
@@ -373,6 +424,9 @@
       imageCount={trainableCount}
       {trainsPairs}
       matureCount={reviewMatureCount}
+      readiness={readinessView}
+      onCheckReadinessAgain={() => readinessRound++}
+      onRemoveFiles={removeDatasetFiles}
       onStart={start}
       onBack={() => (step = 2)}
       onShowMature={() => {
