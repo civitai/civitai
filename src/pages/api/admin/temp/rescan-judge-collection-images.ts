@@ -8,11 +8,13 @@ import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 /**
  * Queues a normal rescan for images posted to collections whose judges apply the browsing level,
  * when the image is `Scanned` with no `scanJobs`, or `PendingManualAssignment`. Run it only once the
- * judge-rating floor (`metadata.judgeRating`, honoured by `resolveScanOutcome`) is deployed.
+ * judge-rating floor (`metadata.judgeRating`, honoured by `resolveScanOutcome`) is deployed; a
+ * run refuses until the primary's `update_nsfw_levels_new` carries that floor.
  *
  * Writes, per image: `ingestion = 'Rescan'`, a `JobQueue` `ImageScan` row, and, when the image has a
- * single browsing level and no judge rating yet, a legacy `metadata.judgeRating` carrying that level,
- * so the level the judges applied stays a floor under the rescan. Nothing else.
+ * single browsing level and no judge rating yet, a legacy `metadata.judgeRating` carrying that level
+ * (`ratedAt` null: when it was applied is not recorded), so the level the judges applied stays a
+ * floor under the rescan. Nothing else.
  *
  * A dry run (the default, and the only thing a GET does) writes nothing and returns counts: per
  * cohort, the same markers outside the flag's collections, and two checks on the scope from an
@@ -23,7 +25,8 @@ const BATCH_SIZE = 500;
 
 const schema = z.object({
   dryRun: booleanString().default(true),
-  ids: commaDelimitedNumberArray().optional(),
+  // `ids=` parses as [0]; only positive ids are a list.
+  ids: commaDelimitedNumberArray(z.number().int().positive().array().min(1)).optional(),
   concurrency: z.coerce.number().min(1).max(10).default(1),
 });
 
@@ -100,11 +103,24 @@ async function countHeld(ids?: number[]) {
 }
 
 async function inScopeIds(ids?: number[]) {
-  if (ids && !ids.length) return [];
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT i.id FROM "Image" i WHERE ${inScope} ${idFilter(ids)} ORDER BY i.id
   `;
   return rows.map((r) => r.id);
+}
+
+/**
+ * Whether the primary's tag recompute carries the judge-rating floor (migration
+ * 20270105120000): without it, a recompute can take a rescanned image below the seeded rating.
+ */
+async function floorMigrationApplied() {
+  const [row] = await dbWrite.$queryRaw<{ applied: boolean }[]>`
+    SELECT COALESCE(
+      pg_get_functiondef(to_regprocedure('update_nsfw_levels_new(integer[])')) LIKE '%judgeRating%',
+      false
+    ) AS applied
+  `;
+  return row?.applied === true;
 }
 
 /** Queues one batch; returns how many rows were still in scope and queued. */
@@ -119,7 +135,7 @@ async function queueBatch(batch: number[]) {
         THEN COALESCE(i."metadata", '{}'::jsonb) || jsonb_build_object('judgeRating', jsonb_build_object(
           'userId', NULL,
           'nsfwLevel', i."nsfwLevel",
-          'ratedAt', i."updatedAt",
+          'ratedAt', NULL,
           'legacy', true,
           'collectionId', p."collectionId"
         ))
@@ -142,7 +158,9 @@ async function queueBatch(batch: number[]) {
 }
 
 export default WebhookEndpoint(async (req, res) => {
-  const { dryRun, ids, concurrency } = schema.parse(req.query);
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
+  const { dryRun, ids, concurrency } = parsed.data;
   if (!dryRun && req.method !== 'POST')
     return res.status(405).json({ error: 'Only a POST may write; a GET is a dry run' });
 
@@ -155,17 +173,30 @@ export default WebhookEndpoint(async (req, res) => {
     }
   }
 
-  const [cohorts, heldForReview] = await Promise.all([countCohorts(ids), countHeld(ids)]);
+  const [cohorts, heldForReview, floorApplied] = await Promise.all([
+    countCohorts(ids),
+    countHeld(ids),
+    floorMigrationApplied(),
+  ]);
   console.log(
-    `rescan-judge-collection-images: scannedNoJobs=${cohorts.scannedNoJobs} pendingManual=${cohorts.pendingManual} heldForReview=${heldForReview} dryRun=${dryRun}`
+    `rescan-judge-collection-images: scannedNoJobs=${cohorts.scannedNoJobs} pendingManual=${cohorts.pendingManual} heldForReview=${heldForReview} floorMigrationApplied=${floorApplied} dryRun=${dryRun}`
   );
   if (dryRun) {
     const [wide, controls] = await Promise.all([countWide(), scopeControls()]);
     console.log(
       `rescan-judge-collection-images: wide pendingManual=${wide.pendingManual} scannedNoJobs=${wide.scannedNoJobs}; controls inScopeWithScannerTags=${controls.inScopeWithScannerTags} outOfScopeScannedWithoutScannerTags=${controls.outOfScopeScannedWithoutScannerTags}`
     );
-    return res.status(200).json({ dryRun, cohorts, heldForReview, wide, controls });
+    return res.status(200).json({
+      dryRun,
+      cohorts,
+      heldForReview,
+      floorMigrationApplied: floorApplied,
+      wide,
+      controls,
+    });
   }
+  if (!floorApplied)
+    return res.status(400).json({ error: 'The judge-rating floor migration is not applied' });
   if (heldForReview > 0)
     return res
       .status(400)

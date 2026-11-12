@@ -69,8 +69,20 @@ beforeAll(async () => {
       PRIMARY KEY ("entityType", "entityId", type)
     );
   `);
+  await installTagRecompute({ withFloor: true });
   raw = pgliteRaw(db);
 });
+
+/** Stands in for `update_nsfw_levels_new`; the endpoint reads only whether its body has the floor. */
+async function installTagRecompute({ withFloor }: { withFloor: boolean }) {
+  await db.exec(`
+    CREATE OR REPLACE FUNCTION update_nsfw_levels_new(image_ids INTEGER[]) RETURNS VOID AS $$
+    BEGIN
+      PERFORM ${withFloor ? `(metadata -> 'judgeRating') FROM "Image"` : `1`};
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+}
 afterAll(() => db.close());
 
 async function seedBase() {
@@ -139,6 +151,7 @@ beforeEach(async () => {
   dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+  await installTagRecompute({ withFloor: true });
   await seedBase();
 });
 
@@ -153,6 +166,7 @@ describe('rescan-judge-collection-images: dry run', () => {
       dryRun: true,
       cohorts: { scannedNoJobs: 1, pendingManual: 1 },
       heldForReview: 0,
+      floorMigrationApplied: true,
       // 106 and 107 carry the same markers in a collection without the flag.
       wide: { scannedNoJobs: 2, pendingManual: 2 },
       controls: { inScopeWithScannerTags: 0, outOfScopeScannedWithoutScannerTags: 0 },
@@ -194,6 +208,46 @@ describe('rescan-judge-collection-images: dry run', () => {
 });
 
 describe('rescan-judge-collection-images: a run', () => {
+  it('refuses to start, writing nothing, until the tag recompute carries the judge floor', async () => {
+    await installTagRecompute({ withFloor: false });
+    const before = await snapshot();
+
+    expect((await call({})).body).toMatchObject({ floorMigrationApplied: false });
+    const { statusCode, body } = await call({ dryRun: 'false' });
+
+    expect(statusCode).toBe(400);
+    expect(body).toEqual({ error: 'The judge-rating floor migration is not applied' });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('refuses to start when the tag recompute does not exist', async () => {
+    await db.exec(`DROP FUNCTION update_nsfw_levels_new(INTEGER[])`);
+    const before = await snapshot();
+
+    const { statusCode } = await call({ dryRun: 'false' });
+
+    expect(statusCode).toBe(400);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it.each([
+    ['false', ''],
+    ['true', ''],
+    ['false', '101,0'],
+    ['false', '101,abc'],
+  ])(
+    'refuses an id list that is empty or not positive ids (dryRun=%s, ids=%j)',
+    async (dryRun, ids) => {
+      const before = await snapshot();
+
+      const { statusCode, body } = await call({ dryRun, ids });
+
+      expect(statusCode).toBe(400);
+      expect(body).toEqual({ error: 'Invalid query' });
+      expect(await snapshot()).toEqual(before);
+    }
+  );
+
   it('refuses to start, writing nothing, while an in-scope image is held for review', async () => {
     await db.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = 102`);
     const before = await snapshot();
@@ -247,7 +301,7 @@ describe('rescan-judge-collection-images: a run', () => {
           judgeRating: {
             userId: null,
             nsfwLevel: X,
-            ratedAt: '2025-01-02T03:04:05',
+            ratedAt: null,
             legacy: true,
             collectionId: JUDGE_COLLECTION,
           },
