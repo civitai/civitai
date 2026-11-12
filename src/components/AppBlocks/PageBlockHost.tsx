@@ -1404,7 +1404,7 @@ export function PageBlockHost({
     enabled: !reviewMode,
   });
 
-  const { send, onMessage, nack, reportNoToken } = usePostMessage({
+  const { send, onMessage, nack, reportNoToken, recentFailures } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
@@ -5987,6 +5987,7 @@ export function PageBlockHost({
         hostSurface={surface}
         canOpenPage={canOpenPage}
         launchOrigin={launchOrigin}
+        getRecentFailures={recentFailures}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
           incident that motivated it, is in `resolveHostConsentNotice`

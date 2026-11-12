@@ -10,6 +10,7 @@ import {
 import { APP_LISTING_OWNER_SQL } from '~/server/notifications/comment.notifications';
 import type {
   AppFeedbackOwnerStatusFilter,
+  AppFeedbackRecentError,
   AppFeedbackSurface,
   AppFeedbackTarget,
   CreateAppFeedbackInput,
@@ -20,7 +21,11 @@ import type {
   ModSetAppFeedbackHiddenInput,
   SetAppFeedbackOwnerStatusInput,
 } from '~/server/schema/app-feedback.schema';
-import { APP_FEEDBACK_SURFACES } from '~/server/schema/app-feedback.schema';
+import {
+  APP_FEEDBACK_RECENT_ERRORS_MAX,
+  APP_FEEDBACK_SURFACES,
+  appFeedbackRecentErrorSchema,
+} from '~/server/schema/app-feedback.schema';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
@@ -380,6 +385,7 @@ export type OwnerFeedbackRow = {
   appSourceCommit: string | null;
   appSourceDirty: boolean | null;
   surface: string | null;
+  recentErrors: unknown;
   ownerStatus: string | null;
   ownerStatusAt: Date | null;
   ownerFlaggedAt: Date | null;
@@ -399,6 +405,8 @@ export type OwnerFeedbackDto = {
   /** `null` = unknown, which is not `false` (clean). */
   appSourceDirty: boolean | null;
   surface: AppFeedbackSurface | null;
+  /** Failed replies to the app's SDK calls before the report, oldest first. Untrusted text. */
+  recentErrors: AppFeedbackRecentError[];
   ownerStatus: FeedbackOwnerStatus | null;
   ownerStatusAt: Date | null;
   ownerFlaggedAt: Date | null;
@@ -406,6 +414,18 @@ export type OwnerFeedbackDto = {
 
 function isSurface(value: unknown): value is AppFeedbackSurface {
   return typeof value === 'string' && (APP_FEEDBACK_SURFACES as readonly string[]).includes(value);
+}
+
+/**
+ * `context.recentErrors` re-validated on the way out: it was written by a client, so a row is read
+ * entry by entry and anything outside the schema (or past the cap) is dropped, not shown.
+ */
+export function readRecentErrors(value: unknown): AppFeedbackRecentError[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, APP_FEEDBACK_RECENT_ERRORS_MAX).flatMap((entry) => {
+    const parsed = appFeedbackRecentErrorSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
 }
 
 /**
@@ -424,6 +444,7 @@ export function toOwnerFeedbackDto(row: OwnerFeedbackRow): OwnerFeedbackDto {
     appSourceDirty: row.appSourceDirty,
     // `context` is a client claim; only a value from the closed set is shown, never used for authz.
     surface: isSurface(row.surface) ? row.surface : null,
+    recentErrors: readRecentErrors(row.recentErrors),
     ownerStatus: row.ownerStatus as FeedbackOwnerStatus | null,
     ownerStatusAt: row.ownerStatusAt,
     ownerFlaggedAt: row.ownerFlaggedAt,
@@ -453,6 +474,7 @@ export async function listAppFeedbackForListing({
       f."appSourceCommit",
       f."appSourceDirty",
       f.context->>'surface' AS surface,
+      f.context->'recentErrors' AS "recentErrors",
       f."ownerStatus",
       f."ownerStatusAt",
       f."ownerFlaggedAt",
@@ -645,11 +667,13 @@ type ModFeedbackRow = {
 function readContext(context: unknown): {
   surface: AppFeedbackSurface | null;
   modelId: number | null;
+  recentErrors: AppFeedbackRecentError[];
 } {
-  const ctx = (context ?? {}) as { surface?: unknown; modelId?: unknown };
+  const ctx = (context ?? {}) as { surface?: unknown; modelId?: unknown; recentErrors?: unknown };
   return {
     surface: isSurface(ctx.surface) ? ctx.surface : null,
     modelId: typeof ctx.modelId === 'number' && Number.isInteger(ctx.modelId) ? ctx.modelId : null,
+    recentErrors: readRecentErrors(ctx.recentErrors),
   };
 }
 

@@ -32,7 +32,7 @@ import { ChromeForkMenuItem } from './ChromeForkEntry';
 import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
-import { resolveAppFeedbackRequest } from './appFeedbackChrome';
+import { resolveAppFeedbackRequest, withAppFeedbackDiagnostics } from './appFeedbackChrome';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
@@ -102,6 +102,7 @@ import {
   resolveSetEntityReactionRequest,
 } from './reactionGate';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
@@ -409,6 +410,7 @@ export function AppBlockChrome({
   hostSurface,
   canOpenPage = false,
   launchOrigin = 'store',
+  getRecentFailures,
 }: {
   blockInstanceId: string;
   /** The approved AppBlock id of the running app. When present, the ⋯ menu
@@ -463,6 +465,8 @@ export function AppBlockChrome({
    *  (`/apps/store`). See `appsRunBackTarget`. Omitted → the store, which is what every
    *  surface other than a home launch should say. */
   launchOrigin?: AppsRunOrigin;
+  /** The host bridge's failed replies to this app, attached to a feedback report. */
+  getRecentFailures?: () => AppFeedbackRecentError[];
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -492,6 +496,13 @@ export function AppBlockChrome({
   // up the snapshot it took at click time.
   const [feedbackTarget, setFeedbackTarget] = useState<AppFeedbackModalTarget | null>(null);
   const feedbackRequest = resolveAppFeedbackRequest({ slug, appBlockId, slotId, modelId });
+  const openFeedback = (target: AppFeedbackModalTarget) =>
+    setFeedbackTarget({
+      ...target,
+      request: withAppFeedbackDiagnostics(target.request, {
+        recentErrors: getRecentFailures?.(),
+      }),
+    });
 
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
@@ -955,7 +966,7 @@ export function AppBlockChrome({
             request={feedbackRequest}
             hostSurface={hostSurface}
             labelled={!geometry.compact}
-            onOpenFeedback={setFeedbackTarget}
+            onOpenFeedback={openFeedback}
           />
           {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
             was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
@@ -1466,7 +1477,7 @@ export function IframeHost({
     enabled: true,
   });
 
-  const { send, onMessage, reportNoToken } = usePostMessage({
+  const { send, onMessage, reportNoToken, recentFailures } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
@@ -3480,6 +3491,7 @@ export function IframeHost({
         slotId={slotId}
         hostSurface="model-slot"
         canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
+        getRecentFailures={recentFailures}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP — the model-slot half, which did not
           exist until now. Every term of the decision is in `resolveHostConsentNotice`

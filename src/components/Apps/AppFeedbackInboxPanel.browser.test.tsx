@@ -26,6 +26,7 @@ type Row = {
   appBlockVersion: string | null;
   appBlockSha: string | null;
   surface: 'slot' | 'page' | null;
+  recentErrors: unknown[];
   ownerStatus: 'acknowledged' | 'resolved' | 'wont_fix' | null;
   ownerStatusAt: Date | null;
   ownerFlaggedAt: Date | null;
@@ -134,6 +135,7 @@ const NEWEST: Row = {
   appBlockVersion: '1.4.0',
   appBlockSha: '3f9c2ab81d0e',
   surface: 'page',
+  recentErrors: [],
   ownerStatus: null,
   ownerStatusAt: null,
   ownerFlaggedAt: null,
@@ -146,6 +148,7 @@ const OLDER: Row = {
   appBlockVersion: '1.3.2',
   appBlockSha: null,
   surface: 'slot',
+  recentErrors: [],
   ownerStatus: 'acknowledged',
   ownerStatusAt: new Date('2026-10-01T12:00:00Z'),
   ownerFlaggedAt: null,
@@ -158,6 +161,7 @@ const SECOND_PAGE: Row = {
   appBlockVersion: null,
   appBlockSha: null,
   surface: null,
+  recentErrors: [],
   ownerStatus: 'resolved',
   ownerStatusAt: new Date('2026-09-03T12:00:00Z'),
   ownerFlaggedAt: new Date('2026-09-03T13:00:00Z'),

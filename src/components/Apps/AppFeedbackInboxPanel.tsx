@@ -27,6 +27,9 @@ import {
   ownerStatusChoices,
   ownerStatusColor,
   ownerStatusLabel,
+  RECENT_ERRORS_HEADING,
+  RECENT_ERRORS_NOTE,
+  recentErrorLine,
   reporterLabel,
 } from '~/components/Apps/appFeedbackInbox';
 import type { OwnerFeedbackDto } from '~/server/services/blocks/app-feedback.service';
@@ -186,6 +189,29 @@ function FeedbackRow({
         <Text size="sm" style={{ whiteSpace: 'pre-wrap' }} data-testid={testId('message')}>
           {item.message}
         </Text>
+
+        {item.recentErrors.length > 0 && (
+          <Paper withBorder p="xs" radius="sm" data-testid={testId('recent-errors')}>
+            <Stack gap={4}>
+              <Text size="xs" fw={600}>
+                {RECENT_ERRORS_HEADING}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {RECENT_ERRORS_NOTE}
+              </Text>
+              {item.recentErrors.map((error, i) => (
+                <Text
+                  key={i}
+                  size="xs"
+                  ff="monospace"
+                  style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                >
+                  {recentErrorLine(error)}
+                </Text>
+              ))}
+            </Stack>
+          </Paper>
+        )}
 
         {actionError && (
           <Alert color="red" variant="light" p="xs" data-testid={testId('error')}>

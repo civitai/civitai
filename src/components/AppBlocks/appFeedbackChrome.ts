@@ -1,8 +1,10 @@
 import type {
   AppFeedbackContext,
+  AppFeedbackRecentError,
   AppFeedbackTarget,
   CreateAppFeedbackInput,
 } from '~/server/schema/app-feedback.schema';
+import { APP_FEEDBACK_RECENT_ERRORS_MAX } from '~/server/schema/app-feedback.schema';
 import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
@@ -90,6 +92,35 @@ export function appFeedbackEntryRequest({
   if (!isSignedIn || !hasStoreAccess) return null;
   if (!hostSurface || !APP_FEEDBACK_HOST_SURFACES[hostSurface]) return null;
   return request;
+}
+
+/**
+ * The request with this app session's diagnostics attached, taken when the modal opens so the
+ * notice in the modal describes exactly what is sent.
+ */
+export function withAppFeedbackDiagnostics(
+  request: AppFeedbackRequest,
+  diagnostics: { recentErrors?: readonly AppFeedbackRecentError[] }
+): AppFeedbackRequest {
+  const recentErrors = diagnostics.recentErrors?.slice(-APP_FEEDBACK_RECENT_ERRORS_MAX) ?? [];
+  const { surface, modelId } = request.context;
+  return {
+    target: request.target,
+    context: {
+      surface,
+      ...(modelId !== undefined ? { modelId } : {}),
+      ...(recentErrors.length ? { recentErrors } : {}),
+    },
+  };
+}
+
+/** What the modal tells the reporter is attached besides their text, or `null` for nothing. */
+export function appFeedbackAttachmentNotice(context: AppFeedbackContext): string | null {
+  const errors = context.recentErrors?.length ?? 0;
+  if (!errors) return null;
+  return `${
+    errors === 1 ? '1 recent app error' : `${errors} recent app errors`
+  } from this session will be attached, to help the developer find the problem.`;
 }
 
 /** The exact `appFeedback.create` input. Text and the server-whitelisted context, nothing else. */

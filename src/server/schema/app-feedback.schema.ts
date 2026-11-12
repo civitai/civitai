@@ -21,16 +21,56 @@ export const appFeedbackTargetSchema = z.union([
 ]);
 export type AppFeedbackTarget = z.infer<typeof appFeedbackTargetSchema>;
 
+export const APP_FEEDBACK_RECENT_ERRORS_MAX = 10;
+export const APP_FEEDBACK_ERROR_MESSAGE_MAX = 300;
+/** Bridge message types are SCREAMING_SNAKE; anything else is not one the host sent. */
+const BRIDGE_TYPE = /^[A-Z][A-Z0-9_]{0,63}$/;
+const OPAQUE_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+const ENUM_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * One failed reply the host sent the app during this app session: which reply, the platform's
+ * error text, and the workflow it concerned. Never a request or response payload. The text is the
+ * platform's own error message, so it is shown to the owner as untrusted text, never as markup.
+ */
+export const appFeedbackRecentErrorSchema = z.object({
+  method: z.string().regex(BRIDGE_TYPE),
+  message: z.string().max(APP_FEEDBACK_ERROR_MESSAGE_MAX),
+  code: z.string().regex(OPAQUE_ID).max(64).optional(),
+  workflowId: z.string().regex(OPAQUE_ID).optional(),
+  /**
+   * Ids and enum keys from the app's request, never its content: which workflow `kind` / `step`
+   * and which checkpoint version it asked for.
+   */
+  input: z
+    .object({
+      kind: z.string().regex(ENUM_KEY).optional(),
+      step: z.string().regex(ENUM_KEY).optional(),
+      modelVersionId: z.number().int().positive().optional(),
+    })
+    .optional(),
+  at: z.number().int().nonnegative(),
+  /** Consecutive identical failures folded into this entry. */
+  count: z.number().int().min(1).max(10_000),
+});
+export type AppFeedbackRecentError = z.infer<typeof appFeedbackRecentErrorSchema>;
+
+export const appFeedbackRecentErrorsSchema = z
+  .array(appFeedbackRecentErrorSchema)
+  .max(APP_FEEDBACK_RECENT_ERRORS_MAX);
+
 /**
  * The ONLY context an `app-block` row stores. A separate schema from the generic
  * `feedbackContextSchema` on purpose: that one carries host-page diagnostics (console and network
  * errors, the Faro session, screenshots), which describe civitai.com rather than the sandboxed app
- * and are not collected for this area. `z.object` strips every undeclared key, so a hand-crafted
- * client cannot smuggle them in.
+ * and are not collected for this area. `recentErrors` is about the APP: failed replies to its own
+ * SDK calls. `z.object` strips every undeclared key, at every level, so a hand-crafted client
+ * cannot smuggle anything else in.
  */
 export const appFeedbackContextSchema = z.object({
   surface: z.enum(APP_FEEDBACK_SURFACES),
   modelId: z.number().int().positive().optional(),
+  recentErrors: appFeedbackRecentErrorsSchema.optional(),
 });
 export type AppFeedbackContext = z.infer<typeof appFeedbackContextSchema>;
 

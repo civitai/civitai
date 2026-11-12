@@ -17,6 +17,7 @@ import {
   newFeedbackBadge,
   ownerStatusChoices,
   ownerStatusLabel,
+  recentErrorLine,
   reporterLabel,
 } from '~/components/Apps/appFeedbackInbox';
 
@@ -229,5 +230,34 @@ describe('inboxEmptyMessage', () => {
   it('a filter that matches nothing says so', () => {
     expect(inboxEmptyMessage('resolved')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
     expect(inboxEmptyMessage('new')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
+  });
+});
+
+describe('recentErrorLine — one failed SDK call in the inbox', () => {
+  it('time, call, message and every detail, as one string', () => {
+    expect(
+      recentErrorLine({
+        method: 'SUBMIT_WORKFLOW',
+        message: 'Validation failed: ecosystem: Ecosystem is currently unavailable',
+        code: 'BAD_REQUEST',
+        workflowId: 'wf_8412',
+        input: { kind: 'textToImage', step: 'upscale', modelVersionId: 812 },
+        at: Date.UTC(2026, 10, 11, 12, 3, 4),
+        count: 3,
+      })
+    ).toBe(
+      '12:03:04 UTC SUBMIT_WORKFLOW: Validation failed: ecosystem: Ecosystem is currently unavailable (×3; code BAD_REQUEST; textToImage; step upscale; model version 812; workflow wf_8412)'
+    );
+  });
+
+  it('no details, no parentheses', () => {
+    expect(
+      recentErrorLine({
+        method: 'GET_BUZZ_BALANCE',
+        message: 'request failed',
+        at: Date.UTC(2026, 10, 11, 0, 0, 9),
+        count: 1,
+      })
+    ).toBe('00:00:09 UTC GET_BUZZ_BALANCE: request failed');
   });
 });

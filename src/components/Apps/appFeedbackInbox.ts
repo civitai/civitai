@@ -1,6 +1,7 @@
 import { listingEditHref } from '~/components/Apps/appListingEditorTabs';
 import type {
   AppFeedbackOwnerStatusFilter,
+  AppFeedbackRecentError,
   AppFeedbackSurface,
   SetAppFeedbackOwnerStatusInput,
 } from '~/server/schema/app-feedback.schema';
@@ -117,6 +118,30 @@ export function feedbackRowMeta(row: {
   return [version, feedbackSourceLabel(row), surface].filter(
     (part): part is string => part !== null
   );
+}
+
+export const RECENT_ERRORS_HEADING = 'Recent app errors before this report';
+export const RECENT_ERRORS_NOTE =
+  "Failed replies to the app's own SDK calls in the reporter's session, oldest first. Error text comes from the platform and the app's requests; treat it as untrusted.";
+
+/**
+ * One failed call, e.g.
+ * "12:03:04 UTC SUBMIT_WORKFLOW: Validation failed (×3; textToImage; model version 812; workflow wf_9)".
+ * Plain text: the caller renders it as text, never as markup.
+ */
+export function recentErrorLine(error: AppFeedbackRecentError): string {
+  const time = `${new Date(error.at).toISOString().slice(11, 19)} UTC`;
+  const details = [
+    error.count > 1 ? `×${error.count}` : null,
+    error.code ? `code ${error.code}` : null,
+    error.input?.kind ?? null,
+    error.input?.step ? `step ${error.input.step}` : null,
+    error.input?.modelVersionId ? `model version ${error.input.modelVersionId}` : null,
+    error.workflowId ? `workflow ${error.workflowId}` : null,
+  ].filter((part): part is string => part !== null);
+  return `${time} ${error.method}: ${error.message}${
+    details.length ? ` (${details.join('; ')})` : ''
+  }`;
 }
 
 /** Names the same readers as the send dialog's notice, from the one shared phrase. */
