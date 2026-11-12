@@ -418,6 +418,19 @@ export const modelNotifications = createNotificationProcessor({
       }`,
     }),
   },
+  'model-version-showcase-featured': {
+    displayName: 'Your image was featured in a model showcase',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username ?? 'A creator'} featured your image in the ${
+        details.modelName
+      } showcase`,
+      url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
+        details.modelVersionId
+      }`,
+    }),
+  },
   'model-gallery-post-pinned': {
     displayName: 'Your post was pinned to a model gallery',
     category: NotificationCategory.Update,

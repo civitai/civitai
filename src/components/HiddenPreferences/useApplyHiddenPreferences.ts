@@ -261,6 +261,8 @@ export function filterPreferences<
               const userId = i.userId;
               const isOwner = ownedByViewer(userId);
               if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
+              // A cover the creator featured from someone else's post: that author is hidden here.
+              if (userId && userId !== x.user.id && hiddenUsers.get(userId)) return false;
               if (x.nsfw) {
                 if (i.nsfwLevel > maxSelectedLevel) return false;
               } else if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;

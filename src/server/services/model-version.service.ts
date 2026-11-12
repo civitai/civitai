@@ -4022,6 +4022,25 @@ export const mergeVersions = async ({
         data: { modelVersionId: targetVersionId },
       });
 
+      // 6b. Re-point the version showcase. No foreign key would delete the sources' rows, so they
+      // move to the target, keeping the target's own row when both name the same image and site.
+      await tx.$executeRaw`
+        INSERT INTO "ModelVersionShowcaseItem"
+          ("modelVersionId", site, "imageId", source, position, excluded,
+           "removedByContributor", "addedById", "createdAt")
+        SELECT DISTINCT ON (s.site, s."imageId")
+          ${targetVersionId}, s.site, s."imageId", s.source, s.position, s.excluded,
+          s."removedByContributor", s."addedById", s."createdAt"
+        FROM "ModelVersionShowcaseItem" s
+        WHERE s."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
+        ORDER BY s.site, s."imageId", s."modelVersionId" DESC
+        ON CONFLICT ("modelVersionId", site, "imageId") DO NOTHING
+      `;
+      await tx.$executeRaw`
+        DELETE FROM "ModelVersionShowcaseItem"
+        WHERE "modelVersionId" IN (${Prisma.join(sourceVersionIds)})
+      `;
+
       // 7. Re-point ImageResource
       await tx.imageResource.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
@@ -4165,6 +4184,8 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  const { refreshVersionShowcases } = await import('~/server/services/version-showcase.service');
+  await refreshVersionShowcases([targetVersionId, ...sourceVersionIds]).catch(() => null);
   // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a
   // pinned AIR names its version, so a moved file is cached under its source's AIR, and the target's
   // coverage now counts the moved files.

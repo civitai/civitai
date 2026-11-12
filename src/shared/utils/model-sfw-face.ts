@@ -176,12 +176,23 @@ export function hasCompleteSfwFace(model: {
   );
 }
 
-/** The cover a viewer gets: the .com one with a complete face, otherwise the creator's .red pick. */
+/**
+ * The cover a viewer gets: the .com one for a .com viewer when the model has a complete face, or
+ * when the model isn't mature (its .com showcase sets that cover, with no face needed), otherwise
+ * the creator's .red pick.
+ */
 export function pickCoverImageId(
-  model: { hasSfwFace?: boolean; coverImageId?: number | null; sfwCoverImageId?: number | null },
+  model: {
+    hasSfwFace?: boolean;
+    nsfw?: boolean;
+    coverImageId?: number | null;
+    sfwCoverImageId?: number | null;
+  },
   showSfwFace: boolean
 ) {
-  return (showSfwFace && model.hasSfwFace ? model.sfwCoverImageId : model.coverImageId) ?? null;
+  const comCover =
+    showSfwFace && (model.hasSfwFace || model.nsfw === false) ? model.sfwCoverImageId : null;
+  return comCover ?? model.coverImageId ?? null;
 }
 
 /** Puts the chosen cover first. Returns the list unchanged when there is no cover. */

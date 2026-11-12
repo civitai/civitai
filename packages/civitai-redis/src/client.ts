@@ -3213,6 +3213,7 @@ const REDIS_KEYS_UNPREFIXED = {
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures:v2',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
+    VERSION_SHOWCASE: 'packed:caches:version-showcase',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model-2',

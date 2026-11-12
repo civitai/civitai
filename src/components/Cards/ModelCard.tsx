@@ -219,7 +219,12 @@ function ModelCardContent({ data, linkVersionId }: Props) {
   const coverId = activeBaseModels?.length
     ? null
     : pickCoverImageId(
-        data as { hasSfwFace?: boolean; coverImageId?: number; sfwCoverImageId?: number },
+        data as {
+          hasSfwFace?: boolean;
+          nsfw?: boolean;
+          coverImageId?: number;
+          sfwCoverImageId?: number;
+        },
         showSfwFace
       );
   const image =

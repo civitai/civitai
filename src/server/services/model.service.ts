@@ -4056,6 +4056,7 @@ export const upsertModel = async (
     await assertCoverImagesValid({
       modelId: id,
       ownerId: beforeUpdate.userId,
+      modelNsfw: data.nsfw ?? beforeUpdate.nsfw,
       coverImageId: data.coverImageId,
       sfwCoverImageId: data.sfwCoverImageId,
     });
