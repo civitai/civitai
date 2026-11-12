@@ -5,16 +5,19 @@ import format from 'pg-format';
 import { getCleanedNSFWWords } from '~/components/Auction/auction.utils';
 import { env } from '~/env/server';
 import { pgDbWrite } from '~/server/db/pgDb';
-import { LOCAL_NOTIFICATION_DB_HOSTS, isLocalDbUrl } from './local-db-guard';
+import {
+  LOCAL_MAIN_DB_HOSTS,
+  LOCAL_NOTIFICATION_DB_HOSTS,
+  describeDbUrl,
+  isLocalDbUrl,
+} from './local-db-guard';
 
 const cleanWords = getCleanedNSFWWords();
 
 export const checkLocalDb = () => {
-  console.log(env.DATABASE_URL);
+  console.log(`DATABASE_URL -> ${describeDbUrl(env.DATABASE_URL)}`);
   // 127.0.0.1 too: on Windows Prisma resolves localhost to ::1, which Docker doesn't publish on.
-  if (
-    !['localhost:15432', '127.0.0.1:15432', 'db:5432'].some((h) => env.DATABASE_URL.includes(h))
-  ) {
+  if (!isLocalDbUrl(env.DATABASE_URL, LOCAL_MAIN_DB_HOSTS)) {
     console.error('ERROR: not running with local database server.');
     process.exit(1);
   }

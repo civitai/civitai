@@ -1,33 +1,61 @@
 import { describe, expect, it } from 'vitest';
-import { LOCAL_NOTIFICATION_DB_HOSTS, isLocalDbUrl } from '../local-dev/local-db-guard';
+import {
+  LOCAL_MAIN_DB_HOSTS,
+  LOCAL_NOTIFICATION_DB_HOSTS,
+  describeDbUrl,
+  isLocalDbUrl,
+} from '../local-dev/local-db-guard';
 
-// gen_seed TRUNCATEs "Notification" on NOTIFICATION_DB_URL, so this guard is all that stands
-// between a mis-set env and a wiped database.
-describe('isLocalDbUrl (notification DB)', () => {
-  const ok = (url?: string) => isLocalDbUrl(url, LOCAL_NOTIFICATION_DB_HOSTS);
+// gen_seed TRUNCATEs tables on DATABASE_URL and NOTIFICATION_DB_URL, so these guards are all that
+// stand between a mis-set env and a wiped database.
+describe('isLocalDbUrl', () => {
+  const notif = (url?: string) => isLocalDbUrl(url, LOCAL_NOTIFICATION_DB_HOSTS);
+  const main = (url?: string) => isLocalDbUrl(url, LOCAL_MAIN_DB_HOSTS);
 
-  it('accepts the local notification databases', () => {
-    expect(ok('postgresql://postgres:postgres@localhost:15434/postgres')).toBe(true);
-    expect(ok('postgresql://postgres:postgres@127.0.0.1:15434/postgres')).toBe(true);
-    expect(ok('postgresql://postgres:postgres@notification-db:5432/postgres')).toBe(true);
+  it('accepts the local databases', () => {
+    expect(notif('postgresql://postgres:postgres@localhost:15434/postgres')).toBe(true);
+    expect(notif('postgresql://postgres:postgres@127.0.0.1:15434/postgres')).toBe(true);
+    expect(notif('postgresql://postgres:postgres@notification-db/postgres')).toBe(true);
+    expect(main('postgresql://postgres:postgres@localhost:15432/civitai?sslmode=disable')).toBe(
+      true
+    );
+    expect(main('postgresql://postgres:postgres@db:5432/civitai')).toBe(true);
   });
 
   it('refuses an unset or unparsable URL', () => {
-    expect(ok(undefined)).toBe(false);
-    expect(ok('')).toBe(false);
-    expect(ok('not a url')).toBe(false);
+    expect(notif(undefined)).toBe(false);
+    expect(notif('')).toBe(false);
+    expect(notif('not a url')).toBe(false);
   });
 
   it('refuses a remote host, and a local port on a remote host', () => {
-    expect(ok('postgresql://u:p@db.example.com:5432/notifications')).toBe(false);
-    expect(ok('postgresql://u:p@db.example.com:15434/notifications')).toBe(false);
-    expect(ok('postgresql://u:p@localhost:15432/civitai')).toBe(false);
+    expect(notif('postgresql://u:p@db.example.com:5432/notifications')).toBe(false);
+    expect(notif('postgresql://u:p@db.example.com:15434/notifications')).toBe(false);
+    expect(notif('postgresql://u:p@localhost:15432/civitai')).toBe(false);
+    expect(main('postgresql://u:p@civitai-prod-db:5432/civitai')).toBe(false);
+    expect(main('postgresql://u:p@localhost.example.com:15432/civitai')).toBe(false);
   });
 
   it('judges the host, not a local address appearing elsewhere in the URL', () => {
-    expect(ok('postgresql://u:localhost:15434@db.example.com:5432/x')).toBe(false);
-    expect(ok('postgresql://u:p@db.example.com:5432/x?application_name=localhost:15434')).toBe(
+    expect(notif('postgresql://u:localhost:15434@db.example.com:5432/x')).toBe(false);
+    expect(notif('postgresql://u:p@db.example.com:5432/x?application_name=localhost:15434')).toBe(
       false
     );
+    expect(main('postgresql://u:localhost:15432@prod.example.com:5432/civitai')).toBe(false);
+  });
+
+  // pg's connection-string parser lets these replace the URL's own host and port.
+  it('refuses a local URL whose query string points the connection elsewhere', () => {
+    expect(notif('postgresql://u:p@localhost:15434/x?host=db.example.com&port=5432')).toBe(false);
+    expect(notif('postgresql://u:p@localhost:15434/x?hostaddr=10.0.0.1')).toBe(false);
+    expect(main('postgresql://u:p@localhost:15432/civitai?host=db.example.com')).toBe(false);
+  });
+});
+
+describe('describeDbUrl', () => {
+  it('logs host:port without credentials', () => {
+    const described = describeDbUrl('postgresql://user:s3cret@localhost:15432/civitai');
+    expect(described).toBe('localhost:15432');
+    expect(described).not.toContain('s3cret');
   });
 });
