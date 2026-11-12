@@ -50,12 +50,15 @@ const { eventSeasonKeys, hatTopicId, LIVE_BUCKET_MS, previewTopicId } = await im
   '~/server/events/points/keys'
 );
 
-const MIGRATIONS = ['20261012130000_event_cosmetic_placement', '20261015120000_event_points'].map(
-  (name) =>
-    path.resolve(
-      __dirname,
-      `../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
-    )
+const MIGRATIONS = [
+  '20261012130000_event_cosmetic_placement',
+  '20261015120000_event_points',
+  '20270103120000_event_award_result',
+].map((name) =>
+  path.resolve(
+    __dirname,
+    `../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+  )
 );
 const db = { pg: null as unknown as PGlite };
 
@@ -1120,8 +1123,21 @@ describe('referee snapshot', () => {
     };
     await runEventPointsReferee(scored, 'live', HOURLY);
     expect(refereeParams().restrictedUsers).toEqual([BANNED]);
-    // Two chunks of hidden lookups, then the new-account threshold.
-    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(3);
+    // Two chunks of hidden lookups, the new-account threshold, then the frozen award results.
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(4);
+  });
+
+  it('writes no snapshot and keeps the last base when the award results cannot be read', async () => {
+    const read = dbMock.dbRead.$queryRaw.getMockImplementation();
+    dbMock.dbRead.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('"EventAwardResult"')
+        ? Promise.reject(new Error('replica down'))
+        : read!(strings, ...values)) as never);
+    await expect(runEventPointsReferee(scored, 'live', HOURLY)).rejects.toThrow('replica down');
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('replaces the recomputed days in one transaction', async () => {

@@ -5705,6 +5705,26 @@ model EventTurfStock {
   @@id([event, userId])
 }
 
+/// A team award computed once and frozen: a Crucible placement or a won flag. `sourceId` names what
+/// earned it, so a second freeze of the same thing inserts nothing. `team` is null when the earner had
+/// no eligible team: the place is recorded as unawarded rather than computed again later.
+model EventAwardResult {
+  id       Int       @id @default(autoincrement())
+  event    String
+  sourceId String
+  kind     String
+  team     String?
+  points   Int
+  /// When the award counts from: the Crucible's end, or the flag's cut.
+  at       DateTime  @db.Timestamptz(3)
+  /// What the result was computed from, kept for audit.
+  inputs   Json
+  frozenAt DateTime  @default(now()) @db.Timestamptz(3)
+  voidedAt DateTime? @db.Timestamptz(3)
+
+  @@unique([event, sourceId])
+}
+
 /// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
 model CreatorMilestone {
   key          String                 @id

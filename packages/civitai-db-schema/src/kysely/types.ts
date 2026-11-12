@@ -3132,6 +3132,24 @@ export type EntityModeration = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type EventAwardResult = {
+  id: Generated<number>;
+  event: string;
+  sourceId: string;
+  kind: string;
+  team: string | null;
+  points: number;
+  /**
+   * When the award counts from: the Crucible's end, or the flag's cut.
+   */
+  at: Timestamp;
+  /**
+   * What the result was computed from, kept for audit.
+   */
+  inputs: unknown;
+  frozenAt: Generated<Timestamp>;
+  voidedAt: Timestamp | null;
+};
 export type EventCosmeticPlacement = {
   id: Generated<string>;
   event: string;
@@ -6672,6 +6690,7 @@ export type DB = {
   EntityMetric: EntityMetric;
   EntityMetricImage: EntityMetricImage;
   EntityModeration: EntityModeration;
+  EventAwardResult: EventAwardResult;
   EventCosmeticPlacement: EventCosmeticPlacement;
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
   EventTurfSticker: EventTurfSticker;
