@@ -2245,6 +2245,7 @@ model Image {
   storylineSparks        Storyline[]            @relation("StorylineSparkImage")
   storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
+  axisRating             ImageAxisRating?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2846,6 +2847,12 @@ model Feedback {
   /// The block version live when the feedback was sent, stamped server-side. NULL for off-site apps.
   appBlockVersion     String?
   appBlockSha         String?
+  // The developer's own build provenance of the submission that was live when the feedback was
+  // sent, copied from `AppBlockPublishRequest.sourceCommit` / `sourceDirty`: an unverified client
+  // claim, NULL = unknown (never "clean"). CHECK `Feedback_app_source_columns_check`. No-type:
+  // raw SQL only, in app-feedback.service.ts, so the deploy and the migration can land in either order.
+  appSourceCommit     String?  // @no-type
+  appSourceDirty      Boolean? // @no-type
 
   /// Owner (developer) status, SEPARATE from the moderator `status` / `triageNote` / `handledBy`
   /// columns above so an owner can never move moderator triage. NULL = new to the developer; otherwise
@@ -5733,6 +5740,41 @@ model EventAwardResult {
   @@unique([event, sourceId])
 }
 
+/// One day of the Flag Race: the flags a finished Crucible's accepted top places became, and when
+/// they stop taking hats. Written once by the swap; `imageIds` is in rank order.
+model FlagDay {
+  id         Int      @id @default(autoincrement())
+  event      String
+  crucibleId Int
+  startsAt   DateTime @db.Timestamptz(3)
+  /// Random within the day's last hour, so nobody can time a last-second pile-on. Never sent to a
+  /// client before it passes.
+  cutAt      DateTime @db.Timestamptz(3)
+  /// The end of the hour the cut falls in: public, unlike the cut.
+  closesAt   DateTime @db.Timestamptz(3)
+  imageIds   Int[]
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([event, crucibleId])
+  @@index([event, startsAt])
+}
+
+/// Hats spent on a flag. Not an EventTurfSticker: flags stack without limit and never count toward
+/// normal Turf. `count` is how many hats one placement spent.
+model EventTurfFlagSticker {
+  id         BigInt   @id @default(autoincrement())
+  event      String
+  flagDayId  Int
+  imageId    Int
+  userId     Int
+  team       String
+  cosmeticId Int
+  count      Int
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([flagDayId, imageId, team, userId, createdAt])
+}
+
 /// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
 model CreatorMilestone {
   key          String                 @id
@@ -7980,6 +8022,36 @@ model ImageAudioScan {
   completedAt   DateTime? @db.Timestamptz(3)
 
   @@index([flagged, createdAt])
+}
+
+enum ImageAxisSource {
+  rated
+  moderator
+}
+
+/// Current rating axes of an image from an axis-capable rater, or a moderator. No row means the
+/// image was not rated on axes. A scan never overwrites a moderator row. Nothing reads it to
+/// filter, rate or hide media yet.
+model ImageAxisRating {
+  imageId         Int             @id
+  image           Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  source          ImageAxisSource
+  sexualLevel     Int?            @db.SmallInt
+  /// Highest sexualLevel any scan has rated; only a moderator lowers it.
+  sexualHighWater Int?            @db.SmallInt
+  violenceLevel   Int?            @db.SmallInt
+  /// No rater produces a language axis yet.
+  languageLevel   Int?            @db.SmallInt
+  /// The rater's modelRef; null on a moderator row.
+  rater           String?
+  /// The rater checkpoint's sha256; null on a moderator row.
+  raterVersion    String?
+  /// The scan workflow's completion time; an older result never replaces a newer one.
+  ratedAt         DateTime        @db.Timestamptz(3)
+  workflowId      String?
+  /// The moderator's user id on a moderator row.
+  setBy           Int?
+  updatedAt       DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
 }
 
 model ScanLabelVote {

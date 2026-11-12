@@ -386,6 +386,10 @@ export default function UserProfileEditModal() {
         // TODO: Fix typing at some point :grimacing:.
         coverImage: user.profile.defaultCoverImage as unknown as FormDataSchema['coverImage'],
         sfwCoverImage: user.profile.sfwCoverImage as unknown as FormDataSchema['sfwCoverImage'],
+        // A showcase stored before `userProfile.update` was bounded can be longer than the
+        // limit; sent back whole it would fail validation on every save, silently when the
+        // Showcase section is hidden. Trimmed the way `addEntityToShowcase` trims.
+        showcaseItems: user.profile.showcaseItems?.slice(0, constants.profile.showcaseItemsLimit),
         profileImage: user?.image,
         socialLinks: (user?.links ?? [])
           .filter((link) => link.type === LinkType.Social)

@@ -200,6 +200,8 @@ export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AppealCategory = "Account" | "Article" | "Model" | "Other";
 
+export type ImageAxisSource = "rated" | "moderator";
+
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
@@ -1761,6 +1763,7 @@ export interface Image {
   storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
+  axisRating?: ImageAxisRating | null;
 }
 
 export interface ImageTagForReview {
@@ -3400,6 +3403,29 @@ export interface EventAwardResult {
   voidedAt: Date | null;
 }
 
+export interface FlagDay {
+  id: number;
+  event: string;
+  crucibleId: number;
+  startsAt: Date;
+  cutAt: Date;
+  closesAt: Date;
+  imageIds: number[];
+  createdAt: Date;
+}
+
+export interface EventTurfFlagSticker {
+  id: bigint;
+  event: string;
+  flagDayId: number;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  count: number;
+  createdAt: Date;
+}
+
 export interface CreatorMilestone {
   key: string;
   track: string;
@@ -4906,6 +4932,22 @@ export interface ImageAudioScan {
   error: string | null;
   createdAt: Date;
   completedAt: Date | null;
+}
+
+export interface ImageAxisRating {
+  imageId: number;
+  image?: Image;
+  source: ImageAxisSource;
+  sexualLevel: number | null;
+  sexualHighWater: number | null;
+  violenceLevel: number | null;
+  languageLevel: number | null;
+  rater: string | null;
+  raterVersion: string | null;
+  ratedAt: Date;
+  workflowId: string | null;
+  setBy: number | null;
+  updatedAt: Date;
 }
 
 export interface ScanLabelVote {

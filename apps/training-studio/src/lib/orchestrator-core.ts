@@ -86,6 +86,24 @@ export function describeSubmitError(error: unknown, status?: number): string {
   );
 }
 
+// The orchestrator's refusal of a training submit whose dataset blobs aren't ready yet. The message is a
+// fallback for an orchestrator that predates the code; a different code never matches on the message.
+const NOT_READY_CODE = 'trainingDataNotReady';
+const NOT_READY_MESSAGE = /^trainingData blob '[^']*' is not available for training yet/;
+
+export function isTrainingDataNotReady(error: unknown, status: number | undefined): boolean {
+  if (status !== 400 || !error || typeof error !== 'object') return false;
+  const e = error as { code?: unknown; errors?: Record<string, unknown> };
+  if (e.code != null) return e.code === NOT_READY_CODE;
+  const { messages, ...otherErrors } = e.errors ?? {};
+  return (
+    Object.keys(otherErrors).length === 0 &&
+    Array.isArray(messages) &&
+    messages.length > 0 &&
+    messages.every((m) => typeof m === 'string' && NOT_READY_MESSAGE.test(m))
+  );
+}
+
 /** Reduce a dataset `air` to the blob id the consumer endpoint wants. Three stored forms: an uploaded blob
  *  is an AIR URN (`urn:air:…:blob@<key>` — the key is after `@`); a generation is a full
  *  `/v2/consumer/blobs/{key}.ext` URL (the key is the last path segment); anything else is already a bare
@@ -96,6 +114,29 @@ export function blobIdFromAir(air: string): string {
   if (idx >= 0) return air.slice(idx + marker.length).split('?')[0];
   if (air.startsWith('urn:air:')) return (air.split('@').pop() ?? air).split('?')[0];
   return air.split('?')[0];
+}
+
+/** More blobs than any dataset the app builds; a bigger request is refused. */
+export const MAX_DATASET_BLOBS = 2000;
+
+/** A request body's list of dataset blob ids. */
+export const isDatasetBlobIds = (v: unknown): v is string[] =>
+  Array.isArray(v) &&
+  v.length <= MAX_DATASET_BLOBS &&
+  v.every((id) => typeof id === 'string' && id.length > 0 && id.length < 512);
+
+/** Runs `fn` over `items` with at most `concurrency` in flight. No new item starts once `stop()` is true. */
+export async function forEachPooled<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+  stop: () => boolean = () => false
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length && !stop()) await fn(items[next++]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
 }
 
 /** The orchestrator's authenticated GET URL for one of the caller's dataset blobs (fetch with

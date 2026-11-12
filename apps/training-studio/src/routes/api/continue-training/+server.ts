@@ -9,6 +9,7 @@ import {
 } from '$lib/server/train';
 import { TrainingBatchValidationError } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
+import { datasetRatingFor } from '$lib/server/dataset-rating';
 
 function parse(v: string | null): number | null {
   const n = Number(v);
@@ -29,7 +30,9 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   };
   const token = await requireToken(locals, 'Pricing is unavailable right now.');
   try {
-    return json(await continueTrainingWhatIf(token, locals.user.id, opts));
+    return json(
+      await continueTrainingWhatIf(token, locals.user.id, opts, await datasetRatingFor(locals.user))
+    );
   } catch (err) {
     if (err instanceof TrainingBatchValidationError) error(400, err.message);
     console.warn('[training-studio] continue whatif failed', err);
@@ -64,7 +67,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
         token,
         locals.user.id,
         opts,
-        textCheckCookie(locals, request)
+        textCheckCookie(locals, request),
+        await datasetRatingFor(locals.user)
       ),
     });
   } catch (err) {

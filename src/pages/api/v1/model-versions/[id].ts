@@ -116,6 +116,7 @@ export default MixedAuthEndpoint(async function handler(
                 'url', mf.url,
                 'sizeKB', mf."sizeKB",
                 'name', mf.name,
+                'overrideName', mf."overrideName",
                 'type', mf.type,
                 'visibility', mf.visibility,
                 'metadata', mf.metadata,

@@ -1,3 +1,4 @@
+import { MINOR_CONTENT_MAX_LEVEL } from '@civitai/shared/minor-content-gate';
 import { NsfwLevel } from '~/server/common/enums';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 
@@ -139,7 +140,7 @@ export const remixGalleryContentRule = (
  * The hard ceiling on what may be submitted into a host image flagged as
  * depicting a minor. Not a creator preference and not overridable by one.
  */
-export const REMIX_GALLERY_MINOR_HOST_MAX_LEVEL = NsfwLevel.PG13;
+export const REMIX_GALLERY_MINOR_HOST_MAX_LEVEL = MINOR_CONTENT_MAX_LEVEL;
 
 /**
  * Whether a submission's rating is acceptable for a host under a rule.

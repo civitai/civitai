@@ -57,10 +57,36 @@ export async function allowedModelFlags(user: SessionUser, keys: string[]): Prom
     await flipt.ensureInitialized();
     const context = fliptContext(user);
     return keys.filter(
-      (key) => (flipt.isEnabledSync(key, String(user.id), context) ?? user.isModerator === true)
+      (key) => flipt.isEnabledSync(key, String(user.id), context) ?? user.isModerator === true
     );
   } catch (error) {
     console.warn('[training-studio] model flag eval failed', error);
     return user.isModerator === true ? [...keys] : [];
+  }
+}
+
+/** This user's variant of a variant flag: null when the flag is off, matches no rule, doesn't exist, or
+ *  Flipt is unreachable. */
+export async function flagVariant(flag: string, user: SessionUser): Promise<string | null> {
+  try {
+    return await getFlipt().getVariant(flag, String(user.id), fliptContext(user));
+  } catch (error) {
+    console.warn('[training-studio] variant flag eval failed', flag, error);
+    return null;
+  }
+}
+
+/** Kill switch for Review's wait on dataset files. On unless the flag exists and is off for this user: off
+ *  leaves only the submit's own refusal. */
+export const UPLOAD_READINESS_FLAG = 'trainingStudioUploadReadiness';
+
+export async function isUploadReadinessOn(user: SessionUser): Promise<boolean> {
+  try {
+    const flipt = getFlipt();
+    await flipt.ensureInitialized();
+    return flipt.isEnabledSync(UPLOAD_READINESS_FLAG, String(user.id), fliptContext(user)) ?? true;
+  } catch (error) {
+    console.warn('[training-studio] upload readiness flag eval failed', error);
+    return true;
   }
 }

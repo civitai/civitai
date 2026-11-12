@@ -30,6 +30,8 @@ export type {
 export type { SubmittedBatch, TrainingItem } from '$lib/train-core';
 export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
 import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
+import type { DatasetRatingCount } from '$lib/dataset-rating';
+import type { ReadinessCheck, ReadinessProbe } from '$lib/upload-readiness';
 
 /** One run's fully-resolved training config, as `submitTraining` sends it (the wire contract of the
  *  shell's POST /api/train): the core's `TrainingRunInput` minus the continue-only field, with the
@@ -63,6 +65,14 @@ export interface StudioBackend {
     signal: AbortSignal
   ): Promise<{ done: boolean; results: AutoLabelResult[] }>;
   submitTraining(runs: TrainingRunPayload[]): Promise<SubmittedBatch>;
+  /** The server's mature count for these dataset blobs under the v2 rating, which also starts rating
+   *  the rest. Absent, or `enabled: false`, means Review counts from the upload rating. */
+  datasetRating?(blobIds: string[]): Promise<DatasetRatingCount>;
+  /** Where each of these dataset files stands for training. Absent, or `enabled: false`, means Review
+   *  doesn't wait and the submit's own refusal decides. */
+  datasetReadiness?(blobIds: string[]): Promise<ReadinessProbe>;
+  /** Whether the orchestrator would take this run's dataset now (a whatif; never charges). */
+  datasetReadyToTrain?(run: TrainingRunPayload): Promise<ReadinessCheck>;
   /** The caller's recent single-image edits, one per result — the edit Data step's "From my edit
    *  generations". */
   listEditGenerations(): Promise<EditGenerationItem[]>;
