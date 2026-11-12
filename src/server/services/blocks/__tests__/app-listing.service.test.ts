@@ -198,6 +198,23 @@ describe('recommendRollup', () => {
   it('recommendPct is null (not 0) when there are zero reviews', () => {
     expect(recommendRollup({ thumbsUpCount: 0, thumbsDownCount: 0 }).recommendPct).toBeNull();
   });
+
+  // One review used to read "100% recommend (1)". Below the threshold the counts still
+  // travel; only the percentage is withheld.
+  it('withholds the percentage below LISTING_RECOMMEND_PCT_MIN_REVIEWS (4 up / 0 down)', () => {
+    expect(recommendRollup({ thumbsUpCount: 4, thumbsDownCount: 0 })).toEqual({
+      recommendedCount: 4,
+      notRecommendedCount: 0,
+      recommendPct: null,
+    });
+    // Counted across both buckets, not just the positive one.
+    expect(recommendRollup({ thumbsUpCount: 1, thumbsDownCount: 3 }).recommendPct).toBeNull();
+  });
+
+  it('returns the percentage from the threshold on (5 up / 0 down → 1; 3 up / 2 down → 0.6)', () => {
+    expect(recommendRollup({ thumbsUpCount: 5, thumbsDownCount: 0 }).recommendPct).toBe(1);
+    expect(recommendRollup({ thumbsUpCount: 3, thumbsDownCount: 2 }).recommendPct).toBe(0.6);
+  });
 });
 
 /**

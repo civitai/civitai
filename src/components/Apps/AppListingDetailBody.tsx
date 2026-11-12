@@ -81,6 +81,7 @@ import {
   type BrokenScreenshotIndexes,
 } from '~/components/Apps/appListingScreenshotNav';
 import { RelatedListings, useRelatedRail } from '~/components/Apps/RelatedListings';
+import { DeveloperTrackRecord } from '~/components/Apps/DeveloperTrackRecord';
 import {
   RELATED_RAIL_NEUTRAL_HEADING,
   relatedRailFirstHeading,
@@ -986,6 +987,7 @@ function RelatedRailLink({ detail }: { detail: ListingDetail }) {
   const { sections, loading } = useRelatedRail({
     listingId: detail.id,
     category: detail.category,
+    creator: detail.creator,
   });
   const heading =
     relatedRailFirstHeading({ category: detail.category, sections, loading }) ??
@@ -1372,6 +1374,11 @@ export function AppListingDetailBody({
             {!preview && detail.creator && (
               <Box data-testid="apps-listing-creator-card">
                 <SmartCreatorCard user={{ id: detail.creator.id }} tipsEnabled={false} />
+                {/* The developer's track record (or the Official badge on an Official
+                    listing). The card already shows "Joined <date>". */}
+                <Box mt={6} px={4}>
+                  <DeveloperTrackRecord creator={detail.creator} isOfficial={!!detail.isOfficial} />
+                </Box>
               </Box>
             )}
 
@@ -1651,7 +1658,11 @@ export function AppListingDetailBody({
       {!preview && (
         <Stack gap="lg" id={RELATED_RAIL_ANCHOR_ID}>
           <Divider />
-          <RelatedListings listingId={detail.id} category={detail.category} />
+          <RelatedListings
+            listingId={detail.id}
+            category={detail.category}
+            creator={detail.creator}
+          />
         </Stack>
       )}
     </Stack>

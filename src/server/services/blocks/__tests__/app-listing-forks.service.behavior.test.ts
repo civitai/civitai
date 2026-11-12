@@ -38,7 +38,16 @@ const MIGRATION = path.resolve(
   '../../../../../packages/civitai-db-schema/prisma/migrations/20261126120000_app_fork_provenance/migration.sql'
 );
 
+const ACTIVE_OWNER = 9101;
+const BANNED_OWNER = 9202;
+const DELETED_OWNER = 9303;
+
 const BASE_SCHEMA = `
+  CREATE TABLE "User" (
+    "id" INTEGER PRIMARY KEY,
+    "bannedAt" TIMESTAMPTZ,
+    "deletedAt" TIMESTAMPTZ
+  );
   CREATE TABLE "app_blocks" (
     "id" TEXT PRIMARY KEY,
     "block_id" TEXT NOT NULL UNIQUE,
@@ -61,6 +70,8 @@ const BASE_SCHEMA = `
     "content_rating" TEXT,
     "app_block_id" TEXT UNIQUE REFERENCES "app_blocks"("id") ON DELETE SET NULL,
     "revision_of_id" TEXT REFERENCES "app_listings"("id") ON DELETE CASCADE,
+    -- Every fixture is owned by the active user unless it says otherwise.
+    "user_id" INTEGER NOT NULL DEFAULT ${ACTIVE_OWNER} REFERENCES "User"("id"),
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now()
   );
 `;
@@ -89,6 +100,10 @@ const sfwPublic = {
 
 async function seed(pg: PGlite) {
   await pg.exec(`
+    INSERT INTO "User" ("id", "bannedAt", "deletedAt") VALUES
+      (${ACTIVE_OWNER}, NULL, NULL),
+      (${BANNED_OWNER}, now(), NULL),
+      (${DELETED_OWNER}, NULL, now());
     INSERT INTO "app_blocks" ("id", "block_id", "current_version_deployed_at") VALUES
       ('ab_parent_1100', 'parent-app', now()),
       ('ab_parent_1200', 'other-parent-app', now()),
@@ -101,7 +116,9 @@ async function seed(pg: PGlite) {
       ('ab_mature_1404', 'fork-mature', now()),
       ('ab_removed_1405', 'fork-removed', now()),
       ('ab_rejected_1406', 'fork-rejected', now()),
-      ('ab_elsewhere_1407', 'fork-of-other', now());
+      ('ab_elsewhere_1407', 'fork-of-other', now()),
+      ('ab_banned_1408', 'fork-banned-owner', now()),
+      ('ab_deleted_1409', 'fork-deleted-owner', now());
     INSERT INTO "app_listings"
       ("id", "slug", "name", "kind", "status", "visibility", "content_rating", "app_block_id", "revision_of_id")
     VALUES
@@ -121,6 +138,12 @@ async function seed(pg: PGlite) {
       ('apl_fork_x7_0407', 'rev-fork-v1', 'Fork One (revision)', 'onsite', 'draft', 'public', 'g', NULL, 'apl_fork_v1_0301'),
       -- A visible fork of a DIFFERENT parent.
       ('apl_fork_x8_0408', 'fork-of-other', 'Other Parent Fork', 'onsite', 'approved', NULL, 'g', 'ab_elsewhere_1407', NULL);
+    -- Store-eligible in every column but the owner: a banned owner, then a deleted one.
+    INSERT INTO "app_listings"
+      ("id", "slug", "name", "kind", "status", "visibility", "content_rating", "app_block_id", "user_id")
+    VALUES
+      ('apl_fork_x9_0409', 'fork-banned-owner', 'Banned Owner Fork', 'onsite', 'approved', NULL, 'g', 'ab_banned_1408', ${BANNED_OWNER}),
+      ('apl_fork_xa_0410', 'fork-deleted-owner', 'Deleted Owner Fork', 'onsite', 'approved', NULL, 'g', 'ab_deleted_1409', ${DELETED_OWNER});
   `);
 }
 
@@ -129,7 +152,8 @@ async function linkForks(pg: PGlite) {
     UPDATE "app_listings" SET "fork_of_listing_id" = '${PARENT}'
       WHERE "id" LIKE 'apl_fork_v%' OR "id" IN (
         'apl_fork_x1_0401', 'apl_fork_x2_0402', 'apl_fork_x3_0403', 'apl_fork_x4_0404',
-        'apl_fork_x5_0405', 'apl_fork_x6_0406', 'apl_fork_x7_0407');
+        'apl_fork_x5_0405', 'apl_fork_x6_0406', 'apl_fork_x7_0407',
+        'apl_fork_x9_0409', 'apl_fork_xa_0410');
     UPDATE "app_listings" SET "fork_of_listing_id" = '${OTHER_PARENT}' WHERE "id" = 'apl_fork_x8_0408';
   `);
 }

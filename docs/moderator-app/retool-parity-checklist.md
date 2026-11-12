@@ -283,7 +283,7 @@ Open, with the evidence each audit produced:
       "+N more" pointing at the Chat section. Collapsed by default — the chip is the signal, the ids are
       what you want once it has fired.
       🔴 **Found while wiring it: every existing chat link on this page 404'd.** `ChatContactPanel`
-      linked to `/retool/chat-audit/search?q=<id>`, and `search` is not one of the four tabs — the tab
+      linked to `/retool/chat-audit/search?q=<id>`, and `search` is not a tab route (the Search tab's route is `chats`) — the tab
       param is validated with `error(404)`, so following the ids the ticket asked for landed on Unknown
       tab. Both places now use `/retool/chat-audit/chats?chat=<id>`, the form `$lib/reports` already
       used. Verified on 43555: seven chat links, all resolving.

@@ -11,7 +11,6 @@ import type {
   GiftableTier,
 } from '~/server/schema/membership-gift.schema';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { refreshSession } from '~/server/auth/session-invalidation';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { createNotification } from '~/server/services/notification.service';
 import { getPlans } from '~/server/services/subscriptions.service';
@@ -505,7 +504,6 @@ export async function acceptMembershipGift({ giftId, userId }: { giftId: string;
 
   await armNextGiftMonth({ userId });
   await invalidateSubscriptionCaches(userId);
-  await refreshSession(userId, { caller: 'membership' });
 
   await log({ type: 'info', stage: 'accept', giftId: gift.id, userId });
   return { accepted: true as const };
@@ -862,7 +860,6 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
   });
 
   await invalidateSubscriptionCaches(gift.holderId);
-  await refreshSession(gift.holderId, { caller: 'membership' });
 
   await log({
     type: 'info',
@@ -1098,7 +1095,6 @@ export async function revokeMembershipGift({
   });
 
   await invalidateSubscriptionCaches(gift.holderId);
-  await refreshSession(gift.holderId, { caller: 'membership' });
 
   await log({
     type: 'warning',
@@ -1611,7 +1607,6 @@ export async function keepGiftMembership({ userId }: { userId: number }) {
   });
 
   await invalidateSubscriptionCaches(userId);
-  await refreshSession(userId, { caller: 'membership' });
 
   await log({ type: 'info', stage: 'keep', userId, stripeSubscriptionId: stripeSub.id });
 

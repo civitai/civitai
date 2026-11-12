@@ -1,9 +1,8 @@
 // SPOKE verify side (Path C). Verifies a session token LOCALLY — no per-request hop:
 //  1. ES256 JWS  → jose `jwtVerify` against the hub's cached JWKS (refetched only on an
 //                  unknown `kid`, i.e. key rotation). This is the steady state.
-//  2. legacy JWE → decoded with NEXTAUTH_SECRET via a jose reimplementation (legacy-cookie.ts) — NO next-auth
-//                  dependency — ONLY to READ old `civitai-token` cookies until they age out post-cutover.
-//  3. revocation → an INJECTED `isRevoked(claims)` (the existing redis marker). Injected,
+//     Nothing else is a session: any other token is rejected.
+//  2. revocation → an INJECTED `isRevoked(claims)` (the existing redis marker). Injected,
 //                  not imported, so the package keeps zero infra deps (base-package rules).
 //
 // Factory mirrors the createXClients(config) injection convention.
@@ -16,7 +15,6 @@ import {
   type JWTPayload,
 } from 'jose';
 import { sessionCookieName } from './cookies';
-import { decodeLegacySessionCookie } from './legacy-cookie';
 import { loadAuthEnv } from './env';
 import { now, elapsed, isTimeoutError, safeInvoke } from './timing';
 import { SESSION_LINEAGE_MAX_AGE_MS } from './family';
@@ -40,17 +38,6 @@ export interface AuthVerifierConfig {
    * Single-key only — for key ROTATION across multiple kids, use JWKS (spokes) instead.
    */
   publicKeyPem?: string;
-  /** Migration-window only: secret to decode legacy next-auth JWE cookies. */
-  legacySecret?: string;
-  /**
-   * Explicit kill-switch for the legacy next-auth JWE fallback. The legacy decode is a SECOND trust
-   * root (symmetric, no iss/aud — the old cookies never carried them), so it must be gated by an
-   * explicit decision, not merely inferred from `legacySecret` presence. Defaults to "on when a
-   * legacy secret is configured" to preserve migration-window behavior; set `false` at cutover to
-   * hard-disable legacy acceptance even while NEXTAUTH_SECRET is still in the env, then remove this
-   * whole branch once all legacy cookies have aged out.
-   */
-  legacyEnabled?: boolean;
   /** Reject tokens without `iat0`. Defaults to env.AUTH_REQUIRE_IAT0 (false). */
   requireIat0?: boolean;
   /** Clock injection (tests), epoch ms. */
@@ -104,10 +91,6 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     // that base URL (http://localhost → unprefixed, https://auth.civitai.com → __Secure-).
     cookieName: config.cookieName ?? sessionCookieName(issuer?.startsWith('https://') ?? false),
     publicKeyPem: config.publicKeyPem ?? env.AUTH_JWT_PUBLIC_KEY,
-    legacySecret: config.legacySecret ?? env.NEXTAUTH_SECRET,
-    // Explicit gate for the legacy JWE trust root. Default: enabled iff a legacy secret is present
-    // (preserves migration-window behavior); pass `legacyEnabled: false` to force it off at cutover.
-    legacyEnabled: config.legacyEnabled ?? true,
     requireIat0: config.requireIat0 ?? env.AUTH_REQUIRE_IAT0,
     clock: config.clock ?? (() => Date.now()),
     isRevoked: config.isRevoked,
@@ -188,17 +171,10 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
       } catch {
         return null; // bad signature / expired / wrong issuer
       }
-    } else if (cfg.legacyEnabled && cfg.legacySecret) {
-      // Legacy next-auth JWE (encrypted, hkdf from NEXTAUTH_SECRET) — decoded with jose, no next-auth dep
-      // (legacy-cookie.ts). Gated behind the explicit `legacyEnabled` switch (a second, symmetric trust
-      // root with no iss/aud), not just secret presence. Returns null on a corrupt/foreign/expired
-      // cookie. Drop this branch post-cutover.
-      claims = await decodeLegacySessionCookie(token, cfg.legacySecret);
     }
 
     if (!claims) return null;
-    // Defense-in-depth: never accept a token carrying `purpose: 'swap'` as a session token. The swap bridge
-    // is removed, but this guard cheaply rejects any stray legacy swap-shaped token.
+    // Defense-in-depth: never accept a token carrying `purpose: 'swap'` as a session token.
     if ((claims as { purpose?: unknown }).purpose === 'swap') return null;
     if (!withinLineageLimits(claims)) return null;
     if (cfg.isRevoked && (await cfg.isRevoked(claims))) return null;

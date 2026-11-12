@@ -122,6 +122,8 @@ const LISTINGS = [
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
+    CREATE TABLE "User" ("id" integer PRIMARY KEY, "bannedAt" timestamptz, "deletedAt" timestamptz);
+    INSERT INTO "User" ("id") VALUES (1);
     CREATE TABLE app_blocks (
       id text PRIMARY KEY, status text NOT NULL, current_version_deployed_at timestamptz
     );

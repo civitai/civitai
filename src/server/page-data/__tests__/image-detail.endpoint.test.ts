@@ -56,7 +56,6 @@ vi.mock('~/server/auth/session-client', () => ({
     return user ? { user } : null;
   }),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({

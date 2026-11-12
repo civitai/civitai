@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import {
+  CREATOR_RAIL_LIMIT,
   isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
@@ -21,9 +22,10 @@ import { trpc } from '~/utils/trpc';
  * Unified listing detail — "More in <category>" DISCOVERY RAIL + a persistent
  * "Browse all apps" link back to `/apps`.
  *
- * Reads the EXISTING `appListings.listAvailable` (category filter + sort) —
- * there is deliberately NO new tRPC procedure and no server schema change for
- * this. Two queries at most:
+ * Reads the EXISTING `appListings.listAvailable` (category / developer filter + sort) —
+ * there is deliberately NO new tRPC procedure for this. Three queries at most:
+ *   0. the developer's apps (`userId`), `sort: 'popular'` — fired only when the page knows
+ *      its developer; rendered first as "More by <developer>";
  *   1. same-category, `sort: 'popular'` — fired only when the listing HAS a
  *      category;
  *   2. all-apps `sort: 'popular'` — fired ONLY when (1) can't fill the rail
@@ -44,6 +46,11 @@ export interface RelatedListingsProps {
   /** The listing being viewed — excluded from the rail. */
   listingId: string;
   category: string | null;
+  /**
+   * The listing's developer, for the "More by <developer>" group. `null`/omitted fires no
+   * creator query and renders no creator group.
+   */
+  creator?: { id: number; username: string | null } | null;
 }
 
 /**
@@ -51,7 +58,7 @@ export interface RelatedListingsProps {
  * the Details panel's link to it, so both read ONE answer. Both callers pass the same inputs,
  * so React Query serves them from the same two queries (no extra request).
  */
-export function useRelatedRail({ listingId, category }: RelatedListingsProps) {
+export function useRelatedRail({ listingId, category, creator }: RelatedListingsProps) {
   const features = useFeatureFlags();
   // Same store-visibility gate the grid + detail use — the SHARED
   // `hasAppsStoreAccess` predicate — so this rail can never fire a read the page
@@ -63,6 +70,16 @@ export function useRelatedRail({ listingId, category }: RelatedListingsProps) {
   // guard — an unknown/legacy category value degrades to "no category filter"
   // (all-popular rail) instead of sending a value the input would reject.
   const categoryFilter = isMarketplaceCategory(category) ? category : undefined;
+
+  // The developer's apps, under the store's own predicate (`userId` narrows it server-side).
+  // One more than the cap, so self can be dropped and the group still fills.
+  const creatorId = creator?.id;
+  const wantCreator = canSeeStore && !!creatorId;
+  const creatorQuery = trpc.appListings.listAvailable.useQuery(
+    { userId: creatorId, sort: 'popular', limit: CREATOR_RAIL_LIMIT + 1 },
+    { enabled: wantCreator }
+  );
+  const creatorItems = onlyListingCards(creatorQuery.data?.items ?? []);
 
   const categoryQuery = trpc.appListings.listAvailable.useQuery(
     { category: categoryFilter, sort: 'popular', limit: RELATED_LISTINGS_LIMIT + 1 },
@@ -76,6 +93,7 @@ export function useRelatedRail({ listingId, category }: RelatedListingsProps) {
     needsPopularTopUp({
       selfId: listingId,
       sameCategory,
+      creator: creatorItems,
       // `isPending` (not `isLoading`) — see `isRelatedRailLoading`. A disabled
       // query is permanently pending, hence the `!!categoryFilter` guard.
       categoryLoading: !!categoryFilter && categoryQuery.isPending,
@@ -91,6 +109,8 @@ export function useRelatedRail({ listingId, category }: RelatedListingsProps) {
     category: categoryFilter ?? null,
     sameCategory,
     popular: onlyListingCards(popularQuery.data?.items ?? []),
+    creator: creatorItems,
+    creatorName: creator?.username ?? null,
   });
 
   const loading = isRelatedRailLoading({
@@ -98,13 +118,15 @@ export function useRelatedRail({ listingId, category }: RelatedListingsProps) {
     categoryPending: categoryQuery.isPending,
     wantTopUp,
     popularPending: popularQuery.isPending,
+    wantCreator,
+    creatorPending: creatorQuery.isPending,
   });
 
   return { sections, loading, canOpenPage: !!features.appBlocksPages };
 }
 
-export function RelatedListings({ listingId, category }: RelatedListingsProps) {
-  const { sections, loading, canOpenPage } = useRelatedRail({ listingId, category });
+export function RelatedListings({ listingId, category, creator }: RelatedListingsProps) {
+  const { sections, loading, canOpenPage } = useRelatedRail({ listingId, category, creator });
 
   // Persistent store link — always rendered, even with an empty rail. It sits beside the
   // FIRST heading on screen, whichever group that is.

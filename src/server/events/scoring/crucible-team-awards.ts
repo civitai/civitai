@@ -117,6 +117,11 @@ export function crucibleAwardsFrom(
   }));
 }
 
+// The award rows' filter cannot use the ledger's key past the season's days, so this reads the
+// season. Both settles call it after their own budgeted queries, under the settle lock: it gets its
+// own cap, and the client gives up 30 s past it (progress headers keep its idle timer from firing).
+export const CRUCIBLE_AWARD_QUERY_MAX_S = 2 * 60;
+
 export const crucibleTeamAwardRowsSql = /* sql */ `
 SELECT time, op, actorId, entityId, team, sourceId
 FROM event_point_events
@@ -160,6 +165,12 @@ export async function loadCrucibleTeamAwards(
   const result = await clickhouse.query({
     query: crucibleTeamAwardRowsSql,
     format: 'JSONEachRow',
+    abort_signal: AbortSignal.timeout((CRUCIBLE_AWARD_QUERY_MAX_S + 30) * 1000),
+    clickhouse_settings: {
+      max_execution_time: CRUCIBLE_AWARD_QUERY_MAX_S,
+      send_progress_in_http_headers: 1,
+      http_headers_progress_interval_ms: '60000',
+    },
     query_params: {
       event: event.name,
       type: CRUCIBLE_TEAM_AWARD_TYPE,

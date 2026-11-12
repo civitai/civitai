@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import dayjs from 'dayjs';
 import type { Stripe } from 'stripe';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -1387,5 +1387,73 @@ describe('keepGiftMembership', () => {
 
     expect(await keepGiftMembership({ userId: 2 })).toMatchObject({ kept: false });
     expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('a session-cache outage after the gift change has committed', () => {
+  // invalidateSubscriptionCaches already refreshes the session and tolerates its failure;
+  // a refresh outside it would turn a committed change into a 500 for the user.
+  beforeEach(async () => {
+    const { refreshSession } = await import('~/server/auth/session-invalidation');
+    vi.mocked(refreshSession).mockRejectedValue(new Error('session cache down'));
+  });
+  afterEach(async () => {
+    const { refreshSession } = await import('~/server/auth/session-invalidation');
+    vi.mocked(refreshSession).mockResolvedValue(undefined);
+  });
+
+  it('still accepts the gift', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...baseGift,
+      status: 'Fulfilled',
+      monthsRemaining: 3,
+    });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'gold' }));
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub());
+
+    await expect(acceptMembershipGift({ giftId: 'gift_1', userId: 2 })).resolves.not.toThrow();
+  });
+
+  it('still keeps the membership', async () => {
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub());
+    mockStripe.subscriptions.retrieve.mockResolvedValue({
+      ...stripeSub(),
+      cancel_at: dayjs().add(30, 'day').unix(),
+      default_payment_method: null,
+      default_source: null,
+      customer: {
+        id: 'cus_1',
+        invoice_settings: {
+          default_payment_method: { id: 'pm_card', object: 'payment_method', type: 'card' },
+        },
+      },
+    });
+
+    expect(await keepGiftMembership({ userId: 2 })).toEqual({ kept: true });
+  });
+
+  it('still revokes the gift', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...baseGift,
+      status: 'Fulfilled',
+      monthsRemaining: 3,
+    });
+
+    expect(await revokeMembershipGift({ paymentIntentId: 'pi_1', reason: 'refund' })).toBe(true);
+  });
+
+  it('still hands over the owed months as a residual subscription', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValue([{ id: 'gift_1' }]);
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...baseGift,
+      status: 'Active',
+      tier: 'bronze',
+      months: 3,
+      monthsRemaining: 2,
+      monthsConsumed: 1,
+    });
+
+    await expect(honorGiftResidualsForUser({ userId: 2 })).resolves.not.toThrow();
+    expect(mockStripe.subscriptions.create).toHaveBeenCalled();
   });
 });

@@ -3387,6 +3387,19 @@ export interface EventTurfStock {
   refilledAt: Date;
 }
 
+export interface EventAwardResult {
+  id: number;
+  event: string;
+  sourceId: string;
+  kind: string;
+  team: string | null;
+  points: number;
+  at: Date;
+  inputs: JsonValue;
+  frozenAt: Date;
+  voidedAt: Date | null;
+}
+
 export interface CreatorMilestone {
   key: string;
   track: string;

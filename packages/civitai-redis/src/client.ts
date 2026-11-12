@@ -2711,7 +2711,6 @@ export const REDIS_SYS_KEYS = {
     FAMILY_LIVE: 'session:family-live',
     // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
     DEVICE_FAMILIES: 'session:device-families',
-    LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
     // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
     // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
     HUB_UPGRADE: 'session:hub-upgrade',
