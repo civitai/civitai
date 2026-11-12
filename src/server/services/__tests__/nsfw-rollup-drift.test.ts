@@ -83,6 +83,9 @@ describe('check-mature-safe-bit-drift', () => {
     await version(40, 4, 2);
     await model(5, true, 61); // no Published version: the model rollup never reaches it
     await version(50, 5, 1, 'Draft');
+    await model(6, true, 61); // not Published, though its version and level look drifted
+    await db.query(`UPDATE "Model" SET status = 'Draft' WHERE id = 6`);
+    await version(60, 6, 1);
 
     const result = await checkMatureSafeBitDrift.run({}).result;
 
@@ -141,13 +144,14 @@ describe('imageDerivedVersionLevels', () => {
       `INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (1, 4, 0), (2, 16, 0)`
     );
     // On the owner's published post: Blocked and unrated are left out, then 20 rated images
-    // count and the 21st (X) does not.
+    // count and the 21st (X) does not. Only the 20th carries PG-13, so an unrated image let into
+    // the window would push it out.
     await db.query(
       `INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (3, 32, 0), (3, 0, 0)`
     );
     for (let index = 1; index <= 20; index++)
       await db.query(`INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (3, $1, $2)`, [
-        index === 1 ? 2 : 1,
+        index === 20 ? 2 : 1,
         index,
       ]);
     await db.query(`INSERT INTO "Image" ("postId", "nsfwLevel", index) VALUES (3, 8, 21)`);
