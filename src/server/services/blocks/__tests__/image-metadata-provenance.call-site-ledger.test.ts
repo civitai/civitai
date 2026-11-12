@@ -1,6 +1,10 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import {
+  BLOCK_PROVENANCE_METADATA_KEYS,
+  OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS,
+} from '~/shared/utils/block-provenance-metadata';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { scanSource } from '../../../../../test/source-scan';
@@ -682,7 +686,12 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
           expr
         );
       if (!match) return 'metadata is no longer one literal key with a text value';
-      if (PROVENANCE_TOKEN.test(match[1])) return 'names a provenance key';
+      const serverOwned: readonly string[] = [
+        ...BLOCK_PROVENANCE_METADATA_KEYS,
+        ...OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS,
+      ];
+      if (serverOwned.includes(match[1]) || PROVENANCE_TOKEN.test(match[1]))
+        return 'names a server-owned key';
       return null;
     }
     case 'raw-mod-rule-metadata': {

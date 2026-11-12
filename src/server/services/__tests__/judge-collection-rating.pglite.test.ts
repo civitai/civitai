@@ -206,12 +206,12 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
     expect((await imageRow()).nsfwLevel).toBe(NsfwLevel.X);
   });
 
-  it('raises the level when the judge picks a higher one', async () => {
-    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG13 });
+  it('raises the level when the judge picks a higher SFW one', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG });
 
-    await rate(NsfwLevel.R);
+    await expect(rate(NsfwLevel.PG13)).resolves.toEqual({ nsfwLevel: NsfwLevel.PG13 });
 
-    expect((await imageRow()).nsfwLevel).toBe(NsfwLevel.R);
+    expect((await imageRow()).nsfwLevel).toBe(NsfwLevel.PG13);
   });
 
   it('leaves the level unlocked and the scan state alone for a raise within SFW', async () => {
@@ -235,9 +235,18 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
     await rate(NsfwLevel.X);
 
     const row = await imageRow();
-    expect(row).toMatchObject({ nsfwLevel: NsfwLevel.X, ingestion: 'Rescan', blockedFor: null });
+    expect(row).toMatchObject({ ingestion: 'Rescan', blockedFor: null });
+    expect(row.metadata?.judgeRating).toMatchObject({ nsfwLevel: NsfwLevel.X });
     expect(row.scannedAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
     await expect(approve()).rejects.toThrow(/NSFW rating/);
+  });
+
+  it('keeps the old level while the rescan runs, so the image never shows a level unchecked', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG13 });
+
+    await expect(rate(NsfwLevel.X)).resolves.toEqual({ nsfwLevel: NsfwLevel.PG13 });
+
+    expect(await imageRow()).toMatchObject({ nsfwLevel: NsfwLevel.PG13, ingestion: 'Rescan' });
   });
 
   it('does not rescan when the judge picks no higher than the scan', async () => {

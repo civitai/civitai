@@ -4268,15 +4268,18 @@ export const setCollectionItemNsfwLevel = async ({
 
   // The judge may raise the scan's level, never lower it; a later scan keeps the judge's level as a
   // floor (resolveScanOutcome). The WHERE repeats the checks above for a scan or block in between.
+  const raisesIntoNsfw = Prisma.sql`(${nsfwLevel}::int > "nsfwLevel" AND ${nsfwLevel}::int > ${sfwBrowsingLevelsFlag}::int)`;
   const [updated] = await dbWrite.$queryRaw<
     { nsfwLevel: number; ingestion: ImageIngestionStatus }[]
   >`
     UPDATE "Image"
-    SET "nsfwLevel" = GREATEST("nsfwLevel", ${nsfwLevel}::int),
-      -- A raise into an NSFW level sends the image back through the scan: its checks ran at the
-      -- lower level. Approval waits for that verdict.
-      ingestion = CASE
-        WHEN ${nsfwLevel}::int > "nsfwLevel" AND ${nsfwLevel}::int > ${sfwBrowsingLevelsFlag}::int
+    SET
+      -- A raise into an NSFW level sends the image back through the scan, since its checks ran at the
+      -- lower level, and keeps that level until they have run at the judge's: the rescan applies the
+      -- floor. Approval waits for that verdict.
+      "nsfwLevel" = CASE WHEN ${raisesIntoNsfw} THEN "nsfwLevel"
+        ELSE GREATEST("nsfwLevel", ${nsfwLevel}::int) END,
+      ingestion = CASE WHEN ${raisesIntoNsfw}
         THEN ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
         ELSE ingestion
       END,

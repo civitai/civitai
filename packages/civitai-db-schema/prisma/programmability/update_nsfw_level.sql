@@ -75,6 +75,7 @@ BEGIN
   UPDATE "Image" i SET
     "nsfwLevel" = f."nsfwLevel",
     "needsReview" = CASE
+      WHEN i."needsReview" IN ('csam', 'appeal') THEN i."needsReview"
       WHEN (i."scanJobs"->'hasMinor')::boolean AND f."nsfwLevel" > 1 AND f."nsfwLevel" < 32
         THEN 'minor'
         ELSE i."needsReview"

@@ -91,19 +91,38 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
+    CREATE TYPE "JobQueueType" AS ENUM ('ImageScan');
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    CREATE TABLE "JobQueue" (
+      type "JobQueueType" NOT NULL, "entityType" "EntityType" NOT NULL, "entityId" int NOT NULL,
+      PRIMARY KEY ("entityType", "entityId", type)
+    );
   `);
 });
 afterAll(() => db.close());
 
-type Row = { nsfwLevel: number; nsfwLevelLocked?: boolean; metadata?: object | null };
+type Row = {
+  nsfwLevel: number;
+  nsfwLevelLocked?: boolean;
+  metadata?: object | null;
+  needsReview?: string | null;
+  scanJobs?: object | null;
+};
 
 /** Stores `stored` and returns the image as the scan loaded it (`loaded`, default the same). */
 async function arrange(stored: Row, loaded: Row = stored) {
-  await db.exec(`DELETE FROM "Image"`);
+  await db.exec(`DELETE FROM "Image"; DELETE FROM "JobQueue";`);
   await db.query(
-    `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "nsfwLevelLocked", metadata)
-     VALUES ($1, 'Rescan', $2, $3, $4)`,
-    [ID, stored.nsfwLevel, stored.nsfwLevelLocked ?? false, stored.metadata ?? null]
+    `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "nsfwLevelLocked", metadata, "needsReview", "scanJobs")
+     VALUES ($1, 'Rescan', $2, $3, $4, $5, $6)`,
+    [
+      ID,
+      stored.nsfwLevel,
+      stored.nsfwLevelLocked ?? false,
+      stored.metadata ?? null,
+      stored.needsReview ?? null,
+      stored.scanJobs ?? null,
+    ]
   );
   return {
     id: ID,
@@ -140,7 +159,9 @@ beforeEach(() => {
   // The scan's reads and writes of the image row itself go to the real row.
   const isImageWrite = (strings: unknown) =>
     Array.isArray(strings) &&
-    ['UPDATE "Image"', '"judgeFloor"'].some((t) => (strings as string[]).join('').includes(t));
+    ['UPDATE "Image"', '"judgeFloor"', 'INSERT INTO "JobQueue"'].some((t) =>
+      (strings as string[]).join('').includes(t)
+    );
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -203,8 +224,51 @@ describe('resolveScanOutcome with a collection judge rating', () => {
       db.query(`UPDATE "Image" SET metadata = $1 WHERE id = $2`, [judgeRated(X), ID]);
     const { outcome, row } = await scan(await arrange({ nsfwLevel: PG13 }));
 
-    expect(row).toMatchObject({ nsfwLevel: X, ingestion: 'Rescan' });
-    expect(outcome).toMatchObject({ nsfwLevel: X, ingestion: 'Rescan' });
+    // The rescan applies the floor once its checks have run there.
+    expect(row).toMatchObject({ nsfwLevel: PG13, ingestion: 'Rescan' });
+    expect(outcome).toMatchObject({ nsfwLevel: PG13, ingestion: 'Rescan' });
+  });
+
+  // An appeal review is the scan's own to keep or drop (it needs a pending appeal); csam is kept by
+  // every write.
+  it('keeps a csam review when the floor raises a minor-flagged image', async () => {
+    for (const needsReview of ['csam']) {
+      scanTagLevel = PG13;
+      const { row } = await scan(
+        await arrange({
+          nsfwLevel: PG13,
+          metadata: judgeRated(R),
+          needsReview,
+          scanJobs: { hasMinor: true },
+        })
+      );
+      expect(row).toMatchObject({ nsfwLevel: R });
+      const { rows } = await db.query<{ needsReview: string }>(
+        `SELECT "needsReview" FROM "Image" WHERE id = $1`,
+        [ID]
+      );
+      expect(rows[0].needsReview).toBe(needsReview);
+    }
+  });
+
+  it('still sends the image back for a rescan when the floor write fails above the checked level', async () => {
+    scanTagLevel = PG13;
+    holder.beforeVerdict = () =>
+      db.query(`UPDATE "Image" SET metadata = $1 WHERE id = $2`, [judgeRated(X), ID]);
+    const passthrough = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (strings.join('').includes('RETURNING "nsfwLevel", ingestion')) throw new Error('boom');
+      return passthrough(strings, ...values);
+    }) as never);
+
+    const { row } = await scan(await arrange({ nsfwLevel: PG13 }));
+
+    expect(row).toMatchObject({ ingestion: 'Rescan', nsfwLevel: PG13 });
+    const { rows } = await db.query(`SELECT * FROM "JobQueue" WHERE "entityId" = $1`, [ID]);
+    expect(rows).toHaveLength(1);
   });
 
   it('keeps a legacy rating (no judge recorded) as the floor', async () => {

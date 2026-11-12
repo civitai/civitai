@@ -739,10 +739,12 @@ export async function resolveScanOutcome({
         { nsfwLevel: number; ingestion: ImageIngestionStatus }[]
       >`
         UPDATE "Image" SET
-          "nsfwLevel" = ${floor},
+          -- A rescan keeps the level until its checks have run at the floor; it applies it then.
+          "nsfwLevel" = CASE WHEN ${rescan} THEN "nsfwLevel" ELSE ${floor} END,
           ingestion = CASE WHEN ${rescan} THEN ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
             ELSE ingestion END,
           "needsReview" = CASE
+            WHEN "needsReview" IN ('csam', 'appeal') THEN "needsReview"
             WHEN ("scanJobs"->'hasMinor')::boolean AND ${floor} > 1 AND ${floor} < ${NsfwLevel.Blocked}
             THEN 'minor'
             ELSE "needsReview"
@@ -760,13 +762,28 @@ export async function resolveScanOutcome({
         ingestion = raised.ingestion;
       }
     } catch (error) {
-      // The verdict above has landed; a failure here must not turn it into a scan error.
+      // The verdict above has landed; a failure here must not turn it into a scan error. Where the
+      // floor sits above the level the checks ran at, the image is still sent back for a rescan (a
+      // queue row alone is pruned for a Scanned image; the Rescan state queues it).
       logToAxiom({
         type: 'error',
         name: 'scan-judge-floor',
         imageId: image.id,
         message: (error as Error).message,
       }).catch(() => null);
+      await dbWrite.$executeRaw`
+        UPDATE "Image" SET ingestion = ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+        WHERE id = ${image.id}
+          AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+          AND NOT "nsfwLevelLocked"
+          AND "blockedFor" IS NULL
+          AND ${rescan}
+      `.catch(() => null);
+      await dbWrite.$executeRaw`
+        INSERT INTO "JobQueue" (type, "entityType", "entityId")
+        VALUES ('ImageScan'::"JobQueueType", 'Image'::"EntityType", ${image.id})
+        ON CONFLICT DO NOTHING
+      `.catch(() => null);
     }
   }
 

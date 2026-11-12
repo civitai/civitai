@@ -48,10 +48,19 @@ async function recompute(image: {
   nsfwLevel: number;
   metadata?: object;
   locked?: boolean;
+  needsReview?: string;
+  scanJobs?: object;
 }) {
   await db.query(
-    `INSERT INTO "Image" (id, "nsfwLevel", "nsfwLevelLocked", metadata) VALUES (1, $1, $2, $3)`,
-    [image.nsfwLevel, image.locked ?? false, image.metadata ?? null]
+    `INSERT INTO "Image" (id, "nsfwLevel", "nsfwLevelLocked", metadata, "needsReview", "scanJobs")
+     VALUES (1, $1, $2, $3, $4, $5)`,
+    [
+      image.nsfwLevel,
+      image.locked ?? false,
+      image.metadata ?? null,
+      image.needsReview ?? null,
+      image.scanJobs ?? null,
+    ]
   );
   await db.query(`INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES (1, $1)`, [
     image.tagLevelTagId,
@@ -77,6 +86,23 @@ describe('update_nsfw_levels_new and a judge rating', () => {
   it('raises a lower stored level to the judge level', async () => {
     expect(await recompute({ tagLevelTagId: 1, nsfwLevel: PG13, metadata: judgeRated(X) })).toBe(X);
   });
+
+  it.each(['csam', 'appeal'])(
+    'keeps a %s review on a minor-flagged image it raises',
+    async (review) => {
+      await recompute({
+        tagLevelTagId: 1,
+        nsfwLevel: PG13,
+        metadata: judgeRated(R),
+        needsReview: review,
+        scanJobs: { hasMinor: true },
+      });
+      const { rows } = await db.query<{ needsReview: string; nsfwLevel: number }>(
+        `SELECT "needsReview", "nsfwLevel" FROM "Image" WHERE id = 1`
+      );
+      expect(rows[0]).toEqual({ needsReview: review, nsfwLevel: R });
+    }
+  );
 
   it('leaves a locked level alone', async () => {
     expect(
