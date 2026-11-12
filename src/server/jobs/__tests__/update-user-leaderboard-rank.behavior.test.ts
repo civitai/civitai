@@ -21,9 +21,8 @@ import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { leaderboardJobs } from '../prepare-leaderboard';
 
 /**
- * UserRank backs the profile rank badge. It is rebuilt from the day's LeaderboardResult rows;
- * on 2026-11-12 the one nightly rebuild missed, and every badge showed 11-11's rank all day
- * while the board list showed 11-12's. These run the real job and the real rebuild SQL.
+ * UserRank backs the profile rank badge and is rebuilt from the day's LeaderboardResult rows.
+ * These run the real job and the real rebuild SQL.
  */
 const SCHEMA = `
   CREATE TABLE "User" (id int PRIMARY KEY, "leaderboardShowcase" text);

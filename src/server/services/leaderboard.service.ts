@@ -13,14 +13,10 @@ import { leaderboardPopulatedKey } from '~/server/services/new-creators.service'
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
 /**
- * A board is populated for today when it has rows dated today, or when `prepare-leaderboard` marked it
- * complete for today. The marker covers a board that legitimately yields no rows, which the rows cannot
- * show. The job writes the marker with `current_date + addDays` at 23:00, so the 00:01 readers see it as
- * `current_date`.
- */
-/**
- * Every active board with a query; which are not populated for today (rows or marker); and which
- * are not yet marked done for today. Rows alone can be a batch of a board still being written.
+ * Every active board with a query, split two ways. `unpopulated`: no rows dated today and no marker
+ * for today (the marker covers a board that legitimately yields no rows). `unmarked`: no marker for
+ * today or later, since rows alone can be a batch of a board still being written. The 23:00 run writes
+ * markers as `current_date + 1`, so from then a finished board's marker reads as tomorrow.
  */
 export async function getLeaderboardPopulation() {
   const rows = await dbWrite.$queryRaw<
