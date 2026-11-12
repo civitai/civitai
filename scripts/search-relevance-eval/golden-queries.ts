@@ -9,7 +9,7 @@
  *   named — graded by whether a hit from `expectEcosystem` ranks in the top `k`: on
  *           `models`, a Checkpoint whose base model is in that ecosystem; on `images`, an
  *           image generated on one. Matched by ecosystem, never by name substring, since
- *           thousands of LoRAs have "Flux" in their names and would pass any boost.
+ *           many LoRAs carry an ecosystem's name ("Flux") and would pass any boost.
  */
 
 import type { ECO } from '~/shared/constants/basemodel.constants';
@@ -46,7 +46,8 @@ export function defineGoldenSet(queries: GoldenQuery[]) {
 const HOMER_TARGETS: GoldenTarget[] = ['images', 'models'];
 
 export const GOLDEN_QUERIES = defineGoldenSet([
-  // Misspelled "Homer Simpson", as reported from real searches: query expansion should recover these.
+  // Misspelled "Homer Simpson", one per error class (transposed, substituted, doubled, dropped,
+  // joined): query expansion should recover each.
   { id: 'homer-simpson', kind: 'canonical', text: 'homer simpson', targets: HOMER_TARGETS },
   {
     id: 'homer-simpson-typo-transposed',
