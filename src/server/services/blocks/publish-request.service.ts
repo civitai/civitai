@@ -91,6 +91,7 @@ import {
 } from '~/shared/constants/app-developer-terms.constants';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
+import type { ApproveClaim } from '~/server/services/blocks/publish-request-holds.service';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -3275,22 +3276,27 @@ export type ApproveRequestResult = {
  * adds a compensation transaction.
  */
 export async function approveRequest(params: ApproveRequestParams): Promise<ApproveRequestResult> {
+  const held: { claim?: ApproveClaim } = {};
   try {
-    return await approveRequestUnderClaim(params);
+    return await approveRequestUnderClaim(params, held);
   } finally {
-    const [{ dbWrite }, { releaseApproveClaim }] = await Promise.all([
-      import('~/server/db/client'),
-      import('./publish-request-holds.service'),
-    ]);
-    await releaseApproveClaim(dbWrite, params.publishRequestId).catch((err) =>
-      // eslint-disable-next-line no-console
-      console.error('[approveRequest] approve claim release failed; it expires on its own', err)
-    );
+    const { claim } = held;
+    if (claim) {
+      const [{ dbWrite }, { releaseApproveClaim }] = await Promise.all([
+        import('~/server/db/client'),
+        import('./publish-request-holds.service'),
+      ]);
+      await releaseApproveClaim(dbWrite, claim).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.error('[approveRequest] approve claim release failed; it expires on its own', err)
+      );
+    }
   }
 }
 
 async function approveRequestUnderClaim(
-  params: ApproveRequestParams
+  params: ApproveRequestParams,
+  held: { claim?: ApproveClaim }
 ): Promise<ApproveRequestResult> {
   const [{ dbRead, dbWrite }, { newUlid }, { env }] = await Promise.all([
     import('~/server/db/client'),
@@ -3587,7 +3593,7 @@ async function approveRequestUnderClaim(
 
   // From here on this approve writes and calls Forgejo, so a hold placed now could not stop it:
   // the claim makes placing one refuse until the approve ends.
-  await dbWrite.$transaction((tx) =>
+  held.claim = await dbWrite.$transaction((tx) =>
     claimApprove(tx, {
       ...holdDecision,
       publishRequestId: request.id,

@@ -1899,6 +1899,13 @@ describe('listRejectedRequests', () => {
 
 // ---- approveRequest --------------------------------------------------------
 
+const claimReleases = () =>
+  mockDbWrite.$executeRaw.mock.calls.filter(
+    (c: unknown[]) =>
+      Array.isArray(c[0]) &&
+      (c[0] as string[]).join('?').includes('DELETE FROM app_publish_request_approve_claims')
+  ).length;
+
 describe('approveRequest', () => {
   function pendingRequest(over: Record<string, unknown> = {}) {
     return {
@@ -2811,14 +2818,7 @@ describe('approveRequest', () => {
     await expect(
       approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
     ).rejects.toThrow(/open review hold/);
-    // Refused at the claim, before the approve's first write; the claim is released all the same.
-    expect(
-      mockDbWrite.$executeRaw.mock.calls.some(
-        (c: unknown[]) =>
-          Array.isArray(c[0]) &&
-          (c[0] as string[]).join('?').includes('DELETE FROM app_publish_request_approve_claims')
-      )
-    ).toBe(true);
+    // Refused at the claim, before the approve's first write.
     expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
     expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
     expect(mockDbWrite.oauthClient.update).not.toHaveBeenCalled();
@@ -2881,6 +2881,25 @@ describe('approveRequest', () => {
     );
     expect(executed.some((sql) => sql.includes("cleared_kind = 'overridden'"))).toBe(true);
     expect(executed.some((sql) => sql.includes('INSERT INTO "ModActivity"'))).toBe(true);
+    expect(claimReleases()).toBe(1);
+  });
+
+  it('🔴 an approve that fails after taking its claim releases it', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    mockForgejo.commitFiles.mockRejectedValueOnce(new Error('forgejo down'));
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/forgejo down/);
+    expect(claimReleases()).toBe(1);
   });
 
   it('subsequent-version happy path skips OauthClient + repo create', async () => {

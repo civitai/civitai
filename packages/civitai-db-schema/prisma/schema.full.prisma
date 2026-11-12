@@ -4111,6 +4111,7 @@ model AppPublishRequestApproveClaim {
   publishRequestId String   @map("publish_request_id")
   claimedByUserId  Int      @map("claimed_by_user_id")
   claimedAt        DateTime @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  claimToken       String   @map("claim_token")
 
   @@index([publishRequestId], map: "app_publish_request_approve_claims_request_idx")
   @@map("app_publish_request_approve_claims")

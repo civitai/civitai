@@ -12,11 +12,10 @@ import {
   HOLD_LABEL_MAX,
   HOLD_REASON_MAX,
   HOLD_REASON_MIN,
+  type PublishRequestHoldKind,
 } from '~/shared/constants/publish-request-holds.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-export type PublishRequestHoldKind = 'onsite' | 'listing';
 
 /** The app's open review holds. An approve while any is open needs an override reason. */
 export function useOpenPublishRequestHolds(slug: string | null | undefined) {

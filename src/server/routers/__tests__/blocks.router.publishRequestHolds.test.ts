@@ -149,6 +149,29 @@ describe('blocks.approveRequest with an open review hold', () => {
     expect(dbMock.dbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
   });
 
+  it('🔴 an override naming the shown holds passes the router to the service and gets past the hold check', async () => {
+    holdsTable([openHold]);
+    const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
+    const err = await caller
+      .approveRequest({
+        publishRequestId: 'pubreq_1',
+        holdOverrideReason: 'checked by hand, a false alarm',
+        holdOverrideIds: [7],
+      })
+      .catch((e) => e);
+    // It fails later on this fixture's minimal request; what matters is that holds did not stop it.
+    expect(err?.code).not.toBe('PRECONDITION_FAILED');
+    expect(String(err?.message)).not.toMatch(/review hold/);
+    // The hold check did run (and read the hold) before letting it through.
+    expect(
+      dbMock.dbWrite.$queryRaw.mock.calls.some((c: unknown[]) =>
+        Prisma.sql(c[0] as TemplateStringsArray, ...c.slice(1)).text.includes(
+          'app_publish_request_holds'
+        )
+      )
+    ).toBe(true);
+  });
+
   it('refuses a too-short override reason at the input', async () => {
     holdsTable([openHold]);
     const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
@@ -175,7 +198,7 @@ describe('hold procedures are moderator-only', () => {
   ] as const)('%s refuses a non-moderator and never touches the table', async (proc, input) => {
     holdsTable([openHold]);
     const caller = blocksRouter.createCaller(fakeCtx(dev) as never);
-    await expect((caller as any)[proc](input)).rejects.toBeInstanceOf(TRPCError);
+    await expect((caller as any)[proc](input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });

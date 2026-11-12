@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
@@ -6,11 +7,15 @@ import {
   HOLD_REASON_MIN,
   MAX_OPEN_HOLDS_PER_APP,
   APPROVE_CLAIM_TTL_MINUTES,
+  type PublishRequestHoldKind,
 } from '~/shared/constants/publish-request-holds.constants';
 
 type RawClient = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
 
-export type PublishRequestHoldKind = 'onsite' | 'listing';
+/** Advisory-lock class for review holds ('ARVH'), so its keys never meet another lock's. */
+const HOLD_LOCK_CLASS = 0x41525648;
+
+export type { PublishRequestHoldKind };
 
 export type PublishRequestHold = {
   id: number;
@@ -69,7 +74,8 @@ function assertReason(reason: string | null | undefined, what: string): string {
  * enclosing transaction ends, so every caller must run inside one.
  */
 async function lockApp(tx: RawClient, slug: string) {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${'app-review-hold:' + slug}))::text`;
+  await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(${HOLD_LOCK_CLASS}::int, hashtext(${slug}))::text`;
 }
 
 export async function getOpenHoldsBySlug(
@@ -261,20 +267,27 @@ export async function checkHoldsBeforeApprove(db: RawClient, input: ApproveHoldI
 export async function claimApprove(
   tx: RawClient,
   input: ApproveHoldInput & { publishRequestId: string; actorUserId: number }
-) {
+): Promise<ApproveClaim> {
   await lockApp(tx, input.slug);
   assertHoldsOverridable(await getOpenHoldsBySlug(tx, [input.slug]), input);
+  const token = randomUUID();
   await tx.$executeRaw`
     INSERT INTO app_publish_request_approve_claims
-      (slug, publish_request_id, claimed_by_user_id, claimed_at)
-    VALUES (${input.slug}, ${input.publishRequestId}, ${input.actorUserId}, now())
+      (slug, publish_request_id, claimed_by_user_id, claimed_at, claim_token)
+    VALUES (${input.slug}, ${input.publishRequestId}, ${input.actorUserId}, now(), ${token})
     ON CONFLICT (slug) DO UPDATE SET publish_request_id = EXCLUDED.publish_request_id,
-      claimed_by_user_id = EXCLUDED.claimed_by_user_id, claimed_at = now()`;
+      claimed_by_user_id = EXCLUDED.claimed_by_user_id, claimed_at = now(),
+      claim_token = EXCLUDED.claim_token`;
+  return { slug: input.slug, token };
 }
 
-export async function releaseApproveClaim(db: RawClient, publishRequestId: string) {
+export type ApproveClaim = { slug: string; token: string };
+
+/** Releases only the claim this approve took, never one a concurrent approve holds. */
+export async function releaseApproveClaim(db: RawClient, claim: ApproveClaim) {
   await db.$executeRaw`
-    DELETE FROM app_publish_request_approve_claims WHERE publish_request_id = ${publishRequestId}`;
+    DELETE FROM app_publish_request_approve_claims
+    WHERE slug = ${claim.slug} AND claim_token = ${claim.token}`;
 }
 
 /**
