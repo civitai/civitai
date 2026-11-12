@@ -230,7 +230,7 @@ export function shouldRetryPartError(err: UploadPartError) {
  * body parser); the same body fails the same way every time. 409 = the multipart
  * session is already finalized or aborted. 422 = the upload
  * STATE is bad (a parts manifest the backend won't accept, or a completion whose
- * object could not be verified). Neither improves on a retry.
+ * object could not be verified). None improves on a retry.
  *
  * 🔴 Retrying one of these is not merely wasteful, it CORRUPTS THE DIAGNOSIS: attempts
  * after the first hit a session the first attempt may already have consumed, so they
@@ -243,7 +243,6 @@ export function shouldRetryPartError(err: UploadPartError) {
  * predicate, one place: a second copy is how that divergence happened.
  */
 export function isTerminalCompleteStatus(status: number) {
-  // 400 = a malformed completion body; re-sending the same body cannot fix it.
   return status === 400 || status === 409 || status === 422;
 }
 
