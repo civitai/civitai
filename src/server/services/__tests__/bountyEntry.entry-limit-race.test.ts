@@ -17,6 +17,9 @@ let committed: Entry[];
 let entryLimit: number;
 let lockedRowQueries: number;
 let rowLock: Promise<void>;
+// What the locked row says; the controller's earlier read always sees an open bounty, as when an
+// award or refund commits between that read and the create.
+let bountyComplete: boolean;
 
 function sqlText(strings: TemplateStringsArray | string) {
   return typeof strings === 'string' ? strings : strings.join('?');
@@ -25,6 +28,7 @@ function sqlText(strings: TemplateStringsArray | string) {
 function installFakeDb() {
   committed = [];
   lockedRowQueries = 0;
+  bountyComplete = false;
   rowLock = Promise.resolve();
   let nextId = 100;
 
@@ -41,14 +45,19 @@ function installFakeDb() {
     const visible = () => [...committed, ...staged];
 
     const tx = {
+      // Any read of the Bounty row gets the row; only a FOR UPDATE read waits for the lock, so a
+      // missing lock shows up as an over-limit count, not as an empty result.
       $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-        if (!/FOR UPDATE/.test(sqlText(strings))) return [];
-        lockedRowQueries++;
+        const text = sqlText(strings);
+        if (!/"Bounty"/.test(text)) return [];
         expect(values).toContain(BOUNTY_ID);
-        const prev = rowLock;
-        rowLock = new Promise<void>((r) => (release = r));
-        await prev;
-        return [{ entryLimit, complete: false }];
+        if (/for update/i.test(text)) {
+          lockedRowQueries++;
+          const prev = rowLock;
+          rowLock = new Promise<void>((r) => (release = r));
+          await prev;
+        }
+        return [{ entryLimit, complete: bountyComplete }];
       },
       bountyEntry: {
         count: async ({ where }: { where: { bountyId: number; userId: number } }) =>
@@ -119,6 +128,13 @@ describe('bounty entry limit under parallel submits', () => {
     entryLimit = 1;
     await submit();
     expect(committed).toHaveLength(1);
+  });
+
+  it('refuses a new entry when an award completed the bounty after the pre-check', async () => {
+    entryLimit = 5;
+    bountyComplete = true;
+    await expect(submit()).rejects.toThrow('Bounty is already complete');
+    expect(committed).toHaveLength(0);
   });
 
   it('does not take the bounty row lock when editing an entry', async () => {
