@@ -2,6 +2,13 @@ import { Prisma } from '@prisma/client';
 import { JUDGE_RATING_METADATA_KEY } from '~/shared/utils/block-provenance-metadata';
 
 /**
+ * Whether `Image` aliased `alias` carries a scan workflow, i.e. was ever scanned. A row without one
+ * was never scanned, whatever its `ingestion` says.
+ */
+export const hasScanWorkflowSql = (alias: string) =>
+  Prisma.sql`COALESCE(${Prisma.raw(`"${alias}"`)}."scanJobs" ? 'workflowId', false)`;
+
+/**
  * `metadata` over `Image` aliased `alias`, with a legacy `judgeRating` seeded from its current level
  * when that is a single browsing level and it has no judge rating yet: the level judges applied
  * before ratings were recorded stays a floor under a rescan. A legacy rating never approves.

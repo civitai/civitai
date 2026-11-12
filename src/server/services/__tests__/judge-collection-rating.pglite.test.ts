@@ -437,6 +437,15 @@ describe('an image that was never scanned', () => {
     expect((await imageRow()).metadata?.judgeRating).toEqual(existing);
   });
 
+  it('queues an image waiting for a manual level even if it carries a scan workflow', async () => {
+    await seed({ ingestion: 'PendingManualAssignment', nsfwLevel: 0 });
+
+    await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
+
+    expect((await imageRow()).ingestion).toBe('Rescan');
+    expect(await queuedScans()).toEqual([{ entityId: IMAGE_ID }]);
+  });
+
   it('a second attempt does not queue it again', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R, scanJobs: null });
     await expect(rate(NsfwLevel.R)).rejects.toThrow(/still being scanned/i);
