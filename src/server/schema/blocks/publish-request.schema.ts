@@ -7,6 +7,7 @@ import {
   HOLD_LABEL_MAX,
   HOLD_REASON_MAX,
   HOLD_REASON_MIN,
+  MAX_OPEN_HOLDS_PER_APP,
 } from '~/shared/constants/publish-request-holds.constants';
 
 export const holdReasonSchema = z.string().trim().min(HOLD_REASON_MIN).max(HOLD_REASON_MAX);
@@ -222,6 +223,7 @@ export const approveRequestSchema = z.object({
   approvalNotes: z.string().max(2000).optional(),
   mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
   holdOverrideReason: holdReasonSchema.optional(),
+  holdOverrideIds: z.array(z.number().int().positive()).max(MAX_OPEN_HOLDS_PER_APP).optional(),
 });
 
 export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;

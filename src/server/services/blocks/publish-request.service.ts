@@ -3001,18 +3001,18 @@ export async function listPendingRequests(
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const [listingFacts, agentSummaries, liveFingerprints] = await Promise.all([
+  const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
+  const [listingFacts, agentSummaries, liveFingerprints, holdCounts] = await Promise.all([
     listingFactsForRequests(items as ListingJoinSubject[]),
     opts.includeAgentReview
       ? agentReviewSummariesForRequests(items.map((r) => r.id))
       : Promise.resolve(null),
     opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
+    getOpenHoldCountsBySlug(
+      dbRead,
+      items.map((r) => r.slug)
+    ),
   ]);
-  const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
-  const holdCounts = await getOpenHoldCountsBySlug(
-    dbRead,
-    items.map((r) => r.slug)
-  );
   // The impersonation check is STALE when the listing changed after it ran (a new app's draft
   // or pending listing is edited in place); a stale check never fast-lanes the row.
   const withStaleness = (id: string) => {
@@ -3241,6 +3241,8 @@ export type ApproveRequestParams = {
   mediaSplit?: ListingMediaSplitDecision | null;
   /** Required to approve while the app has open review holds; recorded on each hold. */
   holdOverrideReason?: string | null;
+  /** The open holds the moderator was shown; an open hold not in this list refuses. */
+  holdOverrideIds?: number[] | null;
 };
 
 export type ApproveRequestResult = {
@@ -3273,6 +3275,23 @@ export type ApproveRequestResult = {
  * adds a compensation transaction.
  */
 export async function approveRequest(params: ApproveRequestParams): Promise<ApproveRequestResult> {
+  try {
+    return await approveRequestUnderClaim(params);
+  } finally {
+    const [{ dbWrite }, { releaseApproveClaim }] = await Promise.all([
+      import('~/server/db/client'),
+      import('./publish-request-holds.service'),
+    ]);
+    await releaseApproveClaim(dbWrite, params.publishRequestId).catch((err) =>
+      // eslint-disable-next-line no-console
+      console.error('[approveRequest] approve claim release failed; it expires on its own', err)
+    );
+  }
+}
+
+async function approveRequestUnderClaim(
+  params: ApproveRequestParams
+): Promise<ApproveRequestResult> {
   const [{ dbRead, dbWrite }, { newUlid }, { env }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
@@ -3320,13 +3339,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   if (request.status !== 'pending') {
     throw new Error(`cannot approve a request in status ${request.status}`);
   }
-  const { checkHoldsBeforeApprove, resolveHoldsAtApprove } = await import(
+  const { checkHoldsBeforeApprove, claimApprove, resolveHoldsAtApprove } = await import(
     './publish-request-holds.service'
   );
-  const seenHoldIds = await checkHoldsBeforeApprove(dbWrite, {
+  const holdDecision = {
     slug: request.slug,
     overrideReason: params.holdOverrideReason,
-  });
+    shownHoldIds: params.holdOverrideIds,
+  };
+  await checkHoldsBeforeApprove(dbWrite, holdDecision);
   // Captured BEFORE markRequestDeployState below flips deploy_state to a
   // production 'building' value — drives the end-of-flow review teardown.
   const hadReviewPreview =
@@ -3563,6 +3584,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         );
     }
   }
+
+  // From here on this approve writes and calls Forgejo, so a hold placed now could not stop it:
+  // the claim makes placing one refuse until the approve ends.
+  await dbWrite.$transaction((tx) =>
+    claimApprove(tx, {
+      ...holdDecision,
+      publishRequestId: request.id,
+      actorUserId: params.reviewerUserId,
+    })
+  );
 
   // APP STORAGE SCHEMA MIGRATIONS — the approve gate, LAST among the refusals and still before
   // anything is written (so a refused approve reserves nothing): refused while an earlier run of
@@ -4490,15 +4521,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // from the `Publish-Request` trailer above and the pushing account. Any push
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
-  // A hold placed while the Forgejo calls above ran refuses here, leaving the request pending:
-  // the same state as any other mid-approve failure, which a re-approve recovers from.
   await dbWrite.$transaction(async (tx) => {
-    await resolveHoldsAtApprove(tx, {
-      slug: request.slug,
-      actorUserId: params.reviewerUserId,
-      overrideReason: params.holdOverrideReason,
-      seenHoldIds,
-    });
+    await resolveHoldsAtApprove(tx, { ...holdDecision, actorUserId: params.reviewerUserId });
     await tx.appBlockPublishRequest.update({
       where: { id: request.id },
       data: {

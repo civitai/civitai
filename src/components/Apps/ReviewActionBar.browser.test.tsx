@@ -144,6 +144,7 @@ describe('ReviewActionBar — review holds', () => {
     expect(mocks.mutate).toHaveBeenCalledWith('approve', {
       publishRequestId: 'req-1',
       holdOverrideReason: 'checked by hand, a false alarm',
+      holdOverrideIds: [7],
     });
   });
 
