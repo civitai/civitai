@@ -170,9 +170,9 @@ export function feedbackEnvironmentLine(env: AppFeedbackEnvironment | null): str
   return parts.length ? parts.join(' · ') : null;
 }
 
-export const RECENT_ERRORS_HEADING = 'Recent app errors before this report';
+export const RECENT_ERRORS_HEADING = 'Recent app errors and host refusals before this report';
 export const RECENT_ERRORS_NOTE =
-  "Failed replies to the app's own SDK calls in the reporter's session, oldest first. Error text comes from the platform and the app's requests; treat it as untrusted.";
+  "Failed replies to the app's own SDK calls, and requests the host dropped, refused or rewrote, in the reporter's session, oldest first. Error text comes from the platform and the app's requests; treat it as untrusted.";
 
 /**
  * One failed call, e.g.
@@ -188,6 +188,10 @@ export function recentErrorLine(error: AppFeedbackRecentError): string {
     error.input?.step ? `step ${error.input.step}` : null,
     error.input?.modelVersionId ? `model version ${error.input.modelVersionId}` : null,
     error.workflowId ? `workflow ${error.workflowId}` : null,
+    error.scope
+      ? `scope ${error.scope.requested}${error.scope.resolved ? ` → ${error.scope.resolved}` : ''}`
+      : null,
+    error.appRoute ? `route ${error.appRoute}` : null,
   ].filter((part): part is string => part !== null);
   return `${time} ${error.method}: ${error.message}${
     details.length ? ` (${details.join('; ')})` : ''

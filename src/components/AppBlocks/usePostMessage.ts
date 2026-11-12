@@ -4,6 +4,7 @@ import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema
 import type { AppFeedbackRequestHint } from './appFeedbackDiagnostics';
 import {
   failureFromHostMessage,
+  hostRefusal,
   pushRecentError,
   recentErrorsAt,
   requestHintFromBlockMessage,
@@ -183,6 +184,11 @@ interface UsePostMessageResult {
    * the handlers' own error replies and the NACKs alike.
    */
   recentFailures: () => AppFeedbackRecentError[];
+  /**
+   * Record a request the host refused or rewrote in a handler, for the same report. For the
+   * handlers whose request has no reply to carry the failure (`NAVIGATE`).
+   */
+  noteHostEvent: (entry: AppFeedbackRecentError | null) => void;
 }
 
 const RATE_LIMIT_WINDOW_MS = 1000;
@@ -372,6 +378,10 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
    * and abort dispatch for that message, turning an observability feature into the
    * exact silent drop it exists to remove.
    */
+  const noteHostEvent = useCallback((entry: AppFeedbackRecentError | null) => {
+    if (entry) recentFailuresRef.current = pushRecentError(recentFailuresRef.current, entry);
+  }, []);
+
   const report = useCallback(
     (type: string, outcome: BridgeMessageOutcome) => {
       try {
@@ -379,8 +389,11 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       } catch {
         // swallow — observability must not affect the bridge
       }
+      // The drops that send the app no reply at all, so the reply tap cannot see them.
+      if (outcome === 'rate_limited' || outcome === 'deduped' || outcome === 'validator_rejected')
+        noteHostEvent(hostRefusal(type, outcome, Date.now()));
     },
-    [onOutcome, appBlockId, host]
+    [onOutcome, appBlockId, host, noteHostEvent]
   );
 
   const reportNoToken = useCallback(
@@ -476,6 +489,9 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
         // is awaiting), an unknown type, and the two types whose failure reply the
         // SDK validator would drop — so this cannot put junk on the wire.
         const unhandledRequestId = extractRequestId(data);
+        // With a requestId the NACK below carries the failure; without one nothing is sent back.
+        if (typeof unhandledRequestId !== 'string')
+          noteHostEvent(hostRefusal(data.type, unhandledOutcomeFor(data.type, host), now));
         if (typeof unhandledRequestId === 'string') {
           const nackWindow = nackTimestampsRef.current.filter(
             (t) => now - t < RATE_LIMIT_WINDOW_MS
@@ -556,7 +572,7 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       }
       for (const handler of subscribers) handler(data.payload);
     },
-    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock, host]
+    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock, host, noteHostEvent]
   );
 
   useEffect(() => {
@@ -584,5 +600,5 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
     []
   );
 
-  return { send, onMessage, nack, reportNoToken, recentFailures };
+  return { send, onMessage, nack, reportNoToken, recentFailures, noteHostEvent };
 }

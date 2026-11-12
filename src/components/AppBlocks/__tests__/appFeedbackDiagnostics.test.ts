@@ -5,6 +5,8 @@ import {
   buildAppFeedbackEnvironment,
   clampErrorText,
   failureFromHostMessage,
+  hostRefusal,
+  navigateDiagnostic,
   osFromUserAgent,
   pushRecentError,
   recentErrorsAt,
@@ -319,5 +321,49 @@ describe('buildAppFeedbackEnvironment', () => {
     expect(env.viewport).toStrictEqual({ width: 0, height: 100_000 });
     expect(env).not.toHaveProperty('devicePixelRatio');
     expect(appFeedbackEnvironmentSchema.safeParse(env).success).toBe(true);
+  });
+});
+
+describe('hostRefusal — requests the host dropped or refused', () => {
+  it('a host-authored message, the reason, and nothing from the request', () => {
+    const entry = hostRefusal('SUBMIT_WORKFLOW', 'rate_limited', AT);
+    expect(entry).toMatchObject({ method: 'SUBMIT_WORKFLOW', reason: 'rate_limited', at: AT });
+    expect(entry!.message).toMatch(/^Dropped by the host/);
+    expect(appFeedbackRecentErrorSchema.parse(entry)).toStrictEqual(entry);
+  });
+
+  it('records nothing for a type that is not a bridge type', () => {
+    expect(hostRefusal('other', 'validator_rejected', AT)).toBeNull();
+  });
+});
+
+describe('navigateDiagnostic — a NAVIGATE the host refused or rewrote', () => {
+  it('a leading-slash path with no scope, resolved inside the app: rewritten, with the route', () => {
+    const entry = navigateDiagnostic(
+      { path: '/generate?model=1#top', target: 'current' },
+      { scope: 'app' },
+      AT
+    );
+    expect(entry).toMatchObject({
+      method: 'NAVIGATE',
+      reason: 'rewritten',
+      scope: { requested: 'unspecified', resolved: 'app' },
+      appRoute: '/generate',
+    });
+    expect(appFeedbackRecentErrorSchema.parse(entry)).toStrictEqual(entry);
+  });
+
+  it('a refusal records the requested scope and no path at all', () => {
+    const entry = navigateDiagnostic({ path: '/admin/secret', scope: 'site' }, null, AT);
+    expect(entry).toMatchObject({ reason: 'refused', scope: { requested: 'site' } });
+    expect(JSON.stringify(entry)).not.toContain('secret');
+  });
+
+  it('a navigation carried out as worded records nothing', () => {
+    expect(navigateDiagnostic({ path: 'gallery', scope: 'app' }, { scope: 'app' }, AT)).toBeNull();
+    expect(
+      navigateDiagnostic({ path: '/models', scope: 'site' }, { scope: 'site' }, AT)
+    ).toBeNull();
+    expect(navigateDiagnostic({ path: 'gallery' }, { scope: 'app' }, AT)).toBeNull();
   });
 });

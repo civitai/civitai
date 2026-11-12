@@ -29,6 +29,24 @@ const OPAQUE_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const ENUM_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 /**
+ * Why the host did not carry out a request as asked. Bridge drops (`rate_limited`, `deduped`,
+ * `no_handler`, `not_applicable`, `validator_rejected`), surface refusals (`review_mode`,
+ * `not_ready`, `refused`) and `rewritten`: honoured, but not as the app worded it.
+ */
+export const APP_FEEDBACK_HOST_REASONS = [
+  'rate_limited',
+  'deduped',
+  'no_handler',
+  'not_applicable',
+  'validator_rejected',
+  'review_mode',
+  'not_ready',
+  'refused',
+  'rewritten',
+] as const;
+export type AppFeedbackHostReason = (typeof APP_FEEDBACK_HOST_REASONS)[number];
+
+/**
  * One failed reply the host sent the app during this app session: which reply, the platform's
  * error text, and the workflow it concerned. Never a request or response payload. The text is the
  * platform's own error message, so it is shown to the owner as untrusted text, never as markup.
@@ -49,6 +67,17 @@ export const appFeedbackRecentErrorSchema = z.object({
       modelVersionId: z.number().int().positive().optional(),
     })
     .optional(),
+  /** Set when the HOST dropped, refused or rewrote the request rather than a call failing. */
+  reason: z.enum(APP_FEEDBACK_HOST_REASONS).optional(),
+  /** NAVIGATE only: the scope the app asked for and the one the host resolved it in. */
+  scope: z
+    .object({
+      requested: z.enum(['app', 'site', 'unspecified']),
+      resolved: z.enum(['app', 'site']).optional(),
+    })
+    .optional(),
+  /** NAVIGATE only: the app-relative path, without query or fragment. Never a full URL. */
+  appRoute: z.string().max(200).optional(),
   at: z.number().int().nonnegative(),
   /** Consecutive identical failures folded into this entry. */
   count: z.number().int().min(1).max(10_000),

@@ -1,6 +1,7 @@
 import type {
   AppFeedbackBrowserFamily,
   AppFeedbackEnvironment,
+  AppFeedbackHostReason,
   AppFeedbackOsFamily,
   AppFeedbackRecentError,
 } from '~/server/schema/app-feedback.schema';
@@ -139,11 +140,66 @@ export function withRequestHint(
   return { ...failure, method: hint.method, ...(hint.input ? { input: hint.input } : {}) };
 }
 
+const HOST_REASON_MESSAGES: Readonly<Record<AppFeedbackHostReason, string>> = Object.freeze({
+  rate_limited: 'Dropped by the host: the app sent more than 30 messages in a second.',
+  deduped: 'Dropped by the host: the same requestId was sent again within 5 seconds.',
+  no_handler: 'Dropped by the host: this host does not handle this message type.',
+  not_applicable: 'Dropped by the host: this message type does not apply on this surface.',
+  validator_rejected: "The app's SDK rejected the host's reply to this request.",
+  review_mode: 'Refused by the host: not available in the moderation review preview.',
+  not_ready: 'Refused by the host: the app had not finished its handshake.',
+  refused: 'Refused by the host: the request was not valid on this surface.',
+  rewritten:
+    "Carried out differently than worded: no scope was given, so the path was resolved inside the app's own route.",
+});
+
+/** An entry for a request the host dropped, refused or rewrote; `null` for a non-bridge type. */
+export function hostRefusal(
+  method: string,
+  reason: AppFeedbackHostReason,
+  at: number,
+  extra: Pick<AppFeedbackRecentError, 'scope' | 'appRoute'> = {}
+): AppFeedbackRecentError | null {
+  if (!BRIDGE_TYPE.test(method)) return null;
+  return { method, message: HOST_REASON_MESSAGES[reason], reason, ...extra, at, count: 1 };
+}
+
+/** The app-relative path of a NAVIGATE: no query, no fragment, no control characters, capped. */
+function appRelativeRoute(path: string): string {
+  const bare = path.split(/[?#]/, 1)[0].replace(CONTROL_CHARS, '').trim();
+  return `/${bare.replace(/^\/+/, '')}`.slice(0, APP_FEEDBACK_APP_ROUTE_MAX);
+}
+
+/**
+ * What a NAVIGATE the host refused or rewrote should record, or `null` when it went as asked.
+ * `resolved` is the host's resolution (`null` = refused). The one rewrite recorded is the silent
+ * one: a path with a leading slash and no `scope`, which reads as site-absolute but is resolved
+ * inside the app's own route.
+ */
+export function navigateDiagnostic(
+  raw: unknown,
+  resolved: { scope: 'app' | 'site' } | null,
+  at: number
+): AppFeedbackRecentError | null {
+  const body = asRecord(raw);
+  const requested =
+    body?.scope === 'site' ? 'site' : body?.scope === 'app' ? 'app' : ('unspecified' as const);
+  if (!resolved) return hostRefusal('NAVIGATE', 'refused', at, { scope: { requested } });
+  const path = typeof body?.path === 'string' ? body.path : '';
+  if (requested === 'unspecified' && path.startsWith('/') && resolved.scope === 'app')
+    return hostRefusal('NAVIGATE', 'rewritten', at, {
+      scope: { requested, resolved: resolved.scope },
+      appRoute: appRelativeRoute(path),
+    });
+  return null;
+}
+
 const sameFailure = (a: AppFeedbackRecentError, b: AppFeedbackRecentError) =>
   a.method === b.method &&
   a.message === b.message &&
   a.code === b.code &&
   a.workflowId === b.workflowId &&
+  a.appRoute === b.appRoute &&
   JSON.stringify(a.input ?? null) === JSON.stringify(b.input ?? null);
 
 /**

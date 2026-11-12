@@ -251,6 +251,22 @@ describe('recentErrorLine — one failed SDK call in the inbox', () => {
     );
   });
 
+  it('a rewritten NAVIGATE names the scopes and the app-relative route', () => {
+    expect(
+      recentErrorLine({
+        method: 'NAVIGATE',
+        message: 'Carried out differently than worded.',
+        reason: 'rewritten',
+        scope: { requested: 'unspecified', resolved: 'app' },
+        appRoute: '/generate',
+        at: Date.UTC(2026, 10, 11, 1, 2, 3),
+        count: 1,
+      })
+    ).toBe(
+      '01:02:03 UTC NAVIGATE: Carried out differently than worded. (scope unspecified → app; route /generate)'
+    );
+  });
+
   it('no details, no parentheses', () => {
     expect(
       recentErrorLine({

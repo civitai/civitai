@@ -45,6 +45,20 @@ describe('appFeedbackContextSchema — recentErrors', () => {
     expect(res.success && res.data.context.recentErrors).toStrictEqual([error]);
   });
 
+  it('keeps a host refusal with its reason, scopes and app route', () => {
+    const refusal = {
+      method: 'NAVIGATE',
+      message: 'rewritten',
+      reason: 'rewritten',
+      scope: { requested: 'unspecified', resolved: 'app' },
+      appRoute: '/generate',
+      at: 1,
+      count: 1,
+    };
+    const res = parse({ recentErrors: [refusal] });
+    expect(res.success && res.data.context.recentErrors).toStrictEqual([refusal]);
+  });
+
   it('caps the list at 10 entries', () => {
     expect(parse({ recentErrors: Array(10).fill(error) }).success).toBe(true);
     expect(parse({ recentErrors: Array(11).fill(error) }).success).toBe(false);
@@ -63,6 +77,9 @@ describe('appFeedbackContextSchema — recentErrors', () => {
       { input: { kind: '<b>' } },
       { input: { modelVersionId: 0 } },
       { count: 0 },
+      { reason: 'because' },
+      { scope: { requested: 'everywhere' } },
+      { appRoute: 'r'.repeat(201) },
     ])
       expect(parse({ recentErrors: [{ ...error, ...bad }] }).success).toBe(false);
   });
