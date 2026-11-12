@@ -214,16 +214,38 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
     expect((await imageRow()).nsfwLevel).toBe(NsfwLevel.R);
   });
 
-  it('leaves the level unlocked and never writes the scan state', async () => {
+  it('leaves the level unlocked and the scan state alone for a raise within SFW', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG });
+
+    await rate(NsfwLevel.PG13);
+
+    const row = await imageRow();
+    expect(row).toMatchObject({
+      nsfwLevel: NsfwLevel.PG13,
+      nsfwLevelLocked: false,
+      ingestion: 'Scanned',
+      blockedFor: null,
+    });
+    expect(row.scannedAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('sends a raise into an NSFW level back through the scan, which holds approval', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG13 });
+
+    await rate(NsfwLevel.X);
+
+    const row = await imageRow();
+    expect(row).toMatchObject({ nsfwLevel: NsfwLevel.X, ingestion: 'Rescan', blockedFor: null });
+    expect(row.scannedAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+    await expect(approve()).rejects.toThrow(/NSFW rating/);
+  });
+
+  it('does not rescan when the judge picks no higher than the scan', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.X });
 
     await rate(NsfwLevel.R);
 
-    const row = await imageRow();
-    expect(row.nsfwLevelLocked).toBe(false);
-    expect(row.ingestion).toBe('Scanned');
-    expect(row.blockedFor).toBeNull();
-    expect(row.scannedAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+    expect(await imageRow()).toMatchObject({ nsfwLevel: NsfwLevel.X, ingestion: 'Scanned' });
   });
 
   it('records the judge, the collection, the level they picked and when', async () => {
@@ -284,11 +306,33 @@ describe('updateCollectionItemsStatus: approving in a judge-rated collection', (
     ],
     ['has a block reason', `UPDATE "Image" SET "blockedFor" = 'tos'`],
     ['carries no scan workflow', `UPDATE "Image" SET "scanJobs" = NULL`],
+    [
+      'carries only a legacy rating',
+      `UPDATE "Image" SET metadata = jsonb_set(metadata, '{judgeRating}', (metadata->'judgeRating') || '{"legacy": true, "userId": null}')`,
+    ],
   ])('refuses a rated item that %s', async (_, change) => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R });
     await rate(NsfwLevel.R);
     await db.exec(change);
 
     await expect(approve()).rejects.toThrow(/NSFW rating/);
+  });
+});
+
+describe('a legacy judge rating', () => {
+  const LEGACY = {
+    judgeRating: { userId: null, nsfwLevel: 4, legacy: true, collectionId: COLLECTION_ID },
+  };
+
+  it('is replaced by a judge rating, which then approves', async () => {
+    await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.R });
+    await db.query(`UPDATE "Image" SET metadata = $1`, [LEGACY]);
+    await expect(approve()).rejects.toThrow(/NSFW rating/);
+
+    await rate(NsfwLevel.R);
+
+    expect((await imageRow()).metadata?.judgeRating).toMatchObject({ userId: JUDGE_ID });
+    expect((await imageRow()).metadata?.judgeRating).not.toHaveProperty('legacy');
+    await expect(approve()).rejects.toThrow(PAST_GATE);
   });
 });

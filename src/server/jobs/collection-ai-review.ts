@@ -107,6 +107,17 @@ export async function reviewCollection(collectionId: number, config: CollectionA
     WHERE ci."collectionId" = ${collectionId}
       AND ci.status = 'REVIEW'
       AND ci."reviewedById" IS NULL
+      -- Where judges apply the rating, an item waits for a judge's rating before it is reviewed,
+      -- so it is not reclassified, and re-billed, on every run until then.
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM "Collection" c
+          WHERE c.id = ci."collectionId"
+            AND c.type = 'Image'
+            AND c.metadata->>'judgesApplyBrowsingLevel' = 'true'
+        )
+        OR ${judgeRatedSql('i', collectionId)}
+      )
     ORDER BY ci.id
     LIMIT ${BATCH_SIZE}
   `;

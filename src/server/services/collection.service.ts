@@ -106,6 +106,7 @@ import {
   allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   parseBitwiseBrowsingLevel,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
   DETAIL_BACKED_REASONS,
@@ -4192,7 +4193,8 @@ export async function getCollectionEntryCount({
 
 /**
  * A scanned, unblocked image a judge of this collection rated, over `Image` aliased `alias`. A row
- * that carries no scan workflow was never scanned, whatever its `ingestion` says.
+ * that carries no scan workflow was never scanned, whatever its `ingestion` says. A legacy rating
+ * (seeded from a level applied before ratings were recorded) is a floor, never an approval.
  */
 export const judgeRatedSql = (alias: string, collectionId: number) => {
   const i = Prisma.raw(`"${alias}"`);
@@ -4203,6 +4205,7 @@ export const judgeRatedSql = (alias: string, collectionId: number) => {
     AND ${i}."blockedFor" IS NULL
     AND ${i}."nsfwLevel" != ${NsfwLevel.Blocked}
     AND ${i}."scanJobs" ? 'workflowId'
+    AND COALESCE(${i}."metadata" -> ${JUDGE_RATING_METADATA_KEY}::text ->> 'legacy', '') != 'true'
   ), false)`;
 };
 
@@ -4265,9 +4268,18 @@ export const setCollectionItemNsfwLevel = async ({
 
   // The judge may raise the scan's level, never lower it; a later scan keeps the judge's level as a
   // floor (resolveScanOutcome). The WHERE repeats the checks above for a scan or block in between.
-  const [updated] = await dbWrite.$queryRaw<{ nsfwLevel: number }[]>`
+  const [updated] = await dbWrite.$queryRaw<
+    { nsfwLevel: number; ingestion: ImageIngestionStatus }[]
+  >`
     UPDATE "Image"
     SET "nsfwLevel" = GREATEST("nsfwLevel", ${nsfwLevel}::int),
+      -- A raise into an NSFW level sends the image back through the scan: its checks ran at the
+      -- lower level. Approval waits for that verdict.
+      ingestion = CASE
+        WHEN ${nsfwLevel}::int > "nsfwLevel" AND ${nsfwLevel}::int > ${sfwBrowsingLevelsFlag}::int
+        THEN ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+        ELSE ingestion
+      END,
       "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
         ${JUDGE_RATING_METADATA_KEY}::text,
         jsonb_build_object(
@@ -4283,7 +4295,7 @@ export const setCollectionItemNsfwLevel = async ({
       AND "blockedFor" IS NULL
       AND "nsfwLevel" != ${NsfwLevel.Blocked}
       AND "scanJobs" ? 'workflowId'
-    RETURNING "nsfwLevel"
+    RETURNING "nsfwLevel", ingestion
   `;
   if (!updated)
     throw throwBadRequestError('This image changed while it was being rated. Try again.');

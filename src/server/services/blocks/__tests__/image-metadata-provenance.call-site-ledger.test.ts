@@ -542,6 +542,11 @@ type UpdateDecision =
   | 'stored-merge-server-keys'
   /** Raw SET building `metadata` from SQL literals, fixed keys and scalar-cast parameters. */
   | 'raw-server-keys'
+  /**
+   * Raw SET merging exactly one literal, non-provenance key whose value is a `::text` parameter: a
+   * string under a fixed key cannot add or replace any other key.
+   */
+  | 'raw-literal-key-text-value'
   /** Raw SET from the moderation-rule result, which merges the stored row with rule keys. */
   | 'raw-mod-rule-metadata'
   /** `data` is `cond ? { … } : { … }`: two object literals, neither naming metadata. */
@@ -556,7 +561,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     sites: 1,
   },
   'src/pages/api/webhooks/youtube-upload.ts#handler': {
-    decision: 'stored-merge-server-keys',
+    decision: 'raw-literal-key-text-value',
     sites: 1,
   },
   // Module-level job body: the enclosing-function rule attributes it to `<module>`.
@@ -670,11 +675,21 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       }
       return null;
     }
+    case 'raw-literal-key-text-value': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      const match =
+        /^COALESCE\("metadata", '\{\}'::jsonb\) \|\| jsonb_build_object\('(\w+)', \$\{[\w.]+\}::text\)$/.exec(
+          expr
+        );
+      if (!match) return 'metadata is no longer one literal key with a text value';
+      if (PROVENANCE_TOKEN.test(match[1])) return 'names a provenance key';
+      return null;
+    }
     case 'raw-mod-rule-metadata': {
       const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
       if (
         expr !==
-        `CASE WHEN \${metadataJson}::jsonb IS NULL THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || (\${metadataJson}::jsonb - \${JUDGE_RATING_METADATA_KEY}::text) END`
+        `CASE WHEN \${metadataJson}::jsonb IS NULL THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
       )
         return 'metadata is no longer the moderation-rule result or the stored value';
       if (

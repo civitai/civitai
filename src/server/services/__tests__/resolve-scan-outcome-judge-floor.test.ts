@@ -4,7 +4,11 @@ import type * as Audit from '~/utils/metadata/audit';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as ImageService from '~/server/services/image.service';
 
-const holder = vi.hoisted(() => ({ holdRule: false }));
+const holder = vi.hoisted(() => ({
+  holdRule: false,
+  /** Runs just before the scan's verdict write. */
+  beforeVerdict: undefined as undefined | (() => Promise<unknown>),
+}));
 
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
@@ -128,15 +132,23 @@ const scan = async (image: ScanImage) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(auditPostImageMeta).mockReturnValue({ success: true });
   holder.holdRule = false;
   scanTagLevel = X;
   const raw = pgliteRaw(db);
+  holder.beforeVerdict = undefined;
+  // The scan's reads and writes of the image row itself go to the real row.
   const isImageWrite = (strings: unknown) =>
-    Array.isArray(strings) && (strings as string[]).join('').includes('UPDATE "Image"');
+    Array.isArray(strings) &&
+    ['UPDATE "Image"', '"judgeFloor"'].some((t) => (strings as string[]).join('').includes(t));
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
-  ) => (isImageWrite(strings) ? raw.executeRaw(strings, ...values) : 0)) as never);
+  ) => {
+    if (!isImageWrite(strings)) return 0;
+    if (strings.join('').includes('"needsReview" = CASE')) await holder.beforeVerdict?.();
+    return raw.executeRaw(strings, ...values);
+  }) as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -167,15 +179,32 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     expect(outcome.nsfwLevel).toBe(R);
   });
 
-  it('holds the floor for a rating written after the scan loaded the image', async () => {
+  it('runs the checks at the judge level when the tags rate lower', async () => {
     scanTagLevel = PG13;
-    const loaded = { nsfwLevel: PG13, metadata: null };
-    const { outcome, row } = await scan(
-      await arrange({ nsfwLevel: R, metadata: judgeRated(R) }, loaded)
-    );
+    // The prompt fails the audit, which only runs for an NSFW level.
+    vi.mocked(auditPostImageMeta).mockReturnValue({ success: false, blockedFor: ['prompt'] });
+    const { outcome, row } = await scan(await arrange({ nsfwLevel: X, metadata: judgeRated(X) }));
 
-    expect(row.nsfwLevel).toBe(R);
-    expect(outcome.nsfwLevel).toBe(R);
+    expect(row).toMatchObject({ ingestion: 'Blocked', nsfwLevel: BLOCKED });
+    expect(outcome.ingestion).toBe('Blocked');
+  });
+
+  it('runs the checks at the tag level when there is no judge rating', async () => {
+    scanTagLevel = PG13;
+    vi.mocked(auditPostImageMeta).mockReturnValue({ success: false, blockedFor: ['prompt'] });
+    const { row } = await scan(await arrange({ nsfwLevel: PG13 }));
+
+    expect(row).toMatchObject({ ingestion: 'Scanned', nsfwLevel: PG13 });
+  });
+
+  it('raises and rescans for a rating written after the checks ran', async () => {
+    scanTagLevel = PG13;
+    holder.beforeVerdict = () =>
+      db.query(`UPDATE "Image" SET metadata = $1 WHERE id = $2`, [judgeRated(X), ID]);
+    const { outcome, row } = await scan(await arrange({ nsfwLevel: PG13 }));
+
+    expect(row).toMatchObject({ nsfwLevel: X, ingestion: 'Rescan' });
+    expect(outcome).toMatchObject({ nsfwLevel: X, ingestion: 'Rescan' });
   });
 
   it('keeps a legacy rating (no judge recorded) as the floor', async () => {
@@ -239,5 +268,40 @@ describe('resolveScanOutcome with a collection judge rating', () => {
 
     expect(row.metadata).toMatchObject({ ...judgeRated(R), ruleId: 7 });
     expect(row.nsfwLevel).toBe(R);
+  });
+
+  it('writes only the rule keys over the stored row, never the loaded copy', async () => {
+    holder.holdRule = true;
+    // The scan loaded an older copy of the metadata than the row now holds.
+    const { row } = await scan(
+      await arrange(
+        { nsfwLevel: R, metadata: { ...judgeRated(R), youtubeVideoId: 'new' } },
+        { nsfwLevel: R, metadata: { judgeRating: { nsfwLevel: PG13 }, youtubeVideoId: 'old' } }
+      )
+    );
+
+    expect(row.metadata).toEqual({
+      ...judgeRated(R),
+      youtubeVideoId: 'new',
+      ruleId: 7,
+      ruleReason: 'r',
+    });
+  });
+
+  it('keeps the landed verdict when the floor write fails', async () => {
+    scanTagLevel = PG13;
+    const passthrough = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (strings.join('').includes('RETURNING "nsfwLevel", ingestion')) throw new Error('boom');
+      return passthrough(strings, ...values);
+    }) as never);
+
+    const { outcome, row } = await scan(await arrange({ nsfwLevel: R, metadata: judgeRated(R) }));
+
+    expect(outcome.ingestion).toBe('Scanned');
+    expect(row).toMatchObject({ ingestion: 'Scanned', nsfwLevel: PG13 });
   });
 });
