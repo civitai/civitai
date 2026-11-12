@@ -18,6 +18,8 @@ import { notifDbRead, notifDbWrite } from './clients/db';
 import { notificationCache, type NotificationCategoryCount } from './cache';
 import { getNotifDbWithoutLag, isWritePool, preventReplicationLag } from './lag';
 import { logToAxiom, safeError } from './clients/axiom';
+import { settleWithin } from './deadline';
+import { countRedisDeadlineMs } from '../../env';
 
 const bulkBatchSize = 5000;
 
@@ -191,13 +193,26 @@ async function countNotificationsImpl(input: {
 
   // Check the lag flag BEFORE the cache — if a recent write flagged this user, bust the cache and read
   // the primary to avoid a stale count. Only the cacheable variant interacts with the cache at all.
-  const db = await getNotifDbWithoutLag(userId);
-  if (cacheable) {
+  //
+  // Every redis call here is bounded and may fail without failing the count: redis holds a cache and a
+  // lag flag, and the DB is the truth. When the lag flag can't be read, read the replica (at worst one
+  // poll interval stale) and leave the cache alone, since a replica count could be the stale one the
+  // flag exists to keep out of it. When a cache call fails, skip the rest of the cache work too.
+  const lag = await settleWithin(() => getNotifDbWithoutLag(userId), countRedisDeadlineMs);
+  const db = lag.ok ? lag.value : notifDbRead();
+  let useCache = cacheable && lag.ok;
+  if (useCache) {
     if (isWritePool(db)) {
-      await notificationCache.bustUser(userId);
+      useCache = (
+        await settleWithin(() => notificationCache.bustUser(userId), countRedisDeadlineMs)
+      ).ok;
     } else {
-      const cached = await notificationCache.getUser(userId);
-      if (cached) return cached;
+      const cached = await settleWithin(
+        () => notificationCache.getUser(userId),
+        countRedisDeadlineMs
+      );
+      if (cached.ok && cached.value) return cached.value;
+      useCache = cached.ok;
     }
   }
 
@@ -223,7 +238,8 @@ async function countNotificationsImpl(input: {
   const rows = await query.result();
   const truncated = rows.reduce((sum, { count }) => sum + Number(count), 0) > COUNT_ROW_LIMIT;
   const result = truncated ? rows.map((row) => ({ ...row, floor: true })) : rows;
-  if (cacheable) await notificationCache.setUser(userId, result);
+  if (useCache)
+    await settleWithin(() => notificationCache.setUser(userId, result), countRedisDeadlineMs);
   return result;
 }
 

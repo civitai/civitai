@@ -37,6 +37,11 @@ export type NotificationsClientConfig = {
    * disables retry. Only transient failures retry; a 4xx (bad payload / auth) throws immediately. All
    * operations are idempotent (upsert-by-key / mark / reads), so retrying is safe. */
   retries?: number;
+  /** Per-attempt timeout for `countNotifications` only. Default 1500 ms: the count feeds a badge polled on
+   * every signed-in page and its callers degrade to no badge, so giving up fast beats waiting. */
+  countTimeoutMs?: number;
+  /** Retries for `countNotifications` only. Default 0: the next poll is the retry. */
+  countRetries?: number;
   /** Base backoff in ms; grows exponentially (`base * 2^attempt`) with jitter, capped at 2s. Default 200. */
   retryBaseMs?: number;
   /** Called once per FINAL request failure (after retries), from the single `post()` choke point — so
@@ -226,6 +231,14 @@ function noticesConfig(config: NotificationsClientConfig): NotificationsClientCo
   };
 }
 
+function countConfig(config: NotificationsClientConfig): NotificationsClientConfig {
+  return {
+    ...config,
+    timeoutMs: config.countTimeoutMs ?? 1500,
+    retries: config.countRetries ?? 0,
+  };
+}
+
 // Bounds each bulk POST so a large producer run (tens of thousands of rows, each with a potentially large
 // `users[]`) can't exceed the app's body limit. The app's DB-write batching is separate.
 const BULK_HTTP_BATCH_SIZE = 1000;
@@ -260,7 +273,7 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
     countNotifications: async (
       input: CountNotificationsInput
     ): Promise<NotificationCategoryCount[]> => {
-      const res = (await post('/notifications/count', input, config)) as Array<
+      const res = (await post('/notifications/count', input, countConfig(config))) as Array<
         Omit<NotificationCategoryCount, 'count'> & { count: number | string }
       >;
       return res.map((c) => ({

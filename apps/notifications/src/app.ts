@@ -28,7 +28,7 @@ import {
 } from './lib/server/operations';
 import { notifDbRead, notifDbWrite } from './lib/server/clients/db';
 import { health } from './lib/server/health';
-import { logLevel } from './env';
+import { handlerDeadlineMs, logLevel } from './env';
 
 /**
  * Build the Fastify server (no listen — server.ts calls listen; tests use `.inject`). Ops routes:
@@ -81,6 +81,27 @@ export async function buildServer(): Promise<FastifyInstance> {
         ? 'error'
         : 'client_error';
     httpRequestDurationSeconds.observe({ route, outcome }, reply.elapsedTime / 1000);
+  });
+
+  // Handler deadline for the authed API: a request still unanswered after handlerDeadlineMs gets a 503, so a
+  // hung DB pool or redis call costs the caller a retryable answer instead of an open socket. Fastify's own
+  // requestTimeout can't do this: it bounds receiving the request, not running the handler. The handler
+  // keeps running; when it finishes, Fastify drops its reply and logs that one was already sent. The
+  // notices routes are exempt because a send runs for minutes by design.
+  const deadlines = new WeakMap<FastifyRequest, ReturnType<typeof setTimeout>>();
+  app.addHook('onRequest', async (req, reply) => {
+    const route = req.routeOptions.url;
+    if (!route?.startsWith('/notifications') || route.startsWith('/notifications/notices')) return;
+    const timer = setTimeout(() => {
+      if (reply.sent) return;
+      req.log.warn({ route, deadlineMs: handlerDeadlineMs }, 'handler deadline exceeded');
+      void reply.code(503).send({ error: 'Deadline exceeded' });
+    }, handlerDeadlineMs);
+    timer.unref();
+    deadlines.set(req, timer);
+  });
+  app.addHook('onResponse', async (req) => {
+    clearTimeout(deadlines.get(req));
   });
 
   app.get('/health', async (_req, reply) => {
@@ -140,9 +161,11 @@ export async function buildServer(): Promise<FastifyInstance> {
       producerRequestsTotal.inc({ outcome: 'created' });
       return reply.code(202).send({ status: 'queued', queued: result.queued });
     } catch (err) {
+      // 503, not 500: the write failed on a dependency, and the client retries 5xx. Safe because the
+      // create is an upsert by key.
       producerRequestsTotal.inc({ outcome: 'error' });
       req.log.error({ err }, 'producer create failed');
-      return reply.code(500).send({ error: 'Internal error' });
+      return reply.code(503).send({ error: 'Unavailable' });
     }
   });
 

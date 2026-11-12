@@ -39,6 +39,28 @@ export const healthWorkerStallMs = positiveMs(process.env.HEALTH_WORKER_STALL_MS
 /** Bound on one recipient's unread-counter bump, so a stuck redis call can't hold the tick. */
 export const counterBumpTimeoutMs = positiveMs(process.env.COUNTER_BUMP_TIMEOUT_MS, 2_000);
 
+// --- dependency deadlines (API) ---
+/**
+ * The longest an authed API request waits for its handler before answering 503. Below the client's 10 s
+ * per-attempt timeout, so the caller gets a retryable answer instead of an abort. The notices routes are
+ * exempt: a send writes in paced chunks for minutes by design.
+ */
+export const handlerDeadlineMs = positiveMs(process.env.NOTIFICATIONS_HANDLER_DEADLINE_MS, 8_000);
+/** Bound on each redis call the count path makes (lag flag, cache read/write); past it the count reads the DB. */
+export const countRedisDeadlineMs = positiveMs(
+  process.env.NOTIFICATIONS_COUNT_REDIS_DEADLINE_MS,
+  300
+);
+/**
+ * `statement_timeout` on every notification-DB connection. The worker's statements are batched, so each one
+ * is short; this only ends a statement stuck behind a lock or a sick server, which otherwise holds its pool
+ * slot indefinitely.
+ */
+export const notifStatementTimeoutMs = positiveMs(
+  process.env.NOTIFICATION_DB_STATEMENT_TIMEOUT_MS,
+  30_000
+);
+
 // --- web push (VAPID) ---
 export const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? '';
 export const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY ?? '';
