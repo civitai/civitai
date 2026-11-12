@@ -71,6 +71,7 @@ export async function evaluateMiniEpochCaller({
   ownerId,
   mode,
   scopeRefused,
+  pick,
 }: {
   req: NextApiRequest;
   user: Session['user'] | undefined;
@@ -79,6 +80,8 @@ export async function evaluateMiniEpochCaller({
   mode: Exclude<MiniEpochGateMode, 'off'>;
   /** The bearer credential lacks the route's scope: a signed-in caller is classed `other`. */
   scopeRefused: boolean;
+  /** How the training file was chosen: by id, or as the primary file, hidden from the caller or not. */
+  pick: 'by-id' | 'primary' | 'hidden-primary';
 }): Promise<{ callerClass: MiniEpochCallerClass; withhold: boolean }> {
   const orchestrator = matchesOrchestratorServiceToken(req);
 
@@ -102,6 +105,7 @@ export async function evaluateMiniEpochCaller({
     name: 'mini-epoch-caller',
     mode,
     modelVersionId,
+    pick,
     authHeader: !!req.headers?.authorization,
     resolvedAs,
     callerClass,

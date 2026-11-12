@@ -330,7 +330,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
-  // Variant: `log` | `enforce` | `enforce-anon`; any other answer is off. Read by mini-epoch-caller.ts.
+  // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts, which also
+  // still handles an `enforce-anon` variant should the flag define one.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by download-credential-gate.ts.
   DOWNLOAD_SCOPE_GATE = 'download-scope-gate',

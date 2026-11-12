@@ -10,6 +10,8 @@ import { resolveActorFor } from '~/utils/resolve-attribution';
 import { getFullTensorAnalysisCached } from '~/server/services/tensor-metadata.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
+import { downloadCredentialGate } from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   inferTensorMetadataFormat,
   parseModelTensorMetadata,
@@ -48,9 +50,13 @@ const NO_STORE_CACHE_CONTROL = 'private, no-store';
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
-  user: Session['user'] | undefined
+  sessionUser: Session['user'] | undefined
 ) {
   res.setHeader('Cache-Control', NO_STORE_CACHE_CONTROL);
+  // Moderator rights through a bearer credential follow the download routes' rule.
+  const user = downloadCredentialGate(req, sessionUser, {
+    requiredScope: TokenScope.ModelsRead,
+  }).effectiveUser;
 
   const result = schema.safeParse(req.query);
   if (!result.success)

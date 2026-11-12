@@ -321,12 +321,14 @@ export default MixedAuthEndpoint(async function handler(
   // url shape applies, and only then apply the gate to the download-route path.
   const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
   const isMod = !!user?.isModerator;
+  // A credential the scope gate refuses sees only what anyone may.
+  const viewerManages = (isOwner || isMod) && !(await isScopeRefused());
   const listed = await trainingDataListing(dbRead, [{ id, files }], {
     redCapable: isRedCapableHost(req.headers.host),
-    viewerManages: isOwner || isMod,
+    viewerManages,
   });
   const visibleFiles = files.filter(
-    (f) => (isOwner || isMod || f.visibility === ModelFileVisibility.Public) && listed(f)
+    (f) => (viewerManages || f.visibility === ModelFileVisibility.Public) && listed(f)
   );
 
   // The download route merges the requesting user's `filePreferences` into
@@ -347,15 +349,20 @@ export default MixedAuthEndpoint(async function handler(
   // `targetFile` still governs both on that arm.
   const filePreferences = { metadata: user?.filePreferences };
 
+  // Owner, moderator, grantee or the service token, with a credential that passes the scope gate.
+  // The scope is checked last, so the refusal log counts only callers it would change.
+  let entitledToVersion: Promise<boolean> | undefined;
+  const isEntitled = () =>
+    (entitledToVersion ??= (async () =>
+      orchestrator ||
+      ((isOwner || isMod || (!!user?.id && (await hasVersionGrant(user.id, modelVersion.id)))) &&
+        !(await isScopeRefused())))());
+
   // A file id the caller may not see is answered as one that does not exist, decided before the
   // file is looked up so the answer cannot tell the two apart.
   if (modelFileId && !visibleFiles.some((f) => f.id === modelFileId)) {
-    const entitled =
-      orchestrator ||
-      (!(await isScopeRefused()) &&
-        (isOwner || isMod || (!!user?.id && (await hasVersionGrant(user.id, modelVersion.id)))));
     res.setHeader('Cache-Control', 'private, no-store');
-    if (!entitled)
+    if (!(await isEntitled()))
       return res
         .status(404)
         .json({ error: `Model file ${modelFileId} not found in version ${id}` });
@@ -366,6 +373,10 @@ export default MixedAuthEndpoint(async function handler(
   const requestedFile = modelFileId
     ? files.find((f) => f.id === modelFileId)
     : getPrimaryFile(files);
+  // The primary file the caller may not see is logged as its own reason, so the gate's measurement
+  // counts it separately.
+  const hiddenPrimary = !modelFileId && (!requestedFile || !visibleFiles.includes(requestedFile));
+
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
@@ -386,6 +397,7 @@ export default MixedAuthEndpoint(async function handler(
         ownerId: modelVersion.modelUserId,
         mode,
         scopeRefused: await isScopeRefused(),
+        pick: modelFileId ? 'by-id' : hiddenPrimary ? 'hidden-primary' : 'primary',
       });
       // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
       // 404 to a caller who would be served.
@@ -394,8 +406,8 @@ export default MixedAuthEndpoint(async function handler(
     } else {
       mayResign =
         orchestrator ||
-        (!(await isScopeRefused()) &&
-          (user?.id === modelVersion.modelUserId || !!user?.isModerator));
+        ((user?.id === modelVersion.modelUserId || !!user?.isModerator) &&
+          !(await isScopeRefused()));
     }
   }
 
@@ -705,8 +717,7 @@ export default MixedAuthEndpoint(async function handler(
       }).catch(() => undefined);
   }
 
-  // Its own credential rule, which accepts a moderator's narrow-scope personal key.
-  const includeModeration = receivesMiniModeration(req, sessionUser);
+  const includeModeration = receivesMiniModeration(req, user);
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
@@ -740,7 +751,7 @@ export default MixedAuthEndpoint(async function handler(
     tipsEnabled,
     ...(includeModeration ? { moderation } : {}),
   };
-  logMiniModerationCaller(req, sessionUser, modelVersion, includeModeration);
+  logMiniModerationCaller(req, user, modelVersion, includeModeration);
   if (includeModeration) {
     res.setHeader('Cache-Control', 'private, no-store');
     // Read by the orchestrator as the absolute time its cached copy of this response expires.

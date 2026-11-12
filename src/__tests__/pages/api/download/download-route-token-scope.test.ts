@@ -92,7 +92,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { resetEnv } from '~/__tests__/mocks/env.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import versionRoute from '~/pages/api/download/models/[modelVersionId]';
 import sha256Route from '~/pages/api/download/sha256/[hash]';
@@ -337,4 +337,90 @@ describe('the scope gate flag on models/[modelVersionId]', () => {
     expect(status).toBe(403);
     expect(scopeLog()).toEqual([expect.objectContaining({ mode: 'enforce' })]);
   });
+});
+
+describe('models/[modelVersionId], the internal system account', () => {
+  const route = ROUTES[0];
+
+  it.each([null, 'log', 'enforce'])(
+    'is served a draft it does not own with a ModelsRead key (flag %s)',
+    async (variant) => {
+      holder.variant = variant;
+      const { served } = await download(route, {
+        user: { id: -1, isModerator: true },
+        context: personalKey(TokenScope.ModelsRead),
+      });
+      expect(served).toBe('https://storage.example/draft');
+    }
+  );
+
+  it('does not extend to another moderator holding the same key', async () => {
+    holder.variant = null;
+    const { served } = await download(route, {
+      user: { id: MODERATOR_ID, isModerator: true },
+      context: personalKey(TokenScope.ModelsRead),
+    });
+    expect(served).toBeUndefined();
+  });
+});
+
+describe('models/[modelVersionId], a bearer the session layer recorded nothing for', () => {
+  const route = ROUTES[0];
+  async function bare(headers: Record<string, string>, token?: string) {
+    const req = {
+      method: 'GET',
+      url: `/api/download/models/${VERSION_ID}${token ? `?token=${token}` : ''}`,
+      query: { modelVersionId: String(VERSION_ID), ...(token ? { token } : {}) },
+      headers: { 'user-agent': 'python-requests/2.31', ...headers },
+      socket: { remoteAddress: '203.0.113.7' },
+    } as unknown as NextApiRequest;
+    // The cookie session it resolved to, with no credential fields recorded.
+    mockGetServerAuthSession.mockResolvedValue({
+      user: { id: OWNER_ID, username: 'u', bannedAt: null },
+    });
+    const res = {
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+      redirect: vi.fn().mockReturnThis(),
+      setHeader: vi.fn().mockReturnThis(),
+      headersSent: false,
+    } as unknown as NextApiResponse;
+    await route[1](req, res);
+    return {
+      status: vi.mocked(res.status).mock.calls.at(-1)?.[0],
+      served: vi.mocked(res.redirect).mock.calls.at(-1)?.[0],
+    };
+  }
+
+  it('refuses one sent in the header', async () => {
+    expect((await bare({ authorization: 'Bearer unknown' })).status).toBe(403);
+  });
+
+  it('refuses one sent as ?token=', async () => {
+    expect((await bare({}, 'unknown')).status).toBe(403);
+  });
+
+  it('does not count the webhook token as one', async () => {
+    setEnv({ WEBHOOK_TOKEN: 'webhook-secret-0123456789' });
+    expect((await bare({}, 'webhook-secret-0123456789')).served).toBe(
+      'https://storage.example/draft'
+    );
+  });
+
+  it('does not count the orchestrator service token as one', async () => {
+    setEnv({ ORCHESTRATOR_SERVICE_TOKEN: 'test-service-token-0123456789abcdef' });
+    expect(
+      (await bare({ authorization: 'Bearer test-service-token-0123456789abcdef' })).served
+    ).toBe('https://storage.example/draft');
+  });
+});
+
+// mini/[id] classes an AIServicesRead key as entitled; the bytes it points at still need ModelsRead.
+it('refuses an AIServicesRead key the bytes under enforce', async () => {
+  const { status } = await download(ROUTES[0], {
+    user: { id: OWNER_ID },
+    context: personalKey(TokenScope.AIServicesRead),
+  });
+  expect(status).toBe(403);
 });

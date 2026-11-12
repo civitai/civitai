@@ -1,5 +1,7 @@
 import type { NextApiRequest } from 'next';
 import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
+import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
+import { constants } from '~/server/common/constants';
 import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -36,6 +38,8 @@ export async function getDownloadScopeGateMode(): Promise<DownloadScopeMode> {
  * still counts, so it is never mistaken for a cookie session.
  */
 function presentedBearer(req: NextApiRequest, context: Context | undefined): boolean {
+  // The orchestrator's service token resolves to no user, so it carries no rights to check.
+  if (matchesOrchestratorServiceToken(req)) return false;
   if (req.headers?.authorization) return true;
   const queryToken = req.url ? new URL(req.url, 'http://local').searchParams.get('token') : null;
   if (queryToken && !matchWebhookToken(queryToken)) return true;
@@ -56,7 +60,8 @@ function presentedBearer(req: NextApiRequest, context: Context | undefined): boo
  * - `refused`: anything else, including a bearer whose recorded scope is missing.
  *
  * `effectiveUser` is the user to authorize with: moderator rights come only from a cookie session
- * or a full-scope personal key, whatever the scope check says.
+ * or a full-scope personal key, whatever the scope check says. The internal system account, whose
+ * keys are limited to read scopes, keeps them by its id.
  */
 export function downloadCredentialGate(
   req: NextApiRequest,
@@ -66,10 +71,11 @@ export function downloadCredentialGate(
   const context = (req as NextApiRequest & { context?: Context }).context;
   if (!presentedBearer(req, context)) return { outcome: 'session', effectiveUser: user };
 
-  const effectiveUser =
-    user && user.isModerator && !isFullScopeUserKey(context)
-      ? { ...user, isModerator: false }
-      : user;
+  let effectiveUser = user;
+  if (user?.isModerator && !isFullScopeUserKey(context)) {
+    if (user.id === constants.system.user.id) logInternalModeratorKey(context);
+    else effectiveUser = { ...user, isModerator: false };
+  }
   const scope = context?.tokenScope;
   const required =
     'requiredScope' in requirement ? [requirement.requiredScope] : requirement.anyOfScopes;
@@ -77,6 +83,17 @@ export function downloadCredentialGate(
     typeof scope === 'number' &&
     (scope === TokenScope.Full || required.some((bit) => Flags.hasFlag(scope, bit)));
   return { outcome: allowed ? 'allowed' : 'refused', effectiveUser };
+}
+
+/** Key id and kind only. */
+function logInternalModeratorKey(context: Context | undefined) {
+  logToAxiom({
+    name: 'download-internal-moderator-key',
+    type: 'info',
+    apiKeyId: context?.apiKeyId ?? null,
+    apiKeyType: context?.apiKeyType ?? null,
+    client: context?.subject?.type ?? null,
+  }).catch(() => undefined);
 }
 
 /**

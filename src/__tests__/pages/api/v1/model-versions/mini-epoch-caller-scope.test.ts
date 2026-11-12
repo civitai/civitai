@@ -263,3 +263,134 @@ describe('mini/[id]?modelFileId= for a file the caller may not see', () => {
     expect(callerClass()).toEqual(['grantee']);
   });
 });
+
+describe('mini/[id], the internal system account', () => {
+  const SYSTEM_ID = -1;
+  const modes = [null, 'log', 'enforce', 'enforce-anon'].flatMap((epochMode) =>
+    [null, 'log', 'enforce'].map((scopeMode) => [epochMode, scopeMode] as const)
+  );
+
+  it.each(modes)(
+    'keeps the moderator class with a ModelsRead key, signed again (caller gate %s, scope gate %s)',
+    async (epochMode, scopeMode) => {
+      h.variants = { 'mini-epoch-caller-gate': epochMode, 'download-scope-gate': scopeMode };
+      const { status, body } = await request(
+        {
+          user: { id: SYSTEM_ID, username: 'civitai', isModerator: true },
+          context: bearer(TokenScope.ModelsRead, 'apiKey'),
+        },
+        [BLOB_FILE]
+      );
+      expect(status).toBe(200);
+      expect(body.downloadUrls).toEqual([FRESH]);
+      expect(h.refreshBlobs).toHaveBeenCalledTimes(1);
+      if (epochMode) expect(callerClass()).toEqual(['moderator']);
+    }
+  );
+
+  it.each([
+    ['another moderator', { id: 31, username: 'mod', isModerator: true }],
+    [
+      'an account that claims to be the system account by anything but its id',
+      { id: 32, username: 'civitai', isModerator: true, meta: { systemAccount: true } },
+    ],
+  ])('downgrades %s holding the same key', async (_label, user) => {
+    h.variants['mini-epoch-caller-gate'] = null;
+    const { body } = await request({ user, context: bearer(TokenScope.ModelsRead, 'apiKey') }, [
+      BLOB_FILE,
+    ]);
+    expect(body.downloadUrls).toEqual([STORED]);
+    expect(h.refreshBlobs).not.toHaveBeenCalled();
+
+    h.variants['mini-epoch-caller-gate'] = 'enforce';
+    loggingMock.logToAxiom.mockClear();
+    const refused = await request({ user, context: bearer(TokenScope.ModelsRead, 'apiKey') }, [
+      TRAINING_FILE,
+    ]);
+    expect(refused.status).toBe(404);
+    expect(callerClass()).toEqual(['other']);
+  });
+});
+
+describe('mini/[id], the orchestrator service token', () => {
+  const SERVICE = 'test-service-token-0123456789abcdef';
+  async function asService(files: object[], query: Record<string, string> = {}) {
+    h.user = undefined;
+    h.context = undefined;
+    dbMock.dbWrite.$queryRaw.mockReset();
+    dbMock.dbWrite.$queryRaw
+      .mockResolvedValueOnce([{ ...versionRow }])
+      .mockResolvedValueOnce(structuredClone(files));
+    const json = vi.fn().mockReturnThis();
+    const res = {
+      status: vi.fn().mockReturnThis(),
+      json,
+      setHeader: vi.fn().mockReturnThis(),
+    } as unknown as NextApiResponse;
+    await handler(
+      {
+        method: 'GET',
+        query: { id: String(VERSION_ID), ...query },
+        headers: { host: 'civitai.com', authorization: `Bearer ${SERVICE}` },
+      } as unknown as NextApiRequest,
+      res
+    );
+    return json.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+  }
+
+  it.each([null, 'log', 'enforce', 'enforce-anon'])(
+    'is served the epoch url, by primary pick and by id, signed again (caller gate %s)',
+    async (epochMode) => {
+      h.variants = { 'mini-epoch-caller-gate': epochMode, 'download-scope-gate': 'enforce' };
+      expect((await asService([BLOB_FILE, PUBLIC_FILE])).downloadUrls).toEqual([FRESH]);
+      expect(
+        (await asService([BLOB_FILE, PUBLIC_FILE], { modelFileId: String(BLOB_FILE.id) }))
+          .downloadUrls
+      ).toEqual([FRESH]);
+      expect(h.refreshBlobs).toHaveBeenCalledTimes(2);
+    }
+  );
+});
+
+describe('mini/[id]?modelFileId= by an owner whose credential lacks the scope', () => {
+  const owner: Caller = { user: { id: OWNER_ID }, context: bearer(TokenScope.UserRead) };
+  const FILES = [TRAINING_FILE, HIDDEN_FILE, PUBLIC_FILE];
+
+  it('under enforce, a hidden file answers like a nonexistent one', async () => {
+    const nonexistent = await request(owner, FILES, { modelFileId: '999' });
+    const hidden = await request(owner, FILES, { modelFileId: String(TRAINING_FILE.id) });
+    expect(hidden.status).toBe(404);
+    expect(JSON.stringify(hidden.body).replace(String(TRAINING_FILE.id), 'ID')).toBe(
+      JSON.stringify(nonexistent.body).replace('999', 'ID')
+    );
+    expect(hidden.headers).toEqual(nonexistent.headers);
+  });
+
+  it.each([null, 'log'])('under %s, the training file is still served', async (mode) => {
+    h.variants['download-scope-gate'] = mode;
+    const { body } = await request(owner, FILES, { modelFileId: String(TRAINING_FILE.id) });
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  it('a moderator by a full-scope key is served a hidden file by id', async () => {
+    const { body } = await request(
+      { user: { id: 1, isModerator: true }, context: bearer(TokenScope.Full, 'apiKey') },
+      FILES,
+      { modelFileId: String(TRAINING_FILE.id) }
+    );
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+});
+
+describe('mini/[id], the primary file hidden from the caller', () => {
+  it('log: the caller line names it as its own reason', async () => {
+    h.variants['mini-epoch-caller-gate'] = 'log';
+    await request({}, [TRAINING_FILE]);
+    await request({ user: { id: OWNER_ID } }, [TRAINING_FILE]);
+    const picks = (loggingMock.logToAxiom.mock.calls as unknown as [Record<string, unknown>][])
+      .map(([entry]) => entry)
+      .filter((entry) => entry?.name === 'mini-epoch-caller')
+      .map((entry) => entry.pick);
+    expect(picks).toEqual(['hidden-primary', 'primary']);
+  });
+});
