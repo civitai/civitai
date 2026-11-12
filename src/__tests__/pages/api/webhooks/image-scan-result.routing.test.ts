@@ -160,9 +160,10 @@ describe('image-scan-result webhook routing', () => {
     expect(mocks.processImageScanWorkflow).toHaveBeenCalledTimes(1);
   });
 
-  it('does not log a video that stayed under maxFrames, or an image', async () => {
+  it('does not log a video under maxFrames, one with no extraction output, or an image', async () => {
     await deliver('succeeded', videoSteps(500, 499));
     await deliver('succeeded', [{ $type: 'wdTagging' }, { $type: 'mediaRating' }]);
+    await deliver('failed', [{ $type: 'videoFrameExtraction', input: { maxFrames: 50 } }]);
 
     expect(frameLimitLogs()).toEqual([]);
   });
