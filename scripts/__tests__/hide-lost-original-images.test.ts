@@ -10,7 +10,9 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('~/server/services/legal-hold.service', () => ({
   captureImageHeldSql: (alias: string) =>
     Prisma.sql`(${Prisma.raw(alias)}.id IN (SELECT "imageId" FROM "ImageHeld"))`,
-  ownerHeldSql: (owner: Prisma.Sql) => Prisma.sql`(${owner} IN (SELECT "userId" FROM "OwnerHeld"))`,
+  // Owner 13 stands for a predicate that comes back NULL: the script must read that as held.
+  ownerHeldSql: (owner: Prisma.Sql) =>
+    Prisma.sql`(CASE WHEN ${owner} = 13 THEN NULL ELSE ${owner} IN (SELECT "userId" FROM "OwnerHeld") END)`,
 }));
 
 import {
@@ -202,6 +204,42 @@ describe('hide-lost-original-images', () => {
       'Scanned',
     ]);
     expect(counts['skipped:crucible-image']).toBe(3);
+  });
+
+  it('logs the intent before the UPDATE runs', async () => {
+    const { deps, logged } = makeDeps({
+      query: async <T>(sql: Prisma.Sql) => {
+        if (sql.text.includes(`SET ingestion = 'NotFound'`)) throw new Error('crash before write');
+        return query<T>(sql);
+      },
+    });
+    await expect(run(options(), GONE, deps)).rejects.toThrow('crash before write');
+    expect(logged.map((e) => e.id)).toEqual([1, 2, 3]);
+    expect(logged.some((e) => e.hidden)).toBe(false);
+    expect(await ingestion(1)).toBe('Scanned');
+  });
+
+  it.each([
+    ['blocked-for', `"blockedFor" = 'CSAM'`],
+    ['tos', `"tosViolation" = true`],
+    ['minor', `minor = true`],
+    ['poi', `poi = true`],
+    ['needs-review', `"needsReview" = 'minor'`],
+  ])('leaves a row alone for %s', async (reason, set) => {
+    await db.exec(`UPDATE "Image" SET ${set} WHERE id = 1`);
+    const { deps } = makeDeps();
+    const counts = await run(options(), GONE, deps);
+    expect(await ingestion(1)).toBe('Scanned');
+    expect(counts[`skipped:${reason}`]).toBe(1);
+    expect(counts.hidden).toBe(2);
+  });
+
+  it('reads a hold predicate that comes back NULL as held', async () => {
+    await db.exec(`UPDATE "Image" SET "userId" = 13 WHERE id = 1`);
+    const { deps } = makeDeps();
+    const counts = await run(options(), GONE, deps);
+    expect(await ingestion(1)).toBe('Scanned');
+    expect(counts['skipped:owner-hold']).toBe(1);
   });
 
   it('writes nothing on a dry run', async () => {
