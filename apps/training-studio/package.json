@@ -1,6 +1,6 @@
 {
   "name": "@civitai/training-studio-app",
-  "version": "0.0.46",
+  "version": "0.0.47",
   "private": true,
   "type": "module",
   "scripts": {
@@ -22,7 +22,7 @@
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
-    "@civitai/orchestration-client": "0.2.0",
+    "@civitai/orchestration-client": "0.2.3",
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",
     "@civitai/ui": "workspace:*",

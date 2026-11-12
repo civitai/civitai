@@ -313,7 +313,7 @@ export async function resolveLockReviewAppeal({
 
   if (unlocked.length) await preventReplicationLag('model', modelId);
   // The ruling is committed: a failed notice must not read as a failed ruling, which cannot be retried.
-  await settleResolvedAppeals(claimed, { status }).catch((error: Error) =>
+  await settleResolvedAppeals(claimed, { status, lockReview: { unlocked } }).catch((error: Error) =>
     logToAxiom({
       type: 'error',
       name: 'lock-review-settle',
