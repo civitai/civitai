@@ -19,7 +19,6 @@ import {
   actedOn,
   appendDurable,
   CROSS_CHECK_EXPIRES,
-  isMissingHead,
   parseArgs,
   readIds,
   readLog,
@@ -334,13 +333,13 @@ describe('hide-lost-original-images', () => {
   it('reports scan-in-flight by both signals and their overlap, without writing', async () => {
     await db.exec(`
       UPDATE "Image" SET "scanJobs" = '{"workflowId":"w"}' WHERE id IN (1, 2);
-      UPDATE "Image" SET "scannedAt" = '2024-01-01', "scanRequestedAt" = '2024-02-01' WHERE id = 3;
+      UPDATE "Image" SET "scannedAt" = '2024-01-01', "scanRequestedAt" = '2024-02-01' WHERE id IN (2, 3);
     `);
     const { deps } = makeDeps();
     const counts = await run(options({ apply: false }), GONE, deps);
     expect(counts['scan-in-flight:workflow-present']).toBe(2);
-    expect(counts['scan-in-flight:requested-after-scanned']).toBe(1);
-    expect(counts['scan-in-flight:both']).toBe(0);
+    expect(counts['scan-in-flight:requested-after-scanned']).toBe(2);
+    expect(counts['scan-in-flight:both']).toBe(1);
   });
 
   it('undo leaves a row that was held while hidden', async () => {
@@ -392,16 +391,8 @@ describe('hide-lost-original-images', () => {
     const ids = path.join(dir, 'ids');
     fs.writeFileSync(ids, '3\n1\n3\n');
     expect(readIds(ids)).toEqual([1, 3]);
-    fs.writeFileSync(ids, '99999999999\n');
+    fs.writeFileSync(ids, '9999999999\n');
     expect(() => readIds(ids)).toThrow(/not an id/);
-  });
-
-  it('counts only a 404 as proof the key is gone', () => {
-    expect(isMissingHead({ name: 'NotFound' })).toBe(true);
-    expect(isMissingHead({ name: 'NoSuchKey' })).toBe(true);
-    expect(isMissingHead({ $metadata: { httpStatusCode: 404 } })).toBe(true);
-    expect(isMissingHead({ name: 'Forbidden', $metadata: { httpStatusCode: 403 } })).toBe(false);
-    expect(isMissingHead(new Error('timeout'))).toBe(false);
   });
 
   it('aborts when a quantile of the targets has no live image to vouch for it', async () => {

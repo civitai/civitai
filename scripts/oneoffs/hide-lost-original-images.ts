@@ -193,18 +193,6 @@ export function controlSql(targets: number[]) {
   `;
 }
 
-/**
- * A HEAD that proves the key is absent: 404 only. Stricter than `announcement-media-check`'s
- * private `isNotFound`, which is not exported, and than the CSAM reader's probe, which falls back to
- * the edge: here a 403 or a timeout must never count as gone.
- */
-export function isMissingHead(e: unknown) {
-  const err = e as { name?: string; $metadata?: { httpStatusCode?: number } } | undefined;
-  return (
-    err?.name === 'NotFound' || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404
-  );
-}
-
 /** `hidden` marks a row the UPDATE returned; a line without it is only the intent to hide. */
 export type LogEntry = { id: number; prior: string; hidden?: true };
 
@@ -458,8 +446,7 @@ async function main() {
   if (/prisma/.test(process.env.LOGGING ?? ''))
     throw new Error('unset LOGGING (prisma query logging prints the target ids)');
   const { dbWrite } = await import('~/server/db/client');
-  const { HeadObjectCommand } = await import('@aws-sdk/client-s3');
-  const { getImageUploadBackend } = await import('~/utils/s3-utils');
+  const { getImageUploadBackend, headObject } = await import('~/utils/s3-utils');
   const { isEdgeUrlPassthrough } = await import('~/shared/utils/edge-url-passthrough');
   const { SearchIndexUpdateQueueAction } = await import('~/server/common/enums');
   const { queueImageSearchIndexUpdate, invalidateManyImageExistence } = await import(
@@ -471,16 +458,13 @@ async function main() {
   const logFile = options.logFile as string;
   const deps: Deps = {
     query: <T>(sql: Prisma.Sql) => dbWrite.$queryRaw<T[]>(sql),
+    // headObject answers absent only for a 404; anything else is unknown, which fails closed here.
     head: async (url) => {
-      try {
-        await backend.s3.send(new HeadObjectCommand({ Bucket: backend.bucket, Key: url }), {
-          abortSignal: AbortSignal.timeout(10_000),
-        });
-        return 'present';
-      } catch (e) {
-        if (isMissingHead(e)) return 'missing';
-        throw e;
-      }
+      const head = await headObject(backend.bucket, url, backend.s3, {
+        abortSignal: AbortSignal.timeout(10_000),
+      });
+      if (head.status === 'unknown') throw new Error('HEAD could not be answered');
+      return head.status === 'absent' ? 'missing' : 'present';
     },
     isExternal: (url) => isEdgeUrlPassthrough(url),
     propagate: async (touched, action) => {
