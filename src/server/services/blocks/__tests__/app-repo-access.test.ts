@@ -102,6 +102,8 @@ describe('grantAppRepoWrite — the SOURCE repo', () => {
 
   it('a source-repo failure is logged and never stops the build-repo grant', async () => {
     sourceRepo.resolveSourceRepoAccess.mockRejectedValue(new Error('db down'));
+    // An earlier test left the build grant rejecting; this one measures the source half only.
+    forgejo.addCollaborator.mockResolvedValue({ outcome: 'granted' });
     await expect(grantAppRepoWrite({ slug: SLUG, userId: EDITOR })).resolves.toBeUndefined();
     expect(forgejo.addCollaborator).toHaveBeenCalledTimes(1);
     expect(logs.logToAxiom.mock.calls.map((c) => c[0].message)).toEqual(['source-grant-failed']);
