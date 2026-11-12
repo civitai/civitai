@@ -53,10 +53,15 @@ export default MixedAuthEndpoint(async function handler(
   sessionUser: Session['user'] | undefined
 ) {
   res.setHeader('Cache-Control', NO_STORE_CACHE_CONTROL);
-  // Moderator rights through a bearer credential follow the download routes' rule.
-  const user = downloadCredentialGate(req, sessionUser, {
+  // Moderator rights through a bearer credential follow the download routes' rule, and need the
+  // route's scope whatever the rollout flag says.
+  const credential = downloadCredentialGate(req, sessionUser, {
     requiredScope: TokenScope.ModelsRead,
-  }).effectiveUser;
+  });
+  const user =
+    credential.effectiveUser?.isModerator && credential.outcome === 'refused'
+      ? { ...credential.effectiveUser, isModerator: false }
+      : credential.effectiveUser;
 
   const result = schema.safeParse(req.query);
   if (!result.success)

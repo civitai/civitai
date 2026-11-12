@@ -10,6 +10,14 @@ const h = vi.hoisted(() => ({
   user: undefined as undefined | Record<string, unknown>,
   context: undefined as undefined | Record<string, unknown>,
   getFileForModelVersion: vi.fn(),
+  variant: null as string | null,
+}));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getFliptVariant: vi.fn(async (flag: string) =>
+    flag === 'download-scope-gate' ? h.variant : null
+  ),
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -103,4 +111,24 @@ describe('/api/v1/model-files/[id]/tensor-metadata, a moderator', () => {
     expect(await call(moderator, key(TokenScope.Full))).toBe(200);
     expect(await call(moderator)).toBe(200);
   });
+});
+
+describe('/api/v1/model-files/[id]/tensor-metadata, the system account', () => {
+  const system = { id: -1, isModerator: true };
+
+  it.each([null, 'log', 'enforce'])(
+    'keeps moderator reads with ModelsRead (flag %s)',
+    async (v) => {
+      h.variant = v;
+      expect(await call(system, key(TokenScope.ModelsRead))).toBe(200);
+    }
+  );
+
+  it.each([null, 'log', 'enforce'])(
+    'loses them with a key without ModelsRead (flag %s)',
+    async (v) => {
+      h.variant = v;
+      expect(await call(system, key(TokenScope.UserRead))).toBe(403);
+    }
+  );
 });
