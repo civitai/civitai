@@ -393,7 +393,7 @@ async function ensureSourceRepoLocked(args: {
     lastAssistantCommitSha: seedSha,
     lastAssistantBranch: seedSha ? SOURCE_MAIN_BRANCH : null,
   };
-  const inserted = await insertSourceRepo(row);
+  const inserted = await insertSourceRepo({ ...row, assistantTree: tree });
   if (!inserted) {
     const raced = await readSourceRepo(args.slug);
     return raced.row ? { kind: 'exists', row: raced.row } : { kind: 'refused' };
