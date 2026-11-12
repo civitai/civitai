@@ -756,6 +756,9 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
   ];
 }
 
+/** Log event for an unrated scan that would take the newer minor review routing. */
+export const UNRATED_MINOR_REVIEW_EVENT = 'unrated-minor-review-candidate';
+
 async function auditScanResults(args: {
   imageId: number;
   userId: number;
@@ -813,6 +816,22 @@ async function auditScanResults(args: {
   // not queued for moderator review.
   if (associatedEntities.poi && nsfw) poiReview = true;
   if (associatedEntities.minor && minorRestrictedScan) minorReview = true;
+
+  // Log, without routing, when an unrated scan would take the newer minor review routing.
+  if (nsfwLevel === 0 && !minorReview && !poiReview) {
+    const arms = [
+      ...(associatedEntities.minor ? ['resource'] : []),
+      ...(minorTags.length > 0 && adultTags.length === 0 ? ['tag'] : []),
+    ];
+    for (const arm of arms)
+      logToAxiom({
+        name: UNRATED_MINOR_REVIEW_EVENT,
+        type: 'info',
+        imageId: args.imageId,
+        arm,
+        at: new Date().toISOString(),
+      }).catch(() => null);
+  }
 
   // The capture account is no one's new account: its captures get only the content keys.
   if (!minorReview && !poiReview && !tagReview && nsfw && !isFeedbackCaptureOwner(args.userId)) {
