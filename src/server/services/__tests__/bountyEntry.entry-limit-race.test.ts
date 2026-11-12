@@ -14,12 +14,13 @@ type Entry = { id: number; bountyId: number; userId: number };
 // commit, and `FOR UPDATE` on the Bounty row blocks until the holder's transaction ends. The
 // controller's limit check reads committed entries outside any transaction, as it does in prod.
 let committed: Entry[];
-let entryLimit: number;
+let entryLimit: number | null;
 let lockedRowQueries: number;
 let rowLock: Promise<void>;
 // What the locked row says; the controller's earlier read always sees an open bounty, as when an
 // award or refund commits between that read and the create.
 let bountyComplete: boolean;
+let bountyRowMissing: boolean;
 
 function sqlText(strings: TemplateStringsArray | string) {
   return typeof strings === 'string' ? strings : strings.join('?');
@@ -29,6 +30,7 @@ function installFakeDb() {
   committed = [];
   lockedRowQueries = 0;
   bountyComplete = false;
+  bountyRowMissing = false;
   rowLock = Promise.resolve();
   let nextId = 100;
 
@@ -57,7 +59,7 @@ function installFakeDb() {
           rowLock = new Promise<void>((r) => (release = r));
           await prev;
         }
-        return [{ entryLimit, complete: bountyComplete }];
+        return bountyRowMissing ? [] : [{ entryLimit, complete: bountyComplete }];
       },
       bountyEntry: {
         count: async ({ where }: { where: { bountyId: number; userId: number } }) =>
@@ -128,6 +130,23 @@ describe('bounty entry limit under parallel submits', () => {
     entryLimit = 1;
     await submit();
     expect(committed).toHaveLength(1);
+  });
+
+  it.each([0, null])(
+    'lets entries through on a bounty with no limit (entryLimit %s)',
+    async (limit) => {
+      entryLimit = limit;
+      committed.push({ id: 1, bountyId: BOUNTY_ID, userId: ENTRANT_ID });
+      await Promise.all([submit(), submit()]);
+      expect(committed).toHaveLength(3);
+    }
+  );
+
+  it('refuses a new entry when the bounty row is gone', async () => {
+    entryLimit = 1;
+    bountyRowMissing = true;
+    await expect(submit()).rejects.toThrow('Bounty not found');
+    expect(committed).toHaveLength(0);
   });
 
   it('refuses a new entry when an award completed the bounty after the pre-check', async () => {
