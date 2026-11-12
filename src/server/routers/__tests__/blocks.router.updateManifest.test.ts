@@ -278,7 +278,9 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     // allowedScopes bitmask + allowedOrigins), i.e. the subset check actually ran.
     expect(mockValidate).toHaveBeenCalledWith(
       expect.any(Object),
-      expect.objectContaining({ allowedScopes: 1, allowedOrigins: ['https://my-app.civit.ai'] })
+      expect.objectContaining({ allowedScopes: 1, allowedOrigins: ['https://my-app.civit.ai'] }),
+      // The in-app editor re-validates an EXISTING manifest: `bugs` is lenient there.
+      { strictIssueTrackerLink: false }
     );
     expect(mockCommitFiles).not.toHaveBeenCalled();
   });
