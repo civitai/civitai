@@ -16,7 +16,7 @@
  * commit or paste either.
  */
 import { createHash, randomUUID } from 'crypto';
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import type { ComFaceIntentVerdict } from '~/server/services/model-sfw-face.service';
@@ -55,6 +55,9 @@ export type RunLog = {
   removed: { id: number; sfwCoverImageId: number }[];
   /** The cover or the listing changed since the dry run. */
   skipped: number[];
+  /** Being removed when the log was last written: after a crash, any of these may be off.
+   *  restore-com-faces.ts takes these too. */
+  pending: { id: number; sfwCoverImageId: number }[];
   /** Threw part-way: the cover may or may not be off. restore-com-faces.ts takes these too. */
   failed: { id: number; sfwCoverImageId: number }[];
 };
@@ -176,20 +179,29 @@ export async function apply(
     startedAt: new Date().toISOString(),
     finishedAt: '',
     removed: [],
+    pending: [],
     skipped: [],
     failed: [],
   };
   deps.save(log);
   await paced(file.detected, pace, deps, async (model) => {
+    const entry = { id: model.id, sfwCoverImageId: model.sfwCoverImageId };
+    let outcome: 'removed' | 'skipped' | 'failed';
     try {
       const now = await deps.currentListing(model.id);
-      if (!now || listingHash(now) !== model.listingHash) log.skipped.push(model.id);
-      else if (await deps.remove(model))
-        log.removed.push({ id: model.id, sfwCoverImageId: model.sfwCoverImageId });
-      else log.skipped.push(model.id);
+      if (!now || listingHash(now) !== model.listingHash) outcome = 'skipped';
+      else {
+        // On disk before the write, so a crash mid-removal still leaves it for the undo.
+        log.pending.push(entry);
+        deps.save(log);
+        outcome = (await deps.remove(model)) ? 'removed' : 'skipped';
+      }
     } catch {
-      log.failed.push({ id: model.id, sfwCoverImageId: model.sfwCoverImageId });
+      outcome = 'failed';
     }
+    log.pending = log.pending.filter((p) => p.id !== model.id);
+    if (outcome === 'skipped') log.skipped.push(model.id);
+    else log[outcome].push(entry);
     deps.save(log);
   });
   log.finishedAt = new Date().toISOString();
@@ -259,7 +271,11 @@ async function main() {
         throw error;
       }
     },
-    save: (log) => writeFileSync(logPath, JSON.stringify(log), { mode: 0o600 }),
+    // Temp file then rename: a kill mid-write never leaves a half-written log.
+    save: (log) => {
+      writeFileSync(`${logPath}.tmp`, JSON.stringify(log), { mode: 0o600 });
+      renameSync(`${logPath}.tmp`, logPath);
+    },
     logRun: async (data) => {
       await dbWrite.modActivity.create({ data });
     },
@@ -282,6 +298,8 @@ async function main() {
     return;
   }
 
+  // A re-run after a crash must not overwrite the first run's log: it is that run's undo input.
+  if (existsSync(logPath)) throw new Error('--log already exists; pass a new path');
   const idsFile = arg('--ids-file');
   const fileSha256 = arg('--sha256');
   const expect = Number(arg('--expect'));
