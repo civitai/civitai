@@ -160,9 +160,8 @@ function SongTitleInput({ id, title: savedTitle }: { id: number; title: string }
         minRows={1}
         variant="unstyled"
         className="min-w-0 flex-1"
-        styles={{
-          input: { fontSize: 24, fontWeight: 700, lineHeight: 1.25, padding: 0, minHeight: 0 },
-        }}
+        classNames={{ input: styles.titleInput }}
+        styles={{ input: { fontSize: 24, fontWeight: 700, lineHeight: 1.25, padding: 0 } }}
         onChange={(e) => {
           const value = e.currentTarget.value.replace(/\r?\n/g, ' ');
           setTitle(value);

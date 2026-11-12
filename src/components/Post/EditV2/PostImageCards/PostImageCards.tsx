@@ -86,7 +86,7 @@ function PostImageCard({ image }: { image: ControlledImage }) {
 function AddSongsButton() {
   return (
     <UnstyledButton
-      className="flex h-14 w-full items-center justify-center gap-2 rounded-xl border border-gray-4 text-sm font-semibold text-blue-6 hover:bg-gray-0 dark:border-dark-3 dark:text-blue-4 dark:hover:bg-dark-6"
+      className="flex h-14 w-full items-center justify-center gap-2 rounded-xl border border-solid border-gray-4 text-sm font-semibold text-blue-6 hover:bg-gray-0 dark:border-dark-3 dark:text-blue-4 dark:hover:bg-dark-6"
       onClick={() => {
         generationGraphPanel.open();
         generationGraphPanel.setView('queue');

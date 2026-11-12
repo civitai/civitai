@@ -71,6 +71,21 @@ describe('the music card', () => {
       .toHaveAttribute('placeholder', 'Untitled song');
   });
 
+  // react-textarea-autosize's development build throws on an inline min/max height, which
+  // crashed the edit page in dev. It cannot throw here: the deps pre-bundle replaces
+  // `process.env.NODE_ENV` with "test" and Mantine's Textarea then renders a plain <textarea>.
+  // The inline style below is the exact `style` prop the autosizer receives in the app.
+  test('the title passes no inline height for the autosizing textarea to refuse', async () => {
+    renderWithProviders(<MusicCard image={song()} />);
+    const title = page.getByRole('textbox', { name: 'Song title' });
+    await expect.element(title).toBeVisible();
+    const { style } = title.element() as HTMLTextAreaElement;
+    expect({ minHeight: style.minHeight, maxHeight: style.maxHeight }).toEqual({
+      minHeight: '',
+      maxHeight: '',
+    });
+  });
+
   test('editing the title saves it to the song', async () => {
     renderWithProviders(<MusicCard image={song()} />);
     const title = page.getByRole('textbox', { name: 'Song title' });

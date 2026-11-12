@@ -1,3 +1,8 @@
+// The real cascade (layer order first, as `_document.tsx` declares it), so the button's
+// computed border is the one the app renders.
+import '../../../../../test/cascade-layer-order.css';
+import '@mantine/core/styles.layer.css';
+import '~/styles/globals.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../../test/component-setup';
@@ -55,6 +60,30 @@ describe('adding more songs to a post', () => {
     await userEvent.click(addSongs());
     expect(mocks.open).toHaveBeenCalledTimes(1);
     expect(mocks.setView).toHaveBeenCalledWith('queue');
+  });
+
+  test('the button has a 1px outline in the strong border colour in both schemes', async () => {
+    mocks.images = [added(2, 'audio')];
+    renderWithProviders(
+      <>
+        <div data-testid="light">
+          <PostImageCards />
+        </div>
+        <div data-testid="dark" data-mantine-color-scheme="dark">
+          <PostImageCards />
+        </div>
+      </>
+    );
+    const border = async (scheme: string) => {
+      const button = page.getByTestId(scheme).getByRole('button', {
+        name: 'Add songs from the generator',
+      });
+      await expect.element(button).toBeVisible();
+      const css = getComputedStyle(button.element());
+      return [css.borderTopWidth, css.borderTopStyle, css.borderTopColor];
+    };
+    expect(await border('light')).toEqual(['1px', 'solid', 'rgb(206, 212, 218)']);
+    expect(await border('dark')).toEqual(['1px', 'solid', 'rgb(92, 95, 102)']);
   });
 
   test('a post without songs has no button', async () => {
