@@ -925,6 +925,7 @@ export const upsertArticle = async ({
       lockedProperties: string[];
       metadata: Prisma.JsonValue;
       content: string | null;
+      scheduledAt: Date | null;
     } | null = null;
     if (id) {
       article = await dbWrite.article.findUnique({
@@ -944,6 +945,7 @@ export const upsertArticle = async ({
           lockedProperties: true,
           metadata: true,
           content: true,
+          scheduledAt: true,
         },
       });
       if (!article) throw throwNotFoundError();
@@ -1351,7 +1353,7 @@ export const upsertArticle = async ({
       const publicSave =
         textChanged &&
         isPublicArticle({
-          status: (data.status as ArticleStatus | undefined) ?? article.status,
+          status: ((data.status as ArticleStatus | undefined) ?? article.status) as ArticleStatus,
           scheduledAt: scheduledAtWrite === undefined ? article.scheduledAt : scheduledAtWrite,
         });
       const updated = await tx.article.update({
