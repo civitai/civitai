@@ -14,7 +14,7 @@ import { UserFlag } from '~/shared/constants/user-flags.constants';
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, clickhouseLongQueries: null }));
 
 const { freezeEventAwards, flagRaceConfigKey } = await import(
   '~/server/events/scoring/award-results'

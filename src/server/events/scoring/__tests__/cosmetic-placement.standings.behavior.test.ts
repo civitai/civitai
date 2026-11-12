@@ -17,7 +17,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  */
 
 const ch = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query: ch.query } }));
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: { query: ch.query },
+  clickhouseLongQueries: { query: ch.query },
+}));
 const signals = vi.hoisted(() => ({ topicSend: vi.fn(async (..._a: unknown[]) => undefined) }));
 vi.mock('~/utils/signal-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SignalClient>()),
