@@ -3,10 +3,11 @@
 -- prisma migrate deploy. Do not apply between 23:00 and 00:01 UTC (prepare-leaderboard /
 -- deliver-leaderboard-cosmetics). The first standings appear on the next prepare-leaderboard run.
 --
--- The scoring is the writer board's query with two changes: only story-category articles count,
--- and bookmarks weigh 4 instead of 10 (views 1 instead of 0.5), because story readers bookmark less
--- than readers of guides. The user and article filters are copied from writer, including
--- `not a.nsfw`, so both boards change together if that filter is fixed.
+-- The scoring is the writer board's query with bookmarks weighted 4 instead of 10 (views 1 instead
+-- of 0.5), because story readers bookmark less than readers of guides. Only story-category articles
+-- count, and only those rated PG or PG-13 (nsfwLevel inside sfwBrowsingLevelsFlag = 3; unrated
+-- excluded), scanned, not a ToS violation, not unlisted and not Private, by an owner who is neither
+-- deleted nor banned. (Writer still filters on Article.nsfw, which no longer tracks the rating.)
 --
 -- The board's display flags (active, public, domain) are copied from writer, so it shows wherever
 -- writer shows. Badge rows copy writer's badge type, source and unlock rule; each carries its own
@@ -63,8 +64,12 @@ WHERE
   am.timeframe = 'AllTime'
   AND a.status = 'Published'
   AND a."publishedAt" BETWEEN current_date - INTERVAL '30 days' AND now()
-  AND u."deletedAt" IS NULL AND u.id > 0
-  AND not a.nsfw
+  AND a.ingestion = 'Scanned'
+  AND NOT a."tosViolation"
+  AND NOT a.unlisted
+  AND a.availability <> 'Private'
+  AND a."nsfwLevel" <> 0 AND (a."nsfwLevel" & ~3) = 0
+  AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL AND u.id > 0
   AND EXISTS (
     SELECT 1 FROM "TagsOnArticle" ta
     JOIN "Tag" t ON t.id = ta."tagId" AND t.name = 'story'

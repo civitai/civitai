@@ -29,10 +29,11 @@ const SCHEMA = `
   );
   CREATE TABLE "Tag" (id int PRIMARY KEY, name text NOT NULL);
   CREATE TABLE "TagsOnTags" ("fromTagId" int NOT NULL, "toTagId" int NOT NULL);
-  CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp);
+  CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp, "bannedAt" timestamp);
   CREATE TABLE "Article" (
     id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL, "publishedAt" timestamp,
-    nsfw boolean NOT NULL DEFAULT false
+    nsfw boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL, ingestion text NOT NULL,
+    "tosViolation" boolean NOT NULL, unlisted boolean NOT NULL, availability text NOT NULL
   );
   CREATE TABLE "TagsOnArticle" ("articleId" int NOT NULL, "tagId" int NOT NULL);
   CREATE TABLE "ArticleMetric" (
@@ -60,12 +61,20 @@ const CATEGORIES = `
 
 const STORY = 2;
 const NEWS = 3;
+const HUGE = { views: 1_000_000, likes: 10000, bookmarks: 10000 };
 type ArticleFixture = {
   id: number;
   userId: number;
   tag: number;
   daysAgo?: number;
-  nsfw?: boolean;
+  status?: string;
+  nsfwLevel?: number;
+  ingestion?: string;
+  tosViolation?: boolean;
+  unlisted?: boolean;
+  availability?: string;
+  userDeleted?: boolean;
+  userBanned?: boolean;
   views?: number;
   likes?: number;
   bookmarks?: number;
@@ -73,10 +82,25 @@ type ArticleFixture = {
 
 async function seedArticles(pg: PGlite, articles: ArticleFixture[]) {
   for (const a of articles) {
-    await pg.query(`INSERT INTO "User" (id) VALUES ($1) ON CONFLICT DO NOTHING`, [a.userId]);
     await pg.query(
-      `INSERT INTO "Article" VALUES ($1, $2, 'Published', now() - make_interval(days => $3), $4)`,
-      [a.id, a.userId, a.daysAgo ?? 1, a.nsfw ?? false]
+      `INSERT INTO "User" VALUES ($1, CASE WHEN $2 THEN now() END, CASE WHEN $3 THEN now() END)
+       ON CONFLICT DO NOTHING`,
+      [a.userId, a.userDeleted ?? false, a.userBanned ?? false]
+    );
+    await pg.query(
+      `INSERT INTO "Article" (id, "userId", status, "publishedAt", "nsfwLevel", ingestion, "tosViolation", unlisted, availability)
+       VALUES ($1, $2, $3, now() - make_interval(days => $4), $5, $6, $7, $8, $9)`,
+      [
+        a.id,
+        a.userId,
+        a.status ?? 'Published',
+        a.daysAgo ?? 1,
+        a.nsfwLevel ?? 1,
+        a.ingestion ?? 'Scanned',
+        a.tosViolation ?? false,
+        a.unlisted ?? false,
+        a.availability ?? 'Public',
+      ]
     );
     await pg.query(`INSERT INTO "TagsOnArticle" VALUES ($1, $2)`, [a.id, a.tag]);
     await pg.query(
@@ -87,7 +111,7 @@ async function seedArticles(pg: PGlite, articles: ArticleFixture[]) {
   }
 }
 
-/** The board's query as prepare-leaderboard's default path runs it (prepare-leaderboard.ts:330). */
+/** The board's query as prepare-leaderboard's defaultLeadboardPopulation wraps it. */
 async function standings(pg: PGlite) {
   const {
     rows: [{ query }],
@@ -113,10 +137,21 @@ describe('story-writer leaderboard migration', () => {
     await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
     await seedArticles(db.pg, [
       { id: 1, userId: 10, tag: STORY, views: 100, likes: 49 },
-      { id: 2, userId: 11, tag: STORY, bookmarks: 100 },
-      { id: 3, userId: 12, tag: NEWS, likes: 10000, bookmarks: 10000 },
-      { id: 4, userId: 13, tag: STORY, nsfw: true, likes: 10000 },
-      { id: 5, userId: 14, tag: STORY, daysAgo: 40, likes: 10000 },
+      { id: 2, userId: 11, tag: STORY, bookmarks: 100, nsfwLevel: 2 },
+      // Each of these would top the board if it counted.
+      { id: 3, userId: 12, tag: NEWS, ...HUGE },
+      { id: 4, userId: 13, tag: STORY, nsfwLevel: 4, ...HUGE },
+      { id: 5, userId: 14, tag: STORY, daysAgo: 40, ...HUGE },
+      { id: 6, userId: 15, tag: STORY, nsfwLevel: 0, ...HUGE },
+      { id: 7, userId: 16, tag: STORY, status: 'Draft', ...HUGE },
+      { id: 8, userId: 17, tag: STORY, userDeleted: true, ...HUGE },
+      { id: 9, userId: 18, tag: STORY, userBanned: true, ...HUGE },
+      { id: 10, userId: -1, tag: STORY, ...HUGE },
+      { id: 11, userId: 19, tag: STORY, ingestion: 'Pending', ...HUGE },
+      { id: 12, userId: 20, tag: STORY, tosViolation: true, ...HUGE },
+      { id: 13, userId: 21, tag: STORY, unlisted: true, ...HUGE },
+      { id: 14, userId: 22, tag: STORY, availability: 'Private', ...HUGE },
+      { id: 15, userId: 23, tag: STORY, nsfwLevel: 32, ...HUGE },
     ]);
     await db.pg.exec(MIGRATION);
   });
@@ -136,7 +171,7 @@ describe('story-writer leaderboard migration', () => {
     ]);
   });
 
-  it('ranks only recent, non-nsfw story articles, with bookmarks weighted 4', async () => {
+  it('ranks only recent, public, PG/PG-13 story articles by live users, with bookmarks weighted 4', async () => {
     const rows = await standings(db.pg);
     // (sqrt(100)*1 + sqrt(49)*7 + sqrt(1)*4) * 100; the greatest(..., 1) floor makes empty terms 1.
     expect(rows.map((r) => [r.userId, r.score])).toEqual([
