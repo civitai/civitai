@@ -26,8 +26,8 @@ const RULE_MODULES = [
 
 /** Permissive sites, by file:line. */
 const PERMIT_SITES = [
-  'src/server/services/image.service.ts:1311',
-  'apps/moderator/src/lib/server/image-moderation.service.ts:121',
+  'src/server/services/image.service.ts:1322',
+  'apps/moderator/src/lib/server/image-moderation.service.ts:134',
 ];
 
 const ROOTS = ['src', 'apps/moderator/src', 'apps/event-engine/src', 'packages'];
