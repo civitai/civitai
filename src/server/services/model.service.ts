@@ -3987,8 +3987,6 @@ export const upsertModel = async (
 
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
-  if (!isModerator && id && beforeUpdate && data.nsfw === true && !beforeUpdate.nsfw)
-    await assertOwnerMayMarkMature(id);
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
   normalizeSfwFaceInput(data);
   // `?? null`: on a create there is no stored row, and a null from the form is not a change.
@@ -4287,6 +4285,8 @@ export const upsertModel = async (
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
+          // The owner's flag or the profanity rating: either would make a reviewed model mature.
+          if (!locked.nsfw && data.nsfw === true) await assertOwnerMayMarkMature(id, tx);
           const raisedOverScanLock = applyRaisedRestrictions(locked, data);
           const ownerFlagOverride = raisedOverScanLock ?? withRaisedFlags(locked, data);
           if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };

@@ -27,6 +27,16 @@ export async function assertGatedVersionsJudged(
   `;
   if (rows.some((v) => requiresPrePublishReview(v.baseModel) && !judgedVersionIds.includes(v.id)))
     throw throwConflictError('This version changed while it was being published. Try again.');
+  const gatedIds = rows.filter((v) => requiresPrePublishReview(v.baseModel)).map((v) => v.id);
+  // The gate judged the model not mature; a save since then must not ride the publish out.
+  if (gatedIds.length) {
+    const [model] = await tx.$queryRaw<{ nsfw: boolean | null }[]>`
+      SELECT m.nsfw FROM "Model" m
+      WHERE m.id IN (SELECT "modelId" FROM "ModelVersion" WHERE id IN (${Prisma.join(gatedIds)}))
+      LIMIT 1
+    `;
+    if (model?.nsfw) throw throwBadRequestError(GATE_REFUSAL_MESSAGES.nsfw);
+  }
   await assertGatedLinkTargets(
     tx,
     rows.filter((v) => requiresPrePublishReview(v.baseModel)).map((v) => v.id)
@@ -96,9 +106,15 @@ export async function isLinkTargetOfLiveGatedVersion(
   return !!hit;
 }
 
-/** The gate judged a live version as not mature; an owner can't make its model mature afterwards. */
-export async function assertOwnerMayMarkMature(modelId: number) {
-  const live = await dbWrite.modelVersion.findFirst({
+/**
+ * The gate judged a live version as not mature; an owner's save can't make its model mature
+ * afterwards. Run under the save's model row lock, which a gated publish also takes.
+ */
+export async function assertOwnerMayMarkMature(
+  modelId: number,
+  db: Prisma.TransactionClient | typeof dbWrite = dbWrite
+) {
+  const live = await db.modelVersion.findFirst({
     where: {
       modelId,
       status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },

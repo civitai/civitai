@@ -180,10 +180,12 @@ const liveGatedVersion = (found: boolean) =>
   mockDbWrite.modelVersion.findFirst.mockImplementation((async ({
     where,
   }: {
-    where: { status?: { in?: string[] }; baseModel?: { in?: string[] } };
+    where: { modelId?: number; status?: { in?: string[] }; baseModel?: { in?: string[] } };
   }) =>
     found &&
+    where.modelId === MODEL_ID &&
     where.status?.in?.includes(ModelStatus.Published) &&
+    where.status?.in?.includes(ModelStatus.Scheduled) &&
     where.baseModel?.in?.includes('Fibo 2.0')
       ? { id: VERSION_IDS[0] }
       : null) as never);

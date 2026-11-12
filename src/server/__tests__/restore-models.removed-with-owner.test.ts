@@ -2,6 +2,9 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { PRE_PUBLISH_REVIEW_BASE_MODELS } from '~/server/common/constants';
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // The job token is not what this file tests.
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
@@ -140,5 +143,6 @@ it('never selects a version on a gated base model', async () => {
   await run();
 
   const [sql] = dbMock.dbWrite.$queryRawUnsafe.mock.calls[0] as [string];
-  expect(sql).toMatch(/mv\."baseModel" NOT IN \('Fibo 2\.0'\)/);
+  for (const baseModel of PRE_PUBLISH_REVIEW_BASE_MODELS)
+    expect(sql).toMatch(new RegExp(`mv\\."baseModel" NOT IN \\([^)]*'${escapeRegExp(baseModel)}'`));
 });

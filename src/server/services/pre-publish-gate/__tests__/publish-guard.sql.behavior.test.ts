@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { constants } from '~/server/common/constants';
 import {
   assertGatedLinkTargets,
+  assertGatedVersionsJudged,
   disallowedLinkTargets,
   isLinkTargetOfLiveGatedVersion,
 } from '~/server/services/pre-publish-gate/publish-guard';
@@ -31,12 +32,12 @@ const tx = {
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
-    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int);
+    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int, nsfw boolean NOT NULL DEFAULT false);
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, status text, "baseModel" text);
     CREATE TABLE "RecommendedResource" (
       id serial PRIMARY KEY, "sourceId" int, "resourceId" int, settings jsonb
     );
-    INSERT INTO "Model" VALUES (10, ${OWNER}), (11, ${OWNER}), (12, ${OTHER_USER}), (13, ${OFFICIAL}),
+    INSERT INTO "Model" (id, "userId") VALUES (10, ${OWNER}), (11, ${OWNER}), (12, ${OTHER_USER}), (13, ${OFFICIAL}),
       (14, ${OTHER_USER});
     INSERT INTO "ModelVersion" VALUES
       (${V.draft}, 10, 'Draft', 'Fibo 2.0'),
@@ -103,5 +104,21 @@ describe('a version that a live gated version links to', () => {
     await unlinkAll();
     await link(V.draft, V.thirdParty);
     expect(await isLinkTargetOfLiveGatedVersion(tx, [V.thirdParty])).toBe(false);
+  });
+});
+
+describe('a gated publish under its lock', () => {
+  it('refuses a model marked mature since the gate judged it', async () => {
+    await unlinkAll();
+    await db.exec(`UPDATE "Model" SET nsfw = true WHERE id = 10`);
+    await expect(assertGatedVersionsJudged(tx, [V.draft], [V.draft])).rejects.toThrow(
+      'Models marked as mature content cannot use this base model.'
+    );
+    await db.exec(`UPDATE "Model" SET nsfw = false WHERE id = 10`);
+  });
+
+  it('publishes the same version while the model is not mature (control)', async () => {
+    await unlinkAll();
+    await expect(assertGatedVersionsJudged(tx, [V.draft], [V.draft])).resolves.toBeUndefined();
   });
 });
