@@ -160,5 +160,7 @@ describe('the snapshot round trip between processes', () => {
     await flipt.isEnabled('default-on-flag'); // starts the background retry
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(await flipt.isEnabled('default-on-flag')).toBe(false); // live state
+    // ...on the sync readers too, which read whichever client is current.
+    expect(flipt.isEnabledSync('default-on-flag')).toBe(false);
   });
 });

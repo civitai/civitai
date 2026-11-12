@@ -109,7 +109,9 @@ const hiddenRule = {
 function sysRedisUp(status: object, rules: object[] = []) {
   mockHGet.mockResolvedValue(JSON.stringify(status));
   mockGet.mockResolvedValue('1');
-  mockHGetAll.mockResolvedValue(Object.fromEntries(rules.map((r: any) => [r.id, JSON.stringify(r)])));
+  mockHGetAll.mockResolvedValue(
+    Object.fromEntries(rules.map((r: any) => [r.id, JSON.stringify(r)]))
+  );
 }
 function sysRedisDown() {
   const down = () => Promise.reject(new Error('sysRedis connection is down'));

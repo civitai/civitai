@@ -6,7 +6,12 @@ import type * as FliptSdk from '@flipt-io/flipt-client-js';
 
 const evaluateBoolean = vi.fn(() => ({ enabled: true }));
 const close = vi.fn();
-const makeClient = () => ({ evaluateBoolean, evaluateVariant: vi.fn(), refresh: async () => {}, close });
+const makeClient = () => ({
+  evaluateBoolean,
+  evaluateVariant: vi.fn(),
+  refresh: async () => {},
+  close,
+});
 const init = vi.fn();
 
 vi.mock('@flipt-io/flipt-client-js', async (importOriginal) => ({
