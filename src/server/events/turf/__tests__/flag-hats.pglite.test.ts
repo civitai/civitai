@@ -44,6 +44,13 @@ vi.mock('~/server/services/placement-moderation.service', () => ({
 vi.mock('~/server/services/home-block-cache.service', () => ({
   homeBlockCacheBust: async () => undefined,
 }));
+// The tester gate asks Flipt about the placer; on by default, as for a tester.
+const flipt = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/flipt/client', () => ({
+  isFlipt: async () => flipt.on,
+  ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => null,
+}));
 
 const { placeFlagHats, placeTurfSticker, getFlagSummary } = await import(
   '~/server/events/turf/turf.service'
@@ -170,6 +177,21 @@ describe('hats on a flag', () => {
     config = { flags: { ...FLAGS, on: false } };
     await expect(add(1)).rejects.toThrow(/isn't open/);
     expect(await hatsLeft()).toBeUndefined();
+  });
+
+  it('refuses a player the tester flag is off for, and spends none; a moderator still adds', async () => {
+    flipt.on = false;
+    try {
+      await expect(add(1)).rejects.toThrow(/isn't open/);
+      expect(await hatsLeft()).toBeUndefined();
+      await placeFlagHats(
+        { event: 'e', userId: PLACER, isModerator: true, imageId: FLAG, cosmeticId: 11, count: 1 },
+        BEFORE
+      );
+      expect(await hatsLeft()).toBe(19);
+    } finally {
+      flipt.on = true;
+    }
   });
 
   it('refuses a player whose hats would count for nobody, and spends none', async () => {

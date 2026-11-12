@@ -455,6 +455,28 @@ describe('the flag freeze', () => {
     expect(await totals()).toEqual({ Blue: 100 });
   });
 
+  it('freezes a zero-pot flag at 0 points and pays no team (the pre-launch tester flag)', async () => {
+    const day = await dayWithFlags();
+    const before = new Date(day.cutAt.getTime() - 60_000);
+    await hats(day.id, 11, 201, 'Blue', 5, before);
+    await hats(day.id, 12, 202, 'Pink', 5, before);
+    const zero = {
+      ...FLAGS,
+      pot: {
+        steps: [{ from: new Date('2026-11-01T00:00:00Z'), perPerson: 0, upTo: 0, after: 0 }],
+        cap: 1,
+      },
+    };
+    setFlags(zero);
+
+    expect(await freezeEventAwards(EVENT, SETTLE)).toBeGreaterThan(0);
+    const rows = await db.query<{ points: number }>(
+      `SELECT points FROM "EventAwardResult" WHERE kind = 'flag' AND team IS NOT NULL`
+    );
+    expect(rows.rows.map((r) => r.points)).toEqual([0, 0]);
+    expect(await totals()).toEqual({});
+  });
+
   it('freezes nothing before the cut', async () => {
     const day = await dayWithFlags();
     await hats(day.id, 11, 201, 'Blue', 1, SWAP);

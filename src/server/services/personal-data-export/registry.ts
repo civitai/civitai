@@ -124,6 +124,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   EventCosmeticPlacement: { subject: ['userId'] },
   EventCosmeticScoreDaily: { subject: ['userId'] },
   EventTurfSticker: { subject: ['userId'] },
+  EventTurfFlagSticker: { subject: ['userId'] },
   EventTurfStock: { subject: ['userId'] },
   CreatorScoreGrant: { subject: ['userId'] },
   UserCreatorMilestone: { subject: ['userId'] },

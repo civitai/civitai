@@ -81,7 +81,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   const { collection } = homeBlock ?? {};
 
   // A Flag Race row keeps its flags in rank order instead of shuffling.
-  const flagEvent = metadata.collection?.flagRace;
+  const features = useFeatureFlags();
+  const flagEvent = features.flagRace ? metadata.collection?.flagRace : undefined;
   const { data: flagSummary } = trpc.hatTurf.getFlags.useQuery(
     { event: flagEvent ?? '' },
     {

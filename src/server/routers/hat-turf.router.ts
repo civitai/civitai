@@ -86,7 +86,9 @@ export const hatTurfRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(placeFlagHatsSchema)
     .use(rateLimit({ limit: 60, period: 60 }))
-    .mutation(({ ctx, input }) => placeFlagHats({ ...input, userId: ctx.user.id })),
+    .mutation(({ ctx, input }) =>
+      placeFlagHats({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   // Today's flags and their live counts for the home row. The same for every viewer.
   getFlags: publicProcedure
     .input(turfEventSchema)

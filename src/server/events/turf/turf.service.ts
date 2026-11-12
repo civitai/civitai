@@ -1,4 +1,6 @@
 import { chunk } from 'lodash-es';
+import { isFliptOnForTesters } from '~/server/flipt/tester-segment';
+import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
@@ -477,9 +479,22 @@ export const FLAG_HAT_COUNTS = [1, 5, 10] as const;
  * Hats on a flag are spent for good and never count toward normal Turf. Refused after the cut.
  */
 export async function placeFlagHats(
-  input: { event: string; userId: number; imageId: number; cosmeticId: number; count: number },
+  input: {
+    event: string;
+    userId: number;
+    isModerator?: boolean;
+    imageId: number;
+    cosmeticId: number;
+    count: number;
+  },
   now = new Date()
 ) {
+  // Testers (and mods) only until the flag goes public at launch.
+  const fliptKey = getFeatureFliptKey('flagRace');
+  const open =
+    !!fliptKey &&
+    (await isFliptOnForTesters(fliptKey, { id: input.userId, isModerator: input.isModerator }));
+  if (!open) throw throwBadRequestError("The Flag Race isn't open right now");
   if (!(FLAG_HAT_COUNTS as readonly number[]).includes(input.count))
     throw throwBadRequestError('Add 1, 5 or 10 hats at a time');
   const { flags } = await readFlagRaceConfig(input.event);
