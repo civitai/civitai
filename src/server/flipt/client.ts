@@ -19,21 +19,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // On: "more like this" stops capping results at the anchor image's level. Off or missing, the cap
   // holds. Create the key in Flipt (disabled) before this deploys: a missing key logs on every eval.
   SEMANTIC_SIMILAR_ANCHOR_CAP_OFF = 'semantic-similar-anchor-cap-off',
-  FEED_IMAGE_EXISTENCE = 'feed-image-existence',
-  FEED_POST_FILTER = 'feed-fetch-filter-in-post',
-  // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
-  // Postgres) for matching users; everyone else keeps Meilisearch with the feed in shadow.
-  FEED_SERVICE_PRIMARY = 'feed-service-primary',
-  // The same for the public REST images endpoint, apart so either can be rolled back alone.
-  FEED_SERVICE_REST_IMAGES = 'feed-service-rest-images',
-  // Under FEED_SERVICE_PRIMARY, also serves hub feeds from the feed service. Off or
-  // missing, a hub stays on Meilisearch while every other shape follows the flag above.
-  FEED_SERVICE_HUBS = 'feed-service-hubs',
-  // The image feed without Meilisearch: every website and REST image-feed request goes to the feed
-  // service, whatever the three flags above say, and what the feed cannot serve is answered without
-  // the search index (an empty page, a retryable 503, or a 400 for a sort it does not have) instead
-  // of falling back. Off or missing, the flags above decide as before.
-  FEED_SERVICE_MEILI_OFF = 'feed-service-meili-off',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
