@@ -115,6 +115,14 @@ describe('setPostText', () => {
     expect(scanEntityInBackground).not.toHaveBeenCalled();
   });
 
+  it('runs the blocklist over a markup-only edit, which is where a link lives', async () => {
+    vi.mocked(throwOnBlockedUserContent).mockRejectedValueOnce(new Error('blocked'));
+    await expect(
+      setPostText({ id: TEXT, content: '<p><a href="https://x.test">old</a></p>', userId: AUTHOR })
+    ).rejects.toThrow('blocked');
+    expect(w.postText.update).not.toHaveBeenCalled();
+  });
+
   it("refuses someone else's text, a moderator's included", async () => {
     await expect(setPostText({ id: TEXT, content: '<p>x</p>', userId: 99 })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',

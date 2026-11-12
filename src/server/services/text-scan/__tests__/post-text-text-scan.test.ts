@@ -105,6 +105,11 @@ describe('applyPostTextTextScan', () => {
     );
     expect(dataWith('csamHeld')).toEqual([]);
     expect(dataWith('nsfwLevel')).toHaveLength(1);
+    expect(w.textScanHold.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { entityType: 'PostText', entityId: ID, label: 'csam', status: 'Pending' },
+      })
+    );
   });
 
   it('a verdict on the text before an edit does not rate the edited, unscanned text', async () => {

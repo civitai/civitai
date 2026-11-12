@@ -89,6 +89,8 @@ export async function setPostText({
   if (plain.length > STORYLINE_TEXT_MAX_LENGTH)
     throw throwBadRequestError(`Text is limited to ${STORYLINE_TEXT_MAX_LENGTH} characters`);
   if (text.content === html) return { id, content: html };
+  // Before the markup-only path: links live in the markup, and only the blocklist checks them.
+  if (html) await throwOnBlockedUserContent(html, { isModerator, surface: 'storyline-text' });
   // The scan reads the plain text, so a markup-only edit keeps its rating: a rescan would be
   // skipped as unchanged and the reset level would never be lifted.
   if (removeTags(text.content).trim() === plain) {
@@ -96,7 +98,6 @@ export async function setPostText({
     return { id, content: html };
   }
 
-  if (plain) await throwOnBlockedUserContent(html, { isModerator, surface: 'storyline-text' });
   await dbWrite.postText.update({ where: { id }, data: { content: html, nsfwLevel: 0 } });
   if (plain) scanEntityInBackground({ entityType: 'PostText', entityId: id });
   // The cleared level no longer rates the post.
