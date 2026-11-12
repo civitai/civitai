@@ -62,7 +62,7 @@ import { logToAxiom } from '~/server/logging/client';
 // The queue CONSUMERS (base.search-index.ts processQueues/update + base.metrics.ts)
 // run on background crons — NOT the latency-critical inline mutation path — and a
 // large sMembers on a healthy-but-BUSY sysRedis can legitimately exceed the tight
-// inline read deadline (default REDIS_SYS_READ_TIMEOUT_MS ≈ 2s), producing a false
+// inline read deadline (default REDIS_SYS_READ_TIMEOUT_MS = 1s), producing a false
 // timeout that (now, non-destructively) just skips-and-retries the run. Give the
 // consumer bucket-content reads a larger deadline so we don't needlessly defer a
 // run on transient busyness; a true half-open still fails open, just after a

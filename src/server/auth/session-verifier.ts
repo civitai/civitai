@@ -26,7 +26,7 @@ export async function isRevoked(claims: SessionClaims): Promise<boolean> {
   if (refuseModerationAccountSession(claims.sub, 'session-token')) return true;
   const tokenId = claims.jti;
   if (!tokenId) return false; // can't check — fail open
-  // Bound the revocation read with the shared wall-clock deadline (REDIS_SYS_READ_TIMEOUT_MS, default 2000ms):
+  // Bound the revocation read with the shared wall-clock deadline (REDIS_SYS_READ_TIMEOUT_MS, default 1000ms):
   // the sys client carries NO socketTimeout (0, to dodge the reconnect-storm wedge on the single-replica
   // backend), so on a silent half-open these reads could park the whole authed request until OS TCP
   // keepalive (~minutes). withSysReadDeadline races them so a stall FAILS OPEN fast — a revocation-check

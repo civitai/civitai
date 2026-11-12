@@ -9,7 +9,7 @@ import type { SessionClaims } from './types';
 export interface RevocationCheckConfig {
   /** The shared session store (`getSysRedis()`). A getter, so building the check never connects. */
   redis: () => SessionRegistryRedis;
-  /** Read deadline in ms (default 2000, the main app's REDIS_SYS_READ_TIMEOUT_MS default). */
+  /** Read deadline in ms (default 2000; the main app's REDIS_SYS_READ_TIMEOUT_MS defaults to 1000). */
   timeoutMs?: number;
   /** Called when a read fails or times out and the check fails open. */
   onError?: (err: unknown) => void;

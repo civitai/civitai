@@ -124,7 +124,10 @@ export const serverSchema = z
     // once written nor any MULTI sub-command — so on a silent half-open a sys read parks
     // (~OS-keepalive minutes) per request without this. Bounds the request handler and
     // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
-    REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
+    // 1000: the sys client's own command-duration histogram puts about 5 in 1,000,000 sys commands
+    // above 1s in normal traffic (about 2 in 100,000 above 500ms), so a 1s bound rarely fires on a
+    // healthy store and halves what each read costs while the store is hung. Was 2000.
+    REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(1000),
     // Process-wide breaker over the same reads (redis/sys-read-breaker.ts): after THRESHOLD
     // consecutive failed reads (timeout or error), withSysReadDeadline rejects at once instead of
     // waiting out the deadline, until COOLDOWN passes and one probe read succeeds. Dark by default —

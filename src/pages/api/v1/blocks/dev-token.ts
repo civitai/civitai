@@ -470,11 +470,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const rateKey = `${REDIS_SYS_KEYS.BLOCKS.DEV_TOKEN_RATE_LIMIT}:${rateSubject}` as const;
   let count: number;
   try {
-    // withSysReadDeadline (#28): the raw sysRedis MULTI runs on the request's
+    // withSysDeadline (#28): the raw sysRedis MULTI runs on the request's
     // critical path. On a SILENT half-open the written command parks in node-redis's
     // reply queue until OS TCP keepalive (~11min) — a HANG, not a throw, so the
     // try/catch alone can't unpark it. Racing the `.exec()` against the sys read
-    // deadline (default REDIS_SYS_READ_TIMEOUT_MS=2000) turns that open-ended hang
+    // deadline (default REDIS_SYS_READ_TIMEOUT_MS=1000) turns that open-ended hang
     // into a clean rejection caught here → fail closed (503) instead of parking.
     const multiResult = await withSysDeadline(
       sysRedis
