@@ -20,6 +20,8 @@ export const semanticImageSearchSchema = baseQuerySchema
     baseModels: z.string().array().max(baseModels.length).optional(),
     types: z.enum(MediaType).array().optional(),
     usernames: z.string().trim().min(1).array().max(20).optional(),
+    // The images feed's `?userId=`, as it filters by id.
+    userIds: z.number().int().positive().array().max(20).optional(),
     // Bounds on `sortAt`, the publish time for a published image.
     postedAfter: z.coerce.date().optional(),
     postedBefore: z.coerce.date().optional(),

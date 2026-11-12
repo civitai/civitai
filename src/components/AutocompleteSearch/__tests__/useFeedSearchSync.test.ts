@@ -45,23 +45,35 @@ describe('useFeedSearchSync', () => {
     setSearch.mockReset();
   });
 
-  it("writes what the user types into the feed's URL, keeping its filters", () => {
+  it('never searches as you type', () => {
+    const render = mount();
+    render({ debouncedSearch: 'red' });
+    render({ debouncedSearch: 'red dragon' });
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("writes committed text into the feed's URL, keeping its filters", () => {
     router.query = { baseModels: 'Illustrious' };
     const render = mount();
-    hook.markTyped();
     render({ debouncedSearch: 'red dragon' });
+    act(() => hook.commit('red dragon'));
     expect(replacedQueries()).toEqual([{ baseModels: 'Illustrious', query: 'red dragon' }]);
   });
 
-  it('waits for a second letter before searching, but clears at once', () => {
-    router.query = { query: 'cat' };
-    const render = mount();
-    hook.markTyped();
-    render({ debouncedSearch: 'r' });
+  it('applies a commit only once the refusal checks have read that text', () => {
+    const render = mount({ debouncedSearch: 'red' });
+    act(() => hook.commit('red dragon'));
     expect(router.replace).not.toHaveBeenCalled();
-    render({ debouncedSearch: 're' });
+    render({ debouncedSearch: 'red dragon' });
+    expect(replacedQueries()).toEqual([{ query: 'red dragon' }]);
+  });
+
+  it('clears the search when the bar is cleared', () => {
+    router.query = { query: 'cat' };
+    const render = mount({ debouncedSearch: 'cat' });
+    act(() => hook.commit(''));
     render({ debouncedSearch: '' });
-    expect(replacedQueries()).toEqual([{ query: 're' }, {}]);
+    expect(replacedQueries()).toEqual([{}]);
   });
 
   it('seeds the bar from a URL it did not write, without writing the URL back', () => {
@@ -81,35 +93,25 @@ describe('useFeedSearchSync', () => {
   });
 
   it('never sends a refused query to the feed', () => {
-    const render = mount({ blocked: true });
-    hook.markTyped();
+    const render = mount({ blocked: true, debouncedSearch: 'refused words' });
+    act(() => hook.commit('refused words'));
     render({ debouncedSearch: 'refused words', blocked: true });
-    hook.applyNow('refused words');
     expect(router.replace).not.toHaveBeenCalled();
   });
 
   it('does nothing on a page whose feed does not answer a query', () => {
     router.query = { query: 'red dragon' };
-    const render = mount({ enabled: false });
-    hook.markTyped();
-    render({ enabled: false, debouncedSearch: 'cats' });
+    mount({ enabled: false, debouncedSearch: 'cats' });
+    act(() => hook.commit('cats'));
     expect(setSearch).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
   });
-});
 
-describe('useFeedSearchSync when the router lags its own writes', () => {
-  beforeEach(() => {
-    router.query = {};
-    router.replace.mockReset();
-    setSearch.mockReset();
-  });
-
-  it('does not put an earlier write back in the bar when a later one is still on its way', () => {
-    const render = mount();
-    hook.markTyped();
-    render({ debouncedSearch: 'red' });
+  it('does not put an earlier commit back in the bar when a later one is still on its way', () => {
+    const render = mount({ debouncedSearch: 'red' });
+    act(() => hook.commit('red'));
     render({ debouncedSearch: 'red dragon' });
+    act(() => hook.commit('red dragon'));
     // The router shows the first write only now, after the second has gone out.
     router.query = { query: 'red' };
     render({ debouncedSearch: 'red dragon' });
@@ -117,23 +119,14 @@ describe('useFeedSearchSync when the router lags its own writes', () => {
     render({ debouncedSearch: 'red dragon' });
     expect(setSearch).not.toHaveBeenCalled();
   });
-});
 
-describe('useFeedSearchSync and the @user token', () => {
-  beforeEach(() => {
-    router.query = {};
-    router.replace.mockReset();
-    setSearch.mockReset();
-  });
-
-  it('removes the user filter it added when the token is deleted, and keeps the rest', () => {
+  it('removes the user filter it added when the @user token is deleted, and keeps the rest', () => {
     router.query = { baseModels: 'Illustrious' };
-    const render = mount();
-    hook.markTyped();
-    render({ debouncedSearch: 'dragon @alice' });
+    const render = mount({ debouncedSearch: 'dragon @alice' });
+    act(() => hook.commit('dragon @alice'));
     router.query = { baseModels: 'Illustrious', query: 'dragon', username: 'alice' };
-    render({ debouncedSearch: 'dragon @alice' });
     render({ debouncedSearch: 'dragon' });
+    act(() => hook.commit('dragon'));
     expect(replacedQueries().at(-1)).toEqual({ baseModels: 'Illustrious', query: 'dragon' });
   });
 });

@@ -512,8 +512,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const handleSubmit = () => {
     if (filtersFeedInPlace) {
-      // Only once the debounce has caught up: the refusal checks have read the debounced text.
-      if (search === debouncedSearch) feedSearch.applyNow(search);
+      feedSearch.commit(search);
       blurAndDiscardCarriedText();
       onSubmit?.();
       return;
@@ -535,7 +534,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // carrier goes with it.
   const handleClear = () => {
     setSearch('');
-    feedSearch.markTyped();
+    feedSearch.commit('');
     onClear?.();
   };
 
@@ -545,8 +544,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // carry exists for. `onClear?.()` still fires, unchanged: on mobile it is what closes the search
   // overlay (`AppHeader` passes `onSearchDone`), and that is not ours to change here.
   const handleBlur = () => {
-    // On a feed it filters, the text is the active filter, so it stays.
-    if (!filtersFeedInPlace) clearDisplayedText();
+    // On a feed it filters, leaving the bar commits the text, which stays as the active filter.
+    if (filtersFeedInPlace) feedSearch.commit(search);
+    else clearDisplayedText();
     onClear?.();
   };
 
@@ -667,7 +667,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         data={items}
         onChange={(value) => {
           if (value == null || value === 'View more results') return;
-          feedSearch.markTyped();
           setSearch(value);
         }}
         onBlur={handleBlur}

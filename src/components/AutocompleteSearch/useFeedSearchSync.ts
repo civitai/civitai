@@ -5,12 +5,11 @@ import {
   parseFeedSearch,
 } from '~/components/AutocompleteSearch/autocomplete-query';
 
-const MIN_TYPED_QUERY_LENGTH = 2;
-
 /**
- * Search v3: keeps the header bar and the feed's `?query=` in step, on a feed that answers it. Only
- * typing writes the URL; a URL change from elsewhere (first load, Back, the feed's Clear search)
- * re-seeds the bar instead.
+ * Search v3: keeps the header bar and the feed's `?query=` in step, on a feed that answers it. The
+ * bar writes the URL only when its text is committed (Enter, blur, the clear button), never as you
+ * type: each applied query is a semantic search, and the service can't take one per keystroke. A
+ * URL change from elsewhere (first load, Back, the feed's Clear search) re-seeds the bar instead.
  *
  * Our own writes are told apart by VALUE, against every write still in flight, not just the last:
  * a second write can go out before the router shows the first, and a last-write-only check would
@@ -24,6 +23,7 @@ export function useFeedSearchSync({
   blocked,
 }: {
   enabled: boolean;
+  /** The bar's text after the debounce the refusal checks read. */
   debouncedSearch: string;
   setSearch: (value: string) => void;
   /** A query the bar refuses (illegal, profane, blocked words) never reaches the feed. */
@@ -32,9 +32,10 @@ export function useFeedSearchSync({
   const router = useRouter();
   const feedQuery = typeof router.query.query === 'string' ? router.query.query : undefined;
   const inFlight = useRef<(string | undefined)[]>([]);
-  const typedSinceSeed = useRef(false);
   const lastSeen = useRef<string | undefined>(undefined);
   const typedUsername = useRef<string | undefined>(undefined);
+  // A committed text waits here until the debounce, and so the refusal checks, have caught up to it.
+  const committed = useRef<string | undefined>(undefined);
 
   const apply = (text: string) => {
     if (!enabled || blocked) return;
@@ -54,27 +55,28 @@ export function useFeedSearchSync({
       return;
     }
     inFlight.current = [];
-    typedSinceSeed.current = false;
+    committed.current = undefined;
     typedUsername.current = undefined;
     setSearch(feedQuery ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, feedQuery]);
 
   useEffect(() => {
-    // Each applied query is a semantic search; a one-letter one finds nothing worth the call.
-    // Emptying the bar still applies at once, and so does Enter.
-    const text = debouncedSearch.trim();
-    if (typedSinceSeed.current && (!text || text.length >= MIN_TYPED_QUERY_LENGTH))
-      apply(debouncedSearch);
+    if (committed.current === undefined || committed.current !== debouncedSearch) return;
+    committed.current = undefined;
+    apply(debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, debouncedSearch, blocked]);
 
   return {
-    /** Call on every edit the user makes; until then the bar only mirrors the URL. */
-    markTyped: () => {
-      typedSinceSeed.current = true;
+    /** Enter, blur or clear: apply `text` to the feed once the refusal checks have read it. */
+    commit: (text: string) => {
+      if (text !== debouncedSearch) {
+        committed.current = text;
+        return;
+      }
+      committed.current = undefined;
+      apply(text);
     },
-    /** Enter: apply now rather than after the debounce. */
-    applyNow: apply,
   };
 }

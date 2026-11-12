@@ -43,7 +43,6 @@ const SEARCH_RETRY_BASE_DELAY_MS = 2000;
 // Slow-fetch thresholds. Bad pods in production can leave a request hanging
 // for tens of seconds before failing, so we show a "taking a while" banner
 // after SLOW_THRESHOLD_MS and abort at ABORT_THRESHOLD_MS to force a retry.
-// Not while a semantic search is running (see the slow-fetch effect).
 const SEARCH_SLOW_THRESHOLD_MS = 3_000;
 const SEARCH_ABORT_THRESHOLD_MS = 8_000;
 

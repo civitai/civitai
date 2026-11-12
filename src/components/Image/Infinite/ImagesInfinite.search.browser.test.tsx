@@ -98,6 +98,7 @@ describe('ImagesInfinite with a search', () => {
     renderWithProviders(<ImagesInfiniteContent searchable />);
 
     await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon' });
     expect(page.getByText('image 1', { exact: true }).query()).toBeNull();
     expect(state.feedEnabled.at(-1)).toBe(false);
   });
@@ -116,6 +117,7 @@ describe('ImagesInfinite with a search', () => {
     renderWithProviders(<ImagesInfiniteContent searchable />);
 
     await expect.element(page.getByText('Warning')).toBeVisible();
+    expect(state.searchInputs.length).toBeGreaterThan(0);
     expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
     expect(state.feedEnabled.at(-1)).toBe(false);
   });

@@ -125,6 +125,7 @@ export function toSemanticImageSearchInput({
     baseModels: filters.baseModels?.length ? filters.baseModels : undefined,
     types: filters.types?.length ? filters.types : undefined,
     usernames: filters.username ? [filters.username] : undefined,
+    userIds: filters.userId ? [filters.userId] : undefined,
     postedAfter: periodStart(filters.period, now),
     limit: 50,
   };

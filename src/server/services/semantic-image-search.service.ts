@@ -58,15 +58,19 @@ export async function searchSemanticImages({
 }) {
   const browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
 
-  const [hidden, addonData, blockedTags, userIds, namedTagIds] = await Promise.all([
+  const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),
     getBlockedBrowsingTags(),
     input.usernames?.length ? resolveUserIds(input.usernames) : undefined,
     input.tagNames?.length ? resolveTagIds(input.tagNames) : undefined,
   ]);
-  if (userIds && !userIds.length)
+  if (namedUserIds && !namedUserIds.length)
     return { items: [], nextCursor: undefined, correctedQuery: undefined };
+  const userIds =
+    namedUserIds || input.userIds?.length
+      ? [...new Set([...(namedUserIds ?? []), ...(input.userIds ?? [])])]
+      : undefined;
   // As the image feed: a tag that cannot be browsed is dropped, and a filter of only such tags is empty.
   // A named tag that does not exist can match nothing.
   if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size)

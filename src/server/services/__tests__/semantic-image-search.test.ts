@@ -361,6 +361,18 @@ describe('filters', () => {
     expect(calls[0].filter.userIds).toEqual([31, 32]);
   });
 
+  it("narrows to the feed's user, by id, alongside any named ones", async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 31 }]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const { source, calls } = rankedSource([101]);
+    await searchSemanticImages({
+      input: textQuery({ usernames: ['fox'], userIds: [31, 40] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.userIds).toEqual([31, 40]);
+  });
+
   it('returns nothing, without asking the index, when no chosen user exists', async () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([]);
     const { source, calls } = rankedSource([101]);
