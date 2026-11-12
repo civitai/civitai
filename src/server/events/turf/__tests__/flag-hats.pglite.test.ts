@@ -245,5 +245,33 @@ describe('the shared flag summary', () => {
     // The recount says Blue; the freeze paid Pink (say, before an exclusion): the badge says Pink.
     const closed = await getFlagSummary('e', new Date(CUT.getTime() + 3_600_000));
     expect(closed?.flags[0].winners).toEqual(['Pink']);
+    // Frozen, it never changes again: cached for minutes, not seconds.
+    expect(redisMock.sysRedis.set).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.any(String),
+      {
+        EX: 300,
+      }
+    );
+  });
+
+  it('caches an open or unfrozen day for seconds only', async () => {
+    await add(5);
+    await getFlagSummary('e', BEFORE);
+    expect(redisMock.sysRedis.set).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.any(String),
+      {
+        EX: 10,
+      }
+    );
+    await getFlagSummary('e', CUT);
+    expect(redisMock.sysRedis.set).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.any(String),
+      {
+        EX: 10,
+      }
+    );
   });
 });

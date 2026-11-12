@@ -46,6 +46,7 @@ import {
   currentFlagDay,
   flagCrucibleTag,
   flagPot,
+  flagSummaryKey,
   flagTally,
   flagWinners,
   swapFlagDay,
@@ -53,6 +54,7 @@ import {
 } from '~/server/events/turf/flag-day';
 import { logToAxiom } from '~/server/logging/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -545,11 +547,11 @@ export async function placeFlagHats(
   return flagStanding(imageId, tally, flags.pot, now, false);
 }
 
-const flagSummaryKey = (event: string) =>
-  `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:flagRace:summary` as const;
 // Short: a placement doesn't clear it (on a busy flag it would never be warm), and the placer gets
 // their flag's fresh counts back from the placement itself.
 const FLAG_SUMMARY_TTL_S = 10;
+// A frozen day never changes again, and the next swap clears the key.
+const FLAG_SUMMARY_FROZEN_TTL_S = 300;
 
 export type FlagStanding = {
   imageId: number;
@@ -619,11 +621,32 @@ export async function getFlagSummary(
   const { flags: config } = await readFlagRaceConfig(eventName);
   if (!config?.on) return null;
   const key = flagSummaryKey(eventName);
-  const raw = await sysRedis.get(key).catch(() => null);
-  if (raw) {
+  const fresh = async () => {
+    const raw = await sysRedis.get(key).catch(() => null);
+    if (!raw) return undefined;
     const cached = JSON.parse(raw) as CachedFlagSummary;
-    if (cached.summary.closed || now.getTime() < cached.cutAtMs) return cached.summary;
-  }
+    return cached.summary.closed || now.getTime() < cached.cutAtMs ? cached.summary : undefined;
+  };
+  const hit = await fresh();
+  if (hit) return hit;
+  // One server rebuilds it at a time: the rest wait for its result rather than each running the
+  // whole day's tally. A server that can't get the lock in time builds it itself.
+  const locked = await withDistributedLock(
+    { key: `flag-race-summary:${eventName}`, ttl: 5, retryDelay: 100, maxRetries: 10 },
+    async () => ({
+      summary: (await fresh()) ?? (await buildFlagSummary(eventName, config, key, now)),
+    })
+  );
+  if (locked) return locked.summary;
+  return (await fresh()) ?? buildFlagSummary(eventName, config, key, now);
+}
+
+async function buildFlagSummary(
+  eventName: string,
+  config: FlagsConfig,
+  key: ReturnType<typeof flagSummaryKey>,
+  now: Date
+): Promise<FlagSummary | null> {
   const [event, day] = await Promise.all([
     getTurfEvent(eventName, now),
     currentFlagDay(eventName, now),
@@ -647,8 +670,11 @@ export async function getFlagSummary(
     }),
   };
   const value: CachedFlagSummary = { summary, cutAtMs: day.cutAt.getTime() };
+  const frozen = !!paid?.size;
   await sysRedis
-    .set(key, JSON.stringify(value), { EX: FLAG_SUMMARY_TTL_S })
+    .set(key, JSON.stringify(value), {
+      EX: frozen ? FLAG_SUMMARY_FROZEN_TTL_S : FLAG_SUMMARY_TTL_S,
+    })
     .catch((error) =>
       logSysRedisFailOpen('write-degraded', 'turf.getFlagSummary', error, { event: eventName })
     );
