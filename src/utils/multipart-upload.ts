@@ -185,10 +185,8 @@ export async function startMultipartUpload({
           reportProgress();
         });
         xhr.upload.addEventListener('loadend', ({ loaded }) => {
-          // The window WIDENS here rather than ending: what remains is a wait for a tiny ETag
-          // reply, not a transfer, so the body's window would kill a slow-but-healthy server
-          // while no window at all lets a connection that goes half-open AFTER the body hold a
-          // worker slot for the life of the page.
+          // Widened, not cleared: with no window, a connection that goes half-open after the body
+          // holds a worker slot for the life of the page.
           //
           // 🔴 REACHING HERE DOES NOT MEAN THE BODY GOT THROUGH: XHR's request-error steps fire
           // `upload.loadend` on `abort` and on `error` too. `bodySent`'s one reader is the
