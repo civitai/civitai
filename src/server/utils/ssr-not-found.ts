@@ -1,6 +1,8 @@
 import type { ServerResponse } from 'node:http';
+// Dependency-free on purpose: page modules import this, and a page module is also loaded in the
+// browser (component and geometry tests render it). `~/server/utils/errorHandling` would drag `pg`
+// and Node built-ins into that graph.
 import { isDbUnavailableError } from '@civitai/db/db-errors';
-import { isUpstreamNetworkError } from '~/server/utils/errorHandling';
 
 /**
  * Page lookups in `getServerSideProps`: only a CONFIRMED missing row may become `notFound`. Anything
@@ -17,7 +19,11 @@ export function isNotFoundError(error: unknown): boolean {
 
 const UNAVAILABLE_TRPC_CODES = new Set(['SERVICE_UNAVAILABLE', 'TIMEOUT']);
 
-/** A dependency failed to answer, as opposed to a bug in the page. */
+/**
+ * A dependency failed to answer, as opposed to a bug in the page: a tRPC 503/timeout, an
+ * unreachable database, or a raw socket failure (refused, reset, timed out). Anything else is
+ * still rethrown with no-store, as a 500.
+ */
 export function isDependencyUnavailableError(error: unknown): boolean {
   const err = error as { code?: string; data?: { code?: string } } | null | undefined;
   if (
@@ -25,7 +31,7 @@ export function isDependencyUnavailableError(error: unknown): boolean {
     UNAVAILABLE_TRPC_CODES.has(err?.data?.code ?? '')
   )
     return true;
-  return isDbUnavailableError(error) || isUpstreamNetworkError(error);
+  return isDbUnavailableError(error);
 }
 
 export const DEPENDENCY_UNAVAILABLE_RETRY_AFTER_SECONDS = 30;
