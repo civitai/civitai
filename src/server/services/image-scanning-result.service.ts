@@ -8,6 +8,7 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   combineFrameAxes,
   readRatingAxes,
+  writeRatedAxes,
   type RatingAxes,
 } from '~/server/services/image-axis-rating.service';
 import {
@@ -321,6 +322,8 @@ export async function processImageScanningWorkflow({
     await recordImageScanningResult({ workflowId, imageId, scan, startedAt, completedAt });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     await applyIngestionSideEffects({ image, outcome });
+    // Last, so even a failure here cannot cost the scan its side effects.
+    if (scan.axes) await writeRatedAxes({ imageId, axes: scan.axes, workflowId, completedAt });
   } catch (error) {
     logToAxiom(
       {
