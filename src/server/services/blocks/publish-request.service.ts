@@ -4431,6 +4431,24 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // The subject is unchanged; trailers map the snapshot to the request and to the developer's
   // source (approve-provenance.ts). A push-originated request's pushed sha is `Pushed-Commit`,
   // never `Source-Commit`: the latter is only ever the client's own claim.
+  //
+  // An empty bundleKey is NOT enough to call `forgejoCommitSha` the developer's push: approve
+  // overwrites a request's `forgejoCommitSha` with its own snapshot, and reset-to-pending clones
+  // that approved row (bundleKey '' included) into a new pending request. A sha some approved
+  // request already holds is the platform's own commit, so it is not a `Pushed-Commit`.
+  let pushedCommit: string | null = null;
+  if (!request.bundleKey && request.forgejoCommitSha) {
+    const platformOwn = await dbRead.appBlockPublishRequest.findFirst({
+      where: {
+        slug: request.slug,
+        status: 'approved',
+        forgejoCommitSha: request.forgejoCommitSha,
+        NOT: { id: request.id },
+      },
+      select: { id: true },
+    });
+    if (!platformOwn) pushedCommit = request.forgejoCommitSha;
+  }
   const { buildApproveCommitMessage } = await import('./approve-provenance');
   const commitMessage = buildApproveCommitMessage({
     publishRequestId: request.id,
@@ -4439,7 +4457,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     sourceCommit: request.sourceCommit,
     sourceDirty: request.sourceDirty,
     sourceRepo: (manifest as { repository?: unknown }).repository,
-    pushedCommit: request.bundleKey ? null : request.forgejoCommitSha,
+    pushedCommit,
   });
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,

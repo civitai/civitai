@@ -4552,6 +4552,39 @@ describe('approveRequest — provenance trailers and version tag (Forgejo over H
     ]);
   });
 
+  it("🔴 a reset-to-pending clone of a push-approved request does NOT call the platform's own commit Pushed-Commit", async () => {
+    // reset-to-pending copies the approved row (bundleKey '', forgejoCommitSha = the previous
+    // APPROVE snapshot) into a new pending request; another approved request holds that sha.
+    const PREV_SNAPSHOT = PUSHED;
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pending({
+        id: 'pubreq_1',
+        bundleKey: '',
+        forgejoCommitSha: PREV_SNAPSHOT,
+        sourceCommit: null,
+        sourceDirty: null,
+      })
+    );
+    mockDbRead.appBlockPublishRequest.findFirst.mockImplementation((async (a: {
+      where?: Record<string, unknown>;
+    }) =>
+      a?.where?.status === 'approved' && a?.where?.forgejoCommitSha === PREV_SNAPSHOT
+        ? { id: 'pubreq_prev' }
+        : null) as never);
+    mockBundleBuffer.current = null;
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map([['block.manifest.json', 'blobM']]));
+    mockForgejo.getBlobContent.mockResolvedValue(Buffer.from(JSON.stringify(manifest())));
+
+    await expect(approve()).resolves.toMatchObject({ forgejoCommitSha: NEW_SHA });
+    const [commit] = posts('/contents');
+    expect(commit.body.message).toBe(
+      'Approved publish request pubreq_1 — hello v0.1.0\n\n' +
+        'Publish-Request: pubreq_1\n' +
+        'App-Version: 0.1.0\n' +
+        'Source-Repo: https://github.com/someone/hello\n'
+    );
+  });
+
   it('invariant guard: a tag already on the approved sha is left alone (re-delivery), approve succeeds', async () => {
     tags.set('v0.1.0', NEW_SHA);
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pending());

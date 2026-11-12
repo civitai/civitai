@@ -876,7 +876,9 @@ async function createAnnotatedTag(opts: {
     body: JSON.stringify({ tag_name: opts.tag, target: opts.target, message: opts.message }),
   });
   // 409: a tag with this name exists (another approve, or a re-delivery, got there first).
-  if (res.status === 409 || res.status === 422) return 'conflict';
+  // Anything else non-2xx (422 = a protected tag name or a rejected form) throws with the
+  // server's reason, so the approve log names the refusal rather than a race.
+  if (res.status === 409) return 'conflict';
   await unwrap<unknown>(res);
   return 'created';
 }

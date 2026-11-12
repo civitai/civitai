@@ -167,6 +167,18 @@ describe('ensureApprovalTag', () => {
     expect(calls).toEqual([]);
   });
 
+  it('a 422 (protected tag name) throws with the server reason instead of reading as a race', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL, init?: RequestInit) =>
+        (init?.method ?? 'GET') === 'POST'
+          ? new Response(JSON.stringify({ message: 'tag is protected' }), { status: 422 })
+          : new Response('{}', { status: 404 })
+      )
+    );
+    await expect(run()).rejects.toThrow(/Forgejo 422.*tag is protected/);
+  });
+
   it('a Forgejo error throws (the approve path logs and continues)', async () => {
     vi.stubGlobal(
       'fetch',
