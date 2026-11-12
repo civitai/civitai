@@ -1,0 +1,27 @@
+name: tmp flake.lock update (delete me)
+on:
+  push:
+    branches: [chore/node-24.22.2]
+    paths: ['.github/workflows/tmp-flake-lock.yml']
+permissions:
+  contents: write
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chore/node-24.22.2
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - name: Update nixpkgs input
+        run: nix flake update nixpkgs
+      - name: Report locked nodejs_24
+        run: nix eval --raw .#legacyPackages.x86_64-linux.nodejs_24.version 2>/dev/null || nix eval --raw --impure --expr '(import (builtins.getFlake (toString ./.)).inputs.nixpkgs { system = "x86_64-linux"; }).nodejs_24.version'
+      - name: Commit flake.lock
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add flake.lock
+          git diff --cached --quiet && { echo "flake.lock unchanged"; exit 1; }
+          git commit -m "chore(nix): update nixpkgs lock (nodejs_24 24.22.2)"
+          git push origin HEAD:chore/node-24.22.2
