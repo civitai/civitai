@@ -8,7 +8,6 @@ vi.mock('~/server/services/orchestrator/videoEnhancement', async (importOriginal
   getVideoMetadata: getVideoMetadataMock,
 }));
 
-import { KNOWN_ORCHESTRATOR_HOSTS } from '~/server/services/orchestrator/trusted-blob-url';
 import { parseTimeSpanSeconds, probeVideoDimensions } from '~/server/services/video-dimensions';
 
 const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
@@ -40,18 +39,13 @@ describe('probeVideoDimensions', () => {
     expect(getVideoMetadataMock).not.toHaveBeenCalled();
   });
 
-  // The probe runs on the system orchestrator token, so an absolute url must be Civitai-hosted
-  // media: the image CDN or the orchestrator. Anything else is skipped, not probed.
+  // The probe runs on the system orchestrator token, so an absolute url is probed only when it is
+  // Civitai-hosted media by the metadata route's rule (isCivitaiMediaUrl has the full matrix).
   it.each([
-    ['a third-party https host', 'https://example.com/video.mp4'],
+    ['a third-party host', 'https://example.com/video.mp4'],
     ['an object-store bucket host', 'https://some-bucket.s3.wasabisys.com/video.mp4'],
-    ['a path-style object-store url', 'https://s3.us-west-1.wasabisys.com/some-bucket/video.mp4'],
-    ['a Civitai subdomain on a non-default port', `https://files.civitai.com:8443/${KEY}.mp4`],
-    ['the image CDN on a non-default port', `https://image.civitai.com:8443/${KEY}/video.mp4`],
-    ['a Civitai host that is not the image CDN', `https://civitai.com/${KEY}.mp4`],
-    ['plain http to the image CDN', `http://image.civitai.com/${KEY}/video.mp4`],
-    ['userinfo', `https://user:pass@image.civitai.com/${KEY}/video.mp4`],
-    ['plain http to the orchestrator', 'http://orchestration.civitai.com/v2/consumer/blobs/A.mp4'],
+    ['a Civitai subdomain', `https://files.civitai.com/${KEY}.mp4`],
+    ['the image CDN', `https://image.civitai.com/${KEY}/original=true/video.mp4`],
   ])('skips %s without running the probe', async (_label, url) => {
     getVideoMetadataMock.mockResolvedValue({ width: 640, height: 360, fps: 24, duration: '' });
 
@@ -59,13 +53,8 @@ describe('probeVideoDimensions', () => {
     expect(getVideoMetadataMock).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['the image CDN', `https://image.civitai.com/${KEY}/original=true/video.mp4`],
-    ...KNOWN_ORCHESTRATOR_HOSTS.map((host) => [
-      `the orchestrator host ${host}`,
-      `https://${host}/v2/consumer/blobs/ABC123.mp4`,
-    ]),
-  ])('probes a video on %s', async (_label, url) => {
+  it('probes a video on the orchestrator', async () => {
+    const url = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.mp4';
     getVideoMetadataMock.mockResolvedValue({ width: 640, height: 360, fps: 24, duration: '' });
 
     expect(await probeVideoDimensions(url)).toEqual({ width: 640, height: 360 });
