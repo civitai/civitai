@@ -50,6 +50,29 @@ describe('articles feed default sort by domain', () => {
     expect(articles(true)).toMatchObject(saved);
   });
 
+  it('server render uses the same per-domain default', () => {
+    vi.stubGlobal('window', undefined);
+    try {
+      expect(articles(true).sort).toBe(ArticleSort.Newest);
+      expect(articles(false).sort).toBe(ArticleSort.MostBookmarks);
+    } finally {
+      vi.stubGlobal('window', {});
+    }
+  });
+
+  it('resets unparseable saved filters to Newest on red', () => {
+    save({ sort: 'bogus' });
+    expect(articles(true).sort).toBe(ArticleSort.Newest);
+    expect(JSON.parse(store.get(ARTICLES_KEY) as string).sort).toBe(ArticleSort.Newest);
+  });
+
+  it('a later pick of the old pair survives when the first run had nothing to rewrite', () => {
+    save({ sort: ArticleSort.MostComments, period: MetricTimeframe.Month });
+    articles(true);
+    save(oldDefaults);
+    expect(articles(true).sort).toBe(ArticleSort.MostBookmarks);
+  });
+
   it('never migrates off red', () => {
     save(oldDefaults);
     expect(articles(false).sort).toBe(ArticleSort.MostBookmarks);
