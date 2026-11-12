@@ -312,9 +312,9 @@ describe('setVersionShowcase: what the write path refuses', () => {
   it('refuses an image its author removed, even on the other site', async () => {
     // The author removed it while it was featured on .red only; the save is for the other site.
     dbMock.dbWrite.modelVersionShowcaseItem.findMany.mockImplementation((async (args: {
-      where: { removedByContributor?: boolean; site?: string };
+      where: { removed?: boolean; site?: string };
     }) =>
-      args.where.removedByContributor && (args.where.site ?? 'red') === 'red'
+      args.where.removed && (args.where.site ?? 'red') === 'red'
         ? [{ imageId: 77 }]
         : []) as never);
     await expect(
@@ -325,7 +325,7 @@ describe('setVersionShowcase: what the write path refuses', () => {
         userId: 5,
         isModerator: false,
       })
-    ).rejects.toThrow(/removed it from your showcase/);
+    ).rejects.toThrow(/removed from your showcase by its author or a moderator/);
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
@@ -346,8 +346,8 @@ describe('setVersionShowcase: a valid save', () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue({ username: 'creator' } as never);
     // Image 78 was featured before this save; 77 is new.
     dbMock.dbWrite.modelVersionShowcaseItem.findMany.mockImplementation((async (args: {
-      where: { removedByContributor?: boolean };
-    }) => (args.where.removedByContributor ? [] : [{ imageId: 78 }])) as never);
+      where: { removed?: boolean };
+    }) => (args.where.removed ? [] : [{ imageId: 78 }])) as never);
     dbMock.dbWrite.$queryRaw.mockImplementation((async (query: { strings?: string[] }) => {
       const sql = (Array.isArray(query) ? query : query.strings ?? []).join('');
       if (sql.includes('CROSS JOIN'))
@@ -399,6 +399,52 @@ describe('setVersionShowcase: a valid save', () => {
         key: 'model-version-showcase-featured:100:77',
       })
     );
+  });
+});
+
+describe('getCoverImages: a community cover on a model card', () => {
+  const featuredOnRedOnly = () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { modelVersionId: VERSION, modelId: 1, imageId: 77 },
+    ] as never);
+    mocks.entry = {
+      modelVersionId: VERSION,
+      rows: [],
+      community: [{ id: 77, site: 'red', nsfwLevel: 1, modelVersionId: VERSION }],
+    };
+  };
+  const coverFor = (site: 'com' | 'red') =>
+    cover.getCoverImages({
+      covers: [{ modelId: 1, ownerId: 5, coverId: 77, site }],
+      modelVersionImages: {},
+      sameVersionOnly: false,
+    });
+
+  it('serves an image featured on civitai.red as the .red cover', async () => {
+    featuredOnRedOnly();
+    expect((await coverFor('red')).get(1)).toMatchObject({ id: 77 });
+  });
+
+  it('leaves it out as the .com cover', async () => {
+    featuredOnRedOnly();
+    expect((await coverFor('com')).has(1)).toBe(false);
+  });
+});
+
+describe('moderatorRemoveFromVersionShowcase', () => {
+  it('leaves a tombstone instead of deleting, so the creator can’t feature it again', async () => {
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
+      id: VERSION,
+      status: 'Published',
+      model: { id: 1, name: 'Model', userId: 5, nsfw: false, status: 'Published' },
+    } as never);
+    await showcase.moderatorRemoveFromVersionShowcase({ modelVersionId: VERSION, imageId: 77 });
+    expect(dbMock.dbWrite.modelVersionShowcaseItem.updateMany).toHaveBeenCalledWith({
+      where: { modelVersionId: VERSION, imageId: 77, source: 'Community' },
+      data: { removed: true, position: null },
+    });
+    expect(dbMock.dbWrite.modelVersionShowcaseItem.deleteMany).not.toHaveBeenCalled();
   });
 });
 

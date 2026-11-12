@@ -11,7 +11,7 @@ images other people made with the version. Behind the `model-version-showcase` f
 
 - `source = 'Owner'`: a position for, or a hide of (`excluded`), one of the creator's own images
 - `source = 'Community'`: a featured image by someone else
-- `removedByContributor`: the image's author removed it; kept so it can't be added again
+- `removed`: the image's author or a moderator removed it; kept so it can't be added again
 
 A version and site with no rows shows exactly what it showed before: the creator's images in post
 order. The table has no foreign keys; a row whose image or version is gone matches nothing.

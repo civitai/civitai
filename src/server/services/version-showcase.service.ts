@@ -106,7 +106,7 @@ const buildVersionShowcaseCache = () =>
       SELECT s."modelVersionId", s."imageId", s.site, s.source, s.position, s.excluded
       FROM "ModelVersionShowcaseItem" s
       WHERE s."modelVersionId" IN (${Prisma.join(ids)})
-        AND NOT s."removedByContributor"
+        AND NOT s."removed"
     `;
       for (const row of rows) records[row.modelVersionId].rows.push(row);
 
@@ -139,7 +139,7 @@ const buildVersionShowcaseCache = () =>
       JOIN "User" u ON u.id = i."userId"
       WHERE s."modelVersionId" IN (${Prisma.join(withCommunity)})
         AND s.source = 'Community'
-        AND NOT s."removedByContributor"
+        AND NOT s."removed"
         AND ${Prisma.join([...showcaseImageConditions(), ...communityImageConditions()], ' AND ')}
     `;
       if (!community.length) return records;
@@ -309,12 +309,19 @@ const coverKey = (modelId: number, imageId: number) => `${modelId}:${imageId}`;
  */
 export async function getShowcaseCommunityCovers(
   covers: { modelId: number; imageId: number }[],
-  { primary = false }: { primary?: boolean } = {}
+  {
+    primary = false,
+    refreshed = false,
+  }: {
+    primary?: boolean;
+    /** The caller just refreshed these versions' showcases from the primary. */
+    refreshed?: boolean;
+  } = {}
 ): Promise<ShowcaseCommunityCovers> {
   const found: ShowcaseCommunityCovers = new Map();
   if (!covers.length) return found;
   try {
-    return await findShowcaseCommunityCovers(covers, primary, found);
+    return await findShowcaseCommunityCovers(covers, primary, refreshed, found);
   } catch (error) {
     // Validation (primary) fails closed; a reader drawing a card falls back to the default cover.
     if (primary) throw error;
@@ -335,6 +342,7 @@ export function isShowcaseCoverImage(
 async function findShowcaseCommunityCovers(
   covers: { modelId: number; imageId: number }[],
   primary: boolean,
+  refreshed: boolean,
   found: ShowcaseCommunityCovers
 ) {
   const db = primary ? dbWrite : dbRead;
@@ -349,14 +357,14 @@ async function findShowcaseCommunityCovers(
     WHERE s."imageId" IN (${Prisma.join(covers.map((cover) => cover.imageId))})
       AND mv."modelId" IN (${Prisma.join(covers.map((cover) => cover.modelId))})
       AND s.source = 'Community'
-      AND NOT s."removedByContributor"
+      AND NOT s."removed"
   `;
   const wanted = new Set(covers.map((cover) => coverKey(cover.modelId, cover.imageId)));
   const rows = versions.filter((row) => wanted.has(coverKey(row.modelId, row.imageId)));
   if (!rows.length) return found;
   const versionIds = [...new Set(rows.map((row) => row.modelVersionId))];
   // Validation judges the current state, not a cache a missed bust left behind.
-  if (primary) await refreshVersionShowcases(versionIds);
+  if (primary && !refreshed) await refreshVersionShowcases(versionIds);
   const showcases = await getVersionShowcases(versionIds);
   for (const { modelVersionId, modelId, imageId } of rows) {
     for (const image of showcases[modelVersionId]?.community ?? []) {
@@ -433,7 +441,8 @@ export async function dropInvalidCommunityCovers(modelIds: number[]) {
       .map(([site, imageId]) => ({ modelId: model.id, site, imageId: imageId as number }))
   );
   if (!candidates.length) return;
-  const valid = await getShowcaseCommunityCovers(candidates, { primary: true });
+  // Every caller refreshes the affected showcases just before this.
+  const valid = await getShowcaseCommunityCovers(candidates, { primary: true, refreshed: true });
   const { saveModelCovers } = await import('~/server/services/model-cover.service');
   for (const { modelId, site, imageId } of candidates) {
     if (isShowcaseCoverImage(valid, { modelId, imageId, site })) continue;
@@ -605,11 +614,11 @@ export async function setVersionShowcase({
     getOwnerImageIds(modelVersionId, ids),
     // An author's removal holds on both sites, whichever site the image was featured on.
     dbWrite.modelVersionShowcaseItem.findMany({
-      where: { modelVersionId, removedByContributor: true },
+      where: { modelVersionId, removed: true },
       select: { imageId: true },
     }),
     dbWrite.modelVersionShowcaseItem.findMany({
-      where: { modelVersionId, removedByContributor: false, source: 'Community' },
+      where: { modelVersionId, removed: false, source: 'Community' },
       select: { imageId: true },
     }),
   ]);
@@ -617,7 +626,9 @@ export async function setVersionShowcase({
   const communityItems = unique.filter((item) => !ownerIds.has(item.imageId));
   const blockedByAuthor = communityItems.find((item) => removed.has(item.imageId));
   if (blockedByAuthor)
-    throw throwBadRequestError('The author of one of these images removed it from your showcase.');
+    throw throwBadRequestError(
+      'One of these images was removed from your showcase by its author or a moderator.'
+    );
   if (communityItems.length > VERSION_SHOWCASE_LIMIT)
     throw throwBadRequestError(
       `A showcase can feature at most ${VERSION_SHOWCASE_LIMIT} community images per site.`
@@ -649,7 +660,7 @@ export async function setVersionShowcase({
 
   await dbWrite.$transaction([
     dbWrite.modelVersionShowcaseItem.deleteMany({
-      where: { modelVersionId, site, removedByContributor: false },
+      where: { modelVersionId, site, removed: false },
     }),
     dbWrite.modelVersionShowcaseItem.createMany({
       data: unique.map((item) => ({
@@ -712,9 +723,9 @@ export async function setVersionShowcaseCover({
     if (!isOwner) {
       const row = await dbWrite.modelVersionShowcaseItem.findUnique({
         where: { modelVersionId_site_imageId: { modelVersionId: latest, site, imageId } },
-        select: { source: true, removedByContributor: true },
+        select: { source: true, removed: true },
       });
-      if (!row || row.source !== 'Community' || row.removedByContributor)
+      if (!row || row.source !== 'Community' || row.removed)
         throw throwBadRequestError(
           'Feature this image in the latest version’s showcase before making it the cover.'
         );
@@ -752,7 +763,7 @@ export async function removeMyImageFromVersionShowcase({
     throw throwAuthorizationError('You can only remove your own images.');
   const { count } = await dbWrite.modelVersionShowcaseItem.updateMany({
     where: { modelVersionId, imageId, source: 'Community' },
-    data: { removedByContributor: true, position: null },
+    data: { removed: true, position: null },
   });
   if (!count) throw throwNotFoundError('This image isn’t featured in that showcase.');
   const version = await getVersionForWrite(modelVersionId);
@@ -760,7 +771,10 @@ export async function removeMyImageFromVersionShowcase({
   await dropInvalidCommunityCovers([version.model.id]);
 }
 
-/** A moderator takes an image out of a version's showcase (both sites); works with the flag off. */
+/**
+ * A moderator takes an image out of a version's showcase, on both sites. Like an author's removal it
+ * leaves a tombstone, so the creator can't feature it again. Works with the flag off.
+ */
 export async function moderatorRemoveFromVersionShowcase({
   modelVersionId,
   imageId,
@@ -768,8 +782,9 @@ export async function moderatorRemoveFromVersionShowcase({
   modelVersionId: number;
   imageId: number;
 }) {
-  await dbWrite.modelVersionShowcaseItem.deleteMany({
+  await dbWrite.modelVersionShowcaseItem.updateMany({
     where: { modelVersionId, imageId, source: 'Community' },
+    data: { removed: true, position: null },
   });
   const version = await getVersionForWrite(modelVersionId);
   await refreshVersionShowcases([modelVersionId]);
@@ -842,7 +857,7 @@ export async function getVersionShowcaseEditor({
       },
     }),
     dbWrite.modelVersionShowcaseItem.findMany({
-      where: { modelVersionId, removedByContributor: true },
+      where: { modelVersionId, removed: true },
       select: { imageId: true, site: true },
     }),
   ]);
@@ -884,7 +899,7 @@ export async function getMyImageShowcaseFeatures({
     WHERE s."imageId" = ${imageId}
       AND i."userId" = ${userId}
       AND s.source = 'Community'
-      AND NOT s."removedByContributor"
+      AND NOT s."removed"
   `;
 }
 
@@ -900,10 +915,10 @@ export async function repointVersionShowcases(targetVersionId: number, sourceVer
       dbWrite.$executeRaw`
         INSERT INTO "ModelVersionShowcaseItem"
           ("modelVersionId", site, "imageId", source, position, excluded,
-           "removedByContributor", "addedById", "createdAt")
+           "removed", "addedById", "createdAt")
         SELECT DISTINCT ON (s.site, s."imageId")
           ${targetVersionId}, s.site, s."imageId", s.source, s.position, s.excluded,
-          s."removedByContributor", s."addedById", s."createdAt"
+          s."removed", s."addedById", s."createdAt"
         FROM "ModelVersionShowcaseItem" s
         WHERE s."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
         ORDER BY s.site, s."imageId", s."modelVersionId" DESC
