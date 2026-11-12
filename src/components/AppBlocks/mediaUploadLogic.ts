@@ -195,6 +195,24 @@ export function checkMediaFile(
 }
 
 /**
+ * The per-file checks on supplied bytes, shared by the single bytes upload and every item of a
+ * batch: the content (after the size cap, in `checkMediaFile`), then a declared `mimeType` against
+ * it. The caller has already checked the size cap where its own ordering needs it.
+ */
+export function checkMediaUploadBytes(req: {
+  kind: MediaUploadKind;
+  bytes: ArrayBuffer;
+  mimeType?: string;
+}): { ok: true; contentType: string } | { ok: false; error: string } {
+  const checked = checkMediaFile(req.kind, req.bytes.byteLength, req.bytes);
+  if (!checked.ok) return checked;
+  if (req.mimeType !== undefined && normaliseMimeType(req.mimeType) !== checked.contentType) {
+    return { ok: false, error: MEDIA_UPLOAD_MIME_MISMATCH_ERROR };
+  }
+  return checked;
+}
+
+/**
  * The bytes-mode admission decision, in the order that keeps each refusal accurate:
  *   1. the size cap FIRST, so an over-cap file is always too large, never `busy`;
  *   2. the window, non-recording, so a full window refuses before any sniffing;
@@ -219,11 +237,8 @@ export function processMediaUploadBytes(
   if (!saveBytesWindowHasRoom(recent, now, size, MEDIA_UPLOAD_WINDOW_LIMITS)) {
     return refuse(MEDIA_UPLOAD_BUSY_ERROR);
   }
-  const checked = checkMediaFile(req.kind, size, req.bytes);
+  const checked = checkMediaUploadBytes(req);
   if (!checked.ok) return refuse(checked.error);
-  if (req.mimeType !== undefined && normaliseMimeType(req.mimeType) !== checked.contentType) {
-    return refuse(MEDIA_UPLOAD_MIME_MISMATCH_ERROR);
-  }
   const admitted = admitSaveBytes(recent, now, size, MEDIA_UPLOAD_WINDOW_LIMITS);
   if (!admitted.ok) {
     return { result: { ok: false, error: MEDIA_UPLOAD_BUSY_ERROR }, recent: admitted.recent };

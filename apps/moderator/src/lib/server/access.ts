@@ -215,6 +215,7 @@ export const NAVIGATION: NavLink[] = [
       { path: GENERATOR_RESTRICTIONS_PATH, label: 'Generator Restrictions' },
       { path: '/audit/training-models', label: 'Training Models' },
       { path: '/audit/training-data', label: 'Training Data Review' },
+      { path: '/audit/app-upload-batches', label: 'App Upload Batches' },
       { path: '/audit/relabel', label: 'Removal Label Relabel' },
       { path: '/audit/text-relabel', label: 'Automated Text Relabel' },
     ],

@@ -2928,6 +2928,21 @@ export interface AppUserScopeGrant {
   buzzBudgetPerDay: number | null;
 }
 
+export interface AppBlockUploadBatch {
+  id: number;
+  userId: number;
+  appBlockId: string;
+  appId: string;
+  blockId: string;
+  version: string | null;
+  itemCount: number;
+  totalBytes: bigint;
+  presignCount: number;
+  blobKeys: string[];
+  createdAt: Date;
+  expiresAt: Date;
+}
+
 export interface AppDeveloperTermsAcceptance {
   userId: number;
   version: string;
