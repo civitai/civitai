@@ -241,7 +241,8 @@ export function shouldRetryPartError(err: UploadPartError) {
  * predicate, one place: a second copy is how that divergence happened.
  */
 export function isTerminalCompleteStatus(status: number) {
-  return status === 409 || status === 422;
+  // 400 = a malformed completion body; re-sending the same body cannot fix it.
+  return status === 400 || status === 409 || status === 422;
 }
 
 export function getPartRetryDelay(err: UploadPartError, attempt: number) {

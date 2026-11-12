@@ -37,6 +37,9 @@ const COMPLETE_VERIFY_TIMEOUT_MS = 5_000;
  */
 type VerifyVerdict = 'confirmed' | 'missing' | 'indeterminate';
 
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0;
+
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
@@ -50,6 +53,19 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   }
 
   const { bucket, key, type, uploadId, parts, backend } = req.body;
+  // A malformed body is the client's fault (400), but the SDK rejects it client-side
+  // with an error the classifier below would answer as a 500, so check it before the try.
+  // Missing `parts` is left to the backend (no SDK throw → the 422 re-upload path).
+  if (
+    !isNonEmptyString(bucket) ||
+    !isNonEmptyString(key) ||
+    !isNonEmptyString(uploadId) ||
+    (parts != null && !Array.isArray(parts))
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ error: 'Missing or invalid bucket, key, uploadId or parts' });
+    return;
+  }
   let s3;
   if (backend === 'backblaze') {
     s3 = getB2ImageS3Client();
@@ -187,8 +203,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       }
 
       /**
-       * 422, against this handler's existing taxonomy (409 terminal / 422
-       * parts-invalid + no-store / 503 transient + Retry-After / 500 genuine fault).
+       * 422, against this handler's existing taxonomy (400 malformed body / 409 terminal /
+       * 422 parts-invalid + no-store / 503 transient + Retry-After / 500 genuine fault).
        *
        * We need the client to retry the UPLOAD, not the completion. 422 is the code
        * that already carries that meaning here — "the request was well formed but the
