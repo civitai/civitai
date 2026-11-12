@@ -447,6 +447,18 @@ describe('upsertCatalogSubListing — item images', () => {
     write.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
     return put({ ...body, creatorUserId: CREATOR });
   };
+  const officialReads = () =>
+    write.$queryRaw.mock.calls.filter((c: unknown[]) =>
+      JSON.stringify(c[0]).includes('is_official')
+    );
+  /** The parent's `is_official` read answers with `rows`, or fails with `err`. */
+  const officialFlag = (answer: { rows: unknown[] } | { err: unknown }) =>
+    write.$queryRaw.mockImplementation(async (query: unknown) => {
+      if (!JSON.stringify(query).includes('is_official')) return [];
+      if ('err' in answer) throw answer.err;
+      return answer.rows;
+    });
+  const markOfficial = () => officialFlag({ rows: [{ id: PARENT, isOfficial: true }] });
 
   it('stores a public image the listing owner uploaded, read as an anonymous viewer', async () => {
     await expect(put({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
@@ -507,8 +519,9 @@ describe('upsertCatalogSubListing — item images', () => {
     ['a creator’s item', CREATOR],
     ['the owner’s own item', OWNER],
   ])(
-    'on %s, a new card the listing owner uploaded goes live without review',
+    'on %s, an Official parent’s new card the listing owner uploaded goes live without review',
     async (_label, author) => {
+      markOfficial();
       write.oauthConsent.findUnique.mockResolvedValue({ id: 1 });
       write.appSubListing.findUnique.mockResolvedValue(
         itemRow({ authorUserId: author, imageId: CREATOR_IMAGE, contentRating: 'pg' })
@@ -531,7 +544,51 @@ describe('upsertCatalogSubListing — item images', () => {
     }
   );
 
+  it.each([
+    ['is not Official', { rows: [] }],
+    ['has an is_official column not yet migrated', { err: { code: 'P2022' } }],
+  ])(
+    'when the parent %s, an owner card is staged and the live card keeps serving',
+    async (_label, answer) => {
+      officialFlag(answer);
+      write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: CREATOR_IMAGE }));
+      await expect(put({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
+        status: 'approved',
+        pendingEdit: true,
+      });
+      // The flag was asked, for this parent: staging is the gate's answer, not a skipped read.
+      expect(officialReads()).toHaveLength(1);
+      expect(JSON.stringify(officialReads()[0][0])).toContain(PARENT);
+      const { data } = write.appSubListing.updateMany.mock.calls[0][0];
+      expect(data).toMatchObject({
+        pendingImageId: OWNER_IMAGE,
+        pendingSubmittedAt: expect.any(Date),
+      });
+      expect(data).not.toHaveProperty('imageId');
+      expect(mockBust).not.toHaveBeenCalled();
+    }
+  );
+
+  it('a failed flag read (not a missing column) fails the sync and writes nothing', async () => {
+    officialFlag({ err: new Error('connection reset') });
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: CREATOR_IMAGE }));
+    await expect(put({ ...BODY, imageId: OWNER_IMAGE })).rejects.toThrow();
+    expect(officialReads()).toHaveLength(1);
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+    expect(mockBust).not.toHaveBeenCalled();
+  });
+
+  it('an Official flag on another listing does not open the shortcut for this parent', async () => {
+    officialFlag({ rows: [{ id: 'apl_OTHER', isOfficial: true }] });
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: CREATOR_IMAGE }));
+    await expect(put({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
+      pendingEdit: true,
+    });
+    expect(write.appSubListing.updateMany.mock.calls[0][0].data).not.toHaveProperty('imageId');
+  });
+
   it('a new owner card replaces a staged edit the platform no longer sends', async () => {
+    markOfficial();
     write.appSubListing.findUnique.mockResolvedValue(
       itemRow({ pendingTitle: 'Neon Drift II', pendingSubmittedAt: new Date(VERSION) })
     );
@@ -551,6 +608,7 @@ describe('upsertCatalogSubListing — item images', () => {
     ['the tagline', { tagline: 'Arcade racer, now with drifts' }],
     ['the rating', { contentRating: 'pg13' }],
   ])('an owner card sent with a change to %s is staged whole', async (_label, change) => {
+    markOfficial();
     write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: CREATOR_IMAGE }));
     await expect(put({ ...BODY, imageId: OWNER_IMAGE, ...change })).resolves.toMatchObject({
       status: 'approved',
@@ -566,6 +624,7 @@ describe('upsertCatalogSubListing — item images', () => {
   });
 
   it('a creator card the owner did not upload is still staged (control for the owner card)', async () => {
+    markOfficial();
     write.oauthConsent.findUnique.mockResolvedValue({ id: 1 });
     write.appSubListing.findUnique.mockResolvedValue(
       itemRow({ authorUserId: CREATOR, imageId: OWNER_IMAGE })
@@ -578,6 +637,7 @@ describe('upsertCatalogSubListing — item images', () => {
   });
 
   it('an owner card on a pending item stays a draft for review', async () => {
+    markOfficial();
     write.appSubListing.findUnique.mockResolvedValue(
       itemRow({ status: 'pending', approvedAt: null })
     );

@@ -238,8 +238,8 @@ describe('progress endpoint', () => {
 
 describe('case, set and re-run actions', () => {
   beforeEach(() => {
-    store.updateExpectation.mockResolvedValue({ id: 9, entityType: 'CommentV2', entityId: 71 });
-    store.getCase.mockResolvedValue({ id: 9, entityType: 'CommentV2', entityId: 71 });
+    store.updateExpectation.mockResolvedValue({ id: 9, entityType: 'CommentV3', entityId: 71 });
+    store.getCase.mockResolvedValue({ id: 9, entityType: 'CommentV3', entityId: 71 });
     runs.rerunErrors.mockResolvedValue({ startId: 'y', runIds: [6], runId: 6 });
   });
 
@@ -264,7 +264,7 @@ describe('case, set and re-run actions', () => {
     expect(totals.refreshSetTotals).toHaveBeenCalledWith({}, 3);
     expect(activity.recordModActivity).toHaveBeenCalledWith({
       userId: 1,
-      entityType: 'CommentV2',
+      entityType: 'CommentV3',
       entityId: 71,
       activity: 'textScan.testCase.relabel',
     });

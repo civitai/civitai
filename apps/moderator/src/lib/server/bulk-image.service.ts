@@ -1,5 +1,6 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { dbRead } from './db';
 import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
@@ -272,16 +273,30 @@ export async function getImagesByIds(
  * The distinct OWNERS of a batch (Retool's GetBulkRemoveImageUserIdsForNotifs). A 300-image removal
  * spanning 40 accounts must send 40 notifications, not 300 — which is the whole reason Retool had a
  * separate query for it rather than notifying per row.
+ *
+ * Feedback page captures are left out and counted: their owner is a system account.
  */
-export async function getBatchOwners(imageIds: number[]): Promise<number[]> {
-  if (!imageIds.length) return [];
+export async function getBatchOwners(
+  imageIds: number[]
+): Promise<{ owners: number[]; capturesSkipped: number }> {
+  if (!imageIds.length) return { owners: [], capturesSkipped: 0 };
   const rows = await dbRead
     .selectFrom('Image')
-    .select('userId')
-    .distinct()
+    .select((eb) => ['userId', eb.fn.countAll<string>().as('images')])
     .where('id', 'in', imageIds)
+    .groupBy('userId')
     .execute();
-  return rows.map((r) => r.userId);
+  return {
+    owners: rows.filter((r) => !isFeedbackCaptureOwner(r.userId)).map((r) => r.userId),
+    capturesSkipped: Number(rows.find((r) => isFeedbackCaptureOwner(r.userId))?.images ?? 0),
+  };
+}
+
+export function capturesSkippedNote(capturesSkipped: number): string {
+  if (!capturesSkipped) return '';
+  return `${capturesSkipped} feedback page capture${
+    capturesSkipped === 1 ? '' : 's'
+  } skipped: their owner is a system account.`;
 }
 
 /**
@@ -329,9 +344,12 @@ export async function strikeBatchOwners(input: {
   /** The user-facing strike description — the same canned message the removal was filed under. */
   description: string;
   moderatorId: number;
-}): Promise<{ struck: number; owners: number; error?: string }> {
-  const owners = await getBatchOwners(input.imageIds);
-  if (!owners.length) return { struck: 0, owners: 0, error: 'no owners could be resolved' };
+}): Promise<{ struck: number; owners: number; capturesSkipped: number; error?: string }> {
+  const { owners, capturesSkipped } = await getBatchOwners(input.imageIds);
+  if (!owners.length)
+    return capturesSkipped
+      ? { struck: 0, owners: 0, capturesSkipped }
+      : { struck: 0, owners: 0, capturesSkipped, error: 'no owners could be resolved' };
 
   const results = await Promise.all(
     owners.map((userId) =>
@@ -347,6 +365,7 @@ export async function strikeBatchOwners(input: {
   return {
     struck: owners.length - failed.length,
     owners: owners.length,
+    capturesSkipped,
     // The first reason, not a count: they share a cause (rate limit, endpoint down) far more often
     // than not, and a bare "3 failed" sends the moderator to the logs to find out why.
     error: failed.length ? failed[0].error : undefined,
@@ -379,7 +398,7 @@ export type RemoveBatchResult =
       alreadyBlocked: number;
       /** `null` when no flag was asked for. `applied: false` carries why. */
       flag: { flag: 'poi' | 'minor' | 'tag'; applied: boolean; error?: string } | null;
-      struck: { struck: number; owners: number; error?: string } | null;
+      struck: { struck: number; owners: number; capturesSkipped: number; error?: string } | null;
       /** Removals held for a second moderator; neither flagged nor struck. */
       held: HeldSummary[];
     };

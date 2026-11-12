@@ -33,7 +33,6 @@ const routers = {
   buzz: () => import('./buzz.router').then((m) => m.buzzRouter),
   chat: () => import('./chat.router').then((m) => m.chatRouter),
   collection: () => import('./collection.router').then((m) => m.collectionRouter),
-  comment: () => import('./comment.router').then((m) => m.commentRouter),
   contestScore: () => import('./contest-score.router').then((m) => m.contestScoreRouter),
   commentv3: () => import('./commentv3.router').then((m) => m.commentv3Router),
   common: () => import('~/server/routers/common.router').then((m) => m.commonRouter),
@@ -69,6 +68,8 @@ const routers = {
   resourceReview: () => import('./resourceReview.router').then((m) => m.resourceReviewRouter),
   semanticImageSearch: () =>
     import('./semantic-image-search.router').then((m) => m.semanticImageSearchRouter),
+  semanticArticleSearch: () =>
+    import('./semantic-article-search.router').then((m) => m.semanticArticleSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
   stickerBook: () => import('./sticker-book.router').then((m) => m.stickerBookRouter),
   stripe: () => import('./stripe.router').then((m) => m.stripeRouter),

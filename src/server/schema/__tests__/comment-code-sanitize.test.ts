@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { commentUpsertInput } from '~/server/schema/comment.schema';
 import { createCommentV3Schema, updateCommentV3Schema } from '~/server/schema/commentv3.schema';
 
 /**
@@ -16,7 +15,6 @@ const surfaces = [
       createCommentV3Schema.parse({ entityType: 'article', entityId: 1, content }).content,
   ],
   ['comment edit', (content: string) => updateCommentV3Schema.parse({ id: 1, content }).content],
-  ['model comment', (content: string) => commentUpsertInput.parse({ modelId: 1, content }).content],
 ] as const;
 
 describe.each(surfaces)('%s sanitization', (_label, parse) => {

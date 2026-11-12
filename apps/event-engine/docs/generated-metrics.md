@@ -1,12 +1,12 @@
 # Handler Metric Output Report
 
-Generated: 2026-11-05T21:08:26.570Z
+Generated: 2026-11-09T21:48:56.696Z
 
 ## Summary
 
-- **Total Handlers**: 25
-- **Handlers with Debug Config**: 20
-- **Total Unique Metric Combinations**: 80
+- **Total Handlers**: 23
+- **Handlers with Debug Config**: 18
+- **Total Unique Metric Combinations**: 78
 
 ## Handler Details
 
@@ -107,23 +107,6 @@ Generated: 2026-11-05T21:08:26.570Z
 - `Collection.contributorCount`
 - `Collection.followerCount`
 
-### commentHandler
-
-**Tables**: Comment
-**Operations**: create, delete
-
-**Metric Outputs**:
-- `Model.commentCount`
-- `User.commentCount`
-
-### commentV2Handler
-
-**Tables**: CommentV2
-**Operations**: create, delete
-
-**Metric Outputs**:
-- `User.commentCount`
-
 ### commentV3Handler
 
 **Tables**: CommentV3
@@ -133,6 +116,7 @@ Generated: 2026-11-05T21:08:26.570Z
 - `Article.commentCount`
 - `Bounty.commentCount`
 - `Image.commentCount`
+- `Model.commentCount`
 - `Post.commentCount`
 - `User.commentCount`
 

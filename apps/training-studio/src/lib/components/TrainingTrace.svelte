@@ -207,7 +207,7 @@
         bind:this={logEl}
         role="log"
         aria-live="off"
-        class="mt-2 max-h-64 overflow-y-auto rounded border border-dark-5 bg-dark-8 px-3 py-2 font-mono text-xs leading-relaxed"
+        class="mt-2 max-h-64 overflow-y-auto [overflow-anchor:none] rounded border border-dark-5 bg-dark-8 px-3 py-2 font-mono text-xs leading-relaxed"
       >
         {#each rawLines as line (line.id)}
           <div class="whitespace-pre-wrap break-all text-dark-2">{line.text}</div>

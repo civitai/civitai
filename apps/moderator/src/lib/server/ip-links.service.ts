@@ -240,7 +240,9 @@ async function linkAccounts(
       (a, b) =>
         a.narrowest - b.narrowest ||
         b.login.length + b.reaction.length - (a.login.length + a.reaction.length) ||
-        (a.last < b.last ? 1 : -1)
+        (a.last < b.last ? 1 : a.last > b.last ? -1 : 0) ||
+        // A total order, or two calls can rank ties differently and pages overlap or skip.
+        a.userId - b.userId
     );
 
   const page = ranked.slice(offset, offset + limit);

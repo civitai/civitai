@@ -2,7 +2,7 @@ import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
-import { isV1Shaped, legacyId } from '~/server/notifications/comment.notifications';
+import { isModelComment, modelPageId } from '~/server/notifications/comment.notifications';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { humanizeList } from '~/utils/humanizer';
 import { withDefiniteArticle } from '~/utils/string-helpers';
@@ -42,19 +42,21 @@ export const reactionNotifications = createNotificationProcessor({
         GROUP BY a.affected_id
         HAVING COUNT(*) >= ${commentReactionMilestones[0]}
       ), reaction_milestone AS (
-        -- Ids in the key and the permalink are the v1 ids: a comment renumbered by the backfill must
-        -- not re-announce every milestone it already passed under its old id.
+        -- Model-page ids in the key and the permalink: a comment renumbered by the backfill must not
+        -- re-announce every milestone it already passed under its old id.
         SELECT
           c."userId" "ownerId",
           JSON_BUILD_OBJECT(
             'modelName', m.name,
             'modelId', m.id,
-            'rootCommentId', ${legacyId('rt')},
-            'commentId', ${legacyId('c')},
+            'rootCommentId', ${modelPageId('rt')},
+            'commentId', ${modelPageId('c')},
             'reactionCount', ms.value
           ) "details"
         FROM affected_value a
-        JOIN "CommentV3" c ON c.id = a.affected_id AND ${isV1Shaped('c')} AND c."deletedAt" IS NULL
+        JOIN "CommentV3" c ON c.id = a.affected_id AND ${isModelComment(
+          'c'
+        )} AND c."deletedAt" IS NULL
         JOIN "CommentV3" rt ON rt.id = c."rootId"
         JOIN "Model" m ON m.id = c."entityId"
         JOIN milestones ms ON ms.value <= a.reaction_count

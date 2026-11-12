@@ -95,15 +95,18 @@ export const updateEntityAvailabilityHandler = async ({
         ]);
         break;
       case 'Article':
-        await articlesSearchIndex.queueUpdate([
-          {
-            id: entityId,
-            action:
-              availability === Availability.Unsearchable
-                ? SearchIndexUpdateQueueAction.Delete
-                : SearchIndexUpdateQueueAction.Update,
-          },
-        ]);
+        await articlesSearchIndex.queueUpdate(
+          [
+            {
+              id: entityId,
+              action:
+                availability === Availability.Unsearchable
+                  ? SearchIndexUpdateQueueAction.Delete
+                  : SearchIndexUpdateQueueAction.Update,
+            },
+          ],
+          { reason: 'availability' }
+        );
         break;
       case 'Post':
         const images = await dbRead.image.findMany({ where: { postId: entityId } });

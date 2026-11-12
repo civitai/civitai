@@ -65,6 +65,8 @@ const REFUSAL_STATUS: Record<MintError, number> = {
   'failed-scan': 403,
   poi: 403,
   unauthorized: 403,
+  'in-review': 403,
+  'unsupported-file': 400,
   'rate-limited': 429,
 };
 

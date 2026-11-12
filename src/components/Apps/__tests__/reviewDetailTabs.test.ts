@@ -18,22 +18,34 @@ import {
  */
 
 describe('the tab set', () => {
-  test('🔴 is exactly these five, in this order (fails when it GROWS or SHRINKS)', () => {
+  test('🔴 is exactly these six, in this order (fails when it GROWS or SHRINKS)', () => {
     // A ledger, not a floor. Every derivation below maps over this list, so a set that
     // silently changed would move the default, the labels and the fallbacks with it.
     expect([...REVIEW_DETAIL_TAB_VALUES]).toEqual([
-      'permissions',
+      'overview',
       'code',
-      'agent',
+      'permissions',
       'manifest',
+      'agent',
       'preview',
     ]);
   });
 
-  test('🔴 PERMISSIONS IS THE DEFAULT — the whole point of the redesign', () => {
-    expect(DEFAULT_REVIEW_DETAIL_TAB).toBe('permissions');
+  test('🔴 OVERVIEW IS THE DEFAULT — one screen for the routine decision', () => {
+    expect(DEFAULT_REVIEW_DETAIL_TAB).toBe('overview');
     // …and it is the FIRST tab, so the bar's reading order matches what a bare URL opens.
-    expect(REVIEW_DETAIL_TAB_VALUES[0]).toBe('permissions');
+    expect(REVIEW_DETAIL_TAB_VALUES[0]).toBe('overview');
+  });
+
+  test('the labels, pinned whole', () => {
+    expect(REVIEW_DETAIL_TAB_LABELS).toEqual({
+      overview: 'Overview',
+      code: 'Code',
+      permissions: 'Permissions',
+      manifest: 'Manifest',
+      agent: 'AI report',
+      preview: 'Preview',
+    });
   });
 
   test('every tab has a label, and no two share one', () => {
@@ -44,7 +56,7 @@ describe('the tab set', () => {
 
   test('isReviewDetailTab accepts members and rejects everything else', () => {
     for (const tab of REVIEW_DETAIL_TAB_VALUES) expect(isReviewDetailTab(tab)).toBe(true);
-    for (const junk of ['', 'summary', 'Permissions', 0, null, undefined, {}, ['code']]) {
+    for (const junk of ['', 'summary', 'Overview', 0, null, undefined, {}, ['code']]) {
       expect(isReviewDetailTab(junk)).toBe(false);
     }
   });
@@ -64,7 +76,7 @@ describe('resolveReviewDetailTab', () => {
     expect(resolveReviewDetailTab(undefined)).toBe(DEFAULT_REVIEW_DETAIL_TAB);
     expect(resolveReviewDetailTab('')).toBe(DEFAULT_REVIEW_DETAIL_TAB);
     expect(resolveReviewDetailTab('summary')).toBe(DEFAULT_REVIEW_DETAIL_TAB);
-    expect(resolveReviewDetailTab('PERMISSIONS')).toBe(DEFAULT_REVIEW_DETAIL_TAB);
+    expect(resolveReviewDetailTab('OVERVIEW')).toBe(DEFAULT_REVIEW_DETAIL_TAB);
     expect(resolveReviewDetailTab(null)).toBe(DEFAULT_REVIEW_DETAIL_TAB);
     expect(resolveReviewDetailTab(7)).toBe(DEFAULT_REVIEW_DETAIL_TAB);
   });
@@ -81,7 +93,7 @@ describe('resolveReviewDetailTab', () => {
   describe('the report-hash fallback (keeps the existing per-finding deep links working)', () => {
     test('🔴 a `#finding-<tab>-<n>` anchor resolves the OUTER tab to `agent`', () => {
       // `ReportTabs` ships a copy-link affordance producing exactly these URLs. Once the
-      // agent report moved behind a non-default tab, such a link landed on Permissions and
+      // agent report moved behind a non-default tab, such a link landed on the default tab and
       // the finding it names was not on screen at all.
       expect(resolveReviewDetailTab(undefined, { hash: '#finding-security-2' })).toBe('agent');
       expect(resolveReviewDetailTab(undefined, { hash: '#finding-code-0' })).toBe('agent');
@@ -131,7 +143,7 @@ describe('reviewDetailTabQuery', () => {
     });
   });
 
-  test('🔴 the DEFAULT tab DROPS the key rather than writing `?tab=permissions`', () => {
+  test('🔴 the DEFAULT tab DROPS the key rather than writing `?tab=overview`', () => {
     // The canonical URL for the page's own default is the bare route; otherwise every
     // arrival that touches a tab and comes back leaves a redundant parameter behind, in the
     // address bar and in anything that copies it.
@@ -153,7 +165,7 @@ describe('reviewDetailTabQuery', () => {
 
   test('it does not mutate the query it was given', () => {
     const current: Record<string, string> = { ...ROUTE, tab: 'code' };
-    reviewDetailTabQuery('permissions', current);
+    reviewDetailTabQuery('overview', current);
     expect(current.tab).toBe('code');
   });
 

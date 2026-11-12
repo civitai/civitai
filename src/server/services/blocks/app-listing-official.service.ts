@@ -4,8 +4,9 @@
  * "Official" means the app is made by the Civitai team. It is a PROVENANCE claim, the listing
  * analogue of `Model.isOfficial` / `Article.isOfficial`: only a moderator sets it, through
  * {@link setListingOfficialAsModerator}, and nothing an author submits can reach it. It renders
- * a badge on the store card and the app page and feeds nothing else — no ranking, no
- * curation, no gate.
+ * a badge on the store card and the app page, and it is one gate: an Official parent's catalog
+ * sync may swap an approved store item's image for one the parent's owner uploaded without
+ * review (`writeSubListing` in `app-sub-listing.service.ts`). No ranking, no curation.
  *
  * 🔴 RAW SQL, AND ONLY HERE. The column is marked no-type in `schema.full.prisma`, so it is
  * stripped from the generated client and does not exist on any Prisma delegate — the same

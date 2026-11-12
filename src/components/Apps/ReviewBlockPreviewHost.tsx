@@ -212,16 +212,24 @@ export function ReviewBlockPreviewHost({
               Read-only preview — side effects are disabled.
             </Text>
           </Group>
-          <Button
-            size="xs"
-            variant="light"
-            color="orange"
-            leftSection={<IconPlayerPlay size={14} />}
-            onClick={() => setConsentArmed(true)}
-            data-testid="review-run-for-real-arm"
-          >
-            Run for real…
-          </Button>
+          {/* De-emphasised on purpose: it spends the moderator's own Buzz and is rarely the
+              next step, so it is a quiet text button with its cost beside it — not an orange
+              call to action next to the app being judged. The consent gate is unchanged. */}
+          <Group gap={6} wrap="nowrap">
+            <Text size="xs" c="dimmed" visibleFrom="sm">
+              Spends your Buzz (cap {buzzCap})
+            </Text>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="gray"
+              leftSection={<IconPlayerPlay size={12} />}
+              onClick={() => setConsentArmed(true)}
+              data-testid="review-run-for-real-arm"
+            >
+              Run for real…
+            </Button>
+          </Group>
         </Group>
       )}
 

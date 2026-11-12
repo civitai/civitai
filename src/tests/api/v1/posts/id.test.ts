@@ -10,6 +10,7 @@ const {
   mockRunImageSearch,
   mockAcquire,
   mockHeldLevel,
+  mockWithheld,
 } = vi.hoisted(() => ({
   mockGetPostDetail: vi.fn(),
   mockRateLimit: vi.fn(),
@@ -17,6 +18,7 @@ const {
   mockRunImageSearch: vi.fn(),
   mockAcquire: vi.fn(),
   mockHeldLevel: vi.fn(),
+  mockWithheld: vi.fn(async () => false),
 }));
 
 vi.mock('~/server/services/post.service', () => ({ getPostDetail: mockGetPostDetail }));
@@ -33,7 +35,10 @@ vi.mock('@civitai/next-axiom', () => ({
 }));
 vi.mock('~/server/services/image-search.service', () => ({ runImageSearch: mockRunImageSearch }));
 // Hand-listed: the endpoint takes only this from model.service, whose import graph is large.
-vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: mockHeldLevel }));
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: mockHeldLevel,
+  isModelGalleryWithheld: mockWithheld,
+}));
 vi.mock('~/server/utils/request-bulkhead', async (importOriginal) => ({
   ...(await importOriginal<typeof RequestBulkhead>()),
   acquireBulkheadSlot: mockAcquire,
@@ -127,6 +132,7 @@ describe('GET /api/v1/posts/[id]', () => {
       user: { id: 3, username: 'alice' },
       tags: [{ id: 9, name: 'landscape' }],
       images: [],
+      hasMoreImages: false,
     });
   });
 
@@ -136,9 +142,48 @@ describe('GET /api/v1/posts/[id]', () => {
 
     const { body } = await call({ id: '55288' });
 
-    expect(mockRunImageSearch.mock.calls[0][0]).toMatchObject({ postOrder: true, limit: 100 });
+    expect(mockRunImageSearch.mock.calls[0][0]).toMatchObject({
+      postOrder: true,
+      limit: 100,
+      throwOnStatementTimeout: true,
+    });
     expect(body?.images).toEqual([{ id: 2 }, { id: 3 }, { id: 1 }]);
   });
+
+  it.each([0, 99, 100])(
+    'marks a complete %i-image gallery without guessing from its length',
+    async (count) => {
+      mockGetPostDetail.mockResolvedValue(post());
+      const images = Array.from({ length: count }, (_, index) => ({ id: index + 1 }));
+      mockRunImageSearch.mockResolvedValue({ items: images, nextCursor: undefined });
+
+      const { statusCode, body, header } = await call({ id: '55288' });
+
+      expect(statusCode).toBe(200);
+      expect(body?.images).toEqual(images);
+      expect(body?.hasMoreImages).toBe(false);
+      expect(header('Cache-Control')).toBe(PUBLIC_CACHE);
+      expect(header('Retry-After')).toBeUndefined();
+      expect(mockRunImageSearch).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['100', 100, 0, null])(
+    'marks a truncated gallery with continuation %j',
+    async (cursor) => {
+      mockGetPostDetail.mockResolvedValue(post());
+      const images = Array.from({ length: 100 }, (_, index) => ({ id: index + 1 }));
+      mockRunImageSearch.mockResolvedValue({ items: images, nextCursor: cursor });
+
+      const { statusCode, body } = await call({ id: '55288' });
+
+      expect(statusCode).toBe(200);
+      expect(body?.images).toEqual(images);
+      expect(body?.hasMoreImages).toBe(true);
+      expect(body).not.toHaveProperty('nextCursor');
+      expect(mockRunImageSearch).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('searches this post’s images as anonymous, at every browsable level', async () => {
     mockGetPostDetail.mockResolvedValue(post());
@@ -180,6 +225,18 @@ describe('GET /api/v1/posts/[id]', () => {
     await call({ id: '55288' });
 
     expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(NsfwLevel.PG);
+  });
+
+  it('serves the post of a taken-down model with no images', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockWithheld.mockResolvedValueOnce(true);
+
+    const { statusCode, body } = await call({ id: '55288' });
+
+    expect(statusCode).toBe(200);
+    expect(body).toMatchObject({ id: 55288, images: [] });
+    expect(mockWithheld).toHaveBeenCalledWith({ postId: 55288 });
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
 
   it('serves the post with no images when its held level allows none', async () => {
@@ -234,6 +291,52 @@ describe('GET /api/v1/posts/[id]', () => {
 
     await call({ id: '55288' });
 
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns an uncached, retryable failure when the image query times out', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockRunImageSearch.mockRejectedValue(
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    );
+
+    const { statusCode, body, header } = await call({ id: '55288' });
+
+    expect(statusCode).toBe(503);
+    expect(body).toEqual({ error: 'Server busy, please retry shortly.' });
+    expect(header('Cache-Control')).toBe('no-store');
+    expect(header('Retry-After')).toBe('2');
+    expect(body).not.toHaveProperty('images');
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a retryable failure if the post lookup times out before acquiring a slot', async () => {
+    mockGetPostDetail.mockRejectedValue(
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    );
+
+    const { statusCode, body, header } = await call({ id: '55288' });
+
+    expect(statusCode).toBe(503);
+    expect(body).toEqual({ error: 'Server busy, please retry shortly.' });
+    expect(header('Cache-Control')).toBe('no-store');
+    expect(header('Retry-After')).toBe('2');
+    expect(mockAcquire).not.toHaveBeenCalled();
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('does not classify a user cancellation as a statement timeout', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockRunImageSearch.mockRejectedValue(
+      Object.assign(new Error('canceling statement due to user request'), { code: '57014' })
+    );
+
+    const { statusCode, header } = await call({ id: '55288' });
+
+    expect(statusCode).toBe(500);
+    expect(header('Cache-Control')).toBe('no-store, max-age=0');
+    expect(header('Retry-After')).toBeUndefined();
     expect(release).toHaveBeenCalledTimes(1);
   });
 

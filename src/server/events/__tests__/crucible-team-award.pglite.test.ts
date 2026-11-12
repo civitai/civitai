@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Push from '~/server/events/points/push';
@@ -32,9 +34,12 @@ vi.mock('~/server/events/points/push', async (importOriginal) => ({
 // rest is the code under test).
 type LedgerRow = Record<string, unknown> & { event: string; type: string };
 const ledger = vi.hoisted(() => [] as LedgerRow[]);
+// The award writer inserts through the shared client; the loader reads through the long-query one.
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: {
     insert: async ({ values }: { values: LedgerRow[] }) => void ledger.push(...values),
+  },
+  clickhouseLongQueries: {
     query: async ({ query_params }: { query_params: { event: string; type: string } }) => ({
       json: async () =>
         ledger.filter((r) => r.event === query_params.event && r.type === query_params.type),
@@ -50,13 +55,20 @@ const { loadTeamAwards } = await import('~/server/events/scoring/team-awards');
 
 const RALLY = 7;
 const UNTAGGED = 8;
+const RALLY_2 = 9;
 const BLUE = 101;
 const TEAMLESS = 102;
 const BANNED = 103;
 const EXCLUDED = 104;
 
+const AWARD_RESULT_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20270103120000_event_award_result/migration.sql'
+);
+
 let db: PGlite;
 const hashes = new Map<string, Map<string, string>>();
+const sets = new Map<string, Set<string>>();
 
 const entryRef = (entryId: number, userId = BLUE, crucibleId = RALLY) => ({
   entryId,
@@ -106,7 +118,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" (
-      "userId" int, "cosmeticId" int, "claimKey" text, "createdAt" timestamptz DEFAULT now()
+      "userId" int, "cosmeticId" int, "claimKey" text, "obtainedAt" timestamptz DEFAULT now()
     );
 
     INSERT INTO "User" (id, "bannedAt", flags) VALUES
@@ -115,18 +127,22 @@ beforeAll(async () => {
     INSERT INTO "Post" VALUES (1, '2026-10-01');
     INSERT INTO "Crucible" VALUES
       (${RALLY}, 'Active', '2099-01-01', 3, '{birthday2026-rally}'),
-      (${UNTAGGED}, 'Active', '2099-01-01', 3, '{}');
+      (${UNTAGGED}, 'Active', '2099-01-01', 3, '{}'),
+      (${RALLY_2}, 'Active', '2099-01-01', 3, '{birthday2026-rally}');
     INSERT INTO "Cosmetic" VALUES
       (11, 'ContentDecoration', '{"event": "birthday2026", "team": "Blue", "design": "basic"}');
     INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey") VALUES
       (${BLUE}, 11, 'claimed'), (${BANNED}, 11, 'claimed'), (${EXCLUDED}, 11, 'claimed');
   `);
+  // The settle also reads the frozen award results.
+  await db.exec(readFileSync(AWARD_RESULT_MIGRATION, 'utf8'));
 });
 afterAll(async () => db.close());
 
 beforeEach(async () => {
   vi.clearAllMocks();
   hashes.clear();
+  sets.clear();
   ledger.length = 0;
   await db.exec(`DELETE FROM "CrucibleEntry"; DELETE FROM "Image";`);
   const raw = pgliteRaw(db);
@@ -155,6 +171,14 @@ beforeEach(async () => {
     Object.fromEntries(hashes.get(key) ?? [])) as never);
   sysRedis.hDel.mockImplementation((async (key: string, field: string) =>
     hashes.get(key)?.delete(field) ? 1 : 0) as never);
+  sysRedis.sAdd.mockImplementation((async (key: string, member: string) => {
+    const set = sets.get(key) ?? new Set<string>();
+    sets.set(key, set);
+    if (set.has(member)) return 0;
+    set.add(member);
+    return 1;
+  }) as never);
+  sysRedis.expireAt.mockResolvedValue(true as never);
   sysRedis.hIncrBy.mockResolvedValue(1000 as never);
   sysRedis.expire.mockResolvedValue(true as never);
 });
@@ -203,7 +227,22 @@ describe('team points for accepted crucible entrants', () => {
     await crucibleTeamAwardSubscriber.accept({ ...entry, acceptedAt: new Date() });
 
     expect(adds()).toBe(2);
+    expect(liveIncrements()).toBe(1);
     expect(await settled()).toBe(1000);
+  });
+
+  it('adds an entrant to the live total once per crucible, matching the settle', async () => {
+    await acceptCrucibleEntry(await enter(1));
+    await acceptCrucibleEntry(await enter(2));
+    await acceptCrucibleEntry(await enter(3));
+
+    expect(adds()).toBe(3);
+    expect(liveIncrements()).toBe(1);
+    expect(liveIncrements() * 1000).toBe(await settled());
+
+    await acceptCrucibleEntry(await enter(4, BLUE, RALLY_2));
+    expect(liveIncrements()).toBe(2);
+    expect(liveIncrements() * 1000).toBe(await settled());
   });
 
   it('keeps the award while a second entry of the same entrant stays, and counts the crucible once', async () => {

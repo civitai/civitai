@@ -176,7 +176,7 @@ beforeEach(() => {
   (router.push as any).mockClear();
   (router.push as any).mockResolvedValue(true);
   (router.replace as any).mockClear();
-  // No `?tab=` ⇒ the default (Permissions). Reset per test so one case's deep link cannot
+  // No `?tab=` ⇒ the default (Overview). Reset per test so one case's deep link cannot
   // leak into the next — the scaffold's router is a shared singleton.
   router.query = {};
   router.pathname = '/apps/review/[publishRequestId]';
@@ -187,16 +187,18 @@ describe('ReviewDetailView — sticky action bar', () => {
     renderWithProviders(
       <ReviewDetailView selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
     );
-    // Body content is present. ⚠️ The assertion moved from `getByText('Show code diff')` to
-    // the PERMISSIONS card when the page became tabbed: the code-diff affordance now lives
-    // in the Code tab, and the default tab is Permissions. The point of the assertion is
-    // unchanged — the shared review body rendered something — and the tab mechanics
-    // themselves are covered in `ReviewDetailTabs.browser.test.tsx`.
-    await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
+    // Body content is present: the default tab is now the OVERVIEW (it was Permissions, and
+    // before that the flat body). The point of the assertion is unchanged — the shared review
+    // body rendered something — and the tab mechanics themselves are covered in
+    // `ReviewDetailTabs.browser.test.tsx`.
+    await expect.element(page.getByTestId('apps-review-overview')).toBeInTheDocument();
     // The pinned action bar (labelled group) with both terminal actions.
     const bar = page.getByRole('group', { name: 'Review actions' });
     await expect.element(bar).toBeInTheDocument();
-    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Approve & next' })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('button', { name: 'Approve', exact: true }))
+      .toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
   });
 
@@ -206,7 +208,7 @@ describe('ReviewDetailView — sticky action bar', () => {
     );
     await expect.element(page.getByText('Approved by @mod-user')).toBeInTheDocument();
     expect(page.getByRole('group', { name: 'Review actions' }).elements()).toHaveLength(0);
-    expect(page.getByRole('button', { name: 'Approve + build' }).elements()).toHaveLength(0);
+    expect(page.getByRole('button', { name: 'Approve & next' }).elements()).toHaveLength(0);
   });
 });
 
@@ -223,12 +225,12 @@ describe('ReviewDetailView — focus management', () => {
 });
 
 describe('ReviewDetailView — approve fires the mutation and redirects', () => {
-  test('clicking Approve + build fires blocks.approveRequest and invokes onClose (redirect to queue)', async () => {
+  test('clicking the immediate Approve fires blocks.approveRequest and invokes onClose (open next)', async () => {
     const onClose = vi.fn();
     renderWithProviders(
       <ReviewDetailView selection={{ request: PENDING, mode: 'pending' }} onClose={onClose} />
     );
-    await page.getByRole('button', { name: 'Approve + build' }).click();
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
     expect(mocks.mutate).toHaveBeenCalledWith(
       'approve',
       expect.objectContaining({ publishRequestId: 'req-1' })
@@ -265,7 +267,7 @@ describe('ReviewDetailView — aria-live status region', () => {
     // asynchronously); idle → empty.
     await expect.element(live).toBeInTheDocument();
     expect(live.element().textContent).toBe('');
-    await page.getByRole('button', { name: 'Approve + build' }).click();
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await vi.waitFor(() => expect(live.element().textContent).toContain('Submission approved'));
   });
 
@@ -300,7 +302,7 @@ describe('ReviewDetailView — route-leave guard', () => {
     renderWithProviders(
       <ReviewDetailView selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
     );
-    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Approve & next' })).toBeInTheDocument();
     const regs = (router.events.on as any).mock.calls.filter(
       (c: unknown[]) => c[0] === 'routeChangeStart'
     );
@@ -350,7 +352,7 @@ describe('ReviewDetailView — route-leave guard', () => {
         onClose={() => void router.push('/apps/review')}
       />
     );
-    await page.getByRole('button', { name: 'Approve + build' }).click();
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith('/apps/review'));
     // The programmatic redirect was NOT treated as a user navigation.
     expect(confirmSpy).not.toHaveBeenCalled();

@@ -7,9 +7,8 @@ vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
   getCreatorGalleryHiddenUserIds: vi.fn(async () => []),
 }));
 
-const { bustPostVersionCache, getHeldGalleryLevel, getHeldLevelsByPost } = await import(
-  '~/server/services/model.service'
-);
+const { bustPostVersionCache, getHeldGalleryLevel, getHeldLevelsByPost, getWithheldVersionIds } =
+  await import('~/server/services/model.service');
 
 // Model 1 is minor with PG stored, model 2 is SFW-only with PG13 stored, model 3 is unflagged.
 const models: Record<number, { minor: boolean; sfwOnly: boolean; level: number }> = {
@@ -238,5 +237,38 @@ describe('getHeldLevelsByPost', () => {
     expect((await getHeldLevelsByPost([])).size).toBe(0);
     expect((await getHeldLevelsByPost([300, 7])).size).toBe(0);
     expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('getWithheldVersionIds', () => {
+  // Model 4 is taken down and model 5 archived, both owned by user 9; model 3 is in no mode.
+  beforeEach(() => {
+    dbMock.dbRead.model.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] } };
+    }) =>
+      where.id.in.map((id) => ({
+        id,
+        userId: 9,
+        mode: id === 4 ? 'TakenDown' : id === 5 ? 'Archived' : null,
+      }))) as never);
+  });
+
+  it("names only a taken-down model's versions", async () => {
+    expect([...(await getWithheldVersionIds([30, 40, 41, 50]))].sort()).toEqual([40, 41]);
+  });
+
+  it("names none of a taken-down model's versions to its owner", async () => {
+    expect([...(await getWithheldVersionIds([40, 41], 9))]).toEqual([]);
+  });
+
+  it("names a taken-down model's versions to a viewer who does not own it", async () => {
+    expect([...(await getWithheldVersionIds([40], 8))]).toEqual([40]);
+  });
+
+  it('names no version it cannot find', async () => {
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValueOnce([] as never);
+    expect([...(await getWithheldVersionIds([42]))]).toEqual([]);
   });
 });

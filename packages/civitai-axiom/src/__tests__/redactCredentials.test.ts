@@ -7,6 +7,8 @@ import {
 } from '../redact-credentials';
 
 const FAKE_KEY = 'fakekey0123456789abcdef0123456789';
+// A per-provider download token: `<provider>:<secret>`.
+const FAKE_PROVIDER_TOKEN = `RunPods:${'ab'.repeat(32)}`;
 
 describe('redactCredentialsInString', () => {
   it.each([
@@ -27,6 +29,16 @@ describe('redactCredentialsInString', () => {
     [`/oauth/cb?code=${FAKE_KEY}&state=s`, '/oauth/cb?code=[redacted]&state=s'],
     [`https://cdn.test/f?sig=${FAKE_KEY}&w=450`, 'https://cdn.test/f?sig=[redacted]&w=450'],
     [`Authorization: Bearer ${FAKE_KEY}`, 'Authorization: Bearer [redacted]'],
+    // The whole provider token, not just the provider name before its `:`.
+    [`Authorization: Bearer ${FAKE_PROVIDER_TOKEN}`, 'Authorization: Bearer [redacted]'],
+    [
+      `/api/download/models/1?token=${FAKE_PROVIDER_TOKEN}`,
+      '/api/download/models/1?token=[redacted]',
+    ],
+    [
+      `/api/download/models/1?token=${encodeURIComponent(FAKE_PROVIDER_TOKEN)}&type=Model`,
+      '/api/download/models/1?token=[redacted]&type=Model',
+    ],
     // A download link's credential is its path segment.
     ['/api/download/l/4fJ9kQ2xVb8NcR1tZp0LmA', '/api/download/l/[redacted]'],
     [

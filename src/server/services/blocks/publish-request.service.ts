@@ -1,6 +1,14 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
 import {
+  agentReviewSummaryFromQueueRow,
+  isImpersonationCheckStale,
+  type AgentReviewQueueRow,
+  type AgentReviewSummary,
+} from '~/shared/utils/agent-review-findings';
+import {
+  BUILDING_REVIEW_PREVIEW_STATES,
   REVIEW_PREVIEW_MAX_AGE_MS,
+  STARTED_REVIEW_BUILD_DETAIL_MARK,
   type ReviewPreviewState,
   type StoredReviewPreviewState,
 } from '~/shared/constants/app-review-preview.constants';
@@ -1598,7 +1606,7 @@ async function submitListingReadiness(args: {
   try {
     const [
       { dbWrite },
-      { computeListingProblems, floorProblems, listingProblemInput },
+      { computeListingProblems, floorProblems, listingProblemInput, listingProblemLinksFrom },
       { loadListingAssetScansBatch },
     ] = await Promise.all([
       import('~/server/db/client'),
@@ -1665,12 +1673,37 @@ async function submitListingReadiness(args: {
       [{ id: row.id, iconId: row.iconId, coverId: row.coverId }],
       dbWrite
     );
+    // The trust-link nudge. On-site links are manifest-governed and reach the listing only at
+    // approve, so the SUBMITTED manifest is what this submit is about: its `repository` / `bugs`
+    // decide the nudge. The columns are still read, for one thing only — whether each exists
+    // here: a link whose column is absent is reported as unknown (no nudge), never as missing.
+    const kind = row.kind === 'offsite' ? 'offsite' : 'onsite';
+    const [
+      { readListingProblemLinkMaps },
+      { resolveListingIssueTracker, resolveListingSourceRepo },
+    ] = await Promise.all([
+      import('./app-listing-issue-tracker.service'),
+      import('./app-listing-mapper'),
+    ]);
+    const linkMaps = await readListingProblemLinkMaps([row.id], dbWrite);
+    const links =
+      kind === 'onsite'
+        ? {
+            sourceRepoUrl: linkMaps.sourceRepoUrls.has(row.id)
+              ? resolveListingSourceRepo(args.manifest)
+              : undefined,
+            issueTrackerUrl: linkMaps.issueTrackerUrls.has(row.id)
+              ? resolveListingIssueTracker(args.manifest)
+              : undefined,
+          }
+        : listingProblemLinksFrom(row.id, linkMaps);
     const { problems } = computeListingProblems(
       listingProblemInput(row, {
-        kind: row.kind === 'offsite' ? 'offsite' : 'onsite',
+        kind,
         appRating:
           typeof args.manifest.contentRating === 'string' ? args.manifest.contentRating : null,
         assetScans: scans.get(row.id) ?? [],
+        links,
       })
     );
     return {
@@ -2784,18 +2817,162 @@ async function listingFactsForRequests(
 }
 
 /**
+ * The compact agentic-review summary for a PAGE of requests, for the queue's AI chip — the
+ * latest report per request, reduced IN SQL to its finding severities and scope-trace counts.
+ *
+ * 🔴 ONE QUERY FOR THE WHOLE PAGE, AND NONE OF THE REPORT BODIES. The report's JSON columns
+ * hold the agent's full findings (tens of KB per row); the queue polls every 15 s, so selecting
+ * them for 50 rows to count severities would ship megabytes per tick. `jsonb` is reduced to the
+ * handful of fields `agentReviewDisplay` reads, and every path tolerates a malformed body (an
+ * `{ error }` section, a non-array `findings`), since these columns hold untrusted model output.
+ *
+ * FAIL-SOFT: a failed read returns an empty map, and the rows then carry no summary, which the
+ * queue renders as "AI: not run". A broken chip must never take the queue down with it.
+ */
+async function agentReviewSummariesForRequests(
+  ids: string[]
+): Promise<Map<string, AgentReviewSummary>> {
+  const out = new Map<string, AgentReviewSummary>();
+  if (ids.length === 0) return out;
+  try {
+    const { dbRead } = await import('~/server/db/client');
+    const rows = (await dbRead.$queryRaw`
+      SELECT DISTINCT ON (r.publish_request_id)
+        r.publish_request_id AS "publishRequestId",
+        r.status AS "status",
+        ARRAY(
+          SELECT lower(f->>'severity')
+          FROM jsonb_array_elements(
+            (CASE WHEN jsonb_typeof(r.code_review->'findings') = 'array'
+                  THEN r.code_review->'findings' ELSE '[]'::jsonb END)
+            || (CASE WHEN jsonb_typeof(r.security_audit->'findings') = 'array'
+                  THEN r.security_audit->'findings' ELSE '[]'::jsonb END)
+          ) AS f
+          WHERE jsonb_typeof(f) = 'object'
+        ) AS "severities",
+        (CASE WHEN jsonb_typeof(r.scope_verdicts->'overBroad') = 'array'
+              THEN jsonb_array_length(r.scope_verdicts->'overBroad') ELSE 0 END)::int AS "overBroad",
+        (CASE WHEN jsonb_typeof(r.scope_verdicts->'underDeclared') = 'array'
+              THEN jsonb_array_length(r.scope_verdicts->'underDeclared') ELSE 0 END)::int AS "underDeclared",
+        (SELECT count(*)::int
+           FROM jsonb_array_elements(
+             CASE WHEN jsonb_typeof(r.scope_verdicts->'scopes') = 'array'
+                  THEN r.scope_verdicts->'scopes' ELSE '[]'::jsonb END
+           ) AS sv
+          WHERE jsonb_typeof(sv) = 'object'
+            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate",
+        -- Every analysis produced a result: an object slot with no non-null error key.
+        (jsonb_typeof(r.code_review) = 'object'
+          AND jsonb_typeof(r.security_audit) = 'object'
+          AND jsonb_typeof(r.scope_verdicts) = 'object'
+          AND coalesce(jsonb_typeof(r.code_review->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.security_audit->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.scope_verdicts->'error'), 'null') = 'null') AS "sectionsOk",
+        (CASE WHEN jsonb_typeof(r.security_audit->'impersonationCheck') = 'object'
+              THEN r.security_audit->'impersonationCheck'->>'status' END) AS "impersonationCheck",
+        (CASE WHEN jsonb_typeof(r.security_audit->'impersonationCheck') = 'object'
+              THEN r.security_audit->'impersonationCheck'->>'fingerprint' END) AS "impersonationFingerprint"
+      FROM app_review_agent_reports r
+      WHERE r.publish_request_id = ANY(${ids}::text[])
+      ORDER BY r.publish_request_id, r.started_at DESC
+    `) as Array<AgentReviewQueueRow & { publishRequestId: string }>;
+    // A finding with no severity becomes `unrated` here (not dropped), so it still flags.
+    for (const r of rows) out.set(r.publishRequestId, agentReviewSummaryFromQueueRow(r));
+  } catch (err) {
+    console.error(
+      `[agentReviewSummariesForRequests] summary read failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+  return out;
+}
+
+/**
+ * The impersonation fingerprint of each request's store listing AS IT IS NOW — the same listing,
+ * found the same way, as the check reads (`gatherImpersonationInputs`: the app's on-site listing
+ * by slug; one keyed to another app does not count). One query for the page. FAIL-SOFT to an
+ * empty map: every check then reads stale, which only keeps rows out of the fast lane.
+ */
+async function liveListingFingerprints(
+  db: { appListing: { findMany(args: unknown): Promise<unknown> } },
+  requests: Array<{ id: string; slug: string; appBlockId: string | null }>
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (requests.length === 0) return out;
+  try {
+    const { impersonationFingerprint } = await import('./app-impersonation.logic');
+    const listings = (await db.appListing.findMany({
+      where: {
+        slug: { in: [...new Set(requests.map((r) => r.slug))] },
+        kind: 'onsite',
+        revisionOfId: null,
+      },
+      select: {
+        slug: true,
+        name: true,
+        tagline: true,
+        description: true,
+        iconId: true,
+        coverId: true,
+        appBlockId: true,
+      },
+    })) as Array<{
+      slug: string;
+      name: string;
+      tagline: string | null;
+      description: string | null;
+      iconId: number | null;
+      coverId: number | null;
+      appBlockId: string | null;
+    }>;
+    const bySlug = new Map(listings.map((l) => [l.slug, l]));
+    for (const r of requests) {
+      const l = bySlug.get(r.slug);
+      if (!l || (l.appBlockId && r.appBlockId && l.appBlockId !== r.appBlockId)) continue;
+      out.set(r.id, impersonationFingerprint(l));
+    }
+  } catch (err) {
+    console.error(
+      `[liveListingFingerprints] read failed: ${
+        err instanceof Error ? err.message || err.name : String(err)
+      }`
+    );
+  }
+  return out;
+}
+
+/** The `where` for the on-site PENDING queue — shared by the list and its count. */
+const PENDING_REQUEST_WHERE = { status: 'pending' } as const;
+
+/** How many on-site publish requests are waiting for review (the Pending tab's badge). */
+export async function countPendingRequests(): Promise<number> {
+  const { dbRead } = await import('~/server/db/client');
+  return dbRead.appBlockPublishRequest.count({ where: PENDING_REQUEST_WHERE });
+}
+
+/**
  * Mod queue: paginated list of publish requests in status='pending',
  * oldest first (FIFO). Includes the submitter's basic profile so the
  * review UI doesn't round-trip per row.
  */
-export async function listPendingRequests(opts: ListPendingRequestsOptions = {}) {
+export async function listPendingRequests(
+  opts: ListPendingRequestsOptions & {
+    /**
+     * Attach each row's agentic-review summary (`agentReview`). The router passes the
+     * viewer's `app-blocks-agentic-review` flag here, so a reviewer without the agentic
+     * surface never receives the field and the queue shows no AI chip for them.
+     */
+    includeAgentReview?: boolean;
+  } = {}
+) {
   const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appBlockPublishRequest.findMany({
-    where: { status: 'pending' },
+    where: PENDING_REQUEST_WHERE,
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
@@ -2811,32 +2988,68 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // The review preview lifecycle (`preview-*`) — projected to `previewState` below and
+      // NOT spread as `deployState`, which the queue reads as the APPROVED-row deploy shape.
+      // `deployDetail` is read ONLY for the preview's build-start time (the expiry rule) and
+      // never returned: on a pending row it is the preview detail, which carries no log, but
+      // nothing here needs the rest of it.
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
       submittedBy: { select: reviewUserChipSelect },
     },
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const listingFacts = await listingFactsForRequests(items as ListingJoinSubject[]);
+  const [listingFacts, agentSummaries, liveFingerprints] = await Promise.all([
+    listingFactsForRequests(items as ListingJoinSubject[]),
+    opts.includeAgentReview
+      ? agentReviewSummariesForRequests(items.map((r) => r.id))
+      : Promise.resolve(null),
+    opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
+  ]);
+  // The impersonation check is STALE when the listing changed after it ran (a new app's draft
+  // or pending listing is edited in place); a stale check never fast-lanes the row.
+  const withStaleness = (id: string) => {
+    const summary = agentSummaries?.get(id) ?? null;
+    if (!summary) return null;
+    return {
+      ...summary,
+      impersonationStale: isImpersonationCheckStale(
+        summary.impersonationFingerprint,
+        liveFingerprints?.get(id) ?? null
+      ),
+    };
+  };
+  const now = Date.now();
   return {
-    items: items.map((r: (typeof rows)[number]) => ({
-      ...r,
-      ...listingFacts(r.id),
-      // BigInt isn't JSON-serializable through tRPC's default transformer;
-      // surface as a string. UI can format with Intl.NumberFormat.
-      bundleSizeBytes: r.bundleSizeBytes.toString(),
-      // Deep-link into the per-slug Forgejo review repo so mods can
-      // browse the actual code from the review modal.
-      reviewRepoUrl: reviewRepoUrl(r.slug),
-      // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
-      // CANONICAL repo at the exact pushed sha instead, so they can review the
-      // real code rather than approve blind. Push rows are marked by empty
-      // bundle pointers (recordPendingFromPush writes bundleKey='' AND
-      // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
-      // it's the discriminator here (the fetch paths key off the equivalent
-      // bundleKey since they need the S3 path).
-      pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
-    })),
+    items: items.map(
+      ({ deployState, deployDetail, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
+        ...r,
+        ...listingFacts(r.id),
+        // The SAME reported state `getReviewStatus` gives the review page (one rule, including
+        // #8240's expiry from the build's start), so the queue chip and the page agree.
+        previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
+        // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
+        // "not run". `null` = the surface is on and this request has no report.
+        ...(agentSummaries ? { agentReview: withStaleness(r.id) } : {}),
+        // BigInt isn't JSON-serializable through tRPC's default transformer;
+        // surface as a string. UI can format with Intl.NumberFormat.
+        bundleSizeBytes: r.bundleSizeBytes.toString(),
+        // Deep-link into the per-slug Forgejo review repo so mods can
+        // browse the actual code from the review modal.
+        reviewRepoUrl: reviewRepoUrl(r.slug),
+        // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
+        // CANONICAL repo at the exact pushed sha instead, so they can review the
+        // real code rather than approve blind. Push rows are marked by empty
+        // bundle pointers (recordPendingFromPush writes bundleKey='' AND
+        // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
+        // it's the discriminator here (the fetch paths key off the equivalent
+        // bundleKey since they need the S3 path).
+        pushCommitUrl:
+          !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
+      })
+    ),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
 }
@@ -3077,6 +3290,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // Push-originated requests (git-push webhook) carry an empty bundleKey
       // and this real sha — approve reconstructs the bundle from Forgejo at it.
       forgejoCommitSha: true,
+      // The submitting client's source claim, carried into the approve commit's trailers.
+      sourceCommit: true,
+      sourceDirty: true,
       submittedByUserId: true,
       appBlockId: true,
       // The reviewed file list, which the permission-hook pin below cross-checks with the bytes.
@@ -3087,6 +3303,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // the teardown at the end. (deploy_state is null for the common no-preview
       // case, so teardown — and its k8s calls — are skipped entirely.)
       deployState: true,
+      // The preview's detail (its sha and serving mode) for that teardown, read here because
+      // markRequestDeployState below clears it before the teardown runs.
+      deployDetail: true,
     },
   });
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
@@ -3210,9 +3429,18 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // here (the H-4 invariant). A post-deploy submission already passed this gate
   // at submit time, and nothing reaches the approve queue without the submit
   // gate first, so skipping the re-check creates no bypass.
+  //
+  // `strictIssueTrackerLink: false` for the same reason: a manifest stored before `bugs` became a
+  // string-only rule must stay approvable. A non-conforming `bugs` is a warning, and the approve's
+  // listing sync publishes no link for it (`resolveListingIssueTracker`).
   const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx, {
     enforceSensitiveScopeJustification: false,
+    strictIssueTrackerLink: false,
   });
+  if (validation.warnings?.length) {
+    // eslint-disable-next-line no-console
+    console.warn(`[approveRequest] manifest warnings: ${validation.warnings.join('; ')}`);
+  }
   if (!validation.valid) {
     throw new Error(
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +
@@ -3585,7 +3813,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // OauthClient owner are mirrored faithfully — important for the transition case
   // where an app approved BEFORE this feature (possibly already curated) has its
   // first listing minted now on a subsequent-version approve.
-  const { mapAppBlockToListing, buildListingScalarSync } = await import('./app-listing-mapper');
+  const { mapAppBlockToListing, buildListingScalarSync, buildListingIssueTrackerSync } =
+    await import('./app-listing-mapper');
   // Is the manual-apply `app_listings.source_repo_url` column there yet? Probed ONCE
   // and threaded into all three write branches below. 🔴 It is deliberately probed
   // rather than assumed: naming a missing column in any of these payloads throws, and
@@ -3597,6 +3826,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // on it must land in this block's log-and-continue rather than abort the approve.
     const { isSourceRepoColumnAvailable } = await import('./app-listing-source-repo.service');
     const sourceRepoAvailable = await isSourceRepoColumnAvailable(dbWrite);
+    // The manual-apply `issue_tracker_url` column (manifest `bugs`), probed the same way. It is a
+    // no-type column, so it is never part of the Prisma payloads below: each branch writes it by
+    // raw SQL right after its own write, and only when this says the column exists.
+    const {
+      isIssueTrackerColumnAvailable,
+      writeIssueTrackerBestEffort,
+      writeListingIssueTrackerUrl,
+      writeOnsiteListingIssueTrackerUrlByAppBlock,
+    } = await import('./app-listing-issue-tracker.service');
+    const issueTrackerAvailable = await isIssueTrackerColumnAvailable(dbWrite);
     // (3b-transition) W13 draft-at-submit — an app SUBMITTED after this feature
     // shipped has a pre-approval on-site DRAFT AppListing (kind='onsite',
     // appBlockId=NULL, status='draft', slug=request.slug) minted at submit, carrying
@@ -3700,6 +3939,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           },
         });
         if (transitioned.count > 0) {
+          const tracker = buildListingIssueTrackerSync({
+            manifest: abForTransition.manifest,
+            issueTrackerAvailable,
+          });
+          if (tracker.write) {
+            await writeIssueTrackerBestEffort(`approve draft ${request.slug}`, () =>
+              writeListingIssueTrackerUrl(dbWrite, draftListing.id, tracker.value)
+            );
+          }
           await recordListingRatingChangeAfterCommit({
             appListingId: draftListing.id,
             slug: request.slug,
@@ -3768,10 +4016,19 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // (don't throw into the already-side-effecting approve flow); the backfill
       // remains the recovery path for such an anomaly.
       if (ab && ab.app && typeof ab.app.userId === 'number') {
-        await dbWrite.appListing.create({
+        const created = await dbWrite.appListing.create({
           data: mapAppBlockToListing(ab as SourceAppBlock, { sourceRepoAvailable }),
           select: { id: true },
         });
+        const tracker = buildListingIssueTrackerSync({
+          manifest: ab.manifest,
+          issueTrackerAvailable,
+        });
+        if (tracker.write && tracker.value !== null && created?.id) {
+          await writeIssueTrackerBestEffort(`approve create ${request.slug}`, () =>
+            writeListingIssueTrackerUrl(dbWrite, created.id, tracker.value)
+          );
+        }
       }
     } else {
       // (3b-sync) MANIFEST-GOVERNED COPY RE-SYNC (subsequent-version approve).
@@ -3831,6 +4088,17 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
               sourceRepoAvailable,
             }),
           });
+          // Re-synced from the manifest on every approved version, like `repository`: removing
+          // `bugs` clears the link.
+          const tracker = buildListingIssueTrackerSync({
+            manifest: ab.manifest,
+            issueTrackerAvailable,
+          });
+          if (tracker.write) {
+            await writeIssueTrackerBestEffort(`approve re-sync ${request.slug}`, () =>
+              writeOnsiteListingIssueTrackerUrlByAppBlock(dbWrite, appBlockId, tracker.value)
+            );
+          }
           if (synced.count === 0) {
             // The replica said a listing exists but the PRIMARY matched no row —
             // replica lag, or the row changed kind between the two reads. Benign
@@ -4160,7 +4428,37 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
 
   // (5) Atomic single-commit replacement of the repo contents on
   // civitai-apps/<slug>. This commit fires the git-push webhook.
-  const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
+  // The subject is unchanged; trailers map the snapshot to the request and to the developer's
+  // source (approve-provenance.ts). A push-originated request's pushed sha is `Pushed-Commit`,
+  // never `Source-Commit`: the latter is only ever the client's own claim.
+  //
+  // An empty bundleKey is NOT enough to call `forgejoCommitSha` the developer's push: approve
+  // overwrites a request's `forgejoCommitSha` with its own snapshot, and reset-to-pending clones
+  // that approved row (bundleKey '' included) into a new pending request. A sha some approved
+  // request already holds is the platform's own commit, so it is not a `Pushed-Commit`.
+  let pushedCommit: string | null = null;
+  if (!request.bundleKey && request.forgejoCommitSha) {
+    const platformOwn = await dbRead.appBlockPublishRequest.findFirst({
+      where: {
+        slug: request.slug,
+        status: 'approved',
+        forgejoCommitSha: request.forgejoCommitSha,
+        NOT: { id: request.id },
+      },
+      select: { id: true },
+    });
+    if (!platformOwn) pushedCommit = request.forgejoCommitSha;
+  }
+  const { buildApproveCommitMessage } = await import('./approve-provenance');
+  const commitMessage = buildApproveCommitMessage({
+    publishRequestId: request.id,
+    slug: request.slug,
+    version: request.version,
+    sourceCommit: request.sourceCommit,
+    sourceDirty: request.sourceDirty,
+    sourceRepo: (manifest as { repository?: unknown }).repository,
+    pushedCommit,
+  });
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,
     files: filesForCommit,
@@ -4172,7 +4470,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // publish request. These two writes are the durable proof that THIS sha
   // went through moderator review — the git-push webhook keys its
   // no-trust-on-push gate off `current_version_sha` (and, as a race backstop,
-  // an `approved` publish request with this `forgejoCommitSha`). Any push
+  // an `approved` publish request with this `forgejoCommitSha`). The webhook for
+  // THIS commit usually arrives before these writes; it recognises the commit
+  // from the `Publish-Request` trailer above and the pushing account. Any push
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
   await dbWrite.appBlock.update({
@@ -4198,6 +4498,36 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       appBlockId,
     },
   });
+
+  // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag
+  // already names another commit, `approved-<request id>`; see decideVersionTag). Runs after the
+  // approval markers are durable and before the build trigger. LOG-AND-CONTINUE: a tag is a
+  // pointer for developers, and a Forgejo error here must never fail an approve whose code is
+  // committed or keep its build from starting.
+  try {
+    const { ensureApprovalTag } = await import('./forgejo.service');
+    const tagged = await ensureApprovalTag({
+      slug: request.slug,
+      version: request.version,
+      publishRequestId: request.id,
+      sha: forgejoCommitSha,
+      message: commitMessage,
+    });
+    if (tagged.status === 'skipped' || tagged.fallbackFrom) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] version tag (slug=${request.slug}, id=${request.id}): ${JSON.stringify(
+          tagged
+        )}`
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] version tag not created (slug=${request.slug}, id=${request.id}); ` +
+        `approve/deploy CONTINUES: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // (6b) FORK PROVENANCE — if this request carries a parent (server-written onto the REQUEST at
   // creation; 🔴 never read from `manifest`), stamp it onto the block and link this app's store
@@ -4252,11 +4582,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // approve supersedes are left to the sweep (`jobs/sweep-review-storage.ts`).
   void teardownReviewStorageForRequest(request.id);
 
-  // (6b) Supersede any OTHER request still 'pending' for this slug. If the
-  // git-push webhook raced ahead of (6) it may have parked a duplicate
-  // pending-review row for THIS approved sha; withdraw it (and any older
-  // pending submission) so the queue reflects that the slug is now approved.
-  // Scoped to NOT touch the row we just approved.
+  // (6b) Supersede any OTHER request still 'pending' for this slug so the queue
+  // reflects that the slug is now approved. Scoped to NOT touch the row we just
+  // approved. This does not stop the webhook from parking this approve's own
+  // commit as a second request, because a row the webhook writes after this
+  // update survives it. The webhook recognises that commit by its
+  // `Publish-Request` trailer and pusher (git-push.ts ownApproveCommitRequest).
   await dbWrite.appBlockPublishRequest.updateMany({
     where: { slug: request.slug, status: 'pending', NOT: { id: request.id } },
     data: { status: 'withdrawn' },
@@ -4315,7 +4646,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // never affect the approve outcome. Gated on `hadReviewPreview` (captured from
   // deploy_state BEFORE markRequestDeployState flipped it to production
   // 'building'), so the common no-preview approve does zero extra DB/k8s work.
-  if (hadReviewPreview) void teardownReviewForRequest(request.id);
+  if (hadReviewPreview) {
+    void teardownReviewForRequest(request.id, { reviewDetail: request.deployDetail });
+  }
   // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
   // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
   void teardownAgentReviewForRequest(request.id);
@@ -4973,6 +5306,12 @@ export type ReviewPreviewDetail = {
    * them), so a 14-day expiry counted from here is never later than the janitor's reap.
    */
   buildStartedAt?: string;
+  /**
+   * Whether this build's preview was published to the shared static server, recorded by the
+   * build callback when it starts the apply step. The teardown follows it, not the flag's current
+   * value.
+   */
+  sharedServer?: boolean;
 };
 
 /** Pack a ReviewPreviewDetail into the deploy_detail string column. */
@@ -5062,7 +5401,9 @@ export async function markReviewPreviewState(
         err instanceof Error ? err.message : String(err)
       }`
     );
-    return 0;
+    // -1, not 0: the write failed, so whether the row is still this preview is UNKNOWN. A caller
+    // that acts on "matched no row" (the watcher unpublishes an orphaned preview) must not act.
+    return -1;
   }
 }
 
@@ -5238,7 +5579,54 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
   if (!claim.claimed) {
     throw new Error(`can only preview a pending request (${params.publishRequestId} changed)`);
   }
-  return startClaimedReviewBuild(claim.claimed, params.actor);
+  return startClaimedReviewBuild(claim.claimed, params.actor, {
+    replacedDeployDetail: claim.replacedDeployDetail,
+  });
+}
+
+/**
+ * A rebuild REPLACES the row's deploy detail, the only record that the old build was published to
+ * the shared static server's review lane, so unpublish from the detail the claim replaced, in
+ * whatever state it was left (a `preview-failed` preview can be published too).
+ *
+ * Only for a detail that RECORDS `sharedServer: true` and a full sha: a per-preview preview, or
+ * one whose serving mode was never recorded (its build never reached the apply step, so nothing
+ * was published), has nothing on the shared server. Unpublishing deletes only
+ * `review/<sha16>/meta.json` in the bucket; a per-preview route for the same host (a same-sha
+ * rebuild with the flag off) is a different backend and outranks the shared review route, so it
+ * is unaffected. Best-effort: it never blocks the rebuild.
+ *
+ * 🔴 NOT FOR THE SAME SHA. Called once the new build's sha is resolved (`newSha`), and skipped when
+ * it equals the replaced one: with the flag on the new build republishes that same
+ * `review/<sha16>/meta.json`, and an unpublish Job landing after that publish would leave the
+ * preview marked live but 404ing, with the callback's replay guard stopping any republish. The
+ * cost, accepted: a same-sha rebuild with the flag OFF leaves the old shared meta in place
+ * (shadowed by the per-preview route, gated, and expired by the bucket lifecycle). `newSha`
+ * undefined (the source could not be resolved, so nothing new will be published) unpublishes.
+ */
+async function unpublishReplacedSharedPreview(
+  request: { id: string; slug: string },
+  replacedDeployDetail: string | null | undefined,
+  newSha: string | undefined
+): Promise<void> {
+  const replaced = parseReviewDetail(replacedDeployDetail);
+  if (replaced.sharedServer !== true || !/^[0-9a-f]{40}$/.test(replaced.sha ?? '')) return;
+  if (newSha !== undefined && replaced.sha === newSha) return;
+  try {
+    const { triggerReviewUnpublish } = await import('./apps-pipeline.service');
+    await triggerReviewUnpublish({
+      slug: request.slug,
+      sha: replaced.sha as string,
+      publishRequestId: request.id,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[previewRequest] unpublish of the replaced shared-server preview failed (id=${
+        request.id
+      }): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
 
 /**
@@ -5253,7 +5641,9 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
  */
 export async function startClaimedReviewBuild(
   request: { id: string; slug: string; bundleKey: string; forgejoCommitSha: string | null },
-  actor: ReviewPreviewActor
+  actor: ReviewPreviewActor,
+  /** A rebuild's claim: the deploy detail it replaced (see unpublishReplacedSharedPreview). */
+  opts: { replacedDeployDetail?: string | null } = {}
 ): Promise<PreviewRequestResult> {
   const { env } = await import('~/env/server');
   const [{ triggerReviewBuild, reviewHost }, { reviewActorDetail }] = await Promise.all([
@@ -5273,6 +5663,7 @@ export async function startClaimedReviewBuild(
   try {
     sha = await resolveReviewSourceSha(request);
   } catch (err) {
+    await unpublishReplacedSharedPreview(request, opts.replacedDeployDetail, undefined);
     await markReviewPreviewState(
       request.id,
       'preview-failed',
@@ -5284,6 +5675,7 @@ export async function startClaimedReviewBuild(
     );
     throw err;
   }
+  await unpublishReplacedSharedPreview(request, opts.replacedDeployDetail, sha);
   const host = reviewHost(sha, env.APPS_DOMAIN);
   const url = `https://${host}/${request.slug}`;
 
@@ -5375,6 +5767,25 @@ export function isReviewPreviewExpired(
 }
 
 /**
+ * The preview state a moderator is SHOWN for a pending request: its stored `preview-*` value, or
+ * `preview-expired` past {@link isReviewPreviewExpired}. `null` when it has no preview. Shared
+ * by `getReviewStatus` (the review page) and `listPendingRequests` (the queue chip), so the two
+ * surfaces cannot disagree about one request.
+ */
+export function reportedReviewPreviewState(
+  deployState: string | null | undefined,
+  deployDetail: string | null | undefined,
+  updatedAt: Date | null,
+  now: number = Date.now()
+): ReviewPreviewState | null {
+  if (typeof deployState !== 'string' || !deployState.startsWith('preview-')) return null;
+  const stored = deployState as StoredReviewPreviewState;
+  return isReviewPreviewExpired(stored, parseReviewDetail(deployDetail), updatedAt, now)
+    ? 'preview-expired'
+    : stored;
+}
+
+/**
  * Poll target for the mod-review UI: returns the current preview lifecycle state
  * + detail (sha / host / url / error) for a publish request. Reads the same
  * deploy_state / deploy_detail columns previewRequest + the review-build-callback
@@ -5408,12 +5819,8 @@ export async function getReviewStatus(opts: {
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
   const isPreviewState =
     typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
-  const stored = isPreviewState ? (row.deployState as StoredReviewPreviewState) : null;
   const detail = isPreviewState ? parseReviewDetail(row.deployDetail) : {};
-  const state: ReviewPreviewState | null =
-    stored && isReviewPreviewExpired(stored, detail, row.deployUpdatedAt)
-      ? 'preview-expired'
-      : stored;
+  const state = reportedReviewPreviewState(row.deployState, row.deployDetail, row.deployUpdatedAt);
 
   let previewUrl: string | undefined;
   if (state === 'preview-live' && opts.modUserId != null && detail.host && detail.url) {
@@ -5816,7 +6223,15 @@ export async function mintReviewBlockToken(opts: {
  * the decision path: it reads the stored review sha (if any) + deletes the
  * review k8s resources by label selector, swallowing every error.
  */
-export async function teardownReviewForRequest(publishRequestId: string): Promise<void> {
+export async function teardownReviewForRequest(
+  publishRequestId: string,
+  /**
+   * The preview's detail as read before the caller changed the row. approveRequest passes it:
+   * by the time it tears down, markRequestDeployState has cleared the row's detail, and without
+   * the sha the shared-server preview would never be unpublished.
+   */
+  opts: { reviewDetail?: string | null } = {}
+): Promise<void> {
   // MOD REVIEW SANDBOX "run for real" (#2831) — drop the DISPOSABLE preview
   // storage schema (`apprev_<pubreq>`) a mod may have created by running the app
   // for real. Runs FIRST, in its OWN try/catch, so a downstream failure (the
@@ -5854,12 +6269,15 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
     // has already flipped the (now approved) row's deploy_state to a production
     // 'building' value, so a deploy_state guard would skip the teardown and leak
     // the review env. The label selector is the real safety boundary.
-    const detail = parseReviewDetail(row.deployDetail);
+    const detail = parseReviewDetail(
+      opts.reviewDetail !== undefined ? opts.reviewDetail : row.deployDetail
+    );
     const { deleteReviewResources } = await import('./apps-pipeline.service');
     await deleteReviewResources({
       slug: row.slug,
       sha: detail.sha ?? '',
       publishRequestId,
+      sharedServer: detail.sharedServer,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -5966,6 +6384,47 @@ export async function teardownReviewStorageForRequest(publishRequestId: string):
   }
 }
 
+/**
+ * A review build finished for a row that is no longer an active preview: release the build slot
+ * it still holds, but only the slot of THAT build: the row's detail must still carry the build's
+ * sha (and, when the caller knows it, its `buildStartedAt`), so an old build's callback or watcher
+ * can never free the slot a newer build of the same request now holds. Two shapes hold one (see buildSlotHolderWhere): a superseded, withdrawn or
+ * decided row still in a building state, and a preview torn down mid-build (no preview, its
+ * started-build detail kept). An active pending preview is never touched. Never throws.
+ */
+export async function releaseSettledBuildSlot(
+  publishRequestId: string,
+  build: { sha: string; buildStartedAt?: string }
+): Promise<void> {
+  try {
+    if (!/^[0-9a-f]{40}$/.test(build.sha)) return;
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appBlockPublishRequest.updateMany({
+      where: {
+        id: publishRequestId,
+        OR: [
+          { deployState: { in: [...BUILDING_REVIEW_PREVIEW_STATES] }, status: { not: 'pending' } },
+          { deployState: null, deployDetail: { contains: STARTED_REVIEW_BUILD_DETAIL_MARK } },
+        ],
+        AND: [
+          { deployDetail: { contains: `"sha":"${build.sha}"` } },
+          ...(build.buildStartedAt
+            ? [{ deployDetail: { contains: `"buildStartedAt":"${build.buildStartedAt}"` } }]
+            : []),
+        ],
+      },
+      data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[releaseSettledBuildSlot] failed (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
 /** Fire-and-forget queue drain (review-autodeploy.service). Never rejects. */
 function drainReviewQueueSoon(): Promise<unknown> {
   return import('./review-autodeploy.service')
@@ -6024,6 +6483,7 @@ export async function teardownPreview(opts: {
       slug: row.slug,
       sha: detail.sha ?? '',
       publishRequestId: opts.publishRequestId,
+      sharedServer: detail.sharedServer,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -6037,12 +6497,26 @@ export async function teardownPreview(opts: {
   // Clear the DB regardless of the k8s outcome. Only ever runs when the row was
   // a preview-* state (guarded above), so it can't clobber a production
   // building/live deploy_state.
-  await dbWrite.appBlockPublishRequest.update({
-    where: { id: opts.publishRequestId },
-    data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
-  });
-  // A torn-down build frees its slot for the next queued preview.
-  void drainReviewQueueSoon();
+  if (row.deployState === 'preview-building') {
+    // No preview any more (deploy_state null: the UI shows none, and the callback's
+    // requireActivePreview writes cannot publish or deploy it), but its build is still running.
+    // Only `preview-building`: in `preview-deploying` the build's callback has already run, so
+    // nothing would ever release a slot kept here before the stale window.
+    // The started-build detail is kept, so the row keeps holding its build slot until the build's
+    // callback clears it (releaseSettledBuildSlot) or the stale window passes. deployUpdatedAt is
+    // kept, so that window still counts from the build's last state change.
+    await dbWrite.appBlockPublishRequest.update({
+      where: { id: opts.publishRequestId },
+      data: { deployState: null },
+    });
+  } else {
+    await dbWrite.appBlockPublishRequest.update({
+      where: { id: opts.publishRequestId },
+      data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
+    });
+    // A torn-down queued or live preview held no running build; the queue may move on.
+    void drainReviewQueueSoon();
+  }
 
   return { publishRequestId: row.id, tornDown: true };
 }

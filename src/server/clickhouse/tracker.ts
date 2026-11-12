@@ -867,6 +867,8 @@ export class Tracker {
     earlyAccess?: boolean;
     time?: Date;
     fileId?: number;
+    /** A per-provider download: the provider whose token fetched the file. */
+    provider?: string;
   }) {
     return this.track('modelVersionEvents', { ...values, ...this.provenance });
   }
@@ -1194,6 +1196,12 @@ export class Tracker {
     applied: boolean;
     promptTokens: number;
     completionTokens: number;
+    nsfwLevel: number;
+    minorUncertain: -1 | 0 | 1;
+    depictsMinor: -1 | 0 | 1;
+    isPhotorealistic: -1 | 0 | 1;
+    suggestiveStyling: -1 | 0 | 1;
+    sexualContent: -1 | 0 | 1;
   }) {
     return this.track(
       'collectionAiReviewEvents',

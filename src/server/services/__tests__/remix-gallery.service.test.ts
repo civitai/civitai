@@ -12,6 +12,7 @@ import type * as Hooks from '~/server/events/points/hooks';
 import type * as HotReads3 from '@civitai/db-queries/hot-reads-3';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { HybridNode } from '~/__tests__/mocks/hybrid';
 
@@ -113,6 +114,11 @@ vi.mock('@civitai/db-queries/hot-reads-3', async (importOriginal) => ({
   listViewerPendingRemixPlacements: viewerPendingRows,
 }));
 
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
+
 vi.mock('~/server/services/placement.service', () => ({
   getPlacementConfig: async () => ({
     declineFeeRate: () => 0.3,
@@ -149,6 +155,20 @@ const forwardTo = <T extends Mock<AnyFn>>(spy: T, ...nodes: HybridNode[]) => {
 };
 
 const queryRaw = forwardTo(vi.fn<AnyFn>(), dbMock.dbRead.$queryRaw, dbMock.dbWrite.$queryRaw);
+
+/**
+ * The reads moved off Prisma's `$queryRaw` (the host rating, the has-entries check, the card
+ * summaries) run through Kysely. Both Kysely clients forward to the same `queryRaw` spy, so the
+ * ordered call list holds them where it always did. The one statement they gained, the
+ * hosts-with-entries lookup in front of the card and has-entries reads, is answered here instead
+ * and kept out of that list: every asked host has a placement, so the reads behind it run.
+ */
+const isHostsLookup = (strings: readonly string[]) =>
+  strings.join('?').includes('SELECT DISTINCT pl."targetId" AS "hostId"');
+const answerKysely = async (strings: readonly string[], ...values: unknown[]) =>
+  isHostsLookup(strings)
+    ? (values[2] as number[]).map((hostId) => ({ hostId }))
+    : queryRaw(strings, ...values);
 const placementFindMany = forwardTo(
   vi.fn<AnyFn>(async () => [] as unknown[]),
   dbMock.dbRead.placement.findMany,
@@ -291,6 +311,8 @@ function primeQueries({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  kysely.read.mockReset().mockImplementation(answerKysely);
+  kysely.write.mockReset().mockImplementation(answerKysely);
   findTeamRemixWaiver.mockResolvedValue(null);
   displayCount.mockResolvedValue(0);
   // 🔴 `clearAllMocks` is mockClear, which does NOT drain a queued `...Once`, and
@@ -3845,5 +3867,106 @@ describe('Availability parameters are cast to the enum, not bound as text', () =
       `AND p."publishedAt" < now() AND p."availability" != $${n}::"Availability" ` +
         `AND i.ingestion = 'Scanned'`
     );
+  });
+});
+
+/**
+ * The writers of the hosts-with-entries negative cache (remix-gallery-hosts.cache): every insert of
+ * a remix-gallery placement busts its host after the row exists, and approval busts again. The set
+ * of writers is pinned by remix-gallery-hosts-writers.test.ts; this pins that each busts the right
+ * host, after its write, and that a refusal busts nothing.
+ */
+describe('busting the hosts-with-entries cache', () => {
+  const hostKey = `packed:caches:remix-gallery-hosts:${HOST_IMAGE}`;
+  const busts = () =>
+    vi
+      .mocked(redisMock.redis.packed.set)
+      .mock.calls.filter(([key]) => String(key).startsWith('packed:caches:remix-gallery-hosts:'))
+      .map((call) => call.slice(0, 3));
+  const BUST = [hostKey, { hostId: HOST_IMAGE, debounce: true }, { EX: 10 }];
+
+  beforeEach(() => {
+    vi.mocked(redisMock.redis.packed.set).mockImplementation((async (key: string) => {
+      if (key === hostKey) calls.push('bust');
+    }) as never);
+  });
+
+  it('a paid submission busts its host after the insert, before the escrow', async () => {
+    await submit();
+    expect(busts()).toEqual([BUST]);
+    expect(calls).toEqual(['create', 'bust', 'hold']);
+  });
+
+  it('a free submission busts its host once the free primitive has inserted', async () => {
+    primeQueries({ submission: verifiedSubmission });
+    createFreePlacement.mockImplementation(async () => {
+      calls.push('free-insert');
+      return { id: FREE_PLACEMENT };
+    });
+    await submit({ free: true });
+    expect(busts()).toEqual([BUST]);
+    expect(calls).toEqual(['free-insert', 'bust']);
+  });
+
+  it('approval busts the host', async () => {
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      placerId: PLACER,
+      status: 'pending',
+      surface: 'remixGallery',
+      data: { imageId: REMIX_IMAGE },
+      targetId: HOST_IMAGE,
+    });
+    await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+    expect(busts()).toEqual([BUST]);
+  });
+
+  it('a refused submission busts nothing', async () => {
+    primeQueries({ submission: { ...goodSubmission, tosViolation: true } });
+    await expect(submit()).rejects.toThrow();
+    expect(busts()).toEqual([]);
+  });
+});
+
+describe('the reads moved off the Prisma query engine', () => {
+  it('the card summaries and the has-entries check run through Kysely only', async () => {
+    queryRaw.mockImplementation(async () => []);
+    await getRemixGalleryCardSummaries({ imageIds: [HOST_IMAGE], browsingLevel: 1 });
+    await getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: 1,
+      domainLevels: 1,
+    });
+    const viaPrisma = [
+      ...dbMock.dbRead.$queryRaw.mock.calls,
+      ...dbMock.dbWrite.$queryRaw.mock.calls,
+    ]
+      .map(flatten)
+      .join(' ');
+    const viaKysely = kysely.read.mock.calls.map(flatten).join(' ');
+    for (const statement of [
+      'WITH visible AS',
+      'SELECT EXISTS',
+      'AS showable',
+      'SELECT DISTINCT pl."targetId"',
+    ]) {
+      expect(viaKysely, statement).toContain(statement);
+      expect(viaPrisma, statement).not.toContain(statement);
+    }
+  });
+
+  it('a host with no placement skips the has-entries check entirely', async () => {
+    kysely.read.mockImplementation(async (strings: readonly string[], ...values: unknown[]) =>
+      isHostsLookup(strings) ? [] : queryRaw(strings, ...values)
+    );
+    queryRaw.mockImplementation(async () => [{ nsfwLevel: 1, minor: false, showable: true }]);
+    const visibility = await getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: 1,
+      domainLevels: 1,
+    });
+    expect(visibility.hasEntries).toBe(false);
+    expect(kysely.read.mock.calls.map(flatten).join(' ')).not.toContain('SELECT EXISTS');
   });
 });

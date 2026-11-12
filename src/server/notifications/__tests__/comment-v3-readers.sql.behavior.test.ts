@@ -46,7 +46,7 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
 const { countedTopLevelCommentSql } = await import('~/server/services/comment-count.sql');
-const { getThreadMuted } = await import('~/server/services/commentv3/section.service');
+const { getCommentMuted } = await import('~/server/services/commentv3/section.service');
 
 const db = { pg: null as unknown as PGlite };
 
@@ -84,7 +84,8 @@ UPDATE "User" SET username = 'u' || id;
 ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "postId" int;
 ALTER TABLE "Post" ADD COLUMN "userId" int, ADD COLUMN "modelVersionId" int, ADD COLUMN title text;
 ALTER TABLE "Model" ADD COLUMN name text, ADD COLUMN "userId" int, ADD COLUMN description text,
-  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp, ADD COLUMN status text;
+  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp, ADD COLUMN status text,
+  ADD COLUMN poi boolean NOT NULL DEFAULT false;
 ALTER TABLE app_listings ADD COLUMN slug text;
 CREATE TABLE "ModelVersion"(id int PRIMARY KEY, name text, "modelId" int);
 CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
@@ -102,7 +103,7 @@ ALTER TABLE "User" ADD COLUMN "bannedAt" timestamp, ADD COLUMN "deletedAt" times
   ADD COLUMN muted boolean NOT NULL DEFAULT false, ADD COLUMN "browsingLevel" int NOT NULL DEFAULT 1;
 INSERT INTO "Article"(id, "userId") VALUES (10, 1);
 UPDATE "Image" SET "userId" = 1, "postId" = 1 WHERE id = 10;
-UPDATE "Model" SET name = 'M', "userId" = 1 WHERE id = 1;
+UPDATE "Model" SET name = 'M', "userId" = 1, status = 'Published' WHERE id = 1;
 UPDATE app_listings SET slug = 'pixel-forge' WHERE serial_id = 9;
 INSERT INTO app_listings(id, serial_id, slug) VALUES ('02ULID', 10, NULL);
 -- User 6 has blocked user 3.
@@ -296,11 +297,17 @@ describe('notification queries on CommentV3', () => {
     expect(modelReply.dedupeKey).toBe('comment:v1:101');
   });
 
-  it('the model page processors carry the old ids, and only for comments with one', async () => {
+  it('the model page processors carry a comment’s old id, and its own where it has none', async () => {
     const comment = await emitted('new-comment');
-    expect(pairs(comment)).toEqual([[55, 1]]);
-    expect(comment[0].key).toBe('new-comment-model:owner:v3:55');
-    expect(comment[0].dedupeKey).toBe('comment:v1:55');
+    // 202 has no old id: a v2 comment on the model thread, as a comment written since the flip is.
+    expect(pairs(comment)).toEqual([
+      [55, 1],
+      [202, 1],
+    ]);
+    const old = comment.find((c) => c.details.commentId === 55)!;
+    expect(old.details.version).toBe(4);
+    expect(old.key).toBe('new-comment-model:owner:v3:55');
+    expect(old.dedupeKey).toBe('comment:v1:55');
 
     const response = await emitted('new-comment-response');
     expect(pairs(response)).toEqual([
@@ -308,14 +315,17 @@ describe('notification queries on CommentV3', () => {
       [101, 2],
     ]);
     expect(response.find((r) => r.details.commentId === 101)!.details).toMatchObject({
+      version: 4,
       modelId: 1,
       parentId: 55,
     });
 
-    expect(pairs(await emitted('new-comment-nested'))).toEqual([
+    const nested = await emitted('new-comment-nested');
+    expect(pairs(nested)).toEqual([
       [57, 1],
       [101, 1],
     ]);
+    expect(nested.every((n) => n.details.version === 4)).toBe(true);
   });
 
   it('new-mention notifies the named, keyed as the comment it is in, and honours a block', async () => {
@@ -384,11 +394,54 @@ describe('notification queries on CommentV3', () => {
     );
   });
 
+  it.each([
+    ['unpublished', `UPDATE "Model" SET status = 'Unpublished' WHERE id = 1`],
+    ['POI', `UPDATE "Model" SET poi = true WHERE id = 1`],
+  ])('replies on a model that is %s reach only its owner', async (_, change) => {
+    const undo = `UPDATE "Model" SET status = 'Published', poi = false WHERE id = 1`;
+    await temporarily(change, undo, async () => {
+      expect(await emitted('new-comment-response')).toEqual([]);
+      // 201, the model reply naming user 9, goes quiet; the image reply naming 10 does not.
+      expect(pairs(await run(mentionNotifications['new-mention'].prepareQuery))).toEqual([
+        [104, 10],
+      ]);
+      expect((await emitted('new-thread-response')).filter((t) => t.details.modelId === 1)).toEqual(
+        []
+      );
+      expect(pairs(await emitted('new-comment-nested'))).toEqual([
+        [57, 1],
+        [101, 1],
+      ]);
+    });
+  });
+
   it('the comment reaction milestone keys on the old ids, for live model comments only', async () => {
     const out = await run(reactionNotifications['comment-reaction-milestone'].prepareQuery);
     expect(out.map((r) => [r.userId, r.details])).toEqual([
       [8, { modelName: 'M', modelId: 1, rootCommentId: 55, commentId: 101, reactionCount: 5 }],
+      [4, { modelName: 'M', modelId: 1, rootCommentId: 202, commentId: 202, reactionCount: 5 }],
     ]);
+  });
+
+  it('the model page processors honour the owner’s section mute and a thread mute', async () => {
+    await temporarily(
+      `INSERT INTO "CommentTopicMute"("userId", "entityType", "entityId") VALUES (1, 'model', 1)`,
+      `DELETE FROM "CommentTopicMute" WHERE "userId" = 1 AND "entityType" = 'model'`,
+      async () => {
+        expect(await emitted('new-comment')).toEqual([]);
+        expect(await emitted('new-comment-nested')).toEqual([]);
+        // Replies still reach the author of the comment answered.
+        expect(pairs(await emitted('new-comment-response'))).toHaveLength(2);
+      }
+    );
+    // User 2 mutes their model comment 200: replies under it stop reaching them.
+    await temporarily(
+      `INSERT INTO "CommentMute"("userId", "commentId") VALUES (2, 200)`,
+      `DELETE FROM "CommentMute" WHERE "userId" = 2`,
+      async () => {
+        expect(await emitted('new-comment-response')).toEqual([]);
+      }
+    );
   });
 
   it('a mute by the recipient drops only their notification', async () => {
@@ -532,6 +585,10 @@ describe('the detail fetcher', () => {
         { type: 'new-thread-response', details: { version: 3, commentId: 400 } },
         { type: 'new-thread-response', details: { version: 3, commentId: 401 } },
         { type: 'new-thread-response', details: { version: 3, commentId: 402 } },
+        // A model comment with no old id is addressed by its own; image
+        // comment 100 still may not stand in.
+        { type: 'new-comment', details: { version: 4, commentId: 202 } },
+        { type: 'new-comment', details: { version: 4, commentId: 100 } },
       ])
     ).toEqual([
       ['model top', 2],
@@ -542,12 +599,14 @@ describe('the detail fetcher', () => {
       [undefined, undefined],
       [undefined, undefined],
       [undefined, undefined],
+      ['v2 on the model thread', 4],
+      [undefined, undefined],
     ]);
   });
 });
 
 describe('the mute menu', () => {
-  // getThreadMuted's raw queries, run here as Prisma would send them.
+  // getCommentMuted's raw queries, run here as Prisma would send them.
   const menu = (commentId: number, userId: number) => {
     dbMock.dbWrite.$queryRawUnsafe.mockImplementation(((sql: string, ...values: unknown[]) =>
       db.pg.query(sql, values).then((r) => r.rows)) as never);
@@ -558,7 +617,7 @@ describe('the mute menu', () => {
       const q = Prisma.sql(strings, ...values);
       return db.pg.query(q.text, q.values).then((r) => r.rows);
     }) as never);
-    return getThreadMuted({ commentId, userId });
+    return getCommentMuted({ commentId, userId });
   };
 
   it("reports the user's own mute, one inherited from an ancestor, and none", async () => {

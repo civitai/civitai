@@ -103,4 +103,20 @@ describe('Hat Turf in the image feed filters', () => {
     expect(page.getByRole('checkbox', { name: 'Remixes Only' }).query()).toBeNull();
     expect(page.getByRole('checkbox', { name: 'Originals Only' }).query()).toBeNull();
   });
+
+  test('My live hats: every media type, Turf hats held on, no time period or remix chips', async () => {
+    player.value = PLAYER;
+    render();
+    await openFilters();
+    await expect.element(page.getByText('Media type')).toBeInTheDocument();
+    await page.getByRole('checkbox', { name: 'My live hats' }).click();
+    await page.getByRole('button', { name: 'Apply filters' }).click();
+    await openFilters();
+    await expect.element(page.getByRole('checkbox', { name: 'My live hats' })).toBeChecked();
+    await expect.element(page.getByRole('checkbox', { name: 'Turf hats' })).toBeDisabled();
+    await expect.element(page.getByRole('checkbox', { name: 'Turf hats' })).toBeChecked();
+    expect(page.getByText('Media type').query()).toBeNull();
+    expect(page.getByText('Time period').query()).toBeNull();
+    expect(page.getByRole('checkbox', { name: 'Remixes Only' }).query()).toBeNull();
+  });
 });

@@ -1,5 +1,12 @@
 import { Stack, Tabs, Text } from '@mantine/core';
-import { IconCode, IconFileCode, IconKey, IconRobot, IconWindow } from '@tabler/icons-react';
+import {
+  IconCode,
+  IconFileCode,
+  IconKey,
+  IconLayoutDashboard,
+  IconRobot,
+  IconWindow,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -10,10 +17,12 @@ import {
   ReviewFilesSection,
   ReviewManifestDiffSection,
   ReviewPreviewSection,
+  REVIEW_PREVIEW_TALL_HEIGHT,
   ScreenshotsReviewPanel,
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
 import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
+import { ReviewOverviewPanel } from '~/components/Apps/ReviewOverviewPanel';
 import {
   isReviewDetailTab,
   resolveReviewDetailTab,
@@ -26,7 +35,8 @@ import {
 import { appDisplayName } from '~/shared/utils/app-display-name';
 
 /**
- * The per-submission review PAGE's body, as FIVE TABS with PERMISSIONS FIRST.
+ * The per-submission review PAGE's body, as SIX TABS with the OVERVIEW FIRST (see
+ * `reviewDetailTabs.ts` for the order and why).
  *
  * ## What moved, and why
  *
@@ -68,6 +78,7 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
  * whole job is to look right — showing the old one.
  */
 export const TAB_ICONS: Record<ReviewDetailTab, typeof IconKey> = {
+  overview: IconLayoutDashboard,
   permissions: IconKey,
   code: IconCode,
   agent: IconRobot,
@@ -125,37 +136,39 @@ function ReviewDetailTabsViewInner({
   const activeTab = useMemo(() => resolveReviewDetailTab(rawTab, { hash }), [rawTab, hash]);
   const visited = useVisitedTabs(activeTab);
 
+  const selectTab = (value: string | null) => {
+    if (!isReviewDetailTab(value)) return;
+    /*
+      🔴 `replace` + `shallow`, like `/apps/activity`: no re-run of `getServerSideProps`
+      and no history entry per click (which would turn Back into a tab-by-tab rewind out
+      of the submission).
+
+      🔴 AND IT CANNOT TRIP THE PAGE'S ROUTE-LEAVE GUARD, because this is a QUERY-ONLY
+      change. `useCatchNavigation`'s `handleBrowsingAway` compares
+      `window.location.pathname` against the destination with its query stripped
+      (`url.split('?')[0]`) and returns early when they are equal — so switching tabs
+      mid-approve never prompts.
+
+      ⚠️ THAT HALF IS A CODE-READING ARGUMENT, NOT A TEST, and is written as one
+      deliberately. The premise it rests on — that a tab click produces a replace to the
+      SAME pathname — IS tested (`ReviewDetailTabs.browser.test.tsx` asserts
+      `url.pathname` is still `/apps/review/[publishRequestId]`). The early return itself
+      cannot be exercised in the component harness: the guard reads the REAL
+      `window.location.pathname`, which under vitest-browser is the runner's page, not the
+      app route, so a faithful test there would be asserting the harness's URL rather than
+      the guard's rule. Do not "fix" that by relaxing the guard to make it testable.
+    */
+    void router.replace(
+      { pathname: router.pathname, query: reviewDetailTabQuery(value, router.query) },
+      undefined,
+      { shallow: true }
+    );
+  };
+
   return (
     <Tabs
       value={activeTab}
-      onChange={(value) => {
-        if (!isReviewDetailTab(value)) return;
-        /*
-          🔴 `replace` + `shallow`, like `/apps/activity`: no re-run of `getServerSideProps`
-          and no history entry per click (which would turn Back into a tab-by-tab rewind out
-          of the submission).
-
-          🔴 AND IT CANNOT TRIP THE PAGE'S ROUTE-LEAVE GUARD, because this is a QUERY-ONLY
-          change. `useCatchNavigation`'s `handleBrowsingAway` compares
-          `window.location.pathname` against the destination with its query stripped
-          (`url.split('?')[0]`) and returns early when they are equal — so switching tabs
-          mid-approve never prompts.
-
-          ⚠️ THAT HALF IS A CODE-READING ARGUMENT, NOT A TEST, and is written as one
-          deliberately. The premise it rests on — that a tab click produces a replace to the
-          SAME pathname — IS tested (`ReviewDetailTabs.browser.test.tsx` asserts
-          `url.pathname` is still `/apps/review/[publishRequestId]`). The early return itself
-          cannot be exercised in the component harness: the guard reads the REAL
-          `window.location.pathname`, which under vitest-browser is the runner's page, not the
-          app route, so a faithful test there would be asserting the harness's URL rather than
-          the guard's rule. Do not "fix" that by relaxing the guard to make it testable.
-        */
-        void router.replace(
-          { pathname: router.pathname, query: reviewDetailTabQuery(value, router.query) },
-          undefined,
-          { shallow: true }
-        );
-      }}
+      onChange={selectTab}
       variant="outline"
       // Panels are mounted by `visited` above, so Mantine's own flag is irrelevant here;
       // pinned explicitly so a later Mantine default change cannot silently re-introduce
@@ -182,6 +195,16 @@ function ReviewDetailTabsViewInner({
         the last thing in the manifest card. `ManifestView` below is passed
         `includeScopes={false}` so this card appears exactly once on the page.
       */}
+      {/*
+        OVERVIEW — the default. The decision signals on one screen; every other tab is the
+        evidence behind one of them. See `ReviewOverviewPanel`.
+      */}
+      <Tabs.Panel value="overview" pt="md">
+        {visited.has('overview') && (
+          <ReviewOverviewPanel selection={selection} onOpenTab={selectTab} />
+        )}
+      </Tabs.Panel>
+
       <Tabs.Panel value="permissions" pt="md">
         {visited.has('permissions') && (
           <Stack gap="sm">
@@ -195,16 +218,19 @@ function ReviewDetailTabsViewInner({
       </Tabs.Panel>
 
       {/*
-        CODE — the file summary plus the GitHub-shaped line diff.
+        CODE — the file summary plus the GitHub-shaped line diff, with the per-file list shown
+        on ARRIVAL (no "Show code diff" switch).
 
-        🔴 THE DIFF STAYS BEHIND ITS OWN SWITCH, and arriving on this tab does NOT fetch it.
-        An earlier revision auto-opened it here; the diff response has no total-bytes cap
-        (300 files × 256 KiB/side), so a mod who opened this tab only to read the file COUNTS
-        paid the whole fetch. The panel is still `visited`-gated, so nothing is read at all
-        until the mod comes here — the switch is the second, cheaper decision.
+        ⚠️ THIS REVERSES AN EARLIER CHOICE, KNOWINGLY. The diff response has no total-bytes cap
+        (300 files × 256 KiB/side), and the switch existed so a mod reading only the file
+        COUNTS did not pay for it. The counts now live on the Overview's neighbours and this
+        tab's only job is the code, so opening it IS the request to read it; an extra click
+        on every review cost more than the fetch. The panel stays `visited`-gated (nothing is
+        read until the mod comes here) and each file stays collapsed, so the rows are only
+        built for files the mod opens. The modal keeps the switch.
       */}
       <Tabs.Panel value="code" pt="md">
-        {visited.has('code') && <ReviewFilesSection request={request} />}
+        {visited.has('code') && <ReviewFilesSection request={request} autoLoadDiff />}
       </Tabs.Panel>
 
       {/*
@@ -272,7 +298,7 @@ function ReviewDetailTabsViewInner({
       <Tabs.Panel value="preview" pt="md">
         {visited.has('preview') && (
           <Stack gap="md">
-            <ReviewPreviewSection selection={selection} />
+            <ReviewPreviewSection selection={selection} frameHeight={REVIEW_PREVIEW_TALL_HEIGHT} />
             <ReviewListingMedia
               slug={request.slug}
               name={appDisplayName(request.manifest, request.slug)}

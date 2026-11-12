@@ -122,38 +122,16 @@ async function getTrackerEvent(
         };
       }
       break;
-    case 'commentOld':
-      const commentOld = await dbRead.comment.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
-      if (commentOld) {
-        return {
-          type: `Comment_${action}`,
-          nsfw: NsfwLevelDeprecated.None,
-          ownerId: commentOld.userId,
-          ...shared,
-        };
-      }
-      break;
     case 'comment':
-      // A comment on a surface that writes CommentV3 may have no CommentV2 row. The event type stays
-      // `CommentV2_*` either way: the id is the same in both tables.
-      const commentV2 =
-        (await dbRead.commentV2.findFirst({
-          where: { id: input.entityId },
-          select: { userId: true },
-        })) ??
-        (
-          await dbRead.$queryRaw<{ userId: number }[]>`
-            SELECT "userId" FROM "CommentV3" WHERE id = ${input.entityId}
-          `
-        )[0];
-      if (commentV2) {
+      // Still `CommentV2_*`: ClickHouse's `reactions.type` enum has no CommentV3 value.
+      const [comment] = await dbRead.$queryRaw<{ userId: number }[]>`
+        SELECT "userId" FROM "CommentV3" WHERE id = ${input.entityId}
+      `;
+      if (comment) {
         return {
           type: `CommentV2_${action}`,
           nsfw: NsfwLevelDeprecated.None,
-          ownerId: commentV2.userId,
+          ownerId: comment.userId,
           ...shared,
         };
       }
@@ -206,10 +184,11 @@ async function holdsReaction({
   // The return annotation makes a missing entity type a compile error rather than a refusal.
   const count = await ((): Promise<number> => {
     switch (entityType) {
-      case 'commentOld':
-        return dbWrite.commentReaction.count({ where: { ...where, commentId: entityId } });
       case 'comment':
-        return dbWrite.commentV2Reaction.count({ where: { ...where, commentId: entityId } });
+        return dbWrite.$queryRaw<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM "CommentV3Reaction"
+          WHERE "commentId" = ${entityId} AND "userId" = ${userId} AND reaction = ${reaction}::"ReviewReactions"
+        `.then(([row]) => row?.n ?? 0);
       case 'image':
         return dbWrite.imageReaction.count({ where: { ...where, imageId: entityId } });
       case 'post':

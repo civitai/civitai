@@ -1,4 +1,5 @@
 import type { EventViewer } from '~/server/events/event-access';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { Prisma } from '@prisma/client';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
@@ -125,11 +126,12 @@ import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import {
-  articleAwaitsTextVerdict,
   isPublicArticle,
   isShareableArticleStatus,
 } from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import type { SkipReason } from '~/server/services/text-scan/actions/settle-skipped';
 import {
   computeArticleDerivedNsfwLevel,
   maybeAutoResolveDisputeAfterScan,
@@ -433,23 +435,34 @@ export const getArticles = async ({
     // tiebreaker so pages are deterministic even when many articles share
     // the same sort value (e.g. the INT_MAX sentinel).
     const NULL_RANK_SENTINEL = 2147483647; // max int32 — sorts after any real rank under ASC
-    const rankExpr = (col: string) => `COALESCE(rank."${col}${period}Rank", ${NULL_RANK_SENTINEL})`;
+    const liveCounts = {
+      collectedCount: `am."collectedCount"`,
+      commentCount: `am."commentCount"`,
+      reactionCount: `am."heartCount" + am."likeCount" + am."dislikeCount" + am."laughCount" + am."cryCount"`,
+    };
+    // Period rank columns are never filled (only AllTime metrics are kept), so shorter periods sort by live AllTime counts; 'stats' mode ranks by all-time counts.
+    const useLiveCounts = period !== MetricTimeframe.AllTime;
+    const metricSort = (col: keyof typeof liveCounts): [string, 'ASC' | 'DESC'] =>
+      useLiveCounts
+        ? [`COALESCE(${liveCounts[col]}, 0)`, 'DESC']
+        : [`COALESCE(rank."${col}${period}Rank", ${NULL_RANK_SENTINEL})`, 'ASC'];
 
     let sortExpr: string;
     let sortDir: 'ASC' | 'DESC';
+    let joinMetric = false;
     switch (sort) {
       case ArticleSort.MostBookmarks:
       case ArticleSort.MostCollected:
-        sortExpr = rankExpr('collectedCount');
-        sortDir = 'ASC';
+        [sortExpr, sortDir] = metricSort('collectedCount');
+        joinMetric = useLiveCounts;
         break;
       case ArticleSort.MostComments:
-        sortExpr = rankExpr('commentCount');
-        sortDir = 'ASC';
+        [sortExpr, sortDir] = metricSort('commentCount');
+        joinMetric = useLiveCounts;
         break;
       case ArticleSort.MostReactions:
-        sortExpr = rankExpr('reactionCount');
-        sortDir = 'ASC';
+        [sortExpr, sortDir] = metricSort('reactionCount');
+        joinMetric = useLiveCounts;
         break;
       case ArticleSort.RecentlyUpdated:
         sortExpr = `extract(epoch from a."updatedAt")`;
@@ -485,6 +498,11 @@ export const getArticles = async ({
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
+      ${
+        joinMetric
+          ? Prisma.sql`LEFT JOIN "ArticleMetric" am ON am."articleId" = a.id AND am.timeframe = 'AllTime'::"MetricTimeframe"`
+          : Prisma.empty
+      }
       ${collectionJoin}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
@@ -601,7 +619,9 @@ export const getArticles = async ({
       .map(({ tags, user, userCosmetics, cursorV, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
-        const coverImage = coverImages.find((x) => x.id === article.coverId);
+        const cover = coverImages.find((x) => x.id === article.coverId);
+        const isOwnerOrMod = !!sessionUser?.isModerator || article.userId === sessionUser?.id;
+        const coverImage = isArticleImageViewable(cover, isOwnerOrMod) ? cover : undefined;
         const match = articleStats[article.id];
 
         return {
@@ -708,7 +728,9 @@ export const getCivitaiNews = async () => {
 
   const articles = articlesRaw.map((article) => {
     const user = users.find((x) => x.id === article.userId);
-    const coverImage = coverImages.find((x) => x.id === article.coverId);
+    const cover = coverImages.find((x) => x.id === article.coverId);
+    // A public page with no viewer: no owner exception.
+    const coverImage = isArticleImageViewable(cover, false) ? cover : undefined;
     return {
       ...article,
       user: user ?? null,
@@ -856,13 +878,17 @@ export const getArticleById = async ({
 
 type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
 
-/**
- * The cover or banner as a reader may see it: owners and moderators always, anyone else only once
- * the image has been scanned and is not waiting on review.
- */
+/** Owners and moderators always; anyone else per `servableArticleImage`. */
+function isArticleImageViewable<T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview'>>(
+  image: T | null | undefined,
+  isOwnerOrMod: boolean
+): image is T {
+  if (!image) return false;
+  return isOwnerOrMod || servableArticleImage(image) !== null;
+}
+
 function viewableArticleImage(image: ArticleImageRow | null | undefined, isOwnerOrMod: boolean) {
-  if (!image) return undefined;
-  if (!isOwnerOrMod && (image.ingestion !== 'Scanned' || image.needsReview)) return undefined;
+  if (!isArticleImageViewable(image, isOwnerOrMod)) return undefined;
   return {
     ...image,
     nsfwLevel: image.nsfwLevel as NsfwLevel,
@@ -900,7 +926,7 @@ export const upsertArticle = async ({
     const tags = withoutOfficialArticleTag(inputTags, officialTag);
     await throwOnBlockedUserContent(
       [data.title, data.content, ...(await newTagNames(tags?.map((tag) => tag.name)))],
-      { isModerator, surface: 'article' }
+      { isModerator, surface: 'article', entityType: 'Article', entityId: id, userId }
     );
 
     // For updates, fetch article early so we can enforce its stored locks and check cover
@@ -1002,7 +1028,13 @@ export const upsertArticle = async ({
 
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
-    await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
+    await throwOnBlockedUserContent(data.content, {
+      isModerator,
+      surface: 'article',
+      entityType: 'Article',
+      entityId: article?.id ?? id,
+      userId: article?.userId ?? userId,
+    });
     await assertNoShopArtworkInContent(data.content, article?.content);
 
     // TODO make coverImage required here and in db
@@ -1343,11 +1375,16 @@ export const upsertArticle = async ({
         ));
       if (sharedSave) await resetSharedArticleTextCheck(tx, id as number);
       sharedTextChanged = sharedSave;
+      // A live article leaves Scanned with its new text too, so no failure before the recompute
+      // can leave that text public without its own verdict.
+      const liveSave =
+        textChanged &&
+        ((data.status as ArticleStatus | undefined) ?? article.status) === ArticleStatus.Published;
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
           ...data,
-          ...(sharedSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
+          ...(sharedSave || liveSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           // The locked read: a block may have written its own keys since the first read.
           metadata: {
@@ -1582,7 +1619,12 @@ export async function applyArticleContentChange({
    */
   context?: ArticleContentChangeContext;
 }) {
-  await throwOnBlockedUserContent(content, { surface: 'article' });
+  await throwOnBlockedUserContent(content, {
+    surface: 'article',
+    entityType: 'Article',
+    entityId: id,
+    userId,
+  });
 
   let resolved = context;
   if (!resolved) {
@@ -1618,15 +1660,19 @@ export async function applyArticleContentChange({
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
     // Under the share-token lock, so a link created meanwhile cannot miss this body: a shared
-    // draft leaves Scanned in the same statement that changes its text.
+    // draft, or a live article, leaves Scanned in the same statement that changes its text.
     const affected = await dbWrite.$transaction(async (tx) => {
       await lockAccessTokens(tx, id);
-      const locked = (await isSharedArticle(id, publication.status, tx))
-        ? await tx.article.findUnique({ where: { id }, select: { content: true } })
-        : null;
-      const resetting = !!locked && locked.content !== content;
+      const shared = await isSharedArticle(id, publication.status, tx);
+      const live = publication.status === ArticleStatus.Published;
+      const locked =
+        shared || live
+          ? await tx.article.findUnique({ where: { id }, select: { content: true } })
+          : null;
+      const changed = !!locked && locked.content !== content;
+      const resetting = shared && changed;
       const written = await tx.$executeRaw`UPDATE "Article" SET content = ${content}${
-        resetting ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
+        changed ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
       } WHERE id = ${id}${
         expectedContent === undefined ? Prisma.empty : Prisma.sql` AND content = ${expectedContent}`
       }`;
@@ -1702,7 +1748,7 @@ export async function applyArticleContentChange({
     }
   }
 
-  // Submit for text moderation (non-blocking). `submitTextModeration` →
+  // Submit for text moderation. `submitTextModeration` →
   // `createXGuardModerationRequest` handles contentHash dedup internally,
   // so a save that doesn't change `title` or `content` is a no-op
   // orchestrator-wise. If the article's text was emptied out entirely,
@@ -1730,8 +1776,11 @@ export async function applyArticleContentChange({
         }));
       if (!checked) await revokeActiveAccessTokens('Article', id);
     } else if (isPublicArticle(publication)) {
-      const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
+      const textForModeration = articleModerationText(currentTitle, content);
 
+      // Awaited, published edits included: the submit records the pending scan for this text,
+      // so the recompute below cannot count a verdict for older text.
+      let skipped: SkipReason | undefined;
       const submitted = submitTextModerationOrScan({
         entityType: 'Article',
         entityId: id,
@@ -1744,6 +1793,9 @@ export async function applyArticleContentChange({
             recordForReview: true,
             rearmRetries: true,
           }),
+        onActiveSkip: async (reason) => {
+          skipped = reason;
+        },
       }).catch((e) => {
         logToAxiom({
           type: 'error',
@@ -1751,9 +1803,12 @@ export async function applyArticleContentChange({
           message: (e as Error).message,
           articleId: id,
         }).catch();
+        return null;
       });
-      // Otherwise the recompute below can count a verdict for older text and take it live.
-      if (articleAwaitsTextVerdict(publication)) await submitted;
+      // The orchestrator client sets no timeout, so a hung submit would hold the save open.
+      const workflow = await withTimeoutFallback(submitted, ARTICLE_TEXT_SUBMIT_TIMEOUT_MS, null);
+      if (!(await articleTextSubmitRecorded(id, textForModeration, workflow, skipped)))
+        await holdArticleTextVerdict(id);
     }
   }
 
@@ -1769,6 +1824,56 @@ export async function applyArticleContentChange({
   );
 
   return true;
+}
+
+const ARTICLE_TEXT_SUBMIT_TIMEOUT_MS = 10_000;
+
+const articleModerationText = (title: string, content: string | null) =>
+  [title, removeTags(content ?? '')].filter(Boolean).join(' ');
+
+/**
+ * Whether the row now holds this text's scan or its verdict. Neither path throws on every miss: the
+ * XGuard submit logs a failed row write, and an active scan can skip without writing.
+ */
+async function articleTextSubmitRecorded(
+  articleId: number,
+  submittedText: string,
+  workflow: { id?: string | null } | null | undefined,
+  skipped: SkipReason | undefined
+) {
+  // A save that wrote later text may have recorded first, leaving this save's scan on the row for
+  // text the article no longer has.
+  const stored = await dbWrite.article.findUnique({
+    where: { id: articleId },
+    select: { title: true, content: true },
+  });
+  if (!stored || articleModerationText(stored.title ?? '', stored.content) !== submittedText)
+    return false;
+  // The row already has this text's verdict, or its scan in flight.
+  if (skipped === 'unchanged' || skipped === 'in-flight') return true;
+  if (!workflow?.id) return false;
+  const row = await dbWrite.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
+    select: { workflowId: true },
+  });
+  return row?.workflowId === workflow.id;
+}
+
+/**
+ * A submit that recorded nothing leaves the verdict for the previous text in place.
+ * Pending keeps that verdict from counting for this text until the retry cron's stuck-Pending sweep
+ * resubmits; the stored verdict fields stay, as a fresh submit leaves them (`markTextScanPending`).
+ */
+async function holdArticleTextVerdict(articleId: number) {
+  await dbWrite.entityModeration.updateMany({
+    where: { entityType: 'Article', entityId: articleId },
+    data: {
+      status: EntityModerationStatus.Pending,
+      workflowId: null,
+      contentHash: null,
+      retryCount: 0,
+    },
+  });
 }
 
 /**
@@ -1906,9 +2011,6 @@ export const deleteArticleById = async ({
     const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
 
     const deleted = await dbWrite.$transaction(async (tx) => {
-      // The comments' CommentV3 rows go before the article's cascade reaches their CommentV2 rows:
-      // every write on these comments locks CommentV3 first, so the cascade must too.
-      await tx.$executeRaw`DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}`;
       const article = await tx.article.delete({
         where: { id },
         select: { coverId: true, bannerId: true },
@@ -1967,7 +2069,9 @@ export const deleteArticleById = async ({
       handleLogError(error as Error, 'article-image-cleanup', { articleId: id });
     }
 
-    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }], {
+      reason: 'delete',
+    });
 
     return deleted;
   } catch (error) {
@@ -2087,7 +2191,9 @@ export async function unpublishArticleById({
   );
 
   // Update search index (remove from public search)
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }], {
+    reason: 'edit',
+  });
 
   // Bust user content cache
   await userArticleCountCache.refresh(ownerId);
@@ -3046,9 +3152,10 @@ export async function dispatchArticleIngestionPostCommit(
 
   // Sync search index — the index filters on ingestion = 'Scanned', so any
   // ingestion state change must be reflected (add when Scanned, remove otherwise).
-  await articlesSearchIndex.queueUpdate([
-    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  await articlesSearchIndex.queueUpdate(
+    [{ id: articleId, action: SearchIndexUpdateQueueAction.Update }],
+    { reason: 'ingestion' }
+  );
 
   if (publishedNotificationUserId !== null) {
     await createNotification({
@@ -3136,9 +3243,10 @@ export async function resolveArticleImageScan({
 
   await resolveIngestionError({ id: imageId, nsfwLevel, userId });
   await recomputeArticleIngestion(articleId);
-  await articlesSearchIndex.queueUpdate([
-    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  await articlesSearchIndex.queueUpdate(
+    [{ id: articleId, action: SearchIndexUpdateQueueAction.Update }],
+    { reason: 'image-scan' }
+  );
 }
 
 const RESCAN_LIMIT = 3;
@@ -3244,7 +3352,9 @@ export async function rescanArticle({
   await preventReplicationLag('userArticles', article.userId);
 
   // Remove from search index immediately — article should not be searchable while rescanning.
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+    reason: 'edit',
+  });
 
   // --- Re-link content images (picks up new images, queues Pending ones) ---
   if (article.content) {
@@ -3537,7 +3647,9 @@ export const setArticleOfficial = async ({
 
   // The index document spreads `articleDetailSelect`, which now carries `isOfficial`, so
   // a stale document would keep serving the old provenance to search.
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+    reason: 'edit',
+  });
 
   return updated;
 };

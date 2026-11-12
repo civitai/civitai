@@ -84,10 +84,10 @@ const user = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const evidence = (over: Record<string, unknown> = {}) => ({
-  source: 'text-scan:Comment:7',
+  source: 'text-scan:CommentV3:7',
   dedupeKey: 'wf-1',
   reason: 'Fake support',
-  entityType: 'Comment',
+  entityType: 'CommentV3',
   entityId: 7,
   text: 'DM me for the prize',
   textHash: 'h1',
@@ -147,10 +147,10 @@ describe('autoMuteScamAccount', () => {
     expect(call.triggers).toEqual([
       expect.objectContaining({
         category: 'scam',
-        source: 'text-scan:Comment:7',
+        source: 'text-scan:CommentV3:7',
         dedupeKey: 'wf-1',
         reason: 'Fake support',
-        entityType: 'Comment',
+        entityType: 'CommentV3',
         entityId: 7,
         text: 'DM me for the prize',
         textHash: 'h1',
@@ -167,7 +167,7 @@ describe('autoMuteScamAccount', () => {
       expect.objectContaining({
         type: 'Muted',
         targetUserId: 42,
-        source: expect.stringContaining('text-scan:Comment:7'),
+        source: expect.stringContaining('text-scan:CommentV3:7'),
       })
     );
     expect(m.appendScamTrigger).not.toHaveBeenCalled();

@@ -856,6 +856,47 @@ describe('a moderator', () => {
     expect(await download(fileId, STRANGER, true)).not.toBeNull();
   });
 
+  it('is not served an attachment still at the key its uploader was given', async () => {
+    const dealId = await accepted();
+    const request = () =>
+      files.requestServiceDealAttachment({
+        ...ATTESTED,
+        dealId,
+        userId: BUYER,
+        fileName: 'notes.txt',
+        mimeType: 'text/plain',
+        size: TEXT.byteLength,
+      });
+    const { fileId: refused } = await request();
+    s3.headObject.mockResolvedValue({ status: 'present', size: TEXT.byteLength + 1 });
+    s3.send.mockResolvedValue({});
+    await expect(
+      files.completeServiceDealAttachment({ fileId: refused, userId: BUYER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    const { fileId: neverCompleted } = await request();
+
+    for (const fileId of [refused, neverCompleted]) {
+      const row = await fileRow(fileId);
+      expect(row.s3Key).toMatch(/^service-deals\/uploads\//);
+      expect(await download(fileId, STRANGER, true)).toBeNull();
+    }
+    expect((await fileRow(refused)).status).toBe('Failed');
+
+    // Its uploader is still served it: the seller's own Final, not yet completed.
+    const { fileId: sellerUpload } = await files.requestServiceDealUpload({
+      dealId,
+      userId: SELLER,
+      kind: 'Final',
+      fileName: 'result.txt',
+      mimeType: 'text/plain',
+      size: TEXT.byteLength,
+    });
+    const uploaderKey = (await fileRow(sellerUpload)).s3Key;
+    expect(uploaderKey).toMatch(/^service-deals\/uploads\//);
+    expect((await download(sellerUpload, SELLER))?.key).toBe(uploaderKey);
+    expect(await download(sellerUpload, STRANGER, true)).toBeNull();
+  });
+
   it("reads the buyer's attachments apart from the delivery in the dispute evidence", async () => {
     const dealId = await accepted();
     const attachmentId = await attach(dealId, 'notes.txt', TEXT);

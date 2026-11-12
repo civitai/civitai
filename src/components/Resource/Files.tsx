@@ -349,6 +349,7 @@ export function Files() {
               ))}
               <InlineDropzone
                 label="Add another model file variant"
+                description={`Supports ${primary.extensions.join(', ')} files`}
                 onDrop={withExtensionGuard('primary', (dropped) =>
                   handleInlineDrop(
                     dropped,

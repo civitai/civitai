@@ -115,6 +115,24 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
+// Arm the redis command metrics behind the `redis-command-metrics-batched` Flipt flag (dark until
+// it is on). Independent of OTEL: both metrics are prom-client. Dynamic, to keep the Flipt client out
+// of this module's static graph; a failure here must never affect boot — both metrics then keep
+// their per-command prom-client calls. See @civitai/telemetry/redis-command-metrics.
+//  - The duration histogram's gate is re-read (cached, 5s) on every command, so it follows the flag.
+//  - The in-flight gauge's mode is LATCHED at the process's first Redis command inc/dec and never
+//    changes (a command inc'd on one path and dec'd on the other would skew it for good), so a flag
+//    flip reaches it only on restart. AWAITED, and placed before the warmer kick, so Flipt is
+//    initialized and the resolver installed before the server takes traffic and the first command
+//    latches the mode. Bounded by Flipt's own init timeout; fail-open (latches per-command).
+try {
+  const m = await import('~/server/prom/redis-command-metrics-gate');
+  m.registerRedisCommandMetricsBatchGate();
+  await m.armRedisInflightGaugeMode();
+} catch (err) {
+  console.error('[instrumentation.node] redis command metrics gate failed (fail-open):', err);
+}
+
 // Kick the in-process route warmer (fire-and-forget). Next standalone
 // lazy-require()s each route on first hit; the dependency-only readiness probe
 // marks a pod Ready while every hot route is still cold, so the first real
@@ -313,11 +331,14 @@ if (!OTEL_ENABLED) {
     // The previous form listened on SIGTERM only and awaited NEITHER promise, so the
     // final batch raced process termination — immaterial while this pipeline carried one
     // record per boot, a real loss path the moment it carries traffic. registerOtelShutdown
-    // adds SIGINT, awaits both shutdowns, and is idempotent across a second signal.
+    // adds SIGINT, awaits the flush and both shutdowns, and is idempotent across signals.
     //
-    // The log line below is deliberate: whether the framework installs its own SIGTERM
-    // handler that exits before ours runs is NOT answerable by any test we can write, so
-    // its presence (or absence) in a terminating process's final output is the check.
+    // Both servers this runs in (Next's start-server and scripts/trpc-server/server.cjs)
+    // install their own SIGTERM/SIGINT handler that drains and then calls process.exit().
+    // On the signal registerOtelShutdown only flushes; it holds that exit while it shuts
+    // both down, for at most OTEL_SHUTDOWN_EXIT_HOLD_MS. The framework's graceful shutdown
+    // is unchanged, and records from before the signal and from the drain are exported.
+    // If the shutdown runs out the cap, it logs "telemetry flush still running" first.
     registerOtelShutdown([loggerProvider, sdk], {
       log: (message) => console.log(`[instrumentation.node] ${message}`),
       onError: (reason) => console.error('[instrumentation.node] OTEL shutdown error:', reason),

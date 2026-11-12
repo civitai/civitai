@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./media-key": "./src/media-key.ts",
+    "./iso-datetime-compat": "./src/iso-datetime-compat.ts",
     "./basemodel.constants": "./src/basemodel.constants.ts",
     "./feedback.constants": "./src/feedback.constants.ts",
     "./feedback-capture": "./src/feedback-capture.ts",
@@ -24,6 +25,7 @@
     "./training-text-encoder": "./src/training-text-encoder.ts",
     "./job-queue": "./src/job-queue.ts",
     "./rated-entity-sql": "./src/rated-entity-sql.ts",
+    "./minor-content-gate": "./src/minor-content-gate.ts",
     "./rating-review": "./src/rating-review.ts",
     "./crucible": "./src/crucible.ts",
     "./box-odds": "./src/box-odds.ts",

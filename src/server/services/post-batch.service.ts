@@ -26,7 +26,16 @@ import {
   MODEL_VERSION_NOT_FOUND,
   modelVersionVisibilitySelect,
 } from '~/server/services/model-version-visibility.service';
-import { addPostImage } from '~/server/services/post.service';
+import {
+  addPostImage,
+  creditResourcesToImages,
+  findCreditableModelVersion,
+} from '~/server/services/post.service';
+import { refreshHasReceivedReviews } from '~/server/redis/caches';
+import {
+  announceReviewsInBackground,
+  unreleasedReviewIdsOfPosts,
+} from '~/server/services/resourceReview.visibility';
 import {
   handleLogError,
   throwBadRequestError,
@@ -103,6 +112,7 @@ async function assertCanUseModelVersion(modelVersionId: number, user: SessionUse
 /** Drops a half-made post and its image rows but keeps the uploaded files: the creator retries
  *  with the same upload keys, which `deletePost` would have removed from storage. */
 async function discardFailedPost(postId: number) {
+  const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([postId]);
   const images = await dbWrite.image.findMany({ where: { postId }, select: { id: true } });
   await dbWrite.image.deleteMany({ where: { postId } });
   if (images.length)
@@ -111,6 +121,10 @@ async function discardFailedPost(postId: number) {
       action: SearchIndexUpdateQueueAction.Delete,
     });
   await dbWrite.post.delete({ where: { id: postId } });
+  announceReviewsInBackground({
+    reviewIds: unreleasedReviewIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 }
 
 const IDEMPOTENCY_TTL_SECONDS = 60 * 60;
@@ -211,6 +225,8 @@ async function runScheduleBatch({
   );
   steps.alreadyCreated = alreadyCreated.size;
   const toCreate = input.posts.filter((_, index) => !alreadyCreated.has(index));
+  // Checked once per call, not per post: every post is credited with the same versions.
+  let resourceVersions: Awaited<ReturnType<typeof findCreditableModelVersion>>[] = [];
   if (toCreate.length)
     await timed(steps, 'validateMs', async () => {
       const validation = await validateBatchSchedule({
@@ -220,6 +236,9 @@ async function runScheduleBatch({
       if (!validation.ok)
         throw throwBadRequestError(validation.issues.map((issue) => issue.message).join(' '));
       if (input.modelVersionId) await assertCanUseModelVersion(input.modelVersionId, user);
+      resourceVersions = await Promise.all(
+        input.resourceIds.map((id) => findCreditableModelVersion(id, user))
+      );
     });
 
   const created: ScheduleBatchResult['created'] = [];
@@ -253,6 +272,16 @@ async function runScheduleBatch({
         steps.addImageMaxMs = Math.max(steps.addImageMaxMs, ms);
         imageIds.push(attached.id);
       }
+      // On-site generations already carry their resources and refuse hand-credited ones.
+      if (resourceVersions.length)
+        await timed(steps, 'resourcesMs', () =>
+          creditResourcesToImages({
+            imageIds,
+            modelVersions: resourceVersions,
+            user,
+            skipOnSite: true,
+          })
+        );
       if (input.tools.length)
         await timed(steps, 'toolsMs', () =>
           addImageTools({
@@ -317,6 +346,7 @@ type BatchSteps = {
   addImageMaxMs: number;
   toolsMs: number;
   techniquesMs: number;
+  resourcesMs: number;
   publishMs: number;
 };
 type TimedStep =
@@ -325,6 +355,7 @@ type TimedStep =
   | 'createPostMs'
   | 'toolsMs'
   | 'techniquesMs'
+  | 'resourcesMs'
   | 'publishMs';
 
 async function timed<T>(steps: BatchSteps, step: TimedStep, run: () => Promise<T>): Promise<T> {
@@ -358,6 +389,7 @@ function logSlowBatchSteps(steps: BatchSteps, durationMs: number, userId: number
     addImageMaxMs: round(steps.addImageMaxMs),
     toolsMs: round(steps.toolsMs),
     techniquesMs: round(steps.techniquesMs),
+    resourcesMs: round(steps.resourcesMs),
     publishMs: round(steps.publishMs),
   }).catch(() => undefined);
 }
@@ -381,6 +413,7 @@ export async function scheduleBatch(args: {
     addImageMaxMs: 0,
     toolsMs: 0,
     techniquesMs: 0,
+    resourcesMs: 0,
     publishMs: 0,
   };
   try {

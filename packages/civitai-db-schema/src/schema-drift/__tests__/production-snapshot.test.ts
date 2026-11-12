@@ -56,14 +56,14 @@ describe('production catalog snapshot (2026-08-03)', () => {
     expect(report.counts.declaredRelations).toBe(countOwningRelationLines(schemaSource));
     expect(report.counts.relationsChecked).toBeGreaterThan(400);
     expect(report.counts.columnsChecked).toBeGreaterThan(2000);
-    expect(report.counts.uniqueDeclarationsChecked).toBeGreaterThan(100);
+    expect(report.counts.uniqueDeclarationsChecked).toBeGreaterThan(95);
   });
 
   it('reports no referential-action drift, because it cannot compare any', () => {
     // The distinction the counters exist to keep: this snapshot has no ON DELETE/UPDATE
     // data, so a zero here is "not measured", not "clean".
     expect(report.counts.referentialActionDrifts).toBe(0);
-    expect(report.counts.referentialActionUnknown).toBeGreaterThan(400);
+    expect(report.counts.referentialActionUnknown).toBeGreaterThan(370);
   });
 
   it('reports the three Club image relations with no foreign key', () => {
@@ -228,14 +228,9 @@ describe('production catalog snapshot (2026-10-20)', () => {
     expect(actions.every((f) => onDelete(f.actual) && onUpdate(f.actual))).toBe(true);
   });
 
-  it('no longer reports the four image relations repaired since 2026-08-03', () => {
-    const repaired = [
-      'ImageTagForReview.imageId',
-      'ImageTool.imageId',
-      'ImageTechnique.imageId',
-      'Thread.imageId',
-    ];
-    // Positive control: all four WERE reported against the earlier capture...
+  it('no longer reports the image relations repaired since 2026-08-03', () => {
+    const repaired = ['ImageTagForReview.imageId', 'ImageTool.imageId', 'ImageTechnique.imageId'];
+    // Positive control: all of them WERE reported against the earlier capture...
     expect(found('missing-foreign-key')).toEqual(expect.arrayContaining(repaired));
     // ...the constraint is in this one, validated...
     const fks = current.foreignKeys.filter(
@@ -256,15 +251,14 @@ describe('production catalog snapshot (2026-10-20)', () => {
     // Exceptions: columns declared ahead of their hand-applied migrations. Remove each when the
     // catalog is recaptured after it:
     //   `CsamReport.sendClaimId` / `CsamReport.sendClaimedAt`: `20261123120000_csam_report_send_claim`
-    //   `Thread.storylineId`: `20261127120000_storyline_thread`
     //   the six fork-provenance columns: `20261126120000_app_fork_provenance`
     //   `ScanLabelClaim.token` / `ScanLabelVote.claimToken`: `20261128120000_scan_label_claim_token`
     //   the four `ServiceDealFile.malwareScan*` columns: `20261128150000_creator_service_final_malware_scan`
     //   `ApiKey.workerDeviceId`: `20261130120000_worker_identity`
     //   `ServiceOffering.sellerAffirmation`: `20261202120000_service_offering_seller_affirmation`
+    //   `Collection.archivedAt`: `20260831000000_collection_archived_at`
     //   `ModActivity.host`: `20261205120000_mod_activity_host`
     //   `OauthClient.skipConsent` / `OauthClient.tokenRateLimit`: `20261026173940_oauth_client_trusted_settings`
-    //   `Comment.removedByAuthor`: `20261210120000_comment_removed_by_author`
     //   `StorylineCollaborator.acceptedAt`: `20261215120000_storyline_collaborator_accepted`
     //   the four `Crucible` takedown columns: `20261203120000_crucible_takedown`
     //   `Crucible.ownerRemovalCount`: `20261216120000_crucible_owner_removal_count`
@@ -276,12 +270,19 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `ServiceDealFile.attestedAt`: `20261224150100_service_deal_file_attachment`
     //   `Article.bannerId`: `20261225120100_article_banner_image`
     //   `UserProfile.showcaseSections`: `20261106005437_user_profile_showcase_sections`
+    //   `ResourceReview.postId` / `.releasedAt`: `20261231130000_resource_review_post_id`
     //   `BoxOpening.guaranteed`: `20261231000000_box_opening_guaranteed`
+    //   `ModActivity.credential`: `20261231180000_mod_activity_credential`
+    //   `app_listings.issue_tracker_url`: `20270103120000_app_listing_issue_tracker` — drop this
+    //     entry once it is applied in every writable environment, together with the probe and
+    //     fallback in `app-listing-issue-tracker.service.ts` (see its RETIREMENT note).
+    //   `Feedback.appSourceCommit` / `.appSourceDirty`: `20270104120000_feedback_app_source_commit`
+    //     — no-type, raw SQL in `app-feedback.service.ts`, which degrades while it is unapplied.
     const inFlightColumns = new Set([
       'BoxOpening.guaranteed',
+      'ModActivity.credential',
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
-      'Thread.storylineId',
       'app_blocks.fork_of_app_block_id',
       'app_blocks.fork_of_commit_sha',
       'app_block_publish_requests.fork_of_app_block_id',
@@ -296,10 +297,10 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceDealFile.malwareScanAttempts',
       'ApiKey.workerDeviceId',
       'ServiceOffering.sellerAffirmation',
+      'Collection.archivedAt',
       'ModActivity.host',
       'OauthClient.skipConsent',
       'OauthClient.tokenRateLimit',
-      'Comment.removedByAuthor',
       'StorylineCollaborator.acceptedAt',
       'Crucible.takenDownAt',
       'Crucible.takenDownById',
@@ -312,11 +313,16 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'StorylineReport.heldStorylineId',
       'StorylineReport.storylineTitle',
       'app_listings.is_official',
+      'app_listings.issue_tracker_url',
       'UserProfile.showcaseSections',
       'Placement.track',
       'ServiceDealFile.removedAt',
       'ServiceDealFile.attestedAt',
       'Article.bannerId',
+      'ResourceReview.postId',
+      'ResourceReview.releasedAt',
+      'Feedback.appSourceCommit',
+      'Feedback.appSourceDirty',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

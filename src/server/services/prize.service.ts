@@ -137,7 +137,7 @@ export async function payPrize(prize: Prize): Promise<boolean> {
  * A banned winner's prize is held, not voided: it can't be claimed or auto-paid while the ban
  * stands, and pays normally once it is lifted. Muted winners are paid as usual.
  */
-async function getBannedUserIds(userIds: number[]) {
+export async function getBannedUserIds(userIds: number[]) {
   if (!userIds.length) return new Set<number>();
   const banned = await dbWrite.user.findMany({
     where: { id: { in: [...new Set(userIds)] }, bannedAt: { not: null } },

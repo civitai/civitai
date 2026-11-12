@@ -52,13 +52,20 @@ export type CreateNotificationPendingRow = z.infer<typeof createNotificationPend
 // live in that app now; the monolith keeps only the main-DB `details` enrichment + the
 // UserNotificationSettings writes below.
 
-export const createNotification = async (data: CreateNotificationPendingRow) => {
+/** `throwOnError` rethrows a failed send, after the usual logging, for a caller that must know it failed. */
+export const createNotification = async (
+  data: CreateNotificationPendingRow,
+  { throwOnError = false }: { throwOnError?: boolean } = {}
+) => {
   try {
     await notifications.createNotification(data);
   } catch (e) {
     // Client errors are logged centrally (notifications-request-failed); best-effort, so swallow them and
     // only surface a non-request error (e.g. schema validation).
-    if (e instanceof NotificationsClientError) return;
+    if (e instanceof NotificationsClientError) {
+      if (throwOnError) throw e;
+      return;
+    }
     const error = e as Error;
     logToAxiom(
       {
@@ -71,6 +78,7 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
       },
       'notifications'
     ).catch();
+    if (throwOnError) throw e;
   }
 };
 

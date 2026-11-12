@@ -58,6 +58,16 @@ describe('/api/mod/remove-images responses', () => {
     expect(handleBlockImages).not.toHaveBeenCalled();
   });
 
+  it('refuses an account-wide removal of the feedback capture account, removing nothing', async () => {
+    const res = await call({ userId: -2, moderatorId: 9 });
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: expect.stringMatching(/feedback page captures/),
+    });
+    expect(handleBlockImages).not.toHaveBeenCalled();
+  });
+
   it('ends the response when the removal itself throws', async () => {
     handleBlockImages.mockRejectedValue(new Error('db down'));
 

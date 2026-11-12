@@ -794,8 +794,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // user. Scope: the delete this replaces named the LEGACY `civitai-token` family only,
     // so only legacy holders were ever affected either way. Cost of keeping it is near
     // zero: a civ-token's Max-Age comes from its own `exp` (civ-cookie.ts:163), so an
-    // expired one is never in the jar to linger; a stale legacy cookie costs one failed
-    // jose decode per request. Deleting safely needs the endpoint to signal a degraded
+    // expired one is never in the jar to linger; a stale legacy cookie is not decoded
+    // outside a preview. Deleting safely needs the endpoint to signal a degraded
     // lookup distinctly from "no session".
     hasAuthCookie = false;
   }

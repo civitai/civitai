@@ -42,6 +42,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
@@ -61,7 +62,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, status text,
-      availability "Availability" DEFAULT 'Public'
+      availability "Availability" DEFAULT 'Public', mode "ModelModifier"
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, index int DEFAULT 0, status text, "publishedAt" timestamp,
@@ -249,6 +250,14 @@ beforeAll(async () => {
     INSERT INTO "ImageConnection" VALUES
       (1531, 1521, 'Bounty'), (1533, 1523, 'BountyEntry'), (1534, 1523, 'BountyEntry'),
       (1551, 1541, 'Article'), (1552, 1541, 'Article');
+    -- Taken-down model 1601 with its version 1611, and archived model 1602 with version 1612.
+    INSERT INTO "Model" (id, status, mode) VALUES
+      (1601, 'Published', 'TakenDown'), (1602, 'Published', 'Archived');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+      (1611, 1601, 'Published'), (1612, 1602, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (1621, 1611, now() - interval '1 day'), (1622, 1612, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId") VALUES (1631, 1621), (1632, 1622);
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -262,6 +271,10 @@ const coverOf = async (entityType: string, entityId: number, viewer: Viewer) => 
 
 const hidden: [string, string, number, number][] = [
   ['a Private bounty', 'Bounty', 1, 101],
+  ['a taken-down model', 'Model', 1601, 1631],
+  ["a taken-down model's version", 'ModelVersion', 1611, 1631],
+  ["a taken-down model's image", 'Image', 1631, 1631],
+  ["a post on a taken-down model's version", 'Post', 1621, 1631],
   ['a flagged image', 'Image', 1211, 1211],
   ['a post whose only image is flagged', 'Post', 1201, 1211],
   ['an article whose cover is flagged', 'Article', 1401, 1411],
@@ -405,6 +418,16 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBe(imageId);
     });
   });
+
+  it.each(['anonymous', 'stranger'] as const)(
+    'keeps the covers of an archived model, its version, image and post for a %s viewer',
+    async (who) => {
+      expect(await coverOf('Model', 1602, viewers[who])).toBe(1632);
+      expect(await coverOf('ModelVersion', 1612, viewers[who])).toBe(1632);
+      expect(await coverOf('Image', 1632, viewers[who])).toBe(1632);
+      expect(await coverOf('Post', 1622, viewers[who])).toBe(1632);
+    }
+  );
 
   it('treats a missing viewer as anonymous', async () => {
     const covers = await getEntityCoverImage({

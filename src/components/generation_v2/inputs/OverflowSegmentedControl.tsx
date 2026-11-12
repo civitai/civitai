@@ -12,7 +12,7 @@
  * - Built-in popover for selecting from all options; a bottom sheet on a phone
  */
 
-import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { CHOICE_GROUP_GAP, ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
 import { ScrollArea, Text } from '@mantine/core';
 import { IconDots } from '@tabler/icons-react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -374,7 +374,18 @@ export function OverflowSegmentedControl<T extends string = string>({
             arrowSize: 12,
           }}
           dropdownProps={{ p: 0 }}
-          target={<span className="absolute bottom-0 right-0 top-0 w-px" />}
+          // Spans the More tile, not a 1px sliver at the edge: a centred arrow on a 1px anchor
+          // pushed the dropdown past the control, over the panel scrollbar.
+          target={
+            <span
+              className="pointer-events-none absolute inset-y-0 right-0"
+              style={{
+                width: `calc((100% - ${(segmentedData.length - 1) * CHOICE_GROUP_GAP}px) / ${
+                  segmentedData.length
+                })`,
+              }}
+            />
+          }
         >
           {(surface) => {
             const grid = (

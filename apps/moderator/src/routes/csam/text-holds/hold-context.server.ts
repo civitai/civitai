@@ -10,7 +10,7 @@ import {
 } from '$lib/server/user-lookup.service';
 import type { HoldContext, HoldParent, HoldProfile } from './hold-context';
 
-type HoldRef = Pick<CsamHoldRow, 'id' | 'entityType' | 'entityId' | 'commentModelId'>;
+type HoldRef = Pick<CsamHoldRow, 'id' | 'entityType' | 'entityId'>;
 
 const toTile = (media: ProfileMedia, caption: string): AppealCoverImage | null =>
   media.id === undefined
@@ -191,17 +191,8 @@ const bare = ({ type, id }: ParentRef): HoldParent => ({
 });
 
 async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>> {
-  // `commentParents` reads `CommentV3`, which shares its ids with `CommentV2`, so it answers both.
-  const isThreadComment = (hold: HoldRef) =>
-    hold.entityType === 'CommentV2' || hold.entityType === 'CommentV3';
-  const threadIds = holds.filter(isThreadComment).map((h) => h.entityId);
-  const threads = threadIds.length ? await commentParents(threadIds) : new Map<number, ParentRef>();
-  const refOf = (hold: HoldRef): ParentRef | null =>
-    isThreadComment(hold)
-      ? threads.get(hold.entityId) ?? null
-      : hold.entityType === 'Comment' && hold.commentModelId
-      ? { type: 'model', id: hold.commentModelId }
-      : null;
+  const threads = await commentParents(holds.map((h) => h.entityId));
+  const refOf = (hold: HoldRef): ParentRef | null => threads.get(hold.entityId) ?? null;
 
   const refs = holds.flatMap((h) => refOf(h) ?? []);
   if (!refs.length) return new Map();
@@ -217,10 +208,7 @@ async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>
 /** Profile images and text, or a comment's parent, batched per type. Decoration: a failing read drops that context, not the page. */
 export async function getHoldContexts(holds: HoldRef[]): Promise<Map<number, HoldContext>> {
   const profileHolds = holds.filter((h) => h.entityType === 'UserProfile');
-  const commentHolds = holds.filter(
-    (h) =>
-      h.entityType === 'Comment' || h.entityType === 'CommentV2' || h.entityType === 'CommentV3'
-  );
+  const commentHolds = holds.filter((h) => h.entityType === 'CommentV3');
   const [profiles, parents] = await Promise.all([
     profileHolds.length
       ? profileContexts([...new Set(profileHolds.map((h) => h.entityId))]).catch((err) => {

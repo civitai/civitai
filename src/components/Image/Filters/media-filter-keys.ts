@@ -30,6 +30,7 @@ export const mediaFilterKeys = [
   'tools',
   'techniques',
   'hatTeams',
+  'hatTurfMine',
   'hideTurfHats',
   'hideWornHats',
 ] as const;
@@ -59,6 +60,7 @@ export const hubExcludedFilterKeys: MediaFilterKey[] = [
   'disableMinor',
   // Hat Turf's: per player and per event, and the main feed's only.
   'hatTeams',
+  'hatTurfMine',
   'hideTurfHats',
   'hideWornHats',
 ];

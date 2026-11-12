@@ -785,6 +785,731 @@
       ]
     },
     {
+      "name": "update operators: PATCH $inc, $mark and $unmark tally a document like the deprecated routes",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PATCH",
+          "path": "/plays/u1",
+          "body": {
+            "$inc": {
+              "plays": 3
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 3
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/plays/u1",
+          "body": {
+            "$inc": {
+              "plays": 1
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 4
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "POST",
+          "path": "/plays/u1/counters/plays",
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 5
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/plays/u1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "author": {
+                "kind": "counter"
+              },
+              "counters": {
+                "plays": 5
+              },
+              "data": {}
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/q1",
+          "body": {
+            "data": {
+              "status": "open"
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "version": 1
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": 1
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": 1
+            }
+          }
+        },
+        {
+          "as": "v3@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": 2
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$inc": {
+              "views": 2
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 2
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/posts/q1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "status": "open"
+              },
+              "version": 1,
+              "marks": {
+                "vote": 2
+              },
+              "counters": {
+                "views": 2
+              },
+              "viewer": {
+                "marks": ["vote"]
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$unmark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": false,
+              "count": 1
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$unmark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": false,
+              "count": 1
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "report"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": "$absent"
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$unmark": "report"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts/q1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "status": "open"
+              },
+              "version": 1,
+              "marks": {
+                "vote": 1,
+                "report": "$absent"
+              },
+              "counters": {
+                "views": 2
+              }
+            }
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "PATCH",
+          "path": "/plays/u1",
+          "body": {
+            "$inc": {
+              "plays": 1
+            }
+          },
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        }
+      ]
+    },
+    {
+      "name": "update operators: refused PATCH bodies",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/r1",
+          "body": {
+            "data": {
+              "status": "open"
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "empty_patch"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {},
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "empty_patch"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": ["$mark", "vote"],
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$set": {
+              "status": "closed"
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "unknown_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 1
+            },
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "multiple_operators"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": "vote",
+            "$unmark": "vote"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "multiple_operators"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": "vote",
+            "status": "closed"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": "report",
+            "reason": "marks carry no payload"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "status": "closed"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "merge_patch_unsupported"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 1,
+              "plays": 1
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {}
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": 1
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": 1
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$unmark": ["vote"]
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": "1"
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 1.5
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 0
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 101
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "likes": 1
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": "star"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/prefs/k",
+          "body": {
+            "$inc": {
+              "views": 1
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/prefs/k",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/absent",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/absent",
+          "body": {
+            "$inc": {
+              "views": 1
+            }
+          },
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/absent",
+          "body": {
+            "$unmark": "report"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/nope/k",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 404,
+            "code": "collection_not_declared"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "query": {
+            "ifVersion": "1"
+          },
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/posts/r1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "status": "open"
+              },
+              "version": 1,
+              "marks": {
+                "vote": 0
+              },
+              "counters": {
+                "views": 0
+              },
+              "viewer": {
+                "marks": []
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "a collection schema: every document write must match it; counters and marks are not document bodies",
       "steps": [
         {
@@ -1025,7 +1750,7 @@
         },
         {
           "as": "v1@A",
-          "method": "PATCH",
+          "method": "POST",
           "path": "/prefs/k",
           "expect": {
             "status": 405,

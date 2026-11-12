@@ -6,7 +6,7 @@ import type * as ImageService from '~/server/services/image.service';
 
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
-  auditMetaData: vi.fn(() => ({ success: false, blockedFor: ['prompt'] })),
+  auditPostImageMeta: vi.fn(() => ({ success: false, blockedFor: ['prompt'] })),
   includesInappropriate: vi.fn(() => false),
   includesPoi: vi.fn(() => 'a person'),
 }));

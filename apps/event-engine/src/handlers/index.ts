@@ -9,8 +9,6 @@ import { bountyEntryReactionHandler } from './bounty-entry-reactions';
 import { resourceReviewHandler } from './reviews';
 import { collectionItemHandler } from './collection-items';
 import { collectionContributorHandler } from './collection-contributors';
-import { commentHandler } from './comments';
-import { commentV2Handler } from './comment-v2';
 import { commentV3Handler } from './comment-v3';
 import { imageResourceHandler } from './image-resources';
 import { buzzTipHandler } from './buzz-tips';
@@ -50,8 +48,6 @@ export const eventHandlers: Record<string, EventHandler> = {
   collectionContributorHandler,
 
   // Comments
-  commentHandler,
-  commentV2Handler,
   commentV3Handler,
 
   // Images

@@ -201,11 +201,9 @@ describe('OffsiteReviewModal — focus return under Modal.Stack', () => {
     const trigger = await openModal();
 
     // 🔴 Located STRUCTURALLY, by Mantine's own close-button class, not by an
-    // accessible name: this modal does not set `closeButtonProps`, so its close button
-    // has no `aria-label` and `getByRole('button', { name: … })` matches nothing —
-    // which times out after 15s and reads exactly like the focus assertion failing.
-    // (That the button is unlabelled is a real a11y gap, but it is pre-existing and
-    // not this PR's to change.)
+    // accessible name. The button is now labelled ("Close review" — pinned in
+    // `OffsiteReviewModal.close.browser.test.tsx`); this arm keeps the structural lookup so
+    // a label change cannot time it out and read as the focus assertion failing.
     const close = document.querySelector(
       '[role="dialog"] button[class*="mantine-Modal-close"]'
     ) as HTMLElement | null;

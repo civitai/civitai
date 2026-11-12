@@ -2334,9 +2334,10 @@ export const comicsRouter = router({
         });
       }
 
-      await comicsSearchIndex.queueUpdate([
-        { id: project.id, action: SearchIndexUpdateQueueAction.Update },
-      ]);
+      await comicsSearchIndex.queueUpdate(
+        [{ id: project.id, action: SearchIndexUpdateQueueAction.Update }],
+        { reason: 'comic-image' }
+      );
 
       return project;
     }),
@@ -2358,9 +2359,10 @@ export const comicsRouter = router({
         data: { status: ComicProjectStatus.Deleted },
       });
 
-      await comicsSearchIndex.queueUpdate([
-        { id: input.id, action: SearchIndexUpdateQueueAction.Delete },
-      ]);
+      await comicsSearchIndex.queueUpdate(
+        [{ id: input.id, action: SearchIndexUpdateQueueAction.Delete }],
+        { reason: 'comic-edit' }
+      );
 
       return { success: true };
     }),
@@ -2441,9 +2443,10 @@ export const comicsRouter = router({
         updated = await dbWrite.comicProject.findUniqueOrThrow({ where: { id: input.id } });
       }
 
-      await comicsSearchIndex.queueUpdate([
-        { id: input.id, action: SearchIndexUpdateQueueAction.Update },
-      ]);
+      await comicsSearchIndex.queueUpdate(
+        [{ id: input.id, action: SearchIndexUpdateQueueAction.Update }],
+        { reason: 'comic-image' }
+      );
 
       return updated;
     }),
@@ -4923,9 +4926,10 @@ export const comicsRouter = router({
       }
 
       // Update search index — publishing a chapter may make the project discoverable
-      await comicsSearchIndex.queueUpdate([
-        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
-      ]);
+      await comicsSearchIndex.queueUpdate(
+        [{ id: input.projectId, action: SearchIndexUpdateQueueAction.Update }],
+        { reason: 'chapter-publish' }
+      );
 
       return updated;
     }),
@@ -4979,9 +4983,10 @@ export const comicsRouter = router({
       });
 
       // Update search index — unpublishing may affect discoverability
-      await comicsSearchIndex.queueUpdate([
-        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
-      ]);
+      await comicsSearchIndex.queueUpdate(
+        [{ id: input.projectId, action: SearchIndexUpdateQueueAction.Update }],
+        { reason: 'comic-edit' }
+      );
 
       return updated;
     }),
@@ -5218,14 +5223,17 @@ export const comicsRouter = router({
       });
 
       // Remove from search index if flagged
-      await comicsSearchIndex.queueUpdate([
-        {
-          id: input.id,
-          action: !project.tosViolation
-            ? SearchIndexUpdateQueueAction.Delete
-            : SearchIndexUpdateQueueAction.Update,
-        },
-      ]);
+      await comicsSearchIndex.queueUpdate(
+        [
+          {
+            id: input.id,
+            action: !project.tosViolation
+              ? SearchIndexUpdateQueueAction.Delete
+              : SearchIndexUpdateQueueAction.Update,
+          },
+        ],
+        { reason: 'comic-edit' }
+      );
 
       return { success: true, tosViolation: !project.tosViolation };
     }),
@@ -5265,9 +5273,10 @@ export const comicsRouter = router({
         activity: 'setNsfwLevel',
       });
 
-      await comicsSearchIndex.queueUpdate([
-        { id: input.id, action: SearchIndexUpdateQueueAction.Update },
-      ]);
+      await comicsSearchIndex.queueUpdate(
+        [{ id: input.id, action: SearchIndexUpdateQueueAction.Update }],
+        { reason: 'nsfw-level' }
+      );
 
       return { success: true };
     }),
@@ -5306,9 +5315,10 @@ export const comicsRouter = router({
         activity: 'setNsfwLevel',
       });
 
-      await comicsSearchIndex.queueUpdate([
-        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
-      ]);
+      await comicsSearchIndex.queueUpdate(
+        [{ id: input.projectId, action: SearchIndexUpdateQueueAction.Update }],
+        { reason: 'nsfw-level' }
+      );
 
       return { success: true };
     }),
@@ -5359,9 +5369,10 @@ export const comicsRouter = router({
         activity: 'unpublishChapter',
       });
 
-      await comicsSearchIndex.queueUpdate([
-        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
-      ]);
+      await comicsSearchIndex.queueUpdate(
+        [{ id: input.projectId, action: SearchIndexUpdateQueueAction.Update }],
+        { reason: 'chapter-edit' }
+      );
 
       return { success: true };
     }),

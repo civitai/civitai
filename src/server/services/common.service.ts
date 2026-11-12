@@ -218,6 +218,17 @@ export const hasEntityAccess = async ({
     }
 
     const resource = data.find((d) => d.entityId === entityId);
+    // Owners always have access to their own, whatever else is in the batch.
+    if (resource?.userId === userId) {
+      return {
+        entityId,
+        entityType,
+        hasAccess: true,
+        availability: resource.availability,
+        permissions: EntityAccessPermission.All,
+      };
+    }
+
     const privateEntityAccess = entityAccess.find((entity) => entity.entityId === entityId);
     // If we could not find a privateEntityAccess record, means the user is guaranteed not to have
     // a link between the entity and himself.

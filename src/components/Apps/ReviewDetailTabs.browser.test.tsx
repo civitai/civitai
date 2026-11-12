@@ -235,8 +235,8 @@ beforeEach(() => {
   router.pathname = '/apps/review/[publishRequestId]';
 });
 
-describe('the five tabs', () => {
-  test('🔴 all five render, in the ledger order', async () => {
+describe('the six tabs', () => {
+  test('🔴 all six render, in the ledger order', async () => {
     render();
     await expect.element(page.getByTestId('apps-review-detail-tabs')).toBeInTheDocument();
     const labels = Array.from(document.querySelectorAll('[role="tab"]')).map((el) =>
@@ -246,18 +246,33 @@ describe('the five tabs', () => {
   });
 });
 
-describe('PERMISSIONS is the default, and it is on screen without interaction', () => {
-  test('🔴 a bare URL selects Permissions and PAINTS the scopes card — no click needed', async () => {
-    // The whole redesign: judging a requested permission is the moderator's primary job
-    // here, and the scopes used to be the LAST thing on the page, inside the manifest card.
+describe('OVERVIEW is the default, and it carries the decision signals without interaction', () => {
+  test('🔴 a bare URL selects Overview and PAINTS the signals — no click needed', async () => {
     render();
-    await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-review-overview')).toBeInTheDocument();
     expect(selectedTab()).toBe(REVIEW_DETAIL_TAB_LABELS[DEFAULT_REVIEW_DETAIL_TAB]);
-    expect(selectedTab()).toBe('Permissions');
-    // Both declared scopes, with the developer's stated reason for each.
+    expect(selectedTab()).toBe('Overview');
+    // The permission summary: the SENSITIVE scope as a full row with the developer's reason,
+    // the ordinary one as a chip.
+    await expect
+      .element(page.getByTestId('apps-review-overview-sensitive-count'))
+      .toHaveTextContent('1 sensitive');
     await expect
       .element(page.getByText('Runs the generation the user asked for.'))
       .toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-review-overview-other-scopes'))
+      .toHaveTextContent('models:read:self');
+    // …the running app (pending → the review sandbox panel) and the store art.
+    await expect.element(page.getByText('Review preview')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
+  });
+
+  test('`?tab=permissions` still opens the full permissions card', async () => {
+    router.query = { tab: 'permissions' };
+    render();
+    await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
+    expect(selectedTab()).toBe('Permissions');
     await expect
       .element(page.getByText('Reads the model the block is mounted on.'))
       .toBeInTheDocument();
@@ -267,8 +282,9 @@ describe('PERMISSIONS is the default, and it is on screen without interaction', 
     // The card was HOISTED out of `ManifestView`, not copied: `includeScopes={false}` on the
     // Manifest tab is the other half of the move. Rendering it in both tabs would give a mod
     // two cards with no way to tell which one they were reading — and because both panels
-    // mount, a document-wide count is the only thing that can see it.
-    router.query = {};
+    // mount, a document-wide count is the only thing that can see it. (The Overview's
+    // summary is a different card, `apps-review-overview-permissions`.)
+    router.query = { tab: 'permissions' };
     render();
     await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
     // Visit the Manifest tab too, so both panels have mounted before counting.
@@ -281,6 +297,7 @@ describe('PERMISSIONS is the default, and it is on screen without interaction', 
     // it belongs to — the same `SensitiveScopeBadge` is rendered by the consent prompt and
     // the granted-permissions panels. `data-scope` + `data-sensitive` pin the id and the
     // attribute TOGETHER.
+    router.query = { tab: 'permissions' };
     render();
     await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
     const sensitive = document.querySelector('[data-scope="ai:write:budgeted"]');
@@ -295,11 +312,14 @@ describe('PERMISSIONS is the default, and it is on screen without interaction', 
 });
 
 describe('deep links', () => {
-  test('🔴 `?tab=code` opens the Code tab, with the file summary in it', async () => {
+  test('🔴 `?tab=code` opens the Code tab with the diff list LOADED — no switch to flip', async () => {
     router.query = { tab: 'code' };
     render();
-    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
+    // The diff panel rendered its (empty) result on arrival…
+    await expect.element(page.getByText('No textual file changes to show.')).toBeInTheDocument();
     expect(selectedTab()).toBe('Code');
+    // …and the switch that used to gate it is gone from the page.
+    expect(page.getByText('Show code diff').elements()).toHaveLength(0);
   });
 
   test('`?tab=manifest` opens Manifest, `?tab=preview` opens Preview', async () => {
@@ -315,14 +335,14 @@ describe('deep links', () => {
     // under a bar with no active tab.
     router.query = { tab: 'summary' };
     render();
-    await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
-    expect(selectedTab()).toBe('Permissions');
+    await expect.element(page.getByTestId('apps-review-overview')).toBeInTheDocument();
+    expect(selectedTab()).toBe('Overview');
   });
 
   test('a REPEATED `?tab=` takes the first entry rather than selecting nothing', async () => {
     router.query = { tab: ['code', 'manifest'] };
     render();
-    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
+    await expect.element(page.getByText('No textual file changes to show.')).toBeInTheDocument();
     expect(selectedTab()).toBe('Code');
   });
 
@@ -333,7 +353,7 @@ describe('deep links', () => {
     render();
     await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
     expect(selectedTab()).toBe('Preview');
-    expect(page.getByTestId('apps-review-permissions').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-overview').elements()).toHaveLength(0);
   });
 });
 
@@ -373,7 +393,7 @@ describe('selecting a tab REWRITES the URL', () => {
       "while a mutation is in flight" — so a `mocks.pending` wired to the wrong hook would
       leave it green and lying. `ReviewActionBar` renders Approve `disabled` while `busy`.
     */
-    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+    await expect.element(page.getByRole('button', { name: 'Approve & next' })).toBeDisabled();
     await expect.element(page.getByRole('tab', { name: 'Manifest' })).toBeInTheDocument();
     await page.getByRole('tab', { name: 'Manifest' }).click();
     expect(router.replace).toHaveBeenCalledTimes(1);
@@ -388,8 +408,8 @@ describe('selecting a tab REWRITES the URL', () => {
   test('…and switching BACK to the default DROPS the key rather than writing it', async () => {
     router.query = { publishRequestId: 'pubreq_01HZX', tab: 'code' };
     render();
-    await expect.element(page.getByRole('tab', { name: 'Permissions' })).toBeInTheDocument();
-    await page.getByRole('tab', { name: 'Permissions' }).click();
+    await expect.element(page.getByRole('tab', { name: 'Overview' })).toBeInTheDocument();
+    await page.getByRole('tab', { name: 'Overview' }).click();
     const [url] = vi.mocked(router.replace).mock.calls[0] as unknown as [
       { query: Record<string, unknown> }
     ];
@@ -411,7 +431,7 @@ describe('the approve/reject bar is OUTSIDE the tabs', () => {
       render();
       await expect.element(page.getByRole('group', { name: 'Review actions' })).toBeInTheDocument();
       await expect
-        .element(page.getByRole('button', { name: 'Approve + build' }))
+        .element(page.getByRole('button', { name: 'Approve & next' }))
         .toBeInTheDocument();
       await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
     }
@@ -540,14 +560,17 @@ describe('the Preview tab’s mode gates — one implementation, both clauses', 
 
 describe('panel laziness', () => {
   test('🔴 an UNVISITED tab does NOT mount its panel — nothing is fetched until it is opened', async () => {
-    // The screenshots query returns base64 image payloads and the preview panel polls, so
+    // The screenshots query returns base64 image payloads and the diff has no byte cap, so
     // mounting every panel on arrival (Mantine `keepMounted`'s default) would make landing
-    // on Permissions pay for four sections a mod may never open. The screenshots panel is
-    // the observable: its heading only exists once the Preview tab has been visited.
+    // on one tab pay for sections a mod may never open. Observed from Permissions (the
+    // Overview, by design, shows the store art itself): the Screenshots heading and the
+    // Code tab's diff result only exist once their tabs have been visited.
+    router.query = { tab: 'permissions' };
     render();
     await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
     expect(page.getByTestId('apps-review-listing-media').elements()).toHaveLength(0);
-    expect(page.getByText('Show code diff').elements()).toHaveLength(0);
+    expect(page.getByText('No textual file changes to show.').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-overview').elements()).toHaveLength(0);
   });
 
   test('🔴 …and a VISITED tab STAYS mounted after you LEAVE it', async () => {

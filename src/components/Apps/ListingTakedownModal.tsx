@@ -8,6 +8,7 @@ import {
   takedownConsequenceCopy,
   takedownSubmitLabel,
   takedownSuccessMessage,
+  withLiveNote,
   type DetailTakedownAction,
 } from '~/components/Apps/appListingDetailModActions';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -78,8 +79,8 @@ export function ListingTakedownModal({
   // more and the route renders its NotFound. Leaving the approved-looking page on screen
   // would be the surface asserting something that stopped being true when the mutation
   // returned.
-  const onSuccess = async () => {
-    showSuccessNotification({ message: takedownSuccessMessage(action) });
+  const onSuccess = async (result?: unknown) => {
+    showSuccessNotification({ message: withLiveNote(takedownSuccessMessage(action), result) });
     setReason('');
     await utils.appListings.getAppDetail.invalidate();
     onClose();

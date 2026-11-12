@@ -213,8 +213,15 @@ describe('apply script, per-app objects ON (rollback)', () => {
   });
 });
 
+/** The review lane of the shared server's publish: logs its lane and env, fails on demand. */
+const REVIEW_FAKE_PUBLISH = `#!/usr/bin/env bash
+echo "publish PUBLISH_LANE=\${PUBLISH_LANE:-unset} SHA=\${SHA} IMAGE=\${IMAGE}" >> "$CALL_LOG"
+[ "\${FAKE_PUBLISH_FAILS:-0}" = 1 ] && { echo "publish: ERROR: review bucket down" >&2; exit 1; }
+exit 0
+`;
+
 /** Runs the mod-review apply script the same way: stubbed kubectl/curl, fixture template. */
-function runReview() {
+function runReview(opts: { sharedServer?: boolean; publishFails?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'apply-review-script-'));
   dirs.push(dir);
   const bin = join(dir, 'bin');
@@ -234,8 +241,11 @@ function runReview() {
     join(templates, 'review.yaml.tmpl'),
     'kind: Deployment\nmetadata:\n  name: ${REVIEW_NAME}\n'
   );
-  const script = buildApplyReviewScript(NS);
-  expect(script).toContain('/templates/review.yaml.tmpl');
+  writeFileSync(join(templates, 'publish.sh'), REVIEW_FAKE_PUBLISH);
+  const script = buildApplyReviewScript(NS, { sharedServer: opts.sharedServer });
+  expect(script).toContain(
+    opts.sharedServer ? '/templates/publish.sh' : '/templates/review.yaml.tmpl'
+  );
   const local = script
     .replaceAll('/templates/', `${forBash(templates)}/`)
     .replaceAll('/tmp/rendered.yaml', forBash(join(dir, 'rendered.yaml')));
@@ -252,6 +262,7 @@ function runReview() {
       IMAGE: `ghcr.io/civitai/app-block-review-${NEW_SLUG}:${SHA}`,
       PUBLISH_REQUEST_ID: 'pubreq_01ARZ3NDEKTSV4RRFFQ69G5FAV',
       APPS_DOMAIN: 'example.test',
+      FAKE_PUBLISH_FAILS: opts.publishFails ? '1' : '0',
       // The app's ProcessEnv type requires NODE_ENV; a child bash does not need it.
     } as unknown as NodeJS.ProcessEnv,
     timeout: 30_000,
@@ -274,5 +285,34 @@ describe('review apply script', () => {
     expect(del).toBeGreaterThan(r.idx(SMOKE_RUN));
     expect(r.idx(APPLY)).toBeGreaterThan(del);
     expect(r.idx(ROLLOUT)).toBeGreaterThan(r.idx(APPLY));
+  });
+});
+
+describe('review apply script, shared static server', () => {
+  it('smoke-tests, then publishes in the review lane; renders, applies and rolls out nothing', () => {
+    const r = runReview({ sharedServer: true });
+    expect(r.stderr).not.toMatch(/ERROR/);
+    expect(r.status).toBe(0);
+    const publish = r.idx(/^publish PUBLISH_LANE=review /);
+    expect(r.idx(SMOKE_RUN)).toBeGreaterThan(-1);
+    expect(publish).toBeGreaterThan(r.idx(SMOKE_RUN));
+    expect(r.calls[publish]).toBe(
+      `publish PUBLISH_LANE=review SHA=${SHA} IMAGE=ghcr.io/civitai/app-block-review-${NEW_SLUG}:${SHA}`
+    );
+    expect(r.calls.filter((c) => APPLY.test(c) || ROLLOUT.test(c) || /delete -f/.test(c))).toEqual(
+      []
+    );
+  });
+
+  it('a failed review publish fails the Job (always fatal in the review lane)', () => {
+    const r = runReview({ sharedServer: true, publishFails: true });
+    expect(r.status).not.toBe(0);
+  });
+
+  it('CONTROL: without the flag nothing is published', () => {
+    const r = runReview();
+    expect(r.status).toBe(0);
+    expect(r.idx(/^publish /)).toBe(-1);
+    expect(r.idx(APPLY)).toBeGreaterThan(-1);
   });
 });

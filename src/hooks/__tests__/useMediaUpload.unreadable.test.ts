@@ -30,7 +30,7 @@ vi.mock('~/hooks/useS3Upload', () => ({
   useS3Upload: () => ({ files: [], uploadToS3, resetFiles: vi.fn(), removeFile: vi.fn() }),
 }));
 vi.mock('~/utils/media-preprocessors', () => ({ preprocessFile: vi.fn() }));
-vi.mock('~/utils/metadata/audit', () => ({ auditMetaData: vi.fn() }));
+vi.mock('~/utils/metadata/audit', () => ({ auditPostImageMeta: vi.fn() }));
 
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { preprocessFile } from '~/utils/media-preprocessors';

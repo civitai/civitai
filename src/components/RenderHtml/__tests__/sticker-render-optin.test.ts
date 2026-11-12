@@ -11,8 +11,6 @@ const SRC = path.resolve(__dirname, '../../..');
 
 const OPTED_IN = [
   'components/CommentsV3/CommentItem.tsx',
-  'components/CommentSection/CommentSectionItem.tsx',
-  'components/Model/Discussion/CommentThreadModal.tsx',
   'components/Model/ModelDiscussion/CommentDiscussionItem.tsx',
 ];
 
@@ -39,6 +37,8 @@ const relative = (file: string) => path.relative(SRC, file).split(path.sep).join
 
 describe('sticker rendering is opt-in', () => {
   const files = walk(SRC).filter((file) => {
+    // Tests don't ship; they render RenderHtml with the opt-in to exercise it.
+    if (/\.test\.tsx?$/.test(file)) return false;
     const source = fs.readFileSync(file, 'utf8');
     return source.includes('<RenderHtml');
   });
@@ -87,7 +87,7 @@ describe('sticker rendering is opt-in', () => {
     const mounts = walk(SRC, [], ['.ts', '.tsx'])
       .filter((file) => /<StickerAttributionHoverCard/.test(fs.readFileSync(file, 'utf8')))
       .map(relative)
-      .filter((file) => !file.includes('/__tests__/'))
+      .filter((file) => !file.includes('/__tests__/') && !/\.test\.tsx?$/.test(file))
       .sort();
 
     expect(mounts).toEqual(['components/RenderHtml/RenderHtml.tsx']);

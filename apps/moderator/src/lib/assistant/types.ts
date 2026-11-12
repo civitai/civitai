@@ -18,6 +18,9 @@ export type TurnToolCall = {
   round?: number;
   /** Whether registration emails went to the model. Absent where the tool does not report it. */
   emailsShown?: boolean;
+  /** Lists shortened to fit the model's result budget, so `truncated` from a size cut reads apart from
+   *  a tool's own page limit. */
+  cutForSize?: { at: string; kept: number; of: number }[];
 };
 
 /**

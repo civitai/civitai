@@ -10,7 +10,7 @@ import { useMenuSheet } from '~/components/Drawer/useMenuSheet';
 import { GeneratedOutputRemixMenu } from '~/components/ImageGeneration/GeneratedOutputRemixMenu';
 import { useGeneratedItemWorkflows } from '~/components/generation_v2/hooks/useGeneratedItemWorkflows';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { downloadBlob, fetchBlob } from '~/utils/file-utils';
+import { blobExtension, downloadBlob, fetchBlob } from '~/utils/file-utils';
 import { showErrorNotification } from '~/utils/notifications';
 
 import classes from './GeneratedImage.module.css';
@@ -24,9 +24,9 @@ export function useDownloadOutput(output: BlobData) {
     try {
       const blob = await fetchBlob(output.url);
       if (!blob) throw new Error('Failed to fetch file');
-      const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') ?? 'bin';
+      const idExt = output.id.match(/\.([^./\\]+)$/)?.[1];
       const baseName = output.id.replace(/\.[^./\\]+$/, '');
-      downloadBlob(blob, `${baseName}.${ext}`);
+      downloadBlob(blob, `${baseName}.${blobExtension(blob, idExt ?? 'bin')}`);
     } catch (e) {
       showErrorNotification({
         title: 'Download failed',

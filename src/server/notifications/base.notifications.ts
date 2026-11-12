@@ -30,12 +30,10 @@ export const notBlockedBetween = (recipient: string, actor: string) => `NOT EXIS
  * any comment above it.
  *
  * The section mute arrives as a `CommentTopicMute` row on the entity, the per-comment mute as a
- * `CommentMute` row on the comment whose replies it silences (both mirrored from `ThreadMute` until
- * the toggles move to v3). Ancestry is `path`, so "any comment above it" is one containment test; a
+ * `CommentMute` row on the comment whose replies it silences. Ancestry is `path`, so "any comment above it" is one containment test; a
  * depth-clamped reply answers through `replyToId` a comment off its path, so that is checked too.
  *
- * Applied to every processor that can emit for a comment EXCEPT `new-mention` and the three
- * model-page processors (`MODEL_ONLY` in `no-unmuteable-comment-processor`). Being named is not
+ * Applied to every processor that can emit for a comment EXCEPT `new-mention`. Being named is not
  * "somebody responded in a thread you're in" — Justin's call, 2026-08-27. That exemption is safe
  * against the batching rather than in spite of it: the family dedupes by `commentDedupeKey` and runs
  * in priority order, Mention first, so a mention in a muted thread claims the key and the suppressed

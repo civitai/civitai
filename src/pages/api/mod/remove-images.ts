@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
@@ -36,6 +40,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       violationDetails,
       canConfirmReRemoval,
     } = parsed.data;
+    if (isFeedbackCaptureOwner(userId))
+      return res.status(400).json({ error: FEEDBACK_CAPTURE_OWNER_REFUSAL });
 
     // A removal of chosen images is held; an account-wide removal (`userId`) is not.
     let ids = imageIds;

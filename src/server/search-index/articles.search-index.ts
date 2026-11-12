@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import { servableBanner } from '~/shared/utils/article-card-image';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
@@ -78,9 +79,12 @@ export const transformData = async ({
 }) => {
   const records = articles
     .map(({ tags, stats, bannerImage, ...articleRecord }) => {
-      // A banner stands in for a missing cover on the card, once it is servable.
-      const coverImage = articleRecord.coverImage ?? servableBanner(bannerImage);
-      if (!coverImage) return null;
+      // Blocked or under-review cover: not indexed. Unscanned cover: indexed without it, so the
+      // article stays searchable.
+      const cover = articleRecord.coverImage;
+      if (cover && (hasBlockMarker(cover) || cover.needsReview)) return null;
+      const coverImage = servableArticleImage(cover) ?? servableArticleImage(bannerImage);
+      if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
         // `content` is a searchable attribute and is stored as HTML, so tag and
@@ -106,25 +110,31 @@ export const transformData = async ({
           : undefined,
         // Flatten tags:
         tags: tags.map((articleTag) => articleTag.tag),
-        coverImage: {
-          ...coverImage,
-          // Lift the cover image nsfwLevel to the article's aggregate so
-          // front-end filters (ImageGuard blur, browsingLevel mask) reflect
-          // the article's true rating whenever content images, userNsfwLevel,
-          // or the moderation floor raised it above the cover's own level.
-          nsfwLevel: Math.max(articleRecord.nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0),
-          meta: coverImage.meta as ImageMetaProps,
-          tags: coverImage.tags.map((x) => x.tag),
-        },
+        coverImage: coverImage
+          ? {
+              ...coverImage,
+              // Lift the cover image nsfwLevel to the article's aggregate so
+              // front-end filters (ImageGuard blur, browsingLevel mask) reflect
+              // the article's true rating whenever content images, userNsfwLevel,
+              // or the moderation floor raised it above the cover's own level.
+              nsfwLevel: Math.max(articleRecord.nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0),
+              meta: coverImage.meta as ImageMetaProps,
+              tags: coverImage.tags.map((x) => x.tag),
+            }
+          : undefined,
         cosmetic: cosmetics[articleRecord.id] ?? null,
       };
     })
     .filter(isDefined);
 
-  return records;
+  // Articles pulled but not indexed: `updateDocs` upserts, so their documents are deleted.
+  const indexed = new Set(records.map((record) => record.id));
+  const disqualifiedIds = articles.map((a) => a.id).filter((id) => !indexed.has(id));
+
+  return { records, disqualifiedIds };
 };
 
-export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
+export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>['records'][number];
 
 const articleSelect = {
   ...articleDetailSelect,
@@ -149,8 +159,45 @@ type Article = Prisma.ArticleGetPayload<{
   select: typeof articleSelect;
 }>;
 
+/** The articles the index holds. The semantic search sync copies it; a parity test pins the copy. */
+export const articleSearchEligibleWhere = {
+  publishedAt: { not: null },
+  status: ArticleStatus.Published,
+  ingestion: ArticleIngestionStatus.Scanned,
+  tosViolation: false,
+  availability: { not: Availability.Unsearchable },
+} satisfies Prisma.ArticleWhereInput;
+
+/**
+ * Which articles the semantic search may return: the Meilisearch rule narrowed to Public articles
+ * (a point's search_text holds the body, and the search service cannot tell who may read a Private
+ * one), minus unlisted articles and those whose owner is banned. The event-engine's
+ * ARTICLE_ELIGIBLE_SQL is its copy, held to it by article-eligibility.parity.test.ts.
+ */
+export const articleSemanticEligibleWhere = {
+  ...articleSearchEligibleWhere,
+  availability: Availability.Public,
+  unlisted: false,
+  user: { bannedAt: null },
+} satisfies Prisma.ArticleWhereInput;
+
+export const pushData = async (
+  { indexName }: { indexName: string },
+  { records, disqualifiedIds }: Awaited<ReturnType<typeof transformData>>
+) => {
+  await updateDocs({
+    indexName,
+    documents: records as any[],
+    batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+  });
+  // `updateDocs` upserts: an article that stopped qualifying keeps its old document otherwise.
+  if (disqualifiedIds.length > 0)
+    await onSearchIndexDocumentsCleanup({ indexName, ids: disqualifiedIds });
+};
+
 export const articlesSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
+  outboxEntity: 'Article',
   setup: onIndexSetup,
   prepareBatches: async ({ db }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
@@ -177,11 +224,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
     const articles = await db.article.findMany({
       select: articleSelect,
       where: {
-        publishedAt: { not: null },
-        status: ArticleStatus.Published,
-        ingestion: ArticleIngestionStatus.Scanned,
-        tosViolation: false,
-        availability: { not: Availability.Unsearchable },
+        ...articleSearchEligibleWhere,
         id: batch.type === 'update' ? { in: batch.ids } : { gte: batch.startId, lte: batch.endId },
       },
     });
@@ -201,13 +244,10 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
     };
   },
   transformData,
-  pushData: async ({ indexName }, records) => {
-    await updateDocs({
-      indexName,
-      documents: records as any[],
-      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-    });
-
-    return;
-  },
+  pushData,
+  // A disqualified article is handled: `pushData` deletes its document.
+  getHandledIds: ({ records, disqualifiedIds }: Awaited<ReturnType<typeof transformData>>) => [
+    ...records.map((record) => record.id),
+    ...disqualifiedIds,
+  ],
 });

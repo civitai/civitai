@@ -82,6 +82,8 @@ vi.mock('~/server/redis/caches', () => {
   };
 });
 
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+
 // The heavy image.service graph — replaced wholesale with the named exports post.service imports.
 vi.mock('~/server/services/image.service', () => ({
   createImage: vi.fn(),
@@ -166,6 +168,21 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ url: KEY, userId: 5, clientUrl: true })
     );
+  });
+
+  it('sends an upload to a judge-rated collection through the normal scan', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({
+      userId: 5,
+      collection: { metadata: { judgesApplyBrowsingLevel: true } },
+    } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user } as never).catch(() => null);
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(createImage).mock.calls[0][0] as Record<string, unknown>;
+    expect(args.skipIngestion).toBeFalsy();
   });
 
   it('creates a server-minted url without the client url flag', async () => {

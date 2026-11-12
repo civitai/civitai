@@ -4,7 +4,6 @@ import path from 'path';
 
 import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
-import { QUARANTINED_COMPONENT_FILES } from './scripts/ci/component-quarantine.mjs';
 
 // CI runs in UTC, and date assertions are written against it. Set before any worker starts, so
 // every worker inherits it on any machine.
@@ -645,25 +644,9 @@ export default defineConfig({
           ...browserTestShell(),
           name: 'component',
           include: ['src/**/*.browser.test.tsx'],
-          // Held out of the blocking run, see scripts/ci/component-quarantine.mjs.
-          exclude: ['**/node_modules/**', ...QUARANTINED_COMPONENT_FILES],
           // process-shim MUST come first (no imports) so it runs before any
           // component's module graph reads `process.env` at import time.
           setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
-        },
-      },
-      {
-        // Exactly the files `component` excludes, same setup, run by the quarantine step of
-        // the `component` CI job (push to `main` and dispatch only). `provide.quarantineRun` lets those files un-skip
-        // the groups that are skipped for the blocking run. Disjoint from `component` by
-        // construction: the same list is its `include` and `component`'s `exclude`.
-        ...browserProjectShell(),
-        test: {
-          ...browserTestShell(),
-          name: 'component-quarantine',
-          include: QUARANTINED_COMPONENT_FILES,
-          setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
-          provide: { quarantineRun: true },
         },
       },
       {

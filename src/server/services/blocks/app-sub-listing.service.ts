@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { readListingOfficialMany } from '~/server/services/blocks/app-listing-official.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import {
   isImageInPublicPost,
@@ -459,7 +460,8 @@ async function writeSubListing(
   authorUserId: number,
   content: SubListingContent,
   authorMismatch: () => SubListingError = notYourItem,
-  /** The new image (already checked public) was uploaded by the parent listing's owner. */
+  /** The new image (already checked public) was uploaded by the parent listing's owner. Lets an
+   *  image-only edit skip review when the parent is Official. */
   ownerImage = false,
   attempt = 1
 ): Promise<WriteOutcome> {
@@ -567,10 +569,15 @@ async function writeSubListing(
     if (existing.pendingSubmittedAt && !(await casUpdate({ ...CLEAR_PENDING }))) return again();
     return { id: existing.id, status, pendingEdit: false, catalogAffected: false };
   }
-  // The platform's own card for an approved item goes live without review: the edit changes only
-  // the image, to a public one the parent listing's owner uploaded, as on the owner's own items.
-  // It replaces any staged edit, as every newer sync does. Anything else waits for a moderator.
-  if (ownerImage && imageOnlyChange(liveContent(existing), content)) {
+  // An Official (Civitai-made) app's own card for an approved item goes live without review: the
+  // edit changes only the image, to a public one the parent listing's owner uploaded. It replaces
+  // any staged edit, as every newer sync does. Anything else, and every other app, waits for a
+  // moderator; an unreadable flag (column not migrated) reads as not Official.
+  if (
+    ownerImage &&
+    imageOnlyChange(liveContent(existing), content) &&
+    (await readListingOfficialMany([parent.id], dbWrite)).has(parent.id)
+  ) {
     const swapped = await casUpdate({
       imageId: content.imageId,
       ...CLEAR_PENDING,
@@ -1538,6 +1545,19 @@ async function isSharedItemLive(row: {
   return item != null && !item.hidden && item.authorUserId === row.authorUserId;
 }
 
+/**
+ * An image passed the card check when it was submitted; it may have been blocked, sent back for
+ * review or unpublished since. A moderator approval must not put it live.
+ */
+async function assertStillPublic(imageId: number | null, remedy: string) {
+  if (imageId == null || (await publicImageOwner(imageId)) != null) return;
+  throw new SubListingError(
+    409,
+    'image_not_public',
+    `The image is no longer public (blocked, unscanned or unpublished); ${remedy}`
+  );
+}
+
 export async function moderateSubListing(args: {
   input: ModerateSubListingInput;
   moderatorId: number;
@@ -1561,6 +1581,7 @@ export async function moderateSubListing(args: {
     switch (action) {
       case 'approve':
         if (status !== 'pending') throw invalid();
+        await assertStillPublic(row.imageId, 'hide the item');
         data = { status: 'approved', approvedAt: now, statusReason: null, ...stamp };
         break;
       case 'hide':
@@ -1589,6 +1610,7 @@ export async function moderateSubListing(args: {
         if (status !== 'approved' || !row.pendingSubmittedAt || row.pendingTitle == null) {
           throw invalid();
         }
+        await assertStillPublic(row.pendingImageId, 'reject the edit');
         data = {
           title: row.pendingTitle,
           tagline: row.pendingTagline,

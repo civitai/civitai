@@ -1128,24 +1128,9 @@ export async function updateStoryline({
   return updated;
 }
 
-/** Every author of a comment on storyline `id`'s threads or CommentV3 topic; recorded in the held copy only. */
+/** Every author of a comment on storyline `id`; recorded in the held copy only. */
 function storylineCommentersSql(id: number) {
-  return Prisma.sql`WITH RECURSIVE below AS (
-      SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
-      UNION
-      -- One indexed lookup per link: an OR across them scans the whole Thread table every step.
-      SELECT x.id FROM below b CROSS JOIN LATERAL (
-        SELECT t.id FROM "Thread" t WHERE t."parentThreadId" = b.id
-        UNION ALL
-        SELECT t.id FROM "Thread" t WHERE t."rootThreadId" = b.id
-        UNION ALL
-        SELECT t.id FROM "CommentV2" k JOIN "Thread" t ON t."commentId" = k.id
-        WHERE k."threadId" = b.id
-      ) x
-    )
-    SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
-    UNION
-    SELECT c."userId" FROM "CommentV3" c
+  return Prisma.sql`SELECT c."userId" FROM "CommentV3" c
     WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}`;
 }
 

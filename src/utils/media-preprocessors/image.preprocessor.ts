@@ -3,7 +3,7 @@ import type { ImageMetadata } from '~/server/schema/media.schema';
 import { createBlurHash } from '~/utils/blurhash';
 import { createImageElement } from '~/utils/image-utils';
 import { getMetadata } from '~/utils/metadata';
-import { auditMetaData } from '~/utils/metadata/audit';
+import { auditPostImageMeta } from '~/utils/metadata/audit';
 
 export const preprocessImage = async (file: File, options?: { allowAnimatedWebP?: boolean }) => {
   const img = await createImageElement(file);
@@ -34,7 +34,7 @@ export const preprocessImage = async (file: File, options?: { allowAnimatedWebP?
 };
 
 export const auditImageMeta = async (meta: ImageMetaProps | undefined, nsfw: boolean) => {
-  const auditResult = await auditMetaData(meta, nsfw);
+  const auditResult = auditPostImageMeta(meta, nsfw);
   return { blockedFor: !auditResult?.success ? auditResult?.blockedFor : undefined };
 };
 

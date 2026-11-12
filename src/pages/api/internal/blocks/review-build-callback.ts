@@ -4,9 +4,13 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
+import {
+  isAppBlocksPipelineEnabled,
+  isAppBlocksReviewSharedServerEnabled,
+} from '~/server/services/app-blocks-flag';
 import {
   triggerApplyReview,
+  triggerReviewUnpublish,
   waitForApplyJob,
   waitForReviewHostReachable,
 } from '~/server/services/blocks/apps-pipeline.service';
@@ -18,6 +22,7 @@ import { deriveFailureClass, parseBuildSignals } from '~/server/services/blocks/
 import {
   markReviewPreviewState,
   parseReviewDetail,
+  releaseSettledBuildSlot,
 } from '~/server/services/blocks/publish-request.service';
 import { recordAppBlockBuildOutcome } from '~/server/prom/app-block-build.metrics';
 import {
@@ -29,16 +34,19 @@ import {
  * POST /api/internal/blocks/review-build-callback  (MOD REVIEW SANDBOX, #2831)
  *
  * The review Tekton PipelineRun's finally task → civitai-web, once the REVIEW
- * build has succeeded (image pushed to ghcr.io) or failed. Mirrors the
+ * build has succeeded (image pushed, or preview published directly) or failed. Mirrors the
  * production build-callback exactly:
  *   1. Verify HMAC signature (BLOCK_BUILD_CALLBACK_SECRET, with the optional
  *      _NEXT rotation secret).
  *   2. Honour the pipeline kill-switch flag (503 when dark).
  *   3. Bind the accepted imageRef to the REVIEW image (app-block-review-<slug>:<sha>).
  *   4. On success → create the review apply Job, advance the pending request's
- *      preview state to deploying then live (after the Job succeeds).
+ *      preview state to deploying then live (after the Job succeeds). A body with
+ *      `directPublish: true` (the build already published the preview to the shared
+ *      static server) skips the apply Job and goes straight to the reachability probe.
  *   5. On failure → flip the preview state to failed, unless a newer run for the
- *      same sha has superseded the sender (stale-run guard).
+ *      same sha has superseded the sender (stale-run guard). A failed direct publish also
+ *      unpublishes its sha (it may have published before failing).
  *
  * An additive parallel lane for review previews only.
  */
@@ -72,6 +80,8 @@ type CallbackBody = {
   imageRef?: string;
   status?: string;
   ts?: unknown;
+  // `true` only from a review build that published the preview itself (no image, no apply Job).
+  directPublish?: unknown;
   // OPTIONAL structured signals, read and validated by `parseBuildSignals` (same contract
   // as the production build-callback; an invalid one is dropped, never fatal).
 };
@@ -270,14 +280,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     /* fall back to the minimal detail */
   }
 
-  if (previewNoLongerActive) {
-    res.status(200).json({
-      ok: true,
-      applied: false,
-      reason: 'preview no longer active (torn down or decided)',
-    });
-    return;
-  }
+  // The build published the preview itself (see CallbackBody.directPublish): on success there is
+  // no apply Job to run, and the preview is ALREADY on the shared server.
+  const directPublish = body.directPublish === true;
+  const reportedSucceeded = (body.status ?? '').toLowerCase() === 'succeeded';
 
   const { signals, dropped } = parseBuildSignals(body as Record<string, unknown>);
   if (dropped.length > 0) {
@@ -289,8 +295,49 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     );
   }
 
-  const succeeded = (body.status ?? '').toLowerCase() === 'succeeded';
-  if (!succeeded) {
+  if (previewNoLongerActive) {
+    // A direct publish put this preview on the shared server after its row stopped being an
+    // active preview (a FAILED one may have published before failing), and that teardown's
+    // unpublish may have run before it landed: unpublish it for this sha. Best-effort and
+    // idempotent. A failure from a superseded run does not (a newer run of the same sha may have
+    // published). Fire-and-forget like the other watchers here: the unpublish creates a k8s Job
+    // (calls with long timeouts) and must not hold the build callback's short request window.
+    if (
+      directPublish &&
+      (reportedSucceeded ||
+        !(await isSupersededRun({
+          mode: 'review',
+          slug: body.slug,
+          sha: body.sha,
+          runId: signals.runId,
+        })))
+    ) {
+      void triggerReviewUnpublish({
+        slug: body.slug,
+        sha: body.sha,
+        publishRequestId: body.publishRequestId,
+      }).catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[review-build-callback] orphaned direct-publish unpublish failed for ${
+            body.publishRequestId
+          }: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
+    }
+    // This build is over, so the build slot its (torn-down, superseded or decided) row still
+    // holds is released now, and the queue moves on.
+    await releaseSettledBuildSlot(body.publishRequestId, { sha: body.sha });
+    reviewBuildSettled(body.publishRequestId, false);
+    res.status(200).json({
+      ok: true,
+      applied: false,
+      reason: 'preview no longer active (torn down or decided)',
+    });
+    return;
+  }
+
+  if (!reportedSucceeded) {
     const failureClass = signals.failedStep
       ? deriveFailureClass(signals.failedStep, signals.failedReason)
       : null;
@@ -327,10 +374,31 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       'preview-failed',
       {
         ...baseDetail,
+        // A direct build may have published its meta to the shared server before it failed:
+        // record that, so a different-sha rebuild and a teardown unpublish it the shared way.
+        ...(directPublish ? { sharedServer: true } : {}),
         error: reviewBuildFailureError(body.status, signals.failedStep, failureClass),
       },
       { requireActivePreview: true }
     );
+    // The build publishes files + meta BEFORE this callback, so a failed direct build may have
+    // left its preview on the shared server: unpublish this sha. Only past the stale-run guard
+    // above (a newer run of the same sha may have published the preview being reviewed), and
+    // fire-and-forget like the orphan branch: best-effort, idempotent, logged on error.
+    if (directPublish) {
+      void triggerReviewUnpublish({
+        slug: body.slug,
+        sha: body.sha,
+        publishRequestId: body.publishRequestId,
+      }).catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[review-build-callback] failed direct-publish unpublish failed for ${
+            body.publishRequestId
+          }: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
+    }
     await recordBuildAttempt(attempt);
     // Counted only once the failure is APPLIED: a superseded run's late report is history,
     // not a build outcome, and must not move a failure-rate alert.
@@ -356,6 +424,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
+  // Read once per build, so the apply Job and the reachability probe agree on the serving path.
+  // Recorded on the detail from here on, so a later teardown unpublishes the way it was served.
+  // A direct publish is on the shared server whatever the flag says now.
+  const sharedServer = directPublish
+    ? true
+    : await isAppBlocksReviewSharedServerEnabled().catch(() => false);
+  baseDetail = { ...baseDetail, sharedServer };
+
   await markReviewPreviewState(body.publishRequestId, 'preview-deploying', baseDetail, {
     requireActivePreview: true,
   });
@@ -375,6 +451,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     failureClass: 'none',
   });
 
+  if (directPublish) {
+    // Nothing to apply: respond to Tekton, then probe + mark live/failed in the background.
+    res.status(200).json({ ok: true, applied: true, directPublish: true });
+    void watchDirectPublishedReview({
+      publishRequestId: body.publishRequestId,
+      slug: body.slug,
+      sha: body.sha,
+      baseDetail,
+    });
+    return;
+  }
+
   let applyJob: { name: string };
   try {
     applyJob = await triggerApplyReview({
@@ -382,6 +470,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       sha: body.sha,
       publishRequestId: body.publishRequestId,
       imageRef: body.imageRef,
+      sharedServer,
     });
   } catch (e) {
     // Job creation failed — no watcher will run to free the dedup mark, so free
@@ -407,23 +496,45 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   void watchReviewApplyJob({
     publishRequestId: body.publishRequestId,
+    slug: body.slug,
     sha: body.sha,
     jobName: applyJob.name,
     baseDetail,
+    sharedServer,
   });
 });
 
-// Exported for the watcher unit tests (the handler returns 200 to Tekton before
-// this runs fire-and-forget, so it can't be observed through the HTTP response).
-export async function watchReviewApplyJob(args: {
+type ReviewWatchArgs = {
   publishRequestId: string;
+  /** The app, for unpublishing a preview nobody is looking at any more (see below). */
+  slug?: string;
   sha: string;
-  jobName: string;
   baseDetail: ReturnType<typeof parseReviewDetail>;
   /** What to do once the build stops holding a slot. Injectable for the watcher's tests. */
   onSettled?: (publishRequestId: string, live: boolean) => void;
-}): Promise<void> {
-  const settled = args.onSettled ?? reviewBuildSettled;
+  /** The preview was published to the shared static server (probe it there). */
+  sharedServer?: boolean;
+  /** The build published the preview itself: no apply Job (or its smoke test) ran. */
+  directPublish?: boolean;
+};
+
+/** The helpers every watcher write shares; see watchReviewApplyJob for why each exists. */
+function reviewWatchContext(args: ReviewWatchArgs) {
+  // A row torn down, withdrawn, superseded or decided while this apply ran still holds its build
+  // slot (its build callback already ran, so nothing else would release it before the stale
+  // window): release it before the queue moves on. A no-op for the active preview just marked.
+  const onSettled = args.onSettled ?? reviewBuildSettled;
+  const settled = async (id: string, live: boolean) => {
+    try {
+      await releaseSettledBuildSlot(id, {
+        sha: args.sha,
+        buildStartedAt: args.baseDetail.buildStartedAt,
+      });
+    } catch {
+      /* never throws; the stale window is the backstop */
+    }
+    onSettled(id, live);
+  };
   // Every write below is a WATCHER advancing write — it must only ever touch the
   // preview THIS watcher owns. The reachability wait can keep this watcher alive
   // for a few minutes, so a mod could tear down this preview and re-preview a new
@@ -431,47 +542,107 @@ export async function watchReviewApplyJob(args: {
   // superseded watcher's late write can't clobber the newer preview (see
   // markReviewPreviewState's expectedSha guard).
   const guard = { requireActivePreview: true as const, expectedSha: args.sha };
+  // The apply Job published this sha to the shared server, but its row is no longer this active
+  // preview (torn down, withdrawn, superseded or decided while it ran). That teardown's unpublish
+  // may have run BEFORE this publish landed, and the row no longer carries the sha to retry it: so
+  // unpublish it now, for the sha this watcher knows. Idempotent.
+  const unpublishOrphan = async () => {
+    if (args.sharedServer !== true) return;
+    if (!args.slug) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[review-build-callback] no slug to unpublish the orphaned preview of ${args.publishRequestId}`
+      );
+      return;
+    }
+    try {
+      await triggerReviewUnpublish({
+        slug: args.slug,
+        sha: args.sha,
+        publishRequestId: args.publishRequestId,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[review-build-callback] orphaned preview unpublish failed for ${args.publishRequestId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  };
+  return { settled, guard, unpublishOrphan };
+}
+
+/**
+ * The preview is published (the apply Job succeeded, or the build published it directly): mark it
+ * live once its host answers, else failed. Shared by both watchers below.
+ */
+async function settlePublishedReview(
+  args: ReviewWatchArgs,
+  ctx: ReturnType<typeof reviewWatchContext>
+): Promise<void> {
+  const { settled, guard, unpublishOrphan } = ctx;
+  // The preview is published (apply lane: the Job succeeded) — but the
+  // preview's PUBLIC host DNS record is created lazily and can lag the deploy
+  // by up to ~a minute before it resolves publicly. Marking the preview "live" the instant the Job
+  // finishes races that propagation, so the mod clicks through and hits
+  // ERR_NAME_NOT_RESOLVED. Gate "live" on a real reachability probe: stay on
+  // "deploying…" until the host actually answers, so the link is never dead.
+  const host = args.baseDetail.host;
+  const reachable = host
+    ? await waitForReviewHostReachable(host, { sharedServer: args.sharedServer === true })
+    : true;
+  if (reachable) {
+    const marked = await markReviewPreviewState(
+      args.publishRequestId,
+      'preview-live',
+      args.baseDetail,
+      guard
+    );
+    // Live only if THIS preview was still the active one: a torn-down or superseded preview
+    // (the guard matched no row) must not start an agent review, and is unpublished.
+    if (marked === 0) await unpublishOrphan();
+    await settled(args.publishRequestId, marked > 0);
+  } else {
+    // The host never answered within the budget. Do NOT mark it live — that's the whole point.
+    // Free the replay-dedup slot (mirror the failed branch below) so a same-sha rebuild isn't
+    // suppressed within the TTL window.
+    await clearReviewApplyMark(args.publishRequestId, args.sha);
+    // A direct publish ran no apply Job, so this is not an apply failure and is not counted as
+    // one (its build was already counted as succeeded). On the apply lane it is.
+    if (!args.directPublish) recordReviewApplyFailure();
+    const marked = await markReviewPreviewState(
+      args.publishRequestId,
+      'preview-failed',
+      {
+        ...args.baseDetail,
+        // Apply lane: its existing text (the Job's own smoke test already passed).
+        // Direct lane: no Job and no smoke test ran, and the shared route needs no new DNS record,
+        // so a page that never answers points at the build itself.
+        error: args.directPublish
+          ? 'Preview published, but it never answered through the review gate (its page at / must return 200). The build may be broken: check it, then rebuild.'
+          : 'Preview deployed but its host did not become reachable in time (DNS propagation). Rebuild to retry.',
+      },
+      guard
+    );
+    // Published for a row that is no longer this preview: unpublish it.
+    if (marked === 0) await unpublishOrphan();
+    await settled(args.publishRequestId, false);
+  }
+}
+
+// Exported for the watcher unit tests (the handler returns 200 to Tekton before
+// this runs fire-and-forget, so it can't be observed through the HTTP response).
+export async function watchReviewApplyJob(
+  args: ReviewWatchArgs & {
+    jobName: string;
+  }
+): Promise<void> {
+  const ctx = reviewWatchContext(args);
   try {
     const outcome = await waitForApplyJob(args.jobName);
     if (outcome === 'succeeded') {
-      // The apply Job succeeded — but the preview's PUBLIC host DNS record is
-      // created lazily and can lag the deploy by up to ~a minute before it
-      // resolves publicly. Marking the preview "live" the instant the Job
-      // finishes races that propagation, so the mod clicks through and hits
-      // ERR_NAME_NOT_RESOLVED. Gate "live" on a real reachability probe: stay on
-      // "deploying…" until the host actually answers, so the link is never dead.
-      const host = args.baseDetail.host;
-      const reachable = host ? await waitForReviewHostReachable(host) : true;
-      if (reachable) {
-        const marked = await markReviewPreviewState(
-          args.publishRequestId,
-          'preview-live',
-          args.baseDetail,
-          guard
-        );
-        // Live only if THIS preview was still the active one: a torn-down or superseded preview
-        // (the guard matched no row) must not start an agent review.
-        settled(args.publishRequestId, marked > 0);
-      } else {
-        // Deploy is healthy but its host never became publicly reachable within
-        // the budget (DNS propagation stall, or a genuinely-broken route). Do
-        // NOT mark it live — that's the whole point. Free the replay-dedup slot
-        // (mirror the failed branch below) so a same-sha rebuild isn't
-        // suppressed within the TTL window.
-        await clearReviewApplyMark(args.publishRequestId, args.sha);
-        recordReviewApplyFailure();
-        await markReviewPreviewState(
-          args.publishRequestId,
-          'preview-failed',
-          {
-            ...args.baseDetail,
-            error:
-              'Preview deployed but its host did not become reachable in time (DNS propagation). Rebuild to retry.',
-          },
-          guard
-        );
-        settled(args.publishRequestId, false);
-      }
+      await settlePublishedReview(args, ctx);
     } else {
       // On a DEFINITIVE failure free the replay-dedup slot so a same-sha retry
       // isn't suppressed within the TTL window; on a 'timeout' leave it (the Job
@@ -488,14 +659,36 @@ export async function watchReviewApplyJob(args: {
           ...args.baseDetail,
           error: outcome === 'timeout' ? 'review deploy timed out' : 'review deploy failed',
         },
-        guard
+        ctx.guard
       );
-      settled(args.publishRequestId, false);
+      await ctx.settled(args.publishRequestId, false);
     }
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(
       `[review-build-callback] watch crashed for ${args.jobName}: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+/**
+ * A DIRECT publish (`directPublish: true`): the build already published the preview to the shared
+ * static server, so there is no apply Job to wait for, and no apply-Job smoke test runs. Probe the
+ * shared route (a 200 for its page at /) and mark it live/failed as after a successful apply Job,
+ * with its own failure text and no apply-failure count. Exported for the watcher unit tests.
+ */
+export async function watchDirectPublishedReview(
+  args: Omit<ReviewWatchArgs, 'sharedServer' | 'directPublish'>
+): Promise<void> {
+  const shared: ReviewWatchArgs = { ...args, sharedServer: true, directPublish: true };
+  try {
+    await settlePublishedReview(shared, reviewWatchContext(shared));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[review-build-callback] direct-publish watch crashed for ${args.publishRequestId}: ${
         err instanceof Error ? err.message : String(err)
       }`
     );

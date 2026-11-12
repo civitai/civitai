@@ -1,27 +1,50 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
-/** Scanned, not awaiting review, not removed: as SQL over `"Image" i`. */
+/**
+ * The same base-model rule as images (`getAllImages`): an image on a restricted base model is not
+ * shown at R or above. As SQL over `"Image" i`; the SFW arm comes first, as there.
+ */
+const baseModelAllowedSql = Prisma.sql`(
+  (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
+  OR NOT i."modelRestricted"
+)`;
+
+/** Scanned, not awaiting review, not removed, allowed by its base model: as SQL over `"Image" i`. */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+  AND ${baseModelAllowedSql}
+)`;
+
+/** The post `"Post" p` is on no taken-down model; true for no post or a post on no model. */
+const notOnTakenDownModelSql = Prisma.sql`NOT EXISTS (
+  SELECT 1 FROM "ModelVersion" mv
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mv.id = p."modelVersionId" AND m.mode = 'TakenDown'
 )`;
 
 /**
  * Whether an image may be shown as a collection's cover to someone who doesn't own it, as SQL over
  * `"Image" i` with `"Post" p` LEFT JOINed on `i."postId"`. The image must be scanned, not awaiting
- * review and not removed. A posted image needs its post published and not Private. A postless
- * image needs `postlessAllowed`: `coverUploadSql` for a collection's own cover, `itemUploadSql` for
- * a cover taken from an item.
+ * review and not removed. A posted image needs its post published, not Private and on no
+ * taken-down model. A postless image needs `postlessAllowed`: `coverUploadSql` for a collection's
+ * own cover, `itemUploadSql` for a cover taken from an item.
  */
 export function servableCollectionCoverSql({ postlessAllowed }: { postlessAllowed: Prisma.Sql }) {
   return Prisma.sql`(
     ${servableImageSql}
     AND (
-      (i."postId" IS NOT NULL AND p."publishedAt" < now() AND p."availability" != 'Private')
+      (
+        i."postId" IS NOT NULL
+        AND p."publishedAt" < now()
+        AND p."availability" != 'Private'
+        AND ${notOnTakenDownModelSql}
+      )
       OR (i."postId" IS NULL AND ${postlessAllowed})
     )
   )`;
@@ -111,6 +134,7 @@ export function collectionItemCoversSql({
             AND ${servableImageSql}
             AND p."publishedAt" < now()
             AND p."availability" != 'Private'
+            AND ${notOnTakenDownModelSql}
       ) t
       WHERE t.rn = 1
     ), modelItemImage AS MATERIALIZED (
@@ -183,8 +207,9 @@ type CoverCandidate = { collectionId: number; collectionOwnerId: number; imageId
 type CoverDb = Pick<typeof dbRead, '$queryRaw'>;
 
 /**
- * The collection ids whose cover may be shown to `viewer`. Staff and the image's owner see any
- * cover; everyone else gets `servableCollectionCoverSql`. Decided on the image id the caller read,
+ * The collection ids whose cover may be shown to `viewer`. Staff see any cover; the image's owner
+ * sees their own past every rule but the base-model one; everyone else gets
+ * `servableCollectionCoverSql`. Decided on the image id the caller read,
  * so a cover changed since then can't be judged on the old one. Pass the client the cover was read
  * from, so the image is judged as of that read.
  */
@@ -206,12 +231,13 @@ export async function getServableCoverCollectionIds(
     ) AS v("collectionId", "collectionOwnerId", "imageId")
     JOIN "Image" i ON i.id = v."imageId"
     LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE ${ownImage}${servableCollectionCoverSql({
+    WHERE (${ownImage}${servableCollectionCoverSql({
     postlessAllowed: coverUploadSql({
       collectionId: Prisma.sql`v."collectionId"`,
       collectionOwnerId: Prisma.sql`v."collectionOwnerId"`,
     }),
-  })}
+  })})
+      AND ${baseModelAllowedSql}
   `;
   return new Set(rows.map((r) => r.collectionId));
 }

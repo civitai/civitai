@@ -120,6 +120,7 @@ const EXPECTED_PROJECTORS: Record<
   | 'ceiling only: labels'
   | 'hydrates for the gate'
   | 'carries the gated social image'
+  | 'raw: review model input'
 > = {
   // The rule itself.
   'server/services/blocks/listing-media-audience.ts': 'gate',
@@ -149,6 +150,11 @@ const EXPECTED_PROJECTORS: Record<
   // module reads an `Image` or builds a url; both only name the gated result's type.
   'server/services/blocks/listing-page-social-image.ts': 'carries the gated social image',
   'pages/apps/store-preview/[slug].tsx': 'carries the gated social image',
+  // The agent review's impersonation check: the submitted icon and cover, exactly as attached,
+  // handed to the review model. Never rendered or returned to a viewer.
+  'server/services/blocks/app-impersonation-check.service.ts': 'raw: review model input',
+  // The same check on an approved app's listing edit: the revision's new icon and cover.
+  'server/services/blocks/app-listing-edit-impersonation.service.ts': 'raw: review model input',
 };
 
 /** Modules that read a listing image url without the gate's columns — none of them public. */
@@ -161,6 +167,10 @@ const EXPECTED_UNGATED_HYDRATIONS: Record<string, string> = {
   // Both moderator queues read `{ id, url, nsfwLevel }`: shown as attached, the level only drives
   // their click-to-reveal on civitai.com.
   'server/services/blocks/publish-request.service.ts': 'the on-site moderator review queue',
+  'server/services/blocks/app-impersonation-check.service.ts':
+    "the agent review's impersonation check (model input, never rendered)",
+  'server/services/blocks/app-listing-edit-impersonation.service.ts':
+    'the listing-edit impersonation check (model input, never rendered)',
 };
 
 describe('listing-media call-site ledger', () => {

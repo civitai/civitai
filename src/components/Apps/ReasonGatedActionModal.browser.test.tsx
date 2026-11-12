@@ -37,23 +37,23 @@ function FieldHarness({ required = true }: { required?: boolean }) {
 describe('ReasonGatedField — counter + inline error at the floor boundary', () => {
   test('empty → neutral counter, no error; under floor → counter + error; at floor → error clears', async () => {
     renderWithProviders(<FieldHarness />);
-    await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     // Empty is neutral (no red error yet).
     expect(page.getByText('Enter at least 3 characters.').elements()).toHaveLength(0);
 
     await page.getByTestId('rg-field').fill('ab');
-    await expect.element(page.getByText('2/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('Enter at least 3 characters.')).toBeInTheDocument();
 
     await page.getByTestId('rg-field').fill('abc');
-    await expect.element(page.getByText('3/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('✓ 3+ characters', { exact: true })).toBeInTheDocument();
     expect(page.getByText('Enter at least 3 characters.').elements()).toHaveLength(0);
   });
 
   test('an OPTIONAL note has no counter/floor/error', async () => {
     renderWithProviders(<FieldHarness required={false} />);
     await expect.element(page.getByTestId('rg-field')).toBeInTheDocument();
-    expect(page.getByText('0/3 characters minimum').elements()).toHaveLength(0);
+    expect(page.getByText('3+ characters', { exact: true }).elements()).toHaveLength(0);
     await page.getByTestId('rg-field').fill('x');
     expect(page.getByText('Enter at least 3 characters.').elements()).toHaveLength(0);
   });

@@ -19,9 +19,6 @@ import { mentionNotifications } from '~/server/notifications/mention.notificatio
  * problem, and none is reachable from here.
  *
  * OUT OF SCOPE, deliberately:
- * - the model-page discussion (`MODEL_ONLY` below): no mute control on its page. A model
- *   `CommentTopicMute` mirrored from a v2 section mute reaches `new-thread-response` but not these
- *   three; accepted until the model surface flips.
  * - `new-comic-comment`: written by `createNotification` in `comics.router.ts`, not a
  *   `prepareQuery`, so no SQL filter reaches it. Its comments are always chapter roots and no UI
  *   mutes a root. Give comics a reply path or a root mute and it needs its own filter; this guard
@@ -48,18 +45,10 @@ const sqlFor = (type: string) => defs[type].prepareQuery?.({ lastSent: '2026-01-
  */
 const MUTE_EXEMPT = new Set(['new-mention']);
 
-/**
- * The model-page discussion: v1-shaped, with no mute control in its UI. Pinned by name below, so a
- * processor that moves to the thread-addressed shape has to leave this list and gain the filter.
- */
-const MODEL_ONLY = new Set(['new-comment', 'new-comment-response', 'new-comment-nested']);
-
 // Matches the TABLE, not one spelling of the clause: a line break after FROM is the same processor
 // and must not fall out of the sweep.
 const commentTypes = Object.keys(defs).filter((type) => sqlFor(type).includes('"CommentV3"'));
-const filteredTypes = commentTypes.filter(
-  (type) => !MUTE_EXEMPT.has(type) && !MODEL_ONLY.has(type)
-);
+const filteredTypes = commentTypes.filter((type) => !MUTE_EXEMPT.has(type));
 
 /**
  * The recipient each processor already proved it knows, taken from its OWN block filter rather than
@@ -89,7 +78,7 @@ describe('comment notifications — per-thread mute', () => {
   // well as documented.
   it('exempts exactly new-mention, on purpose', () => {
     expect([...MUTE_EXEMPT]).toEqual(['new-mention']);
-    expect(filteredTypes).toHaveLength(15);
+    expect(filteredTypes).toHaveLength(18);
   });
 
   it('finds the family on the real objects', () => {
@@ -133,21 +122,6 @@ describe('comment notifications — per-thread mute', () => {
     expect(sql).toContain('FROM "CommentV3"');
     expect(sql).not.toContain('"CommentMute"');
     expect(sql).not.toContain('"CommentTopicMute"');
-  });
-
-  it('leaves the model-page discussion processors alone, and nothing else', () => {
-    // The set is derived from the SQL, not from MODEL_ONLY: a processor that reads only model
-    // comments and nothing else is the one that may skip the filter.
-    const modelOnly = Object.keys(defs).filter((type) => {
-      const sql = sqlFor(type);
-      return (
-        sql.includes(`c."entityType" = 'model'`) &&
-        !sql.includes('threadType') &&
-        !sql.includes('mention')
-      );
-    });
-    expect(modelOnly.sort()).toEqual([...MODEL_ONLY].sort());
-    for (const type of modelOnly) expect(sqlFor(type)).not.toContain('"CommentMute"');
   });
 
   it('reads no old comment table anywhere in the family', () => {

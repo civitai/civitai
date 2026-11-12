@@ -139,8 +139,11 @@ export type EcosystemSeoConfig = {
     /** One line shown in the banner, e.g. who is shutting it down and what to use instead. */
     note: string;
   };
-  /** Local-run honesty box. Omit for API-only ecosystems (renders an "API only" note instead). */
-  localRun?: { vram: string; weightsSize: string; tool: string };
+  /**
+   * Local-run honesty box. Omit for API-only ecosystems (renders an "API only" note instead).
+   * `vram` only when the publisher states a figure; without one the GPU line is skipped.
+   */
+  localRun?: { vram?: string; weightsSize: string; tool: string };
   /** Attribution line in the footer. */
   attribution: string;
   /**
@@ -1745,6 +1748,322 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     ],
     localRun: { vram: '16GB+ VRAM', weightsSize: '~12.5–25GB', tool: 'ComfyUI' },
     attribution: 'an image model by Krea',
+  },
+
+  Krea3: {
+    key: 'Krea3',
+    updatedAt: '2026-11-06',
+    name: 'Krea 3',
+    seoTitle: 'Krea 3 (Krea3) AI Image Generator & Editor Online | Civitai',
+    metaDescription:
+      'Generate and edit images with Krea 3 online on Civitai: restage products, swap materials and combine reference images while the subject stays intact.',
+    modality: 'image',
+    isNew: true,
+    hero: {
+      intro:
+        "Krea 3 is Krea's image model for reference-driven generation and editing. Start from a product, a person, a room or a set of visual references, describe the change, keep what matters, and try the next idea. It runs on Krea's own API right here on Civitai, so there is nothing to download and no GPU to set up.",
+      badges: ['Text-to-Image', 'Reference-Driven Editing', 'By Krea', 'API (hosted)'],
+    },
+    overview: [
+      "Krea 3 is Krea's new image model, built around references rather than a prompt alone. You hand it one or more images, say what should change and what must stay, and it produces the edited result. On Civitai it runs on Krea's own API, so there are no files to download and it does not take LoRAs; it is ready in the generator with no setup, at 1K or 2K, with up to six references per edit.",
+      'It is at its best on four kinds of job. Restaging a product: put a real item into a new setting, light or composition while its label, shape and material carry through. Changing materials: try a new fabric, surface or colour in the same room from the same viewpoint. Combining references: bring a person, wardrobe, accessories and a backdrop from separate images into one shot. Building a sequence: keep editing from a result you like to make a series of consistent stills.',
+      'Choose Krea 3 when the work starts from something real that has to survive the edit, such as a product shot, a portrait or an interior. For open-weight text-to-image, a LoRA library or a local workflow, Krea 2 is the sibling to reach for; it ships Raw and Turbo checkpoints and trains LoRAs, while Krea 3 is the hosted editing model.',
+    ],
+    promptTips: [
+      'Write in plain, direct sentences. Krea 3 follows instructions about what to change and what to keep, so say both: "Keep the sofa shape, room and camera angle; change the fabric to green velvet."',
+      'With several references, say which image is which and give each one job: "the person from the first image, wearing the jacket from the second, in front of the backdrop from the third." Do not ask one image to set both the subject and a conflicting style.',
+      'For product and identity edits, name the details that identify the subject, such as the label, colour, material, shape or facial features, so they carry through unchanged.',
+      'When small details matter, such as a logo, fabric, small text or a face in a wide shot, upload the highest-resolution version of the reference you have.',
+      'Skip weight syntax and negatives. (word:1.5), [word] and ((word)) are read as literal text, and the Civitai generator has no negative prompt for Krea 3, so describe the wanted result instead of what to avoid. If too much changed, narrow the edit; if a sequence drifts, restart from the strongest earlier image.',
+    ],
+    generatorVersionId: 3405360,
+    featuredModels: [
+      {
+        modelId: 3001916,
+        versionId: 3405360,
+        imageId: 146130046,
+        displayName: 'Krea 3',
+        note: "Civitai-hosted · Krea's API",
+      },
+    ],
+    featuredExamples: [
+      {
+        imageId: 148106619,
+        prompt:
+          'A misty monochrome photograph of a stone bridge with marble statues in a ruined city',
+        settings: 'Krea 3 · 1184×880',
+      },
+      {
+        imageId: 148103410,
+        prompt:
+          'A tall pirate ship skimming down a skyscraper as fireworks shoot starlight from its cannons',
+        settings: 'Krea 3 · 1184×880',
+      },
+      {
+        imageId: 147845730,
+        prompt: 'A redesigned King of Hearts playing card in the Paris portrait tradition',
+        settings: 'Krea 3 · 880×1184',
+      },
+      {
+        imageId: 147803348,
+        prompt:
+          'A close-up cinematic composition of a melancholy scarecrow with a patched burlap face',
+        settings: 'Krea 3 · 1792×2368',
+      },
+      {
+        imageId: 148025909,
+        prompt: 'A high-energy full-body character portrait in techno Y2K cyberpunk paint strokes',
+        settings: 'Krea 3 · 1024×1024',
+      },
+      {
+        imageId: 147721583,
+        prompt: 'Black and white cinematic three-quarter portrait of a relaxed man in his mid-30s',
+        settings: 'Krea 3 · 2368×1776',
+      },
+    ],
+    comparison: {
+      peers: ['Krea 2', 'Nano Banana', 'FLUX.2'],
+      rows: [
+        {
+          label: 'Best for',
+          values: [
+            'Reference-driven editing & restaging',
+            'Photorealism & aesthetics',
+            'Likeness-preserving photo editing',
+            'Photorealism, text, versatility',
+          ],
+        },
+        {
+          label: 'Image editing',
+          values: [
+            'Native, multi-reference',
+            'Native (Raw/Turbo edit)',
+            'Native, multi-turn',
+            'Native',
+          ],
+        },
+        {
+          label: 'LoRA ecosystem',
+          values: ['None (hosted)', '{loras:Krea2}', 'None (hosted)', '{loras:Flux2}'],
+        },
+        {
+          label: 'Access',
+          values: ['API (hosted)', 'Open weights + API', 'API (hosted)', 'Open weights + API'],
+        },
+        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
+      ],
+    },
+    faq: [
+      {
+        q: 'What is Krea 3?',
+        a: "Krea 3 is Krea's image model for reference-driven generation and editing: give it a product, a person, a room or several references, describe the change, and it keeps what matters. You can use it on Civitai straight from the browser.",
+      },
+      {
+        q: "What's the difference between Krea 2 and Krea 3?",
+        a: "Krea 2 is a text-to-image model with open-weight Raw and Turbo checkpoints, a LoRA library and hosted Large and Medium tiers. Krea 3 is the reference-driven editing model that runs on Krea's API: it starts from your images and keeps the subject intact through the edit. Pick Krea 2 to generate from a prompt or train a LoRA, and Krea 3 to restage, re-material or combine real references.",
+      },
+      {
+        q: 'Can I combine several reference images?',
+        a: 'Yes, up to six per edit on Civitai. Upload the references, say which image is which in the prompt, and give each one job: the person from the first image, the jacket from the second, the backdrop from the third. Krea 3 composes them into one shot.',
+      },
+      {
+        q: 'Can I use LoRAs with Krea 3?',
+        a: "Not on Civitai. Krea 3 runs on Krea's API here without LoRAs; you steer it with references and plain-language instructions. For a LoRA ecosystem, Krea 2 and its Raw and Turbo checkpoints are in the Civitai generator too.",
+      },
+      {
+        q: 'Do I need a GPU to run Krea 3?',
+        a: 'No local setup is possible or needed. Krea 3 is API-only, with no open weights to download; Krea runs the model and Civitai handles the generation for you.',
+      },
+    ],
+    attribution: 'a hosted image generation and editing model by Krea (Krea 3)',
+    factCheck: [
+      {
+        field: 'comparison',
+        claim: 'Krea 3 "Native, multi-reference" editing; Nano Banana "Native, multi-turn"',
+        note: "The Krea 3 cell comes from Krea's docs (up to eight references in the API; the Civitai generator takes six). The Nano Banana cell is copied from that page and was not re-verified here.",
+      },
+    ],
+  },
+
+  MossImage: {
+    key: 'MossImage',
+    updatedAt: '2026-11-06',
+    slug: 'moss-image',
+    name: 'MOSS Image',
+    seoTitle: 'MOSS Image Models & {loras:MossImage} LoRAs, Online Generator | Civitai',
+    metaDescription:
+      "Download MOSS Image SFT and Base with {loras:MossImage} LoRAs, or generate online. OpenMOSS's open 5B model for accurate in-image text, layouts and 4K-token prompts.",
+    modality: 'image',
+    isNew: true,
+    hero: {
+      intro:
+        'MOSS Image is a 5B-parameter text-to-image model from the OpenMOSS team, built for accurate in-image text, layout control and long prompts. It reads natural language, booru-style tags or a JSON layout, renders from 512px up to 2K at any aspect ratio, and ships under Apache-2.0. Generate with it right here on Civitai, no GPU, no install, or download the weights and train your own LoRA.',
+      badges: ['Text-to-Image', 'Text Rendering', 'By OpenMOSS', 'Open weights (Apache-2.0)'],
+    },
+    overview: [
+      'MOSS Image is a 5B-parameter diffusion transformer from OpenMOSS, the open-source lab at Fudan University. It pairs a Qwen3.5 9B text encoder with the FLUX.2 VAE, which is where its two headline abilities come from: the large language encoder reads prompts of up to 4K tokens in natural language, booru-style tags or a JSON layout, and the model was trained to place text and elements where the prompt says. It renders from 512px up to 2K at any aspect ratio and is text-to-image only; image editing and reference images are not part of this release.',
+      'Two versions are published. SFT is the supervised fine-tune of Base on curated data and the one to generate with: OpenMOSS’s own comparison shows cleaner text grouping and more organised layouts. Base is the undistilled base model with no post-training, the one to fine-tune and train LoRAs on. On Civitai the two share one ecosystem, so a LoRA trained on either loads on both. OpenMOSS recommends 50 steps with CFG 3 (raise it for short prompts), flow-matching Euler and shift 5; Civitai’s generator starts at 25 steps and goes up to 60. The weights and inference code are Apache-2.0: commercial use, derivatives and LoRAs are allowed, with the licence notice kept on redistribution.',
+      'Choose MOSS Image when the picture has to carry words, such as a poster, a label, a sign or a comic panel, or when a long, specific caption is easier to write than a tag soup. For anime with a deep tag vocabulary, Anima and Illustrious are the better-trodden paths; for photoreal editing, Krea 2 or FLUX.2. On Civitai both MOSS versions sit in the generator with steps, CFG and a negative prompt exposed, and a growing LoRA library trained on Base.',
+    ],
+    promptTips: [
+      'Write a full scene caption in plain sentences, or booru-style tags, or both; mixing is fine. The Qwen3.5 encoder reads whole sentences and the model was trained on long captions, so a detailed prompt of several hundred words is normal.',
+      'Put text that should appear in the image in quotation marks, as OpenMOSS’s examples do, and describe its style and placement. Line breaks inside the quoted text set the line breaks in the rendered text.',
+      'Tag prompts follow the order quality, score, meta, year, character, series, artist, general, with artists written as @name, as in the official examples: "best quality, highres, 1girl, blue hair, @artist".',
+      'OpenMOSS’s prompting guide uses no weight syntax such as (word:1.5) or ((word)); put the emphasis in words instead.',
+      'Use the negative prompt; the model runs with CFG. OpenMOSS’s recommended negative is "nsfw, worst quality, bad anatomy, watermark, jpeg artifact". English has the most training data, and Chinese and other languages are supported, including for rendered text.',
+    ],
+    generatorVersionId: 3409867,
+    featuredModels: [
+      {
+        modelId: 3005406,
+        versionId: 3409867,
+        imageId: 145881759,
+        displayName: 'MOSS Image SFT',
+        note: 'Civitai-hosted · default for generation',
+      },
+      {
+        modelId: 3005406,
+        versionId: 3409868,
+        imageId: 145881841,
+        displayName: 'MOSS Image Base',
+        note: 'Open weights · for LoRA training',
+      },
+      {
+        modelId: 3007815,
+        versionId: 3429070,
+        imageId: 146791334,
+        displayName: 'Moss detail tweaker',
+      },
+      {
+        modelId: 507459,
+        versionId: 3434694,
+        imageId: 147086573,
+        displayName: 'The Weirdies',
+      },
+      {
+        modelId: 2952303,
+        versionId: 3412942,
+        imageId: 146016641,
+        displayName: 'SumiInk — Sumi-e and ink wash style',
+      },
+      {
+        modelId: 1970260,
+        versionId: 3435609,
+        imageId: 147130375,
+        displayName: 'Retro Anime Style',
+      },
+    ],
+    featuredExamples: [
+      {
+        imageId: 147910721,
+        prompt: 'A green electric bulb glowing softly on a wooden table in warm ambient light',
+        settings: 'Steps 8 · CFG 1 · MOSS Image SFT + 8-step LoRA · 768×1024',
+      },
+      {
+        imageId: 148121247,
+        prompt: 'A young anime character in a school uniform laughing with his eyes closed',
+        settings: 'Steps 35 · CFG 4 · MOSS Image SFT + LoRA · 1664×2496',
+      },
+      {
+        imageId: 147276347,
+        prompt:
+          'Painterly concept art blending atmospheric grandeur with gritty industrial realism',
+        settings: 'Steps 20 · CFG 3 · MOSS Image SFT · 832×1216',
+      },
+      {
+        imageId: 147725376,
+        prompt: 'A sunlit woodland clearing with a fairytale castle glimpsed between the trees',
+        settings: 'Steps 20 · CFG 2.5 · MOSS Image SFT + LoRAs · 1536×2048',
+      },
+      {
+        imageId: 147163682,
+        prompt:
+          'Candid 1960s flash photograph of a scientist examining a towering obelisk in an old laboratory',
+        settings: 'Steps 25 · CFG 2.5 · MOSS Image SFT · 1024×1536',
+      },
+      {
+        imageId: 147681135,
+        prompt: 'A cinematic anime hillside at golden hour, seen from beneath a large tree',
+        settings: 'Steps 20 · CFG 3 · MOSS Image SFT · 1024×1024',
+      },
+    ],
+    comparison: {
+      peers: ['Qwen', 'FLUX.2', 'Anima'],
+      rows: [
+        {
+          label: 'Best for',
+          values: [
+            'Text in images, layouts & long prompts',
+            'Prompt adherence & text',
+            'Photorealism, text, versatility',
+            'Anime & illustration',
+          ],
+        },
+        {
+          label: 'Prompt style',
+          values: [
+            'Sentences, tags or JSON layout',
+            'Natural language',
+            'Natural language',
+            'Tags + natural language',
+          ],
+        },
+        {
+          label: 'Text in images',
+          values: ['Strong', 'Strong', 'Strong', 'Basic'],
+        },
+        {
+          label: 'LoRA ecosystem',
+          values: ['{loras:MossImage}', '{loras:Qwen}', '{loras:Flux2}', '{loras:Anima}'],
+        },
+        {
+          label: 'Access',
+          values: [
+            'Open weights (Apache-2.0)',
+            'Open weights + API',
+            'Open weights + API',
+            'Open weights',
+          ],
+        },
+        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
+      ],
+    },
+    faq: [
+      {
+        q: 'What is MOSS Image?',
+        a: "MOSS Image is OpenMOSS's open 5B text-to-image model, built for accurate in-image text, layout control and long prompts, with a Qwen3.5 text encoder and the FLUX.2 VAE. Generate with it on Civitai, or download the weights.",
+      },
+      {
+        q: "What's the difference between MOSS Image SFT and Base?",
+        a: 'SFT is the supervised fine-tune on curated data and the one to generate with: OpenMOSS’s own comparison shows cleaner text grouping and more organised layouts. Base is the undistilled model with no post-training, the one to fine-tune and train LoRAs on. Both are in the Civitai generator, and a LoRA trained on either loads on both.',
+      },
+      {
+        q: 'How do I get readable text in the image?',
+        a: 'Put the text in quotation marks and describe its style and placement; line breaks inside the quotes become line breaks in the render. English has the most training data, and Chinese and other languages are supported. Try it by remixing one of the examples above.',
+      },
+      {
+        q: 'Can I train a LoRA for MOSS Image?',
+        a: "Yes. Base is the version to train on, and a LoRA trained on it also loads on SFT in the Civitai generator. MOSS Image LoRA training is rolling out in Civitai's Training Studio, and a LoRA you publish earns Buzz when others generate with it.",
+      },
+      {
+        q: 'Do I need a GPU to use MOSS Image?',
+        a: 'Not on Civitai, where the compute runs for you. Locally, each version ships the diffusion model in bf16 and int8, with the Qwen3.5 text encoder and FLUX.2 VAE alongside, for ComfyUI.',
+      },
+    ],
+    localRun: {
+      weightsSize: '~5GB int8 or ~9.5GB bf16, plus a ~7–9GB text encoder',
+      tool: 'ComfyUI',
+    },
+    attribution: 'an open text-to-image model by OpenMOSS (Apache-2.0)',
+    factCheck: [
+      {
+        field: 'faq',
+        claim:
+          "MOSS Image LoRA training is rolling out in Civitai's Training Studio, and a LoRA you publish earns Buzz when others generate with it",
+        note: 'Training Studio lists MOSS behind the moss-image-training flag (moderators until rolled out); confirm the rollout state before publishing. The Buzz claim holds: MOSS Image is Apache-2.0, so generation compensation is not stopped for it.',
+        highlight: "rolling out in Civitai's Training Studio",
+      },
+    ],
   },
 
   Anima: {
@@ -3890,9 +4209,11 @@ export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
   { slug: 'stable-diffusion', label: 'Stable Diffusion', ecosystemKeys: ['SD1'] },
   { slug: 'hidream', label: 'HiDream', ecosystemKeys: ['HiDream'] },
   { slug: 'krea2', label: 'Krea 2', ecosystemKeys: ['Krea2'] },
+  { slug: 'krea3', label: 'Krea 3', ecosystemKeys: ['Krea3'] },
   { slug: 'anima', label: 'Anima', ecosystemKeys: ['Anima'] },
   { slug: 'gpt-image', label: 'GPT Image', ecosystemKeys: ['OpenAI'] },
   { slug: 'z-image', label: 'Z-Image', ecosystemKeys: ['ZImageTurbo', 'ZImageBase'] },
+  { slug: 'moss-image', label: 'MOSS Image', ecosystemKeys: ['MossImage'] },
 ];
 
 /** True once an announced sunset date has arrived — the ecosystem's endpoints are gone. */

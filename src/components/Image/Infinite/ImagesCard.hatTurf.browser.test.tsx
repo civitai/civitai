@@ -295,6 +295,16 @@ describe('Hat Turf on the /images feed card', () => {
     await vi.waitFor(() => expect(q('hat-turf-hat')).not.toBeNull());
   });
 
+  // My live hats is served on this card, not on ImageCard: the chip once shipped on the wrong one.
+  test("My live hats: the card shows how long the viewer's hat has left", async () => {
+    h.stock = {
+      ...h.stock,
+      expiry: { ttlHours: 48, rolloutAt: null },
+    } as typeof h.stock;
+    renderCard(turf(), { ...image, turfPlacedAt: new Date(Date.now() - 6 * 3_600_000) });
+    await vi.waitFor(() => expect(q('hat-turf-time-left')?.textContent).toBe('42h left'));
+  });
+
   test('with Hat Turf off for the viewer the card has none of it', async () => {
     renderCard(null);
     await cardRendered();

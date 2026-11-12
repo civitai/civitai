@@ -45,7 +45,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !models.length;
 
-  if (isNullState) {
+  if (isNullState && inView) {
     return null;
   }
 

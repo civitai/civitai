@@ -1,8 +1,8 @@
 {
   "metrics": {
-    "handlers": 25,
-    "handlersWithDebug": 20,
-    "metrics": 80
+    "handlers": 23,
+    "handlersWithDebug": 18,
+    "metrics": 78
   },
   "entityTypes": {
     "Article": {
@@ -64,7 +64,7 @@
     },
     "Model": {
       "collectedCount": "collectionItemHandler",
-      "commentCount": "commentHandler",
+      "commentCount": "commentV3Handler",
       "downloadCount": "(not emitted by this app)",
       "earnedAmount": "updateCompensation",
       "generationCount": "(not emitted by this app)",
@@ -172,17 +172,11 @@
       "Collection.contributorCount",
       "Collection.followerCount"
     ],
-    "Comment": [
-      "Model.commentCount",
-      "User.commentCount"
-    ],
-    "CommentV2": [
-      "User.commentCount"
-    ],
     "CommentV3": [
       "Article.commentCount",
       "Bounty.commentCount",
       "Image.commentCount",
+      "Model.commentCount",
       "Post.commentCount",
       "User.commentCount"
     ],

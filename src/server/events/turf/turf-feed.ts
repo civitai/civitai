@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import client from 'prom-client';
 import { PROM_PREFIX } from '@civitai/telemetry/client';
 import { dbRead } from '~/server/db/client';
@@ -6,7 +7,13 @@ import { loadEvents } from '~/server/events/load-events';
 import { logToAxiom } from '~/server/logging/client';
 import { eventPointKeys } from '~/server/events/points/keys';
 import { TURF_RANK_MIN, turfKeys } from '~/server/events/turf/turf-map';
-import { getTurfEvent, inTurf, isRunning, type TurfEvent } from '~/server/events/turf/turf.service';
+import {
+  getTurfEvent,
+  inTurf,
+  isRunning,
+  ownDrawnStickers,
+  type TurfEvent,
+} from '~/server/events/turf/turf.service';
 import { sysRedis } from '~/server/redis/client';
 import type { HatSort } from '~/shared/constants/hat-turf-feed.constants';
 
@@ -92,6 +99,94 @@ return redis.call('ZRANGE', src, ARGV[1], ARGV[2], 'BYSCORE', 'LIMIT', '0', ARGV
 
 const CURSOR = /^(\d+)\|(\d+)$/;
 
+const pickedTeams = (event: TurfEvent, teams?: string[]) =>
+  event.teams.filter((t) => teams?.some((x) => x.toLowerCase() === t.toLowerCase()));
+const rankKeys = (event: TurfEvent, picked: string[]) => {
+  const keys = turfKeys(event.name);
+  return picked.length ? picked.map((t) => keys.rankTeam(t)) : [keys.rankTotal];
+};
+
+// shortcut: under a sort a player's drawn hats are read whole, oldest first, up to this many, and
+// past it the newest are not ranked. A player's live hats are bounded by hat lifetime x supply. Rank
+// in Redis (a per-player set) if hats stop expiring or the supply grows.
+const MY_HATS_RANKED_MAX = 1000;
+
+type OwnHat = { id: number; key: number };
+
+/**
+ * One page of the images `userId` has a hat drawn on (ownDrawnStickers), with when each hat was
+ * placed. Soonest to expire first; under a Hat Turf sort, ranked as readTurfRankPage ranks them,
+ * leaving out an image with no counted hat as it does. The cursor is `key|id` of the last id served;
+ * a cursor of another shape starts from the top.
+ */
+export async function readMyTurfPage({
+  event,
+  userId,
+  sort,
+  teams,
+  cursor,
+  limit,
+  now = new Date(),
+}: {
+  event: TurfEvent;
+  userId: number;
+  sort?: HatSort;
+  teams?: string[];
+  cursor?: string;
+  limit: number;
+  now?: Date;
+}) {
+  const match = cursor ? CURSOR.exec(cursor) : null;
+  const at = match ? { key: Number(match[1]), id: Number(match[2]) } : null;
+  const own = ownDrawnStickers(event, userId, now);
+  const page = (listed: OwnHat[], more: boolean, rows: { imageId: number; createdAt: Date }[]) => {
+    const last = listed[listed.length - 1];
+    return {
+      ids: listed.map((x) => x.id),
+      placedAt: new Map(rows.map((r) => [r.imageId, new Date(r.createdAt)])),
+      nextCursor: more && last ? `${last.key}|${last.id}` : undefined,
+    };
+  };
+
+  if (!sort) {
+    const after = at
+      ? Prisma.sql`AND (s."createdAt", s."imageId") > (${new Date(at.key)}, ${at.id})`
+      : Prisma.empty;
+    const rows = await dbRead.$queryRaw<{ imageId: number; createdAt: Date }[]>`
+      SELECT s."imageId", s."createdAt" ${own} ${after}
+      ORDER BY s."createdAt", s."imageId"
+      LIMIT ${limit + 1}
+    `;
+    const listed = rows
+      .slice(0, limit)
+      .map((r) => ({ id: r.imageId, key: new Date(r.createdAt).getTime() }));
+    return page(listed, rows.length > limit, rows);
+  }
+
+  const rows = await dbRead.$queryRaw<{ imageId: number; createdAt: Date }[]>`
+    SELECT s."imageId", s."createdAt" ${own}
+    ORDER BY s."createdAt", s."imageId"
+    LIMIT ${MY_HATS_RANKED_MAX}
+  `;
+  if (!rows.length) return page([], false, rows);
+  const ids = rows.map((r) => String(r.imageId));
+  const scores = await Promise.all(
+    rankKeys(event, pickedTeams(event, teams)).map((key) => sysRedis.zmScore(key, ids))
+  );
+  // Summed as the several-team rank is (ZUNIONSTORE), so the order matches readTurfRankPage's.
+  const ranked = ids.flatMap((id, i) => {
+    const counted = scores.map((s) => s[i]).filter((s) => s != null);
+    return counted.length
+      ? [{ id: Number(id), key: counted.reduce((a, s) => a + Number(s), 0) }]
+      : [];
+  });
+  const dir = sort === 'most' ? -1 : 1;
+  const order = (a: OwnHat, b: OwnHat) => dir * (a.key - b.key) || dir * (a.id - b.id);
+  ranked.sort(order);
+  const rest = at ? ranked.filter((x) => order(x, at) > 0) : ranked;
+  return page(rest.slice(0, limit), rest.length > limit, rows);
+}
+
 /**
  * One page of image ids by hats: `most` highest first, `fewest` lowest first (from one counted hat).
  * `teams` picks whose hats count (none: every team's). The cursor is `score|id` of the last id served;
@@ -111,8 +206,8 @@ export async function readTurfRankPage({
   limit: number;
 }) {
   const keys = turfKeys(event.name);
-  const picked = event.teams.filter((t) => teams?.some((x) => x.toLowerCase() === t.toLowerCase()));
-  const ranks = picked.length ? picked.map((t) => keys.rankTeam(t)) : [keys.rankTotal];
+  const picked = pickedTeams(event, teams);
+  const ranks = rankKeys(event, picked);
   const match = cursor ? CURSOR.exec(cursor) : null;
   const at = match ? { score: Number(match[1]), member: match[2] } : null;
   const most = sort === 'most';
@@ -195,7 +290,8 @@ const metrics =
     pages: new client.Counter({
       name: PROM_PREFIX + 'turf_feed_pages_total',
       help:
-        'Image feed pages served under a Hat Turf sort (`mode=sort`) or Show filter (`mode=show`), ' +
+        'Image feed pages served under a Hat Turf sort (`mode=sort`), the viewer’s own hats ' +
+        '(`mode=mine`) or a Show filter (`mode=show`), ' +
         'by how they came back after up to 3 reads: `full`, `end` (the feed ran out), `short` (fewer ' +
         'than asked, more to come) or `empty` (none, more to come), and `reads` taken. A high short ' +
         'or empty share means the filters thin pages.',
@@ -208,7 +304,7 @@ const metrics =
  * Every read continues from the last one's cursor, so the returned cursor follows the last read.
  */
 export async function fillTurfPage<T extends { id: number }, R extends { items: T[] }, C>(
-  mode: 'sort' | 'show',
+  mode: 'sort' | 'mine' | 'show',
   limit: number,
   cursor: C | undefined,
   read: (cursor: C | undefined) => Promise<R & { nextCursor?: C }>,

@@ -24,6 +24,11 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
   preventModelVersionLagBatch: vi.fn(),
 }));
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
+}));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
@@ -110,7 +115,9 @@ const matches = (row: VersionRow, where: VersionWhere) =>
   (where.modelId === undefined || row.modelId === where.modelId);
 
 const rawSql = () =>
-  mockTx.$executeRaw.mock.calls.map(([strings]) => (strings as string[]).join('?'));
+  [...mockTx.$executeRaw.mock.calls, ...mockTx.$queryRaw.mock.calls].map(([strings]) =>
+    (strings as string[]).join('?')
+  );
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -188,7 +195,7 @@ describe('publishModelById only touches the model’s own versions', () => {
     });
 
     expect(mockTx.modelVersion.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: [OWN_VERSION_ID] }, modelId: MODEL_ID },
+      where: expect.objectContaining({ id: { in: [OWN_VERSION_ID] }, modelId: MODEL_ID }),
       data: { status: 'Scheduled' },
     });
     const versionPublishedAt = rawSql().find((sql) => sql.includes('UPDATE "ModelVersion"'));
@@ -218,5 +225,21 @@ describe('publishModelById meta', () => {
     expect(mockTx.model.update.mock.calls[0][0].data.meta).toStrictEqual({
       showcaseCollectionId: 3,
     });
+  });
+});
+
+describe('publishModelById and the reviews written from its posts', () => {
+  it('releases only the posts the restore moved, flagging those put back under their old date', async () => {
+    dbMock.dbWrite.post.findMany.mockResolvedValue([{ id: 5 }, { id: 6 }]);
+    mockTx.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      Array.isArray(strings) && strings.join('?').includes('UPDATE "Post"')
+        ? [{ id: 5 }]
+        : []) as never);
+
+    await publishModelById({ id: MODEL_ID, versionIds: [OWN_VERSION_ID] });
+
+    expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ change: 'publish', postIds: [5] })
+    );
   });
 });

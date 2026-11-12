@@ -1,13 +1,5 @@
 import { shortAge } from '$lib/format';
-import {
-  chatAuditChatUrl,
-  commentV2Url,
-  commentV3Url,
-  entityUrl,
-  modelCommentUrl,
-  userLookupUrl,
-  userUrl,
-} from '$lib/entity-url';
+import { chatAuditChatUrl, commentUrl, entityUrl, userLookupUrl, userUrl } from '$lib/entity-url';
 
 export const NOTE_MAX_LENGTH = 500;
 
@@ -17,8 +9,6 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'Post',
   'Article',
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'UserProfile',
 ] as const;
@@ -30,9 +20,7 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   Post: 'Post',
   Article: 'Article',
   ChatMessage: 'Chat message',
-  Comment: 'Model comment',
-  CommentV2: 'Comment',
-  CommentV3: 'Comment (new)',
+  CommentV3: 'Comment',
   UserProfile: 'Profile',
 };
 
@@ -80,8 +68,6 @@ export function decisionLabel(hold: { status: string; decision: string | null })
 /** The types the main app can remove without destroying them; a type outside the list only gets "do nothing". */
 const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'UserProfile',
   'Post',
@@ -161,8 +147,6 @@ export function holdTitle(hold: {
   switch (hold.entityType) {
     case 'ChatMessage':
       return 'Chat';
-    case 'Comment':
-    case 'CommentV2':
     case 'CommentV3':
       return 'Comment';
     case 'UserProfile':
@@ -205,20 +189,13 @@ type HoldRef = {
   userId: number | null;
   username: string | null;
   chatId: number | null;
-  commentModelId?: number | null;
 };
 
-/** Where the held text lives. Null for a legacy model `Comment` whose model could not be read. */
+/** Where the held text lives. */
 export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null {
   switch (hold.entityType) {
-    case 'CommentV2':
-      return commentV2Url(civitaiUrl, hold.entityId);
     case 'CommentV3':
-      return commentV3Url(civitaiUrl, hold.entityId);
-    case 'Comment':
-      return hold.commentModelId
-        ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)
-        : null;
+      return commentUrl(civitaiUrl, hold.entityId);
     case 'ChatMessage':
       return hold.chatId ? chatAuditChatUrl(hold.chatId) : null;
     case 'UserProfile':

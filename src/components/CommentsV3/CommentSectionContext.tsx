@@ -45,6 +45,12 @@ type SectionState = {
   borderless: boolean;
   /** The comment the section is rooted on (a deep link, or a thread opened past the display depth). */
   focusedId?: number;
+  /** The list holds only the hidden comments, of a surface whose section leaves them out. */
+  hiddenOnly: boolean;
+  /** Top-level comments apart from and among the hidden, from a section that leaves them out. */
+  counts?: { visible: number; hidden: number };
+  /** With `threadId`, the thread could not be loaded: gone, or not visible to this viewer. */
+  threadMissing: boolean;
   focusedThread?: { ancestorIds: number[]; locked: boolean };
   focusPending: boolean;
   focus: (commentId?: number) => void;
@@ -86,6 +92,10 @@ export function CommentSectionProvider({
   forceLocked = false,
   deepLinks = true,
   borderless = false,
+  initialSort = ThreadSort.Oldest,
+  threadId,
+  highlight,
+  hiddenOnly = false,
   children,
 }: {
   entityType: CommentV3SurfaceType;
@@ -96,29 +106,42 @@ export function CommentSectionProvider({
   forceLocked?: boolean;
   deepLinks?: boolean;
   borderless?: boolean;
+  initialSort?: ThreadSort;
+  /** Shows only this comment's thread and loads no section list: a dialog on one thread. */
+  threadId?: number;
+  /** The comment to mark, where the page's own link parameters do not name it. */
+  highlight?: number;
+  /** List only the hidden comments, on a surface whose section leaves them out. */
+  hiddenOnly?: boolean;
   children: React.ReactNode;
 }) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
-  const { highlightedId, parentFocus } = useLinkedFocus(deepLinks);
+  const [sort, setSort] = useState<ThreadSort>(initialSort);
+  const linked = useLinkedFocus(deepLinks && !threadId);
+  const linkedHighlight = linked.highlightedId ?? highlight;
+  const parentFocus = threadId ?? linked.parentFocus;
 
   // Queries never go stale by default, and a notification link reuses this key: refetch on every
   // mount and every new link, or a reply posted since the reader last opened the page stays missing.
   const section = trpc.commentv3.getSection.useInfiniteQuery(
-    { entityType, entityId, sort },
-    { getNextPageParam: (page) => page.nextCursor ?? undefined, refetchOnMount: 'always' }
+    { entityType, entityId, sort, ...(hiddenOnly ? { hidden: true } : {}) },
+    {
+      getNextPageParam: (page) => page.nextCursor ?? undefined,
+      refetchOnMount: 'always',
+      enabled: !threadId,
+    }
   );
   const firstPage = section.data?.pages[0];
   const linkedFocus =
     parentFocus ??
-    (highlightedId && firstPage && !firstPage.comments.some((c) => c.id === highlightedId)
-      ? highlightedId
+    (linkedHighlight && firstPage && !firstPage.comments.some((c) => c.id === linkedHighlight)
+      ? linkedHighlight
       : undefined);
 
   // A deep link decides the starting point; opening a thread from inside overrides it, and
   // arriving on a different link resets that override, as a remount would.
-  const linkKey = `${entityType}_${entityId}_${parentFocus ?? ''}_${highlightedId ?? ''}`;
+  const linkKey = `${entityType}_${entityId}_${parentFocus ?? ''}_${linkedHighlight ?? ''}`;
   const [focusState, setFocusState] = useState<{ key: string; id?: number | null }>({
     key: linkKey,
   });
@@ -131,15 +154,19 @@ export function CommentSectionProvider({
     void refetchSection();
   }, [linkKey, refetchSection]);
   const focusedOverride = focusState.key === linkKey ? focusState.id : undefined;
-  const wantedFocus = focusedOverride === undefined ? linkedFocus : focusedOverride ?? undefined;
+  const wantedFocus =
+    focusedOverride === undefined ? linkedFocus : focusedOverride ?? threadId ?? undefined;
 
   const thread = trpc.commentv3.getThread.useQuery(
-    { commentId: wantedFocus ?? 0, entityType, entityId, sort },
+    { commentId: wantedFocus ?? 0, entityType, entityId, sort, highlight: linkedHighlight },
     { enabled: !!wantedFocus, retry: false }
   );
-  // A link to a comment that is gone, hidden from this viewer or on another entity shows the whole
-  // section rather than an empty one.
-  const focusedId = wantedFocus && !thread.isError ? wantedFocus : undefined;
+  // The thread answers with the comment the link marks, which a model-page link may name by its old id.
+  const highlightedId = thread.data?.highlightId ?? linkedHighlight;
+  // The id the thread resolved, which a model-page link may name by its old id. A link to a comment
+  // that is gone, hidden from this viewer or on another entity shows the whole section instead.
+  const focusedId =
+    wantedFocus && !thread.isError ? thread.data?.comment.id ?? wantedFocus : undefined;
 
   // A reply link roots on the parent, whose first page of replies may not hold the reply: root on
   // the reply itself then, where "View parent comment" leads back up.
@@ -215,6 +242,9 @@ export function CommentSectionProvider({
     forceLocked,
     borderless,
     focusedId,
+    hiddenOnly,
+    counts: section.data?.pages[0]?.counts,
+    threadMissing: !!threadId && thread.isError,
     focusedThread: thread.data
       ? { ancestorIds: thread.data.ancestorIds, locked: thread.data.locked }
       : undefined,

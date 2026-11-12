@@ -2,7 +2,6 @@ import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
 import { TokenScope } from '@civitai/auth/token-scope';
-import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import {
   systemAccountRefusal,
@@ -12,7 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { addApiKey, deleteApiKeys } from '~/server/services/api-key.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { HeaderTokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
-import { webhookTokenValues } from '~/server/utils/webhook-token';
+import { distinctAdminToken } from '~/server/utils/admin-token';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 
 /**
@@ -76,16 +75,8 @@ async function refusal(userId: number) {
   );
 }
 
-// Unconfigured while it repeats another admin token.
-function keyToken() {
-  const token = env.SYSTEM_ACCOUNT_KEY_TOKEN;
-  return token && [...webhookTokenValues(), env.PROBE_TOKEN, env.JOB_TOKEN].includes(token)
-    ? undefined
-    : token;
-}
-
 export default HeaderTokenSecuredEndpoint(
-  keyToken,
+  () => distinctAdminToken('SYSTEM_ACCOUNT_KEY_TOKEN'),
   async function (req: AxiomAPIRequest, res: NextApiResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     res.setHeader('Cache-Control', 'no-store');

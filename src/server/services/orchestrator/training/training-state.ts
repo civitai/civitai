@@ -19,6 +19,7 @@ import {
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getWorkflow, queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import type { TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { TrainingRunNameParts } from '~/shared/utils/training-file-names';
@@ -166,10 +167,11 @@ export async function resolveTrainingRun({
     where: { id: modelVersionId },
     select: {
       id: true,
+      status: true,
       trainingStatus: true,
       trainingDetails: true,
       meta: true,
-      model: { select: { userId: true, name: true } },
+      model: { select: { userId: true, name: true, status: true, mode: true } },
       files: {
         where: { type: 'Training Data' },
         select: { id: true, type: true, metadata: true, sizeKB: true },
@@ -178,6 +180,10 @@ export async function resolveTrainingRun({
   });
   if (!version) throw throwNotFoundError(`No model version with id ${modelVersionId}`);
   if (version.model.userId !== userId && !isModerator) throw throwAuthorizationError();
+  // A run's state carries its epochs, which are the model's weights: a deleted or taken-down
+  // model's are moderators-only, answered as if the version did not exist.
+  if ((isModelDeleted(version) || isModelTakenDown(version)) && !isModerator)
+    throw throwNotFoundError(`No model version with id ${modelVersionId}`);
 
   const run: TrainingRunNameParts = {
     modelName: version.model.name,

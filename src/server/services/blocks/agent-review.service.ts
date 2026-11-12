@@ -225,7 +225,12 @@ export async function startAgentReview(
         // a `{ error: … }` forward would re-report an old failure as if it were this run's.
         if (value == null) continue;
         if (isAgentSectionFailureMarker(value)) continue;
-        carried[section] = value;
+        // The old run's impersonation record does not describe this run: the check runs again
+        // when this run reports, and until then there is no record (so no fast lane).
+        carried[section] =
+          section === 'securityAudit'
+            ? (await import('./app-impersonation.logic')).stripImpersonationRecord(value)
+            : value;
       }
       // The model string describes the run that produced the carried content; keep it so a
       // partially-seeded report is not attributed to nothing.

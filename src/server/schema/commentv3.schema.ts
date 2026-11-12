@@ -6,6 +6,11 @@ import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { surfaceMayContainStickers } from '~/shared/utils/sticker-token';
 import { CommentEntityType } from '~/shared/utils/prisma/enums';
 import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
+import { usageLimits } from '~/shared/constants/usage-limits';
+
+export const commentRateLimits = usageLimits('comments.hourly', 'comments.daily');
+/** Shared by every comment write surface and the usage-limits read. */
+export const COMMENT_V3_RATE_LIMIT_KEY = 'commentv3:write';
 
 /** What a comment can be written against: a section's entity, or the comment it replies to. */
 export type CommentTargetType = CommentEntityType | 'comment';
@@ -20,6 +25,8 @@ export const getCommentSectionSchema = z.object({
   entityId: z.number().int().positive(),
   sort,
   cursor,
+  /** Only the hidden top-level comments, on a surface whose section leaves them out. */
+  hidden: z.boolean().optional(),
 });
 
 export type GetCommentRepliesInput = z.infer<typeof getCommentRepliesSchema>;
@@ -36,6 +43,8 @@ export const getCommentThreadSchema = z.object({
   entityType: z.enum(CommentEntityType),
   entityId: z.number().int().positive(),
   sort,
+  /** The comment a link marks, which a model-page link may name by its old id. */
+  highlight: z.number().int().positive().optional(),
 });
 
 export const commentContentSchema = getSanitizedStringSchema({

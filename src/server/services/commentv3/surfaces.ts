@@ -1,4 +1,5 @@
 import { NotificationCategory } from '~/server/common/enums';
+import type { CommentType } from '~/server/clickhouse/tracker';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { articleShareCookieName } from '~/server/services/article-share.helpers';
@@ -7,6 +8,7 @@ import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getModelVisibleToViewer } from '~/server/services/model-visibility.service';
 import { createNotification } from '~/server/services/notification.service';
 import { assertStorylineVisible } from '~/server/services/storyline.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
@@ -14,6 +16,7 @@ import type { StoredCommentV3 } from '~/server/services/commentv3/write.service'
 import {
   handleLogError,
   throwAuthorizationError,
+  throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
@@ -29,6 +32,7 @@ import {
   ArticleStatus,
   type CommentEntityType,
   ComicChapterStatus,
+  ModelStatus,
 } from '~/shared/utils/prisma/enums';
 
 export type CommentReadContext = Pick<Context, 'user' | 'features' | 'req' | 'cache'>;
@@ -40,10 +44,14 @@ export type CommentReadContext = Pick<Context, 'user' | 'features' | 'req' | 'ca
 type CommentSurface = {
   /** Throws not-found when the viewer may not see the entity's comments. Reads and writes. */
   assertVisible?(entityId: number, ctx: CommentReadContext): Promise<void>;
-  /** Throws when the viewer may not write there: a create or an edit. */
+  /** Throws when the viewer may not write there: a create or an edit, or the owner's hide and pin. */
   assertWritable?(entityId: number, ctx: ProtectedContext): Promise<void>;
+  /** Throws when the entity takes no new comments or edits; the owner may still hide and pin. */
+  assertOpen?(entityId: number, ctx: ProtectedContext): Promise<void>;
   /** After a new comment commits: side effects only. */
   onCreated?(comment: StoredCommentV3, ctx: ProtectedContext): void;
+  /** The ClickHouse comment event for a new comment, where it is not the default (`commentTrackTypes`). */
+  trackAs?(comment: StoredCommentV3): { type: CommentType; entityId: number };
 };
 
 /** Creators who blocked the viewer and creators the viewer blocked. */
@@ -82,6 +90,49 @@ const accessGated =
     if (!access?.hasAccess)
       throw throwAuthorizationError('You do not have access to this resource.');
   };
+
+/** A model's comments are for whoever may see the model: published, or its owner's; not `poi`. */
+async function assertModelCommentsVisible(modelId: number, ctx: CommentReadContext) {
+  if (!(await getModelVisibleToViewer(modelId, ctx.user)))
+    throw throwNotFoundError('Model not found');
+}
+
+/**
+ * A model takes comments while neither it nor its comments are locked (`meta.commentsLocked`, which
+ * the page enforces only by hiding the discussion) and it has a published version. With exactly one, the
+ * writer needs access to it: an early-access version would otherwise be discussed by readers it
+ * still excludes. With more, the latest may be early access while an older one is open.
+ */
+async function assertModelOpen(modelId: number, ctx: ProtectedContext) {
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: {
+      locked: true,
+      meta: true,
+      modelVersions: {
+        take: 2,
+        select: { id: true },
+        where: { status: ModelStatus.Published },
+        orderBy: { index: 'asc' },
+      },
+    },
+  });
+  if (!model) throw throwNotFoundError('Model not found');
+  const commentsLocked = !!(model.meta as { commentsLocked?: boolean } | null)?.commentsLocked;
+  if ((model.locked || commentsLocked) && !ctx.user.isModerator)
+    throw throwAuthorizationError(model.locked ? 'Model is locked' : 'Comments are locked');
+  const [version] = model.modelVersions;
+  if (!version) throw throwNotFoundError('This model has no versions.');
+  if (model.modelVersions.length > 1) return;
+  const [access] = await hasEntityAccess({
+    entityType: 'ModelVersion',
+    entityIds: [version.id],
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+  });
+  if (!access?.hasAccess)
+    throw throwAuthorizationError("You do not have access to this model's latest version.");
+}
 
 /**
  * An unpublished article's comments are its owner's, moderators', and those of a viewer whose share
@@ -220,9 +271,20 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     assertVisible: assertComicChapterVisible,
     onCreated: (comment, ctx) => void notifyComicOwner(comment, ctx).catch(handleLogError),
   },
-  model: {},
+  model: {
+    assertVisible: assertModelCommentsVisible,
+    assertOpen: assertModelOpen,
+    // Every comment, replies too, keyed by the model: the model metrics job finds models to recount
+    // by this event.
+    trackAs: (comment) => ({ type: 'Model', entityId: comment.entityId }),
+  },
   model3d: {},
-  model3dReview: {},
+  // Nothing renders these comments, and the surface never wrote CommentV3.
+  model3dReview: {
+    assertWritable: async () => {
+      throw throwBadRequestError('Comments on 3D model reviews are closed.');
+    },
+  },
   appListing: {},
 };
 

@@ -22,6 +22,11 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
   scanEntityInBackground: vi.fn(),
 }));
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
+}));
 vi.mock('~/server/services/job-queue.service', () => ({
   enqueueJobs: vi.fn(async () => undefined),
 }));
@@ -81,11 +86,12 @@ const runOnPglite = async (strings: TemplateStringsArray, values: unknown[]) => 
 };
 
 // Only the post writes reach the database; everything else upsertCollection touches is mocked.
-const routeRaw = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
-  if (!strings.join('').includes('UPDATE "Post"')) return [];
-  const result = await runOnPglite(strings, values);
-  return result.affectedRows ?? 0;
-}) as never;
+const routeRaw = (as: 'count' | 'rows') =>
+  (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (!strings.join('').includes('UPDATE "Post"')) return as === 'rows' ? [] : 0;
+    const result = await runOnPglite(strings, values);
+    return as === 'rows' ? result.rows : result.affectedRows ?? 0;
+  }) as never;
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -98,8 +104,8 @@ beforeEach(async () => {
     -- Not a user id; must be ignored rather than break the lookup.
     INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{"secondaryUserId": "n/a"}');
   `);
-  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(routeRaw);
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(routeRaw);
+  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(routeRaw('count'));
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(routeRaw('rows'));
 });
 
 // `by` other than the owner saves as a co-manager, whose `read` the service ignores.
@@ -217,6 +223,21 @@ describe('collection privacy toggle and its posts', () => {
     expect(await post(1)).toEqual({ publishedAt: PUBLISHED_AT, metadata: { keep: 'x' } });
     expect(await post(2)).toEqual({ publishedAt: PUBLISHED_AT, metadata: {} });
     expect(await post(3)).toEqual({ publishedAt: PUBLISHED_AT, metadata: {} });
+  });
+
+  it('recounts the reviews of the posts it hides, and releases those it restores as restores', async () => {
+    await insertPost(1);
+    await insertPost(2, { publishedAt: null, metadata: modelUnpublishStamps });
+
+    await setRead('Public', 'Private');
+    expect(syncReviewsOfMovedPosts).toHaveBeenLastCalledWith(
+      expect.objectContaining({ change: 'unpublish', postIds: [1] })
+    );
+
+    await setRead('Private', 'Public');
+    expect(syncReviewsOfMovedPosts).toHaveBeenLastCalledWith(
+      expect.objectContaining({ change: 'publish', postIds: [1] })
+    );
   });
 
   it.each(['Public', 'Private'] as const)(

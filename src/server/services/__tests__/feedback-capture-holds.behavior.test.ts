@@ -224,6 +224,17 @@ describe('purge-feedback-captures', () => {
     });
   });
 
+  // The log reads the guard's own legs, so a report list holding a null cannot make it disagree.
+  it('logs each state exactly as the guard reads it', async () => {
+    await CLAUSES[2][1](1);
+    await db.query(
+      `INSERT INTO "CsamReport" ("userId", images) VALUES (NULL, '[null, {"id": 9}]')`
+    );
+    expect(await query(keptCapturesSql(CUTOFF))).toEqual([
+      { id: 1, review: false, blocked: false, minor: true, reported: false, evidenceHold: false },
+    ]);
+  });
+
   it('keeps every capture while the capture account is marked', async () => {
     await seedImage(1);
     await db.query(`INSERT INTO "EvidenceHold" VALUES ($1)`, [CAPTURE]);

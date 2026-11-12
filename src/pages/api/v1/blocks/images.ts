@@ -210,10 +210,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   try {
-    // A minor or SFW-only model's images are served only at its gallery's held level.
+    // A minor or SFW-only model's images are served only at its gallery's held level, and a
+    // taken-down model's not at all.
     if (data.modelId || data.modelVersionId || data.postId) {
       // Loaded on demand: the model service's import graph is large and only this branch needs it.
-      const { getHeldGalleryLevel } = await import('~/server/services/model.service');
+      const { getHeldGalleryLevel, isModelGalleryWithheld } = await import(
+        '~/server/services/model.service'
+      );
+      // A taken-down model's images are withheld here from everyone, its owner included.
+      if (await isModelGalleryWithheld(data)) {
+        res.status(200).json({ items: [], metadata: {} });
+        return;
+      }
       const heldLevel = await getHeldGalleryLevel(data);
       if (heldLevel !== undefined) {
         browsingLevel = Flags.intersection(browsingLevel, heldLevel);

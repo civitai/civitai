@@ -52,6 +52,7 @@ export function chromeClearance({
   height,
   rotation,
   knobOffset,
+  knobBelow = false,
   outset,
   gap,
 }: {
@@ -63,6 +64,8 @@ export function chromeClearance({
   rotation: number;
   /** The rotate knob hangs this fraction of the sticker's height above it. */
   knobOffset: number;
+  /** The knob hangs below instead (knobBelowFor). */
+  knobBelow?: boolean;
   /** How far the corner handles stick out past the box on every side. */
   outset: number;
   /** Clear air between the furthest thing on the sticker and the chrome. */
@@ -73,11 +76,13 @@ export function chromeClearance({
   const sin = Math.abs(Math.sin(radians));
 
   // The local rectangle to clear, about the sticker's centre. Asymmetric,
-  // because the rotate knob only hangs off the top — and it is what makes this
-  // more than the usual `h·|cos| + w·|sin|` extent: that formula is for a
-  // rectangle centred on the point it turns about, and the knob is not.
-  const top = -(height / 2 + Math.max(knobOffset * height, outset));
-  const bottom = height / 2 + outset;
+  // because the rotate knob hangs off one end (the top, or the bottom when
+  // `knobBelow`) — and it is what makes this more than the usual
+  // `h·|cos| + w·|sin|` extent: that formula is for a rectangle centred on the
+  // point it turns about, and the knob is not.
+  const knob = Math.max(knobOffset * height, outset);
+  const top = -(height / 2 + (knobBelow ? outset : knob));
+  const bottom = height / 2 + (knobBelow ? knob : outset);
   // Every corner shares the same |x·sin| reach, so only the y term differs.
   const side = (width / 2 + outset) * sin;
 
@@ -223,6 +228,7 @@ export function placeButtonPosition({
   liftOverTray = false,
   rotation,
   knobOffset,
+  knobBelow = false,
   outset,
   gap,
 }: {
@@ -237,6 +243,7 @@ export function placeButtonPosition({
   liftOverTray?: boolean;
   rotation: number;
   knobOffset: number;
+  knobBelow?: boolean;
   outset: number;
   gap: number;
 }): { flipped: boolean; below: number; above: number; lift: number } | null {
@@ -256,7 +263,15 @@ export function placeButtonPosition({
   // `placementControlPosition`.
   if (!(height > 0) || !(width > 0)) return null;
 
-  const clearance = chromeClearance({ width, height, rotation, knobOffset, outset, gap });
+  const clearance = chromeClearance({
+    width,
+    height,
+    rotation,
+    knobOffset,
+    knobBelow,
+    outset,
+    gap,
+  });
   // From the cluster's own measured rect, both times: the pair that comes out
   // is the same whichever side it is currently on.
   const measured = cluster.getBoundingClientRect();

@@ -9,7 +9,8 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { HoverCard } from '~/components/MantineOverlays';
-import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
+import { getHotkeyHandler, useDebouncedValue } from '@mantine/hooks';
+import { useSearchFocusHotkeys } from '~/hooks/useSearchFocusHotkeys';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import type { Hit } from 'instantsearch.js';
 import { useRouter } from 'next/router';
@@ -28,6 +29,7 @@ import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/Cleara
 import { slugit } from '~/utils/string-helpers';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
+import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
@@ -93,19 +95,21 @@ type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
 // never reaches `useInstantSearch().status`, so we can't key off that).
 const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
   createResilientSearchClient(
-    withSemanticImageSearch({
-      ...meilisearch,
-      search(requests) {
-        // Prevent making a request if there is no query
-        // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
-        // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
-        if (requests.every(({ params }) => !params?.query)) {
-          return Promise.resolve(emptyMeiliResults(requests));
-        }
+    withSemanticArticleSearch(
+      withSemanticImageSearch({
+        ...meilisearch,
+        search(requests) {
+          // Prevent making a request if there is no query
+          // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
+          // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
+          if (requests.every(({ params }) => !params?.query)) {
+            return Promise.resolve(emptyMeiliResults(requests));
+          }
 
-        return meilisearch.search(requests);
-      },
-    }),
+          return meilisearch.search(requests);
+        },
+      })
+    ),
     {
       onError: () => autocompleteAvailability.setUnavailable(true),
       onSuccess: () => autocompleteAvailability.setUnavailable(false),
@@ -546,10 +550,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onSubmit?.();
   };
 
-  useHotkeys([
-    ['/', focusInput],
-    ['mod+k', focusInput],
-  ]);
+  useSearchFocusHotkeys(focusInput);
 
   useEffect(() => {
     // Only set the query when the debounced search changes

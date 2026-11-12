@@ -250,8 +250,13 @@ Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing 
 
 | Action | Privileged | Bulk? | Input |
 |---|---|---|---|
-| `bulkDelete` | no | **yes** | `{ commentIds?: number[], commentV2Ids?: number[] }` — at least one required |
-| `removeAsTos` | no | **yes** | `{ commentIds?: number[], commentV2Ids?: number[] }` — soft-hide, retains row for evidence |
+| `bulkDelete` | no | **yes** | `{ commentIds: number[] }` — CommentV3 ids, at least one |
+| `removeAsTos` | no | **yes** | `{ commentIds: number[] }` — soft-hide, retains row for evidence |
+
+Both took a second list, `commentIds` (v1 `Comment` ids), until the model flip (2026-11-07, not
+deployed), and then only `commentV2Ids` (CommentV3 ids) until CommentV3 Phase 5 (built 2026-11-09,
+not deployed) renamed it `commentIds`; every comment is addressed by its CommentV3 id. Today they
+are `/api/mod/comment/bulk-delete` and `remove-as-tos`, returning `{ deleted }` / `{ comments }`.
 
 @dev: — Group 4 description says SQL body wasn't in source list. Need to find the exact "Remove as TOS Violation" behavior. Best guess: sets a flag (e.g. `tosViolation: true`) + hides from public views. Will dig into existing report-action code first.
 @justin: Yeah. Send a sub agent to dig.
@@ -263,17 +268,20 @@ Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing 
 2. `updateCommentReportStatusByReason(id, TOSViolation, Actioned)` (comment.service.ts:213-230) — flips reports to Actioned
 3. Fires `reportAcceptedReward` for each reporter
 4. Sends `'tos-violation'` notification to comment owner
+
 5. ModActivity tracked implicitly via reward system
 
 Comment stays in DB; hidden from public views via `where: { tosViolation: false }` filter.
 
+(`comment.controller.ts` and `comment.service.ts` were deleted in the model flip, 2026-11-06 and 2026-11-07, not deployed; a model comment is flagged by its CommentV3 id through `bulkSetCommentV3TosViolation`.)
+
 **CommentV2 — column exists, no endpoint.** `tosViolation` column on CommentV2. The `commentv2` router that later held `setTosViolation` was deleted 2026-11-05 (release 2 of the CommentV3 write flip, not deployed); the endpoint is now `commentv3.setTosViolation`. Reports reference it for display only.
 
 **`removeAsTos` action implementation:**
-- Bulk over `{ commentIds?: number[], commentV2Ids?: number[] }`
+- Bulk over `{ commentIds: number[] }` (CommentV3 ids; was `commentV2Ids` until CommentV3 Phase 5)
 - For each: mirror the legacy flow (flag + reports → Actioned + reward + notification)
-- Build a new `setCommentV2TosViolation` service that mirrors the legacy one for CommentV2 — Phase 1 deliverable (added to checklist below)
-- Single handler: iterate each list, call the variant-appropriate service, collect affected IDs for the audit row
+- Build a new `setCommentV2TosViolation` service that mirrors the legacy one for CommentV2 — Phase 1 deliverable (added to checklist below); superseded by `bulkSetCommentV3TosViolation`, the only one left after CommentV3 Phase 5
+- Single handler: `bulkSetCommentV3TosViolation` over the list, collecting affected IDs for the audit row
 
 No search index update needed (filter-based hiding, not deletion).
 

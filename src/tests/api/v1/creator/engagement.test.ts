@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as EngagementService from '~/server/services/creator-engagement.service';
+import type * as FeatureFlags from '~/server/services/feature-flags.service';
 
 const { mockGetEngagement, mockFlags, mockWindow } = vi.hoisted(() => ({
   mockGetEngagement: vi.fn(),
@@ -11,7 +12,10 @@ vi.mock('~/server/services/creator-engagement.service', async (importOriginal) =
   ...(await importOriginal<typeof EngagementService>()),
   getCreatorEngagement: mockGetEngagement,
 }));
-vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlagsAsync: mockFlags }));
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlags>()),
+  getFeatureFlagsAsync: mockFlags,
+}));
 vi.mock('~/server/utils/public-api-rate-limit', () => ({ checkFixedWindow: mockWindow }));
 vi.mock('@civitai/next-axiom', () => ({
   withAxiom:

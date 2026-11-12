@@ -1018,6 +1018,13 @@ export const AppealCategory = {
 
 export type AppealCategory = (typeof AppealCategory)[keyof typeof AppealCategory];
 
+export const ImageAxisSource = {
+  rated: 'rated',
+  moderator: 'moderator',
+} as const;
+
+export type ImageAxisSource = (typeof ImageAxisSource)[keyof typeof ImageAxisSource];
+
 export const AuctionType = {
   Model: 'Model',
   Image: 'Image',
@@ -1299,6 +1306,7 @@ export const OutboxEntity = {
   Model: 'Model',
   Post: 'Post',
   ModelVersion: 'ModelVersion',
+  Comic: 'Comic',
 } as const;
 
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];

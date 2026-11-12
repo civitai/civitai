@@ -20,9 +20,7 @@ beforeEach(() => vi.clearAllMocks());
 describe('Clavata scam auto-mute', () => {
   it.each([
     ['Chat', 'chatMessages'],
-    ['Comment', 'comments'],
-    ['CommentV2', 'commentsV2'],
-    ['CommentV3', 'commentsV2'],
+    ['CommentV3', 'comments'],
   ] as const)('%s mutes with cleanup %s', async (type, cleanup) => {
     await autoMuteIfScamAccount({ type, entityId: 9, userId: 5, matches: [TAG], value: 'x' });
     expect(autoMuteScamAccount).toHaveBeenCalledExactlyOnceWith(
@@ -32,7 +30,7 @@ describe('Clavata scam auto-mute', () => {
 
   it('ignores other tags and other entity types', async () => {
     await autoMuteIfScamAccount({
-      type: 'Comment',
+      type: 'CommentV3',
       entityId: 9,
       userId: 5,
       matches: ['Other'],
@@ -51,7 +49,13 @@ describe('Clavata scam auto-mute', () => {
   it('logs rather than throws when the mute fails', async () => {
     vi.mocked(autoMuteScamAccount).mockRejectedValueOnce(new Error('db down'));
     await expect(
-      autoMuteIfScamAccount({ type: 'Comment', entityId: 9, userId: 5, matches: [TAG], value: 'x' })
+      autoMuteIfScamAccount({
+        type: 'CommentV3',
+        entityId: 9,
+        userId: 5,
+        matches: [TAG],
+        value: 'x',
+      })
     ).resolves.toBeUndefined();
     expect(loggingMock.logToAxiom).toHaveBeenCalled();
   });
@@ -74,11 +78,11 @@ describe('clavataScamEvidence', () => {
 
   it('keys other entities by their text, so an edit is a new verdict and the same text is not', () => {
     const at = (value: string) =>
-      clavataScamEvidence({ type: 'Comment', entityId: 7, matches: [TAG], value });
+      clavataScamEvidence({ type: 'CommentV3', entityId: 7, matches: [TAG], value });
     expect(at('a').dedupeKey).toBe(at('a').dedupeKey);
     expect(at('a').dedupeKey).not.toBe(at('b').dedupeKey);
     expect(at('a').dedupeKey).toMatch(
-      /^clavata:Comment:7:[0-9a-f]{16}:Impersonating Civitai Staff$/
+      /^clavata:CommentV3:7:[0-9a-f]{16}:Impersonating Civitai Staff$/
     );
     expect(at('a')).toMatchObject({
       contentAt: null,

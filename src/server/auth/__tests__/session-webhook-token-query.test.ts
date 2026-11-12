@@ -19,7 +19,6 @@ vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: async () => null },
   getHubSession: async () => null,
   maybeRollHubCookie: async () => undefined,
-  maybeUpgradeLegacySession: async () => undefined,
 }));
 
 const { getServerAuthSession } = await import('~/server/auth/get-server-auth-session');

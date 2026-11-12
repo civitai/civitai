@@ -24,13 +24,19 @@ import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service
  * search service is mocked so no Prisma/Meili/Flipt is loaded.
  */
 
-const { mockRunImageSearch, mockCheckRateLimit, mockGetHeldGalleryLevel, mockWithoutHeld } =
-  vi.hoisted(() => ({
-    mockWithoutHeld: vi.fn(),
-    mockRunImageSearch: vi.fn(),
-    mockCheckRateLimit: vi.fn(),
-    mockGetHeldGalleryLevel: vi.fn(),
-  }));
+const {
+  mockRunImageSearch,
+  mockCheckRateLimit,
+  mockGetHeldGalleryLevel,
+  mockWithoutHeld,
+  mockIsWithheld,
+} = vi.hoisted(() => ({
+  mockIsWithheld: vi.fn(async () => false),
+  mockWithoutHeld: vi.fn(),
+  mockRunImageSearch: vi.fn(),
+  mockCheckRateLimit: vi.fn(),
+  mockGetHeldGalleryLevel: vi.fn(),
+}));
 
 const claimsBox: { claims: BlockTokenClaims | undefined } = { claims: undefined };
 
@@ -41,6 +47,7 @@ vi.mock('~/server/services/image-search.service', () => ({
 
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: mockGetHeldGalleryLevel,
+  isModelGalleryWithheld: mockIsWithheld,
 }));
 
 // Per-token catalog rate limiter — mocked so the existing maturity-clamp tests
@@ -414,6 +421,24 @@ describe('/api/v1/blocks/images — a held model or version', () => {
     expect(res.body.items).toEqual([]);
     expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['modelId', { modelId: '5' }, { modelId: 5 }],
+    ['modelVersionId', { modelVersionId: '50' }, { modelVersionId: 50 }],
+    ['postId', { postId: '500' }, { postId: 500 }],
+  ])(
+    'serves ?%s= of a taken-down model no images, searching nothing',
+    async (_n, query, selector) => {
+      mockIsWithheld.mockResolvedValueOnce(true);
+
+      const res = await invoke(query);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(mockIsWithheld).toHaveBeenCalledWith(expect.objectContaining(selector));
+      expect(mockRunImageSearch).not.toHaveBeenCalled();
+    }
+  );
 
   it('leaves an unheld model at the token level', async () => {
     mockGetHeldGalleryLevel.mockResolvedValue(undefined);

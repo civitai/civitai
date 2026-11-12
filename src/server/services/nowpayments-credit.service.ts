@@ -4,6 +4,7 @@ import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { getMultipliersForUser, getTransactionByExternalId } from '~/server/services/buzz.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { HAND_PAID } from '~/server/services/nowpayments-settle-decision';
 import {
   eventFromPayment,
   manualPayinCreditExternalId,
@@ -125,6 +126,8 @@ export async function assessDepositCredit(
   });
   if (deposit?.status === 'finished' && deposit.buzzCredited != null)
     return refuse('Already credited by the deposit flow');
+  if (deposit?.status === HAND_PAID)
+    return refuse('Already paid by hand: a hand-paid top-up names this payment');
   const payinHash = payment.payin_hash ?? null;
   if (payinHash && (await getTransactionByExternalId(manualPayinCreditExternalId(payinHash))))
     return refuse('Already credited by hand against its payin hash');

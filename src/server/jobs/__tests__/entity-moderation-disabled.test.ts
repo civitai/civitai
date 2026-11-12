@@ -19,11 +19,11 @@ beforeEach(() => {
 
 describe('getDisabledEntities', () => {
   it('skips keys text scan owns, on top of the operator toggles', async () => {
-    vi.mocked(getTextScanOwnedClavataKeys).mockResolvedValue(new Set(['Comment', 'Chat']));
+    vi.mocked(getTextScanOwnedClavataKeys).mockResolvedValue(new Set(['CommentV3', 'Chat']));
     expect(await getDisabledEntities()).toEqual({
       Post: false,
       Article: true,
-      Comment: false,
+      CommentV3: false,
       Chat: false,
     });
   });

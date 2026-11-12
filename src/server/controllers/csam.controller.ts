@@ -1,5 +1,9 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -22,7 +26,12 @@ import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-f
 import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { bulkSetReportStatus, csamReportRewardExclusions } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
-import { BlockImageReason, ReportStatus } from '~/shared/utils/prisma/enums';
+import {
+  AppealStatus,
+  BlockImageReason,
+  EntityType,
+  ReportStatus,
+} from '~/shared/utils/prisma/enums';
 
 export async function createCsamReportHandler({
   input,
@@ -42,6 +51,11 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   let denyFailed = false;
   let denyBookkeepingFailed = false;
   let strikesReviewFailed = false;
+  if (
+    isFeedbackCaptureOwner(userId) ||
+    isFeedbackCaptureOwner((details as { secondaryUserId?: unknown } | undefined)?.secondaryUserId)
+  )
+    throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   if (contextSources && type !== 'Image')
     throwBadRequestError('Text can be attached to an image report only');
   const contextText = contextSources
@@ -165,8 +179,27 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     }
   }
 
-  // Last, so the images are already blocked and the report row committed when the flag comes off.
-  if (type === 'Image' && imageIds.length) await releaseReviewFlagsToReportHold(imageIds);
+  if (type === 'Image' && imageIds.length) {
+    await dbWrite.appeal.updateMany({
+      where: {
+        entityType: EntityType.Image,
+        entityId: { in: imageIds },
+        status: AppealStatus.Pending,
+      },
+      data: {
+        status: AppealStatus.Rejected,
+        resolvedBy: reportedById,
+        resolvedAt: new Date(),
+        internalNotes: 'Closed by CSAM report',
+      },
+    });
+    // Every filed image's deferred block effects, whether or not its flag comes off below.
+    await dbWrite.$executeRaw`
+      DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${imageIds}::int[])
+    `;
+    // Last, so the images are already blocked and the report row committed when the flag comes off.
+    await releaseReviewFlagsToReportHold(imageIds);
+  }
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
   return { denyFailed, denyBookkeepingFailed, strikesReviewFailed };
@@ -179,6 +212,8 @@ export async function createExternalCsamReportHandler({
   input: CreateExternalCsamReportSchema;
   ctx: ProtectedContext;
 }) {
+  if (isFeedbackCaptureOwner(input.userId) || isFeedbackCaptureOwner(input.secondaryUserId))
+    throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   // No auto soft-delete/ban here: external offenders are typically already
   // banned, and there is no on-Civitai content to remove. The report row is
   // picked up and sent to NCMEC by the hourly send-csam-reports job.

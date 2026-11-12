@@ -5,10 +5,7 @@ import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { forcedMinorModelBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -42,7 +39,7 @@ import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
 export function ModelCarousel(props: Props) {
   const currentUser = useCurrentUser();
   const forceMinorLevel = props.minor && !currentUser?.isModerator;
-  const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+  const minorBrowsingLevel = forcedMinorModelBrowsingLevel(!!currentUser);
 
   return (
     <BrowsingLevelProvider forcedBrowsingLevel={forceMinorLevel ? minorBrowsingLevel : undefined}>
@@ -59,7 +56,13 @@ export function ModelCarousel(props: Props) {
   );
 }
 
-function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
+function ModelCarouselContent({
+  modelId,
+  modelVersionId,
+  modelUserId,
+  limit = 10,
+  initialMobile,
+}: Props) {
   const features = useFeatureFlags();
   const showEventCosmetics = useShowEventCosmetics();
   const { running, helpers } = useTourContext();
@@ -80,7 +83,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
   });
 
   const hiddenExplained = useExplainHiddenImages(flatData);
-  const mobile = useContainerSmallerThan('md');
+  const mobile = useContainerSmallerThan('md', initialMobile);
 
   if (isLoading)
     return (
@@ -271,4 +274,5 @@ type Props = {
   modelUserId: number;
   limit?: number;
   minor?: boolean;
+  initialMobile?: boolean;
 };

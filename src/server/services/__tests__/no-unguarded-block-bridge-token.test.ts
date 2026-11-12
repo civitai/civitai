@@ -1277,12 +1277,32 @@ function importMap(source: string): Map<string, { spec: string; imported: string
 
 /** `~/server/schema/buzz.schema` -> the repo-relative file that actually exists. */
 function resolveModule(spec: string): string | null {
-  if (!spec.startsWith('~/')) return null;
-  const base = path.join('src', spec.slice(2));
-  for (const candidate of [`${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')]) {
-    if (fs.existsSync(path.join(REPO_ROOT, candidate))) return candidate;
+  if (spec.startsWith('~/')) {
+    const base = path.join('src', spec.slice(2));
+    for (const candidate of [`${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')]) {
+      if (fs.existsSync(path.join(REPO_ROOT, candidate))) return candidate;
+    }
+    return null;
   }
-  return null;
+  return resolveWorkspacePackage(spec);
+}
+
+/**
+ * `@civitai/<name>[/<subpath>]` -> the file `packages/civitai-<name>/package.json` exports for
+ * it. Only a plain string export resolves; anything else stays null, so it is reported as
+ * unreadable rather than guessed.
+ */
+function resolveWorkspacePackage(spec: string): string | null {
+  const match = /^@civitai\/([a-z0-9-]+)(\/[A-Za-z0-9._/-]+)?$/.exec(spec);
+  if (!match) return null;
+  const dir = `packages/civitai-${match[1]}`;
+  const manifest = readIfPresent(`${dir}/package.json`);
+  if (manifest == null) return null;
+  const exports = (JSON.parse(manifest) as { exports?: Record<string, unknown> }).exports ?? {};
+  const target = exports[`.${match[2] ?? ''}`];
+  if (typeof target !== 'string') return null;
+  const file = path.posix.join(dir, target);
+  return fs.existsSync(path.join(REPO_ROOT, file)) ? file : null;
 }
 
 const NEXT_BINDING_RE =
@@ -1973,6 +1993,22 @@ describe('the bridge scan can actually see what it claims to', () => {
     // Reading the declaration's own VALUE back proves the slice is the right one, and is what
     // makes the fixture a used binding rather than a lint warning.
     expect(found).toContain(dollar$Fixture);
+  });
+
+  it('resolves a workspace package import through its exports map', () => {
+    expect(resolveModule('~/server/routers/blocks.router')).toBe(
+      'src/server/routers/blocks.router.ts'
+    );
+    expect(resolveModule('@civitai/shared/iso-datetime-compat')).toBe(
+      'packages/civitai-shared/src/iso-datetime-compat.ts'
+    );
+    expect(resolveModule('@civitai/shared/not-an-export')).toBeNull();
+    expect(resolveModule('@civitai/no-such-package')).toBeNull();
+    expect(resolveModule('zod')).toBeNull();
+    // Read through to the declaration: a helper with no blockToken scores false, not unreadable.
+    expect(
+      schemaCarriesBlockToken('isoDatetimeCompat', 'src/server/routers/blocks.router.ts')
+    ).toBe(false);
   });
 
   it('a parameter name colliding with the chain operand does NOT suppress the operand', () => {

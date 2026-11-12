@@ -1,16 +1,12 @@
 import { Button, Center, Group, Loader, Stack, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import {
-  OnsiteReviewModalTitle,
-  type AnyRequest,
-  type OnsiteReviewMode,
-} from '~/components/Apps/OnsiteReviewModal';
-import { ReviewDetailView } from '~/components/Apps/ReviewDetailView';
+import type { AnyRequest, OnsiteReviewMode } from '~/components/Apps/OnsiteReviewModal';
+import { useNextPendingReview } from '~/components/Apps/useNextPendingReview';
+import { AllCaughtUp, ReviewDetailView } from '~/components/Apps/ReviewDetailView';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -27,9 +23,10 @@ import { trpc } from '~/utils/trpc';
  * `setSelected`; with the flag off the queue keeps opening the modal, so this is
  * fully reversible.
  *
- * 🔴 IT NO LONGER RE-HOSTS `OnsiteReviewModalBody` VERBATIM. Phase 2 landed: the page
- * composes the SAME exported sub-sections into five tabs — Permissions (default) · Code ·
- * Agent report · Manifest · Preview — with the approve/reject bar pinned OUTSIDE them. The
+ * 🔴 IT NO LONGER RE-HOSTS `OnsiteReviewModalBody` VERBATIM. The page composes the SAME
+ * exported sub-sections into six tabs — Overview (default) · Code · Permissions · Manifest ·
+ * AI report · Preview — with the approve/reject bar pinned OUTSIDE them. After a decision it
+ * opens the next oldest pending submission ("Approve & next"), or "No more app submissions waiting". The
  * panels are shared with the queue modal, so only the arrangement differs; see
  * `ReviewDetailTabsView` and `OnsiteReviewModalBody`'s docstring.
  *
@@ -95,7 +92,8 @@ export const getServerSideProps = createServerSideProps<ReviewDetailPageProps>({
 
 export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageProps) {
   const features = useFeatureFlags();
-  const router = useRouter();
+  // After a decision: the next oldest pending submission, or "No more app submissions waiting".
+  const { openNext, caughtUp } = useNextPendingReview(publishRequestId);
 
   const query = trpc.blocks.getPublishRequest.useQuery(
     { publishRequestId },
@@ -171,12 +169,16 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
                 Review queue
               </Button>
             </Group>
-            <Title order={2}>
-              {selection ? <OnsiteReviewModalTitle selection={selection} /> : 'Submission review'}
-            </Title>
+            {/* The submission's own header (icon, name, slug, version, kind) is
+                `ReviewDetailView`'s; this title only covers loading and not-found. */}
+            {(!selection || caughtUp) && (
+              <Title order={2}>{caughtUp ? 'Review queue' : 'Submission review'}</Title>
+            )}
           </Stack>
 
-          {query.isLoading ? (
+          {caughtUp ? (
+            <AllCaughtUp />
+          ) : query.isLoading ? (
             <Center py="xl">
               <Loader size="sm" />
             </Center>
@@ -191,10 +193,10 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
               // key parity with the modal for defensiveness.
               key={selection.request.id}
               selection={selection}
-              // Q6: after approve/reject, redirect to the queue (matches today's
-              // modal-close-then-invalidate — the mutation already invalidates the
-              // list queries, so the queue is fresh on arrival).
-              onClose={() => void router.push('/apps/review')}
+              // After a decision, open the next OLDEST pending submission — or show
+              // "No more app submissions waiting" when none is left. (Was: back to the queue, which cost a
+              // click and a scan per review.)
+              onClose={openNext}
             />
           )}
         </Stack>

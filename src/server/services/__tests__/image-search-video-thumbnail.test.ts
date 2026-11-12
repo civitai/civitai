@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest } from 'next';
 import type * as Caches from '~/server/redis/caches';
+import type * as FeatureFlags from '~/server/services/feature-flags.service';
 
-vi.mock('~/server/services/feature-flags.service', () => ({
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlags>()),
   getFeatureFlags: vi.fn(() => ({ canViewNsfw: true, datapacketRead: false })),
   buildFliptContext: vi.fn(() => ({})),
 }));

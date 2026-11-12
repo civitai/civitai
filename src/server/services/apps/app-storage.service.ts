@@ -537,7 +537,7 @@ export const appStorageSetInput = z.object({
   // value is intentionally `unknown` here — the server-side cap is
   // by byte-size, not by structural shape. Apps choose their own
   // value schema; the cap keeps the per-write budget bounded.
-  value: z.unknown(),
+  value: z.unknown().optional(),
 });
 export const appStorageListInput = z.object({
   prefix: z.string().max(200).optional(),

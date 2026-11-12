@@ -418,4 +418,17 @@ export const modelNotifications = createNotificationProcessor({
       }`,
     }),
   },
+  'model-gallery-post-pinned': {
+    displayName: 'Your post was pinned to a model gallery',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username ?? 'A creator'} pinned your post to the ${
+        details.modelName
+      } gallery`,
+      url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
+        details.modelVersionId
+      }`,
+    }),
+  },
 });

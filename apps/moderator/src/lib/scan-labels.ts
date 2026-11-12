@@ -56,7 +56,13 @@ export const BLOCK_REASONS = [
     label: 'Other ToS violation',
     help: 'Another specific violation (e.g. prohibited bodily waste, incest, hate/extremism, self-harm). Requires a short comment.',
   },
-  // Last, so the number keys of the reasons above stay where moderators expect them.
+  // A reason's position is its number key: add new reasons here, after the others.
+  {
+    id: 'school-nsfw',
+    label: 'NSFW potential minor in a school environment',
+    help: 'Nudity, sexual activity, or sexualized clothing/poses involving a character who could be under 18, in a school setting (classroom, campus, school uniform in a school context). School settings are moderated more strictly.',
+  },
+  // Must stay past the 1-9 number keys: one CSAM vote holds the image, so it is never one keystroke.
   {
     id: 'csam-realistic',
     label: 'CSAM: realistic minor (hold for report)',

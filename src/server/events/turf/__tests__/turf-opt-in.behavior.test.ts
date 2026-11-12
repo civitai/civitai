@@ -31,6 +31,12 @@ const EVENT = {
   getTeamCosmetic: async () => 11,
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// getTurfStock and getTurfSummaries read through Kysely, not Prisma's `$queryRaw`: both Kysely
+// clients' statements go to the same PGlite (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 // Blocks and suspensions have their own tests; nobody here is blocked.
 vi.mock('~/server/services/placement-moderation.service', () => ({
   assertCanPlace: () => Promise.resolve(),
@@ -67,11 +73,20 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, ingestion text,
       "tosViolation" boolean, "needsReview" text, "blockedFor" text
     );
+    -- Read by getTurfStock's count of the player's live hats; empty here.
+    CREATE TABLE "EventTurfSticker" (
+      id bigserial PRIMARY KEY, event text, "imageId" int, "userId" int, team text,
+      "cosmeticId" int, data jsonb, "createdAt" timestamptz DEFAULT now(), "removedAt" timestamptz
+    );
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" ("userId" int, "cosmeticId" int);
     -- Read by the contest-entry rule; empty, so no image here is a contest entry.
     CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
+    -- contestEntry also reads running flag Crucibles.
+    CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+    CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[]);
+    CREATE TABLE "CrucibleEntry" (id serial PRIMARY KEY, "crucibleId" int, "imageId" int);
     INSERT INTO "Cosmetic" VALUES (11, 'ContentDecoration', '{"event":"e","team":"Blue"}');
   `);
 });
@@ -97,6 +112,16 @@ beforeEach(async () => {
   dbMock.dbRead.$queryRaw.mockImplementation(
     (async (s: TemplateStringsArray, ...v: unknown[]) => (await run(s, ...v)).rows) as never
   );
+  kysely.read
+    .mockReset()
+    .mockImplementation(
+      async (s: readonly string[], ...v: unknown[]) => (await run(s as never, ...v)).rows
+    );
+  kysely.write
+    .mockReset()
+    .mockImplementation(
+      async (s: readonly string[], ...v: unknown[]) => (await run(s as never, ...v)).rows
+    );
   dbMock.dbWrite.$queryRaw.mockImplementation(
     (async (s: TemplateStringsArray, ...v: unknown[]) => (await run(s, ...v)).rows) as never
   );
@@ -110,6 +135,34 @@ beforeEach(async () => {
 });
 
 const inTurf = async (userId: number) => (await getTurfStock('e', userId)).optedIn;
+
+describe('the stock and summary reads', () => {
+  it('run through Kysely, one statement each, and never reach the Prisma query engine', async () => {
+    kysely.read.mockClear();
+    dbMock.dbRead.$queryRaw.mockClear();
+    dbMock.dbWrite.$queryRaw.mockClear();
+
+    const stock = await getTurfStock('e', OPTED_IN);
+    expect({
+      optedIn: stock.optedIn,
+      left: stock.left,
+      ownerOff: stock.ownerOff,
+      liveHats: stock.liveHats,
+    }).toEqual({ optedIn: true, left: false, ownerOff: false, liveHats: 0 });
+
+    const { open, mine, hidden, images } = await getTurfSummaries('e', [101, 105, 106], OPTED_IN);
+    expect({ open, mine, hidden, images }).toEqual({
+      open: { 101: true, 105: false, 106: false },
+      mine: { 101: false, 105: false, 106: false },
+      hidden: {},
+      images: {},
+    });
+
+    expect(kysely.read).toHaveBeenCalledTimes(2);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+});
 
 describe('who is in Hat Turf', () => {
   // Deliberate: Hat Turf is opt-in only. Making placing a hat count as joining is a product

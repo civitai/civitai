@@ -18,7 +18,9 @@ import {
   getCommentLock,
   getCommentReplies,
   getCommentSection,
+  countSectionComments,
   getCommentThread,
+  resolveModelPageCommentId,
 } from '~/server/services/commentv3/read.service';
 
 // Against real Postgres, with CommentV3 rows as the mirror or the v3 write path stores them.
@@ -170,6 +172,19 @@ describe('getCommentSection', () => {
     expect(page.nextCursor).toBeNull();
   });
 
+  it('leaves a hidden top-level comment out where the surface asks, rather than folded in', async () => {
+    const page = await section(reader, { budget: 100, hidden: 'exclude' });
+    expect(page.rootIds).toEqual([600, 100, 200, 500, 800]);
+    const asModerator = await section(moderator, { budget: 100, hidden: 'exclude' });
+    expect(asModerator.rootIds).not.toContain(700);
+    expect((await section(reader, { budget: 100, hidden: 'only' })).rootIds).toEqual([700]);
+  });
+
+  it('counts the top-level comments this viewer may see, apart from the hidden ones', async () => {
+    // The section's own roots: an excluded author's, a ToS removal and an empty placeholder are not.
+    expect(await countSectionComments(db, ARTICLE, reader)).toEqual({ visible: 5, hidden: 1 });
+  });
+
   it('opens at most the per-root cap under one comment, shallowest first', async () => {
     const page = await section(reader, { repliesPerRoot: 7, budget: 100 });
     expect(page.children[100].ids).toEqual([101, 102, 103, 104, 105]);
@@ -262,6 +277,52 @@ describe('getCommentSection', () => {
 });
 
 describe('getCommentReplies', () => {
+  // A tombstone that was pinned when deleted: older rows still carry pinnedAt (the delete now clears it).
+  it('treats a deleted comment as unpinned: no pin, no lead slot, no jump among replies', async () => {
+    await pg.exec(`
+      INSERT INTO "Article" VALUES (12);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 12);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt", "pinnedAt", "deletedAt") VALUES
+        (1200, 'article', 12, NULL, 2, 'live', ${at(1)}, NULL, NULL),
+        (1210, 'article', 12, NULL, 3, '', ${at(2)}, ${at(90)}, now()),
+        (1220, 'article', 12, NULL, 4, 'pinned', ${at(3)}, ${at(80)}, NULL),
+        (1230, 'article', 12, NULL, 5, 'plain', ${at(4)}, NULL, NULL);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt", "pinnedAt", "deletedAt") VALUES
+        (1211, 'article', 12, 1210, 2, 'under the tombstone', ${at(5)}, NULL, NULL),
+        (1201, 'article', 12, 1200, 2, 'first reply', ${at(10)}, NULL, NULL),
+        (1202, 'article', 12, 1200, 3, '', ${at(11)}, ${at(91)}, now());
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt")
+        VALUES (1203, 'article', 12, 1202, 4, 'under the reply tombstone', ${at(12)});
+    `);
+    const entity = { entityType: 'article', entityId: 12 };
+    const page = await getCommentSection(db, entity, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 10,
+      budget: 100,
+      repliesPerRoot: 10,
+      repliesPerParent: 5,
+    });
+    expect(page.rootIds).toEqual([1220, 1200, 1210, 1230]);
+    expect(item(page, 1210)).toMatchObject({ deleted: true, pinnedAt: null });
+    expect(item(page, 1220).pinnedAt).not.toBeNull();
+    expect(page.children[1200].ids).toEqual([1201, 1202]);
+
+    const replies = await getCommentReplies(db, 1200, reader, { sort: ThreadSort.Oldest });
+    expect(ids(replies).slice(0, 2)).toEqual([1201, 1202]);
+    expect(item(replies, 1202)).toMatchObject({ deleted: true, pinnedAt: null });
+    // A later page still reaches it: it is paged as unpinned, not left to a first page it no longer leads.
+    const firstReply = await getCommentReplies(db, 1200, reader, {
+      sort: ThreadSort.Oldest,
+      limit: 1,
+    });
+    const nextReply = await getCommentReplies(db, 1200, reader, {
+      sort: ThreadSort.Oldest,
+      limit: 1,
+      cursor: firstReply.children[1200].nextCursor!,
+    });
+    expect(ids(nextReply)[0]).toBe(1202);
+  });
+
   it('pages one comment’s replies and continues where the section stopped', async () => {
     const page = await section(reader);
     const rest = await getCommentReplies(db, 101, reader, {
@@ -316,6 +377,41 @@ describe('getCommentThread', () => {
         entity: { entityType: 'article', entityId: 11 },
       })
     ).not.toBeNull();
+  });
+});
+
+describe('resolveModelPageCommentId', () => {
+  // Model 7: 950 with old id 100 (also article comment 100's id) and 951, written since the flip.
+  // Model 8: 960 with old id 950 (model 7's comment's own id).
+  it('names a model comment by its old id, or by its own, never another model’s', async () => {
+    await pg.exec(`
+      INSERT INTO "Model" VALUES (7), (8);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('model', 7), ('model', 8);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "legacyV1Id") VALUES
+        (950, 'model', 7, 2, 'old', 100), (951, 'model', 7, 2, 'new', NULL),
+        (960, 'model', 8, 2, 'other', 950);`);
+    expect(await resolveModelPageCommentId(db, 7, 951)).toBe(951);
+    expect(await resolveModelPageCommentId(db, 7, 950)).toBe(950);
+    expect(await resolveModelPageCommentId(db, 7, 100)).toBe(950);
+    expect(await resolveModelPageCommentId(db, 8, 950)).toBe(960);
+    // Not an old id on this model: taken as the comment's own, which the thread read checks.
+    expect(await resolveModelPageCommentId(db, 8, 951)).toBe(951);
+  });
+});
+
+describe('a locked comment', () => {
+  it('says so on its item, which is what takes its Reply away, and not on its neighbours', async () => {
+    await pg.exec(`UPDATE "CommentV3" SET locked = true WHERE id = 101`);
+    try {
+      const page = await section(reader);
+      expect(item(page, 101).locked).toBe(true);
+      expect(item(page, 102).locked).toBe(false);
+      const thread = await getCommentThread(db, 101, reader, onArticle);
+      expect(thread!.comment.locked).toBe(true);
+      expect(item(thread!.replies, 107).locked).toBe(false);
+    } finally {
+      await pg.exec(`UPDATE "CommentV3" SET locked = false WHERE id = 101`);
+    }
   });
 });
 

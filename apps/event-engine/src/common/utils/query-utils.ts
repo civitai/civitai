@@ -4,7 +4,10 @@ import { logger } from './logger';
 export class SimpleClickhouse {
   constructor(private ch: IClickhouseClient) {}
 
-  public async query<T extends object>(query: TemplateStringsArray | string, ...values: any[]): Promise<T[]> {
+  public async query<T extends object>(
+    query: TemplateStringsArray | string,
+    ...values: any[]
+  ): Promise<T[]> {
     if (typeof query !== 'string') {
       query = query.reduce((acc, part, i) => acc + part + this.formatSqlType(values[i] ?? ''), '');
     }
@@ -20,8 +23,10 @@ export class SimpleClickhouse {
   private formatSqlType(value: any): string {
     // Catch any dates being passed in as a string
 
-
-    if (typeof value === 'string' && (value.endsWith('(Coordinated Universal Time)') || /\.\d{3}Z$/.test(value))) {
+    if (
+      typeof value === 'string' &&
+      (value.endsWith('(Coordinated Universal Time)') || /\.\d{3}Z$/.test(value))
+    ) {
       value = new Date(value);
     }
     if (value instanceof Date) return "parseDateTimeBestEffort('" + value.toISOString() + "')";
@@ -97,7 +102,7 @@ const redisHelpers = (redis: IRedisClient) => {
       if ('masters' in (redis as any)) {
         const cluster = redis as any;
         const masters = cluster.masters ? Object.values(cluster.masters) : [];
-        for (const master of masters as {client: IRedisClient}[]) {
+        for (const master of masters as { client: IRedisClient }[]) {
           const sha = await master.client.sendCommand?.(['SCRIPT', 'LOAD', script.trim()]);
           if (sha) scriptShas[name as keyof typeof scripts] = sha;
         }
@@ -106,14 +111,14 @@ const redisHelpers = (redis: IRedisClient) => {
         if (sha) scriptShas[name as keyof typeof scripts] = sha;
       }
     }
-  }
+  };
 
   const addScripts = (redis: IRedisClient | IRedisMulti) => {
     const executeScript = async (name: keyof typeof scripts, keys: string[], args: string[]) => {
       const sha = scriptShas[name];
       if (!sha) return await redis.eval(scripts[name], { keys, arguments: args });
       else return redis.evalSha(sha, { keys, arguments: args });
-    }
+    };
 
     return {
       async setNxKeepTtlWithEx(key: string, value: string, ttl: number) {
@@ -135,12 +140,12 @@ const redisHelpers = (redis: IRedisClient) => {
         field: string,
         incrBy: number,
         ttl: number,
-        recentEventTtl: number,
+        recentEventTtl: number
       ) {
         const result = await executeScript(
           'hIncrIfExistsOnce',
           [key, dedupeKey, recentEventKey],
-          [field, incrBy.toString(), String(ttl), String(recentEventTtl)],
+          [field, incrBy.toString(), String(ttl), String(recentEventTtl)]
         );
         return result !== 0;
       },
@@ -151,16 +156,14 @@ const redisHelpers = (redis: IRedisClient) => {
         fields: Record<string, string>,
         ttl: number
       ) {
-        return executeScript('hReplaceStampedEx', [key, markerKey], [
-          String(ttl),
-          stamp.field,
-          stamp.value,
-          stamp.ifMarker,
-          ...Object.entries(fields).flat(),
-        ]);
+        return executeScript(
+          'hReplaceStampedEx',
+          [key, markerKey],
+          [String(ttl), stamp.field, stamp.value, stamp.ifMarker, ...Object.entries(fields).flat()]
+        );
       },
-    }
-  }
+    };
+  };
 
   const helpers = {
     async hSetEx(key: string, fields: Record<string, string>, ttl: number) {
@@ -183,9 +186,12 @@ export type RedisWithHelpers<TRedis extends IRedisClient = IRedisClient> = Omit<
 // Extract the return type of TRedis's multi method, or default to IRedisMulti
 type ExtractMultiType<T> = T extends { multi(): infer M } ? M : IRedisMulti;
 
-export type MultiWithHelpers<TRedis extends IRedisClient> = ExtractMultiType<TRedis> & ReturnType<ReturnType<typeof redisHelpers>['addScripts']>;
+export type MultiWithHelpers<TRedis extends IRedisClient> = ExtractMultiType<TRedis> &
+  ReturnType<ReturnType<typeof redisHelpers>['addScripts']>;
 
-export function withRedisHelpers<TRedis extends IRedisClient>(redis: TRedis): RedisWithHelpers<TRedis> {
+export function withRedisHelpers<TRedis extends IRedisClient>(
+  redis: TRedis
+): RedisWithHelpers<TRedis> {
   const { addScripts, ...helpers } = redisHelpers(redis);
 
   return new Proxy(redis as unknown as RedisWithHelpers<TRedis>, {
@@ -208,7 +214,7 @@ export function withRedisHelpers<TRedis extends IRedisClient>(redis: TRedis): Re
               // Return original multi methods
               const val = Reflect.get(multiTarget, multiProp);
               return typeof val === 'function' ? val.bind(multiTarget) : val;
-            }
+            },
           }) as MultiWithHelpers<TRedis>;
         };
       }
@@ -219,7 +225,7 @@ export function withRedisHelpers<TRedis extends IRedisClient>(redis: TRedis): Re
         if (logger.isDebugEnabled) {
           logger.redis(`Binding function: ${String(prop)}`);
         }
-        return function(...args: any[]) {
+        return function (...args: any[]) {
           if (logger.isDebugEnabled) {
             logger.redis(`Calling ${String(prop)} with args:`, args.length);
           }

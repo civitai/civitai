@@ -37,16 +37,22 @@ describe('reportRowActions — the per-row action set', () => {
     ]);
   });
 
-  it('a resolved/dismissed report offers NO report actions (only listing actions remain)', () => {
+  it('a RESOLVED report offers NO report actions (only listing actions remain)', () => {
     expect(reportRowActions({ reportStatus: 'resolved', listingStatus: 'approved' })).toEqual([
       'delist',
       'claim',
     ]);
-    expect(reportRowActions({ reportStatus: 'dismissed', listingStatus: 'removed' })).toEqual([
+    expect(reportRowActions({ reportStatus: 'resolved', listingStatus: 'removed' })).toEqual([
       'relist',
       'claim',
       'purge',
     ]);
+  });
+
+  it('🔴 a DISMISSED report offers nothing at all — not even the listing actions', () => {
+    // Dismissed = "no action warranted"; Delist / Claim on that row was the bug.
+    expect(reportRowActions({ reportStatus: 'dismissed', listingStatus: 'approved' })).toEqual([]);
+    expect(reportRowActions({ reportStatus: 'dismissed', listingStatus: 'removed' })).toEqual([]);
   });
 
   it('claim is offered on BOTH an approved and a removed listing (a mod may reclaim either)', () => {
@@ -66,7 +72,9 @@ describe('reportRowActions — the per-row action set', () => {
     expect(reportRowActions({ reportStatus: 'pending', listingStatus: 'approved' })).not.toContain(
       'purge'
     );
-    expect(reportRowActions({ reportStatus: 'pending', listingStatus: 'removed' })).toContain('purge');
+    expect(reportRowActions({ reportStatus: 'pending', listingStatus: 'removed' })).toContain(
+      'purge'
+    );
   });
 
   it('a null/gone listing status yields no listing-level actions', () => {

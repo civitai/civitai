@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AutoLabelService from '~/server/services/training-studio-auto-label.service';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -27,7 +28,8 @@ vi.mock('~/server/flipt/client', () => ({
   ensureFliptInitialized: vi.fn(async () => undefined),
   isFliptSync: vi.fn(() => true),
 }));
-vi.mock('~/server/services/feature-flags.service', () => ({
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlags>()),
   getFeatureFlagsLazy: vi.fn(() => ({})),
   computeUserFeatureFlagsOverlay: vi.fn(() => ({})),
   getFliptGatedEligibility: vi.fn(() => ({})),

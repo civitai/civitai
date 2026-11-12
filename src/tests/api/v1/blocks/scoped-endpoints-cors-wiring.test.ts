@@ -453,10 +453,12 @@ describe('scoped block endpoints — opaque-origin CORS wiring', () => {
         );
         // CORS-only change: the per-user authorization gate must be unchanged.
         expect(opts.requiredScope, `${module} requiredScope`).toBe(requiredScope);
-        // PUT/DELETE in the preflight: only the document store writes with them, and a
-        // browser refuses a cross-origin PUT or DELETE the preflight does not allow.
+        // PUT/DELETE/PATCH in the preflight: only the document store writes with them, and a
+        // browser refuses a cross-origin PUT, DELETE or PATCH the preflight does not allow.
         expect(opts.extraCorsMethods, `${module} extraCorsMethods`).toEqual(
-          module === '~/pages/api/v1/blocks/storage/[[...path]]' ? ['PUT', 'DELETE'] : undefined
+          module === '~/pages/api/v1/blocks/storage/[[...path]]'
+            ? ['PUT', 'DELETE', 'PATCH']
+            : undefined
         );
       });
     }

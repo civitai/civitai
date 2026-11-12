@@ -8,7 +8,7 @@ import { MEDIA_TYPE } from '~/shared/constants/mime-types';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { preprocessFile } from '~/utils/media-preprocessors';
-import { auditMetaData } from '~/utils/metadata/audit';
+import { auditPostImageMeta } from '~/utils/metadata/audit';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -265,7 +265,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             const meta = embeddedMeta;
 
             if (meta) {
-              const audit = await auditMetaData(meta, false);
+              const audit = auditPostImageMeta(meta, false);
               if (audit.blockedFor.length) processing.blockedFor = audit.blockedFor.join(',');
             }
 

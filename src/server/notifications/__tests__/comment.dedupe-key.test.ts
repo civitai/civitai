@@ -72,7 +72,7 @@ describe('comment notifications — shared dedupe key', () => {
       // (model3dReview), which renders a dead link. Claiming there would suppress a working owner
       // notification — that is exactly how the mention/challenge regression got in.
       expect(sqlFor(type)).toContain(`when details->>'threadType' <> 'comment' then`);
-      // v1-shaped model comments have no threadType and build their URL from modelId, so they always claim.
+      // Model comments have no threadType and build their URL from modelId, so they always claim.
       expect(sqlFor(type)).toContain(`when details->>'threadType' is null then`);
     }
   );
@@ -85,12 +85,18 @@ describe('comment notifications — shared dedupe key', () => {
     expect(sql).toContain(commentDedupeKeyByShape);
   });
 
-  it.each([...V1_TYPES, ...V2_TYPES])('%s stamps details.version 3', (type) => {
+  it.each(V2_TYPES)('%s stamps details.version 3', (type) => {
     // `comment.detail-fetcher.ts` registers itself for EVERY key in commentNotifications and
     // looks a versionless row up by its old v1 id. A thread-addressed processor that drops the
     // version doesn't fail — it silently attaches whichever model comment has that old id, or
     // none. Nothing else guards it.
     expect(sqlFor(type)).toContain(`'version', 3`);
+  });
+
+  it.each(V1_TYPES)('%s stamps details.version 4', (type) => {
+    // Version 4 tells the detail fetcher a model comment with no old id carries its own id; on an
+    // older row the same number may be a removed v1 comment's.
+    expect(sqlFor(type)).toContain(`'version', 4`);
   });
 
   it('every dedupeKey is derived from commentId only — never from the recipient or the type', () => {

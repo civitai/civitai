@@ -71,23 +71,23 @@ const SESSION_PATH_FILES = [ENTRY, 'server/auth/session-client.ts', 'server/auth
 
 /** Entry-point imports that do NOT read credentials off the request. */
 const NON_CREDENTIAL_MODULES: Record<string, string> = {
-  'server/auth/session-metrics.ts': 'counters only — takes no request',
+  'server/auth/preview-session-cookie.ts':
+    'decodes a cookie value the entry point already read; takes no request',
   'server/auth/moderation-account.ts': 'compares a resolved user id with config; takes no request',
   'server/utils/url-helpers.ts': 'builds a base URL from config; reads nothing off the request',
   'server/utils/webhook-token.ts':
     'compares a value the entry point already read with config; takes no request',
   'env/server.ts': 'environment config; reads nothing off the request',
-  'env/other.ts': 'environment config; reads nothing off the request',
 };
 
 /** Workspace packages the entry point imports. Not scanned, so declared. */
 const NON_CREDENTIAL_PACKAGES: Record<string, string> = {
   '@civitai/auth':
-    'owns the cookie-NAME vocabulary, the legacy cookie decode and the slot readers. The only `req` field that crosses this boundary is `req.cookies`, into a reader listed in COOKIE_HELPERS; any other call taking a bag fails closed',
+    'owns the cookie-NAME vocabulary and the slot readers. The only `req` field that crosses this boundary is `req.cookies`, into a reader listed in COOKIE_HELPERS; any other call taking a bag fails closed',
 };
 
 const NON_CREDENTIAL_HEADERS: Record<string, string> = {
-  host: 'response-side only — the cookie domain for maybeRollHubCookie / maybeUpgradeLegacySession, never read to identify a caller',
+  host: 'response-side only — the cookie domain for maybeRollHubCookie, never read to identify a caller',
 };
 const NON_CREDENTIAL_QUERY: Record<string, string> = {};
 const NON_CREDENTIAL_COOKIES: Record<string, string> = {
@@ -95,8 +95,6 @@ const NON_CREDENTIAL_COOKIES: Record<string, string> = {
     'a device identifier (either slot) used for rolling/upgrade bookkeeping; authenticates nobody on its own',
   maybeRollHubCookie:
     'a presence check deciding whether the cookie write expires the other slot; the token it rolls is passed in separately, so it authenticates nobody',
-  maybeUpgradeLegacySession:
-    'a presence check deciding whether the cookie write expires the other slot; the token it upgrades is passed in separately, so it authenticates nobody',
 };
 
 const UNRESOLVABLE = '<unresolvable>';

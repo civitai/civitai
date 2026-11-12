@@ -23,6 +23,7 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
 import { decodeHubId } from '~/server/utils/hub-id';
@@ -32,7 +33,7 @@ import {
 } from '~/server/services/creator-milestone-share.service';
 import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
 import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
-import { servableBanner } from '~/shared/utils/article-card-image';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 
 // --- Schema & Types ---
 
@@ -178,6 +179,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       coverImageId: true,
       sfwCoverImageId: true,
       meta: true,
+      mode: true,
       userId: true,
       user: { select: { username: true, settings: true } },
       modelVersions: {
@@ -213,6 +215,8 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   // Run metric + image queries in parallel
   // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on.
   const coverId = (model.sfwName != null ? model.sfwCoverImageId : null) ?? model.coverImageId;
+  // A taken-down model's card is drawn without any of its images.
+  const withheld = isModelWithheld(model);
   const ownPosts = model.userId === -1 ? {} : { userId: model.userId };
   const previewableImage = {
     tosViolation: false,
@@ -233,22 +237,24 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       .catch(() => null),
     // Same pick as the model page's showcase (getImagesForModelVersion): the owner's own
     // posts only, earliest post first, unless the model belongs to the system account.
-    dbRead.image.findFirst({
-      where: {
-        post: {
-          publishedAt: { not: null },
-          modelVersionId: publishedVersion.id,
-          availability: Availability.Public,
-          ...(model.userId !== -1 ? { userId: model.userId } : {}),
-        },
-        tosViolation: false,
-        needsReview: null,
-        ingestion: 'Scanned',
-      },
-      select: ogImageSelect,
-      orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
-    }),
-    coverId
+    withheld
+      ? null
+      : dbRead.image.findFirst({
+          where: {
+            post: {
+              publishedAt: { not: null },
+              modelVersionId: publishedVersion.id,
+              availability: Availability.Public,
+              ...(model.userId !== -1 ? { userId: model.userId } : {}),
+            },
+            tosViolation: false,
+            needsReview: null,
+            ingestion: 'Scanned',
+          },
+          select: ogImageSelect,
+          orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
+        }),
+    coverId && !withheld
       ? dbRead.image.findFirst({
           where: {
             id: coverId,
@@ -306,7 +312,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         title: true,
         content: true,
         user: { select: { username: true } },
-        coverImage: { select: ogImageSelect },
+        coverImage: { select: { ...ogImageSelect, ingestion: true, needsReview: true } },
         bannerImage: { select: { ...ogImageSelect, ingestion: true, needsReview: true } },
       },
     }),
@@ -340,7 +346,11 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
     title: article.title,
     description: cleanDescription(removeSpoilers(article.content ?? '')),
     creator: article.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(article.coverImage ?? servableBanner(article.bannerImage))),
+    ...buildEntityImage(
+      getSafeImage(
+        servableArticleImage(article.coverImage) ?? servableArticleImage(article.bannerImage)
+      )
+    ),
     stats,
   };
 }

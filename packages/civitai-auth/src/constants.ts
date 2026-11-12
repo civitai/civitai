@@ -9,7 +9,7 @@ export const SESSION_COOKIE_BASE = 'civ-token';
 // Per-browser device id cookie (account-switch device set, section E). Same secure-prefix rules as the
 // session cookie — derive its name via `deviceCookieName(secure)`, never hardcode the prefixed literal.
 export const DEVICE_COOKIE_BASE = 'civ-device';
-// Legacy NextAuth session cookie — READ-ONLY during the cutover (decoded by the jose helper). Same secure-prefix
+// Legacy NextAuth session cookie — cleared on logout; read only by the main app's PR-preview sign-in. Same secure-prefix
 // rules as the others, so resolve its name via `legacySessionCookieName(secure)`, never hardcode the literal
 // (prod is `__Secure-civitai-token`, not `civitai-token`).
 export const LEGACY_SESSION_COOKIE_BASE = 'civitai-token';

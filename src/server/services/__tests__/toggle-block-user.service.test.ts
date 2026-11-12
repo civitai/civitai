@@ -34,7 +34,6 @@ import {
   BLOCK_HIDE_MAX_COMMENTS,
   BLOCK_HIDE_READ_TIMEOUT_MS,
   blockHideCandidatesSql,
-  blockHideV3CandidatesSql,
 } from '~/server/services/block-hide-comments.service';
 
 const userId = 42;
@@ -486,8 +485,7 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     const result = await blockHiding();
 
-    // One read per comment table, both after the block.
-    expect(order).toEqual(['block', 'hide', 'hide']);
+    expect(order).toEqual(['block', 'hide']);
     expect(result.commentsHidden).toEqual({ status: 'hidden', count: 0, capped: false });
   });
 
@@ -496,17 +494,11 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     await blockHiding();
 
-    expect(queryWithTimeout).toHaveBeenCalledTimes(2);
+    expect(queryWithTimeout).toHaveBeenCalledTimes(1);
     expect(queryWithTimeout).toHaveBeenCalledWith(
       expect.anything(),
       BLOCK_HIDE_READ_TIMEOUT_MS,
       blockHideCandidatesSql,
-      [targetUserId, userId, BLOCK_HIDE_MAX_COMMENTS]
-    );
-    expect(queryWithTimeout).toHaveBeenCalledWith(
-      expect.anything(),
-      BLOCK_HIDE_READ_TIMEOUT_MS,
-      blockHideV3CandidatesSql,
       [targetUserId, userId, BLOCK_HIDE_MAX_COMMENTS]
     );
   });

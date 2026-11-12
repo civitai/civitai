@@ -44,6 +44,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOrigina
 }));
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
   distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
+  refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
   promoteChallengeEntries: vi.fn().mockResolvedValue(0),
 }));
 vi.mock('~/server/games/daily-challenge/generative-content', async (importOriginal) => ({

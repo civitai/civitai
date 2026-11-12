@@ -35,9 +35,10 @@ const getAccountsOnAddresses = vi.fn(async (_addresses: string[], _opts?: unknow
   linked: linked as never,
   invalid: [] as string[],
 }));
+const getLinkedAccounts = vi.fn(async (_id: number, _opts?: unknown) => linked);
 vi.mock('$lib/server/ip-links.service', async (importOriginal) => ({
   ...(await importOriginal<typeof IpLinks>()),
-  getLinkedAccounts: vi.fn(async () => linked),
+  getLinkedAccounts,
   getAccountsOnAddresses,
   getReactionBreadth: vi.fn(async () => ({ reactors: 0, top: [] })),
 }));
@@ -80,6 +81,13 @@ const getPlacementFlows = vi.fn(async () => ({
   truncated: false,
 }));
 vi.mock('$lib/server/placement-flows.service', () => ({ getPlacementFlows }));
+vi.mock('$lib/server/training-lookup.service', () => ({
+  lookupTrainings: vi.fn(),
+  getAccountTrainings: vi.fn(),
+  MAX_TRAINING_IDS: 25,
+  MAX_TRAINING_ACCOUNTS: 25,
+  MAX_TRAINING_DAYS: 90,
+}));
 const resolveUserId = vi.fn(async () => null);
 vi.mock('$lib/server/user-lookup.service', () => ({ resolveUserId }));
 const getRegistrationEmails = vi.fn(
@@ -188,6 +196,8 @@ describe('toolsFor', () => {
       'search_accounts',
       'buzz_flows',
       'placement_flows',
+      'training_lookup',
+      'account_trainings',
       'crucible_judging',
       'abuse_findings',
     ])
@@ -311,6 +321,37 @@ describe('accounts_on_address', () => {
   it('passes the window and the page through, so a later page is not page one again', async () => {
     await ask({ addresses: ['192.0.2.1'], days: 7, offset: 100, limit: 50 });
     expect(getAccountsOnAddresses.mock.lastCall![1]).toEqual({ days: 7, offset: 100, limit: 50 });
+  });
+
+  it('says where the next page starts, and when there is none', async () => {
+    getAccountsOnAddresses.mockResolvedValueOnce({
+      linked: { ...linked, matched: 195 } as never,
+      invalid: [],
+    });
+    expect((await ask({ address: '192.0.2.1', offset: 40, limit: 1 })).page).toEqual({
+      list: 'accounts',
+      offset: 40,
+      nextOffset: 41,
+    });
+    getAccountsOnAddresses.mockResolvedValueOnce({
+      linked: { ...linked, matched: 41 } as never,
+      invalid: [],
+    });
+    expect((await ask({ address: '192.0.2.1', offset: 40, limit: 1 })).page).toMatchObject({
+      nextOffset: null,
+    });
+  });
+
+  it('says where the next page starts for find_linked_accounts too', async () => {
+    getLinkedAccounts.mockResolvedValueOnce({ ...linked, matched: 195 } as never);
+    const { data } = await run('find_linked_accounts', { userId: 5, offset: 40, limit: 1 }, [
+      LOOKUP_PAGE,
+    ]);
+    expect((data as { page: unknown }).page).toEqual({
+      list: 'accounts',
+      offset: 40,
+      nextOffset: 41,
+    });
   });
 
   it('names every address it was given when it times out', () => {
@@ -707,8 +748,7 @@ describe('reactors_page', () => {
     data: {
       overFloor: number;
       belowFloor: number;
-      offset: number;
-      nextOffset: number | null;
+      page: { list: string; offset: number; nextOffset: number | null };
       refused?: string;
       actors: { rank: number; userId: number; email?: string; normalizedEmail?: string }[];
     };
@@ -760,14 +800,26 @@ describe('reactors_page', () => {
     expect(data.actors.map((a) => [a.rank, a.userId])).toEqual(
       Array.from({ length: 20 }, (_, i) => [21 + i, 3021 + i])
     );
-    expect(data).toMatchObject({ overFloor: 250, belowFloor: 4, nextOffset: 40 });
+    expect(data).toMatchObject({
+      overFloor: 250,
+      belowFloor: 4,
+      page: { list: 'actors', offset: 20, nextOffset: 40 },
+    });
     expect(truncated).toBe(true);
+  });
+
+  it('moves the next page on to just after the last reactor kept when cut for size', async () => {
+    const result = await page({ offset: 20, limit: 100 });
+    const out = JSON.parse(fitJson(result, 5_000).json) as { result: Page };
+    const { actors, page: kept } = out.result.data;
+    expect(actors.length).toBeLessThan(100);
+    expect(kept).toEqual({ list: 'actors', offset: 20, nextOffset: actors.at(-1)!.rank });
   });
 
   it('ends the list where the reactors end', async () => {
     const { data, truncated } = await page({ offset: 200, limit: 100 });
     expect(data.actors.at(-1)).toMatchObject({ rank: 250, userId: 3250 });
-    expect(data.nextOffset).toBeNull();
+    expect(data.page.nextOffset).toBeNull();
     expect(truncated).toBe(false);
   });
 
@@ -775,7 +827,7 @@ describe('reactors_page', () => {
     serve(7_000);
     const { data, truncated, rows } = await page({ offset: 5_000, limit: 100 });
     expect(data.refused).toBe('Only the first 5000 ranks are paged; offset was 5000.');
-    expect(data).toMatchObject({ overFloor: 7_000, actors: [], nextOffset: null });
+    expect(data).toMatchObject({ overFloor: 7_000, actors: [], page: { nextOffset: null } });
     expect(getReactorsPage).toHaveBeenCalledWith(1, expect.objectContaining({ limit: 0 }));
     expect([rows, truncated]).toEqual([0, true]);
   });
@@ -789,7 +841,7 @@ describe('reactors_page', () => {
       expect.objectContaining({ offset: 4_980, limit: 20 })
     );
     expect(data.actors.map((a) => a.rank)).toEqual(Array.from({ length: 20 }, (_, i) => 4_981 + i));
-    expect(data).toMatchObject({ overFloor: 7_000, nextOffset: null });
+    expect(data).toMatchObject({ overFloor: 7_000, page: { nextOffset: null } });
     expect([rows, truncated]).toEqual([20, true]);
   });
 
@@ -801,7 +853,7 @@ describe('reactors_page', () => {
       const { data } = await page({ offset, limit: 30 });
       expect(data.refused).toBeUndefined();
       ranks.push(...data.actors.map((a) => a.rank));
-      offset = data.nextOffset;
+      offset = data.page.nextOffset;
     }
     expect(ranks).toEqual(Array.from({ length: 100 }, (_, i) => 4_901 + i));
   });
@@ -811,7 +863,7 @@ describe('reactors_page', () => {
     const { data } = await page({ offset: 4_900, limit: 100 });
     expect(data.refused).toBeUndefined();
     expect(data.actors.at(-1)?.rank).toBe(5_000);
-    expect(data.nextOffset).toBeNull();
+    expect(data.page.nextOffset).toBeNull();
   });
 
   it('caps a page at 100', () => {

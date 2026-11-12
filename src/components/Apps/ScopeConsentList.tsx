@@ -1,7 +1,8 @@
-import { Stack, Text } from '@mantine/core';
+import { Button, Stack, Text } from '@mantine/core';
 import { blockScopePermissions } from '~/components/Apps/listingPermissions';
 import { ListingPermissionGroups } from '~/components/Apps/ListingPermissionsDisclosure';
 import { buildScopeConsentRows } from '~/components/Apps/scopeConsentRows';
+import { REVOKE_SCOPES_MAX_PER_CALL } from '~/shared/constants/block-scope.constants';
 import {
   ScopeConsentAction,
   ScopeRevokeFailureNotice,
@@ -108,7 +109,7 @@ export function ScopeConsentList({
    * `buildScopeConsentRows`' appended tail, and the `revoked` arm renders a marker and NO control, so
    * nothing can reach `requestRevoke` with the placeholder `appBlockId`. Reported by the round-5 lane.
    */
-  const { requestRevoke, pendingScope, failure, justRevoked } = useScopeRevoke({
+  const { requestRevoke, requestRevokeAll, pendingScope, failure, justRevoked } = useScopeRevoke({
     appBlockId: grant?.appBlockId ?? '',
     appName: grant?.name ?? 'This app',
     // Read ONLY to latch pending local entries off once the server confirms them — see
@@ -156,6 +157,9 @@ export function ScopeConsentList({
     grantWithheldAt: grant?.grantWithheldAt,
   });
   const stateByScope = new Map(rows.map((r) => [r.scope, r.state]));
+  const revokable = rows.filter((r) => r.state === 'revokable').map((r) => r.scope);
+  const keptCount = rows.filter((r) => r.state === 'fixed').length;
+  const tooManyForOneCall = revokable.length > REVOKE_SCOPES_MAX_PER_CALL;
 
   return (
     <Stack gap="xs" data-testid="scope-consent-list">
@@ -169,7 +173,11 @@ export function ScopeConsentList({
           // revoked and the publisher later dropped from the manifest is in the second and not the
           // first. See that function's docblock: forgetting a withdrawal is the one thing this
           // surface must never do.
-          permissions={blockScopePermissions(rows.map((r) => r.scope))}
+          // Each exempt row already carries its own "Can't be withdrawn" note here.
+          permissions={blockScopePermissions(
+            rows.map((r) => r.scope),
+            { noteIrrevocable: false }
+          )}
           revokedIds={rows.filter((r) => r.state === 'revoked').map((r) => r.scope)}
           // A green check reads as "allowed", which a permission the viewer never gave is not.
           notGrantedIds={rows.filter((r) => r.state === 'not-granted').map((r) => r.scope)}
@@ -188,6 +196,26 @@ export function ScopeConsentList({
           )}
         />
       )}
+      {revokable.length >= 2 ? (
+        <Stack gap={4} align="flex-start">
+          <Button
+            variant="default"
+            color="red"
+            size="compact-sm"
+            data-testid="scope-revoke-all"
+            loading={pendingScope === '*'}
+            disabled={tooManyForOneCall || (pendingScope !== null && pendingScope !== '*')}
+            onClick={() => requestRevokeAll(revokable, keptCount)}
+          >
+            Remove all {revokable.length} removable permissions
+          </Button>
+          {tooManyForOneCall ? (
+            <Text size="xs" c="dimmed">
+              Too many to remove at once. Remove them one at a time.
+            </Text>
+          ) : null}
+        </Stack>
+      ) : null}
       {/* 🔴 BEFORE the revoked-at line, deliberately: the hold governs EVERY row on the card while
           `scopesRevokedAt` is about one past action, and on a migrated database both can be true at
           once. See `ScopeGrantWithheldLine`. */}

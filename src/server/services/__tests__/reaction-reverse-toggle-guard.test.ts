@@ -99,15 +99,6 @@ describe('toggleReaction — a reverse toggle inside the window is ignored', () 
     expect(db.imageReaction.create).not.toHaveBeenCalled();
     expect(mockOnCreated).not.toHaveBeenCalled();
   });
-
-  it('covers comment v1 (commentOld) the same way', async () => {
-    const comment = { ...like, entityType: 'commentOld' } as const;
-    expect(await toggleReaction(comment)).toBe('created');
-    vi.advanceTimersByTime(100);
-
-    expect(await toggleReaction(comment)).toBe('ignored');
-    expect(db.commentReaction.rows).toHaveLength(1);
-  });
 });
 
 describe('toggleReaction — toggles the guard must not touch', () => {

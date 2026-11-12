@@ -211,7 +211,9 @@ describe('replayApp — the scan path (positive control)', () => {
   it('RESIDUAL: a ULID-shaped key with an edited anchor is scanned and reported, but kept out of the user-chosen tally', async () => {
     mockFindBlocked.mockImplementation(async (values) =>
       (values as string[]).flatMap((v, index) =>
-        v === SEEDED ? [{ kind: 'pattern' as const, index, matched: SEEDED }] : []
+        v === SEEDED
+          ? [{ kind: 'pattern' as const, index, matched: SEEDED, patternId: 0, listId: null }]
+          : []
       )
     );
     const { rows, tally } = await run([], [{ key: SEEDED, anchor: false }]);
@@ -226,7 +228,9 @@ describe('replayApp — the scan path (positive control)', () => {
   it('a pattern-only hit is reported but does NOT block (user-content-pattern-enforce is absent), on data and on a user-chosen counter', async () => {
     mockFindBlocked.mockImplementation(async (values) =>
       (values as string[]).flatMap((v, index) =>
-        v === 'zz-pattern-zz' ? [{ kind: 'pattern' as const, index, matched: 'pattern' }] : []
+        v === 'zz-pattern-zz'
+          ? [{ kind: 'pattern' as const, index, matched: 'pattern', patternId: 0, listId: null }]
+          : []
       )
     );
     const { rows, tally } = await run(
@@ -523,7 +527,7 @@ describe('blocklistSelfCheck', () => {
           ? [{ kind: 'link' as const, index, matched: ['x'] }]
           : []),
         ...(v.includes('zz probe')
-          ? [{ kind: 'pattern' as const, index, matched: 'zz probe' }]
+          ? [{ kind: 'pattern' as const, index, matched: 'zz probe', patternId: 0, listId: null }]
           : []),
       ])
     );

@@ -7,6 +7,7 @@ import { runImageSearch } from '~/server/services/image-search.service';
 import { getPostDetail } from '~/server/services/post.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
+import { isStatementTimeout } from '~/server/utils/statement-timeout';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import {
   acquireBulkheadSlot,
@@ -58,6 +59,11 @@ export default MixedAuthEndpoint(async function handler(
 
   const { id } = parsedParams.data;
   const notFound = () => res.status(404).json({ error: 'Post not found' });
+  const unavailable = () => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Retry-After', '2');
+    return res.status(503).json({ error: 'Server busy, please retry shortly.' });
+  };
 
   let releaseSlot: (() => void) | undefined;
   try {
@@ -72,10 +78,17 @@ export default MixedAuthEndpoint(async function handler(
     if (!published || !browsable || !servedAvailability.has(post.availability)) return notFound();
 
     // Loaded on demand: the model service's import graph is large.
-    const { getHeldGalleryLevel } = await import('~/server/services/model.service');
-    const heldLevel = await getHeldGalleryLevel({ postId: post.id });
-    if (heldLevel !== undefined) browsingLevel = Flags.intersection(browsingLevel, heldLevel);
-    const respond = (images: unknown[]) =>
+    const { getHeldGalleryLevel, isModelGalleryWithheld } = await import(
+      '~/server/services/model.service'
+    );
+    // A taken-down model's post is served with no images, to everyone.
+    const [heldLevel, withheld] = await Promise.all([
+      getHeldGalleryLevel({ postId: post.id }),
+      isModelGalleryWithheld({ postId: post.id }),
+    ]);
+    if (withheld) browsingLevel = 0;
+    else if (heldLevel !== undefined) browsingLevel = Flags.intersection(browsingLevel, heldLevel);
+    const respond = (images: unknown[], hasMoreImages = false) =>
       res.status(200).json({
         id: post.id,
         title: post.title,
@@ -86,6 +99,7 @@ export default MixedAuthEndpoint(async function handler(
         user: { id: post.user.id, username: post.user.username },
         tags: post.tags.map((tag) => ({ id: tag.id, name: tag.name })),
         images,
+        hasMoreImages,
       });
     // The search reads 0 as its default level, not as none, so an empty intersection has no images.
     if (!browsingLevel) return respond([]);
@@ -93,20 +107,17 @@ export default MixedAuthEndpoint(async function handler(
     try {
       releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
     } catch (e) {
-      if (e instanceof BulkheadFullError) {
-        res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('Retry-After', '2');
-        return res.status(503).json({ error: 'Server busy, please retry shortly.' });
-      }
+      if (e instanceof BulkheadFullError) return unavailable();
       throw e;
     }
 
-    const { items: images } = await runImageSearch(
+    const { items: images, nextCursor } = await runImageSearch(
       {
         limit: 100,
         withMeta: false,
         withTags: false,
         postOrder: true,
+        throwOnStatementTimeout: true,
         data: {
           postId: post.id,
           period: constants.galleryFilterDefaults.period,
@@ -116,8 +127,9 @@ export default MixedAuthEndpoint(async function handler(
       { browsingLevel, user: undefined, req }
     );
 
-    return respond(images);
+    return respond(images, nextCursor !== undefined);
   } catch (e) {
+    if (isStatementTimeout(e)) return unavailable();
     if (e instanceof TRPCError && e.code === 'NOT_FOUND') return notFound();
     return handleEndpointError(res, e);
   } finally {

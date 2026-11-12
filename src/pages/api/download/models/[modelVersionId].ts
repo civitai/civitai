@@ -16,6 +16,7 @@ import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { countsTowardDownloadLimit } from '~/server/utils/download-repeats';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
+import { takeProviderToken } from '~/server/services/provider-download/provider-token';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
 import {
@@ -25,8 +26,16 @@ import {
 } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
+import type { SessionUser } from '~/types/session';
+import type { ProviderServed } from '~/server/services/provider-download/provider-download.service';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 import { logUrlExpiry } from '~/server/utils/url-expiry-log';
+import {
+  checkDownloadCredential,
+  DOWNLOAD_SCOPE_REFUSED,
+  type DownloadRoute,
+} from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -79,187 +88,57 @@ function logSchemaRejection(error: z.ZodError, repaired: boolean) {
   });
 }
 
-export default PublicEndpoint(
-  async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
-    // This response is per-user, auth/early-access-gated, rate-limited, and
-    // redirects to a short-lived signed file URL. It must never be cached by the
-    // CDN. PublicEndpoint stamps a `public, s-maxage` default which would
-    // (a) leak one user's signed redirect to every other requester and
-    // (b) keep serving a deleted/taken-down model's 302 from edge for the whole
-    // cache window after the origin already returns 404 — defeating DMCA
-    // takedowns. Override with no-store so deletes take effect immediately.
-    res.setHeader('Cache-Control', 'no-store, max-age=0');
-
-    // Must run before `getServerAuthSession` below, which reads `?token=` off
-    // `req.url` — a stray `?` swallows that param into the one before it, so an
-    // API-key caller would otherwise be treated as anonymous.
-    const repaired = repairSplitQueryString(req);
-    // Unsampled: this is what says whether any client still needs the shim, and
-    // a rate that can report zero is the point.
-    if (repaired) logSplitQueryRepair(req);
-
-    const isBrowser = isRequestFromBrowser(req);
-    function errorResponse(status: number, message: string) {
-      res.status(status);
-      if (isBrowser) return res.send(message);
-      return res.json({ error: message });
+type GateArgs = Omit<
+  Parameters<typeof getFileForModelVersion>[0],
+  'user' | 'direct' | 'attribution' | 'redCapable'
+>;
+type FileResult = Awaited<ReturnType<typeof getFileForModelVersion>>;
+/** `getFileForModelVersion` with this request's caller and host already applied. */
+export type DownloadGate = (args: GateArgs) => Promise<FileResult>;
+/** The file to serve, or the refusal, and the version the browser redirects name. */
+export type PickedFile = { fileResult: FileResult; modelVersionId?: number };
+/** Chooses and serves the file for a caller holding a per-provider download token. */
+export type ProviderPick = (args: {
+  req: NextApiRequest;
+  res: NextApiResponse;
+  provider: string;
+}) => Promise<ProviderServed>;
+export type DownloadRequest =
+  | {
+      ok: true;
+      pick: (gate: DownloadGate, user: SessionUser | undefined) => Promise<PickedFile>;
+      providerPick: ProviderPick;
     }
+  | { ok: false; reason: 'schema'; message: string }
+  | { ok: false; reason: 'missing-version' | 'invalid-hash' };
 
-    try {
-      // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
-      // (edge-attested or transport peer only) — an enforcement control must not key
-      // on an address the caller supplies, and for anonymous callers this same value
-      // is the download-quota bucket below. Do not swap this for an inline resolver.
-      //
-      // Operator note before you add an entry to `ip-blacklist`: a request that
-      // did not transit the Cloudflare edge is attributed to the transport peer,
-      // so where that peer is a shared hop, listing its address blocks all such
-      // traffic to every download route at once. See `parseIpBlocklist`.
-      const ip = getTrustedClientIp(req);
-      const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
-      if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
+function parseVersionRequest(req: NextApiRequest, repaired: boolean): DownloadRequest {
+  const queryResults = schema.safeParse(req.query);
+  if (!queryResults.success) {
+    logSchemaRejection(queryResults.error, repaired);
+    return {
+      ok: false,
+      reason: 'schema',
+      message: z.prettifyError(queryResults.error) ?? 'Invalid modelVersionId',
+    };
+  }
+  const input = queryResults.data;
+  const modelVersionId = input.modelVersionId;
+  if (!modelVersionId) return { ok: false, reason: 'missing-version' };
 
-      // Check if user is blacklisted
-      const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
-      if (!!session?.user) {
-        const userBlacklist = parseUserBlocklist(await getDownloadBlocklistValue('user-blacklist'));
-        if (userBlacklist.includes(session.user.id.toString()))
-          return errorResponse(403, 'Forbidden');
-      }
-
-      // Check if user has a concerning number of downloads
-      //
-      // 🔴 READ THIS BEFORE KEYING AN ANONYMOUS DOWNLOAD LIMIT ON THIS BUCKET.
-      //
-      // For an authenticated caller `userKey` is the user id and each account
-      // counts separately. For an ANONYMOUS caller it is `ip`, which comes from
-      // getTrustedClientIp: a request that did not transit the Cloudflare edge
-      // is attributed to the transport peer, so wherever that peer is a shared
-      // hop, every such caller lands on ONE counter.
-      //
-      // That collapse is fine for the blocklist above (a membership test
-      // against a curated list) and it is NOT fine for a counter with a
-      // threshold: a shared counter is driven by the aggregate volume of
-      // unrelated callers, so when it trips it 429s all of them together, none
-      // of whom did anything the limit was aimed at. The people it lands on are
-      // exactly the ones who reached us without edge transit.
-      //
-      // The COUPLING is the point. `hasExceededLimit` reads a bucket's
-      // threshold out of a redis hash, and the two cases are symmetric: a
-      // bucket whose threshold is unset is counted but not enforced, and a
-      // bucket whose threshold is set shares one counter across every
-      // non-edge-attested anonymous caller. Neither is a property of this
-      // file — the hash decides which one applies, so this code is correct
-      // under both and the design question is unaffected by which holds.
-      //
-      // Before setting a threshold for the anonymous bucket, give this surface
-      // a key that does not collapse, or scope the limit to edge-attested
-      // requests.
-      const isAuthed = !!session?.user;
-      const userKey = session?.user?.id?.toString() ?? ip;
-      if (!userKey) return errorResponse(403, 'Forbidden');
-      const fallbackKey = isAuthed ? 'authed' : 'anon';
-      if (await downloadLimiter.hasExceededLimit(userKey, fallbackKey)) {
-        return errorResponse(
-          429,
-          `We've noticed an unusual amount of downloading from your account. Contact support@civitai.com or come back later.`
-        );
-      }
-
-      // Validate query params
-      const queryResults = schema.safeParse(req.query);
-      if (!queryResults.success) {
-        logSchemaRejection(queryResults.error, repaired);
-        return res
-          .status(400)
-          .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid modelVersionId' });
-      }
-      const input = queryResults.data;
-      const modelVersionId = input.modelVersionId;
-      if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
-
-      // Get file
-      //
-      // `direct` is evaluated here, AFTER the blocklist, rate-limit and (inside
-      // getFileForModelVersion) auth/ownership/paid-access checks. It selects
-      // which host serves the bytes and nothing else — a caller that fails any
-      // gate above never reaches this line, so the allowlist cannot widen access.
-      const fileResult = await getFileForModelVersion({
-        ...input,
-        user: session?.user,
-        direct: shouldResolveDirect(req),
-        attribution: { caller: 'download-route', actor: resolveActorFor(session?.user) },
-        redCapable: isRedCapableHost(req.headers.host),
-      });
-
-      if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
-      if (fileResult.status === 'resolve-failed') {
-        // Same 404 as `not-found`, but this 404 came from a delivery-worker /
-        // storage-resolver resolve FAILURE, which can be TRANSIENT (a storage
-        // outage, not a permanently-missing file). PublicEndpoint set a default
-        // `Cache-Control: public, s-maxage=300, …` before this handler ran;
-        // override it with `no-store` so a transient resolve failure is NOT
-        // edge-cached as "File not found" for ~5 min for a file that exists.
-        // setHeader (last-write-wins, headers not yet flushed) overrides the
-        // PublicEndpoint default. Deterministic by-id `not-found` stays cacheable.
-        res.setHeader('Cache-Control', 'private, no-store');
-        return errorResponse(404, 'File not found');
-      }
-      if (fileResult.status === 'failed-scan') {
-        // Moderators are served this file, so the refusal must not be edge-cached for them.
-        res.setHeader('Cache-Control', 'private, no-store');
-        return errorResponse(
-          403,
-          'This file did not pass a security scan and is not available for download'
-        );
-      }
-      if (fileResult.status === 'archived')
-        return errorResponse(410, 'Model archived, not available for download');
-      if (fileResult.status === 'early-access') {
-        if (!isBrowser)
-          return res.status(403).json({
-            error: 'Early Access',
-            deadline: fileResult.details.deadline,
-            message: isNonCommercialBaseModel(fileResult.details.baseModel)
-              ? notCommerciallyAvailableMessage(fileResult.details.baseModel)
-              : 'This asset is in Early Access. You can use Buzz access it now!',
-          });
-        else return res.redirect(`/model-versions/${modelVersionId}`);
-      }
-      // Answer in place rather than redirecting. `early-access` can bounce to the version page
-      // because that page renders a purchase CTA, but a plain missing grant has nothing actionable
-      // there — the redirect just lands the user back where they clicked, which is the exact
-      // "download button does nothing" symptom this status exists to eliminate.
-      if (fileResult.status === 'no-access')
-        return errorResponse(403, 'You do not have access to download this file');
-      // Only reachable without a session — `getFileForModelVersion` reports a signed-in user's
-      // missing grant as `no-access`, so sending someone to /login here can no longer loop them
-      // back to the page they started on.
-      if (fileResult.status === 'unauthorized') {
-        if (!isBrowser)
-          return res.status(401).json({
-            error: 'Unauthorized',
-            message: 'The creator of this asset requires you to be logged in to download it',
-          });
-        else
-          return res.redirect(
-            getLoginLink({
-              reason: 'download-auth',
-              returnUrl: `/model-versions/${modelVersionId}`,
-            })
-          );
-      }
-
-      if (fileResult.status === 'downloads-disabled')
-        return res.status(401).json({
-          error: 'Unauthorized',
-          message: 'The creator of this asset has disabled downloads on this file',
-        });
-
-      if (fileResult.status !== 'success') return errorResponse(500, 'Error getting file');
-
-      // Check for misalignment (skip when fileId is used — we already found the exact file)
-      if (!input.fileId) {
+  return {
+    ok: true,
+    async providerPick({ req, res, provider }) {
+      const { serveProviderDownload } = await import(
+        '~/server/services/provider-download/provider-download.service'
+      );
+      const { modelVersionId: _, fileId, ...selectors } = input;
+      return serveProviderDownload({ req, res, provider, modelVersionId, fileId, selectors });
+    },
+    async pick(gate) {
+      const fileResult = await gate(input);
+      // Skipped when fileId is used — we already found the exact file.
+      if (fileResult.status === 'success' && !input.fileId) {
         for (const key of Object.keys(input)) {
           if (
             input[key as keyof typeof input] &&
@@ -267,88 +146,311 @@ export default PublicEndpoint(
             fileResult.metadata[key as keyof typeof fileResult.metadata] !==
               input[key as keyof typeof input]
           )
-            return errorResponse(404, 'File not found');
+            return { fileResult: { status: 'not-found' }, modelVersionId };
         }
       }
+      return { fileResult, modelVersionId };
+    },
+  };
+}
 
-      // Track download
+/**
+ * The download route, shared by every URL that names a model file. `parseRequest` reads the URL
+ * and says how its file is chosen; everything else, from the blocklists to the redirect, is here,
+ * so no download URL can check less than another. A per-provider token is served by the request's
+ * `providerPick`, never as an anonymous download.
+ */
+export function createModelDownloadHandler(
+  parseRequest: (req: NextApiRequest, repaired: boolean) => DownloadRequest,
+  route: DownloadRoute
+) {
+  return PublicEndpoint(
+    async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
+      // This response is per-user, auth/early-access-gated, rate-limited, and
+      // redirects to a short-lived signed file URL. It must never be cached by the
+      // CDN. PublicEndpoint stamps a `public, s-maxage` default which would
+      // (a) leak one user's signed redirect to every other requester and
+      // (b) keep serving a deleted/taken-down model's 302 from edge for the whole
+      // cache window after the origin already returns 404 — defeating DMCA
+      // takedowns. Override with no-store so deletes take effect immediately.
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+
+      // Must run before `getServerAuthSession` below, which reads `?token=` off
+      // `req.url` — a stray `?` swallows that param into the one before it, so an
+      // API-key caller would otherwise be treated as anonymous.
+      const repaired = repairSplitQueryString(req);
+      // Unsampled: this is what says whether any client still needs the shim, and
+      // a rate that can report zero is the point.
+      if (repaired) logSplitQueryRepair(req);
+      // Before anything reads the request: a provider token is removed from it here.
+      const providerToken = takeProviderToken(req);
+
+      const isBrowser = isRequestFromBrowser(req);
+      function errorResponse(status: number, message: string) {
+        res.status(status);
+        if (isBrowser) return res.send(message);
+        return res.json({ error: message });
+      }
+      function refuseRequest(request: Extract<DownloadRequest, { ok: false }>) {
+        if (request.reason === 'schema') return res.status(400).json({ error: request.message });
+        if (request.reason === 'invalid-hash')
+          return errorResponse(400, 'Invalid hash: expected 64 hexadecimal characters');
+        return errorResponse(400, 'Missing modelVersionId');
+      }
+
       try {
-        if (!fileResult.isDownloadable) {
-          throw new Error(
-            'File not downloadable. Either a moderator or the resource owner disabled downloads for this version'
+        // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
+        // (edge-attested or transport peer only) — an enforcement control must not key
+        // on an address the caller supplies, and for anonymous callers this same value
+        // is the download-quota bucket below. Do not swap this for an inline resolver.
+        //
+        // Operator note before you add an entry to `ip-blacklist`: a request that
+        // did not transit the Cloudflare edge is attributed to the transport peer,
+        // so where that peer is a shared hop, listing its address blocks all such
+        // traffic to every download route at once. See `parseIpBlocklist`.
+        const ip = getTrustedClientIp(req);
+        const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
+        if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
+
+        // A per-provider download token: no session, no user blocklist, no per-user limit.
+        if (providerToken.kind === 'duplicate')
+          return res.status(400).json({ error: 'Send one token' });
+        if (providerToken.kind === 'provider') {
+          // Loaded only for a provider token, so every other download keeps today's import graph.
+          const { authorizeProviderToken } = await import(
+            '~/server/services/provider-download/provider-download.service'
+          );
+          const authorized = await authorizeProviderToken(providerToken.token);
+          if (!authorized.ok) return res.status(authorized.status).json(authorized.body);
+          const request = parseRequest(req, repaired);
+          if (!request.ok) return refuseRequest(request);
+          const served = await request.providerPick({ req, res, provider: authorized.provider });
+          if (!served.ok) return res.status(served.status).json(served.body);
+          return res.redirect(served.url);
+        }
+
+        // Check if user is blacklisted
+        const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+        const credential = await checkDownloadCredential(req, session?.user, {
+          route,
+          requiredScope: TokenScope.ModelsRead,
+        });
+        if (credential.refuse) return res.status(403).json(DOWNLOAD_SCOPE_REFUSED);
+        const user = credential.effectiveUser;
+        if (!!user) {
+          const userBlacklist = parseUserBlocklist(
+            await getDownloadBlocklistValue('user-blacklist')
+          );
+          if (userBlacklist.includes(user.id.toString())) return errorResponse(403, 'Forbidden');
+        }
+
+        // Check if user has a concerning number of downloads
+        //
+        // 🔴 READ THIS BEFORE KEYING AN ANONYMOUS DOWNLOAD LIMIT ON THIS BUCKET.
+        //
+        // For an authenticated caller `userKey` is the user id and each account
+        // counts separately. For an ANONYMOUS caller it is `ip`, which comes from
+        // getTrustedClientIp: a request that did not transit the Cloudflare edge
+        // is attributed to the transport peer, so wherever that peer is a shared
+        // hop, every such caller lands on ONE counter.
+        //
+        // That collapse is fine for the blocklist above (a membership test
+        // against a curated list) and it is NOT fine for a counter with a
+        // threshold: a shared counter is driven by the aggregate volume of
+        // unrelated callers, so when it trips it 429s all of them together, none
+        // of whom did anything the limit was aimed at. The people it lands on are
+        // exactly the ones who reached us without edge transit.
+        //
+        // The COUPLING is the point. `hasExceededLimit` reads a bucket's
+        // threshold out of a redis hash, and the two cases are symmetric: a
+        // bucket whose threshold is unset is counted but not enforced, and a
+        // bucket whose threshold is set shares one counter across every
+        // non-edge-attested anonymous caller. Neither is a property of this
+        // file — the hash decides which one applies, so this code is correct
+        // under both and the design question is unaffected by which holds.
+        //
+        // Before setting a threshold for the anonymous bucket, give this surface
+        // a key that does not collapse, or scope the limit to edge-attested
+        // requests.
+        const isAuthed = !!user;
+        const userKey = user?.id?.toString() ?? ip;
+        if (!userKey) return errorResponse(403, 'Forbidden');
+        const fallbackKey = isAuthed ? 'authed' : 'anon';
+        if (await downloadLimiter.hasExceededLimit(userKey, fallbackKey)) {
+          return errorResponse(
+            429,
+            `We've noticed an unusual amount of downloading from your account. Contact support@civitai.com or come back later.`
           );
         }
 
-        const now = new Date();
+        const request = parseRequest(req, repaired);
+        if (!request.ok) return refuseRequest(request);
 
-        // An unpublished version is only reachable by its owner and by internal services — the scanner
-        // fetches the file minutes after upload, which was landing a Download event and leaving every
-        // draft showing 1 download before it went live.
-        const tracker = new Tracker(req, res, session);
-        if (fileResult.published && countsAsPublicDownload(session?.user))
-          await tracker.modelVersionEvent({
-            type: 'Download',
-            modelId: fileResult.modelId,
-            modelVersionId,
-            fileId: fileResult.fileId,
-            nsfw: fileResult.nsfw,
-            earlyAccess: fileResult.inEarlyAccess,
-            time: now,
+        // `direct` is evaluated here, AFTER the blocklist, rate-limit and (inside
+        // getFileForModelVersion) auth/ownership/paid-access checks. It selects
+        // which host serves the bytes and nothing else — a caller that fails any
+        // gate above never reaches this line, so the allowlist cannot widen access.
+        const direct = shouldResolveDirect(req);
+        const gate: DownloadGate = (args) =>
+          getFileForModelVersion({
+            ...args,
+            user: user,
+            direct,
+            attribution: { caller: 'download-route', actor: resolveActorFor(user) },
+            redCapable: isRedCapableHost(req.headers.host),
           });
+        const { fileResult, modelVersionId } = await request.pick(gate, user);
 
-        // Bust the downloads cache so the user sees their download immediately
-        if (session?.user?.id) {
-          bustUserDownloadsCache(session.user.id).catch(() => {
-            // ignore
-          });
+        if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
+        if (fileResult.status === 'resolve-failed') {
+          // Same 404 as `not-found`, but this 404 came from a delivery-worker /
+          // storage-resolver resolve FAILURE, which can be TRANSIENT (a storage
+          // outage, not a permanently-missing file). PublicEndpoint set a default
+          // `Cache-Control: public, s-maxage=300, …` before this handler ran;
+          // override it with `no-store` so a transient resolve failure is NOT
+          // edge-cached as "File not found" for ~5 min for a file that exists.
+          // setHeader (last-write-wins, headers not yet flushed) overrides the
+          // PublicEndpoint default. Deterministic by-id `not-found` stays cacheable.
+          res.setHeader('Cache-Control', 'private, no-store');
+          return errorResponse(404, 'File not found');
+        }
+        if (fileResult.status === 'failed-scan') {
+          // Moderators are served this file, so the refusal must not be edge-cached for them.
+          res.setHeader('Cache-Control', 'private, no-store');
+          return errorResponse(
+            403,
+            'This file did not pass a security scan and is not available for download'
+          );
+        }
+        if (fileResult.status === 'archived')
+          return errorResponse(410, 'Model archived, not available for download');
+        if (fileResult.status === 'early-access') {
+          if (!isBrowser)
+            return res.status(403).json({
+              error: 'Early Access',
+              deadline: fileResult.details.deadline,
+              message: isNonCommercialBaseModel(fileResult.details.baseModel)
+                ? notCommerciallyAvailableMessage(fileResult.details.baseModel)
+                : 'This asset is in Early Access. You can use Buzz access it now!',
+            });
+          else return res.redirect(`/model-versions/${modelVersionId}`);
+        }
+        // Answer in place rather than redirecting. `early-access` can bounce to the version page
+        // because that page renders a purchase CTA, but a plain missing grant has nothing actionable
+        // there — the redirect just lands the user back where they clicked, which is the exact
+        // "download button does nothing" symptom this status exists to eliminate.
+        if (fileResult.status === 'no-access')
+          return errorResponse(403, 'You do not have access to download this file');
+        // Only reachable without a session — `getFileForModelVersion` reports a signed-in user's
+        // missing grant as `no-access`, so sending someone to /login here can no longer loop them
+        // back to the page they started on.
+        if (fileResult.status === 'unauthorized') {
+          if (!isBrowser)
+            return res.status(401).json({
+              error: 'Unauthorized',
+              message: 'The creator of this asset requires you to be logged in to download it',
+            });
+          else
+            return res.redirect(
+              getLoginLink({
+                reason: 'download-auth',
+                returnUrl: `/model-versions/${modelVersionId}`,
+              })
+            );
         }
 
-        // Increment download count for user. A resume re-enters here for the same file, so only the
-        // first request for a file and repeats past the free allowance count.
-        if (await countsTowardDownloadLimit(userKey, fileResult.fileId))
-          await downloadLimiter.increment(userKey);
-      } catch (error) {
-        // Don't return error to user
-        console.error(error);
-      }
+        if (fileResult.status === 'downloads-disabled')
+          return res.status(401).json({
+            error: 'Unauthorized',
+            message: 'The creator of this asset has disabled downloads on this file',
+          });
 
-      logUrlExpiry(fileResult);
-      // Redirect to download url
-      res.redirect(fileResult.url);
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      // `token` is the caller's API key, and Axiom applies no redaction of its own.
-      const { token, ...loggableQuery } = req.query;
-      logToAxiom({
-        name: 'download-model-endpoint',
-        type: 'error',
-        message: err.message,
-        stack: err.stack,
-        query: loggableQuery,
-      }).catch(() => {
-        // swallow logging failure
-      });
-      if (res.headersSent) return;
-      // 🔴 civitai#3845 TIER 1. This was `errorResponse(500, err.message)` on a
-      // `PublicEndpoint`, so an anonymous caller got the driver's own prose —
-      // ``Invalid `prisma.modelFile.findFirst()` invocation``, table and column
-      // names — through BOTH arms of `errorResponse`: `{ error: <text> }` as JSON
-      // and, for a browser UA, `res.send(<text>)` as bare text/plain. The ledger
-      // sweep only inspects `.json({…})` bodies, so the text/plain arm was never
-      // even visible to it.
-      //
-      // Not delegated to `handleEndpointError`: that would force JSON on the
-      // browser arm and drop the content negotiation this route exists to do. The
-      // genericization is the same one the helper applies, sharing its constant so
-      // the two cannot drift. Nothing is lost — `logToAxiom` directly above still
-      // records the un-redacted message and stack.
-      //
-      // Every OTHER exit from this handler already answers with a string literal,
-      // so after this line `errorResponse` can no longer be reached with
-      // caught-error text. `src/tests/api/tier1-public-route-disclosure.test.ts`
-      // pins that structurally, per call site.
-      return errorResponse(500, GENERIC_SERVER_ERROR_MESSAGE);
-    }
-  },
-  ['GET']
+        if (fileResult.status !== 'success') return errorResponse(500, 'Error getting file');
+
+        // Track download
+        try {
+          if (!fileResult.isDownloadable) {
+            throw new Error(
+              'File not downloadable. Either a moderator or the resource owner disabled downloads for this version'
+            );
+          }
+
+          const now = new Date();
+
+          // An unpublished version is only reachable by its owner and by internal services — the scanner
+          // fetches the file minutes after upload, which was landing a Download event and leaving every
+          // draft showing 1 download before it went live.
+          const tracker = new Tracker(req, res, session);
+          if (fileResult.published && countsAsPublicDownload(user))
+            await tracker.modelVersionEvent({
+              type: 'Download',
+              modelId: fileResult.modelId,
+              modelVersionId: modelVersionId ?? fileResult.modelVersionId,
+              fileId: fileResult.fileId,
+              nsfw: fileResult.nsfw,
+              earlyAccess: fileResult.inEarlyAccess,
+              time: now,
+            });
+
+          // Bust the downloads cache so the user sees their download immediately
+          if (user?.id) {
+            bustUserDownloadsCache(user.id).catch(() => {
+              // ignore
+            });
+          }
+
+          // Increment download count for user. A resume re-enters here for the same file, so only the
+          // first request for a file and repeats past the free allowance count.
+          if (await countsTowardDownloadLimit(userKey, fileResult.fileId))
+            await downloadLimiter.increment(userKey);
+        } catch (error) {
+          // Don't return error to user
+          console.error(error);
+        }
+
+        logUrlExpiry(fileResult);
+        // Redirect to download url
+        res.redirect(fileResult.url);
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        // `token` is the caller's API key, and Axiom applies no redaction of its own.
+        const { token, ...loggableQuery } = req.query;
+        logToAxiom({
+          name: 'download-model-endpoint',
+          type: 'error',
+          message: err.message,
+          stack: err.stack,
+          query: loggableQuery,
+        }).catch(() => {
+          // swallow logging failure
+        });
+        if (res.headersSent) return;
+        // 🔴 civitai#3845 TIER 1. This was `errorResponse(500, err.message)` on a
+        // `PublicEndpoint`, so an anonymous caller got the driver's own prose —
+        // ``Invalid `prisma.modelFile.findFirst()` invocation``, table and column
+        // names — through BOTH arms of `errorResponse`: `{ error: <text> }` as JSON
+        // and, for a browser UA, `res.send(<text>)` as bare text/plain. The ledger
+        // sweep only inspects `.json({…})` bodies, so the text/plain arm was never
+        // even visible to it.
+        //
+        // Not delegated to `handleEndpointError`: that would force JSON on the
+        // browser arm and drop the content negotiation this route exists to do. The
+        // genericization is the same one the helper applies, sharing its constant so
+        // the two cannot drift. Nothing is lost — `logToAxiom` directly above still
+        // records the un-redacted message and stack.
+        //
+        // Every OTHER exit from this handler already answers with a string literal,
+        // so after this line `errorResponse` can no longer be reached with
+        // caught-error text. `src/tests/api/tier1-public-route-disclosure.test.ts`
+        // pins that structurally, per call site.
+        return errorResponse(500, GENERIC_SERVER_ERROR_MESSAGE);
+      }
+    },
+    ['GET']
+  );
+}
+
+export default createModelDownloadHandler(
+  parseVersionRequest,
+  '/api/download/models/[modelVersionId]'
 );

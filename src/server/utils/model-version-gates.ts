@@ -1,5 +1,6 @@
 import { isPaidAccessActive } from '@civitai/buzz';
 import { getPaidAccess } from '~/server/services/paid-access.service';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -19,8 +20,7 @@ export const isModelDeleted = (version: GatedVersion) =>
 export const isModelArchived = (version: GatedVersion) =>
   version.model.mode === ModelModifier.Archived;
 
-export const isModelTakenDown = (version: GatedVersion) =>
-  version.model.mode === ModelModifier.TakenDown;
+export const isModelTakenDown = (version: GatedVersion) => isModelWithheld(version.model);
 
 /** Both the model and the version are published. */
 export const isVersionPublished = (version: GatedVersion) =>

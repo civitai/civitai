@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { loadEvents } from '~/server/events/load-events';
 import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
 import { EVENT_POINTS_LEDGER_TABLE } from '~/server/events/points/award';
-import { eventSeasonKeys, liveBucket } from '~/server/events/points/keys';
+import { eventSeasonKeys, liveBucket, LIVE_BUCKET_TTL_S } from '~/server/events/points/keys';
 import { markEventTeamsDirty } from '~/server/events/points/push';
 import {
   CRUCIBLE_TEAM_AWARDS,
@@ -16,8 +16,7 @@ import type {
   CrucibleEntrySubscriber,
 } from '~/server/services/crucible-entry-accepted';
 
-// Outlives the referee's hourly cut, as the engine's own live buckets do.
-const LIVE_TTL_S = 3 * 60 * 60;
+const AWARDED_TTL_PAST_END_MS = 7 * 24 * 60 * 60 * 1000;
 
 type LedgerRow = ReturnType<typeof crucibleTeamAwardLedgerRow>;
 
@@ -63,19 +62,26 @@ async function grant(entry: CrucibleEntryRef & { acceptedAt: Date }) {
         AND c.data->>'event' = ${event.name}
         AND c.data->>'design' = ${join.design}
         AND c.data->>'team' IS NOT NULL
-      ORDER BY uc."createdAt", c.id
+      ORDER BY uc."obtainedAt", c.id
       LIMIT 1
     `;
     if (!player?.eligible || !event.teams.includes(player.team)) continue;
 
     // The ledger row is the record; a repeated accept writes a second add, which the settle counts
-    // once. The accepted hash keeps that rare, and a repeat's live increment is reset at the settle.
+    // once. The accepted hash keeps that rare.
     await insertLedger([crucibleTeamAwardLedgerRow(event.name, 'add', entry, at, player.team)]);
 
     try {
-      const key = eventSeasonKeys(event.name, 'live').live(liveBucket(at), 'team');
+      // Live counts each entrant once per crucible, as the settle does, so a second entry doesn't
+      // lift the team until the settle takes it back.
+      const keys = eventSeasonKeys(event.name, 'live');
+      const awarded = keys.crucibleAwarded(entry.crucibleId);
+      const first = await sysRedis.sAdd(awarded, String(entry.userId));
+      await sysRedis.expireAt(awarded, new Date(event.endDate.getTime() + AWARDED_TTL_PAST_END_MS));
+      if (!first) continue;
+      const key = keys.live(liveBucket(at), 'team');
       await sysRedis.hIncrBy(key, player.team, award.points);
-      await sysRedis.expire(key, LIVE_TTL_S);
+      await sysRedis.expire(key, LIVE_BUCKET_TTL_S);
       markEventTeamsDirty(event, at);
     } catch (error) {
       // The row is the record; the live total catches up at the next settle.

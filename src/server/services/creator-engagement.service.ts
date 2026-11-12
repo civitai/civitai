@@ -7,6 +7,7 @@ import { kyselyRead } from '~/server/db/kyselyDb';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 
 export const engagementItemTypes = ['image', 'video', 'model'] as const;
@@ -260,6 +261,7 @@ async function modelReviewCounts(
       AND r."userId" <> ${userId}
       AND r."userId" <> ALL(${intArray(excluded)})
       AND NOT r.exclude AND NOT r."tosViolation"
+      AND ${sql.raw(visibleReviewSql('r'))}
       ${sinceSql('r.createdAt', since)}
     GROUP BY 1
   `.execute(kyselyRead);

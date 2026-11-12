@@ -1,14 +1,13 @@
 import { faker } from '@faker-js/faker';
 import dayjs from '~/shared/utils/dayjs';
-import { capitalize, pull, range, without } from 'lodash-es';
-import type { DatabaseError } from 'pg';
+import { capitalize, without } from 'lodash-es';
+import { Pool, type DatabaseError } from 'pg';
 import format from 'pg-format';
 // import type { DatabaseError } from 'pg-protocol/src/messages';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -48,6 +47,7 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import {
   checkLocalDb,
+  checkLocalNotificationDb,
   deleteRandomJobQueueRows,
   generateRandomName,
   insertRows,
@@ -77,6 +77,9 @@ const fbool = faker.datatype.boolean;
 // TODO fix tables ownership from doadmin to civitai
 
 // TODO seed logicalDb
+
+// The notification DB client moved to apps/notifications; the seed only needs a plain pool.
+const notifDbWrite = new Pool({ connectionString: process.env.NOTIFICATION_DB_URL });
 
 const setSerialNotif = async (table: string) => {
   // language=text
@@ -621,7 +624,6 @@ const genModels = (num: number, userIds: number[]) => {
       fbool(0.01), // locked
       isDeleted ? rand(userIds) : null, // deletedBy
       fbool(0.001), // underAttack
-      isEa ? faker.date.future().toISOString() : null, // earlyAccessDeadline
       randw([
         { value: null, weight: 100 },
         { value: rand(Object.values(ModelModifier)), weight: 1 },
@@ -732,8 +734,6 @@ const genMvs = (num: number, modelData: { id: number; uploadType: ModelUploadTyp
         { value: 15, weight: 2 },
         { value: 31, weight: 2 },
       ]), // nsfwLevel
-      null, // earlyAccessConfig // TODO
-      null, // earlyAccessEndsAt // TODO
       model.uploadType, // uploadType
     ];
     ret.push(row);
@@ -1438,7 +1438,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1453,7 +1452,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1468,7 +1466,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1483,7 +1480,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1498,7 +1494,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1513,7 +1508,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1528,7 +1522,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1543,7 +1536,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1558,7 +1550,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1573,7 +1564,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1588,7 +1578,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1603,7 +1592,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1618,7 +1606,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1633,7 +1620,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1648,7 +1634,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1663,7 +1648,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1678,7 +1662,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1693,7 +1676,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1708,7 +1690,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1723,7 +1704,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1738,7 +1718,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1753,7 +1732,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1768,7 +1746,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1783,7 +1760,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1798,7 +1774,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1813,7 +1788,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1828,7 +1802,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1843,7 +1816,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1858,7 +1830,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1873,7 +1844,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1888,7 +1858,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1925,7 +1894,6 @@ const genTags = (num: number) => {
         { value: TagType.Label, weight: 7500 },
         { value: TagType.UserGenerated, weight: 150000 },
       ]), // type
-      'None', // nsfw
       false, // adminOnly
       1, // nsfwLevel
     ];
@@ -2054,100 +2022,78 @@ const genTagsOnModels = (num: number, tagIds: number[], modelIds: number[]) => {
 };
 
 /**
- * Comment
+ * CommentTopic
  */
-const genCommentsModel = (
-  num: number,
-  userIds: number[],
-  modelIds: number[],
-  parentIds: number[],
-  doThread = false,
-  startId = 0
-) => {
-  const ret = [];
+type CommentEntityType = 'model' | 'image' | 'post' | 'review' | 'article';
+type CommentTopicRow = { entityType: CommentEntityType; entityId: number };
+type CommentV3Row = CommentTopicRow & { id: number; createdAt: Date };
 
-  for (let step = startId + 1; step <= startId + num; step++) {
+const commentTopicColumns = ['entityType', 'entityId', 'locked'];
+
+// Draws each entity at most once: a topic's primary key is (entityId, entityType).
+const genCommentTopics = (num: number, entityIds: Partial<Record<CommentEntityType, number[]>>) => {
+  const ret = [];
+  const remaining = Object.fromEntries(
+    Object.entries(entityIds).map(([type, ids]) => [type, faker.helpers.shuffle(ids)])
+  ) as Record<CommentEntityType, number[]>;
+
+  for (let step = 1; step <= num; step++) {
+    const types = (Object.keys(remaining) as CommentEntityType[]).filter(
+      (t) => remaining[t].length > 0
+    );
+    if (!types.length) break;
+    const entityType = rand(types);
+
+    const row = [
+      entityType, // entityType
+      remaining[entityType].pop(), // entityId
+      fbool(0.01), // locked
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * CommentV3
+ */
+// id comes from comment_shared_id_seq, path from the commentv3_set_path trigger, and rootId and depth
+// are GENERATED from path. reactionCount and the topic's commentCount are trigger-maintained.
+const commentV3Columns = [
+  'entityType',
+  'entityId',
+  'parentId',
+  'userId',
+  'content',
+  'createdAt',
+  'updatedAt',
+  'tosViolation',
+  'hidden',
+  'locked',
+  'pinnedAt',
+];
+
+const genCommentsV3 = (num: number, userIds: number[], topics: CommentTopicRow[]) => {
+  const ret = [];
+  if (!topics.length) return [];
+
+  for (let step = 1; step <= num; step++) {
+    const { entityType, entityId } = rand(topics);
     const created = faker.date.past({ years: 3 }).toISOString();
 
     const row = [
-      step, // id
+      entityType, // entityType
+      entityId, // entityId
+      null, // parentId
+      rand(userIds), // userId
       `<p>${randPrependBad(faker.lorem.paragraph({ min: 1, max: 8 }))}</p>`, // content
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
-      fbool(0.01), // nsfw
       fbool(0.01), // tosViolation
-      doThread ? rand(parentIds) : null, // parentId
-      rand(userIds), // userId
-      rand(modelIds), // modelId
-      fbool(0.01), // locked
       fbool(0.01), // hidden
-    ];
-
-    ret.push(row);
-  }
-  return ret;
-};
-
-/**
- * Thread
- */
-const genThreads = (
-  num: number,
-  imageIds: number[],
-  postIds: number[],
-  reviewIds: number[],
-  articleIds: number[],
-  commentIds: number[],
-  parentIds: number[],
-  doThread = false,
-  startId = 0
-) => {
-  const ret = [];
-
-  const seenImageIds: number[] = [];
-  const seenPostIds: number[] = [];
-  const seenReviewIds: number[] = [];
-  const seenArticleIds: number[] = [];
-
-  const parentIdxs = range(parentIds.length);
-
-  for (let step = startId + 1; step <= startId + num; step++) {
-    const type = rand(['image', 'post', 'review', 'article']); // TODO bounty, bountyEntry
-
-    const imageId = type === 'image' && !doThread ? rand(without(imageIds, ...seenImageIds)) : null;
-    const postId = type === 'post' && !doThread ? rand(without(postIds, ...seenPostIds)) : null;
-    const reviewId =
-      type === 'review' && !doThread ? rand(without(reviewIds, ...seenReviewIds)) : null;
-    const articleId =
-      type === 'article' && !doThread ? rand(without(articleIds, ...seenArticleIds)) : null;
-
-    const parentIdx = doThread ? rand(parentIdxs) : 0;
-    if (doThread) pull(parentIdxs, parentIdx);
-    const parentId = doThread ? parentIds[parentIdx] : null;
-    const commentId = doThread ? commentIds[parentIdx] : null;
-
-    if (imageId) seenImageIds.push(imageId);
-    if (postId) seenPostIds.push(postId);
-    if (reviewId) seenReviewIds.push(reviewId);
-    if (articleId) seenArticleIds.push(articleId);
-
-    const row = [
-      step, // id
       fbool(0.01), // locked
-      null, // questionId
-      null, // answerId
-      imageId, // imageId
-      postId, // postId
-      reviewId, // reviewId
-      '{}', // metadata // TODO do we need "reviewIds" here?
-      null, // modelId
-      commentId, // commentId
-      articleId, // articleId
-      null, // bountyEntryId // TODO
-      null, // bountyId // TODO
-      null, // clubPostId
-      parentId, // parentThreadId
-      parentId, // rootThreadId
+      fbool(0.01) ? created : null, // pinnedAt
     ];
 
     ret.push(row);
@@ -2155,31 +2101,67 @@ const genThreads = (
   return ret;
 };
 
-/**
- * CommentV2
- */
-const genCommentsV2 = (num: number, userIds: number[], threadIds: number[], startId = 0) => {
+// A reply takes its parent's topic; replyToId stays null because these never reach the depth clamp.
+const genCommentV3Replies = (num: number, userIds: number[], parents: CommentV3Row[]) => {
   const ret = [];
+  if (!parents.length) return [];
 
-  for (let step = startId + 1; step <= startId + num; step++) {
-    const created = faker.date.past({ years: 3 }).toISOString();
+  for (let step = 1; step <= num; step++) {
+    const parent = rand(parents);
+    const created = faker.date.between({ from: parent.createdAt, to: Date.now() }).toISOString();
 
     const row = [
-      step, // id
-      `<p>${randPrependBad(faker.lorem.paragraph({ min: 1, max: 8 }))}</p>`, // content
+      parent.entityType, // entityType
+      parent.entityId, // entityId
+      parent.id, // parentId
+      rand(userIds), // userId
+      `<p>${randPrependBad(faker.lorem.paragraph({ min: 1, max: 4 }))}</p>`, // content
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
-      fbool(0.01), // nsfw
       fbool(0.01), // tosViolation
-      rand(userIds), // userId
-      rand(threadIds), // threadId
-      null, // metadata // TODO need "oldId"?
       fbool(0.005), // hidden
+      false, // locked
+      null, // pinnedAt
     ];
 
     ret.push(row);
   }
   return ret;
+};
+
+// insertRows writes every column positionally, which CommentV3's GENERATED columns reject.
+const insertRowsWithColumns = async <T>(
+  table: string,
+  columns: string[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any[][],
+  returning: string[] = []
+): Promise<T[]> => {
+  if (!data.length) {
+    console.log(`No rows to insert. Skipping ${table}.`);
+    return [];
+  }
+
+  console.log(`Inserting ${data.length} rows into ${table}`);
+
+  let query = format('INSERT INTO %I (%I) VALUES %L ON CONFLICT DO NOTHING', table, columns, data);
+  if (returning.length) query += format(' RETURNING %I', returning);
+
+  try {
+    const ret = await pgDbWrite.query(query);
+
+    if (ret.rowCount === data.length) console.log(`\t-> ✔️ Inserted ${ret.rowCount} rows`);
+    else if (ret.rowCount === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
+    else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount ?? 'unk'} of ${data.length} rows`);
+
+    return ret.rows as T[];
+  } catch (error) {
+    const e = error as DatabaseError;
+    console.log(`\t-> ❌  ${e.message}`);
+    if (e.detail) console.log(`\t-> Detail: ${e.detail}`);
+    if (e.where) console.log(`\t-> where: ${e.where}`);
+    return [];
+  }
 };
 
 /**
@@ -2392,42 +2374,20 @@ const genArticleReactions = (num: number, userIds: number[], articleIds: number[
 };
 
 /**
- * CommentReaction
+ * CommentV3Reaction
  */
-const genCommentReactions = (num: number, userIds: number[], commentIds: number[]) => {
+// reactionCount on the comment is maintained by the commentv3_reaction_count trigger.
+const genCommentV3Reactions = (num: number, userIds: number[], comments: CommentV3Row[]) => {
   const ret = [];
+  if (!comments.length) return [];
 
   for (let step = 1; step <= num; step++) {
-    // nb not quite right, would need created of entity, but being lazy here
-    const created = faker.date.past({ years: 3 }).toISOString();
+    const comment = rand(comments);
+    const created = faker.date.between({ from: comment.createdAt, to: Date.now() }).toISOString();
 
     const row = [
       step, // id
-      rand(commentIds), // commentId
-      rand(userIds), // userId
-      rand(reactions), // reaction
-      created, // createdAt
-      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
-    ];
-
-    ret.push(row);
-  }
-  return ret;
-};
-
-/**
- * CommentV2Reaction
- */
-const genCommentV2Reactions = (num: number, userIds: number[], commentIds: number[]) => {
-  const ret = [];
-
-  for (let step = 1; step <= num; step++) {
-    // nb not quite right, would need created of entity, but being lazy here
-    const created = faker.date.past({ years: 3 }).toISOString();
-
-    const row = [
-      step, // id
-      rand(commentIds), // commentId
+      comment.id, // commentId
       rand(userIds), // userId
       rand(reactions), // reaction
       created, // createdAt
@@ -3411,10 +3371,10 @@ const genRows = async (truncate = true) => {
     .map((m) => ({
       id: m[6] as number,
       userId: m[7] as number,
-      uploadType: m[25] as ModelUploadType,
+      uploadType: m[24] as ModelUploadType,
       type: m[2] as ModelType,
       status: m[9] as ModelStatus,
-      availability: m[28] as Availability,
+      availability: m[27] as Availability,
     }))
     .filter((m) => modelIds.includes(m.id));
 
@@ -3428,7 +3388,7 @@ const genRows = async (truncate = true) => {
         id: mv[6] as number,
         modelId: modelId,
         userId: matchModel?.userId,
-        uploadType: mv[28] as ModelUploadType,
+        uploadType: mv[26] as ModelUploadType,
         type: matchModel?.type,
         status: matchModel?.status,
         availability: matchModel?.availability,
@@ -3523,56 +3483,47 @@ const genRows = async (truncate = true) => {
   // TODO TagsOnImageVote
   // TODO TagsOnModelsVote
 
-  const commentsV1 = genCommentsModel(Math.ceil(numRows * 3), userIds, modelIds, [], false);
-  const commentsV1Ids = await insertRows('Comment', commentsV1);
+  const commentV3Returning = ['id', 'entityType', 'entityId', 'createdAt'];
 
-  const commentsV1Thread = genCommentsModel(
-    numRows,
-    userIds,
-    modelIds,
-    commentsV1Ids,
-    true,
-    commentsV1Ids[commentsV1Ids.length - 1]
+  const modelTopics = genCommentTopics(numRows, { model: modelIds });
+  const otherTopics = genCommentTopics(Math.ceil(numRows * 3), {
+    image: imageIds,
+    post: postIds,
+    review: reviewIds,
+    article: articleIds,
+  });
+  const topics = await insertRowsWithColumns<CommentTopicRow>(
+    'CommentTopic',
+    commentTopicColumns,
+    modelTopics.concat(otherTopics),
+    ['entityType', 'entityId']
   );
-  const commentsV1AllIds = await insertRows('Comment', commentsV1Thread);
+  const modelTopicRows = topics.filter((t) => t.entityType === 'model');
+  const otherTopicRows = topics.filter((t) => t.entityType !== 'model');
 
-  const threads = genThreads(
-    Math.ceil(numRows * 3),
-    imageIds,
-    postIds,
-    reviewIds,
-    articleIds,
-    [],
-    [],
-    false
+  const topComments = await insertRowsWithColumns<CommentV3Row>(
+    'CommentV3',
+    commentV3Columns,
+    genCommentsV3(Math.ceil(numRows * 3), userIds, modelTopicRows).concat(
+      genCommentsV3(Math.ceil(numRows * 4), userIds, otherTopicRows)
+    ),
+    commentV3Returning
   );
-  const threadIds = await insertRows('Thread', threads);
 
-  const commentsV2 = genCommentsV2(Math.ceil(numRows * 4), userIds, threadIds);
-  const commentsV2Ids = await insertRows('CommentV2', commentsV2);
-
-  const threadsNest = genThreads(
-    numRows,
-    [],
-    [],
-    [],
-    [],
-    commentsV2Ids,
-    commentsV2.map((c) => c[7] as number),
-    true,
-    threadIds[threadIds.length - 1]
+  const replies = await insertRowsWithColumns<CommentV3Row>(
+    'CommentV3',
+    commentV3Columns,
+    genCommentV3Replies(Math.ceil(numRows * 1.5), userIds, topComments),
+    commentV3Returning
   );
-  const threadsNestIds = await insertRows('Thread', threadsNest);
-
-  const commentsV2Nest = genCommentsV2(
-    numRows,
-    userIds,
-    threadsNestIds,
-    commentsV2Ids[commentsV2Ids.length - 1]
+  const nestedReplies = await insertRowsWithColumns<CommentV3Row>(
+    'CommentV3',
+    commentV3Columns,
+    genCommentV3Replies(Math.ceil(numRows / 2), userIds, replies),
+    commentV3Returning
   );
-  const commentsV2NestIds = await insertRows('CommentV2', commentsV2Nest);
 
-  const commentsV2AllIds = commentsV2Ids.concat(commentsV2NestIds);
+  const allComments = topComments.concat(replies, nestedReplies);
 
   const resources = genImageResources(numRows, mvIds, imageIds);
   await insertRows('ImageResource', resources);
@@ -3592,14 +3543,8 @@ const genRows = async (truncate = true) => {
 
   const articleReactions = genArticleReactions(Math.ceil(numRows * 5), userIds, articleIds);
   await insertRows('ArticleReaction', articleReactions);
-  const commentV1Reactions = genCommentReactions(Math.ceil(numRows * 5), userIds, commentsV1AllIds);
-  await insertRows('CommentReaction', commentV1Reactions);
-  const commentV2Reactions = genCommentV2Reactions(
-    Math.ceil(numRows * 5),
-    userIds,
-    commentsV2AllIds
-  );
-  await insertRows('CommentV2Reaction', commentV2Reactions);
+  const commentV3Reactions = genCommentV3Reactions(Math.ceil(numRows * 10), userIds, allComments);
+  await insertRows('CommentV3Reaction', commentV3Reactions);
   const imageReactions = genImageReactions(Math.ceil(numRows * 5), userIds, imageIds);
   await insertRows('ImageReaction', imageReactions);
   const postReactions = genPostReactions(Math.ceil(numRows * 5), userIds, postIds);
@@ -3885,8 +3830,6 @@ const genRedisSystemFeatures = async () => {
     REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES,
     JSON.stringify({
       // Chat: true,
-      // Comment: false,
-      // CommentV2: true,
       // User: false,
       // UserProfile: false,
       // Model: false,
@@ -3928,6 +3871,7 @@ const genRedisSystemFeatures = async () => {
 
 const main = async () => {
   checkLocalDb();
+  checkLocalNotificationDb();
 
   await pgDbWrite.query('REASSIGN OWNED BY doadmin, civitai, "civitai-jobs" TO postgres');
   await pgDbWrite.query(

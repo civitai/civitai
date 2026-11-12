@@ -236,8 +236,8 @@ function ConfirmShare({
           </Text>
           <Text ta="center" size="sm">
             {shareDataset
-              ? 'You own the rights to all the files in this dataset, and you want it shared with the published model. Shared datasets can be downloaded from the model page once it’s published.'
-              : 'You own the rights to all the files in this dataset. It stays available only to you.'}{' '}
+              ? 'You have the right, or the rightholder’s explicit permission, to redistribute all the files in this dataset, and you want it shared with the published model. Shared datasets can be downloaded from the model page once it’s published.'
+              : 'You have the right, or the rightholder’s explicit permission, to use all the files in this dataset for training. It stays available only to you.'}{' '}
             <Anchor href="/content/training/data-policy" target="_blank" rel="noopener">
               Dataset storage policy
             </Anchor>

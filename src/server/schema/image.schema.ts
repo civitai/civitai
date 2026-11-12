@@ -537,6 +537,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     hatSort: z.enum(HAT_SORTS).optional(),
     // Whose hats a Hat Turf sort counts; none, every team's.
     hatTeams: z.string().max(32).array().max(8).optional(),
+    // Only the images the viewer has a live Turf hat on.
+    hatTurfMine: z.boolean().optional(),
     hideTurfHats: z.boolean().optional(),
     hideWornHats: z.boolean().optional(),
     // Client-only on green: opt-in PG-13 on public feeds. Passes through the
@@ -588,9 +590,8 @@ export const removeImageResourceSchema = z.object({
  * ceiling of its own that this could narrow:
  *
  * - `addEntityToShowcase` truncates the showcase it writes to
- *   `constants.profile.showcaseItemsLimit` (32). That is the only write path that
- *   truncates — `userProfile.update` takes `showcaseItems` unbounded and the service
- *   stores it as given, so a stored showcase is not guaranteed to be at or under 32.
+ *   `constants.profile.showcaseItemsLimit` (32), and `userProfile.update` rejects a
+ *   `showcaseItems` list longer than that.
  * - The notification panel dedupes image ids out of a 30-per-page infinite list, so
  *   500 is ~16 pages deep, and in practice more, since only notifications naming an
  *   image contribute an id.

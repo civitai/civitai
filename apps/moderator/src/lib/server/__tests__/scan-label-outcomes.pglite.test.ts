@@ -7,7 +7,7 @@ import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
-import { quotaStatus } from '$lib/scan-labels';
+import { BLOCK_REASONS, quotaStatus } from '$lib/scan-labels';
 import type { BlockDeps, BlockImageArgs } from '../scan-label.service';
 
 /** The majority-block sweep, the quota report and the label view, against the real migrations. */
@@ -77,6 +77,7 @@ beforeEach(async () => {
   await pg.exec(migration('20261023130000_scan_label_reasons_copy'));
   await pg.exec(migration('20261128120000_scan_label_claim_token'));
   await pg.exec(migration('20261230140000_scan_label_csam_hold'));
+  await pg.exec(migration('20261231170000_scan_label_school_nsfw_reason'));
   await pg.exec(migration('20260626120000_add_user_roles_and_oauth_access'));
   await pg.exec(migration('20260630140000_add_role_table'));
   await pg.exec(`INSERT INTO "Role" ("id") VALUES ('moderator:scan-labels')`);
@@ -109,6 +110,23 @@ const vote = (itemId: number, userId: number, block: boolean, when = '2026-10-13
 const item = async (id: number) =>
   (await pg.query<Record<string, unknown>>(`SELECT * FROM "ScanLabelItem" WHERE id = $1`, [id]))
     .rows[0];
+
+// A reason missing from the CHECK constraint fails the whole vote (the moderator sees only "not
+// recorded"), so every form reason must be in the migrations.
+describe('block reasons', () => {
+  it('records a vote for every reason the form offers', async () => {
+    for (const [i, { id }] of BLOCK_REASONS.entries()) {
+      const itemId = await seedItem(i + 1);
+      const result = await castVote({
+        itemId,
+        userId: 11,
+        choice: { block: true, reason: id, reasonComment: 'x' },
+        msOnItem: 1000,
+      });
+      expect(result, id).toMatchObject({ ok: true });
+    }
+  });
+});
 
 describe('applyMajorityBlocks', () => {
   it('blocks once a second block vote lands, as the moderator whose vote made the majority', async () => {

@@ -42,6 +42,7 @@
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import LossGraph from '$lib/components/LossGraph.svelte';
+  import RunLog from '$lib/components/RunLog.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
@@ -867,6 +868,12 @@
     {/key}
   {/if}
 
+  {#if d.state !== 'training' && d.traces.length}
+    {#key d.workflowId}
+      <RunLog traces={d.traces} name={d.name} />
+    {/key}
+  {/if}
+
   {#if d.state === 'review' || d.state === 'rejected' || d.state === 'unreviewed'}
     <ReviewStatusPanel
       kind={d.state}
@@ -1339,7 +1346,7 @@
             <div class="flex w-full flex-col gap-2 border-b border-dark-4 pb-3">
               <label class="inline-flex items-center gap-2 text-sm text-dark-0">
                 <Checkbox bind:checked={() => ownRights, setOwnRights} />
-                I own the rights to all these files
+                I have the right, or the rightholder’s explicit permission, to redistribute these files
               </label>
               <label
                 class="inline-flex items-center gap-2 text-sm {ownRights ? 'text-dark-0' : 'text-dark-2'}"

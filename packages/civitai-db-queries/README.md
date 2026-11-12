@@ -60,18 +60,6 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   values the Prisma reads returned, runs in CI on the same Postgres service, and also fails if any
   statement names a relation declared as a view.
 
-  `hot-reads-4.db.ts` holds the model page's comment reads: the visible top-level comment count
-  (`comment.getVisibleCountByModel`) and the first page of `comment.getAll` (the unpinned list and the
-  pinned block, each with its author, reactions and model name in one statement where Prisma issues
-  one query per relation). Both apply one viewer filter (hidden and blocked users, ToS violations
-  outside the moderator view, the hidden view). They replaced the Prisma reads (formerly behind a
-  server Flipt flag), each on the database the Prisma read used, and read base tables only. A cursor
-  page or another sort of the unpinned list still reads through Prisma.
-  `<civitai>/src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts` pins the counts and
-  the pinned block to the values the Prisma reads returned, compares the unpinned list with the Prisma
-  read that still serves the other pages, and runs on the same Postgres service with the same
-  no-view check.
-
   `hot-reads-5.db.ts` holds high-volume single-row lookups (KeyValue configs, a post's linked
   Model3D, dismissed announcement ids, a post's collaborators, a home block, the unclaimed prize
   count, a model's version ids, a user's model reviews, the download path's model version, the image

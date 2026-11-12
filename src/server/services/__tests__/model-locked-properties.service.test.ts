@@ -917,6 +917,27 @@ describe('upsertModel — content flags the row ends up with', () => {
     }
   );
 
+  it.each(['poi', 'minor'] as const)(
+    'keeps a %s locked off when the owner marks nsfw after its lock is lifted',
+    async (flag) => {
+      mockStored({ lockedProperties: ['poi', 'minor', 'sfwOnly'] });
+
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: true, [flag]: true });
+
+      expect(updateData().nsfw).toBe(true);
+      expect(updateData()).not.toHaveProperty(flag);
+    }
+  );
+
+  it('refuses SFW-only beside nsfw once the sfwOnly lock is lifted with poi and minor locked off', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['poi', 'minor'] });
+
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, sfwOnly: true })).rejects.toThrow(
+      'Mature content on a model marked as SFW is not permitted.'
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
   const flaggedRow = {
     minor: true,
     nsfw: true,

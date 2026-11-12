@@ -46,7 +46,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !resourceReviews.length;
 
-  if (isNullState) {
+  if (isNullState && inView) {
     return null;
   }
 

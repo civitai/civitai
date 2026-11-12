@@ -26,14 +26,12 @@ function makeTable(rows: Row[]) {
 }
 
 const REACTION_MODELS = [
-  ['commentOld', 'commentReaction', 'commentId'],
-  ['comment', 'commentV2Reaction', 'commentId'],
   ['image', 'imageReaction', 'imageId'],
   ['post', 'postReaction', 'postId'],
   ['resourceReview', 'resourceReviewReaction', 'reviewId'],
   ['article', 'articleReaction', 'articleId'],
   ['bountyEntry', 'bountyEntryReaction', 'bountyEntryId'],
-] as const satisfies readonly (readonly [ReactionEntityType, string, string])[];
+] as const satisfies readonly (readonly [Exclude<ReactionEntityType, 'comment'>, string, string])[];
 
 // The subset whose deletes queue a metric update, i.e. the ones with an
 // `if (count > 0)` guard to regress.

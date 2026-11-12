@@ -40,17 +40,22 @@ const EVENT = {
   getTeamCosmetic: async (team: string) => COSMETIC[team],
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// getTurfStock and getTurfSummaries read through Kysely, not Prisma's `$queryRaw`: both Kysely
+// clients' statements go to the same PGlite (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 vi.mock('~/server/events/turf/turf-watch', async (importOriginal) => ({
   ...(await importOriginal<typeof TurfWatch>()),
   pushTurfCounts: async () => undefined,
 }));
 
-const { getTurfEvent, reconcileTurf, syncTurfImages } = await import(
+const { getTurfEvent, getTurfStock, reconcileTurf, syncTurfImages } = await import(
   '~/server/events/turf/turf.service'
 );
-const { fillTurfPage, getHatTurfFeedEvent, readTurfRankPage, turfHiddenIds } = await import(
-  '~/server/events/turf/turf-feed'
-);
+const { fillTurfPage, getHatTurfFeedEvent, readMyTurfPage, readTurfRankPage, turfHiddenIds } =
+  await import('~/server/events/turf/turf-feed');
 
 const OWNER = 7;
 const keys = turfKeys('e');
@@ -78,6 +83,10 @@ beforeAll(async () => {
     );
     CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
+    -- contestEntry also reads running flag Crucibles.
+    CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+    CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[]);
+    CREATE TABLE "CrucibleEntry" (id serial PRIMARY KEY, "crucibleId" int, "imageId" int);
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "EventTurfSticker" (
       id bigserial PRIMARY KEY, event text, "imageId" int, "userId" int, team text,
@@ -99,6 +108,8 @@ beforeEach(async () => {
   override = null;
   redis = createLuaRedis(0);
   const raw = pgliteRaw(db);
+  kysely.read.mockReset().mockImplementation(raw.queryRaw);
+  kysely.write.mockReset().mockImplementation(raw.queryRaw);
   for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
     client.$executeRaw.mockImplementation(raw.executeRaw as never);
@@ -295,6 +306,142 @@ describe('reading the ranks', () => {
       limit: 1,
     });
     expect(page.ids).toEqual([three]);
+  });
+});
+
+describe("reading the viewer's own hats", () => {
+  const VIEWER = 1;
+  beforeEach(() => {
+    redisMock.sysRedis.zmScore.mockImplementation((async (key: string, members: string[]) =>
+      members.map((m) => redis.zset(key)?.[m] ?? null)) as never);
+  });
+  const readMine = async (limit: number, sort?: 'most' | 'fewest', teams?: string[]) => {
+    const now = later();
+    const e = await event(now);
+    const out: number[] = [];
+    let cursor: string | undefined;
+    for (let pages = 0; pages < 20; pages++) {
+      const page = await readMyTurfPage({
+        event: e,
+        userId: VIEWER,
+        sort,
+        teams,
+        cursor,
+        limit,
+        now,
+      });
+      out.push(...page.ids);
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    return out;
+  };
+  const readRanked = async (sort: 'most' | 'fewest', teams?: string[]) => {
+    const e = await event();
+    const out: number[] = [];
+    let cursor: string | undefined;
+    for (let pages = 0; pages < 20; pages++) {
+      const page = await readTurfRankPage({ event: e, sort, teams, cursor, limit: 2 });
+      out.push(...page.ids);
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    return out;
+  };
+
+  it('lists only their live hats, soonest to expire first, paged without gaps or repeats', async () => {
+    override = JSON.stringify({ ttlHours: 48, rolloutAt: '2026-01-01T00:00:00Z' });
+    const [old, mid, fresh, removed, expired, theirs] = [
+      await newImage(),
+      await newImage(),
+      await newImage(),
+      await newImage(),
+      await newImage(),
+      await newImage(),
+    ];
+    const oldAt = new Date(clock - 40 * HOUR);
+    await sticker(fresh, VIEWER, new Date(clock - 1 * HOUR));
+    await sticker(old, VIEWER, oldAt);
+    await sticker(mid, VIEWER, new Date(clock - 10 * HOUR));
+    await sticker(removed, VIEWER, new Date(clock - 5 * HOUR));
+    await db.query(`UPDATE "EventTurfSticker" SET "removedAt" = now() WHERE "imageId" = $1`, [
+      removed,
+    ]);
+    await sticker(expired, VIEWER, new Date(clock - 50 * HOUR));
+    await sticker(theirs, 2, new Date(clock - 20 * HOUR));
+    expect(await readMine(1)).toEqual([old, mid, fresh]);
+    expect(await readMine(2)).toEqual([old, mid, fresh]);
+    const now = later();
+    const page = await readMyTurfPage({ event: await event(now), userId: VIEWER, limit: 3, now });
+    expect(page.nextCursor).toBeUndefined();
+    expect(page.placedAt.get(old)).toEqual(oldAt);
+  });
+
+  it('under a Hat Turf sort, ranks them as the feed ranks every image, leaving out one never ranked', async () => {
+    const three = await imageWith(3, 0);
+    const one = await imageWith(1, 0);
+    const mixed = await imageWith(1, 1);
+    const notMine = await imageWith(0, 3);
+    // A contest entry: the viewer's hat on it is live, but drawn nowhere and ranked by no sort.
+    const contest = await imageWith(1, 0);
+    await db.query(`INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES (1, $1)`, [
+      contest,
+    ]);
+    await sync(three, one, mixed, notMine, contest);
+    expect(await readMine(2, 'most')).toEqual([three, mixed, one]);
+    expect(await readMine(10)).not.toContain(contest);
+    const mine = new Set([three, one, mixed]);
+    for (const [sort, teams] of [
+      ['most', undefined],
+      ['fewest', undefined],
+      ['most', ['Pink']],
+      ['fewest', ['Blue', 'Pink']],
+    ] as const) {
+      const ranked = (await readRanked(sort, teams ? [...teams] : undefined)).filter((id) =>
+        mine.has(id)
+      );
+      expect(await readMine(1, sort, teams ? [...teams] : undefined)).toEqual(ranked);
+    }
+  });
+
+  it('leaves out a hat no feed draws: its owner turned Hat Turf off, or the image is hidden', async () => {
+    const [kept, held] = [await newImage(), await newImage()];
+    await sticker(kept, VIEWER);
+    await sticker(held, VIEWER);
+    await db.query(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = $1`, [held]);
+    expect(await readMine(10)).toEqual([kept]);
+    await db.query(`UPDATE "User" SET settings = $2 WHERE id = $1`, [
+      OWNER,
+      JSON.stringify({ eventTurfOwnerOff: { e: 'true' } }),
+    ]);
+    try {
+      expect(await readMine(10)).toEqual([]);
+      const now = later();
+      expect((await getTurfStock('e', VIEWER, now)).liveHats).toBe(0);
+    } finally {
+      await db.query(`UPDATE "User" SET settings = '{}' WHERE id = $1`, [OWNER]);
+    }
+    expect((await getTurfStock('e', VIEWER, later())).liveHats).toBe(1);
+  });
+
+  // Own hats share drawnStickers with getTurfStickersForImages: a hat the feed draws nowhere is not live.
+  it("a banned viewer's hats are drawn nowhere, so none is live", async () => {
+    const image = await newImage();
+    await sticker(image, VIEWER);
+    expect(await readMine(10)).toEqual([image]);
+    await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [VIEWER]);
+    try {
+      expect(await readMine(10)).toEqual([]);
+      expect((await getTurfStock('e', VIEWER, later())).liveHats).toBe(0);
+    } finally {
+      await db.query(`UPDATE "User" SET "bannedAt" = NULL WHERE id = $1`, [VIEWER]);
+    }
+  });
+
+  it('a viewer with no live hats gets an empty page and no cursor', async () => {
+    await sticker(await newImage(), 2);
+    const page = await readMyTurfPage({ event: await event(), userId: VIEWER, limit: 5 });
+    expect(page).toMatchObject({ ids: [], nextCursor: undefined });
   });
 });
 

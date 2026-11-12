@@ -199,7 +199,14 @@ export function ModelVersionDetails(props: Props) {
   return <ModelVersionDetailsContent {...props} />;
 }
 
-function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds = false }: Props) {
+function ModelVersionDetailsContent({
+  model,
+  version,
+  image,
+  onFavoriteClick,
+  ds = false,
+  initialMobile,
+}: Props) {
   useMetricSubscription('ModelVersion', version.id);
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -243,7 +250,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
     modelVersionId: version.id,
     modelVersion: permissionData,
   });
-  const mobile = useIsMobile();
+  const mobile = useIsMobile({ unmeasured: initialMobile });
 
   // Live metrics for model version stats
   const liveMetrics = useLiveMetrics('ModelVersion', version.id, {
@@ -675,6 +682,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
               minor={model.minor}
+              initialMobile={initialMobile}
             />
           )}
           {/* App Blocks: model.sidebar_top slot. Renders publisher-installed and
@@ -2021,6 +2029,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
               minor={model.minor}
+              initialMobile={initialMobile}
             />
           )}
           {model.description ? (
@@ -2041,6 +2050,8 @@ type Props = {
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
   /** `@civitai/components` markup in place of Mantine (`modelPageDesignSystemMarkup`). */
   ds?: boolean;
+  /** Phone layout until the container is measured, from the request's user agent. */
+  initialMobile?: boolean;
 };
 
 function VersionDescriptionModal({ description }: { description: string }) {

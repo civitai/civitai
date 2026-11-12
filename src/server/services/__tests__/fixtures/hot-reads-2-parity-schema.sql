@@ -102,7 +102,8 @@ CREATE TABLE "hot_reads_2_parity"."Image" (
   "type"      "hot_reads_2_parity"."MediaType"            NOT NULL DEFAULT 'image',
   "metadata"  JSONB                                       NOT NULL DEFAULT '{}',
   "nsfwLevel" INTEGER                                     NOT NULL DEFAULT 0,
-  "ingestion" "hot_reads_2_parity"."ImageIngestionStatus" NOT NULL DEFAULT 'Pending'
+  "ingestion" "hot_reads_2_parity"."ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
+  "needsReview" TEXT
 );
 
 CREATE TABLE "hot_reads_2_parity"."Model" (
@@ -325,11 +326,13 @@ CREATE TABLE "hot_reads_2_parity"."TagsOnImageVote" (
 );
 
 -- The four VIEWS the reads touch, copied from their latest migration with every relation, enum and
--- function qualified to this schema and nothing else changed, so their column types (sums are
--- BIGINT or NUMERIC, not INTEGER) and their plans are the production ones:
+-- function qualified to this schema and nothing else changed except where noted, so their column
+-- types (sums are BIGINT or NUMERIC, not INTEGER) and their plans are the production ones:
 --   "UserStat"           migrations/20251123233705_userstats_shrink
 --   "ModelReportStat"    migrations/20230209225221_rename_inaction_unaction
---   "GenerationCoverage" migrations/20260923140000_generation_coverage_two_rules_one_view
+--   "GenerationCoverage" migrations/20261231160000_generation_coverage_trained_files_need_epoch,
+--                        minus its scan_excluded test: V_FULL's config file carries a Danger scan
+--                        so the file read is exercised, and the reads assert V_FULL covered
 --   "ImageTag"           migrations/20260921130000_tag_drop_nsfw_enum
 
 CREATE VIEW "hot_reads_2_parity"."UserStat"
@@ -461,7 +464,7 @@ FROM (
             AND mf.type = ANY (ARRAY['Model'::text, 'Pruned Model'::text, 'Diffusion Model'::text, 'UNet'::text, 'Negative'::text, 'VAE'::text])
             AND COALESCE(mf.metadata ->> 'format'::text, ''::text) <> ALL (ARRAY['Diffusers'::text, 'Core ML'::text, 'ONNX'::text])
           )
-          OR (mf.metadata -> 'trainingResults'::text) IS NOT NULL
+          OR ((mf.metadata -> 'trainingResults'::text -> 'epochs'::text) @> '[{}]'::jsonb) IS TRUE
         ) AS ok_live,
         (
           (
@@ -469,7 +472,7 @@ FROM (
             AND mf.type = ANY (ARRAY['Model'::text, 'Pruned Model'::text, 'Diffusion Model'::text, 'UNet'::text, 'Negative'::text, 'VAE'::text])
             AND COALESCE(mf.metadata ->> 'format'::text, ''::text) <> ALL (ARRAY['Core ML'::text, 'ONNX'::text])
           )
-          OR (mf.metadata -> 'trainingResults'::text) IS NOT NULL
+          OR ((mf.metadata -> 'trainingResults'::text -> 'epochs'::text) @> '[{}]'::jsonb) IS TRUE
         ) AS ok_next,
         (
           mf."scannedAt" IS NOT NULL

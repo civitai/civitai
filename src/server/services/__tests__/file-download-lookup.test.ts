@@ -1,5 +1,6 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 // Type-only: erased at runtime, so the dynamic-import warm-up in each describe
 // (which is what keeps the heavy module graph off the per-test timeout) still
 // does the actual loading. Replaces inline `typeof import(...)` annotations,
@@ -432,6 +433,59 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
       expect(result.status).toBe('not-found');
     });
   });
+
+  // A taken-down model's files are served to moderators only, with the same answer as a deleted one.
+  describe('taken-down models', () => {
+    const OWNER = { id: 999, isModerator: false };
+    const takenDown = () =>
+      publishedModelVersion({ model: { ...publishedModelVersion().model, mode: 'TakenDown' } });
+    const download = (user?: { id: number; isModerator: boolean }) =>
+      getFileForModelVersion({ modelVersionId: 1, user } as never);
+
+    beforeEach(() => {
+      // Anonymous downloads on, so an anonymous caller reaches the file rather than the login gate.
+      setEnv({ UNAUTHENTICATED_DOWNLOAD: true });
+      resolveDownloadUrlMock.mockResolvedValue({
+        url: 'https://cdn.example.com/signed',
+        urlExpiryDate: new Date(),
+      });
+    });
+    afterEach(() => resetEnv());
+
+    it.each([
+      ['its owner', OWNER],
+      ['an anonymous request', undefined],
+      ['a signed-in non-owner', { id: 4321, isModerator: false }],
+    ])('is not-found for %s, exactly as a deleted model is', async (_who, user) => {
+      versionRead.mockResolvedValue(
+        publishedModelVersion({ model: { ...publishedModelVersion().model, status: 'Deleted' } })
+      );
+      const deleted = await download(user);
+      versionRead.mockResolvedValue(takenDown());
+
+      const result = await download(user);
+
+      expect(result).toEqual({ status: 'not-found' });
+      expect(result).toEqual(deleted);
+      expect(resolveDownloadUrlMock).not.toHaveBeenCalled();
+    });
+
+    it('is still served to a moderator', async () => {
+      versionRead.mockResolvedValue(takenDown());
+
+      expect((await download({ id: 7, isModerator: true })).status).toBe('success');
+    });
+
+    it.each([
+      ['its owner', OWNER],
+      ['an anonymous request', undefined],
+      ['a signed-in non-owner', { id: 4321, isModerator: false }],
+    ])('leaves a model that is not taken down served to %s', async (_who, user) => {
+      versionRead.mockResolvedValue(publishedModelVersion());
+
+      expect((await download(user)).status).toBe('success');
+    });
+  });
 });
 
 /**
@@ -496,6 +550,8 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     hashes: [{ hash: 'eeee5555' }],
   };
   const UNIVERSE = [OWNED_PRIMARY, OWNED_SECOND, LINKED_VAE];
+  /** The model the linked VAE version belongs to. */
+  let linkedModel: { status: string; mode: string | null } = { status: 'Published', mode: null };
 
   const matches = (f: (typeof UNIVERSE)[number], where: Record<string, unknown>) =>
     (where.id === undefined || f.id === where.id) &&
@@ -522,9 +578,14 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
 
     // Stubs that ENFORCE the where clause — this is what makes a
     // mismatched (versionId, fileId) pair come back empty, exactly as in prod.
-    modelFileFindFirst.mockImplementation(async ({ where }: any) => {
+    linkedModel = { status: 'Published', mode: null };
+    // The linked version's model state comes back only when the read selects it, as in prod.
+    modelFileFindFirst.mockImplementation(async ({ where, select }: any) => {
       const found = UNIVERSE.filter((f) => matches(f, where)).sort((a, b) => a.id - b.id);
-      return found[0] ?? null;
+      if (!found[0]) return null;
+      return select?.modelVersion?.select?.model?.select?.mode
+        ? { ...found[0], modelVersion: { status: 'Published', model: linkedModel } }
+        : found[0];
     });
     // The Kysely files read enforces the same filters, given as the inputs the Prisma `where` was
     // built from.
@@ -614,6 +675,27 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     expect(result.status).toBe('success');
     expect(result.fileId).toBe(91);
   });
+
+  it.each([
+    ['taken-down', { status: 'Published', mode: 'TakenDown' }],
+    ['deleted', { status: 'Deleted', mode: null }],
+  ])(
+    'the linked fallback serves no file from a %s model, except to a moderator',
+    async (_s, model) => {
+      linkedModel = model;
+      const vae = { modelVersionId: HOST_VERSION_ID, type: 'VAE' } as const;
+
+      const refused = await getFileForModelVersion({ ...vae, user: PUBLIC_REQUESTER } as never);
+      const forMod = (await getFileForModelVersion({
+        ...vae,
+        user: { id: 7, isModerator: true },
+      } as never)) as { status: string; fileId?: number };
+
+      expect(refused).toEqual({ status: 'not-found' });
+      expect(forMod.status).toBe('success');
+      expect(forMod.fileId).toBe(91);
+    }
+  );
 
   it('NEGATIVE CONTROL: the pair the bug emitted (fileId=91 on version 4242) is a 404', async () => {
     // Built by hand, NOT by the helper — this is the URL the unguarded pin
@@ -952,6 +1034,7 @@ describe('getFileForModelVersion — a shared training dataset', () => {
     name: 'data.zip',
     type: 'Training Data',
     metadata: { nsfwLevel: 1 },
+    virusScanResult: 'Success',
   };
   const download = (user: { id: number; isModerator?: boolean }) =>
     getFileForModelVersion({
@@ -992,6 +1075,35 @@ describe('getFileForModelVersion — a shared training dataset', () => {
     expect((await download(user)).status).toBe('success');
   });
 
+  it.each(['Pending', 'Error', null])(
+    'is the same not-found as a missing file for others until its scan is a Success (%s)',
+    async (virusScanResult) => {
+      listDownloadFilesMock.mockResolvedValue([{ ...dataset, virusScanResult }]);
+      const result = await download({ id: 1 });
+      expect(result).toEqual({ status: 'not-found' });
+      expect(resolveDownloadUrlMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['its owner', { id: 999 }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('is served to %s before its scan completes', async (_, user) => {
+    listDownloadFilesMock.mockResolvedValue([{ ...dataset, virusScanResult: 'Pending' }]);
+    expect((await download(user)).status).toBe('success');
+  });
+
+  it('does not hold a model file to a completed scan', async () => {
+    listDownloadFilesMock.mockResolvedValue([{ ...aFile, virusScanResult: 'Pending' }]);
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1 },
+      attribution: { path: 'test', actor: 'test' } as never,
+      redCapable: true,
+    });
+    expect(result.status).toBe('success');
+  });
+
   it('does not gate a model file', async () => {
     shareRestrictedMock.mockResolvedValue(true);
     listDownloadFilesMock.mockResolvedValue([aFile]);
@@ -1019,6 +1131,7 @@ describe('getFileForModelVersion — a training dataset on each host', () => {
     name: 'data.zip',
     type: 'Training Data',
     metadata,
+    virusScanResult: 'Success',
   });
   const download = (redCapable: boolean, user: { id: number; isModerator?: boolean } = { id: 1 }) =>
     getFileForModelVersion({

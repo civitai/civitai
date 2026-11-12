@@ -181,9 +181,39 @@ describe('block tool registry — the model is shown the schema the route enforc
       const derived = z.toJSONSchema(tool.argsSchema, { io: 'input', unrepresentable: 'any' });
       // Identity, not "looks similar": the served document must BE the
       // projection of the enforcing schema. A hand-written twin is how a model
-      // gets shown a contract the route does not enforce.
-      expect(entry.function.parameters).toEqual(derived);
+      // gets shown a contract the route does not enforce. Only the `$schema`
+      // dialect url is dropped (next test).
+      const { $schema, ...withoutDialect } = derived;
+      expect($schema).toBe('https://json-schema.org/draft/2020-12/schema');
+      expect(entry.function.parameters).toEqual(withoutDialect);
     }
+  });
+
+  // 🔴 A block echoes these declarations back in its chat step's `tools[]`, and the generation
+  // input gate reads a whole url in step params as an image input: zod's `$schema` url there
+  // refused every chat App Block message once the external-host refusal was on.
+  it('🔴 `parameters` carries no `$schema` and no whole-url string anywhere', () => {
+    const urls: string[] = [];
+    const walk = (value: unknown): void => {
+      if (typeof value === 'string') {
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim())) urls.push(value);
+      } else if (Array.isArray(value)) value.forEach(walk);
+      else if (value && typeof value === 'object')
+        for (const [key, child] of Object.entries(value)) {
+          walk(key);
+          walk(child);
+        }
+    };
+    const declared = blockToolDeclarations();
+    expect(declared.length).toBeGreaterThan(0);
+    for (const entry of declared) {
+      expect(Object.keys(entry.function.parameters as object)).not.toContain('$schema');
+      walk(entry.function.parameters);
+    }
+    expect(urls).toEqual([]);
+    // Positive control: the walk does see a url in a schema shaped like these.
+    walk({ type: 'object', $schema: 'https://json-schema.org/draft/2020-12/schema' });
+    expect(urls).toEqual(['https://json-schema.org/draft/2020-12/schema']);
   });
 
   it('the declaration is shaped as the chat step accepts it', () => {

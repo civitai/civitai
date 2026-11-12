@@ -1,51 +1,20 @@
 import type { Prisma } from '@prisma/client';
-import { constants } from '~/server/common/constants';
-import type { SqlRunner } from '~/server/services/comment-v3-backfill.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 /**
- * Comment writes on CommentV3 for the surfaces in `constants.comments.v3WriteSurfaces`
- * (`docs/plans/comments-v3-article-flip.md`, stage B). A new comment on one of them exists only here:
- * no `CommentV2` or `Thread` row is written. A comment written before its surface flipped keeps its
- * CommentV2 row, which every write here keeps in step (`syncOldRows`).
+ * Comment writes on CommentV3.
  *
  * Raw SQL over a `SqlRunner` (D8), so a caller can run these in the transaction that spends its
- * stickers or writes the old tables. Id lists travel as one comma-joined string, which pg and
+ * stickers. Id lists travel as one comma-joined string, which pg and
  * PGlite send alike.
  */
 
-/** Whether comments on `entityType` are written to CommentV3 directly. */
-export const isV3WriteSurface = (entityType: string) =>
-  constants.comments.v3WriteSurfaces.includes(entityType);
-
-/** SQL: CommentV2 row `alias` has a CommentV3 twin on a CommentV3-write surface. */
-export const hasV3SurfaceTwinSql = (alias: string) =>
-  `EXISTS (SELECT 1 FROM "CommentV3" v WHERE v.id = ${alias}.id AND ${v3WriteSurfaceSql(
-    'v."entityType"'
-  )})`;
-
-/** A user's live comments on CommentV3-write surfaces matching `condition`, optionally of `among`. */
-export async function v3SurfaceCommentIds(
-  db: SqlRunner,
-  userId: number,
-  condition: string,
-  among?: number[]
-) {
-  const { rows } = await db.query<{ id: number }>(
-    `SELECT id FROM "CommentV3"
-     WHERE "userId" = $1 AND "deletedAt" IS NULL AND ${condition}
-       AND ${v3WriteSurfaceSql('"entityType"')}
-       ${among ? `AND id = ANY(string_to_array($2, ',')::int[])` : ''}`,
-    among ? [userId, among.join(',')] : [userId]
-  );
-  return rows.map((r) => r.id);
-}
-
-/** `isV3WriteSurface` as SQL over a CommentEntityType column. */
-export const v3WriteSurfaceSql = (column: string) =>
-  constants.comments.v3WriteSurfaces.length
-    ? `${column}::text IN (${constants.comments.v3WriteSurfaces.map((t) => `'${t}'`).join(', ')})`
-    : 'false';
+export type SqlRunner = {
+  query: <R extends Record<string, unknown>>(
+    sql: string,
+    params?: unknown[]
+  ) => Promise<{ rows: R[] }>;
+};
 
 /** A Prisma transaction (or client) as a `SqlRunner`. */
 export const prismaRunner = (db: Pick<Prisma.TransactionClient, '$queryRawUnsafe'>): SqlRunner => ({
@@ -92,10 +61,10 @@ export function getStoredComment(db: SqlRunner, id: number, lock?: 'FOR KEY SHAR
   );
 }
 
-/** The live row when its surface writes CommentV3 directly; otherwise undefined. */
+/** The live row; undefined when the comment is gone or deleted. */
 export async function getV3WriteComment(db: SqlRunner, id: number) {
   const row = await getStoredComment(db, id);
-  return row && !row.deletedAt && isV3WriteSurface(row.entityType) ? row : undefined;
+  return row && !row.deletedAt ? row : undefined;
 }
 
 /**
@@ -193,30 +162,11 @@ export async function insertComment(
   return created;
 }
 
-/**
- * The CommentV2 twins of a write, for the comments that have one. Left stale, the old reads would
- * serve what was deleted or removed, and an update to the row would make the mirror copy a deleted
- * comment back.
- */
-const syncOldRows = {
-  update: (db: SqlRunner, ids: number[], set: string, params: unknown[] = []) =>
-    db.query(
-      `UPDATE "CommentV2" SET ${set}, "updatedAt" = now()
-       WHERE id = ANY(string_to_array($1, ',')::int[])`,
-      [ids.join(','), ...params]
-    ),
-  delete: (db: SqlRunner, ids: number[]) =>
-    db.query(`DELETE FROM "CommentV2" WHERE id = ANY(string_to_array($1, ',')::int[])`, [
-      ids.join(','),
-    ]),
-};
-
 /** A content edit on a live comment; undefined when it is gone or deleted. */
 export async function updateCommentContent(
   db: SqlRunner,
   { id, content }: { id: number; content: string }
 ) {
-  // CommentV3 first, as every write here locks it, so an edit and a delete cannot deadlock.
   const row = await first<StoredCommentV3>(
     db,
     `UPDATE "CommentV3" SET content = $2, "updatedAt" = now()
@@ -224,7 +174,6 @@ export async function updateCommentContent(
      RETURNING ${COLUMNS}`,
     [id, content]
   );
-  if (row) await syncOldRows.update(db, [id], 'content = $2', [content]);
   return row;
 }
 
@@ -290,7 +239,7 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
   const kept = pending.filter((id) => requested.has(id));
   if (kept.length) {
     const { rows } = await db.query<RemovedCommentV3 & { deletedAt: Date | null }>(
-      `UPDATE "CommentV3" SET "deletedAt" = now(), content = '', "updatedAt" = now()
+      `UPDATE "CommentV3" SET "deletedAt" = now(), content = '', "pinnedAt" = NULL, "updatedAt" = now()
        WHERE id = ANY(${IDS}) AND "deletedAt" IS NULL
        RETURNING id, "userId", "entityType"::text AS "entityType", "entityId", NULL::timestamptz AS "deletedAt"`,
       [list(kept)]
@@ -302,20 +251,12 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
         list(rows.map((r) => r.id)),
       ]);
   }
-  if (removed.length)
-    await syncOldRows.delete(
-      db,
-      removed.map((r) => r.id)
-    );
   return removed;
 }
 
 type Flags = { hidden?: boolean; tosViolation?: boolean; pinned?: boolean };
 
-/**
- * Sets moderation flags on live comments; returns the rows it changed. Run it in a transaction: the
- * row lock must cover the CommentV2 sync, or a racing toggle's sync is mirrored back over it.
- */
+/** Sets moderation flags on live comments; returns the rows it changed. */
 export async function setCommentFlags(db: SqlRunner, ids: number[], flags: Flags) {
   const sets: string[] = [];
   const params: unknown[] = [ids.join(',')];
@@ -338,16 +279,19 @@ export async function setCommentFlags(db: SqlRunner, ids: number[], flags: Flags
      RETURNING id, "userId"`,
     params
   );
-  // After the CommentV3 update, which decides what changed; the same expressions read CommentV2's own
-  // columns, under the same parameter numbers.
-  if (rows.length)
-    await syncOldRows.update(
-      db,
-      rows.map((r) => r.id),
-      sets.join(', '),
-      params.slice(1)
-    );
   return rows;
+}
+
+/** Flips a live comment's lock, which closes its subtree to replies. Undefined when it is gone. */
+export async function toggleCommentLock(db: SqlRunner, id: number) {
+  const row = await first<{ id: number; locked: boolean }>(
+    db,
+    `UPDATE "CommentV3" SET locked = NOT locked, "updatedAt" = now()
+     WHERE id = $1 AND "deletedAt" IS NULL
+     RETURNING id, locked`,
+    [id]
+  );
+  return row;
 }
 
 /** Flips a section's lock, creating its topic (locked) when it has none yet. Returns the new state. */

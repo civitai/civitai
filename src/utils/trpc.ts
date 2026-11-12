@@ -25,6 +25,7 @@ import type { AppRouter } from '~/server/routers';
 import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { isDev } from '~/env/other';
 import { pageRouteHeaders } from '~/utils/page-route-header';
+import { trpcClientHeaders } from '~/utils/trpc-client-headers';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -36,12 +37,6 @@ import {
   getTrpcUnifiedBatchWindowEnabled,
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
-
-type RequestHeaders = {
-  'x-client-date': string;
-  'x-client': string;
-  'x-client-version'?: string;
-};
 
 const url = '/api/trpc';
 
@@ -252,6 +247,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getTeamScores',
   'event.getWornHat',
   'generation.checkResourcesCoverage',
+  'hatTurf.getFlags',
   'hatTurf.getStickersForImages',
   'generation.getStatus',
   'homeBlock.getHomeBlock',
@@ -461,11 +457,7 @@ function batchStreamLink({
     maxItems: TRPC_MAX_BATCH_SIZE,
   });
 }
-const headers: RequestHeaders = {
-  'x-client-version': process.env.version,
-  'x-client-date': Date.now().toString(),
-  'x-client': 'web',
-};
+const headers = trpcClientHeaders;
 
 /**
  * Shared QueryClient config. Used by both the per-request server `QueryClient`

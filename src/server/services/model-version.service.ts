@@ -59,7 +59,11 @@ import {
 } from '~/server/services/hot-reads-8.reads';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
-import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
+import {
+  dataForModelsCache,
+  modelVersionAccessCache,
+  refreshHasReceivedReviews,
+} from '~/server/redis/caches';
 import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -169,6 +173,7 @@ import {
 } from '~/server/services/orchestrator/models';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { addPostImage, createPost } from '~/server/services/post.service';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   runClickHouseRead,
@@ -182,6 +187,10 @@ import {
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import {
   assertFileTypeChangeAllowed,
+  assertFormatChangeAllowed,
+  scanResetConflictMessage,
+  scanResetForFileChange,
+  scanResetWriteGuard,
   versionAcceptsNewTrainingData,
 } from '~/server/utils/model-file-replace';
 import {
@@ -751,9 +760,11 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
+  const patternLogIds = { entityType: 'ModelVersion', entityId: id, userId: actorUserId };
   await throwOnBlockedUserContent(data.description, {
     isModerator,
     surface: 'modelVersion',
+    ...patternLogIds,
   });
 
   // Name and trained words are scanned only where they DIFFER from the stored row.
@@ -775,6 +786,7 @@ export const upsertModelVersion = async ({
   await throwOnBlockedUserContent(changedVersionText(data, storedText), {
     isModerator,
     surface: 'modelVersion',
+    ...patternLogIds,
   });
   // Trigger words are part of the listing the .com face re-check reads (queued after commit).
   const trainedWordsChanged =
@@ -859,7 +871,11 @@ export const upsertModelVersion = async ({
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
-    await throwOnBlockedUserContent(data.description, { isModerator, surface: 'modelVersion' });
+    await throwOnBlockedUserContent(data.description, {
+      isModerator,
+      surface: 'modelVersion',
+      ...patternLogIds,
+    });
   }
 
   // Validate NSFW + restricted base model combination
@@ -1418,7 +1434,11 @@ export async function applyModelVersionContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedUserContent(description, { surface: 'modelVersion' });
+  await throwOnBlockedUserContent(description, {
+    surface: 'modelVersion',
+    entityType: 'ModelVersion',
+    entityId: id,
+  });
 
   let modelId: number;
   if (context) {
@@ -2116,6 +2136,7 @@ export const publishModelVersionById = async ({
     select: { entityId: true },
   });
 
+  let movedPostIds: number[] = [];
   const version = await dbWrite.$transaction(
     async (tx) => {
       // Re-checked here, under a lock, because the caller's check ran before this transaction and
@@ -2124,6 +2145,11 @@ export const publishModelVersionById = async ({
       const downed = await readDownedVersion(tx, id, 'update');
       if (enforceTakedown && downed)
         throw throwAuthorizationError('You are not authorized to publish this model version');
+      // Under the lock: a replica read can still show a version the owner just published as Draft.
+      const [stored] = await tx.$queryRaw<{ status: ModelStatus }[]>`
+        SELECT status FROM "ModelVersion" WHERE id = ${id}
+      `;
+      const isLive = stored?.status === ModelStatus.Published;
 
       let updatedVersion;
       if (status === ModelStatus.Published && paidAccessGate) {
@@ -2146,7 +2172,9 @@ export const publishModelVersionById = async ({
         updatedVersion = await tx.modelVersion.update({
           where: { id },
           data: {
-            status,
+            // A live version stays live: put back to Scheduled with its past date, the job would
+            // re-release it at once, taking a scheduled model with it.
+            status: isLive ? ModelStatus.Published : status,
             meta,
             availability: currentVersion.model.availability,
           },
@@ -2178,7 +2206,7 @@ export const publishModelVersionById = async ({
       // overwrite every attached post's publishedAt and let an owner repeatedly
       // bump old posts to the top of feeds. Mirrors the `WHERE "publishedAt" IS
       // NOT NULL` guard in the unpublish path below.
-      await tx.$executeRaw`
+      const movedPosts = await tx.$queryRaw<{ id: number }[]>`
         UPDATE "Post"
         SET
           "publishedAt" = CASE
@@ -2190,7 +2218,9 @@ export const publishModelVersionById = async ({
         WHERE "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING id
       `;
+      movedPostIds = movedPosts.map((post) => post.id);
 
       if (!currentVersion.model.publishedAt) {
         // Safeguard to ensure the model is marked as published if it wasn't
@@ -2235,6 +2265,11 @@ export const publishModelVersionById = async ({
     posts.map((p) => p.id)
   );
   void onStorySparkPostsRestored({ postIds: posts.map((p) => p.id) });
+  syncReviewsOfMovedPosts({
+    change: 'publish',
+    postIds: movedPostIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);
@@ -2424,6 +2459,11 @@ export const unpublishModelVersionById = async ({
     select: { id: true },
   });
   void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
+  syncReviewsOfMovedPosts({
+    change: 'unpublish',
+    postIds: posts.map((x) => x.id),
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
@@ -3208,7 +3248,9 @@ export async function bustModelLevelVersionCaches(modelIds: number | number[]) {
 export const bustMvCache = async (
   ids: number | number[],
   modelIds?: number | number[],
-  userId?: number
+  userId?: number,
+  /** `orchestrator: false` for a caller that busts the orchestrator itself, with its own pacing. */
+  { orchestrator = true }: { orchestrator?: boolean } = {}
 ) => {
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
@@ -3233,7 +3275,7 @@ export const bustMvCache = async (
     // Best-effort: a stale price on the model page is not worth failing an unpublish over.
     logToAxiom({ type: 'error', name: 'bust-paid-access-cache', message: 'gate row', error });
   }
-  await bustOrchestratorModelCache(versionIds, userId);
+  if (orchestrator) await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,
   // so a stale `images: []` entry from the publish race will hide the model
@@ -3800,7 +3842,10 @@ export const mergeVersions = async ({
           select: {
             id: true,
             type: true,
+            name: true,
             metadata: true,
+            virusScanResult: true,
+            pickleScanResult: true,
             modelVersion: { select: { uploadType: true, trainingStatus: true } },
           },
         });
@@ -3810,6 +3855,8 @@ export const mergeVersions = async ({
           const file = fileById.get(mapping.fileId);
           if (!file) throw throwBadRequestError('A file to update is not part of this merge.');
           assertFileTypeChangeAllowed(file, mapping.type);
+          const change = { type: mapping.type, format: mapping.metadata?.format };
+          assertFormatChangeAllowed(file, change, false);
 
           const updateData: Record<string, unknown> = {};
           if (mapping.type) updateData.type = mapping.type;
@@ -3818,13 +3865,22 @@ export const mergeVersions = async ({
               ...((file.metadata as Record<string, unknown>) ?? {}),
               ...mapping.metadata,
             };
+          Object.assign(updateData, scanResetForFileChange(file, change));
           if (Object.keys(updateData).length > 0) {
             const { count } = await tx.modelFile.updateMany({
-              where: { id: mapping.fileId, ...inMerge },
+              where: {
+                id: mapping.fileId,
+                ...inMerge,
+                ...scanResetWriteGuard(file, change),
+              },
               data: updateData,
             });
             if (count !== 1)
-              throw throwBadRequestError('A file to update is not part of this merge.');
+              throw throwBadRequestError(
+                Object.keys(scanResetWriteGuard(file, change)).length
+                  ? scanResetConflictMessage(file)
+                  : 'A file to update is not part of this merge.'
+              );
           }
         }
       }

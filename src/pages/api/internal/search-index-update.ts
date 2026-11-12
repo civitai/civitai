@@ -64,7 +64,7 @@ export default WebhookEndpoint(async (req, res) => {
   const ids = [...new Set(entityIds ?? [entityId as number])];
   const updates = ids.map((id) => ({ id, action: queueAction }));
 
-  await index.queueUpdate(updates);
+  await index.queueUpdate(updates, { reason: 'internal-api' });
 
   // Images live in two indexes (main + metrics) — keep both in sync, matching the main app's
   // queueImageSearchIndexUpdate.

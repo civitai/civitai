@@ -41,7 +41,6 @@ import {
   IconTagOff,
   IconTrash,
 } from '@tabler/icons-react';
-import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
@@ -92,8 +91,10 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
+import { buildModelMetaDescription } from '~/components/Model/model-meta-description';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { modelOgEndpoint } from '~/components/Meta/og-image-url';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
@@ -162,10 +163,10 @@ import { getDefaultModelVersion } from '~/server/services/model-version.service'
 import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { isMobileUserAgent } from '~/shared/utils/mobile-user-agent';
 import {
+  forcedMinorModelBrowsingLevel,
   getIsSafeBrowsingLevel,
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import {
@@ -401,7 +402,8 @@ export const getServerSideProps = createServerSideProps({
           // match useQueryImages exactly — browsingLevel and the addon-derived
           // excludedTagIds/disablePoi/disableMinor all key the query — or the React
           // Query key won't line up and the client refetches. Fail-soft on any miss.
-          model && modelVersionIdParsed
+          // A taken-down model's images are withheld; its owner's carousel fetches them client-side.
+          model && modelVersionIdParsed && !isModelWithheld(model)
             ? (async () => {
                 // Mirror ModelCarousel: a minor model forces its carousel to SFW for
                 // non-moderators, so SSR must resolve at that same forced level. Using
@@ -410,9 +412,7 @@ export const getServerSideProps = createServerSideProps({
                 // exactly the models this matters for.
                 const forceMinorLevel = !!model.minor && !session?.user?.isModerator;
                 const browsingLevel = forceMinorLevel
-                  ? session?.user
-                    ? sfwBrowsingLevelsFlag
-                    : publicBrowsingLevelsFlag
+                  ? forcedMinorModelBrowsingLevel(!!session?.user)
                   : getServerBrowsingLevel({
                       canViewNsfw: features?.canViewNsfw ?? false,
                       user: session?.user,
@@ -441,7 +441,7 @@ export const getServerSideProps = createServerSideProps({
     }
 
     return {
-      props: { id },
+      props: { id, initialMobile: isMobileUserAgent(ctx.req.headers['user-agent']) },
       gating,
       suppressAds,
     };
@@ -450,6 +450,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function ModelDetailsV2({
   id,
+  initialMobile,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
 
@@ -872,17 +873,22 @@ export default function ModelDetailsV2({
     return <NotFound />;
   }
 
-  const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
+  // Crawlers and link unfurlers get no image of a taken-down model, whoever rendered the page.
+  const withheld = isModelWithheld(model);
+  const image = withheld
+    ? undefined
+    : versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
   const thumbsUpCount = model.rank?.thumbsUpCountAllTime ?? 0;
   const thumbsDownCount = model.rank?.thumbsDownCountAllTime ?? 0;
   const totalRatingCount = thumbsUpCount + thumbsDownCount;
+  const plainDescription = removeTags(model.description ?? '');
   const metaSchema = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
     applicationCategory: 'Multimedia',
     applicationSubCategory: `${selectedEcosystemName} Model`,
-    description: removeTags(model.description ?? ''),
+    description: plainDescription,
     name: model.name,
     image: imageUrl,
     // Google rejects an aggregateRating whose item has no author, so deleted users get a placeholder.
@@ -943,9 +949,17 @@ export default function ModelDetailsV2({
         title: `${model.name}${
           selectedVersion ? ' - ' + selectedVersion.name : ''
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
-        description: truncate(removeTags(model.description ?? ''), { length: 150 }),
-        images: versionImages,
-        ogEndpoint: modelOgEndpoint(model),
+        description: buildModelMetaDescription({
+          name: model.name,
+          ecosystemName: selectedEcosystemName,
+          typeName: getDisplayName(model.type),
+          creator: !model.user.deletedAt ? model.user.username : undefined,
+          downloads: model.rank?.downloadCountAllTime,
+          likes: model.rank?.thumbsUpCountAllTime,
+          description: plainDescription,
+        }),
+        images: withheld ? undefined : versionImages,
+        ogEndpoint: withheld ? undefined : modelOgEndpoint(model),
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,
@@ -1638,6 +1652,7 @@ export default function ModelDetailsV2({
                   version={selectedVersion}
                   image={image}
                   onFavoriteClick={handleToggleFavorite}
+                  initialMobile={initialMobile}
                 />
               )}
             </PageStack>
@@ -1674,7 +1689,12 @@ export default function ModelDetailsV2({
               </>
             )}
             {selectedVersion && (
-              <ModelVersionWrittenReviews modelId={model.id} modelVersionId={selectedVersion.id} />
+              <ModelVersionWrittenReviews
+                modelId={model.id}
+                modelVersionId={selectedVersion.id}
+                thumbsUpCount={thumbsUpCount}
+                thumbsDownCount={thumbsDownCount}
+              />
             )}
             <AdUnitTopSection />
             <Container size="xl" my="xl">

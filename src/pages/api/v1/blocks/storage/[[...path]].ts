@@ -24,13 +24,13 @@ export const config = { api: { bodyParser: false } };
 
 // allowOpaqueOrigin: an UNVERIFIED block direct-fetches this from an opaque origin
 // (`Origin: null`); the Bearer block-JWT (no cookies) remains the sole authz gate — see
-// WithBlockScopeOpts.allowOpaqueOrigin. extraCorsMethods: documents are written with PUT and
-// deleted with DELETE, which the preflight must allow.
+// WithBlockScopeOpts.allowOpaqueOrigin. extraCorsMethods: documents are written with PUT,
+// deleted with DELETE and tallied with PATCH, which the preflight must allow.
 export default withBlockScope(withAxiom(createStorageHandler()), {
   endpoint: storageEndpointLabel,
   requiredScope: 'apps:storage',
   allowOpaqueOrigin: true,
-  extraCorsMethods: ['PUT', 'DELETE'],
+  extraCorsMethods: ['PUT', 'DELETE', 'PATCH'],
   // The middleware's own refusals in this route's envelope, so every response has one shape.
   formatRefusal: storageRefusalBody,
 });

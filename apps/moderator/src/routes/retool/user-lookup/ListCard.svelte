@@ -15,6 +15,7 @@
     capped = false,
     action,
     controls,
+    footer,
     children,
   }: {
     title: string;
@@ -30,6 +31,8 @@
      *  `total` is 0, so a filter bar placed there disappears the moment it matches nothing — taking
      *  with it the only way to clear the filter that emptied the list. */
     controls?: Snippet;
+    /** After the list, and rendered even when it is empty. */
+    footer?: Snippet;
     /** Receives how many rows to render — the card owns the expand toggle. */
     children: Snippet<[number]>;
   } = $props();
@@ -61,4 +64,6 @@
     {@render children(limit)}
     <ShowMoreButton {total} {shown} {expanded} {capped} onToggle={() => (expanded = !expanded)} />
   {/if}
+
+  {@render footer?.()}
 </div>

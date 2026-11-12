@@ -9,13 +9,19 @@ import type * as SystemCache from '~/server/services/system-cache';
 //     without its content-rating cap (forcedBrowsingLevel).
 // Neither shows up as an error at any layer, so only a test pins them.
 
-const { permissionsMock, replacedTagIdsMock, heldLevelMock } = vi.hoisted(() => ({
-  permissionsMock: vi.fn(),
-  replacedTagIdsMock: vi.fn(),
-  heldLevelMock: vi.fn(),
-}));
+const { permissionsMock, replacedTagIdsMock, heldLevelMock, withheldVersionsMock } = vi.hoisted(
+  () => ({
+    permissionsMock: vi.fn(),
+    replacedTagIdsMock: vi.fn(),
+    heldLevelMock: vi.fn(),
+    withheldVersionsMock: vi.fn(),
+  })
+);
 
-vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: heldLevelMock }));
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: heldLevelMock,
+  getWithheldVersionIds: withheldVersionsMock,
+}));
 
 vi.mock('~/server/services/collection.service', () => ({
   getUserCollectionPermissionsByIds: permissionsMock,
@@ -95,6 +101,7 @@ beforeEach(() => {
   // "nothing is replaced" rather than from whatever ran before it.
   replacedTagIdsMock.mockResolvedValue([]);
   heldLevelMock.mockResolvedValue(undefined);
+  withheldVersionsMock.mockResolvedValue(new Set());
   stubVersions({});
   // The service maps whatever the write returns before handing it back, so the
   // fakes have to return a row rather than undefined.
@@ -569,6 +576,42 @@ describe('resolveHubSources source expansion', () => {
 
     expect(heldLevelMock).not.toHaveBeenCalled();
     expect(result?.heldBrowsingLevel).toBeUndefined();
+  });
+
+  it("drops a taken-down model's versions from the hub", async () => {
+    findFirstHub.mockResolvedValue({
+      sources: [
+        { type: UserHubSourceType.Model, targetId: 20 },
+        { type: UserHubSourceType.ModelVersion, targetId: 41 },
+      ],
+    });
+    stubVersions({ 20: [30, 31] });
+    withheldVersionsMock.mockResolvedValue(new Set([30, 31]));
+
+    const result = await resolveHubSources({ hubId: 1, userId: 5, galleryOwnerId: 5 });
+
+    // The viewer is passed on, so the model's owner keeps it.
+    expect(withheldVersionsMock).toHaveBeenCalledWith(expect.arrayContaining([30, 31, 41]), 5);
+    expect(result?.modelVersionIds).toEqual([41]);
+    // The hold is read alongside, over every version the hub named.
+    expect(heldLevelMock).toHaveBeenCalledWith({ modelIds: [20], modelVersionIds: [41] });
+  });
+
+  it("keeps a taken-down model's versions for a viewer the caller exempts", async () => {
+    findFirstHub.mockResolvedValue({
+      sources: [{ type: UserHubSourceType.ModelVersion, targetId: 41 }],
+    });
+    withheldVersionsMock.mockResolvedValue(new Set([41]));
+
+    const result = await resolveHubSources({
+      hubId: 1,
+      userId: 5,
+      isModerator: true,
+      holdExempt: true,
+    });
+
+    expect(withheldVersionsMock).not.toHaveBeenCalled();
+    expect(result?.modelVersionIds).toEqual([41]);
   });
 
   it('holds a moderator the caller does not exempt', async () => {

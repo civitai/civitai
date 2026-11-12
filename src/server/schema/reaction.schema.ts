@@ -16,7 +16,6 @@ export const reactionRateLimits = usageLimits(
 // literal union — the block-check owner resolver switches exhaustively over it.
 export const reactableEntities = [
   'comment',
-  'commentOld',
   'image',
   'post',
   'resourceReview',
@@ -59,7 +58,6 @@ const contentReactions = ['Like', 'Heart', 'Laugh', 'Cry'] as const satisfies Re
 /**
  * The reactions a user may create on each entity type: the set the site's own UI offers.
  * The display filter in `src/components/Reaction/Reactions.tsx` is a separate copy.
- * - `commentOld` keeps Dislike: the legacy comment `ReactionPicker` still offers it.
  * - `resourceReview` has no reaction UI; it gets the standard set so the API can still use it.
  */
 export const allowedReactionsByEntity: Record<
@@ -72,7 +70,6 @@ export const allowedReactionsByEntity: Record<
   bountyEntry: contentReactions,
   comment: contentReactions,
   resourceReview: contentReactions,
-  commentOld: ['Like', 'Dislike', 'Heart', 'Laugh', 'Cry'],
 };
 
 export const isReactionAllowedForEntity = (

@@ -12,7 +12,7 @@ import { familyResources, familyScope, makeTextBlock, modelIdOf, type FamilyExt 
 
 /**
  * HiDream-O1 (full + dev). Both variants
- * carry LoRAs, a 1K/2K resolution tier, and a negative prompt; dev is the
+ * carry LoRAs, a 1K/2K resolution tier (edit is 2K only), and a negative prompt; dev is the
  * distilled build (cfg 1). No snippets key at all, even with the wildcards flag on.
  */
 
@@ -38,7 +38,11 @@ const hiDreamO1ResolutionOptions = [
   { label: '2K', value: '2K' },
 ] as const;
 
-const hiDreamO1AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
+/** Edit output at 1K comes back garbled; 2K is clean. */
+const hiDreamO1EditResolutionOptions = [{ label: '2K', value: '2K' }] as const;
+
+/** Every side must stay within 64-2048: the orchestrator refuses more ("The field Width must be between 64 and 2048"). */
+export const hiDreamO1AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
   '1K': [
     { label: '16:9', value: '16:9', width: 1408, height: 768 },
     { label: '3:2', value: '3:2', width: 1216, height: 832 },
@@ -49,13 +53,13 @@ const hiDreamO1AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
     { label: '9:16', value: '9:16', width: 768, height: 1408 },
   ],
   '2K': [
-    { label: '16:9', value: '16:9', width: 2816, height: 1536 },
-    { label: '3:2', value: '3:2', width: 2432, height: 1664 },
-    { label: '4:3', value: '4:3', width: 2304, height: 1792 },
+    { label: '16:9', value: '16:9', width: 2048, height: 1152 },
+    { label: '3:2', value: '3:2', width: 2048, height: 1344 },
+    { label: '4:3', value: '4:3', width: 2048, height: 1536 },
     { label: '1:1', value: '1:1', width: 2048, height: 2048 },
-    { label: '3:4', value: '3:4', width: 1792, height: 2304 },
-    { label: '2:3', value: '2:3', width: 1664, height: 2432 },
-    { label: '9:16', value: '9:16', width: 1536, height: 2816 },
+    { label: '3:4', value: '3:4', width: 1536, height: 2048 },
+    { label: '2:3', value: '2:3', width: 1344, height: 2048 },
+    { label: '9:16', value: '9:16', width: 1152, height: 2048 },
   ],
 };
 
@@ -99,7 +103,11 @@ export const hiDreamO1 = defineGraph<FamilyExt>({ scope: familyScope })
   )
   .use(variants)
   .field('resources', familyResources)
-  .field('resolution', enumDef({ options: hiDreamO1ResolutionOptions, default: '1K' }))
+  .field('resolution', ({ _ext }) =>
+    _ext.workflow === 'img2img:edit'
+      ? enumDef({ options: hiDreamO1EditResolutionOptions, default: '2K' })
+      : enumDef({ options: hiDreamO1ResolutionOptions, default: '1K' })
+  )
   .field('aspectRatio', ({ resolution }) => AR(resolution))
   .field('seed', SEED)
   .use(makeTextBlock({ snippets: false }));

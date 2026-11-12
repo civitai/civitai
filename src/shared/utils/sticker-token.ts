@@ -341,3 +341,9 @@ export function rankStickerMatch(query: string, slug: string, extra?: string): n
   if ((extra ?? '').toLowerCase().includes(needle)) return 2;
   return null;
 }
+
+/** Below jumbo, margins of -size/2 zero the margin box so the sticker can't stretch its line. Jumbo is alone on its line, so it keeps its box. */
+export const stickerInlineStyle = (size: number) =>
+  size >= STICKER_SIZE.jumbo
+    ? { verticalAlign: 'text-bottom' }
+    : { verticalAlign: 'middle', marginTop: `${-size / 2}px`, marginBottom: `${-size / 2}px` };

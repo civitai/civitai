@@ -1059,6 +1059,13 @@ describe('strike.service', () => {
       });
     });
 
+    it('refuses the feedback capture account, striking nobody', async () => {
+      await expect(createStrike({ ...baseInput, userId: -2 })).rejects.toThrow(
+        /feedback page captures/
+      );
+      expect(mockDbWrite.userStrike.create).not.toHaveBeenCalled();
+    });
+
     it('throws NOT_FOUND when user does not exist', async () => {
       mockDbRead.user.findUnique.mockReset();
       mockDbRead.user.findUnique.mockResolvedValueOnce(null);

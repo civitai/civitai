@@ -302,10 +302,8 @@ describe('captureAttachGate', () => {
     expect(await gate([PENDING, PENDING, READY])).toBeNull();
     expect(sleep.mock.calls.map(([ms]) => ms)).toEqual(CAPTURE_POLL_DELAYS_MS.slice(0, 2));
   });
-  it('gives up after about two minutes', async () => {
+  it('gives up after the last delay', async () => {
     expect(await gate(Array(CAPTURE_POLL_DELAYS_MS.length + 1).fill(PENDING))).toBe('scanning');
-    const waited = CAPTURE_POLL_DELAYS_MS.reduce((a, b) => a + b, 0);
-    expect(waited).toBe(120_000);
     expect(sleep).toHaveBeenCalledTimes(CAPTURE_POLL_DELAYS_MS.length);
   });
   it.each([

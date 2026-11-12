@@ -22,7 +22,6 @@ import {
 } from '~/server/services/block-check.service';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import { getCommentExcludedUserIds } from '~/server/services/comment-exclusions.service';
-import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
 import {
   afterCommentsV3Deleted,
   bulkSetCommentV3TosViolation,
@@ -31,9 +30,9 @@ import {
 import {
   getStoredComment,
   getV3WriteComment,
-  isV3WriteSurface,
   prismaRunner,
   setCommentFlags,
+  toggleCommentLock,
   type StoredCommentV3,
 } from '~/server/services/commentv3/write.service';
 import { type CommentReadContext, commentSurface } from '~/server/services/commentv3/surfaces';
@@ -43,10 +42,10 @@ import {
 } from '~/server/services/commentv3/comment-write.service';
 import {
   getSectionMuted,
-  getThreadMuted,
+  getCommentMuted,
   toggleSectionLock,
   toggleSectionMute,
-  toggleThreadMute,
+  toggleCommentMute,
 } from '~/server/services/commentv3/section.service';
 import { emptyReactionCounts } from '~/shared/utils/comment-reactions';
 import {
@@ -56,8 +55,10 @@ import {
   getCommentEntity,
   getCommentLock,
   getCommentReplies,
+  countSectionComments,
   getCommentSection,
   getCommentThread,
+  resolveModelPageCommentId,
 } from '~/server/services/commentv3/read.service';
 import { getCosmeticsAndProfilePicturesForUsers } from '~/server/services/user.service';
 import {
@@ -122,18 +123,23 @@ export async function getCommentSectionHandler({
   ctx: Context;
   input: GetCommentSectionInput;
 }) {
-  await assertSectionVisible(input, ctx);
-  const viewer = await viewerFor(ctx, input);
-  const [page, lock] = await Promise.all([
+  const [, viewer] = await Promise.all([assertSectionVisible(input, ctx), viewerFor(ctx, input)]);
+  const leavesOutHidden = constants.comments.leavesOutHiddenComments(input);
+  const [page, lock, counts] = await Promise.all([
     getCommentSection(kyselyV3Read, input, viewer, {
       sort: input.sort,
       cursor: input.cursor,
       budget: constants.comments.getV3PageBudget(input),
       replyDepth: replyDepth(input.entityType),
+      hidden: leavesOutHidden ? (input.hidden ? 'only' : 'exclude') : undefined,
     }),
     getCommentLock(kyselyV3Read, input),
+    // A section that leaves its hidden comments out says how many there are, on its first page.
+    leavesOutHidden && !input.cursor
+      ? countSectionComments(kyselyV3Read, input, viewer)
+      : undefined,
   ]);
-  return { ...(await withAuthors(page)), locked: lock.locked };
+  return { ...(await withAuthors(page)), locked: lock.locked, counts };
 }
 
 /** A reply or deep link names a comment; its surface comes from the stored row, never the input. */
@@ -169,18 +175,33 @@ export async function getCommentThreadHandler({
   ctx: Context;
   input: GetCommentThreadInput;
 }) {
-  const { entity, viewer } = await resolveComment(ctx, input.commentId);
-  const thread = await getCommentThread(kyselyV3Read, input.commentId, viewer, {
+  const isModel = input.entityType === 'model';
+  const [commentId, highlightId] = await Promise.all([
+    isModel
+      ? resolveModelPageCommentId(kyselyV3Read, input.entityId, input.commentId)
+      : input.commentId,
+    isModel && input.highlight
+      ? resolveModelPageCommentId(kyselyV3Read, input.entityId, input.highlight)
+      : input.highlight,
+  ]);
+  const { entity, viewer } = await resolveComment(ctx, commentId);
+  const thread = await getCommentThread(kyselyV3Read, commentId, viewer, {
     sort: input.sort,
     entity: { entityType: input.entityType, entityId: input.entityId },
   });
   if (!thread) throw throwNotFoundError('Comment not found');
   const [replies, lock] = await Promise.all([
     withAuthors({ ...thread.replies, comments: [thread.comment, ...thread.replies.comments] }),
-    getCommentLock(kyselyV3Read, entity, input.commentId),
+    getCommentLock(kyselyV3Read, entity, commentId),
   ]);
   const [comment, ...rest] = replies.comments;
-  return { ...thread, comment, replies: { ...replies, comments: rest }, locked: lock.locked };
+  return {
+    ...thread,
+    comment,
+    replies: { ...replies, comments: rest },
+    locked: lock.locked,
+    highlightId,
+  };
 }
 
 async function asNewItem(row: StoredCommentV3) {
@@ -204,6 +225,7 @@ async function asNewItem(row: StoredCommentV3) {
     pinnedAt: row.pinnedAt,
     hidden: row.hidden,
     tosViolation: row.tosViolation,
+    locked: row.locked,
     reactionCount: 0,
     user: author ? { ...author, ...lookup(author.id) } : null,
     reactions: emptyReactionCounts(),
@@ -244,13 +266,7 @@ async function assertSectionOwnerOrModerator(ctx: ProtectedContext, comment: Sto
 export async function assertCommentActionable(commentId: number, ctx: ProtectedContext) {
   const comment = await getV3WriteComment(prismaRunner(dbWrite), commentId);
   if (ctx.user.isModerator) return comment;
-  if (!comment) {
-    // A comment on a surface that does not write CommentV3 has no section gate.
-    if (await isCommentGoneForMembers(commentId))
-      throw throwNotFoundError(`No comment with id ${commentId}`);
-    return undefined;
-  }
-  if (comment.tosViolation) throw throwNotFoundError(`No comment with id ${commentId}`);
+  if (!comment || comment.tosViolation) throw throwNotFoundError(`No comment with id ${commentId}`);
   await assertSectionVisible(comment, ctx);
   if (comment.entityType === 'storyline')
     await commentSurface('storyline').assertWritable?.(comment.entityId, ctx);
@@ -264,9 +280,9 @@ async function assertCanWrite(
   answered: (StoredCommentV3 | undefined)[]
 ) {
   const { id: userId, isModerator } = ctx.user;
-  if (!isV3WriteSurface(section.entityType))
-    throw throwBadRequestError(`Comments on ${section.entityType} are not written here yet.`);
-  await commentSurface(section.entityType).assertWritable?.(section.entityId, ctx);
+  const surface = commentSurface(section.entityType);
+  await surface.assertWritable?.(section.entityId, ctx);
+  await surface.assertOpen?.(section.entityId, ctx);
   await throwOnBlockedCommentContent(content, { isModerator });
   await throwIfBlockedByOwners({
     userId,
@@ -306,9 +322,10 @@ export async function createCommentV3Handler({
   });
   const surface = commentSurface(section.entityType);
   // The cast is safe: commentSurface above throws for any other entity type.
-  const trackAs = parent ? 'Comment' : commentTrackTypes[section.entityType as CommentEntityType];
-  if (trackAs)
-    ctx.track.comment({ type: trackAs, entityId: row.id, nsfw: false }).catch(handleLogError);
+  const trackType = parent ? 'Comment' : commentTrackTypes[section.entityType as CommentEntityType];
+  const tracked =
+    surface.trackAs?.(row) ?? (trackType ? { type: trackType, entityId: row.id } : undefined);
+  if (tracked) ctx.track.comment({ ...tracked, nsfw: false }).catch(handleLogError);
   surface.onCreated?.(row, ctx);
   void onCommentCreated({ userId, entityType: section.entityType, entityId: section.entityId });
   return asNewItem(row);
@@ -402,6 +419,20 @@ export async function setTosViolationV3Handler({
   return bulkSetCommentV3TosViolation({ ids: [input.id], actor: { id: ctx.user.id, ip: ctx.ip } });
 }
 
+export async function toggleCommentLockV3Handler({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: CommentV3IdInput;
+}) {
+  if (!ctx.user.isModerator) throw throwAuthorizationError();
+  const comment = await writableComment(ctx, input.id);
+  const row = await dbWrite.$transaction((tx) => toggleCommentLock(prismaRunner(tx), comment.id));
+  if (!row) throw throwNotFoundError(`No comment with id ${comment.id}`);
+  return { id: comment.id, locked: row.locked };
+}
+
 export async function getSectionLockHandler({
   ctx,
   input,
@@ -446,7 +477,7 @@ export async function toggleSectionMuteHandler({
   return toggleSectionMute({ ...input, userId: ctx.user.id });
 }
 
-export async function getThreadMutedHandler({
+export async function getCommentMutedHandler({
   ctx,
   input,
 }: {
@@ -454,10 +485,10 @@ export async function getThreadMutedHandler({
   input: CommentMuteInput;
 }) {
   const comment = await assertCommentActionable(input.commentId, ctx);
-  return getThreadMuted({ ...input, userId: ctx.user.id }, { comment });
+  return getCommentMuted({ ...input, userId: ctx.user.id }, { comment });
 }
 
-export async function toggleThreadMuteHandler({
+export async function toggleCommentMuteHandler({
   ctx,
   input,
 }: {
@@ -465,5 +496,5 @@ export async function toggleThreadMuteHandler({
   input: CommentMuteInput;
 }) {
   const comment = await assertCommentActionable(input.commentId, ctx);
-  return toggleThreadMute({ ...input, userId: ctx.user.id }, { comment });
+  return toggleCommentMute({ ...input, userId: ctx.user.id }, { comment });
 }

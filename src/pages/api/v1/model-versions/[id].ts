@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { ModelFileVisibility, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
@@ -115,6 +116,7 @@ export default MixedAuthEndpoint(async function handler(
                 'url', mf.url,
                 'sizeKB', mf."sizeKB",
                 'name', mf.name,
+                'overrideName', mf."overrideName",
                 'type', mf.type,
                 'visibility', mf.visibility,
                 'metadata', mf.metadata,
@@ -216,7 +218,7 @@ export async function prepareModelVersionResponse(
       (await getPaidAccess('ModelVersion', [version.id]))[version.id]
     );
   const includeDownloadUrl = model.mode !== ModelModifier.Archived;
-  const includeImages = model.mode !== ModelModifier.TakenDown;
+  const includeImages = !isModelWithheld(model);
   const listed = await trainingDataListing(dbRead, [{ id: version.id, files }], { redCapable });
 
   // Creator Controls: gate the version download count (public API — no owner/mod

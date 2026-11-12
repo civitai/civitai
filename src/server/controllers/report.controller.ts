@@ -57,9 +57,8 @@ export async function createReportHandler({
   ctx: ProtectedContext;
 }) {
   try {
-    // Gated like reacting. A pre-flip comment keeps its id in both tables, so the old type is too.
-    if (input.type === ReportEntity.CommentV2 || input.type === ReportEntity.CommentV3)
-      await assertCommentActionable(input.id, ctx);
+    // Gated like reacting.
+    if (input.type === ReportEntity.CommentV3) await assertCommentActionable(input.id, ctx);
     const result = await createReport({
       ...input,
       userId: ctx.user.id,

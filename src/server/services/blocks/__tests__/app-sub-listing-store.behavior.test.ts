@@ -25,6 +25,18 @@ vi.mock('~/server/services/blocks/app-listing-beta.service', async (importOrigin
   readListingBetaManyForRender: vi.fn(async () => new Map()),
 }));
 import type * as BetaService from '~/server/services/blocks/app-listing-beta.service';
+// approve-edit re-checks the staged image through `getImage`; its visibility SQL is executed in
+// app-sub-listing-card-image.behavior.test.ts. Here every image row is public to its uploader.
+vi.mock('~/server/services/image.service', () => ({
+  getImage: async ({ id }: { id: number }) => {
+    const { rows } = await holder.db.query<{ userId: number }>(
+      `SELECT "userId" FROM "Image" WHERE id = $1`,
+      [id]
+    );
+    if (!rows.length) throw new Error(`no image ${id}`);
+    return { id, user: { id: rows[0].userId } };
+  },
+}));
 
 /**
  * The store catalog statement, unmodified, executed on real rows.

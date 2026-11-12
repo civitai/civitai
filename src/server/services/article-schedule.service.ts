@@ -86,7 +86,9 @@ export async function publishDueScheduledArticles(now: Date) {
         entityType: 'article',
         entityId: id,
       }),
-      articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]),
+      articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+        reason: 'scheduled-publish',
+      }),
       userArticleCountCache.refresh(userId),
       createNotification({
         userId,

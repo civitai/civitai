@@ -7,7 +7,7 @@ import {
   getV3WriteComment,
   isTopicMuted,
   prismaRunner,
-  toggleCommentMute,
+  toggleCommentMute as writeCommentMute,
   toggleTopicLock,
   toggleTopicMute,
   type StoredCommentV3,
@@ -44,7 +44,7 @@ export async function getSectionMuted({
 /** The comment exactly as `getV3WriteComment` returned it from the primary, to spare a second read. */
 type Loaded = { comment: StoredCommentV3 | undefined };
 
-export async function toggleThreadMute(
+export async function toggleCommentMute(
   { commentId, userId }: CommentMuteInput & { userId: number },
   loaded?: Loaded
 ) {
@@ -53,10 +53,10 @@ export async function toggleThreadMute(
     : await getV3WriteComment(prismaRunner(dbWrite), commentId);
   // A ToS removal answers as missing: the endpoint takes a bare id, so it must not tell them apart.
   if (!comment || comment.tosViolation) throw throwNotFoundError();
-  return toggleCommentMute(prismaRunner(dbWrite), { userId, commentId });
+  return writeCommentMute(prismaRunner(dbWrite), { userId, commentId });
 }
 
-export async function getThreadMuted(
+export async function getCommentMuted(
   { commentId, userId }: CommentMuteInput & { userId: number },
   loaded?: Loaded
 ) {

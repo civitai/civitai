@@ -37,7 +37,7 @@ import {
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
@@ -55,6 +55,12 @@ import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
+import { ResourceReviewEditButton } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewEditButton';
+import { useReviewFocusStore } from '~/components/Post/EditV2/PostResourceReviews/reviewFocus';
+import {
+  ResourceReviewCommentHint,
+  ResourceReviewThumbs,
+} from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewThumbs';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
 import {
@@ -536,6 +542,8 @@ const ResourceHeader = () => {
 const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) => {
   const { image, canAdd, otherImages } = useAddedImageContext();
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
+  const postId = usePostEditStore((state) => state.post?.id);
+  const ownerId = usePostEditStore((state) => state.post?.user.id);
 
   const { modelId, modelName, modelType, modelVersionId, modelVersionName, detected } = resource;
 
@@ -637,13 +645,37 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
             <Text lineClamp={1}>{modelName}</Text>
             <Text span c="dimmed" size="sm" lineClamp={1}>
               {modelVersionName}
+              {postId && ownerId && (
+                <ResourceReviewCommentHint
+                  postId={postId}
+                  ownerId={ownerId}
+                  modelVersionId={modelVersionId}
+                />
+              )}
             </Text>
           </Stack>
-          <Badge color="gray" size="md" variant="filled">
+          <Badge color="gray" size="md" variant="filled" visibleFrom="sm">
             {getDisplayName(modelType ?? 'unknown')}
           </Badge>
         </Box>
       </Link>
+
+      {postId && ownerId && (
+        <ResourceReviewThumbs
+          postId={postId}
+          ownerId={ownerId}
+          modelVersionId={modelVersionId}
+          modelName={modelName}
+        />
+      )}
+      {postId && ownerId && (
+        <ResourceReviewEditButton
+          postId={postId}
+          ownerId={ownerId}
+          modelVersionId={modelVersionId}
+          modelName={modelName}
+        />
+      )}
 
       {!otherAvailableIDs.length ? (
         <></>
@@ -716,6 +748,16 @@ function EditDetail() {
   const updateImage = usePostEditStore((state) => state.updateImage);
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
+
+  // "Next unrated" on the review progress card may target a resource hidden behind "Show All".
+  const reviewFocus = useReviewFocusStore((state) => state.target);
+  useEffect(() => {
+    if (reviewFocus?.imageId !== image.id) return;
+    const visible = sortByModelTypes(image.resourceHelper).filter((x) => !!x.modelName);
+    if (visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId) >= 3)
+      setShowMoreResources(true);
+    useReviewFocusStore.setState({ target: null });
+  }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
@@ -1276,9 +1318,7 @@ function EditDetail() {
             className="rounded-lg p-2"
             classNames={{ message: 'flex items-center justify-center gap-2' }}
           >
-            <Text align="center">
-              This image is waiting for manual review and will receive a rating at a later time.
-            </Text>
+            <Text align="center">This image is waiting to be rated.</Text>
           </Alert>
         )}
         {/* #endregion */}

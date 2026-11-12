@@ -1,24 +1,12 @@
 import { Button, Loader, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
-import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { useClipboard } from '@mantine/hooks';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowBackUp,
   IconArrowRight,
-  IconBell,
-  IconBellOff,
   IconCaretDownFilled,
-  IconDotsVertical,
-  IconEdit,
   IconExclamationCircle,
-  IconEye,
-  IconEyeOff,
-  IconFlag,
-  IconId,
-  IconLink,
+  IconLock,
   IconPinned,
-  IconPinnedOff,
-  IconShieldOff,
   IconTrash,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -32,26 +20,18 @@ import {
 import { CommentBadge } from '~/components/CommentsV3/CommentBadge';
 import { useScrollToHighlightedComment } from '~/components/CommentsV3/useScrollToHighlightedComment';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { openReportModal } from '~/components/Dialog/triggers/report';
-import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
-import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import type { ReactionMetrics } from '~/components/Reaction/Reactions';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
-import { ReportEntity } from '~/shared/utils/report-helpers';
-import { showSuccessNotification } from '~/utils/notifications';
-import { isViewer } from '~/utils/is-viewer';
 import { trpc } from '~/utils/trpc';
 import { CommentEditor } from './CommentComposer';
+import { CommentMenu, useCommentAbilities } from './CommentMenu';
+import { useCommentReactions } from './useCommentReactions';
 import { useCommentSection } from './CommentSectionContext';
 import type { CommentV3Comment } from './types';
-import { useCommentMutations } from './useCommentMutations';
 import classes from '~/components/CommentsV3/CommentItem.module.css';
 
 /** An editor's trailing empty paragraph, which would render as a blank line under the text. */
@@ -66,6 +46,7 @@ export function CommentItem({
   level,
   lockedAbove,
   pageRepliesInPlace,
+  repliesElsewhere,
 }: {
   comment: CommentV3Comment;
   level: number;
@@ -73,52 +54,27 @@ export function CommentItem({
   lockedAbove: boolean;
   /** The root of a focused view pages its replies in place instead of opening another view. */
   pageRepliesInPlace?: boolean;
+  /** The view shows this comment's replies and reply box itself, as a thread dialog's root. */
+  repliesElsewhere?: boolean;
 }) {
   const section = useCommentSection();
-  const {
-    entityType,
-    ownerId,
-    badges,
-    highlightedId,
-    isMuted,
-    forceLocked,
-    seededChildren,
-    focus,
-  } = section;
+  const { entityType, badges, highlightedId, seededChildren, focus } = section;
   const currentUser = useCurrentUser();
-  const mutations = useCommentMutations();
-  const clipboard = useClipboard();
   const { concealed, reveal, conceal } = useHiddenCommentReveal(comment.hidden);
   const [editing, setEditing] = useState(false);
   const [replying, setReplying] = useState(false);
-  const [menuOpened, setMenuOpened] = useState(false);
 
   // Null on a deleted comment, which stays only as a placeholder for its replies.
   const author = comment.user;
-  const isOwner = isViewer(currentUser, author?.id);
-  const isMod = !!currentUser?.isModerator;
-  const isResourceOwner = isViewer(currentUser, ownerId);
-  const can = {
-    delete: isOwner || isMod,
-    edit: (isOwner || isMod) && ((!lockedAbove && !isMuted) || isMod),
-    reply: !!currentUser && !lockedAbove && !isMuted && !forceLocked && !comment.hidden,
-    hide: isResourceOwner || isMod,
-    pin: isResourceOwner || isMod,
-    report: !isOwner,
-  };
+  const can = useCommentAbilities(comment, lockedAbove);
+  const isMod = can.isMod;
   const badge = author && badges.find((b) => b.userId === author.id);
-
-  // Fetched only while the menu is open: one query per comment on every page would cost more.
-  const { data: threadMute } = trpc.commentv3.getThreadMuted.useQuery(
-    { commentId: comment.id },
-    { enabled: menuOpened && !!currentUser }
-  );
 
   const createdReplies = section.created[comment.id] ?? [];
   const replyCount = comment.replyCount + createdReplies.length;
   const maxDepth = constants.comments.getMaxDepth({ entityType });
   const seeded = seededChildren[comment.id];
-  const [expanded, setExpanded] = useState(!!seeded && level < maxDepth);
+  const [expanded, setExpanded] = useState(!repliesElsewhere && !!seeded && level < maxDepth);
   // Past the display depth a thread opens as its own view instead of indenting further.
   const opensOwnView = level >= maxDepth && !expanded;
   const toggleReplies = () => (opensOwnView ? focus(comment.id) : setExpanded((x) => !x));
@@ -126,57 +82,7 @@ export function CommentItem({
   const isHighlighted = highlightedId === comment.id;
   useScrollToHighlightedComment(isHighlighted, comment.id);
 
-  const metrics = useMemo(
-    (): ReactionMetrics => ({
-      likeCount: comment.reactions.Like,
-      dislikeCount: comment.reactions.Dislike,
-      heartCount: comment.reactions.Heart,
-      laughCount: comment.reactions.Laugh,
-      cryCount: comment.reactions.Cry,
-    }),
-    [comment.reactions]
-  );
-  const myReactions = useMemo(
-    () =>
-      currentUser
-        ? comment.myReactions.map((reaction) => ({ userId: currentUser.id, reaction }))
-        : [],
-    [comment.myReactions, currentUser]
-  );
-
-  const confirmDelete = () =>
-    openConfirmModal({
-      title: 'Delete comment',
-      children: (
-        <Text size="sm">
-          Are you sure you want to delete this comment? This action is destructive and cannot be
-          reverted.
-        </Text>
-      ),
-      centered: true,
-      labels: { confirm: 'Delete comment', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => void mutations.delete(comment).catch(() => null),
-    });
-  const confirmTos = () =>
-    openConfirmModal({
-      title: 'Remove as ToS violation',
-      children: (
-        <Text size="sm">
-          This flags the comment as a Terms of Service violation, actions any matching reports and
-          notifies the author. Are you sure?
-        </Text>
-      ),
-      centered: true,
-      labels: { confirm: 'Remove as ToS violation', cancel: 'Cancel' },
-      confirmProps: { color: 'red', loading: mutations.settingTos },
-      closeOnConfirm: false,
-      onConfirm: () =>
-        mutations
-          .removeAsTos(comment)
-          .catch(() => null)
-          .finally(() => closeAllModals()),
-    });
+  const { metrics, reactions: myReactions } = useCommentReactions(comment);
 
   if (section.removed.has(comment.id)) return null;
 
@@ -223,6 +129,13 @@ export function CommentItem({
                   <IconPinned size={16} stroke={2} />
                 </ThemeIcon>
               )}
+              {comment.locked && (
+                <Tooltip label="Replies locked">
+                  <ThemeIcon size="sm" color="yellow">
+                    <IconLock size={14} />
+                  </ThemeIcon>
+                </Tooltip>
+              )}
               {isMod && comment.tosViolation && (
                 <Tooltip label="Has TOS Violation">
                   <ThemeIcon color="orange" size="xs">
@@ -234,134 +147,11 @@ export function CommentItem({
           )}
 
           {author && (
-            <Menu position="bottom-end" withinPortal opened={menuOpened} onChange={setMenuOpened}>
-              <Menu.Target>
-                <LegacyActionIcon size="xs" variant="subtle" aria-label="Comment options">
-                  <IconDotsVertical size={14} />
-                </LegacyActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {can.delete && (
-                  <Menu.Item
-                    leftSection={<IconTrash size={14} stroke={1.5} />}
-                    color="red"
-                    onClick={confirmDelete}
-                  >
-                    Delete comment
-                  </Menu.Item>
-                )}
-                {can.edit && (
-                  <Menu.Item
-                    leftSection={<IconEdit size={14} stroke={1.5} />}
-                    onClick={() => setEditing(true)}
-                  >
-                    Edit comment
-                  </Menu.Item>
-                )}
-                {can.hide && (
-                  <Menu.Item
-                    leftSection={
-                      comment.hidden ? (
-                        <IconEye size={14} stroke={1.5} />
-                      ) : (
-                        <IconEyeOff size={14} stroke={1.5} />
-                      )
-                    }
-                    onClick={() => void mutations.toggleHide(comment).catch(() => null)}
-                  >
-                    {comment.hidden ? 'Unhide comment' : 'Hide comment'}
-                  </Menu.Item>
-                )}
-                {can.pin && !comment.hidden && (
-                  <Menu.Item
-                    leftSection={
-                      comment.pinnedAt ? (
-                        <IconPinnedOff size={14} stroke={1.5} />
-                      ) : (
-                        <IconPinned size={14} stroke={1.5} />
-                      )
-                    }
-                    onClick={() => void mutations.togglePin(comment).catch(() => null)}
-                  >
-                    {comment.pinnedAt ? 'Unpin comment' : 'Pin comment'}
-                  </Menu.Item>
-                )}
-                <HideUserButton as="menu-item" userId={author.id} />
-                <BlockUserButton userId={author.id} as="menu-item" />
-                {can.report && (
-                  <LoginRedirect reason="report-model">
-                    <Menu.Item
-                      leftSection={<IconFlag size={14} stroke={1.5} />}
-                      onClick={() =>
-                        openReportModal({
-                          entityType: ReportEntity.CommentV3,
-                          entityId: comment.id,
-                        })
-                      }
-                    >
-                      Report
-                    </Menu.Item>
-                  </LoginRedirect>
-                )}
-                {currentUser && (
-                  <Menu.Item
-                    leftSection={
-                      threadMute?.muted ? (
-                        <IconBell size={14} stroke={1.5} />
-                      ) : (
-                        <IconBellOff size={14} stroke={1.5} />
-                      )
-                    }
-                    // The toggle flips from the stored state, so it waits for that state to load.
-                    disabled={
-                      !threadMute ||
-                      threadMute.viaAncestor ||
-                      mutations.togglingMute ||
-                      !threadMute.canMute
-                    }
-                    onClick={() => void mutations.toggleMute(comment).catch(() => null)}
-                  >
-                    {threadMute?.viaAncestor
-                      ? 'Muted with the thread above'
-                      : threadMute && !threadMute.canMute
-                      ? 'No replies to mute yet'
-                      : threadMute?.muted
-                      ? 'Unmute this thread'
-                      : 'Mute this thread'}
-                  </Menu.Item>
-                )}
-                <Menu.Item
-                  leftSection={<IconLink size={14} stroke={1.5} />}
-                  onClick={() => {
-                    // Through the permalink, so the copy carries none of this page's link parameters.
-                    clipboard.copy(`${window.location.origin}/comments/${comment.id}`);
-                    showSuccessNotification({ message: 'Comment link copied to clipboard' });
-                  }}
-                >
-                  Copy link
-                </Menu.Item>
-                {isMod && (
-                  <Menu.Item
-                    leftSection={<IconId size={14} stroke={1.5} />}
-                    onClick={() => {
-                      clipboard.copy(String(comment.id));
-                      showSuccessNotification({ message: 'Comment ID copied to clipboard' });
-                    }}
-                  >
-                    Copy comment ID
-                  </Menu.Item>
-                )}
-                {isMod && !comment.tosViolation && (
-                  <Menu.Item
-                    color="red"
-                    leftSection={<IconShieldOff size={14} stroke={1.5} />}
-                    onClick={confirmTos}
-                  >
-                    Remove as ToS violation
-                  </Menu.Item>
-                )}
-              </Menu.Dropdown>
-            </Menu>
+            <CommentMenu
+              comment={comment}
+              lockedAbove={lockedAbove}
+              onEdit={() => setEditing(true)}
+            />
           )}
         </div>
 
@@ -388,7 +178,7 @@ export function CommentItem({
                   metrics={metrics}
                 />
                 {comment.hidden && <HideAgainButton onClick={conceal} />}
-                {can.reply && (
+                {can.reply && !repliesElsewhere && (
                   <Button
                     variant="subtle"
                     radius="xl"
@@ -409,7 +199,7 @@ export function CommentItem({
           <CommentReplies
             parent={comment}
             level={level + 1}
-            lockedAbove={lockedAbove}
+            lockedAbove={lockedAbove || comment.locked}
             pageInPlace={pageRepliesInPlace}
           />
         )}
@@ -426,7 +216,7 @@ export function CommentItem({
             />
           </div>
         )}
-        {replyCount > 0 && !expanded && (
+        {replyCount > 0 && !expanded && !repliesElsewhere && (
           <Button
             className="mt-2.5 self-start"
             variant="subtle"
@@ -444,7 +234,7 @@ export function CommentItem({
           </Button>
         )}
       </div>
-      {replyCount > 0 && (
+      {replyCount > 0 && !repliesElsewhere && (
         <UnstyledButton onClick={toggleReplies} className={classes.repliesIndicator} />
       )}
     </div>

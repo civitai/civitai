@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { chunk } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
@@ -26,6 +30,8 @@ export default ModEndpoint(
   async function deleteUserImages(req: NextApiRequest, res: NextApiResponse) {
     try {
       const { userId, batchSize } = schema.parse(req.query);
+      if (isFeedbackCaptureOwner(userId))
+        return res.status(400).json({ error: FEEDBACK_CAPTURE_OWNER_REFUSAL });
       const { markerView } = await assertAccountNotUnderLegalHold(userId);
       // Repeated in each delete, so a hold that lands mid-run stops the rest.
       const held = accountHoldSql(Prisma.sql`${userId}::int`, markerView);

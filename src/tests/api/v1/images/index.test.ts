@@ -10,8 +10,10 @@ const {
   mockGetServerAuthSession,
   mockGetFeatureFlags,
   mockGetHeldGalleryLevel,
+  mockIsWithheld,
 } = vi.hoisted(() => ({
   mockGetHeldGalleryLevel: vi.fn(),
+  mockIsWithheld: vi.fn(async () => false),
   mockGetAllImages: vi.fn(),
   mockGetImagesFromFeedSearch: vi.fn(),
   mockImageMetaCacheFetch: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: mockGetHeldGalleryLevel,
   getHeldLevelsByPost: async () => new Map(),
+  isModelGalleryWithheld: mockIsWithheld,
 }));
 
 vi.mock('~/server/redis/caches', () => ({
@@ -191,6 +194,32 @@ describe('/api/v1/images API Handler', () => {
     mockGetImagesFromFeedSearch.mockResolvedValue(mockImagesResult);
     mockGetAllImages.mockResolvedValue(mockImagesResult);
     mockImageMetaCacheFetch.mockResolvedValue(mockMetaResult);
+  });
+
+  describe('a taken-down model', () => {
+    afterEach(() => mockIsWithheld.mockReset().mockResolvedValue(false));
+
+    it.each([
+      ['?modelId=', { modelId: '5' }],
+      ['?modelVersionId=', { modelVersionId: '50' }],
+      ['?postId=', { postId: '500' }],
+    ])('serves %s no images, searching nothing, to anyone', async (_name, selector) => {
+      mockGetServerAuthSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
+      mockIsWithheld.mockResolvedValue(true);
+      const { req, res } = createMocks({ query: { ...selector, browsingLevel: '31' } });
+
+      await handler(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(res._getJSONData().items).toEqual([]);
+      expect(mockIsWithheld).toHaveBeenCalledWith(
+        expect.objectContaining(
+          Object.fromEntries(Object.entries(selector).map(([key, id]) => [key, Number(id)]))
+        )
+      );
+      expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+      expect(mockGetAllImages).not.toHaveBeenCalled();
+    });
   });
 
   describe('a held model or version', () => {

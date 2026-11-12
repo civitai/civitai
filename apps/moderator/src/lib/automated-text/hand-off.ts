@@ -2,7 +2,7 @@ import { userLookupUrl } from '$lib/entity-url';
 import {
   getReportItemUrl,
   reportActionPath,
-  reportEntities,
+  isReportEntity,
   type ReportEntity,
 } from '$lib/reports';
 
@@ -41,9 +41,6 @@ export type HandOffDeps = {
   ) => Promise<{ reachable: boolean; contextUrl: string | null } | null>;
 };
 
-const isReportEntity = (v: string): v is ReportEntity =>
-  (reportEntities as readonly string[]).includes(v);
-
 /**
  * Where a labeler takes a case they judged a clear violation: the Automated report (`?report=` opens
  * one report whatever its status), the content, and the author in User Lookup.
@@ -51,13 +48,14 @@ const isReportEntity = (v: string): v is ReportEntity =>
 export function handOffLinks(civitaiUrl: string, src: HandOffSource): HandOffLink[] {
   const links: HandOffLink[] = [];
   // 'unknown': no report join row, so the report page cannot show it (see reportReachability).
-  if (isReportEntity(src.entityType)) {
+  const type = src.entityType;
+  if (isReportEntity(type)) {
     links.push({
       label: 'Open the report',
-      href: reportActionPath(src.entityType, src.reportId),
+      href: reportActionPath(type, src.reportId),
       external: false,
     });
-    const content = getReportItemUrl(civitaiUrl, src.entityType, src.entityId, src.contextUrl);
+    const content = getReportItemUrl(civitaiUrl, type, src.entityId, src.contextUrl);
     if (content)
       links.push({
         label: 'Open the content',
@@ -81,8 +79,9 @@ export async function resolveHandOffs(
 ): Promise<ResolvedHandOff[]> {
   return Promise.all(
     items.map(async (item) => {
-      const found = isReportEntity(item.entityType)
-        ? await deps.lookup({ ...item, entityType: item.entityType })
+      const type = item.entityType;
+      const found = isReportEntity(type)
+        ? await deps.lookup({ ...item, entityType: type })
         : { reachable: false, contextUrl: null };
       const contentGone = found?.reachable === false;
       const all = handOffLinks(

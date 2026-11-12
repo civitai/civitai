@@ -78,8 +78,25 @@ export const listAppListingsSchema = z.object({
    * `app-store-sub-listings` flag. Only the `/apps` store grid asks.
    */
   includeSubListings: z.boolean().optional(),
+  /**
+   * Only this developer's listings: the listing page's "More by this developer" rail and the
+   * profile Apps tab. It narrows the store predicate (`storeEligibilityWhere`), so a listing
+   * is returned exactly when this viewer could find it in the store anyway.
+   */
+  userId: z.number().int().positive().optional(),
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
+
+/** `appListings.getDeveloperTrackRecord` — whose record. */
+export const getDeveloperTrackRecordSchema = z.object({
+  userId: z.number().int().positive(),
+});
+
+/**
+ * A developer's store track record: how many of their listings this viewer could find in the
+ * store, and the counted reviews (recommend + not recommend) on those listings.
+ */
+export type DeveloperTrackRecord = { appCount: number; reviewCount: number };
 
 /**
  * REST-query variant of {@link listAppListingsSchema} for the public
@@ -168,13 +185,15 @@ export type ListingCreatorChip = {
 
 /**
  * Recommend rollup, read from the `AppListingMetric` rollup (P5-populated).
- * `recommendPct` is `null` when there are no reviews yet (metric row absent OR
- * zero counts) so the UI can render "no reviews yet" instead of "0%".
+ * `recommendPct` is `null` when there are too few reviews for a percentage to mean
+ * anything: none at all (metric row absent OR zero counts), or fewer than the minimum
+ * `recommendRollup` applies. The counts are always present, so the UI branches on them:
+ * zero reviews → "No reviews yet", reviews but no pct → the counts, else the pct.
  */
 export type ListingRecommendRollup = {
   recommendedCount: number;
   notRecommendedCount: number;
-  /** up / (up+down) in [0,1], or null when there are no reviews yet. */
+  /** up / (up+down) in [0,1], or null below the minimum review count (incl. zero). */
   recommendPct: number | null;
 };
 
@@ -527,6 +546,19 @@ export type ListingDetail = {
    * Null while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
    */
   sourceRepoUrl: string | null;
+  /**
+   * PUBLIC ISSUE-TRACKER / SUPPORT link ("report a problem here"), or null.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. A link the AUTHOR chose to publish, moderator-gated on both kinds
+   * like `sourceRepoUrl` (manifest `bugs` re-reviewed on approve for on-site; a MATERIAL patch
+   * field staged on a shadow revision for off-site), and normalised by `validateIssueTrackerUrl`
+   * (https, no credentials, no port, ≤200 chars). ANY host, unlike the source link, which is why
+   * the store renders it `rel="noopener noreferrer nofollow ugc"`.
+   *
+   * DETAIL-ONLY, for the reason `sourceRepoUrl` gives. Null while the manual-apply column is
+   * outstanding (it is read by raw SQL, never selected on the row).
+   */
+  issueTrackerUrl: string | null;
   /**
    * The app's APPROVED scope ids (`AppBlock.approved_scopes`), for the pre-launch
    * permission disclosure. `[]` in THREE cases, and the third is the one readers miss:

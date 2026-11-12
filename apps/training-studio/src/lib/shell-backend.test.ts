@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MatureAckRequiredError } from './mature-charge';
 import { shellBackend } from './shell-backend';
 import { AutoLabelRefusedError } from './autolabel-errors';
+import {
+  FILES_PROCESSING_CODE,
+  FILES_PROCESSING_MESSAGE,
+  FilesProcessingError,
+} from './files-processing';
 
 const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
@@ -92,5 +97,27 @@ describe('auto-label submit failures decide whether the image keeps its cap slot
   it('a network failure after send may have been charged', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
     expect(await submit().catch((e) => e)).not.toBeInstanceOf(AutoLabelRefusedError);
+  });
+});
+
+describe('a training submit refused while files are still processing', () => {
+  it('comes back as FilesProcessingError so the retry can show', async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json(
+        { message: FILES_PROCESSING_MESSAGE, code: FILES_PROCESSING_CODE },
+        { status: 400 }
+      )
+    );
+    const err = await shellBackend.submitTraining([]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FilesProcessingError);
+  });
+
+  it('keeps any other 400 a plain error with the server message', async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ message: 'Training could not start: bad steps' }, { status: 400 })
+    );
+    const err = await shellBackend.submitTraining([]).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(FilesProcessingError);
+    expect((err as Error).message).toBe('Training could not start: bad steps');
   });
 });

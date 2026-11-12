@@ -21,6 +21,7 @@ import { createMossImageInput } from './moss-image.handler';
 import { createBooguInput } from './boogu.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createKrea3Input } from './krea3.handler';
+import { createMinimaxH3ImageInput } from './minimax-h3-image.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 import { createReveInput } from './reve.handler';
 import { createMingInput } from './ming.handler';
@@ -45,6 +46,7 @@ import { createFlux3VideoInput } from './flux3-video.handler';
 import { createMiniMaxInput } from './minimax.handler';
 import { createHappyHorseInput } from './happy-horse.handler';
 import { createVeo3Input } from './veo3.handler';
+import { createGeminiOmniInput } from './gemini-omni.handler';
 import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
 import { createAceAudioInput } from './ace.handler';
@@ -78,6 +80,7 @@ export { createMossImageInput } from './moss-image.handler';
 export { createBooguInput } from './boogu.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createKrea3Input } from './krea3.handler';
+export { createMinimaxH3ImageInput } from './minimax-h3-image.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createReveInput } from './reve.handler';
 export { createMingInput } from './ming.handler';
@@ -102,6 +105,7 @@ export { createFlux3VideoInput } from './flux3-video.handler';
 export { createMiniMaxInput } from './minimax.handler';
 export { createHappyHorseInput } from './happy-horse.handler';
 export { createVeo3Input } from './veo3.handler';
+export { createGeminiOmniInput } from './gemini-omni.handler';
 export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
 export { createAceAudioInput } from './ace.handler';
@@ -194,6 +198,8 @@ function createStep(
       return createKrea2Input(data, handlerCtx);
     case 'Krea3':
       return createKrea3Input(data, handlerCtx);
+    case 'MiniMaxH3Image':
+      return createMinimaxH3ImageInput(data, handlerCtx);
 
     case 'PonyV7':
       return createPonyV7Input(data, handlerCtx);
@@ -282,6 +288,8 @@ function createStep(
 
     case 'Veo3':
       return createVeo3Input(data, handlerCtx);
+    case 'GeminiOmni':
+      return createGeminiOmniInput(data, handlerCtx);
 
     case 'Vidu':
       return createViduInput(data, handlerCtx);

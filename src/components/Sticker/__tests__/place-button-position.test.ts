@@ -84,6 +84,16 @@ describe('chromeClearance', () => {
     expect(clearance({ rotation: 180 })).toEqual({ below: 44 + GAP, above: OUTSET + GAP });
   });
 
+  it('puts the knob-sized standoff below when the knob hangs below', () => {
+    // A Hat Turf hat at an image's top edge hangs its knob under the sticker (knobBelowFor),
+    // so the Place cluster under it has to clear the knob, not just the handles.
+    expect(clearance({ knobBelow: true })).toEqual({ below: 44 + GAP, above: OUTSET + GAP });
+    expect(clearance({ knobBelow: true, rotation: 180 })).toEqual({
+      below: OUTSET + GAP,
+      above: 44 + GAP,
+    });
+  });
+
   it('is driven by the WIDTH on its side, where height says nothing', () => {
     // A wide, short sticker turned upright reaches further vertically than its
     // own box ever does — the case a height-only clearance gets backwards.

@@ -29,7 +29,11 @@ describe('image detail media schema', () => {
     });
 
     const image = schemaFor('image', level);
-    expect(image).toMatchObject({ '@type': 'ImageObject' });
+    expect(image).toMatchObject({
+      '@type': 'ImageObject',
+      license: 'https://civitai.com/content/tos',
+      acquireLicensePage: 'https://civitai.com/images/9',
+    });
     expect(image?.contentUrl).toContain('media-key');
   });
 

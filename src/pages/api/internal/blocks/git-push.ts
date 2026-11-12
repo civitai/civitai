@@ -3,14 +3,20 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import {
   BlockManifestValidator,
   type AppContext,
 } from '~/server/services/block-manifest-validator.service';
 import { userIdForForgejoUsername } from '~/server/services/blocks/dev-git-access.service';
-import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/blocks/forgejo.service';
+import { approveCommitRequestId } from '~/server/services/blocks/approve-provenance';
+import {
+  FORGEJO_ORG,
+  getPlatformAccountLogin,
+  getRawFile,
+  setCommitStatus,
+} from '~/server/services/blocks/forgejo.service';
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 import { recordPendingFromPush } from '~/server/services/blocks/publish-request.service';
 import { takePushReviewSlot } from '~/server/services/blocks/submit-rate-limit';
@@ -30,10 +36,13 @@ import {
  * NO TRUST ON PUSH (v1 mod-review gate): a signature-valid push does NOT
  * by itself approve or deploy anything. The build + deploy is triggered by
  * `approveRequest` (the moderator path) when a mod approves a publish
- * request; that approve stamps the approved sha onto
- * `app_blocks.current_version_sha` BEFORE its commit fires this webhook, so:
- *   - sha === app_blocks.current_version_sha → the moderator-approved,
- *     in-flight deploy → no-op here (approveRequest already triggered it).
+ * request; that approve commits, then stamps the approved sha onto
+ * `app_blocks.current_version_sha` and the approved request. Its commit fires
+ * this webhook, usually before those writes land, so:
+ *   - the approve's own commit (its message names the request and the
+ *     platform account pushed it: ownApproveCommitRequest), or a sha already
+ *     stamped as current / approved → the moderator-approved, in-flight
+ *     deploy → no-op here (approveRequest triggers the build itself).
  *   - any other sha → an UNREVIEWED direct push to civitai-apps/<slug> →
  *     recorded as a `pending` publish request and left for moderator review.
  *     It never auto-approves and never deploys.
@@ -83,6 +92,7 @@ type ForgejoPushPayload = {
   repository?: { name?: string; full_name?: string };
   pusher?: { login?: string; username?: string };
   commits?: Array<{ id?: string; message?: string }>;
+  head_commit?: { id?: string; message?: string } | null;
 };
 
 function safeEqualHex(a: string, b: string): boolean {
@@ -127,6 +137,63 @@ export function verifyForgejoSignature(rawBody: Buffer, signatureHeader: unknown
 }
 
 const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
+
+/**
+ * The publish request whose approve wrote this pushed commit, or null when the push is anything
+ * else. This is how the webhook tells the platform's own approve commit from a push to review,
+ * with no dependency on whether approveRequest has written its markers yet.
+ *
+ * approveRequest commits, THEN stamps `current_version_sha` and the approved request. Forgejo
+ * fires this webhook while that commit call is still in flight, so for a large bundle the webhook
+ * routinely arrives seconds before those writes, and the marker checks in the handler cannot see
+ * them. The commit itself is known before the commit exists: approveRequest writes the request id
+ * into its message (approve-provenance.ts). So a push is the approve's own commit when all hold:
+ *   - the pushed head's message is an approve message naming request R (approveCommitRequestId);
+ *   - the pusher is the platform account. Forgejo sets `pusher` from the credential that pushed,
+ *     inside the signed payload; a developer pushes as their own account and can type the message
+ *     but not this. (Manifest edits are also pushed as the platform account, but carry no approve
+ *     message, and record their own pending request.)
+ *   - R is a request for this slug that is pending (mid-approve) or approved. Read from the
+ *     primary: R predates the approve, so this read has no replica-lag window either.
+ * Anything that cannot be confirmed (no message, the platform login unreadable) returns null, and
+ * the push is handled exactly as before: recorded for review.
+ */
+export async function ownApproveCommitRequest(args: {
+  slug: string;
+  sha: string;
+  payload: ForgejoPushPayload;
+}): Promise<string | null> {
+  const { slug, sha, payload } = args;
+  const head =
+    payload.commits?.find((c) => c?.id === sha) ??
+    (payload.head_commit?.id === sha ? payload.head_commit : undefined);
+  const requestId = approveCommitRequestId(head?.message);
+  if (!requestId) return null;
+
+  const pusher = payload.pusher?.login ?? payload.pusher?.username;
+  if (typeof pusher !== 'string' || pusher.length === 0) return null;
+  let platformLogin: string;
+  try {
+    platformLogin = await getPlatformAccountLogin();
+  } catch (e) {
+    const at = `${slug}@${sha.slice(0, 12)}`;
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[git-push] ${at}: platform account unreadable, approve commit not recognised: ${String(
+        e
+      ).slice(0, 200)}`
+    );
+    return null;
+  }
+  // Forgejo user names are case-insensitive.
+  if (pusher.toLowerCase() !== platformLogin.toLowerCase()) return null;
+
+  const request = await dbWrite.appBlockPublishRequest.findFirst({
+    where: { id: requestId, slug, status: { in: ['pending', 'approved'] } },
+    select: { id: true },
+  });
+  return request?.id ?? null;
+}
 
 /**
  * Parse a Forgejo `repository.full_name` (`<org>/<slug>`) and assert the
@@ -252,17 +319,29 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
   // Race backstop: approveRequest stamps current_version_sha and finalises the
   // publish request (status='approved', forgejoCommitSha=sha) right after its
-  // commit — but its commit fires THIS webhook, so the webhook can in principle
-  // arrive in the narrow window before those writes land. An `approved` publish
-  // request for (slug, sha) is the same durable proof of moderator approval, so
-  // treat it as the in-flight approved deploy too (no-op). A direct attacker
-  // push has neither marker.
+  // commit — but its commit fires THIS webhook, which usually arrives before
+  // those writes land (both reads here can also trail them on a replica). An
+  // `approved` publish request for (slug, sha) is the same durable proof of
+  // moderator approval, so treat it as the in-flight approved deploy too
+  // (no-op). A direct attacker push has neither marker.
   const approvedForThisSha = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'approved', forgejoCommitSha: sha },
     select: { id: true },
   });
   if (approvedForThisSha) {
     res.status(200).json({ ok: true, slug, sha, deploy: 'already-approved' });
+    return;
+  }
+  // The markers above trail approveRequest's writes; recognise its own commit directly.
+  const approvingRequestId = await ownApproveCommitRequest({ slug, sha, payload });
+  if (approvingRequestId) {
+    res.status(200).json({
+      ok: true,
+      slug,
+      sha,
+      deploy: 'already-approved',
+      publishRequestId: approvingRequestId,
+    });
     return;
   }
 
@@ -327,7 +406,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     allowedScopes: appBlock.app.allowedScopes ?? 0,
     allowedOrigins: (appBlock.app.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
   };
-  const validation = await BlockManifestValidator.validateSubmission(manifest, appContext);
+  // `strictIssueTrackerLink: false`: a push re-validates the app's manifest, which may carry a
+  // `bugs` stored before that key became a string-only rule; that must not block the push. A
+  // non-conforming `bugs` is a warning, and the approve publishes no link for it.
+  const validation = await BlockManifestValidator.validateSubmission(manifest, appContext, {
+    strictIssueTrackerLink: false,
+  });
+  if (validation.warnings?.length) {
+    // eslint-disable-next-line no-console
+    console.warn(`[git-push] ${slug}: manifest warnings: ${validation.warnings.join('; ')}`);
+  }
   if (!validation.valid) {
     await setCommitStatusSafe({
       slug,

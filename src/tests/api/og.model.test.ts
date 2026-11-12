@@ -64,11 +64,12 @@ const pickedUrl = () => {
   return url.match(/(owner|other)-[a-z0-9-]+/)?.[0] ?? null;
 };
 
-const mockModel = (userId: number) =>
+const mockModel = (userId: number, extra: { mode?: string; coverImageId?: number } = {}) =>
   dbMock.dbRead.model.findFirst.mockResolvedValue({
     name: 'M',
     description: '',
     meta: null,
+    ...extra,
     userId,
     user: { username: 'creator', settings: null },
     modelVersions: [{ id: VERSION_ID, description: '' }],
@@ -182,5 +183,22 @@ describe('/api/og?type=model cover image', () => {
     );
     await render();
     expect(pickedUrl()).toBe('other-first');
+  });
+
+  it('renders no image of a taken-down model, neither its cover nor a showcase image', async () => {
+    mockModel(OWNER_ID, { mode: 'TakenDown', coverImageId: 2 });
+    dbMock.dbRead.image.findFirst.mockImplementation(
+      fakeFindFirst([
+        {
+          id: 2,
+          postId: 6,
+          index: 0,
+          url: 'owner-cover',
+          post: { userId: OWNER_ID, availability: 'Public' },
+        },
+      ])
+    );
+    await render();
+    expect(fetchImageAsDataUri).not.toHaveBeenCalled();
   });
 });

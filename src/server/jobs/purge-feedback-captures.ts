@@ -9,7 +9,12 @@ import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteImages } from '~/server/services/image.service';
-import { captureImageHeldSql, ownerHeldSql } from '~/server/services/legal-hold.service';
+import {
+  captureHoldLegsSql,
+  captureImageHeldSql,
+  ownerHeldSql,
+  type CaptureHoldLeg,
+} from '~/server/services/legal-hold.service';
 import { decreaseDate } from '~/utils/date-helpers';
 
 /** Bounds how much of a backlog one run pulls in. Oldest-first, so the remainder drains later. */
@@ -46,20 +51,11 @@ export function expiredCapturesSql(cutoff: Date, limit = BATCH_SIZE) {
 
 /** The captures past `cutoff` that are kept, each with the states that keep it. */
 export function keptCapturesSql(cutoff: Date) {
+  const legs = Object.entries(captureHoldLegsSql('i')).map(
+    ([leg, sql]) => Prisma.sql`${sql} AS ${Prisma.raw(`"${leg}"`)}`
+  );
   return Prisma.sql`
-    SELECT
-      i.id,
-      i."needsReview" IS NOT DISTINCT FROM 'csam' AS review,
-      i."blockedFor" IS NOT DISTINCT FROM 'CSAM' AS blocked,
-      i.minor IS TRUE AS minor,
-      (i.id)::text IN (
-        SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END
-        FROM "CsamReport" lr
-        CROSS JOIN LATERAL jsonb_array_elements(
-          CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
-        ) le
-      ) AS reported,
-      EXISTS (SELECT 1 FROM "EvidenceHoldImage" ehi WHERE ehi."imageId" = i.id) AS "evidenceHold"
+    SELECT i.id, ${Prisma.join(legs)}
     FROM "Image" i
     WHERE i."userId" = ${captureOwner}
       AND i."createdAt" < ${cutoff}
@@ -68,14 +64,7 @@ export function keptCapturesSql(cutoff: Date) {
   `;
 }
 
-type KeptRow = {
-  id: number;
-  review: boolean;
-  blocked: boolean;
-  minor: boolean;
-  reported: boolean;
-  evidenceHold: boolean;
-};
+type KeptRow = { id: number } & Record<CaptureHoldLeg, boolean>;
 
 /** Per-run counts of what was kept, by each state that keeps a capture (one row can count twice). */
 export function summarizeKept(rows: KeptRow[]) {

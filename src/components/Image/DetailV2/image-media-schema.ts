@@ -80,6 +80,9 @@ export function buildImageMediaSchema({
     creator,
     creditText,
     copyrightNotice,
+    // Uploads are licensed under the Terms (§9.2) unless the creator states otherwise; Google's
+    // Licensable badge needs a licence URL.
+    license: baseUrl ? `${baseUrl}/content/tos` : undefined,
     acquireLicensePage: baseUrl ? `${baseUrl}/images/${image.id}` : undefined,
     uploadDate: image.createdAt,
     datePublished: image.createdAt,

@@ -4,6 +4,12 @@ The first surface to read and write `CommentV3` directly. Background and the rul
 `docs/comments-consolidation.md` (design) and `docs/comments-consolidation-checklist.md` (Phase 4).
 Comments on this plan: `@dev:` inline; mine are `@ai:`.
 
+> **Superseded in part by `comments-v3-phase5.md`.** Phase 5 removes the surface switches
+> (`v3ReadSurfaces`/`v3WriteSurfaces`, `isV3WriteSurface`), the old-row sync, the reverse copy (so
+> there is no rollback to the old tables), the CommentV2 event-engine handler and the old
+> `Comment`/`CommentV2` report and text-scan types, and drops the mirror triggers. The stage B
+> mechanisms below that keep old rows in step describe the state before it.
+
 ## Decisions taken
 
 - **Article first** (2026-10-26). Lowest risk of the first-tier surfaces after bounty; its comment
@@ -18,11 +24,11 @@ Comments on this plan: `@dev:` inline; mine are `@ai:`.
   `CommentV3` has the text-scan profile and the `queueScamScan` call, and also the Clavata path:
   `trg_moderation_commentv3` (migration `20261211120000_comment_v3_moderation_trigger`) queues
   each direct insert or content edit, `entity-moderation.ts` consumes it, and it is a Clavata
-  cutover target, owned by text scan on `CommentV2`'s rollout until it has its own. The trigger
+  cutover target, owned by text scan on its own `CommentV3` rollout (it followed `CommentV2`'s until 2026-11-10). The trigger
   skips rows the mirror copies, which the old table's trigger already queued, so a comment is
   scanned once. A backfill rerun calls the mirror's row functions outside a trigger, so while the
-  trigger is enabled its copies are queued too; the job drops one it cannot report. Until the old-row sync goes, an edit to a pre-flip article comment also updates
-  its `CommentV2` row and is queued under both types.
+  trigger is enabled its copies are queued too; the job drops one it cannot report. Until the old-row sync went (Phase 5), an edit to a pre-flip article comment also updated
+  its `CommentV2` row and was queued under both types.
 - **Tombstones render as placeholders** (2026-10-27). A deleted comment that still has live
   replies shows "This comment was deleted" with no author, content, reactions or menu, and its
   replies stay under it. It shows while a comment below it is visible to the viewer through
@@ -128,7 +134,7 @@ sizes come from one grouped count on `rootId`, reply counts from one grouped cou
   the `Reactions` bar (it already takes counts plus the viewer's reactions), `SortFilter`,
   `LoadMoreButton`, and the report, hide-user and block-user menu items.
 - **Mutations behind one adapter** (`useCommentMutations`): it called the `commentv2` procedures
-  until a surface's stage B, and since release 2 of the write flip (built 2026-11-05, not deployed)
+  until a surface's stage B, and since release 2 of the write flip (built 2026-11-05, deployed by 2026-11-10)
   calls only `commentv3` mutations.
 
 ### Comment links
@@ -190,15 +196,15 @@ review of every `CommentsV2` mount (2026-10-27); "Read flip as built" below reco
 | 3D model               | `hideWhenLocked`                                                           | `getThreadEntityOwnerId` has no `model3d` case (owner exemption)                          |
 | App listing            | Divider and "Discussion" title, `hideWhenLocked`                           | no `appListing` owner case; its browser test mocks the v2 provider                        |
 | Comic chapter          | inline on the comics page, `ownerId` only                                  | top-level comments write through `commentv3.create` since write flip release 2; links open the chapter |
-| Model discussion       | needs design                                                               | still the v1 masonry and dialog; `model` rows mix v1 and v2 ids                           |
+| Model discussion       | masonry of cards and thread dialog (`comments-v3-model-flip.md`)           | built 2026-11-06 with its write flip; `model` surface gates, page budget 8                |
 
-Questions and answers have no surface to flip: their code was removed in #7543, and their threads stay as data until Phase 6 archives them to `qa_archive`.
+Questions and answers have no surface to flip: their code was removed in #7543, and their threads stay as data until Phase 6 drops them with the old tables.
 
 ### Read flip as built (2026-11-02; comic chapters 2026-11-03; not yet deployed)
 
-Every surface in the table above except model discussion reads CommentV3
+Every surface in the table above reads CommentV3
 (`v3ReadSurfaces`); their writes went through `commentv2` and reached CommentV3 by the mirror until
-release 2 of the write flip (built 2026-11-05, not deployed), which writes CommentV3 directly and deletes the `commentv2` router.
+release 2 of the write flip (built 2026-11-05, deployed by 2026-11-10), which writes CommentV3 directly and deletes the `commentv2` router.
 
 - **Mounts.** Each keeps its component and props, now a `CommentSection`. The owner may hide and
   pin where the v2 mount passed `resourceOwnerId` (post, image, 3D model, app listing) and nowhere
@@ -228,9 +234,11 @@ release 2 of the write flip (built 2026-11-05, not deployed), which writes Comme
 - **The v2 client suite is removed.** `components/CommentsV2/` is gone: what the v3 suite borrowed
   (`HiddenComment`, `CommentBadge`, `useScrollToHighlightedComment`, `useSectionMute`,
   `ToggleLockComments`, the two stylesheets) moved into `CommentsV3/`, and `HiddenCommentsModal`
-  (v1 model discussion) into `Model/ModelDiscussion/`. The `commentv2` read procedures stayed for
-  clients on the previous build, until release 2 of the write flip (built 2026-11-05, not deployed) deleted the router.
-- **Not flipped.** Model discussion, which reads v1 `Comment`, not CommentV2.
+  (v1 model discussion) into `Model/ModelDiscussion/` (kept in the model flip and rebuilt on CommentV3,
+  `comments-v3-model-flip.md`). The `commentv2` read procedures stayed for
+  clients on the previous build, until release 2 of the write flip (built 2026-11-05, deployed by 2026-11-10) deleted the router.
+- **Not flipped here.** Model discussion flipped reads and writes together on 2026-11-06
+  (`comments-v3-model-flip.md`).
 
 ## Stage B: writes
 
@@ -250,7 +258,7 @@ comment's surface. What it covers, beyond the SQL itself:
   (reports actioned, reporters rewarded, author notified) against `CommentV3Report`, block-hide,
   scam cleanup and restore, CSAM hold removal. Lock and mutes stay on the `commentv2` procedures.
   (Superseded: lock and mutes are on `commentv3` since release 2 of the write flip, built
-  2026-11-05, not deployed.)
+  2026-11-05, deployed by 2026-11-10.)
 - **Reactions.** Toggle, block check, ClickHouse tracking, rewards (`goodContentReward` read only
   the v2 table, so a v3-only comment would have earned nothing), notifications.
 - **Reports.** `ReportEntity.CommentV3` in both enums, `report-entities.ts` and the relabel
@@ -283,7 +291,7 @@ comment's surface. What it covers, beyond the SQL itself:
   adapter calls them on a write surface. Lock, comment mute and section mute keep their
   `commentv2` procedures, whose services branch on the surface. The other `commentv2` writes
   (upsert, delete, hide, pin) refuse a write-surface comment, so a stale page cannot skip the new
-  lock and parent checks. Superseded by release 2 of the write flip (built 2026-11-05, not deployed): lock and mutes moved to `commentv3` and
+  lock and parent checks. Superseded by release 2 of the write flip (built 2026-11-05, deployed by 2026-11-10): lock and mutes moved to `commentv3` and
   the `commentv2` procedures are deleted.
 - A comment that started in CommentV2 keeps its CommentV2 row, and every CommentV3 write keeps it
   in step: edits and flags are copied to it and a delete removes it. Left stale, the old reads
@@ -296,16 +304,17 @@ comment's surface. What it covers, beyond the SQL itself:
   columns an old-table update changed.
 - Block checks and reaction tracking read CommentV3 only when there is no CommentV2 row; the old
   chain resolves the same owners when there is one.
-- Counts: `comment-v3.ts` counts every comment on a write surface, whichever table it was written
+- Counts (until Phase 5 deleted `comment-v2.ts`): `comment-v3.ts` counts every comment on a write surface, whichever table it was written
   to, and `comment-v2.ts` skips those surfaces, so either service can deploy first; a test holds
   the event engine's surface list to the surfaces CommentV3 serves (`v3ReadSurfaces` since the
   write flip's release 1). `articleStatCache` needs nothing new: the
   article metrics job already counts from CommentV3 and purges it.
-- Text-scan: `CommentV3` follows the `CommentV2` rollout until it is given its own. Verdicts are
+- Text-scan: `CommentV3` followed the `CommentV2` rollout until 2026-11-10, when it was given its own. Verdicts are
   not aliased across the two types: an article comment edited after the flip is scanned afresh
   under `CommentV3`, and its earlier `CommentV2` verdict and hold stay where they are.
-- Moderator app: the `commentV3` queue is labelled "Comment (new)" until Phase 6 removes the old
-  types; its lists key rows by label, so labels must differ.
+- Moderator app: the `commentV3` queue is labelled "Comment (new)" until the old types are
+  removed (Phase 5 did; it is "Comment" at `/reports/comment`); its lists key rows by label, so
+  labels must differ.
 
 Before the deploy, in this order:
 
@@ -337,6 +346,7 @@ Before the deploy, in this order:
 3. The read flip for every other surface (`Flipping another surface`) and the remaining
    cross-surface readers, in one PR; image and post queries timed on the production replica
    first. A surface goes back to the old reads by leaving `v3ReadSurfaces`. Built 2026-11-02 for
-   all but model discussion ("Read flip as built").
+   all but model discussion ("Read flip as built"), which flipped 2026-11-06
+   (`comments-v3-model-flip.md`).
 4. The write flip for every read-flipped surface at once, in two releases
-   (`comments-v3-write-flip.md`); the old-row sync stays until Phase 6. Model comments flip last.
+   (`comments-v3-write-flip.md`); the old-row sync stayed until Phase 5. Model comments flip last.

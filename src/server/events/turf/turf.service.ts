@@ -1,6 +1,10 @@
 import { chunk } from 'lodash-es';
+import { isFliptOnForTesters } from '~/server/flipt/tester-segment';
+import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { flagAudienceAmong } from '~/server/events/event-access';
 import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
 import { loadEvents } from '~/server/events/load-events';
@@ -35,11 +39,23 @@ import {
   type TurfStickerRow,
 } from '~/server/events/turf/turf-map';
 import { markTurfWatched, pushTurfCounts, type TurfPush } from '~/server/events/turf/turf-watch';
+import { readFlagRaceConfig, type FlagsConfig } from '~/server/events/scoring/award-results';
+import { imageVisible, ownerActive } from '~/server/events/turf/turf-sql';
+import {
+  FLAG_KIND,
+  currentFlagDay,
+  flagCrucibleTag,
+  flagPot,
+  flagTally,
+  flagWinners,
+  swapFlagDay,
+  type FlagTally,
+} from '~/server/events/turf/flag-day';
 import { logToAxiom } from '~/server/logging/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
-import { sysRedis } from '~/server/redis/client';
+import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { TurfHatArt, TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
@@ -83,13 +99,6 @@ type LoadedEvents = Awaited<ReturnType<typeof loadEvents>>;
 type EventDef = LoadedEvents[number];
 export type TurfEvent = EventDef & { turf: EventTurfConfig };
 
-// An image anyone may see: in a published, non-private post, scanned and not held or blocked.
-// Placement and the sticker read both require it, so nothing is placed where it cannot be drawn.
-const imageVisible = Prisma.sql`p."publishedAt" <= now() AND p.availability <> 'Private'
-  AND i.ingestion = 'Scanned' AND NOT i."tosViolation" AND i."needsReview" IS NULL
-  AND i."blockedFor" IS NULL`;
-// Read apart from ownerAllowsTurf so a banned owner's image is not blamed on the owner's switch.
-const ownerActive = Prisma.sql`o."bannedAt" IS NULL AND o."deletedAt" IS NULL`;
 // A sticker's hat art, drawn as the sticker itself: the cosmetic's image and where its visible
 // pixels sit in it (the fit's canvas and bounds only; its outline is not needed to draw).
 const hatArt = (cosmeticId: Prisma.Sql) => Prisma.sql`(SELECT CASE WHEN hc.data ->> 'url' IS NULL
@@ -97,21 +106,38 @@ const hatArt = (cosmeticId: Prisma.Sql) => Prisma.sql`(SELECT CASE WHEN hc.data 
       'canvas', hc.data -> 'fit' -> 'canvas', 'bounds', hc.data -> 'fit' -> 'bounds') END
   FROM "Cosmetic" hc WHERE hc.id = ${cosmeticId})`;
 
-// Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest.
-const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
+// Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest, or
+// entered in one of the event's flag Crucibles while it runs. Uncorrelated, so it is hashed once per
+// query: CrucibleEntry has no imageId index.
+const contestEntry = (imageId: Prisma.Sql, event: string) => Prisma.sql`(EXISTS (
   SELECT 1 FROM "CollectionItem" ci JOIN "Collection" c ON c.id = ci."collectionId"
   WHERE ci."imageId" = ${imageId} AND c.mode = 'Contest'
-)`;
+) OR ${imageId} IN (
+  SELECT ce."imageId" FROM "Crucible" cr JOIN "CrucibleEntry" ce ON ce."crucibleId" = cr.id
+  WHERE cr.status = 'Active'::"CrucibleStatus"
+    AND cr."eventTags" @> ARRAY[${flagCrucibleTag(event)}]::text[] AND ce."imageId" IS NOT NULL
+))`;
 
-/** The images among `imageIds` that are entries in a contest (see contestEntry). */
-async function contestImageIds(imageIds: number[], db: typeof dbRead | typeof dbWrite) {
-  if (!imageIds.length) return new Set<number>();
-  const rows = await db.$queryRaw<{ imageId: number }[]>`
-    SELECT DISTINCT ci."imageId" FROM "CollectionItem" ci
-    JOIN "Collection" c ON c.id = ci."collectionId"
-    WHERE ci."imageId" = ANY(${imageIds}::int[]) AND c.mode = 'Contest'
-  `;
-  return new Set((rows ?? []).map((r) => r.imageId));
+/**
+ * FROM and WHERE for the stickers the feed draws, narrowed by `and`: live, placed by an active user,
+ * on an image anyone may see whose owner allows turf, not a contest entry. Aliases s, u, i and p.
+ */
+function drawnStickers(event: TurfEvent, now: Date, and: Prisma.Sql) {
+  return Prisma.sql`FROM "EventTurfSticker" s
+    JOIN "User" u ON u.id = s."userId"
+    JOIN "Image" i ON i.id = s."imageId"
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE s.event = ${event.name} AND ${and}
+      AND s."removedAt" IS NULL ${unexpired(event, now)} AND ${imageVisible}
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+      AND NOT ${contestEntry(Prisma.sql`s."imageId"`, event.name)} AND ${ownerAllowsTurf(
+    event.name
+  )}`;
+}
+
+/** FROM and WHERE for `userId`'s own stickers the feed draws (drawnStickers). */
+export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date) {
+  return drawnStickers(event, now, Prisma.sql`s."userId" = ${userId}`);
 }
 
 /**
@@ -233,17 +259,28 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
     userTeam && stepAt(event.turf.catchUp ?? [], now)
       ? userTeam.then((team) => turfCatchUpAt(event, team, now))
       : 1;
+  const { kyselyRead } = await loadKyselyDb();
   const [row, [user], multiplier, creditedByTeam, team] = await Promise.all([
     dbRead.eventTurfStock.findUnique({
       where: { event_userId: { event: event.name, userId } },
       select: { stock: true, refilledAt: true },
     }),
-    dbRead.$queryRaw<{ optedIn: boolean | null; left: boolean | null; ownerOff: boolean | null }[]>`
+    // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql). Booleans and an int4 count.
+    queryPrismaSql<{
+      optedIn: boolean | null;
+      left: boolean | null;
+      ownerOff: boolean | null;
+      liveHats: number | null;
+    }>(
+      kyselyRead,
+      Prisma.sql`
       SELECT ${inTurf('u', event.name)} AS "optedIn",
         (u.settings -> ${TURF_SETTING} ->> ${event.name}) = 'false' AS "left",
-        (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff"
+        (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff",
+        (SELECT count(*)::int ${ownDrawnStickers(event, userId, now)}) AS "liveHats"
       FROM "User" u WHERE u.id = ${userId}
-    `,
+    `
+    ),
     catchUp,
     turfCreditedByTeam(event, now),
     userTeam,
@@ -267,6 +304,8 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
     /** Joined once and then left: they rejoin from the button, unprompted. */
     left: !!user?.left,
     ownerOff: !!user?.ownerOff,
+    /** The viewer's hats still drawn (ownDrawnStickers): the event page links to them in the feed. */
+    liveHats: user?.liveHats ?? 0,
   };
 }
 // #endregion
@@ -281,10 +320,17 @@ export type PlaceTurfStickerInput = {
   source?: 'feed' | 'image-detail';
 };
 
-export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new Date()) {
+/**
+ * The checks every hat placement makes of the placer: Turf open to them, opted in, on a team, the
+ * hat theirs and their team's. Returns the event, the team and its supply multiplier now.
+ */
+async function resolvePlacer(
+  input: { event: string; userId: number; cosmeticId: number },
+  now: Date
+) {
   const event = await getTurfEvent(input.event, now);
   if (!event || !isRunning(event, now)) throw throwBadRequestError("Turf isn't open right now");
-  const { userId, imageId } = input;
+  const { userId } = input;
   if (event.turf.mode === 'shadow') {
     const testers = await flagAudienceAmong(event.turf.testerFlag, [userId]);
     if (!testers.has(userId)) throw throwAuthorizationError("Turf isn't open to you yet");
@@ -307,6 +353,53 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   if (placer.team.toLowerCase() !== team.toLowerCase())
     throw throwBadRequestError("That hat isn't your team's");
   const multiplier = await turfCatchUpAt(event, team, now);
+  return { event, team, multiplier };
+}
+
+/**
+ * Locks the player's stock row inside `tx` and checks it holds `count` stickers, so two placements
+ * never both spend the same sticker. A first placement creates the bucket full, so there is always a
+ * row to lock. Throws when the stock is short. Returns `spend`, to call once the placement is
+ * written: a placement refused on its insert has then spent nothing, whatever the transaction does.
+ */
+async function lockStock(
+  tx: Prisma.TransactionClient,
+  event: TurfEvent,
+  userId: number,
+  multiplier: number,
+  now: Date,
+  count = 1
+) {
+  const { stock: full } = turfSupplyAt(event, null, now, multiplier);
+  await tx.$executeRaw`
+    INSERT INTO "EventTurfStock" (event, "userId", stock, "refilledAt")
+    VALUES (${event.name}, ${userId}, ${full}, ${now})
+    ON CONFLICT (event, "userId") DO NOTHING
+  `;
+  const [row] = await tx.$queryRaw<{ stock: number; refilledAt: Date }[]>`
+    SELECT stock, "refilledAt" FROM "EventTurfStock"
+    WHERE event = ${event.name} AND "userId" = ${userId}
+    FOR UPDATE
+  `;
+  const { stock } = turfSupplyAt(event, row ?? null, now, multiplier);
+  if (stock < 1) throw throwBadRequestError('Out of hat stickers. They refill over time');
+  if (stock < count) throw throwBadRequestError(`You have ${Math.floor(stock)} hat stickers left`);
+  return {
+    spend: () => tx.$executeRaw`
+      UPDATE "EventTurfStock" SET stock = ${stock - count}, "refilledAt" = ${now}
+      WHERE event = ${event.name} AND "userId" = ${userId}
+    `,
+  };
+}
+
+export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new Date()) {
+  const { event, team, multiplier } = await resolvePlacer(input, now);
+  const { userId, imageId } = input;
+  // Only while the Flag Race runs, so a normal placement pays no flag lookup otherwise.
+  const { flags } = await readFlagRaceConfig(event.name);
+  const flagDay = flags?.on ? await currentFlagDay(event.name, now) : undefined;
+  if (flagDay?.imageIds.includes(imageId))
+    throw throwBadRequestError('This image is a flag today: add hats with its flag buttons');
 
   const [image] = await dbWrite.$queryRaw<
     {
@@ -319,7 +412,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   >`
     SELECT i."userId" AS "ownerId",
       COALESCE(p.id IS NOT NULL AND ${imageVisible}, false) AS visible,
-      ${contestEntry(Prisma.sql`i.id`)} AS contest,
+      ${contestEntry(Prisma.sql`i.id`, event.name)} AS contest,
       ${ownerActive} AS "ownerActive",
       ${ownerAllowsTurf(event.name)} AS "ownerAllows"
     FROM "Image" i JOIN "User" o ON o.id = i."userId"
@@ -342,21 +435,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
 
   try {
     await dbWrite.$transaction(async (tx) => {
-      // A first placement creates the bucket full, so there is always a row to lock: two placements
-      // must not both spend the same sticker.
-      const { stock: full } = turfSupplyAt(event, null, now, multiplier);
-      await tx.$executeRaw`
-        INSERT INTO "EventTurfStock" (event, "userId", stock, "refilledAt")
-        VALUES (${event.name}, ${userId}, ${full}, ${now})
-        ON CONFLICT (event, "userId") DO NOTHING
-      `;
-      const [row] = await tx.$queryRaw<{ stock: number; refilledAt: Date }[]>`
-        SELECT stock, "refilledAt" FROM "EventTurfStock"
-        WHERE event = ${event.name} AND "userId" = ${userId}
-        FOR UPDATE
-      `;
-      const { stock } = turfSupplyAt(event, row ?? null, now, multiplier);
-      if (stock < 1) throw throwBadRequestError('Out of hat stickers. They refill over time');
+      const { spend } = await lockStock(tx, event, userId, multiplier, now);
       const data = input.source ? { ...input.data, source: input.source } : input.data;
       // One sticker per player per image: an expired one is placed again in its row. A live or
       // removed one is left, and the create below refuses on the unique key.
@@ -382,10 +461,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
             createdAt: now,
           },
         });
-      await tx.$executeRaw`
-        UPDATE "EventTurfStock" SET stock = ${stock - 1}, "refilledAt" = ${now}
-        WHERE event = ${event.name} AND "userId" = ${userId}
-      `;
+      await spend();
     });
   } catch (error) {
     if (isPrismaUniqueViolation(error))
@@ -393,6 +469,190 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
     throw error;
   }
   void requestTurfSync(event, imageId).catch(logSyncError);
+}
+
+export const FLAG_HAT_COUNTS = [1, 5, 10] as const;
+
+/**
+ * Spends `count` hats on one of today's flags. Flags stack without limit and take hats on every
+ * image, even one whose owner keeps Hat Turf off (entering the Crucible was the owner's consent).
+ * Hats on a flag are spent for good and never count toward normal Turf. Refused after the cut.
+ */
+export async function placeFlagHats(
+  input: {
+    event: string;
+    userId: number;
+    isModerator?: boolean;
+    imageId: number;
+    cosmeticId: number;
+    count: number;
+  },
+  now = new Date()
+) {
+  // Testers (and mods) only until the flag goes public at launch.
+  const fliptKey = getFeatureFliptKey('flagRace');
+  const open =
+    !!fliptKey &&
+    (await isFliptOnForTesters(fliptKey, { id: input.userId, isModerator: input.isModerator }));
+  if (!open) throw throwBadRequestError("The Flag Race isn't open right now");
+  if (!(FLAG_HAT_COUNTS as readonly number[]).includes(input.count))
+    throw throwBadRequestError('Add 1, 5 or 10 hats at a time');
+  const { flags } = await readFlagRaceConfig(input.event);
+  if (!flags?.on) throw throwBadRequestError("The Flag Race isn't open right now");
+  const { event, team, multiplier } = await resolvePlacer(input, now);
+  const { userId, imageId, count } = input;
+  const day = await currentFlagDay(event.name, now);
+  if (!day?.imageIds.includes(imageId)) throw throwBadRequestError("This image isn't a flag today");
+  if (now >= day.cutAt) throw throwBadRequestError('This flag has closed');
+  // Only players eligible for event points count on a flag (flagTally): refuse the rest rather than
+  // take hats that count for nobody.
+  const [placer] = await dbWrite.$queryRaw<{ eligible: boolean }[]>`
+    SELECT ${eventPlayerEligibleSql(
+      event.startDate
+    )} AS eligible FROM "User" u WHERE u.id = ${userId}
+  `;
+  if (!placer?.eligible) throw throwBadRequestError("Your account can't add hats to flags yet");
+
+  const [image] = await dbWrite.$queryRaw<
+    { ownerId: number; visible: boolean; ownerActive: boolean }[]
+  >`
+    SELECT i."userId" AS "ownerId",
+      COALESCE(p.id IS NOT NULL AND ${imageVisible}, false) AS visible,
+      ${ownerActive} AS "ownerActive"
+    FROM "Image" i JOIN "User" o ON o.id = i."userId"
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId}
+  `;
+  if (!image?.visible || !image.ownerActive)
+    throw throwBadRequestError("You can't put hats on this flag");
+  if (image.ownerId !== userId)
+    await assertCanPlace({ ownerId: image.ownerId, placerId: userId }).catch(() => {
+      throw throwBadRequestError("You can't put hats on this flag");
+    });
+
+  await dbWrite.$transaction(async (tx) => {
+    const { spend } = await lockStock(tx, event, userId, multiplier, now, count);
+    await tx.$executeRaw`
+      INSERT INTO "EventTurfFlagSticker"
+        (event, "flagDayId", "imageId", "userId", team, "cosmeticId", count, "createdAt")
+      VALUES (${event.name}, ${day.id}, ${imageId}, ${userId}, ${team}, ${input.cosmeticId},
+        ${count}, ${now})
+    `;
+    await spend();
+  });
+  // The placer's own view: fresh, where the shared summary may lag by its TTL.
+  const tally = await flagTally(event, day, dbWrite, imageId);
+  return flagStanding(imageId, tally, flags.pot, now, false);
+}
+
+const flagSummaryKey = (event: string) =>
+  `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:flagRace:summary` as const;
+// Short: a placement doesn't clear it (on a busy flag it would never be warm), and the placer gets
+// their flag's fresh counts back from the placement itself.
+const FLAG_SUMMARY_TTL_S = 10;
+
+export type FlagStanding = {
+  imageId: number;
+  hatsByTeam: Record<string, number>;
+  players: number;
+  pot: number;
+  // Once closed: the team or tied teams with the most hats at the cut, which the freeze pays.
+  winners: string[];
+};
+
+export type FlagSummary = {
+  flagDayId: number;
+  closed: boolean;
+  // Only once passed: before the cut, nobody may know when it falls.
+  cutAt: Date | null;
+  // The cut falls in the hour before this.
+  closesAt: Date;
+  flags: FlagStanding[];
+};
+
+// Cached with the cut beside it, so a hit is checked in memory: an open summary must not outlive
+// the cut, and a hit must not cost a database read.
+type CachedFlagSummary = { summary: FlagSummary; cutAtMs: number };
+
+function flagStanding(
+  imageId: number,
+  tally: FlagTally,
+  pot: FlagsConfig['pot'],
+  at: Date,
+  closed: boolean
+): FlagStanding {
+  const hatsByTeam = tally.hats.get(imageId) ?? {};
+  const players = tally.players.get(imageId) ?? 0;
+  return {
+    imageId,
+    hatsByTeam,
+    players,
+    pot: flagPot(pot, players, at).pot,
+    winners: closed ? flagWinners(hatsByTeam) : [],
+  };
+}
+
+/** Per flag of a frozen day, the teams its freeze paid (none when nobody placed); empty if not frozen. */
+async function frozenFlagWinners(event: string, flagDayId: number) {
+  const rows = await dbWrite.$queryRaw<{ sourceId: string; team: string | null }[]>`
+    SELECT "sourceId", team FROM "EventAwardResult"
+    WHERE event = ${event} AND kind = ${FLAG_KIND} AND "sourceId" LIKE ${`flag:${flagDayId}:%`}
+  `;
+  const winners = new Map<number, string[]>();
+  for (const r of rows) {
+    const imageId = Number(r.sourceId.split(':')[2]);
+    const list = winners.get(imageId) ?? [];
+    if (r.team) list.push(r.team);
+    winners.set(imageId, list.sort());
+  }
+  return winners;
+}
+
+/**
+ * Today's flags with their hat counts, for the home row's badges: the same for every viewer, so it
+ * is cached briefly here and at the edge. The counts are flagTally's, which the freeze pays from.
+ */
+export async function getFlagSummary(
+  eventName: string,
+  now = new Date()
+): Promise<FlagSummary | null> {
+  const { flags: config } = await readFlagRaceConfig(eventName);
+  if (!config?.on) return null;
+  const key = flagSummaryKey(eventName);
+  const raw = await sysRedis.get(key).catch(() => null);
+  if (raw) {
+    const cached = JSON.parse(raw) as CachedFlagSummary;
+    if (cached.summary.closed || now.getTime() < cached.cutAtMs) return cached.summary;
+  }
+  const [event, day] = await Promise.all([
+    getTurfEvent(eventName, now),
+    currentFlagDay(eventName, now),
+  ]);
+  if (!event || !day) return null;
+  const closed = now >= day.cutAt;
+  // Closed, it must agree with the freeze: read the primary, as the freeze does, and name the teams
+  // the freeze paid once it has run.
+  const tally = await flagTally(event, day, closed ? dbWrite : dbRead);
+  const paid = closed ? await frozenFlagWinners(eventName, day.id) : undefined;
+  const at = closed ? day.cutAt : now;
+  const summary: FlagSummary = {
+    flagDayId: day.id,
+    closed,
+    cutAt: closed ? day.cutAt : null,
+    closesAt: day.closesAt,
+    flags: day.imageIds.map((imageId) => {
+      const standing = flagStanding(imageId, tally, config.pot, at, closed);
+      const frozen = paid?.get(imageId);
+      return frozen ? { ...standing, winners: frozen } : standing;
+    }),
+  };
+  const value: CachedFlagSummary = { summary, cutAtMs: day.cutAt.getTime() };
+  await sysRedis
+    .set(key, JSON.stringify(value), { EX: FLAG_SUMMARY_TTL_S })
+    .catch((error) =>
+      logSysRedisFailOpen('write-degraded', 'turf.getFlagSummary', error, { event: eventName })
+    );
+  return summary;
 }
 
 // Longest the reactionEarns answer (a running sync and two Redis reads) takes before answering false.
@@ -573,7 +833,7 @@ function liveStickers(
     SELECT s."imageId", s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
       ${hatArt(Prisma.sql`s."cosmeticId"`)} AS art,
       (u."bannedAt" IS NULL AND u."deletedAt" IS NULL) AS drawable,
-      ${contestEntry(Prisma.sql`s."imageId"`)} AS contest,
+      ${contestEntry(Prisma.sql`s."imageId"`, event.name)} AS contest,
       ${eventPlayerEligibleSql(event.startDate)} AS eligible
     FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"
@@ -935,6 +1195,31 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   return { images: counts.size, turf: kept.size, dropped, set, removed: mapChanged.length - set };
 }
 
+// Apart from the reconcile so a failed swap can't stop the turf pass, and the next pass retries it.
+async function swapFlagDayFor(event: TurfEvent, now: Date) {
+  try {
+    const { flags } = await readFlagRaceConfig(event.name);
+    if (flags) await swapFlagDay(event, flags, now);
+  } catch (error) {
+    void logToAxiom({ type: 'error', name: 'flag-race-swap', event: event.name, error }).catch(
+      () => null
+    );
+  }
+}
+
+/**
+ * Swaps in each running event's next flag day as soon as its flag Crucible has finished. Called by
+ * the every-minute Crucible finalize job as well as the turf reconcile; a swap already made is a
+ * no-op.
+ */
+export async function swapAllFlagDays(now = new Date()) {
+  for (const def of await loadEvents()) {
+    if (!def.turf || now < def.startDate || now >= def.endDate) continue;
+    const event = await getTurfEvent(def.name, now);
+    if (event) await swapFlagDayFor(event, now);
+  }
+}
+
 /** Every event whose turf may still change: running, or in the finalize window after it. */
 export async function reconcileAllTurf(now = new Date()) {
   const results = [];
@@ -950,6 +1235,7 @@ export async function reconcileAllTurf(now = new Date()) {
     const began = Date.now();
     const result = { event: def.name, ...(await reconcileTurf(event, at)), ms: 0 };
     result.ms = Date.now() - began;
+    await swapFlagDayFor(event, at);
     // How long a pass takes as the event grows: it writes every image's feed indexes too.
     void logToAxiom({ type: 'info', name: 'event-turf', message: 'reconciled', ...result });
     results.push(result);
@@ -969,10 +1255,13 @@ export async function reconcileAllTurf(now = new Date()) {
  */
 export async function getTurfSummaries(
   eventName: string,
-  imageIds: number[],
+  askedIds: number[],
   viewerId?: number,
   now = new Date()
 ) {
+  // Caller ids, bound as `int[]`: one past int4 would fail the whole statement (see isPgInt4). No
+  // image has such an id, so it is answered like one never asked about.
+  const imageIds = askedIds.filter(isPgInt4);
   const event = await getTurfEvent(eventName, now);
   if (!event || event.turf.mode === 'off' || !imageIds.length)
     return { team: null, images: {}, open: {}, mine: {}, hidden: {} };
@@ -981,29 +1270,42 @@ export async function getTurfSummaries(
   const mineStillBlocks = liveAfter
     ? Prisma.sql`AND (s."removedAt" IS NOT NULL OR s."createdAt" > ${liveAfter})`
     : Prisma.empty;
-  const [counts, hats, openRows, mineRows, contestRows] = await Promise.all([
+  const { kyselyRead } = await loadKyselyDb();
+  const [counts, hats, flags] = await Promise.all([
     sysRedis.hmGet(turfKeys(event.name).counts, keys),
     sysRedis.hmGet(eventPointKeys(event.name).hats, keys),
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT i.id FROM "Image" i
-      JOIN "Post" p ON p.id = i."postId"
-      WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible} AND ${ownerAllowsTurf(event.name)}
-    `,
-    // Removed ones too: placing again refuses them. Not expired ones, which placing renews.
-    viewerId
-      ? dbRead.$queryRaw<{ imageId: number }[]>`
-          SELECT s."imageId" FROM "EventTurfSticker" s
+    // One statement for what were three (open, mine, contest entry), each answered per asked id by
+    // the same predicate the separate reads applied, and through Kysely rather than Prisma's
+    // `$queryRaw` (see queryPrismaSql). `mine` counts removed stickers too, since placing again
+    // refuses them, but not expired ones, which placing renews.
+    queryPrismaSql<{ id: number; open: boolean; mine: boolean; contest: boolean }>(
+      kyselyRead,
+      Prisma.sql`
+      SELECT x.id,
+        EXISTS (
+          SELECT 1 FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
+          WHERE i.id = x.id AND ${imageVisible} AND ${ownerAllowsTurf(event.name)}
+        ) AS open,
+        ${
+          viewerId
+            ? Prisma.sql`EXISTS (
+          SELECT 1 FROM "EventTurfSticker" s
           WHERE s.event = ${event.name} AND s."userId" = ${viewerId}
-            AND s."imageId" = ANY(${imageIds}::int[]) ${mineStillBlocks}
-        `
-      : [],
-    contestImageIds(imageIds, dbRead),
+            AND s."imageId" = x.id ${mineStillBlocks}
+        )`
+            : Prisma.sql`false`
+        } AS mine,
+        ${contestEntry(Prisma.sql`x.id`, event.name)} AS contest
+      FROM unnest(${imageIds}::int[]) AS x(id)
+    `
+    ),
   ]);
-  const hiddenIds = contestRows;
+  const hiddenIds = new Set(flags.filter((r) => r.contest).map((r) => r.id));
   const hidden = Object.fromEntries([...hiddenIds].map((id) => [id, true]));
-  const mineIds = new Set(mineRows.map((r) => r.imageId));
+  const mineIds = new Set(flags.filter((r) => r.mine).map((r) => r.id));
   const mine = Object.fromEntries(imageIds.map((id) => [id, mineIds.has(id)]));
-  const openIds = new Set(openRows.map((r) => r.id));
+  const openIds = new Set(flags.filter((r) => r.open).map((r) => r.id));
   const open = Object.fromEntries(
     imageIds.map((id) => [id, openIds.has(id) && !hiddenIds.has(id)])
   );
@@ -1055,7 +1357,9 @@ export async function getTurfStickers(
     WHERE s.event = ${event.name} AND s."imageId" = ${imageId} AND s."removedAt" IS NULL
       ${unexpired(event, now)}
       AND ${imageVisible} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL ${only}
-      AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}
+      AND NOT ${contestEntry(Prisma.sql`s."imageId"`, event.name)} AND ${ownerAllowsTurf(
+    event.name
+  )}
     ORDER BY s."createdAt" DESC, s.id DESC
     LIMIT ${limit}
   `;
@@ -1146,14 +1450,7 @@ export async function getTurfStickersForImages(
       SELECT s.id, s."imageId", s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
         row_number() OVER (PARTITION BY s."imageId", s.team ORDER BY s."createdAt" DESC, s.id DESC)
           AS "teamRank"
-      FROM "EventTurfSticker" s
-      JOIN "User" u ON u.id = s."userId"
-      JOIN "Image" i ON i.id = s."imageId"
-      JOIN "Post" p ON p.id = i."postId"
-      WHERE s.event = ${event.name} AND s."imageId" = ANY(${imageIds}::int[])
-        AND s."removedAt" IS NULL ${unexpired(event, now)} AND ${imageVisible}
-        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-        AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}
+      ${drawnStickers(event, now, Prisma.sql`s."imageId" = ANY(${imageIds}::int[])`)}
     ), picked AS (
       SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt", row_number() OVER (
         PARTITION BY "imageId" ORDER BY "teamRank", "createdAt" DESC, id DESC

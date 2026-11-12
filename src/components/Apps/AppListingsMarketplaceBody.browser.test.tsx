@@ -126,14 +126,15 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
 // Import AFTER mocks (vi.mock is hoisted, static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+const { FiltersProvider } = await import('~/providers/FiltersProvider');
 
 /** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
 function StoreWithControls() {
   return (
-    <>
+    <FiltersProvider>
       <AppsStoreFeedFilters />
       <AppListingsMarketplaceBody />
-    </>
+    </FiltersProvider>
   );
 }
 const { clearRecentlyOpenedApps, getRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
@@ -165,6 +166,7 @@ const { clearRecentlyOpenedApps, getRecentlyOpenedApps, recordRecentlyOpenedApp 
 const router = useRouter();
 
 beforeEach(() => {
+  localStorage.removeItem('apps-store-filters');
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
   mocks.lastArgs = null;
   // A FRESH object each test: `useZodRouteParams` memoises on the `query`

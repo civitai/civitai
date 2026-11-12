@@ -10,6 +10,7 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
@@ -546,6 +547,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
       FROM "ResourceReview" r
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
+        AND ${visibleReviewSql('r')}
         AND r."modelVersionId" = ANY($1::int[])
         AND r."modelVersionId" BETWEEN $2 AND $3
       GROUP BY r."modelVersionId"`,
@@ -647,6 +649,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
       FROM "ResourceReview" r
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
+        AND ${visibleReviewSql('r')}
         AND r."modelId" = ANY($1::int[])
       GROUP BY r."modelId"`,
       [ids]
@@ -657,7 +660,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
   return tasks;
 }
 
-async function getCommentTasks(ctx: ModelMetricContext) {
+export async function getCommentTasks(ctx: ModelMetricContext) {
   const commentEvents = await ctx.ch.$query<{ modelId: number }>`
     SELECT DISTINCT entityId AS modelId
     FROM comments
@@ -665,7 +668,10 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       AND type = 'Model'
       AND entityId IS NOT NULL
   `;
-  const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])];
+  // Must stay sorted (numerically): each batch queries entityId BETWEEN ids[0] AND ids[last].
+  const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])].sort(
+    (a, b) => a - b
+  );
   ctx.addAffected(affected);
 
   // Seed commentCount to 0 for all affected models so that models with zero

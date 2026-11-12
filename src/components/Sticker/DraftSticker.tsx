@@ -23,7 +23,7 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import type { Gesture, StartGesture } from '~/components/Sticker/draft-gesture';
-import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
+import { KNOB_OFFSET, knobBelowFor, rotate } from '~/components/Sticker/draft-gesture';
 import { placeButtonPosition } from '~/components/Sticker/place-button-position';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
@@ -174,6 +174,7 @@ export function DraftSticker({
   artwork,
   opaque,
   liftOverTray,
+  knobFlips,
 }: {
   draft: StickerDraft;
   /** The sticker's artwork; or pass `artwork` to draw something else in its place. */
@@ -221,6 +222,8 @@ export function DraftSticker({
   opaque?: boolean;
   /** Pull the cluster over the draft when the tray covers it, not only past the clip (a Hat Turf hat). */
   liftOverTray?: boolean;
+  /** Hang the rotate knob below when above would put it past the clipping edge (a Hat Turf hat). */
+  knobFlips?: boolean;
 }) {
   const useStore = useDraftStoreHook();
   const markPurchased = useStore((state) => state.markPurchased);
@@ -378,11 +381,12 @@ export function DraftSticker({
   // The two standoffs and the lift ride along because they come from the same
   // measurement, and because the side they apply to is decided in the same
   // breath — see the note above `setPosition` in `measure`.
-  const [{ flipped, below, above, lift }, setPosition] = useState({
+  const [{ flipped, below, above, lift, knobBelow }, setPosition] = useState({
     flipped: false,
     lift: 0,
     below: 0,
     above: 0,
+    knobBelow: false,
   });
   const trayElement = useStore((state) => state.tray);
 
@@ -390,8 +394,15 @@ export function DraftSticker({
   // so it has to keep its identity across a drag — otherwise re-binding them is
   // back on the pointermove path, which is the whole problem. It reads the
   // values it needs through a ref instead of closing over them.
-  const frame = useRef({ flipped, lift, liftOverTray, rotation: draft.rotation });
-  frame.current = { flipped, lift, liftOverTray, rotation: draft.rotation };
+  const frame = useRef({
+    flipped,
+    lift,
+    liftOverTray,
+    knobFlips,
+    knobBelow,
+    rotation: draft.rotation,
+  });
+  frame.current = { flipped, lift, liftOverTray, knobFlips, knobBelow, rotation: draft.rotation };
 
   const clip = useRef<HTMLElement | null>(null);
 
@@ -400,8 +411,31 @@ export function DraftSticker({
     const button = buttonRef.current;
     if (!element || !button) return;
 
-    const { flipped, lift, liftOverTray, rotation } = frame.current;
-    const tray = useStore.getState().tray;
+    const { flipped, lift, liftOverTray, knobFlips, rotation } = frame.current;
+    const { tray, interaction } = useStore.getState();
+    const clipBox = clip.current?.getBoundingClientRect() ?? null;
+    // Decided here, with the standoffs that depend on it, and held still through a rotate drag:
+    // the drag reads the side it started on, so a swap mid-turn would spin the sticker half a turn.
+    let knobBelow = false;
+    if (knobFlips) {
+      const rect = element.getBoundingClientRect();
+      knobBelow =
+        interaction === 'rotate'
+          ? frame.current.knobBelow
+          : knobBelowFor({
+              centre: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+              height: rect.height,
+              rotation,
+              knobOffset: KNOB_OFFSET,
+              clip: clipBox ?? {
+                top: 0,
+                left: 0,
+                right: window.innerWidth,
+                bottom: window.innerHeight,
+              },
+              current: frame.current.knobBelow,
+            });
+    }
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
     // the element then carries the standoff for the side it just left, and the
@@ -412,12 +446,13 @@ export function DraftSticker({
       sticker: element,
       cluster: button,
       tray: tray?.getBoundingClientRect() ?? null,
-      clip: clip.current?.getBoundingClientRect() ?? null,
+      clip: clipBox,
       flipped,
       lift,
       liftOverTray,
       rotation,
       knobOffset: KNOB_OFFSET,
+      knobBelow,
       outset: HANDLE_OUTSET,
       gap: BUY_BUTTON_GAP,
     });
@@ -429,9 +464,10 @@ export function DraftSticker({
       current.flipped === next.flipped &&
       current.below === next.below &&
       current.above === next.above &&
-      current.lift === next.lift
+      current.lift === next.lift &&
+      current.knobBelow === knobBelow
         ? current
-        : next
+        : { ...next, knobBelow }
     );
   }, [useStore]);
 
@@ -487,9 +523,11 @@ export function DraftSticker({
   // The cheap half, and the only one a gesture reaches: rect and offset reads,
   // no style recalc. Which ancestor clips is a property of the tree, not of the
   // sticker's own transform, so none of these deps can change it.
+  // Ending a turn re-decides the knob's side, which the turn held still.
+  const rotating = useStore((state) => state.interaction === 'rotate');
   useLayoutEffect(() => {
     measure();
-  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped]);
+  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped, rotating]);
 
   const begin =
     (mode: Gesture['mode'], corner?: { sx: number; sy: number }) => (event: React.PointerEvent) => {
@@ -578,6 +616,7 @@ export function DraftSticker({
           draftId: draft.id,
           pointerId: event.pointerId,
           mode: 'rotate',
+          knobBelow,
         });
       }
     };
@@ -888,8 +927,15 @@ export function DraftSticker({
 
           <span
             onPointerDown={begin('rotate')}
-            className={`absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA} before:-translate-y-2.5`}
-            style={{ top: `-${KNOB_OFFSET * 100}%` }}
+            data-testid="draft-rotate-knob"
+            data-knob-below={knobBelow || undefined}
+            className={clsx(
+              `absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA}`,
+              knobBelow ? 'before:translate-y-2.5' : 'before:-translate-y-2.5'
+            )}
+            style={
+              knobBelow ? { bottom: `-${KNOB_OFFSET * 100}%` } : { top: `-${KNOB_OFFSET * 100}%` }
+            }
           />
         </div>
       </div>

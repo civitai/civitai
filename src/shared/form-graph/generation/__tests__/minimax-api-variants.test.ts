@@ -92,3 +92,25 @@ describe('minimax H3 Max and HeyGen variants', () => {
     expect(store.getField('duration')?.value).toBeGreaterThanOrEqual(5);
   });
 });
+
+describe('minimax H3 custom checkpoints', () => {
+  const CUSTOM_ID = 9_999_001;
+
+  it('keeps a custom checkpoint and runs it on the comfy build', () => {
+    const store = storeOn('txt2vid', CUSTOM_ID);
+
+    expect((store.getField('model')?.value as { id: number }).id).toBe(CUSTOM_ID);
+    expect(store.getField('minimaxVariant')?.value).toBe('comfy');
+    expect(store.getField('resources')).not.toBeNull();
+    expect(store.getField('steps')).not.toBeNull();
+  });
+
+  it('offers a custom checkpoint the comfy build aspect ratios', () => {
+    const options = (modelId: number) =>
+      (store(modelId).getField('aspectRatio')?.meta as { options?: unknown[] })?.options;
+    const store = (modelId: number) => storeOn('txt2vid', modelId);
+
+    expect(options(CUSTOM_ID)).toEqual(options(minimaxVersionIds.comfy));
+    expect(options(CUSTOM_ID)).not.toEqual(options(minimaxVersionIds['v1.0']));
+  });
+});

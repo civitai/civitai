@@ -986,8 +986,7 @@ export async function resolveServiceDealFileDownload({
   const ready = row.status === 'Ready';
   const party = row.sellerId === userId || row.buyerId === userId;
   const allowed = row.removedAt
-    ? // Never bytes the uploader can still write to (see `keepServerCopy`).
-      canReviewCsam && isModerator && !party && !isUploaderKey(row.s3Key)
+    ? canReviewCsam && isModerator && !party
     : isAttachment
     ? (isModerator && row.sellerId !== userId) ||
       (row.buyerId === userId && ready) ||
@@ -1006,6 +1005,10 @@ export async function resolveServiceDealFileDownload({
         finalScansClear(row) &&
         buyerOwnsFinals({ status: row.dealStatus, completedAt: row.completedAt }));
   if (!allowed) return null;
+  // A file never completed, or refused at completion, can still sit at the key its uploader holds
+  // an upload URL for. Only the uploader is served those bytes (see `keepServerCopy`).
+  const uploaderId = isAttachment ? row.buyerId : row.sellerId;
+  if (isUploaderKey(row.s3Key) && userId !== uploaderId) return null;
 
   // The party receiving the file gets the copy the server built, never the upload.
   const receives = isAttachment

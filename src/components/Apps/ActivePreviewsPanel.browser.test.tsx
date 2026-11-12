@@ -204,3 +204,23 @@ describe('ActivePreviewsPanel — the age cell uses the SHARED ladder, not a loc
     expect(page.getByText('—', { exact: true }).elements()).toHaveLength(1);
   });
 });
+
+describe('ActivePreviewsPanel — zero is SAID, not silence', () => {
+  test('🔴 no active previews → "0 active previews · 0 / N building", not an empty render', async () => {
+    mocks.data = { cap: 3, building: 0, active: [] };
+    renderWithProviders(<ActivePreviewsPanel />);
+    await expect
+      .element(page.getByTestId('apps-active-previews-empty'))
+      .toHaveTextContent('0 active previews · 0 / 3 building');
+    // …as one quiet line, not the full panel.
+    expect(page.getByRole('table').elements()).toHaveLength(0);
+  });
+
+  test('still nothing before the first load (no data yet is not "zero")', async () => {
+    mocks.data = undefined;
+    renderWithProviders(<ActivePreviewsPanel />);
+    // A tick for the render to commit, then: the panel chose to say nothing.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(page.getByTestId('apps-active-previews-empty').elements()).toHaveLength(0);
+  });
+});

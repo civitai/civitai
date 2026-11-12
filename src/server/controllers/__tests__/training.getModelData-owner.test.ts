@@ -114,3 +114,50 @@ describe('training.getModelData and a Training Studio dataset', () => {
     expect(result.modelVersions[0].files[0].metadata).toEqual(stored);
   });
 });
+
+describe('training.getModelData on a deleted or taken-down model', () => {
+  const EPOCH_URL = 'https://orchestration.example.test/blobs/epoch-3.safetensors';
+  function givenModel(state: { status: string; mode: string | null }) {
+    const model = JSON.parse(JSON.stringify(MODEL));
+    model.modelVersions[0].files[0].metadata = {
+      selectedEpochUrl: EPOCH_URL,
+      trainingResults: { version: 2, epochs: [{ epochNumber: 3, modelUrl: EPOCH_URL }] },
+    };
+    // The model's state comes back only when the read selects it, as in prod.
+    getModel.mockImplementation((async (args: {
+      select?: { status?: boolean; mode?: boolean };
+    }) => ({
+      ...model,
+      ...(args.select?.status ? { status: state.status } : {}),
+      ...(args.select?.mode ? { mode: state.mode } : {}),
+    })) as never);
+  }
+  const metadataOf = (result: Awaited<ReturnType<typeof call>>) =>
+    result.modelVersions[0].files[0].metadata as Record<string, any>;
+
+  it.each([
+    ['taken down', { status: 'Published', mode: 'TakenDown' }],
+    ['deleted', { status: 'Deleted', mode: null }],
+  ])('withholds the epoch urls from the owner when %s', async (_s, state) => {
+    givenModel(state);
+
+    const metadata = metadataOf(await call({ id: OWNER, isModerator: false }));
+
+    expect(metadata.selectedEpochUrl).toBeUndefined();
+    expect(metadata.trainingResults.epochs).toEqual([{ epochNumber: 3 }]);
+  });
+
+  it('gives a moderator the epoch urls', async () => {
+    givenModel({ status: 'Published', mode: 'TakenDown' });
+
+    expect(metadataOf(await call({ id: 1, isModerator: true })).selectedEpochUrl).toBe(EPOCH_URL);
+  });
+
+  it('keeps them for the owner of a model that is neither', async () => {
+    givenModel({ status: 'Published', mode: null });
+
+    const metadata = metadataOf(await call({ id: OWNER, isModerator: false }));
+
+    expect(metadata.trainingResults.epochs[0].modelUrl).toBe(EPOCH_URL);
+  });
+});

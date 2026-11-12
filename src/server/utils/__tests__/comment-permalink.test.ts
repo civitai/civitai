@@ -48,7 +48,12 @@ const link = (r: CommentPermalinkRow | null | undefined) => buildCommentPermalin
 const HANDLED: Array<[string, Partial<Record<keyof CommentPermalinkRow, unknown>>, string]> = [
   ['post', { entityType: 'post' }, `/posts/${PARENT_ID}?${QUERY}`],
   ['review', { entityType: 'review' }, `/reviews/${PARENT_ID}?${QUERY}`],
-  ['model', { entityType: 'model' }, `/models/${PARENT_ID}?dialog=commentThread&${QUERY}`],
+  [
+    'model',
+    { entityType: 'model' },
+    // The dialog opens the comment it names; the permalink pins the comment itself.
+    `/models/${PARENT_ID}?dialog=commentThread&commentId=${COMMENT_ID}&${QUERY}`,
+  ],
   ['article', { entityType: 'article' }, `/articles/${PARENT_ID}?${QUERY}`],
   ['bounty', { entityType: 'bounty' }, `/bounties/${PARENT_ID}?${QUERY}`],
   ['bountyEntry', { entityType: 'bountyEntry' }, `/bounties/entries/${PARENT_ID}?${QUERY}`],

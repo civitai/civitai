@@ -1,5 +1,5 @@
 import type { CommentTargetType } from '~/server/schema/commentv3.schema';
-import { isViewerContentOwner } from '~/server/services/commentsv2.service';
+import { isViewerContentOwner } from '~/server/services/comment-owner.service';
 import {
   BlockedByUsers,
   BlockedUsers,

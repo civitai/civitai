@@ -2,90 +2,114 @@ import { Anchor, Badge, Button, Card, Group, Text, ThemeIcon } from '@mantine/co
 import { Tooltip } from '~/components/MantineOverlays';
 import type { ReactNode } from 'react';
 import { useRef, useState } from 'react';
-import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   IconExclamationCircle,
   IconLock,
   IconMessageCircle2,
   IconPinned,
+  IconTrash,
 } from '@tabler/icons-react';
 
+import { CommentEditor } from '~/components/CommentsV3/CommentComposer';
+import { CommentMenu } from '~/components/CommentsV3/CommentMenu';
+import { useCommentSection } from '~/components/CommentsV3/CommentSectionContext';
+import {
+  HiddenCommentLabel,
+  HideAgainButton,
+  useHiddenCommentReveal,
+} from '~/components/CommentsV3/HiddenComment';
+import type { CommentV3Comment } from '~/components/CommentsV3/types';
+import { useCommentReactions } from '~/components/CommentsV3/useCommentReactions';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
-import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/CommentDiscussionMenu';
-import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
+import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useToggleCommentReaction } from '~/components/CommentSection/useToggleCommentReaction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
-import type { CommentGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
 
 export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
   const currentUser = useCurrentUser();
+  const { locked, created, hiddenOnly } = useCommentSection();
+  // The hidden-comments dialog lists them to be read, so it does not fold them again.
+  const { concealed, reveal, conceal } = useHiddenCommentReveal(comment.hidden && !hiddenOnly);
+  const [editing, setEditing] = useState(false);
+  const author = comment.user;
+  const replyCount = comment.replyCount + (created[comment.id]?.length ?? 0);
 
-  const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
-    { commentId: comment.id },
-    { initialData: comment.reactions, staleTime: Infinity, refetchOnWindowFocus: false }
-  );
-  const { data: commentCount = 0 } = trpc.comment.getCommentsCount.useQuery(
-    { id: comment.id },
-    { initialData: comment._count.comments, staleTime: Infinity, refetchOnWindowFocus: false }
-  );
-
-  const toggleCommentReaction = useToggleCommentReaction(comment.id);
-  const handleReactionClick = (reaction: ReviewReactions) => {
-    toggleCommentReaction.toggle(reaction);
-  };
+  const { metrics, reactions: myReactions } = useCommentReactions(comment);
 
   return (
     <Card radius="md" p="md" withBorder>
       <Group align="flex-start" justify="space-between" wrap="nowrap" mb="xs">
-        <UserAvatar
-          user={comment.user}
-          subText={<DaysFromNow date={comment.createdAt} />}
-          subTextForce
-          avatarSize="md"
-          badge={
-            modelUserId != null && comment.user.id === modelUserId ? (
-              <Badge size="xs" color="violet">
-                OP
-              </Badge>
-            ) : null
-          }
-          withUsername
-          linkToProfile
-        />
+        {!author ? (
+          <Group gap={6} wrap="nowrap">
+            <IconTrash size={16} className="text-gray-6 dark:text-dark-2" />
+            <Text size="sm" c="dimmed" fs="italic">
+              This comment was deleted
+            </Text>
+          </Group>
+        ) : concealed ? (
+          <HiddenCommentLabel onShow={reveal} />
+        ) : (
+          <UserAvatar
+            user={author}
+            subText={<DaysFromNow date={comment.createdAt} />}
+            subTextForce
+            avatarSize="md"
+            badge={
+              modelUserId != null && author.id === modelUserId ? (
+                <Badge size="xs" color="violet">
+                  OP
+                </Badge>
+              ) : null
+            }
+            withUsername
+            linkToProfile
+          />
+        )}
         <Group gap={4} wrap="nowrap">
-          {comment.pinnedAt && (
+          {author && comment.pinnedAt && (
             <Tooltip label="Pinned">
               <ThemeIcon size="sm" color="orange">
                 <IconPinned size={16} stroke={2} />
               </ThemeIcon>
             </Tooltip>
           )}
-          <CommentDiscussionMenu comment={comment} hideLockOption modelUserId={modelUserId} />
+          <CommentMenu comment={comment} lockedAbove={locked} onEdit={() => setEditing(true)} />
         </Group>
       </Group>
 
-      <ClampedContent commentId={comment.id}>
-        <RenderHtml
-          html={comment.content}
-          className="text-sm"
-          withMentions
-          withProfanityFilter
-          allowStickers
-        />
-      </ClampedContent>
+      {editing ? (
+        <CommentEditor editing={comment} autoFocus onDone={() => setEditing(false)} />
+      ) : (
+        author &&
+        !concealed && (
+          <ClampedContent commentId={comment.id}>
+            <RenderHtml
+              html={comment.content}
+              className="text-sm"
+              withMentions
+              withProfanityFilter
+              allowStickers
+            />
+          </ClampedContent>
+        )
+      )}
 
       <Group mt="sm" align="flex-start" justify="space-between" wrap="nowrap">
-        <ReactionPicker
-          reactions={reactions}
-          onSelect={handleReactionClick}
-          disabled={toggleCommentReaction.isPending}
-        />
+        <Group gap={4}>
+          {author && !concealed && (
+            <Reactions
+              reactions={myReactions}
+              entityId={comment.id}
+              entityType="comment"
+              metrics={metrics}
+            />
+          )}
+          {comment.hidden && !hiddenOnly && !concealed && <HideAgainButton onClick={conceal} />}
+        </Group>
         <Group gap={4} wrap="nowrap">
           {currentUser?.isModerator && comment.tosViolation && (
             <Tooltip label="Has TOS Violation">
@@ -95,9 +119,11 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
             </Tooltip>
           )}
           {comment.locked && (
-            <ThemeIcon color="yellow" size="xs">
-              <IconLock />
-            </ThemeIcon>
+            <Tooltip label="Replies locked">
+              <ThemeIcon color="yellow" size="xs">
+                <IconLock />
+              </ThemeIcon>
+            </Tooltip>
           )}
           <Button
             radius="xl"
@@ -109,7 +135,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
           >
             <Group gap={2} wrap="nowrap">
               <IconMessageCircle2 size={14} />
-              <Text>{abbreviateNumber(commentCount)}</Text>
+              <Text>{abbreviateNumber(replyCount)}</Text>
             </Group>
           </Button>
         </Group>
@@ -118,7 +144,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
   );
 }
 
-type Props = { data: CommentGetAllItem; modelUserId?: number };
+type Props = { data: CommentV3Comment; modelUserId?: number };
 
 const CLAMP_HEIGHT = 100;
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied, requiresGrant } from '$lib/server/access';
 import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
+import { isInt4Id } from '$lib/server/users.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -763,13 +764,12 @@ export const actions: Actions = {
       form
         .getAll(name)
         .map((v) => Number(v))
-        .filter((n) => Number.isInteger(n) && n > 0);
+        .filter(isInt4Id);
 
     if (input.kind === 'comments') {
       if (input.op !== 'delete' && input.op !== 'tos' && input.op !== 'untos')
         return contentFail('Unsupported action for comments.');
       const commentIds = ids('commentIds');
-      const commentV2Ids = ids('commentV2Ids');
       const result = await bulkCommentAction({
         action:
           input.op === 'delete'
@@ -778,7 +778,6 @@ export const actions: Actions = {
             ? 'removeAsTos'
             : 'restoreFromTos',
         commentIds,
-        commentV2Ids,
         userId: input.userId,
         moderatorId: locals.user.id,
       });
@@ -787,7 +786,7 @@ export const actions: Actions = {
         success: true,
         op: input.op,
         affected: result.affected ?? 0,
-        requested: commentIds.length + commentV2Ids.length,
+        requested: commentIds.length,
       };
     }
 

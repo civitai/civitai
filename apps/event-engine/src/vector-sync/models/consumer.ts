@@ -3,22 +3,15 @@
  * searchable within minutes: `node dist/vector-sync/models/consumer.js`. Its own process and
  * consumer group; needs CDC_MODEL_ENABLED, which adds Model and ModelVersion to the connector.
  */
-import http from 'http';
-import { Kafka, type Consumer } from 'kafkajs';
-import { assertVectorSyncConfig, config } from '@/config';
-import { createGuardedPgPool } from '@/utils/pg-pool-guard';
+import { config } from '@/config';
 import { logger } from '@/utils/logger';
-import { Embedder, MixedStampError } from '../embedder';
-import { ModelMismatchError, type VectorStore } from '../qdrant';
+import { runSyncConsumer, routeByTopic } from '../domain/consumer';
+import { DomainSyncQueue, type LaneDeps, type Offset, type SyncLane } from '../domain/queue';
 import { connectorBlock } from '../sync';
-import { modelVectorStore } from './collection';
+import { MODEL_CDC_TABLES, MODEL_TOPICS, modelDomain, toDomainRef, type ModelRef } from './domain';
 import type { ModelPayload } from './source';
-import { syncModelIds, type ModelSyncDeps } from './sync';
 
-export const MODEL_TOPICS = ['postgres.Model', 'postgres.ModelVersion', 'postgres.TagsOnModels'];
-/** The tables whose changes decide a model's eligibility; embedding waits until both stream. */
-export const MODEL_CDC_TABLES = ['public.Model', 'public.ModelVersion'];
-const MAX_PENDING = 2_000;
+export { MODEL_CDC_TABLES, MODEL_TOPICS, modelRefFromEvent, type ModelRef } from './domain';
 
 /** Refuses to start without the flag: the topics it needs would never carry events. */
 export function assertModelCdc() {
@@ -33,310 +26,60 @@ export function assertModelCdc() {
 export const modelEmbedBlock = (fetchImpl: typeof fetch = globalThis.fetch) =>
   connectorBlock(fetchImpl, MODEL_CDC_TABLES);
 
-export type ModelRef = { model: number } | { version: number };
+export type ModelQueueDeps = LaneDeps<ModelPayload>;
 
-/**
- * What a CDC message touches. A ModelVersion delete carries only the version's own id (the
- * table's replica identity is its key); the queue finds its model through the payload.
- */
-export function modelRefFromEvent(topic: string, value: unknown): ModelRef | null {
-  const event = value as {
-    op?: string;
-    before?: Record<string, unknown> | null;
-    after?: Record<string, unknown> | null;
-  };
-  if (!event || event.op === 'r') return null;
-  const row = event.after ?? event.before;
-  if (!row) return null;
-  const id = topic === 'postgres.Model' ? row.id : row.modelId;
-  if (typeof id === 'number') return { model: id };
-  if (topic === 'postgres.ModelVersion' && event.op === 'd' && typeof row.id === 'number')
-    return { version: row.id };
-  return null;
-}
+/** The models-only queue: one lane, addressed by model or deleted version. */
+export class ModelSyncQueue extends DomainSyncQueue {
+  private readonly lane: SyncLane<ModelPayload>;
 
-type Offset = { topic: string; partition: number; offset: string };
-
-export type ModelQueueDeps = Omit<ModelSyncDeps, 'store'> & {
-  store: ModelSyncDeps['store'] & Pick<VectorStore<ModelPayload>, 'isStamped' | 'idsMatching'>;
-};
-
-/**
- * Collects model ids and syncs them every `debounceMs`, committing offsets only once the Qdrant
- * writes for everything before them have succeeded; a crash redelivers, which the sync absorbs.
- * While embedding is off, paused or the collection unstamped, deletes and payload updates still
- * run, and models needing a vector are left for the backfill.
- */
-export class ModelSyncQueue {
-  private pending = new Set<number>();
-  /** Deleted versions, resolved to their models at flush. */
-  private deletedVersions = new Set<number>();
-  private offsets = new Map<string, Offset>();
-  private flushing: Promise<void> | null = null;
-  lastFlushOk = Date.now();
-  /** Vectors stored, or a flush succeeding. */
-  lastProgress = Date.now();
-  consecutiveFailures = 0;
-  private progressCount = 0;
-  embedStopped: string | null = null;
-  gateBlocked: string | null = null;
-  /** The collection has no recorded model yet, so nothing embeds. */
-  unstamped = false;
-
-  private readonly deps: ModelQueueDeps;
-
-  constructor(deps: ModelQueueDeps, private readonly commit: (offsets: Offset[]) => Promise<void>) {
-    // Progress is vectors stored, not returned: a flush whose writes keep failing would otherwise
-    // read as slow, stay healthy, and pay to re-embed the same models every tick.
-    const { store } = deps;
-    this.deps = {
-      ...deps,
-      store: {
-        payloadFields: (...a) => store.payloadFields(...a),
-        delete: (...a) => store.delete(...a),
-        setPayloads: (...a) => store.setPayloads(...a),
-        assertModel: (...a) => store.assertModel(...a),
-        isStamped: () => store.isStamped(),
-        idsMatching: (...a) => store.idsMatching(...a),
-        upsert: async (...a) => {
-          await store.upsert(...a);
-          this.noteProgress();
-        },
-      },
-    };
+  constructor(deps: ModelQueueDeps, commit: (offsets: Offset[]) => Promise<void>) {
+    super([{ domain: modelDomain, deps }], commit, 'model-sync');
+    this.lane = this.lanes.get(modelDomain.name)!;
   }
 
-  add(ref: ModelRef | null, offset: Offset) {
-    if (ref && 'model' in ref) this.pending.add(ref.model);
-    else if (ref) this.deletedVersions.add(ref.version);
-    this.offsets.set(`${offset.topic}:${offset.partition}`, offset);
+  add(ref: ModelRef | null, offset: Offset): void;
+  add(domain: string | null, ref: unknown, offset: Offset): void;
+  add(...args: unknown[]) {
+    if (args.length === 3) return super.add(...(args as Parameters<DomainSyncQueue['add']>));
+    const [ref, offset] = args as [ModelRef | null, Offset];
+    super.add(modelDomain.name, toDomainRef(ref), offset);
   }
 
-  get size() {
-    return this.pending.size + this.deletedVersions.size;
+  get embedStopped() {
+    return this.lane.embedStopped;
   }
-
-  get isFull() {
-    return this.size >= MAX_PENDING;
+  get gateBlocked() {
+    return this.lane.gateBlocked;
   }
-
-  flush(): Promise<void> {
-    this.flushing ??= this.doFlush().finally(() => {
-      this.flushing = null;
-    });
-    return this.flushing;
+  get unstamped() {
+    return this.lane.unstamped;
   }
-
-  private async doFlush() {
-    const progressAtStart = this.progressCount;
-    const ids = [...this.pending];
-    const versions = [...this.deletedVersions];
-    const offsets = [...this.offsets.values()];
-    this.pending = new Set();
-    this.deletedVersions = new Set();
-    this.offsets = new Map();
-    try {
-      // No match: no point holds the version, or the point predates versionIds.
-      const owners = await this.deps.store.idsMatching('versionIds', versions);
-      if (versions.length && !owners.length)
-        logger.info({ versions: versions.length }, 'model-sync: deleted versions matched no point');
-      ids.push(...owners);
-      // A new collection's model is recorded by the backfill canary first, so two writers
-      // cannot stamp it differently.
-      if (ids.length) {
-        const embed = !!this.deps.embedder && !this.gateBlocked && (await this.refreshStamp());
-        const started = Date.now();
-        const stats = await syncModelIds(ids, embed ? this.deps : { ...this.deps, embedder: null });
-        logger.info({ ids: ids.length, ms: Date.now() - started, ...stats }, 'model-sync: flushed');
-      }
-    } catch (err) {
-      for (const id of ids) this.pending.add(id);
-      for (const v of versions) this.deletedVersions.add(v);
-      for (const o of offsets) {
-        const key = `${o.topic}:${o.partition}`;
-        if (!this.offsets.has(key)) this.offsets.set(key, o);
-      }
-      // A flush that stored some vectors before failing is slow, not stuck.
-      if (this.progressCount === progressAtStart) this.consecutiveFailures++;
-      else this.consecutiveFailures = 0;
-      if (err instanceof ModelMismatchError || err instanceof MixedStampError) {
-        // Retrying would pay for the same rejected vectors every tick.
-        this.stopEmbedding((err as Error).message);
-      }
-      throw err;
-    }
-    if (offsets.length) {
-      try {
-        await this.commit(
-          offsets.map((o) => ({ ...o, offset: (BigInt(o.offset) + 1n).toString() }))
-        );
-      } catch (err) {
-        logger.warn({ err }, 'model-sync: offset commit failed');
-      }
-    }
-    this.lastFlushOk = Date.now();
-    this.lastProgress = this.lastFlushOk;
-    this.consecutiveFailures = 0;
+  refreshStamp() {
+    return this.lane.refreshStamp();
   }
-
-  noteProgress() {
-    this.progressCount++;
-    this.lastProgress = Date.now();
-  }
-
-  /** Whether the collection has a recorded model; logs once when it does not. */
-  async refreshStamp() {
-    const stamped = await this.deps.store.isStamped();
-    if (!stamped && !this.unstamped)
-      logger.warn('model-sync: collection has no recorded model yet; not embedding');
-    this.unstamped = !stamped;
-    return stamped;
-  }
-
   setGate(reason: string | null) {
-    if (reason !== this.gateBlocked) {
-      if (reason) logger.warn({ reason }, 'model-sync: embedding paused');
-      else logger.info('model-sync: embedding resumed');
-    }
-    this.gateBlocked = reason;
+    this.lane.setGate(reason);
   }
-
   stopEmbedding(reason: string) {
-    if (!this.deps.embedder) return;
-    logger.error({ reason }, 'model-sync: embedding stopped');
-    this.deps.embedder = null;
-    this.embedStopped = reason;
+    this.lane.stopEmbedding(reason);
   }
-
-  /**
-   * Healthy within 10 minutes of a successful flush. Past that, a flush still storing vectors
-   * stays healthy (killing it would lose paid work), but not one whose flushes keep failing
-   * without progress. 45 minutes outlasts a batch's rate-limit backoff plus the 30-minute
-   * workflow timeout.
-   */
-  isHealthy(now = Date.now()) {
-    if (now - this.lastFlushOk < 10 * 60_000) return true;
-    return this.consecutiveFailures < 3 && now - this.lastProgress < 45 * 60_000;
-  }
-}
-
-async function main() {
-  assertVectorSyncConfig();
-  assertModelCdc();
-  const vs = config.vectorSync;
-  const pg = createGuardedPgPool(
-    { connectionString: config.postgres.connectionString, max: vs.pgPoolMax },
-    'model-sync',
-    (message, err) => logger.error({ err }, message)
-  );
-  const store = modelVectorStore();
-  await store.bootstrap({ alias: vs.modelAlias });
-  const embedder = vs.embedEnabled ? Embedder.fromConfig('normal') : null;
-  if (!embedder) logger.warn('model-sync: VECTOR_SYNC_EMBED_ENABLED is off; not embedding');
-
-  const kafka = new Kafka({ clientId: 'model-vector-sync', brokers: config.kafka.brokers });
-  const consumer: Consumer = kafka.consumer({
-    groupId: vs.modelConsumerGroup,
-    sessionTimeout: 30000,
-    retry: { restartOnFailure: async () => true },
-  });
-  const queue = new ModelSyncQueue({ pg, store, embedder }, (offsets) =>
-    consumer.commitOffsets(offsets)
-  );
-  // A Kafka Connect blip only pauses embedding.
-  const checkGate = () =>
-    Promise.all([modelEmbedBlock(), queue.refreshStamp().catch(() => undefined)])
-      .then(([reason]) => reason)
-      .then((reason) => queue.setGate(reason))
-      .catch((err) => queue.setGate(`gate check failed: ${(err as Error).message}`));
-  if (embedder) await checkGate();
-  const gate = setInterval(() => {
-    if (embedder) void checkGate();
-  }, 60_000);
-
-  let stopping = false;
-  const timer = setInterval(() => {
-    queue.flush().catch((err) => logger.error({ err }, 'model-sync: flush failed; retrying'));
-  }, vs.debounceMs);
-
-  http
-    .createServer((_req, res) => {
-      const healthy = queue.isHealthy();
-      res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          healthy,
-          pending: queue.size,
-          embedding: !!embedder && !queue.embedStopped && !queue.gateBlocked && !queue.unstamped,
-          embedStopped: queue.embedStopped,
-          embedPaused: queue.gateBlocked,
-        })
-      );
-    })
-    .listen(config.app.healthCheckPort);
-
-  await consumer.connect();
-  await consumer.subscribe({ topics: MODEL_TOPICS, fromBeginning: false });
-  logger.info({ topics: MODEL_TOPICS, group: vs.modelConsumerGroup }, 'model-sync: consuming');
-  await consumer.run({
-    autoCommit: false,
-    eachBatchAutoResolve: false,
-    eachBatch: async ({ batch, resolveOffset, heartbeat, isRunning, isStale }) => {
-      const beat = setInterval(() => heartbeat().catch(() => undefined), 5000);
-      try {
-        for (const message of batch.messages) {
-          if (!isRunning() || isStale() || stopping) break;
-          let ref: ModelRef | null = null;
-          try {
-            ref = modelRefFromEvent(batch.topic, JSON.parse(message.value?.toString() ?? 'null'));
-          } catch (err) {
-            logger.error(
-              { err, topic: batch.topic, offset: message.offset },
-              'model-sync: unparseable message; skipping'
-            );
-          }
-          queue.add(ref, {
-            topic: batch.topic,
-            partition: batch.partition,
-            offset: message.offset,
-          });
-          resolveOffset(message.offset);
-          while (queue.isFull) {
-            await queue.flush().catch(async (err) => {
-              logger.error({ err }, 'model-sync: flush failed under backpressure');
-              await new Promise((r) => setTimeout(r, 5000));
-            });
-            await heartbeat();
-          }
-        }
-        await heartbeat();
-      } finally {
-        clearInterval(beat);
-      }
-    },
-  });
-
-  const shutdown = async (signal: string) => {
-    if (stopping) return;
-    stopping = true;
-    logger.info({ signal }, 'model-sync: shutting down');
-    clearInterval(timer);
-    clearInterval(gate);
-    try {
-      consumer.pause(MODEL_TOPICS.map((topic) => ({ topic })));
-      await queue.flush();
-    } catch (err) {
-      logger.error({ err }, 'model-sync: final flush failed; uncommitted events will redeliver');
-    }
-    await consumer.disconnect().catch(() => undefined);
-    await pg.end().catch(() => undefined);
-    process.exit(0);
-  };
-  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => void shutdown(signal));
 }
 
 if (require.main === module) {
-  main().catch((err) => {
+  try {
+    assertModelCdc();
+  } catch (err) {
+    logger.error({ err }, 'model-sync: failed to start');
+    process.exit(1);
+  }
+  runSyncConsumer({
+    log: 'model-sync',
+    clientId: 'model-vector-sync',
+    groupId: config.vectorSync.modelConsumerGroup,
+    domains: [modelDomain],
+    topics: MODEL_TOPICS,
+    route: routeByTopic([modelDomain]),
+  }).catch((err) => {
     logger.error({ err }, 'model-sync: failed to start');
     process.exit(1);
   });

@@ -1,5 +1,8 @@
 import { Prisma } from '@prisma/client';
+import { hasScanWorkflowSql } from '~/server/common/judge-rating';
+import { queueNeverScannedRescan } from '~/server/services/judge-collection-rescan.service';
 import { reviewQueueVisibleTargetSql } from '~/server/services/collection-review.sql';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
@@ -18,6 +21,7 @@ import {
   PostSort,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   bustContestCollectionItemsCache,
@@ -31,7 +35,12 @@ import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
-import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
+import {
+  refreshHasReceivedReviews,
+  tagIdsForImagesCache,
+  userCollectionCountCache,
+} from '~/server/redis/caches';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -51,6 +60,7 @@ import type {
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
   SetCollectionAiReviewInput,
+  SetCollectionArchivedInput,
 } from '~/server/schema/collection.schema';
 import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -98,6 +108,7 @@ import {
   allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   parseBitwiseBrowsingLevel,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
   DETAIL_BACKED_REASONS,
@@ -135,7 +146,10 @@ import {
   assertImagesVisibleToViewer,
   assertImageVisibleToViewer,
 } from '~/server/services/image-visibility.service';
-import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import {
+  JUDGE_RATING_METADATA_KEY,
+  stripBlockProvenanceMetadata,
+} from '~/shared/utils/block-provenance-metadata';
 import {
   collectionSupportsCollaborators,
   freeGrantBaseline,
@@ -158,6 +172,9 @@ export type CollectionContributorPermissionFlags = {
   isContributor: boolean;
   isCollaborator: boolean;
   collaborationDisabled: boolean;
+  // Archived collections stay readable but accept no new entries — write/writeReview are
+  // forced false for everyone, the owner and moderators included.
+  archived: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
   publicCollection: boolean;
@@ -256,6 +273,7 @@ export async function getUserCollectionPermissionsByIds({
     mode: CollectionMode | null;
     contributorPermissions: CollectionContributorPermission[] | null;
     collaborationDisabledAt: Date | null;
+    archivedAt: Date | null;
     hasAcceptedSeat: boolean;
   };
 
@@ -268,6 +286,7 @@ export async function getUserCollectionPermissionsByIds({
       c.type::"CollectionType" as "type",
       c.mode::"CollectionMode" as "mode",
       c."collaborationDisabledAt",
+      c."archivedAt",
       ${
         userId
           ? Prisma.sql`cc.permissions as "contributorPermissions", ci.id IS NOT NULL as "hasAcceptedSeat"`
@@ -305,6 +324,7 @@ export async function getUserCollectionPermissionsByIds({
       isContributor: false,
       isCollaborator: false,
       collaborationDisabled: !!collection.collaborationDisabledAt,
+      archived: !!collection.archivedAt,
       isOwner: false,
       publicCollection: false,
       followPermissions: [],
@@ -410,6 +430,17 @@ export async function getUserCollectionPermissionsByIds({
     return permissions;
   });
 
+  // Archive is an absolute write block, applied after every per-user grant above so it also
+  // closes the owner and moderator branches — an archived collection accepts no new entries
+  // from anyone until it's unarchived. Read/manage are untouched, so the owner can still view
+  // it and unarchive it.
+  for (const permission of results) {
+    if (permission.archived) {
+      permission.write = false;
+      permission.writeReview = false;
+    }
+  }
+
   return results;
 }
 
@@ -467,7 +498,7 @@ export function submissionStatus(
     : CollectionItemStatus.ACCEPTED;
 }
 
-function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
+export function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
   return {
     collectionId,
     read: false,
@@ -478,6 +509,7 @@ function createEmptyPermissions(collectionId: number): CollectionContributorPerm
     isContributor: false,
     isCollaborator: false,
     collaborationDisabled: false,
+    archived: false,
     isOwner: false,
     publicCollection: false,
     followPermissions: [],
@@ -496,6 +528,7 @@ type CollectionForPermission = {
   imageId?: number;
   type?: CollectionType;
   mode?: CollectionMode | null;
+  archivedAt?: Date | null;
 };
 
 export const getUserCollectionsWithPermissions = async <
@@ -510,14 +543,21 @@ export const getUserCollectionsWithPermissions = async <
     permission,
     contributingOnly = true,
     includeActiveContests = false,
+    excludeArchived = false,
     contestModelId,
   } = input;
   let { permissions = [] } = input;
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
-    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode", c."createdAt", c."updatedAt"`
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode", c."archivedAt", c."createdAt", c."updatedAt"`
   );
+
+  // The "Save to collection" picker passes this to drop archived collections from every branch;
+  // management surfaces (MyCollections) leave it off so the owner can still see and unarchive them.
+  const excludeArchivedFilter = excludeArchived
+    ? Prisma.sql`AND c."archivedAt" IS NULL`
+    : Prisma.empty;
 
   if (input.type) {
     AND.push(Prisma.sql`(c."type" = ${input.type}::"CollectionType" OR c."type" IS NULL)`);
@@ -538,6 +578,7 @@ export const getUserCollectionsWithPermissions = async <
       FROM "Collection" c
       WHERE "userId" = ${userId}
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+        ${excludeArchivedFilter}
 
     )`,
   ];
@@ -552,6 +593,7 @@ export const getUserCollectionsWithPermissions = async <
       FROM "Collection" c
       WHERE "write" = ${CollectionWriteConfiguration.Public}::"CollectionWriteConfiguration"
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+          ${excludeArchivedFilter}
     `);
   }
 
@@ -569,6 +611,7 @@ export const getUserCollectionsWithPermissions = async <
       WHERE "read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
         ${excludeContests}
+        ${excludeArchivedFilter}
 
     `);
   }
@@ -587,6 +630,7 @@ export const getUserCollectionsWithPermissions = async <
           AND cc."collectionId" IS NOT NULL
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
           ${excludeContests}
+          ${excludeArchivedFilter}
     )`);
   }
 
@@ -616,6 +660,7 @@ export const getUserCollectionsWithPermissions = async <
             WHERE m."id" = ${contestModelId} AND m."userId" = ${userId}
           )
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+          ${excludeArchivedFilter}
         LIMIT 100
     )`);
   }
@@ -825,6 +870,38 @@ export async function getPendingCollectionReviewCounts({
 
   return { total, byCollection };
 }
+
+// Archiving keeps the collection readable but drops it out of the "Save to collection" picker
+// and blocks new entries; unarchiving clears the timestamp. Scoped to the owner (moderators
+// exempt) so a direct call can't archive someone else's collection even though the router
+// already gates on ownership. Bookmark collections (a user's Liked/Favorites) are refused: the
+// UI offers no archive toggle for them, so archiving one via a direct call would strand it with
+// no in-product way back.
+export const setCollectionArchived = async ({
+  id,
+  archived,
+  userId,
+  isModerator,
+}: SetCollectionArchivedInput & { userId: number; isModerator?: boolean }) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id },
+    select: { id: true, userId: true, mode: true },
+  });
+  if (!collection || (!isModerator && collection.userId !== userId))
+    throw throwNotFoundError(`No collection with id ${id}`);
+  if (collection.mode === CollectionMode.Bookmark)
+    throw throwBadRequestError('Bookmark collections cannot be archived.');
+
+  await dbWrite.collection.update({
+    where: { id },
+    data: { archivedAt: archived ? new Date() : null },
+  });
+
+  await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await preventReplicationLag('collection', id);
+
+  return { id, archived };
+};
 
 const inputToCollectionType = {
   modelId: CollectionType.Model,
@@ -1602,7 +1679,7 @@ export const upsertCollection = async ({
       // already down), so an action taken while it was hidden lands only on the owner, the images,
       // a hold, or the post's model or version; any of those keeps the post down.
       // One statement, so a failed lookup restores nothing.
-      await dbWrite.$executeRaw`
+      const restored = await dbWrite.$queryRaw<{ id: number }[]>`
         WITH reported AS (
           SELECT "userId"::bigint AS id FROM "CsamReport" WHERE "userId" IS NOT NULL
           UNION
@@ -1640,11 +1717,17 @@ export const upsertCollection = async ({
               WHERE mv.id = p."modelVersionId" AND mv.status = 'Published' AND m.status = 'Published'
             )
           )
+        RETURNING p.id
       `;
+      syncReviewsOfMovedPosts({
+        change: 'publish',
+        postIds: restored.map((post) => post.id),
+        onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+      });
     } else if (!updated.mode && updated.read !== CollectionReadConfiguration.Public) {
       // otherwise set publishedAt to null when no mode is setup. Already-unpublished posts are
       // left alone so their own stamps survive.
-      await dbWrite.$executeRaw`
+      const hidden = await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Post" SET
           "publishedAt" = NULL,
           "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
@@ -1652,7 +1735,13 @@ export const upsertCollection = async ({
             'unpublishedByCollection', ${updated.id}::int
           )
         WHERE "collectionId" = ${updated.id} AND "publishedAt" IS NOT NULL
+        RETURNING id
       `;
+      syncReviewsOfMovedPosts({
+        change: 'unpublish',
+        postIds: hidden.map((post) => post.id),
+        onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+      });
     }
 
     // Follow rows carry whatever the collection granted for free when they were written, so
@@ -1926,6 +2015,7 @@ export const getCollectionItemsByCollectionId = async ({
   user,
   imagesAsPublicCatalog = false,
   coverage,
+  requireRead = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -1938,6 +2028,11 @@ export const getCollectionItemsByCollectionId = async ({
   imagesAsPublicCatalog?: boolean;
   /** See `getModelsRaw`. */
   coverage?: CoverageAudience;
+  /**
+   * Answer a collection the viewer may neither read nor submit to as a missing one. Callers that
+   * leave it off must check read themselves.
+   */
+  requireRead?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -1957,6 +2052,14 @@ export const getCollectionItemsByCollectionId = async ({
     userId: user?.id,
     isModerator: user?.isModerator,
   });
+
+  // Readers and managers see every item. A viewer who may only submit (the usual contest setup:
+  // anyone may add, entries hidden) sees only their own. Anyone else gets a missing collection.
+  const readsAll = canReadCollectionItems(permission);
+  const submitsOnly = !readsAll && (permission.write || permission.writeReview) && !!user?.id;
+  if (requireRead && !readsAll && !submitsOnly) throw throwNotFoundError('Collection not found');
+  const ownItemsCondition =
+    requireRead && !readsAll ? Prisma.sql`AND ci."addedById" = ${user?.id}` : Prisma.sql``;
 
   if (
     (forReview ||
@@ -2064,6 +2167,7 @@ export const getCollectionItemsByCollectionId = async ({
         ${tagCondition}
         ${awaitingHumanCondition}
         ${imageIngestionCondition}
+        ${ownItemsCondition}
         ${cursorCondition}
       ORDER BY "sortKey" DESC, ci.id DESC
       LIMIT ${limit + 1}
@@ -2100,23 +2204,27 @@ export const getCollectionItemsByCollectionId = async ({
       : Prisma.sql``;
 
     // Cursor condition for compound ordering (createdAt, id)
+    // The cursor item is looked up only among the items this viewer may list.
+    const cursorItemScope = Prisma.sql`AND "collectionId" = ${collectionId} ${
+      requireRead && !readsAll ? Prisma.sql`AND "addedById" = ${user?.id}` : Prisma.sql``
+    }`;
     const cursorCondition = parsedCursor.id
       ? sortDirection === 'DESC'
         ? Prisma.sql`AND (
-            ci."createdAt" < (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+            ci."createdAt" < (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
             OR (
-              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
               AND ci.id < ${parsedCursor.id}
             )
             OR ci."createdAt" IS NULL
           )`
         : Prisma.sql`AND (
-            ci."createdAt" > (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+            ci."createdAt" > (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
             OR (
-              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope})
               AND ci.id < ${parsedCursor.id}
             )
-            OR (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id}) IS NULL
+            OR (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} ${cursorItemScope}) IS NULL
           )`
       : Prisma.sql``;
 
@@ -2159,6 +2267,7 @@ export const getCollectionItemsByCollectionId = async ({
         ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${reviewVisibleCondition}
+        ${ownItemsCondition}
         ${cursorCondition}
       ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
       LIMIT ${limit + 1}
@@ -2407,7 +2516,8 @@ export const getUserCollectionItemsByItem = async ({
 }: {
   input: GetUserCollectionItemsByItemSchema & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, modelId, imageId, articleId, postId, model3dId } = input;
+  const { userId, isModerator, modelId, imageId, articleId, postId, model3dId, excludeArchived } =
+    input;
 
   const userCollections = await getUserCollectionsWithPermissions({
     input: {
@@ -2417,6 +2527,7 @@ export const getUserCollectionItemsByItem = async ({
         CollectionContributorPermission.MANAGE,
       ],
       userId,
+      excludeArchived,
     },
   });
 
@@ -2768,19 +2879,54 @@ export const updateCollectionItemsStatus = async ({
       }
     }
 
-    if (collectionMetadata?.judgesApplyBrowsingLevel && collection.type === CollectionType.Image) {
-      const exists = await dbRead.collectionItem.findFirst({
-        where: {
-          id: { in: collectionItemIds },
-          image: {
-            nsfwLevel: {
-              in: [0, -1],
-            },
-          },
-        },
-      });
+    // Approval needs a judge's rating, not only a level: a scan sets the level on its own.
+    if (
+      collectionMetadata?.judgesApplyBrowsingLevel &&
+      collection.type === CollectionType.Image &&
+      collectionItemIds.length > 0
+    ) {
+      // Why an unblocked item can't be approved yet, held first: `held` (for moderator review),
+      // `failed` (its scan), `scanning` (waiting on a verdict, or never scanned: queued below).
+      const unrated = await dbWrite.$queryRaw<
+        { imageId: number; state: 'held' | 'failed' | 'scanning' | null }[]
+      >`
+        SELECT i.id AS "imageId", CASE
+          WHEN i."blockedFor" IS NOT NULL OR i."nsfwLevel" = ${NsfwLevel.Blocked} THEN NULL
+          WHEN i."needsReview" IS NOT NULL THEN 'held'
+          WHEN i.ingestion IN (
+            ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus"
+          ) THEN 'failed'
+          WHEN i.ingestion IN (
+            ${ImageIngestionStatus.Pending}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.PendingManualAssignment}::"ImageIngestionStatus"
+          ) OR NOT ${hasScanWorkflowSql('i')} THEN 'scanning'
+        END AS state
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        WHERE ci."collectionId" = ${collectionId}
+          AND ci.id IN (${Prisma.join(collectionItemIds)})
+          AND NOT ${judgeRatedSql('i', collectionId)}
+      `;
 
-      if (exists) {
+      if (unrated.length) {
+        const { failed } = await queueNeverScannedRescan(
+          unrated.filter((r) => r.state === 'scanning').map((r) => r.imageId),
+          Prisma.sql`p."collectionId" = ${collectionId}`
+        );
+        if (unrated.some((r) => r.state === 'held'))
+          throw throwBadRequestError(
+            'Some of the items selected are waiting for moderator review.'
+          );
+        if (failed.length || unrated.some((r) => r.state === 'failed'))
+          throw throwBadRequestError(
+            'The scan failed for some of the items selected; ask a moderator.'
+          );
+        if (unrated.some((r) => r.state === 'scanning'))
+          throw throwBadRequestError(
+            'Some of the items selected are still being scanned. Try again shortly.'
+          );
         throw throwBadRequestError(
           'Some of the items selected have not been given a NSFW rating. Please ensure all items have a NSFW rating before approving them.'
         );
@@ -4036,10 +4182,21 @@ export const getCollectionItemById = ({ id }: GetByIdInput) => {
 export async function getCollectionEntryCount({
   collectionId,
   userId,
+  isModerator,
 }: {
   collectionId: number;
   userId: number;
+  isModerator?: boolean;
 }) {
+  // A collection the viewer may neither read nor submit to answers as a missing one.
+  const permission = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId,
+    isModerator,
+  });
+  if (!canReadCollectionItems(permission) && !permission.write && !permission.writeReview)
+    throw throwNotFoundError('Collection not found');
+
   const [collection] = await dbRead.$queryRaw<{ total: number }[]>`
     SELECT
       CAST(c.metadata->'maxItemsPerUser' as int) as total
@@ -4067,10 +4224,35 @@ export async function getCollectionEntryCount({
   return result;
 }
 
+/**
+ * A scanned, unblocked image a judge of this collection rated, over `Image` aliased `alias`. A row
+ * that carries no scan workflow was never scanned, whatever its `ingestion` says. A legacy rating
+ * (seeded from a level applied before ratings were recorded) is a floor, never an approval. An
+ * image held for moderator review (`needsReview`) is not rated for approval until the hold clears.
+ */
+export const judgeRatedSql = (alias: string, collectionId: number) => {
+  const i = Prisma.raw(`"${alias}"`);
+  // COALESCE: a missing key or NULL column is "not rated", never an unknown that NOT keeps out.
+  return Prisma.sql`COALESCE((
+    ${i}."metadata" -> ${JUDGE_RATING_METADATA_KEY}::text ->> 'collectionId' = ${collectionId}::text
+    AND ${i}.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+    AND ${i}."blockedFor" IS NULL
+    AND ${i}."nsfwLevel" != ${NsfwLevel.Blocked}
+    AND ${i}."scanJobs" ? 'workflowId'
+    AND ${i}."needsReview" IS NULL
+    AND COALESCE(${i}."metadata" -> ${JUDGE_RATING_METADATA_KEY}::text ->> 'legacy', '') != 'true'
+  ), false)`;
+};
+
+const SCAN_FAILED_ERROR = 'The scan failed for this image; ask a moderator.';
+const scanFailed = (ingestion: ImageIngestionStatus) =>
+  ingestion === ImageIngestionStatus.Error || ingestion === ImageIngestionStatus.NotFound;
+
 export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
   nsfwLevel,
-}: SetCollectionItemNsfwLevelInput) => {
+  userId,
+}: SetCollectionItemNsfwLevelInput & { userId: number }) => {
   const collectionItem = await getCollectionItemById({ id: collectionItemId });
 
   if (!collectionItem) {
@@ -4089,47 +4271,110 @@ export const setCollectionItemNsfwLevel = async ({
     throw throwBadRequestError('This collection does not support NSFW level assignment.');
   }
 
-  const image = await dbRead.image.findUnique({
-    where: { id: collectionItem.imageId as number },
-    select: {
-      post: {
-        select: {
-          collectionId: true,
-        },
-      },
-    },
-  });
+  if (!nsfwLevel || nsfwLevel === NsfwLevel.Blocked) throw throwBadRequestError();
+
+  const imageId = collectionItem.imageId;
+  const [image] = await dbWrite.$queryRaw<
+    {
+      postCollectionId: number | null;
+      ingestion: ImageIngestionStatus;
+      nsfwLevel: number;
+      blockedFor: string | null;
+      needsReview: string | null;
+      scanned: boolean;
+    }[]
+  >`
+    SELECT p."collectionId" AS "postCollectionId", i.ingestion, i."nsfwLevel", i."blockedFor",
+      i."needsReview", ${hasScanWorkflowSql('i')} AS scanned
+    FROM "Image" i
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId}
+  `;
 
   if (!image) {
     throw throwNotFoundError('Image not found');
   }
 
-  if (image.post?.collectionId !== collectionItem.collectionId) {
+  if (image.postCollectionId !== collectionItem.collectionId) {
     throw throwBadRequestError(
       'The image you are trying to apply an NSFW level to was not created for this collection. NSFW level assignment is only available for images created for this collection.'
     );
   }
 
-  if (!nsfwLevel) throw throwBadRequestError();
+  if (hasBlockMarker(image))
+    throw throwBadRequestError('This image is blocked and cannot be rated.');
+  // A rating can send the image back through the scan, whose verdict replaces a moderation hold.
+  if (image.needsReview != null)
+    throw throwBadRequestError('This image is waiting for moderator review.');
+  if (scanFailed(image.ingestion)) throw throwBadRequestError(SCAN_FAILED_ERROR);
+  if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned) {
+    const { failed } = await queueNeverScannedRescan(
+      [imageId],
+      Prisma.sql`p."collectionId" = ${collectionItem.collectionId}`
+    );
+    if (failed.length) throw throwBadRequestError(SCAN_FAILED_ERROR);
+    throw throwBadRequestError('This image is still being scanned. Try again shortly.');
+  }
 
-  // A rating must not lift a block, so a Blocked image is never written.
-  const { count } = await dbWrite.image.updateMany({
-    where: {
-      id: collectionItem.imageId as number,
-      ingestion: { not: ImageIngestionStatus.Blocked },
-    },
-    data: {
-      nsfwLevel,
-      scannedAt: new Date(),
-      ingestion: ImageIngestionStatus.Scanned,
-      blockedFor: null,
-    },
-  });
-  if (count === 0) throw throwBadRequestError('This image is blocked and cannot be rated.');
+  // The judge may raise the scan's level, never lower it; a later scan keeps the judge's level as a
+  // floor (resolveScanOutcome). The WHERE repeats the checks above for a scan or block in between.
+  const raisesIntoNsfw = Prisma.sql`(${nsfwLevel}::int > "nsfwLevel" AND ${nsfwLevel}::int > ${sfwBrowsingLevelsFlag}::int)`;
+  const [updated] = await dbWrite.$queryRaw<
+    { nsfwLevel: number; ingestion: ImageIngestionStatus }[]
+  >`
+    UPDATE "Image"
+    SET
+      -- A raise into an NSFW level sends the image back through the scan, since its checks ran at the
+      -- lower level, and keeps that level until they have run at the judge's: the rescan applies the
+      -- floor. Approval waits for that verdict.
+      "nsfwLevel" = CASE WHEN ${raisesIntoNsfw} THEN "nsfwLevel"
+        ELSE GREATEST("nsfwLevel", ${nsfwLevel}::int) END,
+      ingestion = CASE WHEN ${raisesIntoNsfw}
+        THEN ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+        ELSE ingestion
+      END,
+      "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+        ${JUDGE_RATING_METADATA_KEY}::text,
+        jsonb_build_object(
+          'userId', ${userId}::int,
+          'nsfwLevel', ${nsfwLevel}::int,
+          'collectionId', ${collectionItem.collectionId}::int,
+          'ratedAt', NOW()
+        )
+      ),
+      "updatedAt" = NOW()
+    WHERE id = ${imageId}
+      AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+      AND "blockedFor" IS NULL
+      AND "nsfwLevel" != ${NsfwLevel.Blocked}
+      AND "scanJobs" ? 'workflowId'
+      AND "needsReview" IS NULL
+    RETURNING "nsfwLevel", ingestion
+  `;
+  if (!updated)
+    throw throwBadRequestError('This image changed while it was being rated. Try again.');
+
+  logToAxiom({
+    type: 'info',
+    name: 'collection-judge-rating',
+    userId,
+    collectionId: collectionItem.collectionId,
+    collectionItemId,
+    imageId,
+    judgeLevel: nsfwLevel,
+    scanLevel: image.nsfwLevel,
+    finalLevel: updated.nsfwLevel,
+  }).catch();
 
   await imagesSearchIndex.queueUpdate([
-    { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
+    { id: imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
+
+  // `rescanning`: the judge's level applies once the rescan's checks have run at it.
+  return {
+    nsfwLevel: updated.nsfwLevel,
+    rescanning: updated.ingestion === ImageIngestionStatus.Rescan,
+  };
 };
 
 export type CollectionEntityType = 'image' | 'model' | 'post' | 'article';
