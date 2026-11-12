@@ -35,6 +35,9 @@ const DAILY_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_DAILY;
 const cacheKey = (blobId: string) =>
   `${KEY}:${RATER_MODEL}:${blobId.trim().toLowerCase()}` as const;
 
+const dailyKey = (kind: 'calls' | 'lookups', userId: number) =>
+  `${DAILY_KEY}:${kind}:${userId}:${new Date().toISOString().slice(0, 10)}` as const;
+
 /** Take up to `want` units of today's `kind` allowance for this user; returns how many were granted.
  *  A Redis failure grants none, which leaves images on their upload rating. */
 export async function claimDaily(
@@ -44,8 +47,7 @@ export async function claimDaily(
 ): Promise<number> {
   if (want <= 0) return 0;
   const limit = kind === 'calls' ? DATASET_RATING_DAILY_CALLS : DATASET_RATING_DAILY_LOOKUPS;
-  const day = new Date().toISOString().slice(0, 10);
-  const key = `${DAILY_KEY}:${kind}:${userId}:${day}` as const;
+  const key = dailyKey(kind, userId);
   try {
     const redis = getSysRedis();
     const total = await redis.incrBy(key, want);
@@ -55,6 +57,15 @@ export async function claimDaily(
     return granted;
   } catch {
     return 0;
+  }
+}
+
+async function returnDaily(kind: 'calls' | 'lookups', userId: number, n: number): Promise<void> {
+  if (n <= 0) return;
+  try {
+    await getSysRedis().decrBy(dailyKey(kind, userId), n);
+  } catch {
+    // best-effort: the allowance is just smaller for the rest of the day
   }
 }
 
@@ -189,18 +200,30 @@ const activeJobs = new Map<number, Promise<void>>();
 
 /** Start rating a dataset's unrated images in the background, one job per user per pod at a time (a
  *  second call while one runs starts nothing; Review asks again). Never throws. */
-export function warmDatasetRating(token: string, userId: number, blobKeys: string[]): void {
+export function warmDatasetRating(
+  token: string,
+  userId: number,
+  blobKeys: string[],
+  deadlineMs: number = DATASET_RATING_DEADLINE_MS
+): void {
   if (blobKeys.length === 0 || activeJobs.has(userId)) return;
   const job = claimDaily('calls', userId, blobKeys.length)
-    .then((granted) => runRatingJob(orchestratorClient(token), blobKeys.slice(0, granted)))
-    .then((summary) => {
+    .then(async (granted) => {
+      const summary = await runRatingJob(
+        orchestratorClient(token),
+        blobKeys.slice(0, granted),
+        rateImage,
+        deadlineMs
+      );
+      // Images the job didn't reach go back to today's allowance, for the next look.
+      await returnDaily('calls', userId, granted - summary.calls);
       void logToAxiom({
         name: 'training-studio-dataset-rating',
         type: 'info',
         message: 'dataset rating job',
         userId,
         ...summary,
-        overDailyCap: blobKeys.length - summary.images,
+        overDailyCap: blobKeys.length - granted,
       });
     })
     .catch((err) => {

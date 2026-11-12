@@ -255,3 +255,14 @@ describe('the daily allowance', () => {
     expect(invokeScan).toHaveBeenCalledTimes(1);
   });
 });
+
+it('gives back the allowance for images a job did not reach', async () => {
+  // Every call is rate-limited past the deadline, so each worker makes one call and the rest go unreached.
+  invokeScan.mockResolvedValue({
+    data: undefined,
+    response: new Response(null, { status: 429, headers: { 'retry-after': '60' } }),
+  });
+  warmDatasetRating('t', 12, ['a', 'b', 'c', 'd', 'e', 'f'], 30);
+  const day = new Date().toISOString().slice(0, 10);
+  await vi.waitFor(() => expect(store.get(`daily:calls:12:${day}`)).toBe(2));
+});
