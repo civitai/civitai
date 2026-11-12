@@ -25,7 +25,7 @@ const { writeRatedAxes, setModeratorAxes } = await import(
 const migration = readFileSync(
   join(
     process.cwd(),
-    'packages/civitai-db-schema/prisma/migrations/20270104120000_image_axis_rating/migration.sql'
+    'packages/civitai-db-schema/prisma/migrations/20270104130000_image_axis_rating/migration.sql'
   ),
   'utf8'
 );
