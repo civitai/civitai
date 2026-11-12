@@ -186,8 +186,17 @@ describe('blocks.*MediaUploadBatch*', () => {
         { code: 'FORBIDDEN', message: 'batch media upload is available to page apps only' },
       ],
       [
-        'a subject that does not hydrate',
+        // The runtime gate hydrates the subject first, so a subject that never resolves is
+        // refused there, before this ladder's own read.
+        'a subject that does not hydrate at all',
         () => h.getSessionUser.mockResolvedValue(null),
+        { code: 'UNAUTHORIZED', message: 'runtime block token subject could not be resolved' },
+      ],
+      [
+        // The narrow window: the gate's read resolved, this ladder's second read did not (a user
+        // deleted between the two). Refused with its own message, never evaluated flag-less.
+        'a subject that stops resolving between the two reads',
+        () => h.getSessionUser.mockResolvedValueOnce({ id: VIEWER_ID }).mockResolvedValueOnce(null),
         {
           code: 'UNAUTHORIZED',
           message: 'uploading subject could not be resolved, please try again',

@@ -1222,12 +1222,20 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
   },
   'blocks.presignMediaUploadBatchItem': {
-    'valid token': PASSED([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']),
+    // Past every auth step, the procedure's own batch check refuses: no batch row exists here.
+    'valid token': E(
+      'FORBIDDEN',
+      'this batch cannot take more uploads',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+    ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
     'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
     // No consent scope: the host's confirm is the consent, as for OPEN_MEDIA_UPLOAD.
-    'missing scope': PASSED(
+    'missing scope': E(
+      'FORBIDDEN',
+      'this batch cannot take more uploads',
       [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
@@ -1244,7 +1252,9 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     // No bridge bucket: bounded by the daily batch quota and the batch itself.
-    'rate limited': PASSED(
+    'rate limited': E(
+      'FORBIDDEN',
+      'this batch cannot take more uploads',
       [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
@@ -1262,12 +1272,20 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
   },
   'blocks.recordMediaUploadBatchItem': {
-    'valid token': PASSED([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']),
+    // Past every auth step, the procedure's own batch check refuses: no batch row exists here.
+    'valid token': E(
+      'FORBIDDEN',
+      'this batch cannot record more files',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+    ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
     'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
     // No consent scope: the host's confirm is the consent, as for OPEN_MEDIA_UPLOAD.
-    'missing scope': PASSED(
+    'missing scope': E(
+      'FORBIDDEN',
+      'this batch cannot record more files',
       [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
@@ -1284,7 +1302,9 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     // No bridge bucket: bounded by the daily batch quota and the batch itself.
-    'rate limited': PASSED(
+    'rate limited': E(
+      'FORBIDDEN',
+      'this batch cannot record more files',
       [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
