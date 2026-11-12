@@ -1,4 +1,4 @@
-import { TRANSCRIPT_AFTER, TRANSCRIPT_BEFORE } from './chat-transcript-cursor';
+import { TRANSCRIPT_AFTER, TRANSCRIPT_AROUND, TRANSCRIPT_BEFORE } from './chat-transcript-cursor';
 
 // Cursor and numbered paging both live in the URL, and anything invalidating a batch must clear
 // BOTH (`clearPaging`) — a stale param from the other scheme reopens a page of a dead query.
@@ -57,4 +57,5 @@ export function clearPaging(params: URLSearchParams) {
   params.delete(IMAGE_PAGE_PARAM);
   params.delete(TRANSCRIPT_BEFORE);
   params.delete(TRANSCRIPT_AFTER);
+  params.delete(TRANSCRIPT_AROUND);
 }
