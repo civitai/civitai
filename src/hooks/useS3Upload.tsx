@@ -66,6 +66,7 @@ const CivFileInput = forwardRef<HTMLInputElement, FileInputProps>(
 type UseS3UploadOptions = {
   endpoint?: string;
   endpointComplete?: string;
+  endpointAbort?: string;
 };
 
 type UploadResult = {
@@ -146,7 +147,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
 
   const endpoint = options.endpoint ?? '/api/upload';
   const completeEndpoint = options.endpointComplete ?? '/api/upload/complete';
-  const abortEndpoint = options.endpointComplete ?? '/api/upload/abort';
+  const abortEndpoint = options.endpointAbort ?? '/api/upload/abort';
 
   // eslint-disable-next-line @typescript-eslint/no-shadow
   const uploadToS3: UploadToS3 = async (file, type = UploadType.Default, options = {}) => {
