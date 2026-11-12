@@ -107,6 +107,13 @@ describe('RenderRichText article image guard', () => {
     await expect.element(page.getByText('This image is rated')).toBeVisible();
     expect(imgWithSrc(container, 'example.com/elsewhere.png')).toHaveLength(0);
     // The linked R image beside it is unaffected by the article's level.
-    expect(imgWithSrc(container, R_UUID)).toHaveLength(1);
+    await expect.poll(() => imgWithSrc(container, R_UUID)).toHaveLength(1);
+  });
+
+  test('a linked image still unrated (0) is covered for a reader', async () => {
+    const { container } = await renderArticle(media(X_UUID, 'x.png'), [image(503, X_UUID, 0)], XXX);
+
+    await expect.element(page.getByText('This image is rated')).toBeVisible();
+    expect(imgWithSrc(container, X_UUID)).toHaveLength(0);
   });
 });

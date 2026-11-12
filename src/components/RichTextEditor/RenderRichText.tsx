@@ -135,7 +135,6 @@ export function RenderRichText({
             media: ({ node }) => {
               const attrs = node.attrs as any;
               if (guardNsfwLevel === undefined) return <EdgeMediaComponent {...attrs} />;
-              // The width moves to the guard's box, which sizes the media inside it.
               return guard(
                 attrs.url ?? '',
                 attrs.size,
