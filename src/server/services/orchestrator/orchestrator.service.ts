@@ -52,6 +52,9 @@ import {
 // explicitly wants to block for the workflow, so we must not abort it early).
 const IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
 
+/** At one frame a second, above the 480 s length cap, so a capped video is rated on every unique second. */
+const VIDEO_SCAN_MAX_FRAMES = 500;
+
 /**
  * The scan submit passes no `wait`, so this is an enqueue: the orchestrator accepts the workflow and
  * returns. Without a signal it inherits undici's 300s default, and every caller awaits it — the
@@ -177,7 +180,12 @@ export async function createImageIngestionRequest({
             name: 'videoFrames',
             metadata,
             priority,
-            input: { videoUrl: mediaUrl, frameRate: 1, uniqueThreshold: 0.9, maxFrames: 50 },
+            input: {
+              videoUrl: mediaUrl,
+              frameRate: 1,
+              uniqueThreshold: 0.9,
+              maxFrames: VIDEO_SCAN_MAX_FRAMES,
+            },
           },
           ...imageScanSteps({
             mediaUrl: { $ref: 'frame', path: 'url' },

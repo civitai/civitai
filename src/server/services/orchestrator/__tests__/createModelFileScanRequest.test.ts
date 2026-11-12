@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as LoggingClient from '~/server/logging/client';
+import type * as DeliveryWorker from '~/utils/delivery-worker';
 
 const {
   mockDbWrite,
@@ -53,7 +54,7 @@ vi.mock('~/shared/utils/air', () => ({ stringifyAIR: mockStringifyAIR }));
 // vs transient classification a property of the fake instead of the code under
 // test. The error classes and the classifier here are the real ones.
 vi.mock('~/utils/delivery-worker', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/utils/delivery-worker')>();
+  const actual = await importOriginal<typeof DeliveryWorker>();
   return {
     ...actual,
     resolveDownloadUrl: mockResolveDownloadUrl,
@@ -818,7 +819,7 @@ describe('createImageIngestionRequest', () => {
         videoUrl: { $ref: '$arguments', path: 'mediaUrl' },
         frameRate: 1,
         uniqueThreshold: 0.9,
-        maxFrames: 50,
+        maxFrames: 500,
       },
     });
     expect(steps.slice(1)).toHaveLength(templates.length);
