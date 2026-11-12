@@ -12,7 +12,7 @@ For the `nsfwLevel` bitflag itself and browsing-level filtering, see [nsfw-filte
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `ingestion`                | Where the image is in the scan lifecycle. `Pending` → `Scanned` / `Blocked` / `Error`; `Rescan` re-enters the scan. `NotFound` means no media behind the row. `PendingManualAssignment` is legacy; uploads no longer set it. | Upload, scan verdict, retry cron, moderators            |
 | `nsfwLevel`                | The rating. `0` = unrated. Derived from tags unless locked.                                                                                                                                                                  | Scan, tag changes, moderators, Knights                  |
-| `nsfwLevelLocked`          | A human decided the rating. Tag changes and rescans no longer move it.                                                                                                                                                       | Moderators, Knights consensus, collection judges        |
+| `nsfwLevelLocked`          | A human decided the rating. Tag changes and rescans no longer move it.                                                                                                                                                       | Moderators, Knights consensus                           |
 | `metadata.nsfwLevelReason` | Why the lock was set. `KNIGHTS_VOTE_NSFW_LEVEL_REASON` marks a Knights consensus lock; anything else is a moderator.                                                                                                         | Same writers as the lock                                |
 | `needsReview`              | Which moderator queue holds the image (`poi`, `minor`, `tag`, `newUser`, `modRule`, `appeal`, …). Non-null hides it from the public.                                                                                         | Scan, tag changes, reports, moderators                  |
 | `blockedFor`               | Why the image is blocked. Set together with `ingestion = Blocked`.                                                                                                                                                           | Scan, moderation rules, moderators                      |
@@ -29,8 +29,10 @@ For the `nsfwLevel` bitflag itself and browsing-level filtering, see [nsfw-filte
 1. `createImage` inserts the row with `ingestion = Pending`, `nsfwLevel = 0`
    Uploads to collections whose judges apply the rating are scanned like any other. Once the scan
    is done (`Scanned`, no block), a judge's rating (`setCollectionItemNsfwLevel`) may raise the
-   level, never lower it, and locks it. It is recorded in the server-owned `metadata.judgeRating`
-   (`userId`, `nsfwLevel`, `ratedAt`), and approval in such a collection requires it.
+   level, never lower it. It does not lock the level: it is recorded in the server-owned
+   `metadata.judgeRating` (`userId`, `nsfwLevel`, `ratedAt`), and a later scan writes the higher of
+   its own level and that one, unless a moderator lock holds. Approval in such a collection
+   requires the rating.
 2. It calls `ingestImage`, which submits the scan and stamps `scanRequestedAt` and `scanJobs.workflowId`.
 3. A database trigger also queues the image in `JobQueue(ImageScan)` whenever `ingestion` becomes `Pending`,
    `Rescan` or `Error`, so a lost submit is retried by the cron (step 3).

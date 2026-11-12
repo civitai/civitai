@@ -61,6 +61,7 @@ import {
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import { hasBlockMarker } from '~/server/common/image-visibility';
+import { JUDGE_RATING_METADATA_KEY } from '~/shared/utils/block-provenance-metadata';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -337,6 +338,14 @@ export async function markImageScanError({
 
 // Image loading
 // --------------------------------------------------
+/** The level a collection judge recorded (`metadata.judgeRating`), or 0 when there is none. */
+function judgeRatingFloor(metadata: unknown) {
+  const level = (metadata as Record<string, { nsfwLevel?: unknown } | undefined> | null)?.[
+    JUDGE_RATING_METADATA_KEY
+  ]?.nsfwLevel;
+  return typeof level === 'number' && level > 0 && level < NsfwLevel.Blocked ? level : 0;
+}
+
 export async function loadImageForScan(imageId: number) {
   const image = await dbWrite.image.findUnique({
     where: { id: imageId },
@@ -618,8 +627,11 @@ export async function resolveScanOutcome({
     toUpdate.ingestion = ImageIngestionStatus.Scanned;
     toUpdate.needsReview = reviewKey;
     toUpdate.blockedFor = null;
-    // Respect a manually-locked nsfw level — never overwrite it from the scan.
-    toUpdate.nsfwLevel = image.nsfwLevelLocked ? image.nsfwLevel : audit.nsfwLevel;
+    // Respect a manually-locked nsfw level — never overwrite it from the scan. A collection judge's
+    // rating is a floor: the scan may rate higher, never lower.
+    toUpdate.nsfwLevel = image.nsfwLevelLocked
+      ? image.nsfwLevel
+      : Math.max(audit.nsfwLevel, judgeRatingFloor(image.metadata));
   }
 
   // Moderation rules can block the image, hold it for review, or annotate its

@@ -159,13 +159,13 @@ describe('setCollectionItemNsfwLevel: a judge rating on top of the scan', () => 
     expect((await imageRow()).nsfwLevel).toBe(NsfwLevel.R);
   });
 
-  it('locks the level so a later scan keeps it, and never writes the scan state', async () => {
+  it('leaves the level unlocked, so a later scan can raise it, and never writes the scan state', async () => {
     await seed({ ingestion: 'Scanned', nsfwLevel: NsfwLevel.PG });
 
     await rate(NsfwLevel.R);
 
     const row = await imageRow();
-    expect(row.nsfwLevelLocked).toBe(true);
+    expect(row.nsfwLevelLocked).toBe(false);
     expect(row.ingestion).toBe('Scanned');
     expect(row.blockedFor).toBeNull();
     expect(row.scannedAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');

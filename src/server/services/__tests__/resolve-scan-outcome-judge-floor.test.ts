@@ -6,7 +6,9 @@ import type * as ImageService from '~/server/services/image.service';
 
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
-  auditPostImageMeta: vi.fn(() => ({ success: true })),
+  auditPostImageMeta: vi.fn((): { success: boolean; blockedFor?: string[] } => ({
+    success: true,
+  })),
   includesInappropriate: vi.fn(() => false),
   includesPoi: vi.fn(() => false),
 }));
@@ -28,24 +30,40 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { auditPostImageMeta } from '~/utils/metadata/audit';
 
-const SCANNED_AT = new Date('2026-01-01T00:00:00.000Z');
+/** A collection judge's rating (`metadata.judgeRating`) is a floor under the scan's level. */
+
+const PG13 = 2;
+const R = 4;
+const X = 8;
+const BLOCKED = 32;
+
+/** The level the scan's tags rate the image at. */
+let scanTagLevel = X;
+
+const judgeRated = (nsfwLevel: number) => ({
+  judgeRating: { userId: 900, nsfwLevel, ratedAt: '2026-01-01T00:00:00.000Z' },
+});
 
 const image = (over: Partial<ScanImage> = {}) =>
   ({
     id: 1,
     userId: 2,
     createdAt: new Date('2025-12-01T00:00:00.000Z'),
-    scannedAt: SCANNED_AT,
+    scannedAt: new Date('2026-01-01T00:00:00.000Z'),
     type: 'image',
     meta: { prompt: 'a lighthouse' },
     metadata: {},
     postId: null,
     nsfwLevelLocked: false,
     nsfwLevel: 0,
-    ingestion: 'Pending',
+    ingestion: 'Rescan',
     ...over,
   } as unknown as ScanImage);
+
+const scan = (over: Partial<ScanImage>) =>
+  resolveScanOutcome({ image: image(over), workflowId: 'wf', prompt: 'p' });
 
 /** Column → bound value of the single UPDATE "Image" the outcome writes. */
 function writtenColumns() {
@@ -66,36 +84,58 @@ function writtenColumns() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  scanTagLevel = X;
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) => {
     const text = strings.join('');
     if (text.includes('TagsOnImageDetails'))
-      return [{ id: 10, name: 'tag', type: 'Label', nsfwLevel: 16, confidence: 90 }];
+      return [{ id: 10, name: 'tag', type: 'Label', nsfwLevel: scanTagLevel, confidence: 90 }];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
 });
 
-describe('resolveScanOutcome on a locked level', () => {
-  // A judge's rating in a judge-rated collection locks the level it wrote.
-  it('keeps the locked level when the scan rates the image higher', async () => {
-    await resolveScanOutcome({
-      image: image({ ingestion: 'Rescan', nsfwLevel: 4, nsfwLevelLocked: true }),
-      workflowId: 'wf',
-      prompt: 'p',
-    });
+describe('resolveScanOutcome with a collection judge rating', () => {
+  it('raises the level past the judge when the scan rates higher', async () => {
+    scanTagLevel = X;
+    await scan({ nsfwLevel: R, metadata: judgeRated(R) });
 
-    const columns = writtenColumns();
-    expect(columns.ingestion).toBe('Scanned');
-    expect(columns.nsfwLevel).toBe(4);
+    expect(writtenColumns()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: X });
   });
 
-  it('writes the scan level when nothing is locked', async () => {
-    await resolveScanOutcome({
-      image: image({ ingestion: 'Rescan', nsfwLevel: 4 }),
-      workflowId: 'wf',
-      prompt: 'p',
-    });
+  it('stays at the judge level when the scan rates lower', async () => {
+    scanTagLevel = PG13;
+    await scan({ nsfwLevel: R, metadata: judgeRated(R) });
 
-    expect(writtenColumns().nsfwLevel).toBe(16);
+    expect(writtenColumns()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: R });
+  });
+
+  it('keeps a moderator lock over both the scan and the judge', async () => {
+    scanTagLevel = X;
+    await scan({ nsfwLevel: PG13, nsfwLevelLocked: true, metadata: judgeRated(R) });
+
+    expect(writtenColumns().nsfwLevel).toBe(PG13);
+  });
+
+  it('blocks on an audit block, whatever the judge rated', async () => {
+    vi.mocked(auditPostImageMeta).mockReturnValueOnce({ success: false, blockedFor: ['prompt'] });
+    await scan({ nsfwLevel: R, metadata: judgeRated(R) });
+
+    expect(writtenColumns()).toMatchObject({ ingestion: 'Blocked', nsfwLevel: BLOCKED });
+  });
+
+  it('ignores a judge rating that is not a level', async () => {
+    scanTagLevel = PG13;
+    await scan({ metadata: { judgeRating: { nsfwLevel: BLOCKED } } });
+
+    expect(writtenColumns().nsfwLevel).toBe(PG13);
+  });
+
+  it('writes the scan level as before when there is no judge rating', async () => {
+    for (const level of [PG13, X]) {
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockClear();
+      scanTagLevel = level;
+      await scan({ nsfwLevel: R });
+      expect(writtenColumns().nsfwLevel).toBe(level);
+    }
   });
 });

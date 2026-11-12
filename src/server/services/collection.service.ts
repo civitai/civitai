@@ -4248,12 +4248,11 @@ export const setCollectionItemNsfwLevel = async ({
   if (image.ingestion !== ImageIngestionStatus.Scanned)
     throw throwBadRequestError('This image is still being scanned. Try again shortly.');
 
-  // The judge may raise the scan's level, never lower it. The lock keeps the result through a
-  // rescan. The WHERE repeats the checks above for a scan or block that lands in between.
+  // The judge may raise the scan's level, never lower it; a later scan keeps the judge's level as a
+  // floor (resolveScanOutcome). The WHERE repeats the checks above for a scan or block in between.
   const [updated] = await dbWrite.$queryRaw<{ nsfwLevel: number }[]>`
     UPDATE "Image"
     SET "nsfwLevel" = GREATEST("nsfwLevel", ${nsfwLevel}::int),
-      "nsfwLevelLocked" = TRUE,
       "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
         ${JUDGE_RATING_METADATA_KEY}::text,
         jsonb_build_object(
