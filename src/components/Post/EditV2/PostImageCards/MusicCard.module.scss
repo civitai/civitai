@@ -1,0 +1,8 @@
+.card {
+  border-color: #e6498066;
+  background: linear-gradient(135deg, #e6498059 0%, #7048e833 55%, var(--mantine-color-white) 100%);
+
+  [data-mantine-color-scheme='dark'] & {
+    background: linear-gradient(135deg, #e6498059 0%, #7048e833 55%, #1a1b1e 100%);
+  }
+}

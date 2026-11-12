@@ -22,6 +22,8 @@ vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => ({
 import { ErrorImage } from '~/components/Post/EditV2/PostImageCards/ErrorImage';
 // eslint-disable-next-line import/first
 import { BlockedImage } from '~/components/Post/EditV2/PostImageCards/BlockedImage';
+// eslint-disable-next-line import/first
+import { PendingImage } from '~/components/Post/EditV2/PostImageCards/PendingImage';
 
 const image = (url: string) =>
   ({ url, name: 'p.jpg', type: 'image', blockedFor: 'x' } as unknown as PostEditMediaDetail);
@@ -65,5 +67,48 @@ describe('a failed post image card', () => {
     } finally {
       revoke.mockRestore();
     }
+  });
+});
+
+describe('a failed or pending post card for a song', () => {
+  const media = (type: 'image' | 'audio') =>
+    ({
+      url: 'https://example.test/a',
+      name: 'a',
+      type,
+      blockedFor: 'x',
+      metadata: { width: 100, height: 100 },
+    } as unknown as PostEditMediaDetail);
+
+  test.each([
+    ['an error card, preview', ErrorImage, true],
+    ['an error card, edit', ErrorImage, false],
+    ['a blocked card, preview', BlockedImage, true],
+    ['a blocked card, edit', BlockedImage, false],
+    ['a pending card, preview', PendingImage, true],
+    ['a pending card, edit', PendingImage, false],
+  ] as const)('%s: renders no image for a song', async (_, Card, preview) => {
+    mocks.showPreview = preview;
+    renderWithProviders(<Card image={media('audio')} />);
+    await expect.element(page.getByTestId('song-tile').first()).toBeInTheDocument();
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  test.each([true, false])('an error card (preview: %s) says the song failed', async (preview) => {
+    mocks.showPreview = preview;
+    renderWithProviders(<ErrorImage image={media('audio')} />);
+    await expect.element(page.getByText('Failed to upload song')).toBeVisible();
+  });
+
+  test.each([
+    ['an error card, preview', ErrorImage, true],
+    ['an error card, edit', ErrorImage, false],
+    ['a blocked card, preview', BlockedImage, true],
+    ['a blocked card, edit', BlockedImage, false],
+  ] as const)('%s: still shows an image upload', async (_, Card, preview) => {
+    mocks.showPreview = preview;
+    renderWithProviders(<Card image={media('image')} />);
+    await expect.element(page.getByRole('button', { name: 'Remove' })).toBeVisible();
+    expect(document.querySelector('img')).not.toBeNull();
   });
 });

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   formatScheduleTime,
   getDefaultScheduleDate,
+  scheduleDescription,
   withScheduleDay,
   withScheduleTime,
 } from '~/components/Post/EditV2/schedule-post.utils';
@@ -98,5 +99,25 @@ describe('formatScheduleTime', () => {
   it('formats the local time as the 24-hour HH:mm a time input expects', () => {
     expect(formatScheduleTime(new Date('2026-10-06T11:03:00.000Z'))).toBe('07:03');
     expect(formatScheduleTime(new Date('2026-10-07T01:15:00.000Z'))).toBe('21:15');
+  });
+});
+
+describe('scheduleDescription', () => {
+  it('keeps the plain sentence for a post without songs', () => {
+    expect(scheduleDescription('post', 0)).toBe(
+      'Select the date and time you want to publish this post.'
+    );
+  });
+
+  it('names one song in the singular', () => {
+    expect(scheduleDescription('post', 1)).toBe(
+      'Select the date and time you want to publish this post and its 1 song.'
+    );
+  });
+
+  it('counts several songs', () => {
+    expect(scheduleDescription('post', 2)).toBe(
+      'Select the date and time you want to publish this post and its 2 songs.'
+    );
   });
 });

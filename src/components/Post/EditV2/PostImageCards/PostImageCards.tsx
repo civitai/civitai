@@ -1,21 +1,25 @@
-import { Tabs, Text } from '@mantine/core';
-import { IconPencil, IconPhoto } from '@tabler/icons-react';
+import { Tabs, Text, UnstyledButton } from '@mantine/core';
+import { IconPencil, IconPhoto, IconPlus } from '@tabler/icons-react';
 import React from 'react';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
-import { AddedAudio } from '~/components/Post/EditV2/PostImageCards/AddedAudio';
 import { AddedImage } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import { BlockedImage } from '~/components/Post/EditV2/PostImageCards/BlockedImage';
 import { ErrorImage } from '~/components/Post/EditV2/PostImageCards/ErrorImage';
+import { MusicCard } from '~/components/Post/EditV2/PostImageCards/MusicCard';
 import { PendingImage } from '~/components/Post/EditV2/PostImageCards/PendingImage';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 export function PostImageCards() {
   const images = usePostEditStore((state) => state.images);
   const { maxItems } = useMediaUploadSettingsContext();
   const { showPreview, toggleShowPreview } = usePostPreviewContext();
+  const { music } = useFeatureFlags();
   const tab = showPreview ? 'preview' : 'edit';
+  const hasSong = images.some((x) => x.type === 'added' && x.data.type === MediaType.audio);
 
   if (!images.length) return null;
 
@@ -55,6 +59,7 @@ export function PostImageCards() {
             </div>
           ))}
       </div>
+      {music && hasSong && <AddSongsButton />}
     </>
   );
 }
@@ -63,7 +68,7 @@ function PostImageCard({ image }: { image: ControlledImage }) {
   switch (image.type) {
     case 'added':
       return image.data.type === MediaType.audio ? (
-        <AddedAudio image={image.data} />
+        <MusicCard image={image.data} />
       ) : (
         <AddedImage image={image.data} />
       );
@@ -76,4 +81,19 @@ function PostImageCard({ image }: { image: ControlledImage }) {
     default:
       return <></>;
   }
+}
+
+function AddSongsButton() {
+  return (
+    <UnstyledButton
+      className="flex h-14 w-full items-center justify-center gap-2 rounded-xl border border-gray-4 text-sm font-semibold text-blue-6 hover:bg-gray-0 dark:border-dark-3 dark:text-blue-4 dark:hover:bg-dark-6"
+      onClick={() => {
+        generationGraphPanel.open();
+        generationGraphPanel.setView('queue');
+      }}
+    >
+      <IconPlus size={16} />
+      Add songs from the generator
+    </UnstyledButton>
+  );
 }
