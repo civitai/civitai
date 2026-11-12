@@ -170,6 +170,7 @@ describe('rescan-judge-collection-images: dry run', () => {
       cohorts: { scannedNoJobs: 1, pendingManual: 1, outOfRetries: 0 },
       heldForReview: 0,
       floorMigrationApplied: true,
+      excludedWithScanWorkflow: { total: 0, pendingManual: 0 },
       // 106 and 107 carry the same markers in a collection without the flag.
       wide: { scannedNoJobs: 2, pendingManual: 2 },
       controls: { inScopeWithScannerTags: 0, outOfScopeScannedWithoutScannerTags: 0 },
@@ -300,6 +301,23 @@ describe('rescan-judge-collection-images: a run', () => {
     expect(body).toMatchObject({ queued: 1 });
     expect(await rescanned()).toEqual([102]);
     expect((await snapshot()).find((r) => r.id === 101)).toEqual(before);
+  });
+
+  // A scan workflow on the row may still be running; one finishing after the rescan would overwrite
+  // its verdict, so such a row is left out and counted.
+  it('leaves out an image that carries a scan workflow, and counts it', async () => {
+    await db.exec(`UPDATE "Image" SET "scanJobs" = '{"workflowId": "wf-old"}' WHERE id = 102`);
+    const before = (await snapshot()).find((r) => r.id === 102);
+
+    const dry = (await call({})).body;
+    expect(dry.cohorts).toMatchObject({ scannedNoJobs: 1, pendingManual: 0 });
+    expect(dry.excludedWithScanWorkflow).toEqual({ total: 1, pendingManual: 1 });
+    expect((await call({ dryRun: 'false', ids: '102' })).statusCode).toBe(400);
+    const { body } = await call({ dryRun: 'false' });
+
+    expect(body).toMatchObject({ queued: 1 });
+    expect(await rescanned()).toEqual([101]);
+    expect((await snapshot()).find((r) => r.id === 102)).toEqual(before);
   });
 
   it('refuses to start, writing nothing, until the tag recompute carries the judge floor', async () => {
