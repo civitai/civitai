@@ -8,7 +8,7 @@ import { getArticles } from '~/server/services/article.service';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import {
-  minorSafeBrowsingLevel,
+  queryVerdictLevel,
   recordRefusal,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
@@ -74,10 +74,9 @@ export async function searchSemanticArticles({
     return refusal;
   };
   const refusal = await refusalOf(input.query, 'query');
-  // Moderators keep the refusal: they search to find what must come down, not to browse it.
-  if (refusal === 'minor' && !user?.isModerator)
-    browsingLevel = minorSafeBrowsingLevel(browsingLevel);
-  else if (refusal) return { ...none, refused: refusal };
+  const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
+  if (verdictLevel === 'refuse') return none;
+  browsingLevel = verdictLevel;
 
   const excludedUserIds = [
     ...new Set(
@@ -177,6 +176,6 @@ export async function searchSemanticArticles({
     shown: page.items.length,
   }).catch(() => undefined);
 
-  if (correctedRefusal) return { ...none, refused: correctedRefusal };
+  if (correctedRefusal) return none;
   return { ...page, correctedQuery };
 }

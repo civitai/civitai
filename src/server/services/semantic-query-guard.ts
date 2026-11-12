@@ -51,7 +51,6 @@ export async function semanticQueryRefusal(
     // A 'poi' verdict is returned before the minor check runs, so it can hide one; still refused.
     if (verdict && includesMinor(audited)) return 'poi-minor';
     if (verdict) return verdict;
-    // Only moderators may look real people up, and then only without the POI add-on.
     if ((disablePoi || !isModerator) && includesPoi(audited)) return 'poi';
     return false;
   } catch {
@@ -59,9 +58,19 @@ export async function semanticQueryRefusal(
   }
 }
 
-/** A minor verdict narrows the search to the safe levels instead of refusing it. */
-export function minorSafeBrowsingLevel(level: number) {
-  return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
+/**
+ * What a raw-query verdict does to the search: a minor verdict narrows a non-moderator to the safe
+ * levels; moderators keep the refusal, since they search to find what must come down.
+ */
+export function queryVerdictLevel(
+  refusal: QueryRefusal,
+  level: number,
+  isModerator?: boolean
+): number | 'refuse' {
+  if (!refusal) return level;
+  if (refusal === 'minor' && !isModerator)
+    return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
+  return 'refuse';
 }
 
 export type QueryStage = 'query' | 'correction';

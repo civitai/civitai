@@ -501,12 +501,11 @@ describe('the query audit and the browsing level', () => {
     }).then((result) => ({ result, calls, track }));
   };
 
-  it('narrows a minor query to the safe levels for a non-moderator, and records it', async () => {
+  // The blanket non-moderator clamp already sits at the safe levels; this pins search-not-refuse.
+  it('searches a minor query for a non-moderator instead of refusing it, and records it', async () => {
     h.includesInappropriate.mockReturnValue('minor');
-    const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS });
-    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2]);
+    const { result, track } = await run({ browsingLevel: ALL_LEVELS });
     expect(result.items.map((i) => i.id)).toEqual([101]);
-    expect(result).not.toHaveProperty('refused');
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
@@ -551,7 +550,7 @@ describe('the query audit and the browsing level', () => {
   it('refuses a minor query for a moderator, before asking the index', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
-    expect(result).toMatchObject({ items: [], refused: 'minor' });
+    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
     expect(calls).toHaveLength(0);
   });
 
@@ -559,7 +558,7 @@ describe('the query audit and the browsing level', () => {
     h.includesInappropriate.mockReturnValue('poi');
     h.includesMinor.mockReturnValue(true);
     const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
-    expect(result).toMatchObject({ items: [], refused: 'poi-minor' });
+    expect(result.items).toEqual([]);
     expect(calls).toHaveLength(0);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })

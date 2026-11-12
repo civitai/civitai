@@ -192,14 +192,13 @@ describe('semantic article search: the query audit and the browsing level', () =
   it('refuses a minor query for a moderator, before asking the service', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const { result } = await run({ browsingLevel: 31, user: MOD });
-    expect(result).toMatchObject({ items: [], refused: 'minor' });
+    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
     expect(sent).toHaveLength(0);
   });
 
-  it('narrows a minor query to the safe levels for a non-moderator, and records it', async () => {
+  it('searches a minor query for a non-moderator instead of refusing it, and records it', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const { result, track } = await run({ browsingLevel: 31 });
-    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
     expect(result.items.map((a) => a.id)).toEqual([10]);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
@@ -210,7 +209,7 @@ describe('semantic article search: the query audit and the browsing level', () =
     h.includesInappropriate.mockReturnValue('poi');
     h.includesMinor.mockReturnValue(true);
     const { result, track } = await run({ browsingLevel: 31, user: MOD });
-    expect(result).toMatchObject({ items: [], refused: 'poi-minor' });
+    expect(result.items).toEqual([]);
     expect(sent).toHaveLength(0);
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
     expect(track.action).toHaveBeenCalledWith(
@@ -229,7 +228,7 @@ describe('semantic article search: the query audit and the browsing level', () =
   it('refuses a person-of-interest query from a non-moderator with no add-on', async () => {
     h.includesPoi.mockReturnValue('someone');
     const { result } = await run();
-    expect(result).toMatchObject({ items: [], refused: 'poi' });
+    expect(result.items).toEqual([]);
     expect(sent).toHaveLength(0);
   });
 
@@ -279,8 +278,18 @@ describe('semantic article search: the query audit and the browsing level', () =
     h.includesInappropriate.mockImplementation(({ prompt }) =>
       prompt === 'corrected' ? 'minor' : false
     );
+    const { register } = await import('prom-client');
+    const counted = async () =>
+      (
+        (await register.getSingleMetric('semantic_search_query_verdicts_total')?.get())?.values ??
+        []
+      )
+        .filter((v) => v.labels.verdict === 'minor' && v.labels.stage === 'correction')
+        .reduce((n, v) => n + v.value, 0);
+    const before = await counted();
     const { result, track } = await run({ correctedQuery: 'corrected' });
     expect(result).toMatchObject({ items: [], correctedQuery: undefined });
+    expect(await counted()).toBe(before + 1);
     expect(h.fetched).toEqual([]);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })

@@ -33,7 +33,7 @@ export function ensureRegisterQueryVerdictCounter(reg: Registry = client.registe
   if (existing) return existing;
   return new client.Counter({
     name: VERDICTS,
-    help: 'Semantic search queries the query audit flagged; stage is the raw query or the spelling correction',
+    help: 'Semantic search queries the query audit flagged or failed to audit (verdict error); stage is the raw query or the spelling correction',
     labelNames: ['index', 'verdict', 'stage'],
     registers: [reg],
   });

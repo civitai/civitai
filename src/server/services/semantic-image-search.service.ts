@@ -10,7 +10,7 @@ import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
-  minorSafeBrowsingLevel,
+  queryVerdictLevel,
   recordRefusal,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
@@ -44,8 +44,6 @@ const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
 });
 
 const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
-// Shown as no results; `refused` is for logging, not for the viewer.
-const refusedPage = (refused: Exclude<QueryRefusal, false>) => ({ ...emptyPage(), refused });
 
 export async function searchSemanticImages({
   input,
@@ -96,11 +94,12 @@ export async function searchSemanticImages({
     return refusal;
   };
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
-  // Moderators keep the refusal: they search to find what must come down, not to browse it.
-  if (refusal === 'minor' && !user?.isModerator) {
-    browsingLevel = minorSafeBrowsingLevel(browsingLevel);
+  const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
+  if (verdictLevel === 'refuse') return emptyPage();
+  if (verdictLevel !== browsingLevel) {
+    browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
-  } else if (refusal) return refusedPage(refusal);
+  }
   const excludedUserIds = [
     ...new Set(
       [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
@@ -202,6 +201,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (correctedRefusal) return refusedPage(correctedRefusal);
+  if (correctedRefusal) return emptyPage();
   return { ...page, correctedQuery };
 }
