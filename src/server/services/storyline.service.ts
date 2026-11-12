@@ -884,7 +884,6 @@ export const createRootChapter = (
 
 /**
  * The user's own storyline from this spark that has no chapter 1 yet and is not taken down.
- * Starting again from the same image returns it, so Back and a second try make no duplicate.
  */
 export async function findUnwrittenSparkStoryline({
   userId,
@@ -893,8 +892,8 @@ export async function findUnwrittenSparkStoryline({
   userId: number;
   sparkImageId: number;
 }) {
-  const [row] = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT s.id FROM "Storyline" s
+  const [row] = await dbWrite.$queryRaw<{ id: number; title: string }[]>`
+    SELECT s.id, s.title FROM "Storyline" s
     WHERE s."userId" = ${userId} AND s."sparkImageId" = ${sparkImageId}
       AND s."tosViolation" = false
       AND NOT EXISTS (
@@ -938,7 +937,16 @@ export async function createStoryline({
   if (sparkImageId) await assertStorylineSpark({ imageId: sparkImageId, userId, maxNsfwLevel });
   if (sparkImageId && !postId) {
     const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId });
-    if (unwritten) return { id: unwritten.id, rootChapterId: null };
+    if (unwritten) {
+      // With no chapter yet, nothing depends on the old terms, so the ones just chosen win.
+      await dbWrite.storyline.update({
+        where: { id: unwritten.id },
+        data: { title, maxNsfwLevel, whoCanContinue: whoCanContinue ?? 'Anyone' },
+      });
+      if (title !== unwritten.title)
+        scanEntityInBackground({ entityType: 'Storyline', entityId: unwritten.id });
+      return { id: unwritten.id, rootChapterId: null };
+    }
   }
 
   let created: { id: number; rootChapterId: number | null };

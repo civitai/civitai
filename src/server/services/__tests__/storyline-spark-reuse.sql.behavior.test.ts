@@ -81,7 +81,7 @@ const find = (userId = STARTER, sparkImageId = SPARK) =>
 
 describe('the storyline a second start from the same image reuses', () => {
   it("is the starter's own storyline from that image with no chapter 1 (control)", async () => {
-    await expect(find()).resolves.toEqual({ id: STORY });
+    await expect(find()).resolves.toEqual({ id: STORY, title: 'A story' });
   });
 
   it('is the newest when there are several', async () => {
@@ -89,7 +89,7 @@ describe('the storyline a second start from the same image reuses', () => {
       INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "sparkImageId", "updatedAt")
         VALUES (11, ${STARTER}, 'Again', ${NsfwLevel.R}, ${SPARK}, now());
     `);
-    await expect(find()).resolves.toEqual({ id: 11 });
+    await expect(find()).resolves.toEqual({ id: 11, title: 'Again' });
   });
 
   it.each([
