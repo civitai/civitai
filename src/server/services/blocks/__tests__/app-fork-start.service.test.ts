@@ -578,20 +578,18 @@ describe('startAppFork — a successful start', () => {
     });
   });
 
-  it('a source repo that never finishes holds the start for at most FORK_SOURCE_REPO_WAIT_MS', async () => {
+  it('a source repo that never finishes holds the start only for the bounded wait', async () => {
+    const { __setForkSourceRepoWaitMsForTests } = await import(
+      '~/server/services/blocks/app-fork-start.service'
+    );
     m.createSource.mockReturnValue(new Promise(() => undefined));
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    __setForkSourceRepoWaitMsForTests(25);
     try {
-      let settled = false;
-      const started = start().then((r) => {
-        settled = true;
-        return r;
-      });
-      for (let i = 0; i < 20 && !settled; i++) await vi.advanceTimersByTimeAsync(1000);
-      expect(settled).toBe(true);
-      await expect(started).resolves.toMatchObject({ parentName: PARENT_NAME });
+      // Would never settle if the start awaited the creation itself.
+      await expect(start()).resolves.toMatchObject({ parentName: PARENT_NAME });
+      expect(m.createSource).toHaveBeenCalledTimes(1);
     } finally {
-      vi.useRealTimers();
+      __setForkSourceRepoWaitMsForTests();
     }
   });
 

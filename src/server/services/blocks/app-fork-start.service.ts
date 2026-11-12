@@ -85,6 +85,11 @@ export const FORK_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /** The longest a fork start waits for the fork's source repo to be created. */
 export const FORK_SOURCE_REPO_WAIT_MS = 5_000;
+let forkSourceRepoWaitMs = FORK_SOURCE_REPO_WAIT_MS;
+/** Tests only: a shorter wait, so the bound is exercised with real timers. */
+export function __setForkSourceRepoWaitMsForTests(ms: number = FORK_SOURCE_REPO_WAIT_MS) {
+  forkSourceRepoWaitMs = ms;
+}
 
 /** The sandbox service's own seed caps (`SEED_MAX_BYTES`, `SEED_MAX_ENTRIES`). */
 export const FORK_SEED_MAX_BYTES = 25 * 1024 * 1024;
@@ -606,7 +611,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
       .catch(() => undefined);
     await Promise.race([
       sourceRepo,
-      new Promise((resolve) => setTimeout(resolve, FORK_SOURCE_REPO_WAIT_MS).unref?.()),
+      new Promise((resolve) => setTimeout(resolve, forkSourceRepoWaitMs).unref?.()),
     ]);
     return { forkSlug, parentName: parent.name, parentListingId: parent.id, seed };
   } catch (err) {
