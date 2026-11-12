@@ -29,8 +29,10 @@ import {
   updateImageTools,
   refreshImageResources,
 } from '~/server/services/image.service';
+import { setSongCover } from '~/server/services/post.service';
 import {
   middleware,
+  guardedProcedure,
   heavyProcedure,
   moderatorProcedure,
   protectedProcedure,
@@ -63,6 +65,7 @@ import {
   imageModerationSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
+  setSongCoverSchema,
   setTosViolationSchema,
   setVideoThumbnailSchema,
   toggleImageFlagSchema,
@@ -234,6 +237,12 @@ export const imageRouter = router({
     .input(setVideoThumbnailSchema)
     .mutation(setVideoThumbnailController),
   // #endregion
+
+  setSongCover: guardedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(setSongCoverSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input, ctx }) => setSongCover({ ...input, user: ctx.user })),
 
   updateAccetableMinor: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })

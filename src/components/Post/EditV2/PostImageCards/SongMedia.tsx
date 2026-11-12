@@ -18,7 +18,7 @@ export function SongMedia({
   return (
     <div className={clsx('flex flex-col gap-3', className)}>
       <div className="relative mx-auto w-full max-w-[320px]">
-        <SongCover />
+        <SongCover image={image} />
         {coverOverlay}
       </div>
       <SongPreviewPlayer src={image.url} duration={duration} />
