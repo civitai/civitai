@@ -1,4 +1,8 @@
-import { FliptClient, type ErrorStrategy } from '@flipt-io/flipt-client-js';
+import {
+  FliptClient,
+  type ErrorStrategy,
+  type NodeFliptClient as NodeFliptClientClass,
+} from '@flipt-io/flipt-client-js';
 import { fliptCacheKeySuffix, TtlCache, type TtlCacheStats } from './cache';
 import { loadFliptConnection, loadFliptTuning, type FliptConfig, type FliptTuning } from './env';
 import {
@@ -7,6 +11,19 @@ import {
   type FliptSnapshot,
   type FliptSnapshotStore,
 } from './snapshot';
+
+/**
+ * The client as it exists at runtime here. The SDK (0.2.0) resolves to its `node` build under
+ * Node, and that build's class has the config poller (a `setInterval` started by `init` when
+ * `updateInterval` is set) and `close()`, which clears it. Its declared `FliptClient` type is the
+ * BROWSER class, which has neither, so the type is taken from the SDK's own `NodeFliptClient`
+ * declaration (a type: the node build exports the class as `FliptClient`).
+ */
+export type FliptNodeClient = InstanceType<typeof NodeFliptClientClass>;
+
+/** `FliptClient.init`, typed as the node build it resolves to. */
+const initClient = (options: Parameters<typeof FliptClient.init>[0]) =>
+  FliptClient.init(options) as unknown as Promise<FliptNodeClient>;
 
 // `ErrorStrategy.Fallback`, spelled as its value so this module needs no runtime value from the
 // SDK beyond `FliptClient` (apps fake the SDK with just that class).
@@ -88,7 +105,7 @@ export type FliptFeatureFlags = {
    * The underlying client — the live one, else the one seeded from a stored snapshot — or `null`.
    * Escape hatch for raw SDK calls.
    */
-  getClientSync(): FliptClient | null;
+  getClientSync(): FliptNodeClient | null;
   /**
    * Cumulative eval-cache counters for both caches. Pure read; safe to call on a
    * scrape interval. See `TtlCacheStats` — `expiredMisses` vs `rotations` is what
@@ -138,9 +155,9 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
 
   // `instance` is the live client: it polls Flipt. `seeded` evaluates a stored snapshot and never
   // polls; it serves only until a live client exists.
-  let instance: FliptClient | null = null;
-  let seeded: FliptClient | null = null;
-  let initializing: Promise<FliptClient | null> | null = null;
+  let instance: FliptNodeClient | null = null;
+  let seeded: FliptNodeClient | null = null;
+  let initializing: Promise<FliptNodeClient | null> | null = null;
   let lastFailureTime = 0;
   // Whether any init attempt has finished. Only the FIRST attempt is waited on by callers (a cold
   // process should not answer before it has tried once); every retry after a failure runs in the
@@ -190,7 +207,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
         );
         return;
       }
-      seeded = await FliptClient.init({
+      seeded = await initClient({
         environment: config.environment,
         fetcher: createSnapshotFetcher(snapshot.data),
         errorStrategy: FALLBACK,
@@ -206,7 +223,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     }
   }
 
-  function startInit(): Promise<FliptClient | null> {
+  function startInit(): Promise<FliptNodeClient | null> {
     if (initializing) return initializing;
 
     initializing = (async () => {
@@ -234,7 +251,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
 
         let abandoned = false;
         const initPromise = (async () => {
-          const client = await FliptClient.init({
+          const client = await initClient({
             environment: config.environment,
             url: connection.url,
             authentication: { clientToken: connection.clientToken },
@@ -252,7 +269,12 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
         // the life of the process. Close it.
         initPromise.then(
           (late) => {
-            if (abandoned) late.close();
+            if (!abandoned) return;
+            try {
+              late.close();
+            } catch (e) {
+              log('[flipt] could not close the client that arrived after the init timeout:', e);
+            }
           },
           () => null
         );
@@ -303,7 +325,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     return flag + suffix;
   }
 
-  async function getInstance(): Promise<FliptClient | null> {
+  async function getInstance(): Promise<FliptNodeClient | null> {
     if (instance) return instance;
 
     // Circuit breaker: no new attempt during the cooldown after a failure.
@@ -320,7 +342,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   // (flag, entityId, context) is stable between config refreshes, so a short in-process TTL cache
   // collapses the wasm call rate.
   function evalBooleanCached(
-    client: FliptClient,
+    client: FliptNodeClient,
     flag: string,
     entityId: string,
     context: Record<string, string>
@@ -338,7 +360,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   }
 
   function evaluateVariantDetail(
-    client: FliptClient,
+    client: FliptNodeClient,
     flag: string,
     entityId: string,
     context: Record<string, string>
@@ -352,7 +374,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   }
 
   function evalVariantCached(
-    client: FliptClient,
+    client: FliptNodeClient,
     flag: string,
     entityId: string,
     context: Record<string, string>
