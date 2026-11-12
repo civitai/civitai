@@ -362,7 +362,8 @@ export async function submitTraining(
     thrown = err;
   }
   const data = result?.data as { id?: string | null } | undefined;
-  const error = result?.error;
+  // The SDK's success variant has no `error` field, so narrow before reading it.
+  const error = result && 'error' in result ? result.error : undefined;
   const status = result?.response?.status;
   if (data?.id) return data.id;
   if (!thrown && isTrainingDataNotReady(error, status)) throw new FilesProcessingError();
