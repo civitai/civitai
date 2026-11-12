@@ -25,6 +25,7 @@ import {
   otelLogRecordsSkippedCounter,
   registerOtelShutdown,
   resetOtelLogBridge,
+  resetOtelLogClock,
 } from '../otel-logs';
 
 // 🔴 This suite deliberately does NOT `vi.mock('@opentelemetry/api-logs')` (or sdk-logs).
@@ -120,6 +121,9 @@ beforeEach(() => {
   // test's provider and its exporter would look empty.
   logs.disable();
   resetOtelLogBridge();
+  // The timestamp test below freezes the clock in 2100; without this every later record
+  // would be stamped there by the backward-step hold.
+  resetOtelLogClock();
   process.env.OTEL_LOGS_ENABLED = 'true';
 });
 
@@ -353,10 +357,6 @@ describe('emitOtelLog — timestamps', () => {
   // is `Date.now()`, i.e. millisecond resolution, so a burst of identical lines in one
   // millisecond (one request running the same procedure several times in a batch) left
   // this process as identical records, and all but one were discarded downstream.
-  //
-  // `Date.now` is FROZEN, not just read: that is the state "two emits in one
-  // millisecond" describes, made deterministic. The frozen instant is in 2100, so the
-  // clock cannot already be past it, whatever ran before this test.
   it('stamps two identical records emitted in the same millisecond with DIFFERENT timestamps', () => {
     const exporter = registerRecordingProvider();
     const frozenMs = 4_102_444_800_123; // 2100-01-01T00:00:00.123Z
@@ -376,10 +376,8 @@ describe('emitOtelLog — timestamps', () => {
     expect(second.hrTime).toEqual([4_102_444_800, 123_000_001]);
   });
 
-  // INVARIANT GUARD, not regression coverage: the SDK already set both fields to one
-  // `Date.now()`, so this held before the fix too. It pins that the fix keeps them equal.
-  // A receiver may drop observed_timestamp only when it equals the timestamp, so a
-  // fix that stamped just one of them would store a second timestamp on every record.
+  // Invariant guard (held before the fix too): a receiver may drop observed_timestamp
+  // only when it equals the timestamp.
   it('sets observedTimestamp to the same value as timestamp', () => {
     const exporter = registerRecordingProvider();
     emitOtelLog('{"a":1}', { type: 'info' });

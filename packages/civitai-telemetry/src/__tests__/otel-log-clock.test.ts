@@ -1,14 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { nextOtelLogTimestamp, resetOtelLogClock } from '../otel-logs';
+import { MAX_CLOCK_HOLD_MS, nextOtelLogTimestamp, resetOtelLogClock } from '../otel-logs';
 
 // Unit tests for the bridge's timestamp source. The end-to-end regression (two identical
 // records in one millisecond leave the process with different timestamps) lives in
 // otel-logs.test.ts, under "emitOtelLog — timestamps".
-//
-// Fixture instants have pairwise-distinct millisecond parts (123, 124, 999) so that a
-// mutant which hardcodes one of them, or drops the millisecond part, gives a wrong
-// expected tuple.
 
 beforeEach(() => {
   resetOtelLogClock();
@@ -56,11 +52,24 @@ describe('nextOtelLogTimestamp', () => {
     expect(nextOtelLogTimestamp(now)).toEqual([1_700_000_000, 124_000_000]);
   });
 
+  it('resyncs to the wall clock after a backward step larger than MAX_CLOCK_HOLD_MS', () => {
+    expect(MAX_CLOCK_HOLD_MS).toBe(1000);
+    let ms = 1_700_000_005_124;
+    const now = () => ms;
+    nextOtelLogTimestamp(now);
+    ms = 1_700_000_004_124; // exactly the cap: still held
+    expect(nextOtelLogTimestamp(now)).toEqual([1_700_000_005, 124_000_001]);
+    ms = 1_700_000_000_123; // 5 s back: resync rather than stamp 5 s in the future
+    expect(nextOtelLogTimestamp(now)).toEqual([1_700_000_000, 123_000_000]);
+    expect(nextOtelLogTimestamp(now)).toEqual([1_700_000_000, 123_000_001]);
+  });
+
   it('reads Date.now() when no clock is injected', () => {
-    const before = Date.now();
-    const [seconds, nanos] = nextOtelLogTimestamp();
-    const stampedMs = seconds * 1000 + Math.floor(nanos / 1_000_000);
-    expect(stampedMs).toBeGreaterThanOrEqual(before);
-    expect(stampedMs).toBeLessThanOrEqual(Date.now());
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(4_102_444_800_456);
+    try {
+      expect(nextOtelLogTimestamp()).toEqual([4_102_444_800, 456_000_000]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
