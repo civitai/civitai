@@ -36,13 +36,14 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   bustCacheTag: vi.fn(async () => undefined),
 }));
 
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { APP_LISTING_CATALOG_TAG } from '../app-listing-cache.constants';
 import { matureRatingsAllowed } from '../app-listing-store-gate';
 import {
   listAvailableListings,
   listingLevelVisibilityFilter,
   storeEligibilityWhere,
+  storeOwnerEligibleWhere,
 } from '../app-listing.service';
 import { getDeveloperTrackRecord } from '../app-listing-track-record.service';
 
@@ -65,6 +66,16 @@ function expectedEligibility(opts: {
     userId: opts.userId,
   }) as Prisma.Sql;
 }
+
+/**
+ * The DEVELOPER filter is the equality `al.user_id = <bound param>`. It is told apart from the
+ * owner-eligibility EXISTS, which every store statement carries and which also names
+ * `al.user_id` (as the correlated owner id, never compared to a parameter).
+ */
+const DEVELOPER_TERM = /al\.user_id = \?/g;
+const developerTerms = (sql: Prisma.Sql) => (sql.sql.match(DEVELOPER_TERM) ?? []).length;
+/** The banned/deleted-owner gate, as the store predicate spells it for the listing's owner. */
+const OWNER_GATE = storeOwnerEligibleWhere(Prisma.sql`al.user_id`).sql;
 
 function callsFor(prefix: string) {
   return cacheCalls.filter((c) => c.key.startsWith(prefix));
@@ -177,16 +188,19 @@ describe('listAvailableListings({ userId }) — the rail and the profile tab', (
     expect((call.sql as Prisma.Sql).values).toContain(DEV);
   });
 
-  it('without a developer the store grid statement names no owner at all (unchanged)', async () => {
+  it('without a developer the store grid statement has no developer filter (unchanged)', async () => {
     await listAvailableListings(
       { kind: 'all', sort: 'popular', limit: 4 },
       { scope: 'full', floor: 'public', redCapable: false, viewerBrowsingLevel: 1 }
     );
     const [call] = callsFor('listAvailableAppListings:');
-    expect((call.sql as Prisma.Sql).sql).not.toContain('al.user_id');
+    const sql = call.sql as Prisma.Sql;
+    expect(developerTerms(sql)).toBe(0);
+    // …while the owner gate is still there: the grid keeps hiding banned / deleted owners.
+    expect(sql.sql).toContain(OWNER_GATE);
   });
 
-  it('storeEligibilityWhere emits the owner term only when a developer is given', () => {
+  it('storeEligibilityWhere emits the developer term only when a developer is given, and the owner gate always', () => {
     const base = {
       levelFilter: listingLevelVisibilityFilter('public'),
       kind: null,
@@ -196,9 +210,14 @@ describe('listAvailableListings({ userId }) — the rail and the profile tab', (
     } as const;
     const withDev = storeEligibilityWhere({ ...base, userId: DEV }) as Prisma.Sql;
     const without = storeEligibilityWhere(base) as Prisma.Sql;
-    expect(withDev.sql).toContain('al.user_id = ?');
+    // The developer equality appears exactly once with a developer and never without one…
+    expect(developerTerms(withDev)).toBe(1);
     expect(withDev.values).toContain(DEV);
-    expect(without.sql).not.toContain('al.user_id');
+    expect(developerTerms(without)).toBe(0);
+    expect(without.values).not.toContain(DEV);
+    // …and the owner-eligibility EXISTS is in both: the developer filter never replaces it.
+    expect(withDev.sql).toContain(OWNER_GATE);
+    expect(without.sql).toContain(OWNER_GATE);
     // The rest of the predicate is the same text either way: the developer narrows it, never
     // replaces a term.
     expect(withDev.sql.startsWith(without.sql.trimEnd())).toBe(true);
