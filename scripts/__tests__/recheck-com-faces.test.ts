@@ -2,9 +2,11 @@ import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { comFaceRecheckRetryKey } from '~/server/services/model-com-face-recheck.service';
+import { chunksFrom } from '../recompute-mature-model-nsfw-levels';
 import {
-  batches,
+  controlSql,
   insertRetryRowsSql,
+  modActivitySql,
   pendingSql,
   readbackSql,
   recheckSetSql,
@@ -18,11 +20,13 @@ beforeAll(async () => {
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, "sfwName" text, "sfwCoverImageId" int,
       "deletedAt" timestamp, "updatedAt" timestamp, meta jsonb DEFAULT '{}');
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, activity text, "entityType" text,
+      "entityId" int, "createdAt" timestamp DEFAULT now());
   `);
 });
 afterAll(() => db.close());
 beforeEach(async () => {
-  await db.exec(`TRUNCATE "KeyValue"; TRUNCATE "Model";`);
+  await db.exec(`TRUNCATE "KeyValue"; TRUNCATE "Model"; TRUNCATE "ModActivity";`);
 });
 
 const run = async <T>(sql: Prisma.Sql) => (await db.query<T>(sql.text, sql.values)).rows;
@@ -51,19 +55,24 @@ const rowOf = async (id: number) =>
     ])
   ).rows[0]?.value;
 
-const CUTOFF = new Date('2026-11-07T17:42:13Z');
-
 describe('the re-check set', () => {
-  it('is every face last saved before the cutoff that is not already waiting', async () => {
+  it('is every face not already waiting', async () => {
     await model(1);
-    await model(2, { updatedAt: '2026-11-08T00:00:00Z' }); // saved after the cutoff
     await model(3, { sfwName: null }); // no .com name
     await model(4, { sfwCoverImageId: null }); // no .com cover
     await model(5, { deletedAt: '2026-11-02T00:00:00Z' });
     await model(6); // already waiting on a re-check
     await db.query(`INSERT INTO "KeyValue" VALUES ($1, '{}'::jsonb)`, [comFaceRecheckRetryKey(6)]);
 
-    expect(await run<{ id: number }>(recheckSetSql(CUTOFF))).toEqual([{ id: 1 }]);
+    expect(await run<{ id: number }>(recheckSetSql())).toEqual([{ id: 1 }]);
+  });
+});
+
+describe('the re-check set, whatever the model was last written', () => {
+  it('takes a face whose model had an unrelated write after the cutoff', async () => {
+    await model(1, { updatedAt: '2026-11-12T00:00:00Z' }); // e.g. a lock toggle bumped updatedAt
+
+    expect(await run<{ id: number }>(recheckSetSql())).toEqual([{ id: 1 }]);
   });
 });
 
@@ -116,7 +125,7 @@ describe('the stop guard', () => {
   it('stops before the next batch when no row of the last one got a verdict', async () => {
     const { inserted, deps: d } = deps((ids) => new Set(ids));
 
-    const result = await runBatches(batches([1, 2, 3, 4, 5], 2), 300_000, d);
+    const result = await runBatches(chunksFrom([1, 2, 3, 4, 5], 2), 300_000, d);
 
     expect(inserted).toEqual([[1, 2]]);
     expect(result).toEqual({ queued: 2, stoppedAt: 3 });
@@ -125,7 +134,7 @@ describe('the stop guard', () => {
   it('keeps going while the checker answers some of each batch', async () => {
     const { inserted, deps: d } = deps((ids) => new Set(ids.slice(1)));
 
-    const result = await runBatches(batches([1, 2, 3, 4, 5], 2), 300_000, d);
+    const result = await runBatches(chunksFrom([1, 2, 3, 4, 5], 2), 300_000, d);
 
     expect(inserted).toEqual([[1, 2], [3, 4], [5]]);
     expect(result).toEqual({ queued: 5, stoppedAt: undefined });
@@ -151,6 +160,41 @@ describe('readback', () => {
       removed: 1,
       unverified: 1,
       total: 4,
+    });
+  });
+});
+
+describe('readback controls', () => {
+  const activity = (entityId: number, name: string, createdAt: string) =>
+    db.query(
+      `INSERT INTO "ModActivity" (activity, "entityType", "entityId", "createdAt") VALUES ($1, 'model', $2, $3)`,
+      [name, entityId, createdAt]
+    );
+
+  it("counts the re-check's removals of these models since the run started", async () => {
+    const since = new Date('2026-11-12T20:00:00Z');
+    await activity(1, 'removeComFace', '2026-11-12T20:30:00Z');
+    await activity(2, 'comFaceRecheckGaveUp', '2026-11-12T21:00:00Z');
+    await activity(3, 'removeComFace', '2026-11-12T19:00:00Z'); // before the run
+    await activity(4, 'removeComFace', '2026-11-12T20:30:00Z'); // not in the run
+    await activity(3, 'lockModel', '2026-11-12T20:30:00Z'); // another activity, in the run
+
+    const [{ count }] = await run<{ count: bigint }>(modActivitySql([1, 2, 3], since));
+
+    expect(Number(count)).toBe(2);
+  });
+
+  it('sees a faced model outside the run that is waiting', async () => {
+    await model(1);
+    await model(2);
+    await model(3, { sfwCoverImageId: null }); // no face
+    await db.query(`INSERT INTO "KeyValue" VALUES ($1, '{}'::jsonb)`, [comFaceRecheckRetryKey(2)]);
+
+    const [counts] = await run<{ total: bigint; pending: bigint }>(controlSql([1]));
+
+    expect({ total: Number(counts.total), pending: Number(counts.pending) }).toEqual({
+      total: 1,
+      pending: 1,
     });
   });
 });

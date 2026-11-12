@@ -12,7 +12,7 @@ import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 const QUEUE = 'com-face-recheck';
 /** A model whose check got no verdict waits in a KeyValue row under this prefix until its next try. */
-const RETRY_KEY_PREFIX = 'com-face-recheck:';
+export const RETRY_KEY_PREFIX = 'com-face-recheck:';
 
 /** Retries back off from the first delay, doubling up to the max, until the window since the oldest
  *  edit still without a verdict runs out. */

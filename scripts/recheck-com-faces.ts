@@ -5,47 +5,52 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   COM_FACE_RUN_BUDGET_MS,
-  comFaceRecheckRetryKey,
+  RETRY_KEY_PREFIX,
 } from '~/server/services/model-com-face-recheck.service';
 import { runScriptAndExit } from './lib/run-as-script';
-import { parseIdsCsv } from './recompute-mature-model-nsfw-levels';
+import { chunksFrom, parseIdsCsv } from './recompute-mature-model-nsfw-levels';
 
 /**
- * Queue the civitai.com listing re-check for models whose .com face was last saved before a cutoff,
- * through the path the `com-face-recheck` job already runs: a due retry row in "KeyValue"
- * (`com-face-recheck:<modelId>`), which the job checks ahead of fresh edits. Each check keeps the face,
- * takes it off civitai.com when the listing is flagged, or retries for 24 hours from the row's insert
- * and then takes it off as unverified (`recheckComFace` / `processComFaceRechecks`). Nothing here
- * messages owners. Postgres only: no Redis.
+ * Queue the civitai.com listing re-check for every model that has a .com face, through the path the
+ * `com-face-recheck` job already runs: a due retry row in "KeyValue" (`com-face-recheck:<modelId>`),
+ * which the job checks ahead of fresh edits. Each check keeps the face, takes it off civitai.com when
+ * the listing is flagged, or retries for 24 hours from the row's insert and then takes it off as
+ * unverified (`recheckComFace` / `processComFaceRechecks`). Nothing here messages owners. Postgres
+ * only: no Redis.
  *
- *   pnpm run tsscript scripts/recheck-com-faces.ts --before <ISO> [--out ids.csv]
+ * Every face, not only those saved before the intent check went live: nothing records when a face
+ * was saved or last passed the check, and Model.updatedAt moves on unrelated writes (a lock toggle,
+ * a lock-review lift), so a cutoff on it would leave older faces unchecked. A face that already
+ * passed costs one more check and stays.
+ *
+ *   pnpm run tsscript scripts/recheck-com-faces.ts [--out ids.csv]
  *   pnpm run tsscript scripts/recheck-com-faces.ts --apply --ids <id>[,<id>...]
  *   pnpm run tsscript scripts/recheck-com-faces.ts --apply --ids-file ids.csv [--batch 20] [--every 300]
- *   pnpm run tsscript scripts/recheck-com-faces.ts --readback --ids-file ids.csv
+ *     [--from <id>] [--limit N]
+ *   pnpm run tsscript scripts/recheck-com-faces.ts --readback --ids-file ids.csv [--since <ISO>]
  *
  * Modes:
  *   (default)   Dry run, read-only on the replica: derives the set at run time (a .com name and cover,
- *               not deleted, Model.updatedAt before --before, no retry row waiting) and prints its
- *               count. --out writes the ids as a CSV; keep it outside the repo.
- *   --apply     Inserts the retry rows in batches of --batch, --every seconds apart. ON CONFLICT DO
- *               NOTHING: a model already waiting keeps its deadline, and a re-run adds nothing. Before
- *               each batch after the first, if every row of the previous batch is still waiting, the
- *               checker is not keeping up (or is down): the run stops instead of starting more 24-hour
- *               countdowns, and prints where to resume. --limit caps how many ids are queued.
- *   --readback  Read-only on the replica: kept / removed / unverified / pending over --ids-file, with
- *               two controls (see `readback`).
+ *               not deleted, no retry row waiting) and prints its count. --out writes the ids as a
+ *               CSV; keep it outside the repo.
+ *   --apply     Inserts the retry rows in ascending id order, in batches of --batch, --every seconds
+ *               apart (at least one job run). ON CONFLICT DO NOTHING: a model already waiting keeps
+ *               its deadline, and a re-run adds nothing. Before each batch after the first, if every
+ *               row of the previous batch is still waiting, the checker is not keeping up (or is down):
+ *               the run stops instead of starting more 24-hour countdowns, and prints the --from id to
+ *               resume at. --limit caps how many ids are queued. Prints its start time for --since.
+ *   --readback  Read-only on the replica: kept / removed / unverified / waiting over the ids; a control
+ *               over faced models outside them (none should be waiting); and with --since, the
+ *               ModActivity removals since the run started, which must equal removed + unverified.
  */
 
-export const RETRY_KEY_PREFIX = comFaceRecheckRetryKey(0).slice(0, -1);
-
 /** The models to re-check, read at run time. */
-export const recheckSetSql = (before: Date) => Prisma.sql`
+export const recheckSetSql = () => Prisma.sql`
   SELECT m.id
   FROM "Model" m
   WHERE m."sfwName" IS NOT NULL
     AND m."sfwCoverImageId" IS NOT NULL
     AND m."deletedAt" IS NULL
-    AND m."updatedAt" < ${before}
     AND NOT EXISTS (
       SELECT 1 FROM "KeyValue" kv WHERE kv.key = ${RETRY_KEY_PREFIX} || m.id::text
     )
@@ -73,12 +78,6 @@ export const pendingSql = (modelIds: number[]) => Prisma.sql`
 /** Every row of the previous batch is still waiting: the checker has not answered any of them. */
 export function checkerStalled(previousBatch: number[], pending: Set<number>) {
   return previousBatch.length > 0 && previousBatch.every((id) => pending.has(id));
-}
-
-export function batches(ids: number[], size: number): number[][] {
-  const out: number[][] = [];
-  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
-  return out;
 }
 
 type RunDeps = {
@@ -158,7 +157,6 @@ async function main() {
   const { values } = parseArgs({
     args: process.argv.slice(2),
     options: {
-      before: { type: 'string' },
       out: { type: 'string' },
       apply: { type: 'boolean', default: false },
       readback: { type: 'boolean', default: false },
@@ -191,13 +189,8 @@ async function main() {
   }
 
   if (!values.apply) {
-    if (!values.before) throw new Error('Pass --before <ISO>');
-    const before = new Date(values.before);
-    if (Number.isNaN(before.getTime())) throw new Error('--before is not a date');
-    const rows = await dbRead.$queryRaw<{ id: number }[]>(recheckSetSql(before));
-    console.log(
-      `set (replica): ${rows.length} models with a .com face last saved before ${values.before}`
-    );
+    const rows = await dbRead.$queryRaw<{ id: number }[]>(recheckSetSql());
+    console.log(`set (replica): ${rows.length} models with a .com face and no re-check waiting`);
     if (values.out) {
       writeFileSync(values.out, ['id', ...rows.map((r) => r.id)].join('\n') + '\n');
       console.log(`ids written to ${values.out}`);
@@ -207,17 +200,16 @@ async function main() {
   }
 
   if (!ids?.length) throw new Error('--apply needs --ids or --ids-file (from the dry run)');
-  const from = Number(values.from);
-  let queue = ids.filter((id) => id >= from).sort((a, b) => a - b);
-  if (values.limit) queue = queue.slice(0, Number(values.limit));
   const size = Number(values.batch);
+  let queue = chunksFrom(ids, ids.length, Number(values.from)).flat();
+  if (values.limit) queue = queue.slice(0, Number(values.limit));
   const everyMs = Number(values.every) * 1000;
   if (everyMs < COM_FACE_RUN_BUDGET_MS)
     throw new Error(`--every must be at least one job run (${COM_FACE_RUN_BUDGET_MS / 1000}s)`);
 
   const startedAt = new Date();
   console.log(`apply: ${queue.length} ids, batches of ${size}, ${values.every}s apart`);
-  const result = await runBatches(batches(queue, size), everyMs, {
+  const result = await runBatches(chunksFrom(queue, size), everyMs, {
     insert: (chunk) => dbWrite.$executeRaw(insertRetryRowsSql(chunk, new Date())),
     pending: async (chunk) =>
       new Set((await dbWrite.$queryRaw<{ id: number }[]>(pendingSql(chunk))).map((r) => r.id)),
