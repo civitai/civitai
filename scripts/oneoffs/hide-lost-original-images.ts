@@ -1,23 +1,12 @@
 /**
  * One-off: hide images whose original bytes are gone from storage, by setting
- * `ingestion = 'NotFound'` ("no media behind the row"). Public reads drop the row
- * (`imageReviewedSql`), a moderator still loads it by id; the row is kept and nothing is told to
- * the owner. The id list is a file kept off-repo; this file holds no ids.
+ * `ingestion = 'NotFound'`. Public reads drop the row (`imageReviewedSql`), a moderator still loads
+ * it by id, the row is kept and the owner is not told. The id list is a file kept off-repo; this
+ * file holds no ids.
  *
- * Per id, right before the write:
- *   - held or in review is skipped: review/block/minor/poi/tos, a CsamReport or EvidenceHold on the
- *     image, any legal hold on the owner, anything not `Scanned`. The same guard is repeated in the
- *     UPDATE, so a hold placed after the check still stops it.
- *   - a fresh HEAD of the original in storage: only a 404 is hidden. A 200 or any error is skipped
- *     (fail closed). Before any HEAD, a control sample of live images must all HEAD present, else the
- *     run stops: a wrong bucket also answers 404 for everything.
- *
- * After each chunk, for the rows hidden: search-index Delete, existence cache, post caches. A bare
- * UPDATE leaves them in site search.
- *
- * Every row about to change is appended to `--log` (id and prior ingestion) BEFORE the UPDATE.
- * `--undo` restores those rows' prior ingestion, only where they are still `NotFound`. Output is
- * counts only; the log is the one place ids live, and its sha256 is printed.
+ * Held or in-review rows are skipped, the check is repeated inside the UPDATE, and only a fresh
+ * HEAD 404 hides. Every row about to change is appended to `--log` (id and prior ingestion) before
+ * the UPDATE; `--undo` restores from it. Output is counts only.
  *
  * Usage (dry run is the default):
  *   npm run tsscript scripts/oneoffs/hide-lost-original-images.ts --ids <file> --log <file>
@@ -41,6 +30,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { Prisma } from '@prisma/client';
+import pLimit from 'p-limit';
 import { hasScanWorkflowSql } from '~/server/common/judge-rating';
 import { captureImageHeldSql, ownerHeldSql } from '~/server/services/legal-hold.service';
 
@@ -193,7 +183,11 @@ export function controlSql(targets: number[]) {
   `;
 }
 
-/** A HEAD that proves the key is absent: 404 only. A 403 or a timeout proves nothing. */
+/**
+ * A HEAD that proves the key is absent: 404 only. Stricter than `announcement-media-check`'s
+ * private `isNotFound`, which is not exported, and than the CSAM reader's probe, which falls back to
+ * the edge: here a 403 or a timeout must never count as gone.
+ */
 export function isMissingHead(e: unknown) {
   const err = e as { name?: string; $metadata?: { httpStatusCode?: number } } | undefined;
   return (
@@ -221,20 +215,6 @@ export type Deps = {
 type Counts = Record<string, number>;
 const bump = (counts: Counts, key: string, by = 1) => (counts[key] = (counts[key] ?? 0) + by);
 
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>) {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i]);
-      }
-    })
-  );
-  return out;
-}
-
 /**
  * The rows are already changed when this runs, and a re-run skips them as not-scanned, so a failure
  * here is never retried by the main path: stop and say how to catch the caches up (`--rebust`).
@@ -260,7 +240,9 @@ export async function rebust(
   const groups = new Map<string, number[]>();
   for (const e of entries) {
     const state = action === 'hide' ? 'NotFound' : e.prior;
-    groups.set(state, [...(groups.get(state) ?? []), e.id]);
+    const ids = groups.get(state) ?? [];
+    ids.push(e.id);
+    groups.set(state, ids);
   }
   let n = 0;
   for (const [state, all] of groups)
@@ -276,10 +258,11 @@ export async function rebust(
 /** A sample of live images must all HEAD present; otherwise a 404 means nothing. */
 export async function controlOk(ids: number[], deps: Pick<Deps, 'query' | 'head' | 'isExternal'>) {
   const rows = await deps.query<{ url: string | null }>(controlSql(ids));
+  // One checkable image per quantile pick, or the control no longer covers the era it vouches for.
   const checkable = rows.filter((r): r is { url: string } => !!r.url && !deps.isExternal(r.url));
-  if (!checkable.length) return false;
+  if (!rows.length || checkable.length !== rows.length) return 0;
   const results = await Promise.all(checkable.map((r) => deps.head(r.url).catch(() => 'error')));
-  return results.every((r) => r === 'present');
+  return results.every((r) => r === 'present') ? checkable.length : 0;
 }
 
 export async function run(options: RunOptions, ids: number[], deps: Deps) {
@@ -287,10 +270,13 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
     throw new Error(
       'the Moderation Lead cross-check has expired: re-run it, then pass --cross-check-rerun'
     );
-  if (!(await controlOk(ids, deps)))
-    throw new Error('control failed: live images did not all HEAD present; no HEAD is trusted');
+  const controls = await controlOk(ids, deps);
+  if (!controls)
+    throw new Error(
+      'control failed: not every quantile has a live image that HEADs present; no HEAD is trusted'
+    );
 
-  const counts: Counts = { listed: ids.length };
+  const counts: Counts = { listed: ids.length, controls };
   const [flight] = await deps.query<{ workflow: number; requested: number; both: number }>(
     inFlightSql(ids)
   );
@@ -316,13 +302,18 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
       return false;
     });
 
-    const heads = await mapLimit(eligible, options.concurrency, async (r) => {
-      try {
-        return await deps.head(r.url);
-      } catch {
-        return 'error' as const;
-      }
-    });
+    const limit = pLimit(options.concurrency);
+    const heads = await Promise.all(
+      eligible.map((r) =>
+        limit(async () => {
+          try {
+            return await deps.head(r.url);
+          } catch {
+            return 'error' as const;
+          }
+        })
+      )
+    );
     const gone = eligible.filter((_, n) => {
       if (heads[n] === 'missing') return true;
       bump(counts, heads[n] === 'present' ? 'skipped:now-200' : 'skipped:head-error');
@@ -353,7 +344,11 @@ export async function undo(
   deps: Deps
 ) {
   const byPrior = new Map<string, number[]>();
-  for (const e of entries) byPrior.set(e.prior, [...(byPrior.get(e.prior) ?? []), e.id]);
+  for (const e of entries) {
+    const ids = byPrior.get(e.prior) ?? [];
+    ids.push(e.id);
+    byPrior.set(e.prior, ids);
+  }
   let restored = 0;
   for (const [prior, all] of byPrior)
     for (let i = 0; i < all.length; i += options.chunk) {

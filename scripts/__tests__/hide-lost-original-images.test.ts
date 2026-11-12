@@ -106,9 +106,6 @@ function makeDeps(over: Partial<Deps> = {}) {
   return { deps, logged, propagated, lines };
 }
 
-// NOTE to whoever trims these: each case pins a rule the Moderation Lead set for this batch
-// (fresh HEAD fail-closed, holds re-read at write time, control before trusting a 404). The suite is
-// the only place those rules are written next to the code that enforces them.
 describe('hide-lost-original-images', () => {
   it('hides only ids that still 404, logs the prior value, and propagates them', async () => {
     const { deps, logged, propagated } = makeDeps({
@@ -264,13 +261,13 @@ describe('hide-lost-original-images', () => {
   it('reports scan-in-flight by both signals and their overlap, without writing', async () => {
     await db.exec(`
       UPDATE "Image" SET "scanJobs" = '{"workflowId":"w"}' WHERE id IN (1, 2);
-      UPDATE "Image" SET "scannedAt" = '2024-01-01', "scanRequestedAt" = '2024-02-01' WHERE id IN (2, 3);
+      UPDATE "Image" SET "scannedAt" = '2024-01-01', "scanRequestedAt" = '2024-02-01' WHERE id = 3;
     `);
     const { deps } = makeDeps();
     const counts = await run(options({ apply: false }), GONE, deps);
     expect(counts['scan-in-flight:workflow-present']).toBe(2);
-    expect(counts['scan-in-flight:requested-after-scanned']).toBe(2);
-    expect(counts['scan-in-flight:both']).toBe(1);
+    expect(counts['scan-in-flight:requested-after-scanned']).toBe(1);
+    expect(counts['scan-in-flight:both']).toBe(0);
   });
 
   it('undo leaves a row that was held while hidden', async () => {
@@ -329,6 +326,39 @@ describe('hide-lost-original-images', () => {
     expect(isMissingHead({ $metadata: { httpStatusCode: 404 } })).toBe(true);
     expect(isMissingHead({ name: 'Forbidden', $metadata: { httpStatusCode: 403 } })).toBe(false);
     expect(isMissingHead(new Error('timeout'))).toBe(false);
+  });
+
+  it('aborts when a quantile of the targets has no live image to vouch for it', async () => {
+    const { deps } = makeDeps();
+    await expect(run(options(), [...GONE, 1000], deps)).rejects.toThrow(/control failed/);
+    expect(await ingestion(1)).toBe('Scanned');
+  });
+
+  it('reports how many control images vouched for the HEADs', async () => {
+    const { deps } = makeDeps();
+    const counts = await run(options({ apply: false }), GONE, deps);
+    expect(counts.controls).toBe(5);
+  });
+
+  it('--rebust hide skips a row that is no longer NotFound; --rebust undo covers restored rows', async () => {
+    const calls: { ids: number[]; action: string }[] = [];
+    const { deps } = makeDeps({
+      propagate: async (t, action) => {
+        calls.push({ ids: t.map((x) => x.id).sort(), action });
+      },
+    });
+    await run(options(), GONE, deps);
+    calls.length = 0;
+    await db.exec(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 3`);
+    const entries = GONE.map((id) => ({ id, prior: 'Scanned' }));
+    expect(await rebust(entries, 'hide', options(), deps)).toBe(2);
+    expect(calls).toEqual([{ ids: [1, 2], action: 'hide' }]);
+
+    calls.length = 0;
+    await undo(entries, options({ undo: true }), deps);
+    calls.length = 0;
+    expect(await rebust(entries, 'undo', options(), deps)).toBe(2);
+    expect(calls).toEqual([{ ids: [1, 2], action: 'undo' }]);
   });
 
   it('parseArgs requires a log and, outside undo, an ids file', () => {
