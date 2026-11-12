@@ -104,6 +104,8 @@ beforeAll(async () => {
 afterAll(() => db.close());
 
 type Row = {
+  /** The stored state; default Rescan. */
+  ingestion?: string;
   nsfwLevel: number;
   nsfwLevelLocked?: boolean;
   metadata?: object | null;
@@ -116,7 +118,7 @@ async function arrange(stored: Row, loaded: Row = stored) {
   await db.exec(`DELETE FROM "Image"; DELETE FROM "JobQueue";`);
   await db.query(
     `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "nsfwLevelLocked", metadata, "needsReview", "scanJobs")
-     VALUES ($1, 'Rescan', $2, $3, $4, $5, $6)`,
+     VALUES ($1, $7, $2, $3, $4, $5, $6)`,
     [
       ID,
       stored.nsfwLevel,
@@ -124,6 +126,7 @@ async function arrange(stored: Row, loaded: Row = stored) {
       stored.metadata ?? null,
       stored.needsReview ?? null,
       stored.scanJobs ?? null,
+      stored.ingestion ?? 'Rescan',
     ]
   );
   return {
@@ -351,6 +354,44 @@ describe('resolveScanOutcome with a collection judge rating', () => {
 
     expect(row).toMatchObject({ ingestion: 'Blocked', nsfwLevel: BLOCKED });
     expect(outcome.nsfwLevel).toBe(BLOCKED);
+  });
+
+  // A hidden image (original lost) is NotFound. These run the real scan writes against the real row:
+  // no verdict, floor or rescan write may move it back toward public; a block still lands.
+  describe('an image hidden as NotFound', () => {
+    it('stays NotFound under a clean verdict', async () => {
+      scanTagLevel = PG13;
+      const { outcome, row } = await scan(
+        await arrange({ nsfwLevel: PG13, ingestion: 'NotFound' })
+      );
+
+      expect(row).toMatchObject({ ingestion: 'NotFound' });
+      expect(outcome.ingestion).toBe('NotFound');
+    });
+
+    it('stays NotFound when a judge floor would send it back for a rescan', async () => {
+      scanTagLevel = PG13;
+      holder.beforeVerdict = () =>
+        db.query(`UPDATE "Image" SET metadata = $1 WHERE id = $2`, [judgeRated(X), ID]);
+      const { outcome, row } = await scan(
+        await arrange({ nsfwLevel: PG13, ingestion: 'NotFound' })
+      );
+
+      expect(row).toMatchObject({ ingestion: 'NotFound', nsfwLevel: PG13 });
+      expect(outcome.ingestion).toBe('NotFound');
+    });
+
+    it('is still blocked by an audit block', async () => {
+      vi.mocked(auditPostImageMeta).mockReturnValueOnce({
+        success: false,
+        blockedFor: ['prompt'],
+        softBlockedFor: [],
+      });
+      const { outcome, row } = await scan(await arrange({ nsfwLevel: R, ingestion: 'NotFound' }));
+
+      expect(row).toMatchObject({ ingestion: 'Blocked', nsfwLevel: BLOCKED });
+      expect(outcome.ingestion).toBe('Blocked');
+    });
   });
 
   it('ignores a judge rating that is not a level', async () => {

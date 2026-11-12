@@ -483,6 +483,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
       ).resolves.toBeUndefined();
 
       expect(markedError?.text).toContain(`'{retryCount}'`);
+      // A hidden (NotFound) image keeps NotFound: Error + a locked rating would republish it.
+      expect(markedError?.text).toContain(`WHEN "ingestion" = 'NotFound'`);
       expect(markedError?.params).toContain(ImageIngestionStatus.Error);
       expect(markedError?.params).toContain(10);
       const stamped = markedError?.params.find(
