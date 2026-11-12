@@ -189,21 +189,21 @@ describe('semantic article search: the query audit and the browsing level', () =
     }).then((result) => ({ result, track }));
   };
 
-  it('refuses a query the audit flags as minor, before asking the service, and records it', async () => {
+  it('narrows a minor query to the safe levels for a moderator, and records it', async () => {
     h.includesInappropriate.mockReturnValue('minor');
-    const { result, track } = await run();
-    expect(result.items).toEqual([]);
-    expect(sent).toHaveLength(0);
+    const { result, track } = await run({ browsingLevel: 31, user: MOD });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
+    expect(result.items.map((a) => a.id)).toEqual([10]);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
   });
 
-  it('refuses any flagged verdict for a moderator at NSFW levels, and records a masked minor match', async () => {
+  it('refuses a POI verdict for a moderator at NSFW levels, and records a masked minor match', async () => {
     h.includesInappropriate.mockReturnValue('poi');
     h.includesMinor.mockReturnValue(true);
     const { result, track } = await run({ browsingLevel: 31, user: MOD });
-    expect(result.items).toEqual([]);
+    expect(result).toMatchObject({ items: [], refused: 'poi-minor' });
     expect(sent).toHaveLength(0);
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
     expect(track.action).toHaveBeenCalledWith(
@@ -219,9 +219,31 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(sent).toHaveLength(0);
   });
 
-  it('searches a person-of-interest query when no add-on disables them', async () => {
+  it('refuses a person-of-interest query from a non-moderator with no add-on', async () => {
     h.includesPoi.mockReturnValue('someone');
     const { result } = await run();
+    expect(result).toMatchObject({ items: [], refused: 'poi' });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('counts each flagged query by verdict and stage', async () => {
+    const { register } = await import('prom-client');
+    const count = async () =>
+      (
+        (await register.getSingleMetric('semantic_search_query_verdicts_total')?.get())?.values ??
+        []
+      )
+        .filter((v) => v.labels.verdict === 'poi' && v.labels.stage === 'query')
+        .reduce((n, v) => n + v.value, 0);
+    const before = await count();
+    h.includesPoi.mockReturnValue('someone');
+    await run();
+    expect(await count()).toBe(before + 1);
+  });
+
+  it('lets a moderator with no add-on search a person-of-interest query', async () => {
+    h.includesPoi.mockReturnValue('someone');
+    const { result } = await run({ user: MOD });
     expect(result.items.map((a) => a.id)).toEqual([10]);
   });
 

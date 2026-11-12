@@ -10,9 +10,12 @@ import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
+  minorSafeBrowsingLevel,
   recordRefusal,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
+  type QueryRefusal,
+  type QueryStage,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
@@ -41,6 +44,8 @@ const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
 });
 
 const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
+// Shown as no results; `refused` is for logging, not for the viewer.
+const refusedPage = (refused: Exclude<QueryRefusal, false>) => ({ ...emptyPage(), refused });
 
 export async function searchSemanticImages({
   input,
@@ -56,7 +61,7 @@ export async function searchSemanticImages({
   track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
-  const browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  let browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
 
   const [hidden, addonData, blockedTags, userIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -78,18 +83,23 @@ export async function searchSemanticImages({
   if (strip.emptyResult) return { items: [], nextCursor: undefined, correctedQuery: undefined };
   const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
-  const addons = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
-    isModerator: user?.isModerator,
-  });
-  const refusalOf = async (text: string) => {
+  const addonsFor = (level: number) =>
+    resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
+  let addons = addonsFor(browsingLevel);
+  const refusalOf = async (text: string, stage: QueryStage) => {
     const refusal = await semanticQueryRefusal(text, {
       browsingLevel,
       disablePoi: addons.disablePoi,
+      isModerator: user?.isModerator,
     });
-    recordRefusal(track, refusal, text, 'images_semantic');
+    recordRefusal(track, refusal, text, 'images_semantic', stage);
     return refusal;
   };
-  if (input.query && (await refusalOf(input.query))) return emptyPage();
+  const refusal = input.query ? await refusalOf(input.query, 'query') : false;
+  if (refusal === 'minor') {
+    browsingLevel = minorSafeBrowsingLevel(browsingLevel);
+    addons = addonsFor(browsingLevel);
+  } else if (refusal) return refusedPage(refusal);
   const excludedUserIds = [
     ...new Set(
       [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
@@ -173,15 +183,16 @@ export async function searchSemanticImages({
     : { text: input.query ?? '' };
 
   let correctedQuery: string | undefined;
-  let correctedReviewed: boolean | undefined;
+  let correctedRefusal: QueryRefusal | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await candidateSource({ query, filter, offset, limit });
       // The service embeds its spelling correction, not the text audited above.
-      if (correctedReviewed === undefined && result.correctedQuery !== undefined)
-        correctedReviewed =
-          result.correctedQuery === input.query || !(await refusalOf(result.correctedQuery));
-      if (correctedReviewed === false) return [];
+      if (correctedRefusal === undefined && result.correctedQuery !== undefined)
+        correctedRefusal =
+          result.correctedQuery !== input.query &&
+          (await refusalOf(result.correctedQuery, 'correction'));
+      if (correctedRefusal) return [];
       correctedQuery ??= result.correctedQuery;
       return result.ids;
     },
@@ -190,6 +201,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (correctedReviewed === false) return emptyPage();
+  if (correctedRefusal) return refusedPage(correctedRefusal);
   return { ...page, correctedQuery };
 }

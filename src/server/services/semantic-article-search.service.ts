@@ -8,9 +8,12 @@ import { getArticles } from '~/server/services/article.service';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import {
+  minorSafeBrowsingLevel,
   recordRefusal,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
+  type QueryRefusal,
+  type QueryStage,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
@@ -48,7 +51,7 @@ export async function searchSemanticArticles({
   candidateSource?: CandidateSource;
 }) {
   const none = { items: [] as HydratedArticle[], nextCursor: undefined, correctedQuery: undefined };
-  const browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  let browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
   const [hidden, addonData, userIds, tagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),
@@ -61,12 +64,18 @@ export async function searchSemanticArticles({
   const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
     isModerator: user?.isModerator,
   });
-  const refusalOf = async (text: string) => {
-    const refusal = await semanticQueryRefusal(text, { browsingLevel, disablePoi });
-    recordRefusal(track, refusal, text, 'articles_semantic');
+  const refusalOf = async (text: string, stage: QueryStage) => {
+    const refusal = await semanticQueryRefusal(text, {
+      browsingLevel,
+      disablePoi,
+      isModerator: user?.isModerator,
+    });
+    recordRefusal(track, refusal, text, 'articles_semantic', stage);
     return refusal;
   };
-  if (await refusalOf(input.query)) return none;
+  const refusal = await refusalOf(input.query, 'query');
+  if (refusal === 'minor') browsingLevel = minorSafeBrowsingLevel(browsingLevel);
+  else if (refusal) return { ...none, refused: refusal };
 
   const excludedUserIds = [
     ...new Set(
@@ -138,15 +147,16 @@ export async function searchSemanticArticles({
   };
 
   let correctedQuery: string | undefined;
-  let correctedReviewed: boolean | undefined;
+  let correctedRefusal: QueryRefusal | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await candidateSource({ query: { text: input.query }, filter, offset, limit });
       // The service embeds its spelling correction, not the text audited above.
-      if (correctedReviewed === undefined && result.correctedQuery !== undefined)
-        correctedReviewed =
-          result.correctedQuery === input.query || !(await refusalOf(result.correctedQuery));
-      if (correctedReviewed === false) return [];
+      if (correctedRefusal === undefined && result.correctedQuery !== undefined)
+        correctedRefusal =
+          result.correctedQuery !== input.query &&
+          (await refusalOf(result.correctedQuery, 'correction'));
+      if (correctedRefusal) return [];
       correctedQuery ??= result.correctedQuery;
       returned += result.ids.length;
       return result.ids;
@@ -165,6 +175,6 @@ export async function searchSemanticArticles({
     shown: page.items.length,
   }).catch(() => undefined);
 
-  if (correctedReviewed === false) return none;
+  if (correctedRefusal) return { ...none, refused: correctedRefusal };
   return { ...page, correctedQuery };
 }

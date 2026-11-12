@@ -6,12 +6,13 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { countQueryVerdict } from '~/server/metrics/semantic-search.metrics';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metadata/audit';
 
 export type QueryTracker = Pick<Tracker, 'action'>;
-export type QueryRefusal = 'minor' | 'poi' | 'error' | false;
+export type QueryRefusal = 'minor' | 'poi' | 'poi-minor' | 'error' | false;
 
 /** Only moderators search above the safe levels. */
 export function resolveSemanticBrowsingLevel(requested: number | undefined, user?: SessionUser) {
@@ -36,28 +37,44 @@ export function anchorBrowsingLevel(viewerLevel: number, anchorNsfwLevel: number
 /** The search gates' query audit, run on the server; any failure refuses. */
 export async function semanticQueryRefusal(
   query: string,
-  { browsingLevel, disablePoi }: { browsingLevel: number; disablePoi: boolean }
+  {
+    browsingLevel,
+    disablePoi,
+    isModerator,
+  }: { browsingLevel: number; disablePoi: boolean; isModerator?: boolean }
 ): Promise<QueryRefusal> {
   try {
     const audited = await stripBenignPhrases(query, BlocklistType.PromptBenignPhrase);
     const nsfw = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
     const verdict = includesInappropriate({ prompt: audited }, nsfw);
-    // A 'poi' verdict is returned before the minor check runs, so it can hide one.
-    if (verdict === 'minor' || (verdict && includesMinor(audited))) return 'minor';
+    if (verdict === 'minor') return 'minor';
+    // A 'poi' verdict is returned before the minor check runs, so it can hide one; still refused.
+    if (verdict && includesMinor(audited)) return 'poi-minor';
     if (verdict) return verdict;
-    if (disablePoi && includesPoi(audited)) return 'poi';
+    // Only moderators may look real people up, and then only without the POI add-on.
+    if ((disablePoi || !isModerator) && includesPoi(audited)) return 'poi';
     return false;
   } catch {
     return 'error';
   }
 }
 
+/** A minor verdict narrows the search to the safe levels instead of refusing it. */
+export function minorSafeBrowsingLevel(level: number) {
+  return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
+}
+
+export type QueryStage = 'query' | 'correction';
+
 export function recordRefusal(
   track: QueryTracker | undefined,
   refusal: QueryRefusal,
   query: string,
-  index: string
+  index: string,
+  stage: QueryStage = 'query'
 ) {
-  if (refusal !== 'minor') return;
+  if (!refusal) return;
+  countQueryVerdict(index, refusal, stage);
+  if (refusal !== 'minor' && refusal !== 'poi-minor') return;
   track?.action({ type: 'CSAM_Help_Triggered', details: { query, index } }).catch(() => undefined);
 }

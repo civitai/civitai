@@ -501,21 +501,15 @@ describe('the query audit and the browsing level', () => {
     }).then((result) => ({ result, calls, track }));
   };
 
-  it('refuses a query the audit flags as minor, before asking the index, and records it', async () => {
+  it('narrows a minor query to the safe levels for a moderator too, and records it', async () => {
     h.includesInappropriate.mockReturnValue('minor');
-    const { result, calls, track } = await run({});
-    expect(result.items).toEqual([]);
-    expect(calls).toHaveLength(0);
+    const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2]);
+    expect(result.items.map((i) => i.id)).toEqual([101]);
+    expect(result).not.toHaveProperty('refused');
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
-  });
-
-  it('refuses a minor query for a moderator too', async () => {
-    h.includesInappropriate.mockReturnValue('minor');
-    const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
-    expect(result.items).toEqual([]);
-    expect(calls).toHaveLength(0);
   });
 
   it('audits the query as NSFW when the resolved level includes an NSFW level', async () => {
@@ -554,11 +548,12 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).not.toHaveBeenCalled();
   });
 
-  it('records a minor match that a POI verdict came back ahead of', async () => {
+  it('refuses, and records, a minor match that a POI verdict came back ahead of', async () => {
     h.includesInappropriate.mockReturnValue('poi');
     h.includesMinor.mockReturnValue(true);
-    const { result, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
-    expect(result.items).toEqual([]);
+    const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result).toMatchObject({ items: [], refused: 'poi-minor' });
+    expect(calls).toHaveLength(0);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
