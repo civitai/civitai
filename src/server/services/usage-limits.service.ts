@@ -1,5 +1,5 @@
 import type { NextApiRequest } from 'next';
-import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/comment.schema';
+import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/commentv3.schema';
 import { POST_CREATE_RATE_LIMIT_KEY } from '~/server/schema/post.schema';
 import { calendarWindow, usageLimitCounters } from '~/server/services/usage-limit-counters';
 import {
@@ -41,7 +41,8 @@ const USAGE_LIMIT_AREAS = Object.entries(SHARED_KEY_BY_AREA).map(([area, sharedK
 
 const labelOf = (id: string) => getUsageLimitDef(id).label;
 
-export type UsageLimitWindow = UsageLimitDef['window']['type'];
+/** A row's window. A `standing` allowance (app storage) is never listed through here. */
+export type UsageLimitWindow = Exclude<UsageLimitDef['window']['type'], 'standing'>;
 
 export type UsageLimit = {
   id: string;
@@ -59,6 +60,9 @@ export type UsageLimit = {
   /** When every attempt in the window has aged out; a calendar window's next boundary. */
   resetAt: string | null;
 };
+
+const rowWindow = (type: UsageLimitDef['window']['type']): UsageLimitWindow | null =>
+  type === 'standing' ? null : type;
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
@@ -106,7 +110,7 @@ export async function getUsageLimits({
           used,
           remaining,
           windowSeconds: rule.period,
-          window: getUsageLimitDef(id).window.type,
+          window: rowWindow(getUsageLimitDef(id).window.type),
           nextAt: remaining > 0 ? null : iso(nextAt),
           resetAt: iso(resetAt),
         };
@@ -133,7 +137,8 @@ async function countedLimits(
     usageLimitDefs.map(async (def): Promise<UsageLimit | null> => {
       const counter = usageLimitCounters[def.id];
       const window = def.window;
-      if (!counter || def.kind !== 'product' || window.type === 'rolling') return null;
+      if (!counter || def.kind !== 'product') return null;
+      if (window.type === 'rolling' || window.type === 'standing') return null;
       if (wanted && !wanted.has(def.id)) return null;
       const { limit, applies } = await resolveUsageLimit(def.id, user);
       if (!applies) return null;

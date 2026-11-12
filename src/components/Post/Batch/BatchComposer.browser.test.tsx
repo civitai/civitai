@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     perDay: [] as { day: string; existing: number; incoming: number }[],
   },
   scheduleCalls: [] as {
+    resourceIds?: number[];
     posts: { clientKey?: string; publishedAt: Date; images?: { url: string }[] }[];
   }[],
   /** Throws on these call numbers (1-based), as a call the client stopped waiting for would. */
@@ -46,6 +47,11 @@ vi.mock('~/components/Dialog/triggers/resource-select', () => ({
   }: {
     onSelect: (resource: { id: number; name: string; model: { name: string } }) => void;
   }) => onSelect({ id: 42, name: 'v2.0', model: { name: 'Neon Noir' } }),
+}));
+
+// A picked resource's card reads app context this harness does not mount.
+vi.mock('~/components/ImageGeneration/GenerationForm/ResourceSelectCard', () => ({
+  ResourceSelectCard: () => <div data-testid="batch-resource-card" />,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -248,6 +254,21 @@ describe('BatchComposer', () => {
       .element(page.getByTestId('batch-success-summary'))
       .toHaveTextContent(`${POST_COUNT} posts scheduled`);
     expect(mocks.scheduleCalls.map((call) => call.posts.length)).toEqual([2, 2, 2, 2, 2, 2]);
+  });
+
+  test('sends the shared resources once per call, not inside each image’s meta', async () => {
+    await uploadPosts(2);
+    await userEvent.click(page.getByRole('button', { name: 'Add resource' }));
+    await expect.element(page.getByTestId('batch-resource-card')).toBeInTheDocument();
+    await userEvent.click(page.getByTestId('batch-review-button'));
+    const schedule = page.getByTestId('batch-schedule-button');
+    await expect.element(schedule).toBeEnabled();
+    await userEvent.click(schedule);
+
+    await expect.element(page.getByTestId('batch-success-summary')).toBeInTheDocument();
+    const [call] = mocks.scheduleCalls;
+    expect(call.resourceIds).toEqual([42]);
+    expect(JSON.stringify(call.posts)).not.toContain('civitaiResources');
   });
 
   test('the success screen closes on Escape and leaves a fresh composer', async () => {

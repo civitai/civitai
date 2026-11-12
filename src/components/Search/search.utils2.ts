@@ -63,7 +63,7 @@ function articlesTransform(items: Hit<ArticleSearchIndexRecord>[]) {
   return items.map((article) => ({
     ...article,
     nsfwLevel: flagifyBrowsingLevel(article.nsfwLevel),
-    coverImage: {
+    coverImage: article.coverImage && {
       ...article.coverImage,
       tags: article.coverImage.tags.map((x) => x.id),
       metadata: article.coverImage.metadata as ImageMetadata,

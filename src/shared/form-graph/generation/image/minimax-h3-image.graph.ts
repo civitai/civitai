@@ -10,8 +10,7 @@ import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
  * prompt and no prompt expansion; LoRAs and checkpoint overrides are not offered yet.
  */
 
-// PENDING: the Draft model version does not exist yet. 0 matches no version.
-export const minimaxH3ImageVersionId = 0;
+export const minimaxH3ImageVersionId = 3463368;
 
 export const MINIMAX_H3_IMAGE_IMAGES_LIMIT = 16;
 export const MINIMAX_H3_IMAGE_MAX_QUANTITY = 4;

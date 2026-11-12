@@ -5,10 +5,7 @@ import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { forcedMinorModelBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -42,7 +39,7 @@ import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
 export function ModelCarousel(props: Props) {
   const currentUser = useCurrentUser();
   const forceMinorLevel = props.minor && !currentUser?.isModerator;
-  const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+  const minorBrowsingLevel = forcedMinorModelBrowsingLevel(!!currentUser);
 
   return (
     <BrowsingLevelProvider forcedBrowsingLevel={forceMinorLevel ? minorBrowsingLevel : undefined}>

@@ -13,6 +13,8 @@
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
+  import { holdsStart, readinessMessage, type ReadinessView } from './uploadReadiness';
   import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
@@ -44,6 +46,7 @@
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
+    numberInputValue,
     PARAM_LABELS,
     optimizerLrParams,
     paramDeviations,
@@ -71,7 +74,8 @@
     type Selection,
   } from './trainingFlow';
 
-  // name / prompts / params / presetType are owned and seeded by the flow so they survive Back.
+  // name / prompts / params / presetType and the Advanced panel state are owned by the flow so they
+  // survive Back.
   let {
     selection,
     trigger,
@@ -80,9 +84,15 @@
     prompts = $bindable(),
     params = $bindable(),
     presetType = $bindable(),
+    openAdvanced = $bindable(),
+    acknowledgedAdvanced = $bindable(),
     imageCount,
     trainsPairs = false,
     matureCount: scannedMature,
+    readiness = { kind: 'off' },
+    readinessUnusableCount,
+    onCheckReadinessAgain,
+    onRemoveFiles,
     onStart,
     onBack,
     onShowMature,
@@ -97,11 +107,21 @@
     /** Keyed by `runParamsKey`; the flow guarantees an entry for every run in `selection`. */
     params: Record<string, RunParams>;
     presetType: string;
+    /** `runParamsKey` of the run whose Advanced panel is open, or '' when none is. */
+    openAdvanced: string;
+    /** Refund-forfeit acknowledgements, keyed by `runParamsKey`. */
+    acknowledgedAdvanced: Record<string, boolean>;
     imageCount: number;
     /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
     trainsPairs?: boolean;
     /** Trainable images whose upload scan rated them mature (R and up). */
     matureCount: number;
+    /** Whether every dataset file is ready to train; `off` leaves Start to the other checks. */
+    readiness?: ReadinessView;
+    /** How many images or pairs Remove takes out when files can't be used. */
+    readinessUnusableCount?: number;
+    onCheckReadinessAgain: () => void;
+    onRemoveFiles: (blobIds: string[]) => void;
     onStart: (
       launched: LaunchedRun[],
       prompts: SamplePrompt[],
@@ -124,6 +144,7 @@
 
   let starting = $state(false);
   let startError = $state('');
+  let filesProcessing = $state(false);
 
   // Moderators can switch training off on the main app; the flow's banner carries their message.
   const trainingDisabled = $derived(serviceStatus.value?.available === false);
@@ -155,11 +176,10 @@
   const typeName = $derived(loraTypeById(selection.loraType).name);
 
   const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
-  let openAdv = $state(-1);
+  const advancedOpen = (i: number) => openAdvanced === runParamsKey(selection.runs[i]!);
 
   // Support refuses refunds on a poor result once advanced params were edited, so editing them needs
   // the same acknowledgement as the in-app trainer — per run, and again when its model changes.
-  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
   const advancedAcknowledged = (i: number) =>
     acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
   const fieldLocked = (i: number, field: ParamField) =>
@@ -303,10 +323,13 @@
   const isExtra = (field: ParamField): field is ExtraParamField =>
     EXTRA_PARAM_FIELDS.includes(field as ExtraParamField);
 
-  const defaultsAt = (i: number) => defaultRunParams(selection.runs[i]!, trigger);
+  const defaultsAt = (i: number) =>
+    defaultRunParams(selection.runs[i]!, trigger, selection.loraType);
   const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode);
   const deviationsByRun = $derived(
-    selection.runs.map((run, i) => paramDeviations(run, paramsAt(i), labelMode, trigger))
+    selection.runs.map((run, i) =>
+      paramDeviations(run, paramsAt(i), labelMode, trigger, selection.loraType)
+    )
   );
   const deviationsAt = (i: number) => deviationsByRun[i] ?? [];
   // The Advanced panel's own count — Steps lives in the header, Checkpoints in the panel.
@@ -362,6 +385,9 @@
   // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
   function clampField(i: number, field: ParamField, bound: ParamBound) {
     const p = paramsAt(i) as unknown as Record<string, NumericInput | boolean>;
+    // Leave a cleared field blank — Number('') is 0, which would clamp up to `min`; the Start payload
+    // fills a blank with the model's default instead.
+    if (typeof p[field] === 'string' && !p[field].trim()) return;
     const n = Number(p[field]);
     if (!Number.isFinite(n)) return;
     const clamped = Math.min(bound.max, Math.max(bound.min, n));
@@ -437,20 +463,28 @@
   } | null>(null);
   let spendDialogOpen = $state(false);
 
-  function start() {
-    // total == null means a quote is in flight or failed — never submit without a shown price
-    // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
-    if (
-      starting ||
+  // total == null means a quote is in flight or failed — never submit without a shown price
+  // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
+  const startBlocked = $derived(
+    starting ||
       trainingDisabled ||
-      blockedMessage ||
+      !!blockedMessage ||
       total == null ||
       (needsAttestation && !attestSfw) ||
       ackMissing ||
-      imagesProblem ||
-      uploadingImage
-    )
-      return;
+      !!imagesProblem ||
+      uploadingImage ||
+      holdsStart(readiness)
+  );
+  const readinessNote = $derived(
+    readinessMessage(readiness, {
+      unusableCount: readinessUnusableCount,
+      noun: trainsPairs ? 'pair' : 'file',
+    })
+  );
+
+  function start() {
+    if (startBlocked) return;
     if (spend && !spend.matureYellow) {
       confirmSpend = spend;
       spendDialogOpen = true;
@@ -464,6 +498,7 @@
     spendDialogOpen = false;
     starting = true;
     startError = '';
+    filesProcessing = false;
     try {
       await onStart(
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
@@ -475,7 +510,8 @@
       );
     } catch (e) {
       if (e instanceof MatureAckRequiredError) refusedMature = e.matureCount;
-      startError = e instanceof Error ? e.message : 'Could not start training';
+      if (e instanceof FilesProcessingError) filesProcessing = true;
+      else startError = e instanceof Error ? e.message : 'Could not start training';
     } finally {
       starting = false;
     }
@@ -606,7 +642,8 @@
         max={bound?.max}
         step={bound?.step}
         aria-label={PARAM_LABELS[f.field]}
-        bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
+        bind:value={() => numberInputValue(paramsAt(i)[f.field] as NumericInput),
+          (v) => setField(i, f.field, v ?? '')}
         onblur={() => bound && clampField(i, f.field, bound)}
         disabled={locked || unacknowledged}
         class="h-7 font-mono"
@@ -680,9 +717,9 @@
               {:else}
                 <button
                   type="button"
-                  onclick={() => (openAdv = openAdv === i ? -1 : i)}
+                  onclick={() => (openAdvanced = advancedOpen(i) ? '' : runParamsKey(run))}
                   class="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition
-                  {openAdv === i
+                  {advancedOpen(i)
                     ? 'border-primary/50 bg-primary/10 text-primary'
                     : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
                 >
@@ -692,7 +729,7 @@
                       {advancedDeviationsAt(i).length} changed
                     </span>
                   {/if}
-                  {#if openAdv === i}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
+                  {#if advancedOpen(i)}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
                       size={12}
                       stroke={2}
                     />{/if}
@@ -738,7 +775,7 @@
           </div>
           {/if}
 
-          {#if openAdv === i && !noAdvancedParams(run)}
+          {#if advancedOpen(i) && !noAdvancedParams(run)}
             {@const extras = supportedExtras(i)}
             {@const hidden = unsupportedExtras(i)}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
@@ -1034,14 +1071,7 @@
     <Button
       class="mt-4 w-full"
       onclick={start}
-      disabled={starting ||
-        trainingDisabled ||
-        !!blockedMessage ||
-        total == null ||
-        (needsAttestation && !attestSfw) ||
-        ackMissing ||
-        !!imagesProblem ||
-        uploadingImage}
+      disabled={startBlocked}
     >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
@@ -1056,6 +1086,23 @@
       </p>
     {:else if blockedMessage}
       <p class="mt-2 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
+    {:else if readinessNote}
+      <div class="mt-2 flex flex-col items-center gap-2">
+        <p class="text-center font-mono text-xs text-dark-2">{readinessNote}</p>
+        {#if readiness.kind === 'unusable'}
+          {@const blobIds = readiness.blobIds}
+          <Button variant="outline" size="sm" onclick={() => onRemoveFiles(blobIds)}>
+            Remove {(readinessUnusableCount ?? blobIds.length) === 1 ? 'it' : 'them'}
+          </Button>
+        {:else if readiness.kind === 'slow'}
+          <Button variant="outline" size="sm" onclick={onCheckReadinessAgain}>Check again</Button>
+        {/if}
+      </div>
+    {:else if filesProcessing}
+      <div class="mt-2 flex flex-col items-center gap-2">
+        <p class="text-center font-mono text-xs text-dark-2">{FILES_PROCESSING_MESSAGE}</p>
+        <Button variant="outline" size="sm" disabled={startBlocked} onclick={start}>Try again</Button>
+      </div>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if imagesProblem}

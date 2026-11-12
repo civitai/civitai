@@ -35,6 +35,16 @@
  *   exit 0, has `error TS`     -> defensive: tsc contradicting itself, treated as
  *                                a crash rather than trusted.
  *
+ * Scope
+ * -----
+ * The root tsconfig `include` covers `src`, `scripts`, each `packages` source dir and the
+ * tests — not `apps/*`, whose SvelteKit code is checked by `svelte-check` rather
+ * than tsc. So a clean tsc run says nothing about the apps, and this command
+ * printed OK over a planted type error in one of them (#4832). After a clean
+ * root run it therefore also runs the per-app gate that CI uses
+ * (`scripts/ci/typecheck-apps.mjs`), unless `scripts/typecheck-apps-gate.mjs`
+ * says not to (in CI, which gates them in its own step, or under the tsc seam).
+ *
  * Heap size
  * ---------
  * Measured cold (no .tsbuildinfo) on a clean checkout, with a deliberate type
@@ -57,6 +67,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { typecheckAppsGateDecision } from './typecheck-apps-gate.mjs';
 import { typecheckQueueDecision } from './typecheck-queue.mjs';
 
 const require = createRequire(import.meta.url);
@@ -76,7 +87,9 @@ if (typecheckQueueDecision(process.argv.slice(2), process.env).queue) {
       await runQueued([], { kind: 'typecheck', fallback: () => undefined });
     } catch (err) {
       if (queueAccepted()) {
-        console.error(`Lost contact with the test queue (${err?.message ?? err}). The run may still be queued.`);
+        console.error(
+          `Lost contact with the test queue (${err?.message ?? err}). The run may still be queued.`
+        );
         process.exit(2);
       }
       console.error(`Typecheck queue failed (${err?.message ?? err}); running directly.`);
@@ -253,7 +266,7 @@ child.on('error', (err) => {
   process.exit(2);
 });
 
-child.on('close', (code, signal) => {
+child.on('close', async (code, signal) => {
   const crashed = signal !== null || code !== 0;
 
   if (!crashed) {
@@ -275,7 +288,46 @@ child.on('close', (code, signal) => {
       `typecheck: OK — 0 type errors in ${((Date.now() - startedAt) / 1000).toFixed(0)}s ` +
         `(heap cap ${heapMb} MB).`
     );
-    process.exit(0);
+
+    // The run above is bounded by the root tsconfig `include`, which has no `apps/*` entry, so
+    // on its own this command reports OK over a type error in any app (#4832). The apps are
+    // checked by their own `typecheck` scripts, through the script CI uses.
+    const appsGate = typecheckAppsGateDecision(process.env, tscArgs);
+    if (!appsGate.run) {
+      console.log(`typecheck: apps/* not checked here — ${appsGate.why}.`);
+      process.exit(0);
+    }
+
+    let runTypecheckApps;
+    try {
+      // In-process, the same function `pnpm run typecheck:apps` and CI call, so all three run the
+      // same app set and report the same way.
+      ({ runTypecheckApps } = await import('./ci/typecheck-apps.mjs'));
+    } catch (err) {
+      console.error(`typecheck: cannot load the apps/* gate (${err?.message ?? err}).`);
+      process.exit(2);
+    }
+
+    let appsCode;
+    try {
+      appsCode = runTypecheckApps({
+        // Resolve from this file, not cwd, so a copy of these scripts in a throwaway repo
+        // discovers that repo's apps/ rather than this one.
+        repoRoot: resolve(dirname(fileURLToPath(import.meta.url)), '..'),
+      });
+    } catch (err) {
+      console.error(`typecheck: the apps/* gate could not run (${err?.message ?? err}).`);
+      console.log('typecheck: FAILED — the apps/* gate could not run (see stderr).');
+      process.exit(2);
+    }
+    if (appsCode !== 0) {
+      console.error(
+        '\ntypecheck: the root tsc run was clean, but an apps/* typecheck failed (above).'
+      );
+      // The OK line above went to stdout; a reader of stdout alone must see the verdict too.
+      console.log('typecheck: FAILED — root clean, but an apps/* typecheck failed (see stderr).');
+    }
+    process.exit(appsCode);
   }
 
   if (errorTsLines > 0) {

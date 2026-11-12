@@ -647,6 +647,38 @@ export async function updateModel3DNsfwLevels(model3dIds: number[]): Promise<voi
   // indexes, so there's no fan-out to do here.
 }
 
+/**
+ * The level a version's own images give it, for a version `mv` of model `m`: the bit_or of the
+ * owner's first 20 published images on it, leaving out unrated (0) and Blocked (32) images. The
+ * version rollup stores this for a non-mature model; anything that needs to know what that rollup
+ * would compute reads it from here.
+ */
+export const imageDerivedVersionLevelSql = Prisma.sql`(
+  SELECT COALESCE(bit_or(i."nsfwLevel"), 0)
+  FROM (
+    SELECT i."nsfwLevel"
+    FROM "Post" p
+    JOIN "Image" i ON i."postId" = p.id
+    WHERE p."modelVersionId" = mv.id
+      AND p."userId" = m."userId"
+      AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0 AND i."nsfwLevel" != 32
+    ORDER BY p."id", i."index"
+    LIMIT 20
+  ) AS i
+)`;
+
+/** Read-only: each version's image-derived level (see `imageDerivedVersionLevelSql`), by id. */
+export async function imageDerivedVersionLevels(versionIds: number[]) {
+  if (!versionIds.length) return new Map<number, number>();
+  const rows = await dbRead.$queryRaw<{ id: number; nsfwLevel: number }[]>(Prisma.sql`
+    SELECT mv.id, ${imageDerivedVersionLevelSql} AS "nsfwLevel"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv.id IN (${Prisma.join(versionIds)})
+  `);
+  return new Map(rows.map((row) => [row.id, row.nsfwLevel]));
+}
+
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return;
   // sysRedis.hGet is typed string but the HA/Sentinel client returns a
@@ -682,20 +714,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
           --     LIMIT 20
           --   ) AS ranked
           -- )
-          WHEN m."userId" != -1 THEN (
-            SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
-            FROM (
-              SELECT
-                i."nsfwLevel"
-              FROM "Post" p
-              JOIN "Image" i ON i."postId" = p.id
-              WHERE p."modelVersionId" = mv.id
-              AND p."userId" = m."userId"
-              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0 AND i."nsfwLevel" != 32
-              ORDER BY p."id", i."index"
-              LIMIT 20
-            ) AS i
-          )
+          WHEN m."userId" != -1 THEN ${imageDerivedVersionLevelSql}
         END AS "nsfwLevel"
       FROM "ModelVersion" mv
       JOIN "Model" m ON mv."modelId" = m.id

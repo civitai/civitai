@@ -30,6 +30,7 @@ export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect
   user: { select: userWithCosmeticsSelect },
   nsfw: true,
   metadata: true,
+  postId: true,
   // helper: {
   //   select: {
   //     imageCount: true,

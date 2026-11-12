@@ -335,6 +335,82 @@ describe('mergeVersions file remaps', () => {
     );
   });
 
+  it('sends a file a merge makes loadable back to the scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({
+        type: 'Config',
+        name: 'a.ckpt',
+        virusScanResult: 'Success',
+        pickleScanResult: 'Success',
+      }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, type: 'Model' }])).rejects.toThrow(PAST_REMAP);
+
+    expect(fileUpdateMany.mock.calls[0][0].data).toMatchObject({ pickleScanResult: 'Pending' });
+  });
+
+  it("refuses a merge a format the file's name does not have", async () => {
+    fileFindMany.mockResolvedValue([storedFile({ name: 'a.safetensors' })]);
+
+    await expect(merge([{ fileId: FILE, metadata: { format: 'PickleTensor' } }])).rejects.toThrow(
+      "A file's format must match its file name."
+    );
+    expect(fileUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('sends a loadable file whose format a merge changes back to the scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({
+        name: 'pack.zip',
+        metadata: { format: 'Other' },
+        virusScanResult: 'Success',
+        pickleScanResult: 'Success',
+      }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, metadata: { format: 'Diffusers' } }])).rejects.toThrow(
+      PAST_REMAP
+    );
+
+    expect(fileUpdateMany.mock.calls[0][0].data).toMatchObject({ pickleScanResult: 'Pending' });
+  });
+
+  it('sends training data relabelled in a merge back to the model-file scan', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({ type: 'Training Data', virusScanResult: 'Success' }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, type: 'Other' }])).rejects.toThrow(PAST_REMAP);
+
+    expect(fileUpdateMany).toHaveBeenCalledWith({
+      where: { id: FILE, ...inMerge, virusScanResult: 'Success' },
+      data: expect.objectContaining({
+        type: 'Other',
+        virusScanResult: 'Pending',
+        pickleScanResult: 'Pending',
+        scanRequestedAt: null,
+      }),
+    });
+    // Prisma refuses a bare null for a Json column.
+    expect(fileUpdateMany.mock.calls[0][0].data.rawScanResult).toBe(Prisma.JsonNull);
+  });
+
+  it('leaves a Danger that landed after the merge read the training data as clean', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({ type: 'Training Data', virusScanResult: 'Success' }),
+    ]);
+    fileUpdateMany.mockImplementation(
+      async ({ where }: { where: { virusScanResult?: string } }) => ({
+        count: where.virusScanResult === 'Success' ? 0 : 1,
+      })
+    );
+
+    await expect(merge([{ fileId: FILE, type: 'Other' }])).rejects.toThrow(
+      "Training data can't be changed to another type until its security scan completes."
+    );
+  });
+
   // The lookup above returns nothing for a file outside the merge: another owner's file, or a
   // version of this model that is not being merged.
   it('refuses a file that is not part of the merge, writing nothing', async () => {

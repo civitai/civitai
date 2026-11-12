@@ -1,8 +1,5 @@
 import type { Filter } from 'meilisearch';
-import { buildBrowsingLevelClause } from '~/components/Search/search-filters';
-import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
-import type { ReverseSearchIndexKey } from '~/components/Search/search.types';
-import { reverseSearchIndexMap } from '~/components/Search/search.types';
+import { indexBrowsingLevelClause } from '~/components/Search/search-filters';
 import { env } from '~/env/server';
 import {
   ARTICLES_SEARCH_INDEX,
@@ -20,7 +17,7 @@ import type {
   SiteSearchParams,
 } from '~/server/schema/site-search.schema';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
-import { Flags } from '~/shared/utils/flags';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const SITE_SEARCH_TIMEOUT_MS = 5_000;
@@ -89,11 +86,7 @@ export function viewerSearchClauses(indexUid: string, viewer: SiteSearchViewer):
   }
 
   if (viewer.browsingLevelCap !== undefined) {
-    const indexKey = reverseSearchIndexMap[indexUid as ReverseSearchIndexKey];
-    const clause = buildBrowsingLevelClause(
-      indexKey ? BROWSING_LEVEL_ATTRIBUTE[indexKey] : undefined,
-      viewer.browsingLevelCap
-    );
+    const clause = indexBrowsingLevelClause(indexUid, viewer.browsingLevelCap);
     if (clause) clauses.push(clause);
   }
 
@@ -117,11 +110,30 @@ type ModelHit = Record<string, unknown> & {
   _formatted?: Record<string, unknown>;
 };
 
-/** Drops the images the site may not serve; the model-level cap does not reach them. */
+type RatedImage = { id?: unknown; nsfwLevel?: unknown };
+
+/** Drops the images the site may not serve; the hit-level cap does not reach them. */
 function capImages(images: unknown, browsingLevelCap: number | undefined) {
   if (browsingLevelCap === undefined || !Array.isArray(images)) return images;
-  return images.filter((image: { nsfwLevel?: unknown }) =>
-    Flags.intersects(Number(image?.nsfwLevel) || 0, browsingLevelCap)
+  return images.filter((image: RatedImage) =>
+    isRatingWithinCap(image?.nsfwLevel, browsingLevelCap)
+  );
+}
+
+/**
+ * The highlight copy's images that the hit itself kept. The copy's values are shaped by the
+ * request's highlight and crop options, so its own ratings are not read; Meilisearch also sends
+ * its numbers as strings.
+ */
+function keepCopiesOf(copies: unknown, kept: unknown) {
+  if (!Array.isArray(copies)) return copies;
+  const keptIds = new Set(
+    (Array.isArray(kept) ? (kept as RatedImage[]) : [])
+      .filter((image) => image?.id != null)
+      .map((image) => String(image.id))
+  );
+  return (copies as RatedImage[]).filter(
+    (image) => image?.id != null && keptIds.has(String(image.id))
   );
 }
 
@@ -142,16 +154,90 @@ export function shapeModelHit(
   if (rest._formatted) {
     const { sfwName: formattedSfwName, ...formatted } = rest._formatted;
     if (useFace) formatted.name = formattedSfwName ?? sfwName;
-    if ('images' in formatted)
-      formatted.images = capImages(formatted.images, viewer.browsingLevelCap);
+    if ('images' in formatted && viewer.browsingLevelCap !== undefined)
+      formatted.images = keepCopiesOf(formatted.images, rest.images);
     rest._formatted = formatted;
   }
   return rest;
 }
 
+type ComicHit = Record<string, unknown> & {
+  coverImageNsfwLevel?: unknown;
+  _formatted?: Record<string, unknown>;
+};
+
+/**
+ * A capped site gets a cover only when every level it carries is inside the cap, stricter than
+ * model images (any overlap). An unrated cover counts as outside.
+ */
+function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
+  if (browsingLevelCap === undefined) return hit;
+  const level = Number(hit.coverImageNsfwLevel) || 0;
+  if (level > 0 && (level & ~browsingLevelCap) === 0) return hit;
+
+  const { coverImageUrl: _url, ...rest } = hit;
+  if (rest._formatted) {
+    const { coverImageUrl: _formattedUrl, ...formatted } = rest._formatted;
+    rest._formatted = formatted;
+  }
+  return rest;
+}
+
+type BountyHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+
+/**
+ * A bounty's own level is its images' combined level, which passes the cap when any one image
+ * does, so each image is capped here.
+ */
+function shapeBountyHit(hit: BountyHit, browsingLevelCap: number | undefined): BountyHit {
+  if (browsingLevelCap === undefined) return hit;
+  const shaped: BountyHit = { ...hit };
+  if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
+  if (shaped._formatted && 'images' in shaped._formatted)
+    shaped._formatted = {
+      ...shaped._formatted,
+      images: keepCopiesOf(shaped._formatted.images, shaped.images),
+    };
+  return shaped;
+}
+
+type CollectionHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+
+/**
+ * A collection's own level is its items' combined level, which passes the cap when any one item
+ * does, so its cover and item images are capped here. `srcs` carry no rating, so a capped site
+ * gets none.
+ */
+function shapeCollectionHit(
+  hit: CollectionHit,
+  browsingLevelCap: number | undefined
+): CollectionHit {
+  if (browsingLevelCap === undefined) return hit;
+  const { srcs: _srcs, ...shaped }: CollectionHit = { ...hit };
+  if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
+  const cover = shaped.image as RatedImage | null | undefined;
+  const coverKept = !!cover && isRatingWithinCap(cover.nsfwLevel, browsingLevelCap);
+  if ('image' in shaped && cover) shaped.image = coverKept ? cover : null;
+  if (shaped._formatted) {
+    const { srcs: _formattedSrcs, ...formatted } = shaped._formatted;
+    if ('images' in formatted) formatted.images = keepCopiesOf(formatted.images, shaped.images);
+    if ('image' in formatted && formatted.image && !coverKept) formatted.image = null;
+    shaped._formatted = formatted;
+  }
+  return shaped;
+}
+
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
-  if (indexUid !== MODELS_SEARCH_INDEX || !Array.isArray(hits)) return hits;
-  return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
+  if (!Array.isArray(hits)) return hits;
+  if (indexUid === MODELS_SEARCH_INDEX)
+    return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
+  if (indexUid === COMICS_SEARCH_INDEX)
+    return hits.map((hit: ComicHit) => shapeComicHit(hit, viewer.browsingLevelCap));
+  if (indexUid === BOUNTIES_SEARCH_INDEX)
+    return hits.map((hit: BountyHit) => shapeBountyHit(hit, viewer.browsingLevelCap));
+  if (indexUid === COLLECTIONS_SEARCH_INDEX)
+    return hits.map((hit: CollectionHit) => shapeCollectionHit(hit, viewer.browsingLevelCap));
+  return hits;
 }
 
 function assertSiteSearchIndex(indexUid: string) {
@@ -248,9 +334,9 @@ export async function siteMultiSearch(input: SiteMultiSearchInput, viewer: SiteS
     status: 200,
     body: {
       ...body,
-      results: body.results?.map((result) => ({
+      results: body.results?.map((result, i) => ({
         ...result,
-        hits: shapeHits(result.indexUid, result.hits, viewer),
+        hits: shapeHits(result.indexUid ?? input.queries[i]?.indexUid, result.hits, viewer),
       })),
     },
   };

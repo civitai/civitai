@@ -15,13 +15,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     tokened cloneUrl + the raw token.
  */
 
-const { mockIsAppBlocksEnabled, mockEnsureForgejoIdentity, mockAddCollaborator } = vi.hoisted(
-  () => ({
-    mockIsAppBlocksEnabled: vi.fn(),
-    mockEnsureForgejoIdentity: vi.fn(),
-    mockAddCollaborator: vi.fn(),
-  })
-);
+const {
+  mockIsAppBlocksEnabled,
+  mockEnsureForgejoIdentity,
+  mockAddCollaborator,
+  mockResolveSource,
+  mockGrantSource,
+} = vi.hoisted(() => ({
+  mockIsAppBlocksEnabled: vi.fn(),
+  mockEnsureForgejoIdentity: vi.fn(),
+  mockAddCollaborator: vi.fn(),
+  mockResolveSource: vi.fn(),
+  mockGrantSource: vi.fn(),
+}));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
@@ -31,6 +37,12 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 // S3). Overriding it locally drops those defaults and crashes at import.
 vi.mock('~/server/services/blocks/dev-git-access.service', () => ({
   ensureForgejoIdentity: mockEnsureForgejoIdentity,
+}));
+// Who may use a source repo is decided (and pinned) in app-source-repo.service; here only what the
+// proc does with the answer.
+vi.mock('~/server/services/blocks/app-source-repo.service', () => ({
+  resolveSourceRepoAccess: mockResolveSource,
+  grantSourceRepoForPull: mockGrantSource,
 }));
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   FORGEJO_ORG: 'civitai-apps',
@@ -111,6 +123,8 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ forgejoUsername: 'dev-7', token: 'minted-token-sha1' });
   mockAddCollaborator.mockReset().mockResolvedValue(undefined);
+  mockResolveSource.mockReset().mockResolvedValue({ ok: false, reason: 'none' });
+  mockGrantSource.mockReset().mockResolvedValue(null);
   findUnique.mockReset();
   acceptedTerms.clear();
   acceptedTerms.add(ownerUser.id);
@@ -300,5 +314,113 @@ describe('blocks.getMyForgejoCloneInfo: App Developer Terms gate the token', () 
     expect(err).toMatchObject({ code: 'FORBIDDEN' });
     expect((err as Error).message).toContain('/content/app-developer-terms');
     expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SOURCE REPOS (`civitai-apps-src/<slug>`): a fork or an App Assistant app can be pulled and
+ * pushed from its first day — before any approval, before any block exists. The build repo's
+ * answer is unchanged; `sourceHttpUrl` is added, and with no build repo `httpUrl` names the
+ * source repo so an older CLI clones it.
+ */
+describe('blocks.getMyForgejoCloneInfo — source repos', () => {
+  const SOURCE_URL = 'https://forgejo.civitai.com/civitai-apps-src/my-fork.git';
+  const mineSource = () => {
+    mockResolveSource.mockResolvedValue({ ok: true, role: 'owner', row: {} });
+    mockGrantSource.mockResolvedValue({ sourceHttpUrl: SOURCE_URL });
+  };
+
+  it('no block yet, the caller’s own source repo: the source repo, write granted, no build repo', async () => {
+    mineSource();
+    const res = await blocksRouter
+      .createCaller(fakeCtx(ownerUser) as never)
+      .getMyForgejoCloneInfo({ slug: 'my-fork' });
+    expect(res).toEqual({
+      notYetAvailable: false,
+      slug: 'my-fork',
+      forgejoUsername: 'dev-7',
+      token: 'minted-token-sha1',
+      httpUrl: SOURCE_URL,
+      cloneUrl: 'https://dev-7:minted-token-sha1@forgejo.civitai.com/civitai-apps-src/my-fork.git',
+      sourceHttpUrl: SOURCE_URL,
+      buildHttpUrl: null,
+    });
+    expect(mockResolveSource).toHaveBeenCalledWith({ slug: 'my-fork', userId: 7 });
+    expect(mockGrantSource).toHaveBeenCalledWith({
+      slug: 'my-fork',
+      userId: 7,
+      forgejoUsername: 'dev-7',
+    });
+    // Nothing on the build repo: there is none.
+    expect(mockAddCollaborator).not.toHaveBeenCalled();
+  });
+
+  it('no block, a source repo that is not the caller’s: NOT_FOUND (as a missing app), nothing provisioned', async () => {
+    mockResolveSource.mockResolvedValue({ ok: false, reason: 'forbidden' });
+    await expect(
+      blocksRouter
+        .createCaller(fakeCtx(otherUser) as never)
+        .getMyForgejoCloneInfo({ slug: 'my-fork' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
+    expect(mockGrantSource).not.toHaveBeenCalled();
+  });
+
+  it('no block, a BANNED owner of the source repo: FORBIDDEN, nothing provisioned', async () => {
+    mineSource();
+    await expect(
+      blocksRouter
+        .createCaller(fakeCtx({ ...ownerUser, bannedAt: new Date('2026-01-01') }) as never)
+        .getMyForgejoCloneInfo({ slug: 'my-fork' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
+    expect(mockGrantSource).not.toHaveBeenCalled();
+  });
+
+  it('no block, an owner who has not accepted the developer terms: no token', async () => {
+    mineSource();
+    acceptedTerms.clear();
+    await expect(
+      blocksRouter
+        .createCaller(fakeCtx(ownerUser) as never)
+        .getMyForgejoCloneInfo({ slug: 'my-fork' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
+  });
+
+  it('a block not approved yet, with a source repo: the source repo instead of notYetAvailable', async () => {
+    mineSource();
+    findUnique.mockResolvedValue({ blockId: 'my-fork', status: 'pending', app: { userId: 7 } });
+    const res = await blocksRouter
+      .createCaller(fakeCtx(ownerUser) as never)
+      .getMyForgejoCloneInfo({ appBlockId: 'ab_1' });
+    expect(res).toMatchObject({ notYetAvailable: false, httpUrl: SOURCE_URL, buildHttpUrl: null });
+  });
+
+  it('approved with a source repo: the build repo as before, plus sourceHttpUrl', async () => {
+    mineSource();
+    findFirst.mockResolvedValue(APPROVED_OWNED);
+    const res = await blocksRouter
+      .createCaller(fakeCtx(ownerUser) as never)
+      .getMyForgejoCloneInfo({ slug: 'my-app' });
+    expect(res).toMatchObject({
+      httpUrl: 'https://forgejo.civitai.com/civitai-apps/my-app.git',
+      buildHttpUrl: 'https://forgejo.civitai.com/civitai-apps/my-app.git',
+      sourceHttpUrl: SOURCE_URL,
+    });
+    expect(mockAddCollaborator).toHaveBeenCalledWith({
+      slug: 'my-app',
+      username: 'dev-7',
+      permission: 'read',
+    });
+  });
+
+  it('approved with no source repo: sourceHttpUrl is null', async () => {
+    findFirst.mockResolvedValue(APPROVED_OWNED);
+    const res = await blocksRouter
+      .createCaller(fakeCtx(ownerUser) as never)
+      .getMyForgejoCloneInfo({ slug: 'my-app' });
+    expect(res).toMatchObject({ sourceHttpUrl: null });
+    expect(mockGrantSource).not.toHaveBeenCalled();
   });
 });

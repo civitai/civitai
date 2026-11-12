@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -18,6 +22,14 @@ vi.mock('../db', () => ({
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
     return dbHandle.current;
   },
+}));
+
+const { fireDeferredBlockEffects } = vi.hoisted(() => ({
+  fireDeferredBlockEffects: vi.fn(async (_c: unknown, _o: unknown) => undefined),
+}));
+vi.mock('../deferred-block-effects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../deferred-block-effects')>()),
+  fireDeferredBlockEffects,
 }));
 
 const {
@@ -38,6 +50,9 @@ CREATE TABLE "Image" (
   "needsReview" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
 );
+${SET_ASIDE_TABLE_SQL}
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
+CREATE TABLE IF NOT EXISTS "Appeal" (id serial PRIMARY KEY, "entityType" text, "entityId" int, status text);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
   "images" JSONB NOT NULL DEFAULT '[]'
@@ -79,6 +94,7 @@ const USERS = {
   evidenceHold: 213,
   notHeld: 220,
   bystander: 230,
+  deferred: 240,
 } as const;
 type Key = keyof typeof USERS;
 
@@ -366,5 +382,40 @@ describe('the evidence-hold marker under a release', () => {
     }
     // Control: the same user releases once the view is back.
     expect(await release(id)).toMatchObject({ ok: true, count: 2 });
+  });
+});
+
+describe('releasing a user whose block put effects off', () => {
+  const id = USERS.deferred;
+  const deferredRows = async () =>
+    (
+      await db.query(`SELECT "imageId" FROM "ImageDeferredBlockEffect" WHERE "imageId" = $1`, [
+        id * 10 + 1,
+      ])
+    ).rows;
+
+  it('fires nothing on a dry run, then claims and fires them once on the release', async () => {
+    await db.query(`INSERT INTO "ImageDeferredBlockEffect" ("imageId") VALUES ($1)`, [id * 10 + 1]);
+    fireDeferredBlockEffects.mockClear();
+
+    expect(await count(id)).toMatchObject({ ok: true, dryRun: true, count: 2 });
+    expect(fireDeferredBlockEffects).not.toHaveBeenCalled();
+    expect(await deferredRows()).toHaveLength(1);
+
+    expect(await release(id)).toMatchObject({ ok: true, dryRun: false, count: 2 });
+    expect(fireDeferredBlockEffects).toHaveBeenCalledTimes(1);
+    expect(fireDeferredBlockEffects).toHaveBeenCalledWith(
+      [
+        {
+          imageId: id * 10 + 1,
+          violationType: null,
+          notifyOwner: true,
+          reportReason: null,
+          reportIds: [],
+        },
+      ],
+      { moderatorId: ADMIN }
+    );
+    expect(await deferredRows()).toEqual([]);
   });
 });

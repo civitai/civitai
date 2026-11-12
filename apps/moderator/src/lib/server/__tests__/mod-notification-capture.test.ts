@@ -8,7 +8,13 @@ vi.mock('../db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('../notifications', () => ({ getNotifications: () => ({ createNotification }) }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn() }));
 
+vi.mock('../redis', () => ({ getSysRedis: vi.fn(), getRedis: vi.fn() }));
+vi.mock('../clickhouse', () => ({ getClickhouse: vi.fn() }));
+vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
+vi.mock('../buzz', () => ({ getBuzz: vi.fn() }));
+
 const { sendModNotification } = await import('../moderation-memory.service');
+const { notifyImageTosViolation } = await import('../image-moderation-effects');
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -25,5 +31,17 @@ describe('a moderator notification', () => {
       ok: true,
     });
     expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the ToS notice on a block', () => {
+  it('is never sent for a feedback page capture', async () => {
+    await notifyImageTosViolation({ imageId: 1, ownerId: FEEDBACK_CAPTURE_OWNER_ID, postId: null });
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it("is sent to an ordinary image's owner (control)", async () => {
+    await notifyImageTosViolation({ imageId: 1, ownerId: 42, postId: null });
+    expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 42 }));
   });
 });

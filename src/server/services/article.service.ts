@@ -1,4 +1,5 @@
 import type { EventViewer } from '~/server/events/event-access';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { Prisma } from '@prisma/client';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
@@ -434,23 +435,34 @@ export const getArticles = async ({
     // tiebreaker so pages are deterministic even when many articles share
     // the same sort value (e.g. the INT_MAX sentinel).
     const NULL_RANK_SENTINEL = 2147483647; // max int32 — sorts after any real rank under ASC
-    const rankExpr = (col: string) => `COALESCE(rank."${col}${period}Rank", ${NULL_RANK_SENTINEL})`;
+    const liveCounts = {
+      collectedCount: `am."collectedCount"`,
+      commentCount: `am."commentCount"`,
+      reactionCount: `am."heartCount" + am."likeCount" + am."dislikeCount" + am."laughCount" + am."cryCount"`,
+    };
+    // Period rank columns are never filled (only AllTime metrics are kept), so shorter periods sort by live AllTime counts; 'stats' mode ranks by all-time counts.
+    const useLiveCounts = period !== MetricTimeframe.AllTime;
+    const metricSort = (col: keyof typeof liveCounts): [string, 'ASC' | 'DESC'] =>
+      useLiveCounts
+        ? [`COALESCE(${liveCounts[col]}, 0)`, 'DESC']
+        : [`COALESCE(rank."${col}${period}Rank", ${NULL_RANK_SENTINEL})`, 'ASC'];
 
     let sortExpr: string;
     let sortDir: 'ASC' | 'DESC';
+    let joinMetric = false;
     switch (sort) {
       case ArticleSort.MostBookmarks:
       case ArticleSort.MostCollected:
-        sortExpr = rankExpr('collectedCount');
-        sortDir = 'ASC';
+        [sortExpr, sortDir] = metricSort('collectedCount');
+        joinMetric = useLiveCounts;
         break;
       case ArticleSort.MostComments:
-        sortExpr = rankExpr('commentCount');
-        sortDir = 'ASC';
+        [sortExpr, sortDir] = metricSort('commentCount');
+        joinMetric = useLiveCounts;
         break;
       case ArticleSort.MostReactions:
-        sortExpr = rankExpr('reactionCount');
-        sortDir = 'ASC';
+        [sortExpr, sortDir] = metricSort('reactionCount');
+        joinMetric = useLiveCounts;
         break;
       case ArticleSort.RecentlyUpdated:
         sortExpr = `extract(epoch from a."updatedAt")`;
@@ -486,6 +498,11 @@ export const getArticles = async ({
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
+      ${
+        joinMetric
+          ? Prisma.sql`LEFT JOIN "ArticleMetric" am ON am."articleId" = a.id AND am.timeframe = 'AllTime'::"MetricTimeframe"`
+          : Prisma.empty
+      }
       ${collectionJoin}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
@@ -602,7 +619,9 @@ export const getArticles = async ({
       .map(({ tags, user, userCosmetics, cursorV, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
-        const coverImage = coverImages.find((x) => x.id === article.coverId);
+        const cover = coverImages.find((x) => x.id === article.coverId);
+        const isOwnerOrMod = !!sessionUser?.isModerator || article.userId === sessionUser?.id;
+        const coverImage = isArticleImageViewable(cover, isOwnerOrMod) ? cover : undefined;
         const match = articleStats[article.id];
 
         return {
@@ -709,7 +728,9 @@ export const getCivitaiNews = async () => {
 
   const articles = articlesRaw.map((article) => {
     const user = users.find((x) => x.id === article.userId);
-    const coverImage = coverImages.find((x) => x.id === article.coverId);
+    const cover = coverImages.find((x) => x.id === article.coverId);
+    // A public page with no viewer: no owner exception.
+    const coverImage = isArticleImageViewable(cover, false) ? cover : undefined;
     return {
       ...article,
       user: user ?? null,
@@ -857,13 +878,17 @@ export const getArticleById = async ({
 
 type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
 
-/**
- * The cover or banner as a reader may see it: owners and moderators always, anyone else only once
- * the image has been scanned and is not waiting on review.
- */
+/** Owners and moderators always; anyone else per `servableArticleImage`. */
+function isArticleImageViewable<T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview'>>(
+  image: T | null | undefined,
+  isOwnerOrMod: boolean
+): image is T {
+  if (!image) return false;
+  return isOwnerOrMod || servableArticleImage(image) !== null;
+}
+
 function viewableArticleImage(image: ArticleImageRow | null | undefined, isOwnerOrMod: boolean) {
-  if (!image) return undefined;
-  if (!isOwnerOrMod && (image.ingestion !== 'Scanned' || image.needsReview)) return undefined;
+  if (!isArticleImageViewable(image, isOwnerOrMod)) return undefined;
   return {
     ...image,
     nsfwLevel: image.nsfwLevel as NsfwLevel,
@@ -901,7 +926,7 @@ export const upsertArticle = async ({
     const tags = withoutOfficialArticleTag(inputTags, officialTag);
     await throwOnBlockedUserContent(
       [data.title, data.content, ...(await newTagNames(tags?.map((tag) => tag.name)))],
-      { isModerator, surface: 'article' }
+      { isModerator, surface: 'article', entityType: 'Article', entityId: id, userId }
     );
 
     // For updates, fetch article early so we can enforce its stored locks and check cover
@@ -1003,7 +1028,13 @@ export const upsertArticle = async ({
 
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
-    await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
+    await throwOnBlockedUserContent(data.content, {
+      isModerator,
+      surface: 'article',
+      entityType: 'Article',
+      entityId: article?.id ?? id,
+      userId: article?.userId ?? userId,
+    });
     await assertNoShopArtworkInContent(data.content, article?.content);
 
     // TODO make coverImage required here and in db
@@ -1588,7 +1619,12 @@ export async function applyArticleContentChange({
    */
   context?: ArticleContentChangeContext;
 }) {
-  await throwOnBlockedUserContent(content, { surface: 'article' });
+  await throwOnBlockedUserContent(content, {
+    surface: 'article',
+    entityType: 'Article',
+    entityId: id,
+    userId,
+  });
 
   let resolved = context;
   if (!resolved) {

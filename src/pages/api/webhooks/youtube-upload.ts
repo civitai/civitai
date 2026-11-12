@@ -92,15 +92,12 @@ export default WebhookEndpoint(async function handler(req, res) {
         client: authClient,
       });
 
-      await dbWrite.image.update({
-        where: { id: data.imageId },
-        data: {
-          metadata: {
-            ...image.metadata,
-            youtubeVideoId: data.youtubeId,
-          },
-        },
-      });
+      // Merged in place: the row was read before the upload, and other keys may have changed since.
+      await dbWrite.$executeRaw`
+        UPDATE "Image"
+        SET "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object('youtubeVideoId', ${data.youtubeId}::text)
+        WHERE id = ${data.imageId}
+      `;
     }
     return res.status(200).json({ ok: true });
   } catch (e: any) {

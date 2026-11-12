@@ -73,4 +73,15 @@ describe('placement router — moving stickers sit behind their own flag', () =>
       expect.objectContaining({ imageId: 99 })
     );
   });
+
+  it('reads them for the signed-in viewer, whose pending stickers it includes', async () => {
+    await placementCaller({
+      features: { stickerVideoTracks: true },
+      user: { id: 4242 },
+    }).getStickerTracks({ imageId: 99 });
+
+    expect(getStickerPlacementTracks).toHaveBeenCalledWith(
+      expect.objectContaining({ imageId: 99, viewerId: 4242 })
+    );
+  });
 });

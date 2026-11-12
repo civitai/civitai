@@ -936,15 +936,18 @@ function isPlayableTrack(track: unknown) {
 /** For the detail view of one video; the listing never carries tracks. */
 export async function getStickerPlacementTracks({
   imageId,
+  viewerId,
   isModerator = false,
 }: {
   imageId: number;
+  viewerId?: number;
   isModerator?: boolean;
 }) {
   const rows = (await listPlacementTrackRows((await loadKyselyDb()).kyselyRead, {
     surface: SURFACE,
     targetType: TARGET_TYPE,
     targetId: imageId,
+    viewerId,
   })) as { id: number; targetId: number; data: Prisma.JsonValue; track: unknown }[];
   // Same withholding as the listing: only a moderator gets kept-off placements.
   const keptOff = isModerator
