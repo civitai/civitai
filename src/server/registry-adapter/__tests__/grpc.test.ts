@@ -2,7 +2,8 @@ import * as grpc from '@grpc/grpc-js';
 import type { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { abortableSleep } from '~/utils/errorHandling';
 import {
   SOURCE_SERVICE,
   createGrpcServer,

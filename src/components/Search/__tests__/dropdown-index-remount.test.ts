@@ -438,11 +438,13 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // `onClear?.()` in BOTH, and that is not a duplication to tidy away: on mobile `AppHeader`
     // passes `onSearchDone`, so it is what closes the search overlay. A refactor that routes the
     // blur past it leaves the overlay stuck open.
+    // Search v3 adds a step to each: on the feed it filters, a clear and a blur commit the bar's
+    // text to the feed (a blur keeps it as the active filter). Neither changes the two halves above.
     expect(source).toMatch(
-      /const handleClear = \(\) => \{\s*setSearch\(''\);\s*onClear\?\.\(\);\s*\};/
+      /const handleClear = \(\) => \{\s*setSearch\(''\);\s*feedSearch\.commit\(''\);\s*onClear\?\.\(\);\s*\};/
     );
     expect(source).toMatch(
-      /const handleBlur = \(\) => \{\s*clearDisplayedText\(\);\s*onClear\?\.\(\);\s*\};/
+      /const handleBlur = \(\) => \{\s*if \(filtersFeedInPlace\) feedSearch\.commit\(search\);\s*else clearDisplayedText\(\);\s*onClear\?\.\(\);\s*\};/
     );
 
     // ONE of the three discards, and a SPELLING check: the carrier is emptied when the URL moves
