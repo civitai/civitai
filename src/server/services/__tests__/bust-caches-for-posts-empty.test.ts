@@ -75,6 +75,11 @@ vi.mock('~/server/search-index/models.search-index', async (importOriginal) => {
     modelsSearchIndex: { ...(actual.modelsSearchIndex as object), queueUpdate: queueModels },
   };
 });
+const bustShowcases = vi.hoisted(() => vi.fn(async (_postIds: number[]) => undefined));
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustVersionShowcasesForPosts: bustShowcases,
+}));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   bustCacheTag: vi.fn(async () => undefined),
@@ -172,5 +177,15 @@ describe('refreshShowcasesForUserModels', () => {
 
     expect(queueModels).not.toHaveBeenCalled();
     expect(refreshShowcase).not.toHaveBeenCalled();
+  });
+
+  // Featured community images are always someone else's posts, which the owner-showcase branch
+  // returns early for: the version showcase bust has to run before that.
+  it("still refreshes the version showcases holding someone else's post", async () => {
+    mockQueryRaw.mockResolvedValueOnce([post(false)] as never);
+
+    await bustCachesForPosts([1]);
+
+    expect(bustShowcases).toHaveBeenCalledWith([1]);
   });
 });

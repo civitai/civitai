@@ -40,7 +40,7 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
   const queryUtils = trpc.useUtils();
 
   const currentModelVersionId = filters.modelVersionId as number;
-  const showcaseEnabled = useFeatureFlags().modelVersionShowcase;
+  const showcaseEnabled = !!useFeatureFlags().modelVersionShowcase;
 
   const hiddenImageIds =
     (model
