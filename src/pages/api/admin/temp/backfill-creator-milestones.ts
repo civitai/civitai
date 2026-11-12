@@ -24,7 +24,7 @@ import { booleanString } from '~/utils/zod-helpers';
  *   tiers      (default) Grant every score tier a user's stored total has reached. Rows are stamped
  *              seen and nothing is notified. Safe to re-run; it also reconciles anyone a failed
  *              nightly grant missed. Refuses to write while the creator-journey flag is not public
- *              (see CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG); the dry run always works.
+ *              when CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG is true; the dry run always works.
  *   activity   Dry run only: users and rows per activity detector group that an ungated
  *              grant-creator-milestones run would grant now. That job does the writing.
  *   cosmetics  After a cosmetic is attached to a milestone definition, grant it to that milestone's

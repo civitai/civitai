@@ -12,11 +12,10 @@ import {
 import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 
 /**
- * While Creator Journey is behind its flag, tier badges are granted only to users the flag is on for,
- * and the launch backfill waits until the flag is public. False grants to everyone again; tier
- * notifications stay flag-gated either way.
+ * True restricts tier badges to users the flag is on for, and makes the tier backfill wait until the
+ * flag is public. False grants to everyone; notifications go only to the flag audience either way.
  */
-export const CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG = true;
+export const CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG = false;
 
 const fliptKey = () => getFeatureFliptKey('creatorJourney') as string;
 

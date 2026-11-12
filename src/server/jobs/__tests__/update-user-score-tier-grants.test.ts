@@ -103,11 +103,13 @@ describe('persistScoreBatch', () => {
   });
 });
 
-describe('persistScoreBatch while Creator Journey is flagged', () => {
+describe('persistScoreBatch while grants require the flag', () => {
+  const gatedOpts = { grantsRequireFlag: true, now: afterLaunch };
+
   it('grants and notifies nothing for a user the flag is off for', async () => {
     mocks.isFlipt.mockResolvedValue(false);
     const { ctx, grantCalls } = batchCtx({ grant: async () => [crossing] });
-    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], gatedOpts);
     expect(mocks.isFlipt).toHaveBeenCalledWith('creator-journey', '7', {
       userId: '7',
       isModerator: 'false',
@@ -122,28 +124,80 @@ describe('persistScoreBatch while Creator Journey is flagged', () => {
       grant: async () => [crossing],
       owed: [{ id: 7, isModerator: true }],
     });
-    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], gatedOpts);
     expect(mocks.isFlipt).not.toHaveBeenCalled();
     expect(grantCalls()).toHaveLength(1);
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
   });
 
-  it('with grants open to everyone, still notifies only flagged users', async () => {
+  it('asks Flipt nothing about a user who is owed no tier', async () => {
+    const { ctx, grantCalls } = batchCtx({ owed: [] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], gatedOpts);
+    expect(mocks.isFlipt).not.toHaveBeenCalled();
+    expect(grantCalls()).toEqual([]);
+  });
+});
+
+// No grantsRequireFlag override: these run on the shipped CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG.
+describe('persistScoreBatch with grants open to everyone', () => {
+  it('grants a user the flag is off for but notifies only the flag audience', async () => {
     mocks.isFlipt.mockResolvedValue(false);
     const { ctx, grantCalls } = batchCtx({ grant: async () => [crossing] });
-    await persistScoreBatch(ctx, [['7', { models: 600 }]], {
-      grantsRequireFlag: false,
-      now: afterLaunch,
-    });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
     expect(grantCalls()).toHaveLength(1);
     expect(mocks.createNotification).not.toHaveBeenCalled();
   });
 
-  it('asks Flipt nothing about a user who is owed no tier', async () => {
-    const { ctx, grantCalls } = batchCtx({ owed: [] });
+  it('notifies the same crossing once the flag is on for the user', async () => {
+    const { ctx, grantCalls } = batchCtx({ grant: async () => [crossing] });
     await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
-    expect(mocks.isFlipt).not.toHaveBeenCalled();
-    expect(grantCalls()).toEqual([]);
+    expect(grantCalls()).toHaveLength(1);
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('persistScoreBatch with grants open, for a user the flag is off for', () => {
+  const legendCrossing = {
+    userId: 7,
+    milestoneKey: 'score:legend',
+    name: 'Legend',
+    threshold: 1_000_000,
+  };
+  const staffAlerts = () =>
+    (mocks.createNotification.mock.calls as unknown as [{ type: string }][])
+      .map(([n]) => n)
+      .filter((n) => n.type === 'creator-legend-reached-staff');
+
+  beforeEach(() => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ value: { legendAlertUserIds: [1, 2] } });
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 7, username: 'newlegend' }]);
+  });
+
+  it('sends no staff Legend alert, and sends one once the flag is on', async () => {
+    mocks.isFlipt.mockResolvedValue(false);
+    const off = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(off.ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(off.grantCalls()).toHaveLength(1);
+    expect(staffAlerts()).toEqual([]);
+
+    mocks.isFlipt.mockResolvedValue(true);
+    const on = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(on.ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toHaveLength(1);
+  });
+
+  it('does not mark a silenced grant seen, and does once the flag is on', async () => {
+    const silenced = { ...crossing, milestoneKey: 'score:unregistered' };
+    mocks.isFlipt.mockResolvedValue(false);
+    const off = batchCtx({ grant: async () => [silenced] });
+    await persistScoreBatch(off.ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(off.grantCalls()).toHaveLength(1);
+    expect(off.markSeenCalls()).toEqual([]);
+
+    mocks.isFlipt.mockResolvedValue(true);
+    const on = batchCtx({ grant: async () => [silenced] });
+    await persistScoreBatch(on.ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(on.markSeenCalls()).toHaveLength(1);
   });
 });
 
