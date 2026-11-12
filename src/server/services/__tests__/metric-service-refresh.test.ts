@@ -212,8 +212,8 @@ describe('MetricService cache refresh', () => {
 // The populate lookup names a few cache-missed ids, and it is most of the analytics DB's query CPU.
 // It runs single-threaded (more threads only queue it behind other queries for CPU) under a server
 // cap, because the app's budget for the read only stops the caller waiting. The query itself is
-// not cancelled with the caller, so a lookup that is merely late still fills the cache, and a
-// lookup the cap stops is retried once under a longer cap, so a slow server still fills it.
+// not cancelled with the caller, so a lookup that is merely late still fills the cache, and the
+// lookup after one the cap stopped runs uncapped, so a slow server still fills it.
 describe('MetricService populate lookup settings', () => {
   const POINT_LOOKUP_SETTINGS = {
     max_threads: 1,
@@ -303,7 +303,7 @@ describe('MetricService populate lookup settings', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
-  it('marks the ids of a lookup stopped at the cap, so the next lookup for them gets the longer cap and caches', async () => {
+  it('marks the ids of a lookup stopped at the cap, so the next lookup naming one runs uncapped and caches', async () => {
     const redis = fakeRedis();
     const timedOutKey = 'metrics:timeout:Image:1';
     const query = vi
@@ -317,19 +317,28 @@ describe('MetricService populate lookup settings', () => {
     expect(redis.strings.get(timedOutKey)).toBe('1');
     expect(redis.pttl(timedOutKey)).toBe(10 * 60 * 1000);
 
-    // The lock's backstop runs out. The harness clock stands still, so drop the lock by hand.
+    // The lock's backstop runs out. The harness clock stands still, so drop the lock by hand. Id 2
+    // was never stopped: one marked id in the batch is enough.
     redis.strings.delete(lockKey(1));
-    const retried = await service.fetch('Image', [1]);
+    const retried = await service.fetch('Image', [1, 2]);
 
     expect(query).toHaveBeenCalledTimes(2);
     expect(query.mock.calls[0][0].clickhouse_settings).toEqual(POINT_LOOKUP_SETTINGS);
-    expect(query.mock.calls[1][0].clickhouse_settings).toEqual({
-      max_threads: 1,
-      max_execution_time: 30,
-      timeout_overflow_mode: 'throw',
-    });
+    // Still one thread, but no server cap: it finishes however slow the server is.
+    expect(query.mock.calls[1][0].clickhouse_settings).toEqual({ max_threads: 1 });
     expect(retried[1].Like).toBe(12);
     expect(redis.hashes.get(metricKey(1))?.Like).toBe('12');
+  });
+
+  it('falls back to the capped lookup when the timeout marker cannot be read', async () => {
+    const redis = fakeRedis();
+    vi.mocked(redis.client.get).mockRejectedValue(new Error('redis down'));
+    const ch = fakeClickhouse({ 1: { Like: 4 } });
+    const service = new MetricService(ch.client, redis.client);
+
+    expect((await service.fetch('Image', [1]))[1].Like).toBe(4);
+    const params = ch.query.mock.calls[0][0] as Record<string, unknown>;
+    expect(params.clickhouse_settings).toEqual(POINT_LOOKUP_SETTINGS);
   });
 
   it('still releases the lock when the lookup fails for any other reason', async () => {
