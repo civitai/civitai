@@ -272,13 +272,17 @@ describe('MetricService populate lookup settings', () => {
 
     await service.fetch('Image', ids(100, 1));
     await service.fetch('Image', ids(101, 1001));
+    // Read in batches of 1000 and 1: the 1-id remainder of a large populate is not capped either.
+    await service.fetch('Image', ids(1001, 5001));
 
-    expect(ch.queriedIds.map((batch) => batch.length)).toEqual([100, 101]);
-    const [atLimit, overLimit] = ch.query.mock.calls.map(
+    expect(ch.queriedIds.map((batch) => batch.length)).toEqual([100, 101, 1000, 1]);
+    const [atLimit, overLimit, largeBatch, remainder] = ch.query.mock.calls.map(
       (call) => call[0] as Record<string, unknown>
     );
     expect(atLimit.clickhouse_settings).toEqual(POINT_LOOKUP_SETTINGS);
     expect(overLimit).not.toHaveProperty('clickhouse_settings');
+    expect(largeBatch).not.toHaveProperty('clickhouse_settings');
+    expect(remainder).not.toHaveProperty('clickhouse_settings');
   });
 
   it('after a server timeout, holds the lock so the next request waits instead of querying again', async () => {
@@ -315,7 +319,8 @@ describe('MetricService populate lookup settings', () => {
 
     await expect(service.fetch('Image', [1])).rejects.toBeInstanceOf(ClickHouseError);
     expect(redis.strings.get(timedOutKey)).toBe('1');
-    expect(redis.pttl(timedOutKey)).toBe(10 * 60 * 1000);
+    // As long as a cached entry: a shorter marker would let a rarely read id be stopped on every read.
+    expect(redis.pttl(timedOutKey)).toBe(12 * HOUR * 1000);
 
     // The lock's backstop runs out. The harness clock stands still, so drop the lock by hand. Id 2
     // was never stopped: one marked id in the batch is enough.
