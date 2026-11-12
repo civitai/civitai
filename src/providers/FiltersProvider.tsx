@@ -358,10 +358,7 @@ export function migrateModelFilters(key: string, value: Record<string, unknown>)
   });
 }
 
-/**
- * civitai.red defaults the article feed to Newest. Same persisted-default problem as
- * migrateModelFilters; localStorage is per origin, so .com is unaffected.
- */
+/** civitai.red defaults articles to Newest; same stored-default issue as migrateModelFilters. */
 export const RED_ARTICLE_FILTER_MIGRATION_KEY = 'article-filters-migration';
 export const RED_ARTICLE_FILTER_MIGRATION_VERSION = '1-red-newest';
 
