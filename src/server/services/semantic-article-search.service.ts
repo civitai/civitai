@@ -6,6 +6,14 @@ import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { articleSemanticEligibleWhere } from '~/server/search-index/articles.search-index';
 import { getArticles } from '~/server/services/article.service';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import {
+  recordRefusal,
+  resolveSemanticBrowsingLevel,
+  semanticQueryRefusal,
+  type QueryTracker,
+} from '~/server/services/semantic-query-guard';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
   collectPage,
   resolveTagIds,
@@ -15,7 +23,6 @@ import {
   type CandidateSource,
   type Hydrate,
 } from '~/server/services/semantic-search-client';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -32,21 +39,34 @@ const searchServiceCandidates = searchServiceSource('articles', {
 export async function searchSemanticArticles({
   input,
   user,
+  track,
   candidateSource = searchServiceCandidates,
 }: {
   input: SemanticArticleSearchInput;
   user?: SessionUser;
+  track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
   const none = { items: [] as HydratedArticle[], nextCursor: undefined, correctedQuery: undefined };
-  const [hidden, userIds, tagIds] = await Promise.all([
+  const browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  const [hidden, addonData, userIds, tagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
+    getBrowsingSettingAddons(),
     input.usernames?.length ? resolveUserIds(input.usernames) : undefined,
     input.tagNames?.length ? resolveTagIds(input.tagNames) : undefined,
   ]);
   // A named user or tag that does not exist can match nothing.
   if (userIds && !userIds.length) return none;
   if (tagIds && tagIds.length < new Set(input.tagNames).size) return none;
+  const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
+    isModerator: user?.isModerator,
+  });
+  const refusalOf = async (text: string) => {
+    const refusal = await semanticQueryRefusal(text, { browsingLevel, disablePoi });
+    recordRefusal(track, refusal, text, 'articles_semantic');
+    return refusal;
+  };
+  if (await refusalOf(input.query)) return none;
 
   const excludedUserIds = [
     ...new Set(
@@ -54,7 +74,6 @@ export async function searchSemanticArticles({
     ),
   ];
   const excludedTagIds = hidden.hiddenTags.filter((x) => x.hidden).map((x) => x.id);
-  const browsingLevel = input.browsingLevel || publicBrowsingLevelsFlag;
   const filter: CandidateFilter = {
     gate: { kind: 'level', nsfwLevels: Flags.instanceToArray(browsingLevel) },
     tagIds,
@@ -119,9 +138,15 @@ export async function searchSemanticArticles({
   };
 
   let correctedQuery: string | undefined;
+  let correctedReviewed: boolean | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await candidateSource({ query: { text: input.query }, filter, offset, limit });
+      // The service embeds its spelling correction, not the text audited above.
+      if (correctedReviewed === undefined && result.correctedQuery !== undefined)
+        correctedReviewed =
+          result.correctedQuery === input.query || !(await refusalOf(result.correctedQuery));
+      if (correctedReviewed === false) return [];
       correctedQuery ??= result.correctedQuery;
       returned += result.ids.length;
       return result.ids;
@@ -140,5 +165,6 @@ export async function searchSemanticArticles({
     shown: page.items.length,
   }).catch(() => undefined);
 
+  if (correctedReviewed === false) return none;
   return { ...page, correctedQuery };
 }

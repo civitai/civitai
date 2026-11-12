@@ -5,18 +5,16 @@ import { getAllImages } from '~/server/services/image.service';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
-import { BlocklistType, ImageSort } from '~/server/common/enums';
+import { ImageSort } from '~/server/common/enums';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
-import type { Tracker } from '~/server/clickhouse/tracker';
-import { stripBenignPhrases } from '~/server/services/blocklist.service';
-import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
-  nsfwBrowsingLevelsArray,
-  nsfwBrowsingLevelsFlag,
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metadata/audit';
+  recordRefusal,
+  resolveSemanticBrowsingLevel,
+  semanticQueryRefusal,
+  type QueryTracker,
+} from '~/server/services/semantic-query-guard';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -42,24 +40,6 @@ const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
 
 const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
 
-/** The search gates' query audit, run on the server; any failure refuses. */
-async function refusesQuery(
-  query: string,
-  { nsfw, disablePoi }: { nsfw: boolean; disablePoi: boolean }
-) {
-  try {
-    const audited = await stripBenignPhrases(query, BlocklistType.PromptBenignPhrase);
-    const verdict = includesInappropriate({ prompt: audited }, nsfw);
-    // A 'poi' verdict is returned before the minor check runs, so it can hide one.
-    if (verdict === 'minor' || (verdict && includesMinor(audited))) return 'minor';
-    if (verdict) return verdict;
-    if (disablePoi && includesPoi(audited)) return 'poi';
-    return false;
-  } catch {
-    return 'error';
-  }
-}
-
 export async function searchSemanticImages({
   input,
   user,
@@ -71,14 +51,10 @@ export async function searchSemanticImages({
   // Signed out: the site defaults for hidden tags and browsing add-ons.
   user?: SessionUser;
   domain?: DomainColor;
-  track?: Pick<Tracker, 'action'>;
+  track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
-  // Only moderators search above the safe levels.
-  const requestedLevel = input.browsingLevel || publicBrowsingLevelsFlag;
-  const browsingLevel = user?.isModerator
-    ? requestedLevel
-    : Flags.intersection(requestedLevel, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
+  const browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
 
   const [hidden, addonData, blockedTags, userIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -103,20 +79,15 @@ export async function searchSemanticImages({
   const addons = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
     isModerator: user?.isModerator,
   });
-  if (input.query) {
-    const refusal = await refusesQuery(input.query, {
-      nsfw: Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag),
+  const refusalOf = async (text: string) => {
+    const refusal = await semanticQueryRefusal(text, {
+      browsingLevel,
       disablePoi: addons.disablePoi,
     });
-    if (refusal === 'minor')
-      track
-        ?.action({
-          type: 'CSAM_Help_Triggered',
-          details: { query: input.query, index: 'images_semantic' },
-        })
-        .catch(() => undefined);
-    if (refusal) return emptyPage();
-  }
+    recordRefusal(track, refusal, text, 'images_semantic');
+    return refusal;
+  };
+  if (input.query && (await refusalOf(input.query))) return emptyPage();
   const excludedUserIds = [
     ...new Set(
       [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
@@ -193,9 +164,15 @@ export async function searchSemanticImages({
     : { text: input.query ?? '' };
 
   let correctedQuery: string | undefined;
+  let correctedReviewed: boolean | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await candidateSource({ query, filter, offset, limit });
+      // The service embeds its spelling correction, not the text audited above.
+      if (correctedReviewed === undefined && result.correctedQuery !== undefined)
+        correctedReviewed =
+          result.correctedQuery === input.query || !(await refusalOf(result.correctedQuery));
+      if (correctedReviewed === false) return [];
       correctedQuery ??= result.correctedQuery;
       return result.ids;
     },
@@ -204,5 +181,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
+  if (correctedReviewed === false) return emptyPage();
   return { ...page, correctedQuery };
 }
