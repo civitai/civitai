@@ -95,6 +95,10 @@ beforeAll(async () => {
     );
     CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
+    -- contestEntry also reads running flag Crucibles.
+    CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+    CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[]);
+    CREATE TABLE "CrucibleEntry" (id serial PRIMARY KEY, "crucibleId" int, "imageId" int);
     CREATE TABLE "EventCosmeticPlacement" (
       id serial PRIMARY KEY, event text NOT NULL, "userId" int NOT NULL, "endedAt" timestamp
     );
