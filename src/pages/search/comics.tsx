@@ -17,6 +17,8 @@ import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { comicSearchCoverLevel } from '~/components/AutocompleteSearch/renderItems/comics';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import Link from 'next/link';
@@ -124,13 +126,27 @@ export function ComicHitList() {
             <Card withBorder radius="md" p={0} className="cursor-pointer hover:shadow-md">
               <Card.Section>
                 {hit.coverImageUrl ? (
-                  <EdgeMedia
-                    src={hit.coverImageUrl}
-                    alt={hit.name}
-                    type="image"
-                    width={450}
-                    style={{ width: '100%', height: 200, objectFit: 'cover' }}
-                  />
+                  <div className="relative" style={{ height: 200 }}>
+                    {/* The index holds no cover image id. A negative id keeps this guard's reveal state and
+                        level overrides apart from any real image's, which are keyed by image id. */}
+                    <ImageGuard2 image={{ id: -hit.id, nsfwLevel: comicSearchCoverLevel(hit) }}>
+                      {(safe) =>
+                        safe ? (
+                          <EdgeMedia
+                            src={hit.coverImageUrl!}
+                            alt={hit.name}
+                            type="image"
+                            width={450}
+                            style={{ width: '100%', height: 200, objectFit: 'cover' }}
+                          />
+                        ) : (
+                          <Center style={{ height: 200 }} className="bg-gray-1 dark:bg-dark-6">
+                            <ImageGuard2.BlurToggle />
+                          </Center>
+                        )
+                      }
+                    </ImageGuard2>
+                  </div>
                 ) : (
                   <Center style={{ height: 200 }} className="bg-gray-1 dark:bg-dark-6">
                     <Text c="dimmed">No cover</Text>
