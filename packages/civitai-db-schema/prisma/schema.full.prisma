@@ -2191,6 +2191,10 @@ model Image {
   nsfw              NsfwLevel               @default(None)
   nsfwLevel         Int                     @default(0)
   nsfwLevelLocked   Boolean                 @default(false)
+  /// Rating axes as one-hot bit groups: sexual 0-4, violence 5-9, language 10-12, sexual
+  /// high-water 13-17, bit 18 set by a moderator. NULL: not rated by an axis-capable rater.
+  /// Layout and write rules: src/server/services/image-nsfw-axes.ts.
+  nsfwAxes          Int?
   tosViolation      Boolean                 @default(false)
   analysis          Json?
   generationProcess ImageGenerationProcess?
@@ -2266,7 +2270,6 @@ model Image {
   storylineSparks        Storyline[]            @relation("StorylineSparkImage")
   storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
-  axisRating             ImageAxisRating?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -8087,36 +8090,6 @@ model ImageAudioScan {
   completedAt   DateTime? @db.Timestamptz(3)
 
   @@index([flagged, createdAt])
-}
-
-enum ImageAxisSource {
-  rated
-  moderator
-}
-
-/// Current rating axes of an image from an axis-capable rater, or a moderator. No row means the
-/// image was not rated on axes. A scan never overwrites a moderator row. Nothing reads it to
-/// filter, rate or hide media yet.
-model ImageAxisRating {
-  imageId         Int             @id
-  image           Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  source          ImageAxisSource
-  sexualLevel     Int?            @db.SmallInt
-  /// Highest sexualLevel any scan has rated; only a moderator lowers it.
-  sexualHighWater Int?            @db.SmallInt
-  violenceLevel   Int?            @db.SmallInt
-  /// No rater produces a language axis yet.
-  languageLevel   Int?            @db.SmallInt
-  /// The rater's modelRef; null on a moderator row.
-  rater           String?
-  /// The rater checkpoint's sha256; null on a moderator row.
-  raterVersion    String?
-  /// The scan workflow's completion time; an older result never replaces a newer one.
-  ratedAt         DateTime        @db.Timestamptz(3)
-  workflowId      String?
-  /// The moderator's user id on a moderator row.
-  setBy           Int?
-  updatedAt       DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
 }
 
 model ScanLabelVote {
