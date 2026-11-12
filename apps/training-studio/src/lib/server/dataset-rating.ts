@@ -1,5 +1,4 @@
-// Server half of the v2 dataset rating: the flag, the shared cache, and the background job that rates a
-// dataset's images ahead of the submit. The decision itself is in $lib/dataset-rating + train-core.
+// Server-only: the client-safe parse and decision are in $lib/dataset-rating.
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { invokeImageScanningStepTemplate } from '@civitai/orchestration-client';
 import type { SessionUser } from '@civitai/auth';

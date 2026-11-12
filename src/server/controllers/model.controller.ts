@@ -209,7 +209,7 @@ import {
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
-  sfwBrowsingLevelsFlag,
+  modelBrowsingLevelLimit,
 } from '~/shared/constants/browsingLevel.constants';
 import {
   Availability,
@@ -876,7 +876,10 @@ export const upsertModelHandler = async ({
       isModerator: ctx.user.isModerator,
       gallerySettings: {
         ...gallerySettings,
-        level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : gallerySettings?.level,
+        level:
+          input.minor || input.sfwOnly
+            ? modelBrowsingLevelLimit({ minor: !!input.minor, sfwOnly: !!input.sfwOnly })
+            : gallerySettings?.level,
       },
       tracker: ctx.track,
     });
@@ -2373,11 +2376,11 @@ export const updateGallerySettingsHandler = async ({
               hiddenImages: gallerySettings.hiddenImages,
               users: gallerySettings.hiddenUsers.map(({ id }) => id),
               tags: gallerySettings.hiddenTags.map(({ id }) => id),
-              level: sfwLocked ? sfwBrowsingLevelsFlag : gallerySettings.level,
+              level: sfwLocked ? modelBrowsingLevelLimit(model) : gallerySettings.level,
               pinnedPosts: gallerySettings.pinnedPosts,
             }
           : sfwLocked
-          ? { level: sfwBrowsingLevelsFlag }
+          ? { level: modelBrowsingLevelLimit(model) }
           : null;
         return { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull };
       },

@@ -139,7 +139,6 @@
         const res = await be.datasetRating!(ids);
         if (stopped || !res.enabled) return;
         ratedMature = { key, count: res.matureCount };
-        // The server is rating the rest in the background; ask again while it does.
         if (res.unrated > 0 && poll < RATING_POLLS)
           timer = setTimeout(() => void ask(poll + 1), RATING_POLL_MS);
       } catch {

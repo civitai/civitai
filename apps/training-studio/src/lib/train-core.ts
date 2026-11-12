@@ -23,6 +23,7 @@ import {
 import {
   blobIdFromAir,
   describeSubmitError,
+  isTrainingDataNotReady,
   isFlux2,
   resolveCurrencies,
   type OrchestratorClient,
@@ -57,6 +58,7 @@ import {
   type RunModelRef,
   type TrainingServiceStatus,
 } from '$lib/service-status-core';
+import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { isMatureRating, type DatasetRating, type StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
@@ -308,6 +310,8 @@ export async function submitTraining(
     },
     query: { wait: 0 },
   });
+  if (!data?.id && isTrainingDataNotReady(error, response?.status))
+    throw new FilesProcessingError();
   if (!data?.id)
     throw new TrainingSubmitError(
       chargeFailureReason(describeSubmitError(error), run.matureAck === true),
@@ -558,6 +562,7 @@ export interface SubmittedBatch {
 
 /** A submit failure as the user should read it: the orchestrator's own reason when it gave one. */
 export function submitFailureReason(err: unknown): string {
+  if (err instanceof FilesProcessingError) return FILES_PROCESSING_PARTIAL_REASON;
   return err instanceof TrainingSubmitError ? err.reason : 'the training service did not respond';
 }
 
@@ -730,7 +735,6 @@ function sourceMatureCount(
   const count = countMatureBlobs(client, airs, rating).then((counted) => {
     onMatureCount?.(counted);
     const { mature, failed, unratedKeys } = counted;
-    // Unrated images may be rated by the next look, so that count isn't kept either.
     if ((failed > 0 || unratedKeys.length > 0) && probeCache.get(key)?.count === count)
       probeCache.delete(key);
     return mature;

@@ -1,6 +1,3 @@
-// Dataset maturity from the orchestrator's v2 image rater. Client-safe: the parse and the per-image
-// decision only. The Flipt evaluation, the shared cache and the rating calls live in
-// lib/server/dataset-rating.ts.
 import type { ImageScanningInput } from '@civitai/orchestration-client';
 
 /** The rater the imageScanning recipe runs when asked for a v2 rating. */

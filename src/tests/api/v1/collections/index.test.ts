@@ -2,9 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
+import {
+  CollectionReadConfiguration,
+  ImageIngestionStatus,
+  MediaType,
+} from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { imageSelect } from '~/server/selectors/image.selector';
+import { publicCoverImageSelect } from '~/server/utils/public-cover-image';
 
 const {
   mockGetAllCollections,
@@ -15,8 +21,10 @@ const {
   mockGetRegion,
   mockIsRegionRestricted,
   mockWithServableCovers,
+  mockGetHeldLevelsByPost,
 } = vi.hoisted(() => ({
   mockWithServableCovers: vi.fn(),
+  mockGetHeldLevelsByPost: vi.fn(),
   mockGetAllCollections: vi.fn(),
   mockGetCollectionItemCount: vi.fn(),
   mockGetUserCollectionPermissionsById: vi.fn(),
@@ -28,11 +36,56 @@ const {
 
 const mockImageFindUnique = dbMock.dbRead.image.findUnique;
 
+type Row = Record<string, unknown>;
+type FindUniqueArgs = { where: { id: number }; select: Row };
+type ListSelect = Row & { image?: { select: Row } };
+
+/** A cover every public check passes, with the fields `imageSelect` returns as well. */
+const cleanCover = {
+  id: 99,
+  name: 'cover',
+  url: 'img-key',
+  type: MediaType.image,
+  width: 512,
+  height: 768,
+  hash: 'hash',
+  meta: null,
+  userId: 2,
+  generationProcess: null,
+  postId: 7,
+  metadata: {},
+  createdAt: new Date('2026-01-01T00:00:00Z'),
+  hideMeta: false,
+  tags: [],
+  nsfwLevel: NsfwLevel.PG,
+  ingestion: ImageIngestionStatus.Scanned,
+  scannedAt: new Date('2026-01-02T00:00:00Z'),
+  tosViolation: false,
+  needsReview: null,
+  blockedFor: null,
+  poi: false,
+  minor: false,
+  acceptableMinor: false,
+};
+
+/** What Prisma returns for `select`: only the selected keys, so an unselected field reads undefined. */
+function pickSelected(row: Row, select: Record<string, unknown>): Row {
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, on]) => !!on)
+      .map(([key]) => [key, row[key]])
+  );
+}
+
 vi.mock('~/server/services/collection.service', () => ({
   getAllCollections: mockGetAllCollections,
   getCollectionItemCount: mockGetCollectionItemCount,
   getUserCollectionPermissionsById: mockGetUserCollectionPermissionsById,
   getCollectionById: mockGetCollectionById,
+}));
+
+vi.mock('~/server/services/model.service', () => ({
+  getHeldLevelsByPost: mockGetHeldLevelsByPost,
 }));
 
 vi.mock('~/server/services/collection-cover-visibility', () => ({
@@ -129,8 +182,10 @@ beforeEach(() => {
   mockGetCollectionItemCount.mockResolvedValue([]);
   mockGetRegion.mockReturnValue({});
   mockIsRegionRestricted.mockReturnValue(false);
-  mockImageFindUnique.mockResolvedValue({ poi: false, minor: false });
+  mockImageFindUnique.mockImplementation((async ({ where, select }: FindUniqueArgs) =>
+    where.id === cleanCover.id ? pickSelected(cleanCover, select) : null) as never);
   mockWithServableCovers.mockImplementation(async (rows: unknown[]) => rows);
+  mockGetHeldLevelsByPost.mockResolvedValue(new Map());
 });
 
 describe('GET /api/v1/collections (list)', () => {
@@ -223,68 +278,6 @@ describe('GET /api/v1/collections (list)', () => {
     expect(mockGetAllCollections.mock.calls[0][0].input.sort).toBe('Most Followers');
   });
 
-  describe('cover poi/minor exclusion', () => {
-    const listRow = (image: Record<string, unknown>) => ({
-      id: 10,
-      name: 'c',
-      description: null,
-      read: CollectionReadConfiguration.Public,
-      type: 'Image',
-      nsfwLevel: 1,
-      userId: 2,
-      user: { id: 2, username: 'bob' },
-      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.PG, ...image },
-    });
-
-    it('selects poi and minor on the cover image', async () => {
-      mockGetAllCollections.mockResolvedValue([]);
-      const { req, res } = createMocks({ query: {} });
-
-      await listHandler(req, res);
-
-      expect(mockGetAllCollections.mock.calls[0][0].select.image).toEqual({
-        select: { id: true, url: true, type: true, nsfwLevel: true, poi: true, minor: true },
-      });
-    });
-
-    it('nulls a cover a stranger may not see, judged with no viewer', async () => {
-      mockGetAllCollections.mockResolvedValue([listRow({ poi: false, minor: false })]);
-      mockWithServableCovers.mockImplementation(async (rows: { image: unknown }[]) =>
-        rows.map((r) => ({ ...r, image: null }))
-      );
-      const { req, res } = createMocks({ query: {} });
-
-      await listHandler(req, res);
-
-      expect(mockWithServableCovers).toHaveBeenCalledWith([expect.objectContaining({ id: 10 })]);
-      expect(res._getJSONData().items[0].coverImageUrl).toBeNull();
-    });
-
-    it('keeps a cover with neither flag', async () => {
-      mockGetAllCollections.mockResolvedValue([listRow({ poi: false, minor: false })]);
-      const { req, res } = createMocks({ query: {} });
-
-      await listHandler(req, res);
-
-      expect(res._getJSONData().items[0].coverImageUrl).toBe('edge:img-key');
-    });
-
-    it.each([
-      ['poi', { poi: true, minor: false }],
-      ['minor', { poi: false, minor: true }],
-    ])('nulls the cover when it is flagged %s, keeping the collection', async (_flag, flags) => {
-      mockGetAllCollections.mockResolvedValue([listRow(flags)]);
-      const { req, res } = createMocks({ query: {} });
-
-      await listHandler(req, res);
-
-      const items = res._getJSONData().items;
-      expect(items).toHaveLength(1);
-      expect(items[0].id).toBe(10);
-      expect(items[0].coverImageUrl).toBeNull();
-    });
-  });
-
   it('RATE LIMIT: 429 + Retry-After, no service call', async () => {
     mockRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 30 });
     const { req, res } = createMocks({ query: {} });
@@ -332,7 +325,8 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
       read: CollectionReadConfiguration.Public,
       userId: 2,
       user: { id: 2, username: 'bob' },
-      image: { url: 'img-key', type: 'image', nsfwLevel: 1 },
+      mode: null,
+      image: pickSelected(cleanCover, imageSelect),
       tags: [{ id: 3, name: 'tag', filterableOnly: false }],
     });
     const { req, res } = createMocks({ query: { id: '55' } });
@@ -348,151 +342,6 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
       coverImageUrl: 'edge:img-key',
       user: { id: 2, username: 'bob' },
       tags: [{ id: 3, name: 'tag' }],
-    });
-  });
-
-  it('MATURITY: nulls the cover URL when the cover is above the region-narrowed PUBLIC ceiling (mature cover never leaked; NOT allBrowsingLevels)', async () => {
-    mockGetUserCollectionPermissionsById.mockResolvedValue({
-      read: true,
-      write: false,
-      manage: false,
-    });
-    mockGetCollectionById.mockResolvedValue({
-      id: 55,
-      name: 'pub',
-      description: 'd',
-      type: 'Image',
-      nsfwLevel: NsfwLevel.R,
-      read: CollectionReadConfiguration.Public,
-      userId: 2,
-      user: { id: 2, username: 'bob' },
-      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.R },
-      tags: [],
-    });
-    const { req, res } = createMocks({ query: { id: '55' } });
-
-    await detailHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(200);
-    // R does NOT intersect the PG-only public flag → cover URL nulled. Under the
-    // old `allBrowsingLevels` clamp this R cover would have leaked.
-    expect(res._getJSONData().coverImageUrl).toBeNull();
-    expect(mockImageFindUnique).not.toHaveBeenCalled();
-  });
-
-  it('MATURITY/CACHEABILITY: the clamp reads NO per-user data — an authed (mod) caller gets byte-identical clamped output to an anon caller', async () => {
-    mockGetUserCollectionPermissionsById.mockResolvedValue({
-      read: true,
-      write: false,
-      manage: false,
-    });
-    mockGetCollectionById.mockImplementation(async () => ({
-      id: 55,
-      name: 'pub',
-      description: 'd',
-      type: 'Image',
-      nsfwLevel: NsfwLevel.R,
-      read: CollectionReadConfiguration.Public,
-      userId: 2,
-      user: { id: 2, username: 'bob' },
-      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.R },
-      tags: [],
-    }));
-
-    const anon = createMocks({ query: { id: '55' } });
-    await detailHandler(anon.req, anon.res);
-    const authed = createMocks({ query: { id: '55' }, user: { id: 7, isModerator: true } });
-    await detailHandler(authed.req, authed.res);
-
-    // Caller identity never feeds the clamp → identical output; mature cover
-    // nulled for BOTH.
-    expect(authed.res._getJSONData()).toEqual(anon.res._getJSONData());
-    expect(anon.res._getJSONData().coverImageUrl).toBeNull();
-  });
-
-  it('MATURITY: the clamp is REGION-derived — a restricted region uses the SFW ceiling (PG-13 cover retained where the public default would null it)', async () => {
-    mockIsRegionRestricted.mockReturnValue(true);
-    mockGetUserCollectionPermissionsById.mockResolvedValue({
-      read: true,
-      write: false,
-      manage: false,
-    });
-    mockGetCollectionById.mockResolvedValue({
-      id: 55,
-      name: 'pub',
-      description: 'd',
-      type: 'Image',
-      nsfwLevel: NsfwLevel.PG13,
-      read: CollectionReadConfiguration.Public,
-      userId: 2,
-      user: { id: 2, username: 'bob' },
-      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.PG13 },
-      tags: [],
-    });
-    const { req, res } = createMocks({ query: { id: '55' } });
-
-    await detailHandler(req, res);
-
-    // Restricted → SFW ceiling (PG + PG-13) → the PG-13 cover survives, proving
-    // the clamp tracks the region helper (not a fixed max, not a per-user value).
-    expect(res._getJSONData().coverImageUrl).toBe('edge:img-key');
-  });
-
-  describe('cover poi/minor exclusion', () => {
-    beforeEach(() => {
-      mockGetUserCollectionPermissionsById.mockResolvedValue({
-        read: true,
-        write: false,
-        manage: false,
-      });
-      mockGetCollectionById.mockResolvedValue({
-        id: 55,
-        name: 'pub',
-        description: 'd',
-        type: 'Image',
-        nsfwLevel: NsfwLevel.PG,
-        read: CollectionReadConfiguration.Public,
-        userId: 2,
-        user: { id: 2, username: 'bob' },
-        image: { id: 99, url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.PG },
-        tags: [],
-      });
-    });
-
-    it('looks up the flags for the cover image and keeps a cover with neither', async () => {
-      const { req, res } = createMocks({ query: { id: '55' } });
-
-      await detailHandler(req, res);
-
-      expect(mockImageFindUnique).toHaveBeenCalledWith({
-        where: { id: 99 },
-        select: { poi: true, minor: true },
-      });
-      expect(res._getJSONData().coverImageUrl).toBe('edge:img-key');
-    });
-
-    it.each([
-      ['poi', { poi: true, minor: false }],
-      ['minor', { poi: false, minor: true }],
-    ])('nulls the cover when it is flagged %s', async (_flag, flags) => {
-      mockImageFindUnique.mockResolvedValue(flags);
-      const { req, res } = createMocks({ query: { id: '55' } });
-
-      await detailHandler(req, res);
-
-      expect(res._getStatusCode()).toBe(200);
-      const body = res._getJSONData();
-      expect(body.id).toBe(55);
-      expect(body.coverImageUrl).toBeNull();
-    });
-
-    it('nulls the cover when its image row is not found', async () => {
-      mockImageFindUnique.mockResolvedValue(null);
-      const { req, res } = createMocks({ query: { id: '55' } });
-
-      await detailHandler(req, res);
-
-      expect(res._getJSONData().coverImageUrl).toBeNull();
     });
   });
 
@@ -522,5 +371,274 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
     expect(res._getHeader('Retry-After')).toBe('15');
     expect(res._getHeader('Cache-Control')).toBe('no-store');
     expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
+  });
+});
+
+const listCollection = {
+  id: 10,
+  name: 'c',
+  description: null,
+  read: CollectionReadConfiguration.Public,
+  type: 'Image',
+  mode: 'Contest',
+  nsfwLevel: NsfwLevel.PG,
+  userId: 2,
+  user: { id: 2, username: 'bob' },
+};
+
+const detailCollection = {
+  id: 55,
+  name: 'pub',
+  description: 'd',
+  read: CollectionReadConfiguration.Public,
+  type: 'Image',
+  mode: 'Contest',
+  nsfwLevel: NsfwLevel.PG,
+  userId: 2,
+  user: { id: 2, username: 'bob' },
+  tags: [],
+};
+
+/** Serves `cover` the way the database would for the select each endpoint passes. */
+function serveCover(cover: Row | null) {
+  mockGetAllCollections.mockImplementation(async ({ select }: { select: ListSelect }) => [
+    {
+      ...pickSelected(listCollection, select),
+      image: cover && select.image ? pickSelected(cover, select.image.select) : null,
+    },
+  ]);
+  mockGetUserCollectionPermissionsById.mockResolvedValue({
+    read: true,
+    write: false,
+    manage: false,
+  });
+  mockGetCollectionById.mockResolvedValue({
+    ...detailCollection,
+    image: cover ? pickSelected(cover, imageSelect) : null,
+  });
+  mockImageFindUnique.mockImplementation((async ({ where, select }: FindUniqueArgs) =>
+    cover && where.id === cover.id ? pickSelected(cover, select) : null) as never);
+}
+
+async function requestCollection(
+  endpoint: 'list' | 'detail',
+  cover: Row | null,
+  {
+    query = {},
+    user,
+  }: { query?: Record<string, string>; user?: { id: number; isModerator?: boolean } } = {}
+) {
+  serveCover(cover);
+  const { req, res } = createMocks({
+    query: endpoint === 'list' ? query : { ...query, id: '55' },
+    user,
+  });
+
+  await (endpoint === 'list' ? listHandler : detailHandler)(req, res);
+
+  expect(res._getStatusCode()).toBe(200);
+  const body = res._getJSONData();
+  if (endpoint === 'detail') {
+    expect(body.id).toBe(55);
+    return body;
+  }
+  expect(body.items).toHaveLength(1);
+  expect(body.items[0].id).toBe(10);
+  return body.items[0];
+}
+
+describe.each(['list', 'detail'] as const)('public collection cover (%s)', (endpoint) => {
+  it.each([MediaType.image, MediaType.video])(
+    'shows a scanned, in-level %s cover with its metadata',
+    async (type) => {
+      const item = await requestCollection(endpoint, { ...cleanCover, type });
+
+      expect(item.coverImageUrl).toBe('edge:img-key');
+      expect(item.coverImage).toEqual({
+        id: 99,
+        url: 'edge:img-key',
+        type,
+        width: 512,
+        height: 768,
+        nsfwLevel: NsfwLevel.PG,
+      });
+    }
+  );
+
+  it('returns null dimensions for a cover without them', async () => {
+    const item = await requestCollection(endpoint, { ...cleanCover, width: null, height: null });
+
+    expect(item.coverImage).toMatchObject({ id: 99, width: null, height: null });
+  });
+
+  it('returns the collection mode', async () => {
+    const item = await requestCollection(endpoint, null);
+
+    expect(item.mode).toBe('Contest');
+  });
+
+  it.each<[string, Row]>([
+    ['unrated (nsfwLevel 0)', { nsfwLevel: 0 }],
+    ['unrated (nsfwLevel null)', { nsfwLevel: null }],
+    ['ingestion Pending', { ingestion: ImageIngestionStatus.Pending }],
+    ['ingestion Rescan', { ingestion: ImageIngestionStatus.Rescan }],
+    ['ingestion Error', { ingestion: ImageIngestionStatus.Error }],
+    ['ingestion Blocked', { ingestion: ImageIngestionStatus.Blocked }],
+    ['ingestion NotFound', { ingestion: ImageIngestionStatus.NotFound }],
+    [
+      'ingestion PendingManualAssignment',
+      { ingestion: ImageIngestionStatus.PendingManualAssignment },
+    ],
+    ['scannedAt null', { scannedAt: null }],
+    ['needsReview csam', { needsReview: 'csam' }],
+    ['needsReview minor', { needsReview: 'minor' }],
+    ['needsReview poi', { needsReview: 'poi' }],
+    ['needsReview empty string', { needsReview: '' }],
+    ['tosViolation', { tosViolation: true }],
+    ['blockedFor set', { blockedFor: 'moderated' }],
+    ['blockedFor empty string', { blockedFor: '' }],
+    ['poi', { poi: true }],
+    ['minor', { minor: true }],
+    ['acceptableMinor', { acceptableMinor: true }],
+    ['rated above the browsing level', { nsfwLevel: NsfwLevel.R }],
+    ['rated Blocked', { nsfwLevel: NsfwLevel.Blocked }],
+    ['rated with Blocked among its levels', { nsfwLevel: NsfwLevel.PG | NsfwLevel.Blocked }],
+    ['audio', { type: MediaType.audio }],
+    ['without a media type', { type: null }],
+    ['without a url', { url: '' }],
+  ])('withholds the cover but keeps the collection: %s', async (_case, override) => {
+    const item = await requestCollection(endpoint, { ...cleanCover, ...override });
+
+    expect(item.coverImageUrl).toBeNull();
+    expect(item.coverImage).toBeNull();
+  });
+
+  it('keeps the collection when it has no cover', async () => {
+    const item = await requestCollection(endpoint, null);
+
+    expect(item.coverImageUrl).toBeNull();
+    expect(item.coverImage).toBeNull();
+  });
+
+  it('gives an authed moderator the same cover as an anonymous caller', async () => {
+    const cover = { ...cleanCover, nsfwLevel: NsfwLevel.R };
+    const anon = await requestCollection(endpoint, cover);
+    const moderator = await requestCollection(endpoint, cover, {
+      user: { id: 7, isModerator: true },
+    });
+
+    expect(moderator).toEqual(anon);
+    expect(anon.coverImage).toBeNull();
+  });
+
+  it('narrows the browsing level for a restricted region', async () => {
+    mockIsRegionRestricted.mockReturnValue(true);
+    const query: Record<string, string> = endpoint === 'list' ? { nsfw: 'true' } : {};
+
+    const pg13 = await requestCollection(
+      endpoint,
+      { ...cleanCover, nsfwLevel: NsfwLevel.PG13 },
+      { query }
+    );
+    const r = await requestCollection(
+      endpoint,
+      { ...cleanCover, nsfwLevel: NsfwLevel.R },
+      { query }
+    );
+
+    expect(pg13.coverImage).toMatchObject({ id: 99, nsfwLevel: NsfwLevel.PG13 });
+    expect(r.coverImage).toBeNull();
+  });
+});
+
+describe.each(['list', 'detail'] as const)('held gallery level on the cover (%s)', (endpoint) => {
+  const query: Record<string, string> = endpoint === 'list' ? { nsfw: 'true' } : {};
+
+  it('withholds a cover above the held level of its post', async () => {
+    mockGetHeldLevelsByPost.mockResolvedValue(new Map([[7, { level: NsfwLevel.PG13 }]]));
+
+    const item = await requestCollection(endpoint, cleanCover, { query });
+
+    expect(mockGetHeldLevelsByPost).toHaveBeenCalledWith([7]);
+    expect(item.coverImageUrl).toBeNull();
+    expect(item.coverImage).toBeNull();
+  });
+
+  it('shows a cover within the held level of its post', async () => {
+    mockGetHeldLevelsByPost.mockResolvedValue(
+      new Map([[7, { level: NsfwLevel.PG | NsfwLevel.PG13 }]])
+    );
+
+    const item = await requestCollection(endpoint, cleanCover, { query });
+
+    expect(item.coverImage).toMatchObject({ id: 99, nsfwLevel: NsfwLevel.PG });
+  });
+
+  it('judges a cover by its own post, not by a hold on another post', async () => {
+    mockGetHeldLevelsByPost.mockResolvedValue(new Map([[8, { level: NsfwLevel.PG13 }]]));
+
+    const item = await requestCollection(endpoint, cleanCover, { query });
+
+    expect(item.coverImage).toMatchObject({ id: 99 });
+  });
+});
+
+describe('public collection cover queries', () => {
+  it('reads the list cover with the public cover select', async () => {
+    await requestCollection('list', cleanCover);
+
+    expect(mockGetAllCollections.mock.calls[0][0].select.image).toEqual({
+      select: publicCoverImageSelect,
+    });
+  });
+
+  it('reads the detail cover by the id getCollectionById returned, with the public cover select', async () => {
+    await requestCollection('detail', cleanCover);
+
+    expect(mockImageFindUnique).toHaveBeenCalledWith({
+      where: { id: 99 },
+      select: publicCoverImageSelect,
+    });
+  });
+
+  it('skips the detail cover read when getCollectionById returned no cover', async () => {
+    await requestCollection('detail', null);
+
+    expect(mockImageFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('withholds the detail cover when its image row is gone', async () => {
+    serveCover(cleanCover);
+    mockImageFindUnique.mockResolvedValue(null);
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getJSONData().coverImage).toBeNull();
+  });
+
+  it('shows an R cover on the list when nsfw=true', async () => {
+    const item = await requestCollection(
+      'list',
+      { ...cleanCover, nsfwLevel: NsfwLevel.R },
+      {
+        query: { nsfw: 'true' },
+      }
+    );
+
+    expect(item.coverImage).toMatchObject({ id: 99, nsfwLevel: NsfwLevel.R });
+  });
+
+  it('keeps the list cover check behind the servable-cover filter, judged with no viewer', async () => {
+    mockWithServableCovers.mockImplementation(async (rows: { image: unknown }[]) =>
+      rows.map((r) => ({ ...r, image: null }))
+    );
+    serveCover(cleanCover);
+    const { req, res } = createMocks({ query: {}, user: { id: 2 } });
+
+    await listHandler(req, res);
+
+    expect(mockWithServableCovers).toHaveBeenCalledWith([expect.objectContaining({ id: 10 })]);
+    expect(res._getJSONData().items[0].coverImage).toBeNull();
   });
 });
