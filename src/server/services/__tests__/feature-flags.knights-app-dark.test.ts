@@ -32,7 +32,7 @@ describe('knightsApp is dark until its Flipt flag says so', () => {
 
   it('is on when knights-of-new-order-app says so', async () => {
     mocks.isFliptSync.mockImplementation(
-      (key: string) => key === 'knights-of-new-order-app' || null
+      (key?: string) => key === 'knights-of-new-order-app' || null
     );
     const user = { id: 9202, isModerator: false, tier: 'free' } as SessionUser;
     expect((await getFeatureFlagsAsync({ user })).knightsApp).toBe(true);

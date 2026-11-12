@@ -191,6 +191,7 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'routes/audit/training-data/[versionId]/CsamReportForm.svelte',
     // The "reviewed it another way" tick that unlocks Approve on a dataset this app cannot preview.
     'routes/audit/training-data/workflow/[workflowId]/WorkflowReviewActions.svelte',
+    'routes/knights-of-new-order/config/SourcesForm.svelte',
     'routes/retool/bulk-ban/+page.svelte',
     'routes/retool/user-lookup/CommentList.svelte',
     'routes/retool/user-lookup/IdentityPanel.svelte',
