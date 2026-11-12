@@ -210,6 +210,30 @@ describe('the sticker timeline', () => {
   });
 });
 
+describe('the timeline inside the image detail dialog', () => {
+  test('its keys step the video, not the carousel the dialog holds', async () => {
+    // The detail view opened from a feed is a modal: the video and the editor sit inside it.
+    const host = page
+      .getByRole('radiogroup', { name: 'Sticker mode' })
+      .element()
+      .closest<HTMLElement>('[style*="600px"]')!;
+    host.setAttribute('role', 'dialog');
+    host.append(video);
+    const carousel = vi.fn();
+    const onCarouselKey = (event: KeyboardEvent) => {
+      if (!event.defaultPrevented && event.key === 'ArrowRight') carousel();
+    };
+    document.addEventListener('keydown', onCarouselKey, true);
+
+    await page.getByText('Movement').click();
+    await userEvent.keyboard('{ArrowRight}');
+
+    expect(video.currentTime).toBeCloseTo(0.1);
+    expect(carousel).not.toHaveBeenCalled();
+    document.removeEventListener('keydown', onCarouselKey, true);
+  });
+});
+
 describe('the mode choice while the tray is open', () => {
   let tray: HTMLDivElement | undefined;
   afterEach(() => tray?.remove());
