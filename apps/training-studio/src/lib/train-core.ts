@@ -23,6 +23,7 @@ import {
 import {
   blobIdFromAir,
   describeSubmitError,
+  isTrainingDataNotReady,
   isFlux2,
   resolveCurrencies,
   type OrchestratorClient,
@@ -57,6 +58,7 @@ import {
   type RunModelRef,
   type TrainingServiceStatus,
 } from '$lib/service-status-core';
+import { FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { slugify } from '$lib/slug';
 import type { TrainingTextCheck } from '$lib/training-text';
@@ -302,6 +304,8 @@ export async function submitTraining(
     },
     query: { wait: 0 },
   });
+  if (!data?.id && isTrainingDataNotReady(error, response?.status))
+    throw new FilesProcessingError();
   if (!data?.id)
     throw new TrainingSubmitError(
       chargeFailureReason(describeSubmitError(error), run.matureAck === true),
@@ -539,6 +543,7 @@ export interface SubmittedBatch {
 
 /** A submit failure as the user should read it: the orchestrator's own reason when it gave one. */
 export function submitFailureReason(err: unknown): string {
+  if (err instanceof FilesProcessingError) return err.message;
   return err instanceof TrainingSubmitError ? err.reason : 'the training service did not respond';
 }
 

@@ -86,6 +86,23 @@ export function describeSubmitError(error: unknown, status?: number): string {
   );
 }
 
+// The orchestrator's refusal of a training submit whose dataset blobs aren't ready yet. The message is a
+// fallback for an orchestrator that predates the code; a different code never matches on the message.
+const NOT_READY_CODE = 'trainingDataNotReady';
+const NOT_READY_MESSAGE = /^trainingData blob '[^']*' is not available for training yet/;
+
+export function isTrainingDataNotReady(error: unknown, status: number | undefined): boolean {
+  if (status !== 400 || !error || typeof error !== 'object') return false;
+  const e = error as { code?: unknown; errors?: { messages?: unknown } };
+  if (e.code !== undefined) return e.code === NOT_READY_CODE;
+  const messages = e.errors?.messages;
+  return (
+    Array.isArray(messages) &&
+    messages.length > 0 &&
+    messages.every((m) => typeof m === 'string' && NOT_READY_MESSAGE.test(m))
+  );
+}
+
 /** Reduce a dataset `air` to the blob id the consumer endpoint wants. Three stored forms: an uploaded blob
  *  is an AIR URN (`urn:air:…:blob@<key>` — the key is after `@`); a generation is a full
  *  `/v2/consumer/blobs/{key}.ext` URL (the key is the last path segment); anything else is already a bare

@@ -9,6 +9,7 @@ import {
   type SubmittedBatch,
 } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
+import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
 
 // Submit the real training workflow(s) — one per run — and return their ids. This spends Buzz, so it's
 // the single write in the whole flow. HTTP mapping over core.submitTrainingBatch: a batch refused by us or
@@ -37,6 +38,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     if (err instanceof MatureAckRequiredError)
       error(409, { message: err.message, matureCount: err.matureCount });
     throwTextCheckHttpError(err);
+    if (err instanceof FilesProcessingError)
+      error(400, { message: err.message, code: FILES_PROCESSING_CODE });
     if (err instanceof TrainingSubmitError && err.isRefusal)
       error(400, `Training could not start: ${err.reason}`);
     if (err instanceof TrainingSubmitError && err.status !== undefined && err.status < 500)

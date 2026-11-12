@@ -7,8 +7,9 @@ declare global {
       message: string;
       /** A 409 from a training submit: how many mature images the server found. */
       matureCount?: number;
-      /** The auto-label stub's 503: our own refusal, before any orchestrator work. */
-      code?: 'auto_label_unavailable';
+      /** The auto-label stub's 503: our own refusal, before any orchestrator work. A training submit's
+       *  400 while dataset files are still processing (`FILES_PROCESSING_CODE`). */
+      code?: 'auto_label_unavailable' | 'filesProcessing';
     }
     interface Locals {
       // Non-optional: the hooks.server.ts guard redirects login/forbidden before any handler runs, so

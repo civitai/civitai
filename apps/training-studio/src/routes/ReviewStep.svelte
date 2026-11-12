@@ -13,6 +13,7 @@
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
   import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
@@ -132,6 +133,7 @@
 
   let starting = $state(false);
   let startError = $state('');
+  let filesProcessing = $state(false);
 
   // Moderators can switch training off on the main app; the flow's banner carries their message.
   const trainingDisabled = $derived(serviceStatus.value?.available === false);
@@ -477,6 +479,7 @@
     spendDialogOpen = false;
     starting = true;
     startError = '';
+    filesProcessing = false;
     try {
       await onStart(
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
@@ -488,7 +491,8 @@
       );
     } catch (e) {
       if (e instanceof MatureAckRequiredError) refusedMature = e.matureCount;
-      startError = e instanceof Error ? e.message : 'Could not start training';
+      if (e instanceof FilesProcessingError) filesProcessing = true;
+      else startError = e instanceof Error ? e.message : 'Could not start training';
     } finally {
       starting = false;
     }
@@ -1070,6 +1074,11 @@
       </p>
     {:else if blockedMessage}
       <p class="mt-2 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
+    {:else if filesProcessing}
+      <div class="mt-2 flex flex-col items-center gap-2">
+        <p class="text-center font-mono text-xs text-dark-2">{FILES_PROCESSING_MESSAGE}</p>
+        <Button variant="outline" size="sm" disabled={starting} onclick={reallyStart}>Try again</Button>
+      </div>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if imagesProblem}

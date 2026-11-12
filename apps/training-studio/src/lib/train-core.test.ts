@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { cardByType } from '$lib/data/trainingModels';
 import { parseServiceStatus } from '$lib/service-status-core';
+import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
 import {
   continueTraining,
   continueTrainingWhatIf,
   MatureAckRequiredError,
   submitTraining,
   submitTrainingBatch,
+  TrainingSubmitError,
   TrainingTextRefusedError,
   type TrainingRunInput,
   type TrainingTextCheck,
@@ -1122,5 +1124,58 @@ describe('the checkpoint a run actually trains', () => {
         status: parseServiceStatus({ blockedModels: [customAir] }),
       })
     ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+  });
+});
+
+describe('a submit refused because a dataset file is still processing', () => {
+  const notReadyText =
+    "trainingData blob 'blob-1' is not available for training yet; try again shortly";
+  const refusal = (extra: Record<string, unknown> = { code: 'trainingDataNotReady' }) => ({
+    error: {
+      title: 'One or more validation errors occurred.',
+      status: 400,
+      errors: { messages: [notReadyText] },
+      ...extra,
+    },
+    response: { status: 400 },
+  });
+
+  it.each([
+    ['its code', refusal()],
+    ['its message when the code is absent', refusal({})],
+  ])('is recognised by %s and shows only the neutral message', async (_, answer) => {
+    submitWorkflow.mockResolvedValueOnce(answer);
+    const err = await submitTrainingBatch(client, [baseRun()], { checkText }).catch((e) => e);
+    expect(err).toBeInstanceOf(FilesProcessingError);
+    expect(err.message).toBe(FILES_PROCESSING_MESSAGE);
+  });
+
+  it('leaves any other refusal on the existing path with its reason', async () => {
+    submitWorkflow.mockResolvedValueOnce({
+      error: { title: 'Bad', errors: { messages: ['steps must be positive'] } },
+      response: { status: 400 },
+    });
+    const err = await submitTrainingBatch(client, [baseRun()], { checkText }).catch((e) => e);
+    expect(err).not.toBeInstanceOf(FilesProcessingError);
+    expect(err).toBeInstanceOf(TrainingSubmitError);
+    expect(err.reason).toContain('steps must be positive');
+  });
+
+  it('does not match the message under a different code', async () => {
+    submitWorkflow.mockResolvedValueOnce(refusal({ code: 'somethingElse' }));
+    const err = await submitTrainingBatch(client, [baseRun()], { checkText }).catch((e) => e);
+    expect(err).not.toBeInstanceOf(FilesProcessingError);
+  });
+
+  it('after some runs landed, returns them instead of throwing, so a retry cannot resubmit them', async () => {
+    submitWorkflow.mockReset();
+    submitWorkflow
+      .mockResolvedValueOnce({ data: { id: 'wf-landed' } })
+      .mockResolvedValueOnce(refusal());
+    const batch = await submitTrainingBatch(client, [baseRun(), { ...baseRun(), steps: 999 }], {
+      checkText,
+    });
+    expect(batch).toEqual({ workflowIds: ['wf-landed'], failure: FILES_PROCESSING_MESSAGE });
+    expect(submitWorkflow).toHaveBeenCalledTimes(2);
   });
 });
