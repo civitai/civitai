@@ -15,6 +15,7 @@ import { flux3Video } from './flux3-video.graph';
 import { minimax } from './minimax.graph';
 import { happyHorse } from './happy-horse.graph';
 import { veo3 } from './veo3.graph';
+import { geminiOmni } from './gemini-omni.graph';
 import { vidu } from './vidu.graph';
 import { kling } from './kling.graph';
 
@@ -117,6 +118,7 @@ export const videoHub = defineGraph<RootCtx>()
       [['MiniMaxH3'], minimax],
       [['HappyHorse'], happyHorse],
       [['Veo3'], veo3],
+      [['GeminiOmni'], geminiOmni],
       [['Vidu'], vidu],
       [['Kling'], kling],
     ] as const)

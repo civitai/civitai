@@ -17,6 +17,7 @@ import { hiDreamO1AspectRatiosByResolution } from '~/shared/form-graph/generatio
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
 import { seedreamVersionIds } from '~/shared/form-graph/generation/image/seedream.graph';
 import { flux3VideoVersionIds } from '~/shared/generation/version-ids';
+import { geminiOmniVersionIds } from '~/shared/form-graph/generation/video/gemini-omni.graph';
 import { createFlux3VideoInput } from '../flux3-video.handler';
 import { createFormGraphStepInput } from '../index';
 import { createOpenAIInput } from '../openai.handler';
@@ -66,11 +67,14 @@ async function dispatch({
   expectEcosystem,
   expectWorkflow,
   expectFlags,
+  gateRules,
   ...input
 }: Record<string, unknown>) {
-  const ext = expectFlags
-    ? { ...BASE, flags: { ...BASE.flags, ...(expectFlags as object) } as GenerationCtx['flags'] }
-    : BASE;
+  const ext = {
+    ...BASE,
+    flags: { ...BASE.flags, ...(expectFlags as object) } as GenerationCtx['flags'],
+    gateRules: (gateRules as GenerationCtx['gateRules']) ?? BASE.gateRules,
+  };
   const parsed = generationHub.parse(input, ext);
   if (!parsed.success) throw new Error(`parse failed: ${JSON.stringify(parsed.errors)}`);
 
@@ -366,11 +370,19 @@ describe('krea3.handler', () => {
 });
 
 describe('seedream.handler', () => {
-  const ON = { seedream55: true };
   const v55 = seedreamVersionIds['v5.5'];
   const v50pro = seedreamVersionIds['v5.0-pro'];
-  const modelMeta = (flags: GenerationCtx['flags']) => {
-    const store = generationHub.createStore({ ext: { ...BASE, flags } });
+  const GATED: GenerationCtx['gateRules'] = [
+    {
+      availableTo: 'moderators',
+      presentation: 'hidden',
+      ecosystems: [],
+      workflows: [],
+      modelVersionIds: [v55],
+    },
+  ];
+  const modelMeta = (gateRules: GenerationCtx['gateRules']) => {
+    const store = generationHub.createStore({ ext: { ...BASE, gateRules } });
     store.set({ workflow: 'txt2img', ecosystem: 'Seedream' });
     return store.getField('model')?.meta as {
       versions?: { options: { label: string; value: number; newUntil?: Date }[] };
@@ -378,11 +390,16 @@ describe('seedream.handler', () => {
     };
   };
 
-  it('with seedream55 off, the default and the version list are v5.0-pro and the four before it', async () => {
-    const steps = await dispatch({ workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat' });
+  it('while v5.5 is gated, the default and the version list are v5.0-pro and the four before it', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Seedream',
+      prompt: 'a cat',
+      gateRules: GATED,
+    });
     expect(firstInput(steps)).toMatchObject({ engine: 'seedream', version: 'v5.0-pro' });
 
-    const meta = modelMeta({});
+    const meta = modelMeta(GATED);
     expect(meta.defaultModelId).toBe(v50pro);
     expect(meta.versions?.options).toEqual([
       { label: 'v3', value: 2208174 },
@@ -393,27 +410,30 @@ describe('seedream.handler', () => {
     ]);
   });
 
-  // The orchestrator answers 400 to v5.5 until its release, which is what the flag waits on.
-  it('with seedream55 off, a submitted v5.5 is sent as v5.0-pro', async () => {
+  // The orchestrator answers 400 to v5.5 until its release, which is what the gate waits on.
+  // A disabled version stays in the picker, but it must not be the default the user lands on.
+  it('a disabled v5.5 is offered but is not the default', () => {
+    const meta = modelMeta([{ ...GATED[0], presentation: 'disabled' }]);
+    expect(meta.defaultModelId).toBe(v50pro);
+    expect(meta.versions?.options.map((o) => o.value)).toContain(v55);
+  });
+
+  it('while v5.5 is gated, a submitted v5.5 is sent as v5.0-pro', async () => {
     const steps = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'Seedream',
       prompt: 'a cat',
       model: v55,
+      gateRules: GATED,
     });
     expect(firstInput(steps)).toMatchObject({ version: 'v5.0-pro' });
   });
 
-  it('with seedream55 on, v5.5 is offered, marked New and the default', async () => {
-    const steps = await dispatch({
-      workflow: 'txt2img',
-      ecosystem: 'Seedream',
-      prompt: 'a cat',
-      expectFlags: ON,
-    });
+  it('ungated, v5.5 is offered, marked New and the default', async () => {
+    const steps = await dispatch({ workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat' });
     expect(firstInput(steps)).toMatchObject({ engine: 'seedream', version: 'v5.5' });
 
-    const meta = modelMeta(ON);
+    const meta = modelMeta([]);
     expect(meta.defaultModelId).toBe(v55);
     expect(meta.versions?.options.at(-1)).toEqual({
       label: 'v5.5',
@@ -423,8 +443,8 @@ describe('seedream.handler', () => {
   });
 
   // Like v5.0-pro, v5.5 is offered at 2K only, with no 2K/4K toggle.
-  it('with seedream55 on, v5.5 has no resolution toggle and sends 2K sizes', async () => {
-    const store = generationHub.createStore({ ext: { ...BASE, flags: ON } });
+  it('v5.5 has no resolution toggle and sends 2K sizes', async () => {
+    const store = generationHub.createStore({ ext: BASE });
     store.set({ workflow: 'txt2img', ecosystem: 'Seedream' });
     expect(store.getField('resolution')).toBeNull();
     // the toggle exists for v4.5, so the null above is about v5.5
@@ -438,31 +458,134 @@ describe('seedream.handler', () => {
       ecosystem: 'Seedream',
       prompt: 'a cat',
       aspectRatio: '1:1',
-      expectFlags: ON,
     });
     expect(firstInput(steps)).toMatchObject({ version: 'v5.5', width: 2048, height: 2048 });
   });
 
-  it('with seedream55 on, a picked v5.0-pro stays v5.0-pro', async () => {
+  it('a picked v5.0-pro stays v5.0-pro', async () => {
     const steps = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'Seedream',
       prompt: 'a cat',
       model: v50pro,
-      expectFlags: ON,
     });
     expect(firstInput(steps)).toMatchObject({ version: 'v5.0-pro' });
   });
 });
 
+describe('gemini-omni.handler', () => {
+  const v11 = geminiOmniVersionIds['1.1-flash'];
+  const PORTRAIT = { url: 'https://example.com/p.png', width: 832, height: 1216 };
+
+  it('defaults to 1.2 Flash and sends the chosen duration, ratio and resolution', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'GeminiOmni',
+      prompt: 'a cat',
+      aspectRatio: '9:16',
+      resolution: '1080p',
+      duration: 15,
+    });
+    expect(firstInput(steps)).toEqual({
+      engine: 'gemini-omni',
+      model: '1.2-flash',
+      prompt: 'a cat',
+      aspectRatio: '9:16',
+      resolution: '1080p',
+      duration: 15,
+    });
+  });
+
+  it('sends no duration for 1.1 Flash', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'GeminiOmni',
+      prompt: 'a cat',
+      model: v11,
+      duration: 8,
+    });
+    expect(firstInput(steps)).toMatchObject({ model: '1.1-flash' });
+    expect(firstInput(steps)).not.toHaveProperty('duration');
+  });
+
+  it('defaults 1.2 to 10 seconds, and allows 15 with a single image', async () => {
+    const byDefault = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'GeminiOmni',
+      prompt: 'a cat',
+    });
+    expect(firstInput(byDefault)).toMatchObject({ duration: 10 });
+
+    const single = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'GeminiOmni',
+      prompt: 'a cat',
+      images: [IMAGE],
+      duration: 15,
+    });
+    expect(firstInput(single)).toMatchObject({ images: [IMAGE.url], duration: 15 });
+  });
+
+  it('keeps the chosen ratio for reference to video rather than the first image', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid:ref2vid',
+      ecosystem: 'GeminiOmni',
+      prompt: 'a cat',
+      aspectRatio: '16:9',
+      images: [PORTRAIT, IMAGE, IMAGE2],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      aspectRatio: '16:9',
+      images: [PORTRAIT.url, IMAGE.url, IMAGE2.url],
+    });
+  });
+
+  it('caps first/last frame at 10 seconds and takes the orientation from the first frame', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'GeminiOmni',
+      prompt: 'a cat',
+      images: [PORTRAIT, IMAGE],
+      duration: 15,
+    });
+    expect(firstInput(steps)).toMatchObject({
+      aspectRatio: '9:16',
+      images: [PORTRAIT.url, IMAGE.url],
+      duration: 10,
+    });
+  });
+
+  // Fewer than three images would turn a reference request into image to video (one) or
+  // first/last frame (two).
+  it('refuses reference to video with fewer than three images', () => {
+    const parsed = generationHub.parse(
+      {
+        workflow: 'img2vid:ref2vid',
+        ecosystem: 'GeminiOmni',
+        prompt: 'a cat',
+        images: [IMAGE, IMAGE2],
+      },
+      BASE
+    );
+    expect(parsed.success).toBe(false);
+  });
+});
+
 describe('minimax-h3-image.handler', () => {
-  const MOD = { minimaxH3ImageGenerator: true };
+  const GATED: GenerationCtx['gateRules'] = [
+    {
+      availableTo: 'moderators',
+      presentation: 'hidden',
+      ecosystems: ['MiniMaxH3Image'],
+      workflows: [],
+      modelVersionIds: [],
+    },
+  ];
 
   it('create sends a comfy createImage step at the 2K size for the ratio, with no images', async () => {
     const create = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'MiniMaxH3Image',
-      expectFlags: MOD,
       prompt: 'a cat',
       aspectRatio: '16:9',
       quantity: 3,
@@ -486,7 +609,6 @@ describe('minimax-h3-image.handler', () => {
     const create = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'MiniMaxH3Image',
-      expectFlags: MOD,
       prompt: 'a cat',
       resolution: '4K',
       aspectRatio: '3:1',
@@ -500,7 +622,6 @@ describe('minimax-h3-image.handler', () => {
     const create = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'MiniMaxH3Image',
-      expectFlags: MOD,
       prompt: 'a cat',
       resolution: '1K',
     });
@@ -511,7 +632,6 @@ describe('minimax-h3-image.handler', () => {
     const edit = await dispatch({
       workflow: 'img2img:edit',
       ecosystem: 'MiniMaxH3Image',
-      expectFlags: MOD,
       prompt: 'a cat',
       aspectRatio: '1:1',
       images: [IMAGE, IMAGE2],
@@ -529,7 +649,7 @@ describe('minimax-h3-image.handler', () => {
   it('caps quantity at 4 even when the tier allows more', () => {
     const parsed = generationHub.parse(
       { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat', quantity: 12 },
-      { ...BASE, limits: { ...BASE.limits, maxQuantity: 12 }, flags: MOD }
+      { ...BASE, limits: { ...BASE.limits, maxQuantity: 12 } }
     );
     expect(parsed.success && (parsed.data as { quantity: number }).quantity).toBe(4);
   });
@@ -545,7 +665,7 @@ describe('minimax-h3-image.handler', () => {
           prompt: 'a cat',
           images: images(n),
         },
-        { ...BASE, flags: MOD }
+        BASE
       );
     const sixteen = parse(16);
     expect(sixteen.success && (sixteen.data as { images: unknown[] }).images).toHaveLength(16);
@@ -555,22 +675,19 @@ describe('minimax-h3-image.handler', () => {
     );
   });
 
-  // The flag keeps it to moderators until the workers and pricing are confirmed.
-  it('without the flag it is not offered, and a submission naming it never reaches it', () => {
+  it('a hiding gate rule takes it out of the picker, and a submission naming it never reaches it', () => {
     const input = { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat' };
     const ecosystemOf = (ext: GenerationCtx) => {
       const parsed = generationHub.parse(input, ext);
       return parsed.success ? (parsed.data as { ecosystem: string }).ecosystem : undefined;
     };
-    expect(ecosystemOf({ ...BASE, flags: MOD })).toBe('MiniMaxH3Image');
-    expect(ecosystemOf(BASE)).not.toBe('MiniMaxH3Image');
+    expect(ecosystemOf(BASE)).toBe('MiniMaxH3Image');
+    expect(ecosystemOf({ ...BASE, gateRules: GATED })).not.toBe('MiniMaxH3Image');
 
-    expect(getEcosystemStates('txt2img', { ...BASE, flags: MOD }).compatibleEcosystems).toContain(
-      'MiniMaxH3Image'
-    );
-    const off = getEcosystemStates('txt2img', BASE);
-    expect(off.compatibleEcosystems).not.toContain('MiniMaxH3Image');
-    expect(off.hiddenEcosystems).toContain('MiniMaxH3Image');
+    expect(getEcosystemStates('txt2img', BASE).compatibleEcosystems).toContain('MiniMaxH3Image');
+    const gated = getEcosystemStates('txt2img', { ...BASE, gateRules: GATED });
+    expect(gated.compatibleEcosystems).not.toContain('MiniMaxH3Image');
+    expect(gated.hiddenEcosystems).toContain('MiniMaxH3Image');
   });
 });
 
