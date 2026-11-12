@@ -168,9 +168,12 @@ beforeEach(() => {
   // The scan's reads and writes of the image row itself go to the real row.
   const isImageWrite = (strings: unknown) =>
     Array.isArray(strings) &&
-    ['UPDATE "Image"', '"judgeFloor"', 'INSERT INTO "JobQueue"'].some((t) =>
-      (strings as string[]).join('').includes(t)
-    );
+    [
+      'UPDATE "Image"',
+      '"judgeFloor"',
+      'INSERT INTO "JobQueue"',
+      'SELECT "ingestion" FROM "Image"',
+    ].some((t) => (strings as string[]).join('').includes(t));
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -379,6 +382,18 @@ describe('resolveScanOutcome with a collection judge rating', () => {
 
       expect(row).toMatchObject({ ingestion: 'NotFound', nsfwLevel: PG13 });
       expect(outcome.ingestion).toBe('NotFound');
+    });
+
+    it('reports Scanned when a rescan request moved the row after it was loaded', async () => {
+      scanTagLevel = PG13;
+      const loadedAsNotFound = await arrange(
+        { nsfwLevel: PG13, ingestion: 'Rescan' },
+        { nsfwLevel: PG13, ingestion: 'NotFound' }
+      );
+      const { outcome, row } = await scan(loadedAsNotFound);
+
+      expect(row).toMatchObject({ ingestion: 'Scanned' });
+      expect(outcome.ingestion).toBe('Scanned');
     });
 
     it('is still blocked by an audit block', async () => {

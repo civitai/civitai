@@ -732,13 +732,20 @@ export async function resolveScanOutcome({
   // judge write takes the greater level too, so either order ends at the higher of the two. A floor
   // above the level the audit ran at sends the image back for a rescan, so its checks run there.
   let nsfwLevel = scanLevel;
-  // What the guarded assignment above leaves, from the row as loaded. shortcut: a row that turned
-  // NotFound after the load is reported Scanned here though the write kept NotFound; upgrade to
-  // RETURNING "ingestion" if that window matters (the UPDATE is an $executeRaw the suite pins).
+  // What the guarded assignment above left. A row loaded as NotFound is read back, because a
+  // rescan request may have moved it before the write and the Scanned effects must then run.
+  // shortcut: a row that turned NotFound after the load is still reported Scanned (sub-second, only
+  // for a scan in flight while an image is hidden); the UPDATE is an $executeRaw many suites pin.
   let ingestion = ingestionKeptAfterVerdict(
     image.ingestion,
     toUpdate.ingestion as ImageIngestionStatus
   );
+  if (ingestion === ImageIngestionStatus.NotFound) {
+    const [row] = await dbWrite.$queryRaw<{ ingestion?: ImageIngestionStatus }[]>`
+      SELECT "ingestion" FROM "Image" WHERE id = ${image.id}
+    `;
+    ingestion = row?.ingestion ?? ingestion;
+  }
   if (scanLevel !== NsfwLevel.Blocked && !image.nsfwLevelLocked) {
     const floor = judgeRatingFloorSql();
     const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
