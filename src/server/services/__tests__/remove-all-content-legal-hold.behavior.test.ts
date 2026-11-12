@@ -23,12 +23,10 @@ const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.ho
     beforeImages: null as (() => Promise<unknown>) | null,
   },
   indexes: Object.fromEntries(
-    ['models', 'images', 'imagesMetrics', 'articles', 'collections', 'bounties', 'users'].map(
-      (name) => [
-        name,
-        { queueUpdate: vi.fn<(rows: { id: number; action: string }[]) => Promise<undefined>>() },
-      ]
-    )
+    ['models', 'imagesMetrics', 'articles', 'collections', 'bounties', 'users'].map((name) => [
+      name,
+      { queueUpdate: vi.fn<(rows: { id: number; action: string }[]) => Promise<undefined>>() },
+    ])
   ),
   metrics: {
     user: { queueUpdate: vi.fn<(ids: unknown) => Promise<undefined>>() },
@@ -97,7 +95,6 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   modelsSearchIndex: indexes.models,
-  imagesSearchIndex: indexes.images,
   imagesMetricsSearchIndex: indexes.imagesMetrics,
   articlesSearchIndex: indexes.articles,
   collectionsSearchIndex: indexes.collections,
@@ -463,7 +460,6 @@ function dropped() {
 }
 const NONE = {
   models: [],
-  images: [],
   imagesMetrics: [],
   articles: [],
   collections: [],
@@ -518,7 +514,6 @@ describe('removeAllContent', () => {
     }
     expect(dropped()).toEqual({
       models: [MODEL],
-      images: [CLEAN * 100, CLEAN * 100 + 1],
       imagesMetrics: [CLEAN * 100, CLEAN * 100 + 1],
       articles: [ARTICLE],
       collections: [COLLECTION],

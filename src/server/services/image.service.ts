@@ -164,7 +164,7 @@ import type {
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageStorageDeletePayload } from '~/server/schema/job-queue.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { imagesMetricsSearchIndex } from '~/server/search-index';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -6046,9 +6046,6 @@ export async function updateImageNsfwLevel({
       // The version showcase is cached for a day and filtered by level when it is built.
       image.postId ? bustCachesForPosts(image.postId) : undefined,
     ]);
-    // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
-    // Commenting this out should solve the problem.
-    // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     if (status) {
       await dbWrite.imageRatingRequest.updateMany({
         where: { imageId: id, status: 'Pending' },
@@ -6864,7 +6861,6 @@ export async function queueImageSearchIndexUpdate({
   ids: number[];
   action: SearchIndexUpdateQueueAction;
 }) {
-  await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
 
   if (action === SearchIndexUpdateQueueAction.Delete) {

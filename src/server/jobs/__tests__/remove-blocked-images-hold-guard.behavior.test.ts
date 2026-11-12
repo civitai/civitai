@@ -45,7 +45,6 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
@@ -64,7 +63,7 @@ import {
   LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
-import { imagesSearchIndex } from '~/server/search-index';
+import { imagesMetricsSearchIndex } from '~/server/search-index';
 import * as postService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -340,7 +339,7 @@ describe('purgeHoldGuard on the delete', () => {
     expect(await remaining()).toEqual(KEPT);
     // A kept image's own side effects must not run: it is still live in the database.
     const deindexed = vi
-      .mocked(imagesSearchIndex.queueUpdate)
+      .mocked(imagesMetricsSearchIndex.queueUpdate)
       .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
     expect(sorted(deindexed)).toEqual(DELETED);
   });
@@ -475,7 +474,7 @@ describe('purgeHoldGuard on the delete', () => {
         EXTENDED,
       ]);
       const deindexed = vi
-        .mocked(imagesSearchIndex.queueUpdate)
+        .mocked(imagesMetricsSearchIndex.queueUpdate)
         .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
       expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, ...MARKED].sort((a, b) => a - b));
     });
@@ -488,7 +487,7 @@ describe('purgeHoldGuard on the delete', () => {
 
       expect(await remaining()).toEqual(expect.arrayContaining([MANUAL, REPORTED]));
       const deindexed = vi
-        .mocked(imagesSearchIndex.queueUpdate)
+        .mocked(imagesMetricsSearchIndex.queueUpdate)
         .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
       // REPORTED is the control: excluded by the guard, so still live and still indexed.
       expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, MANUAL]);
