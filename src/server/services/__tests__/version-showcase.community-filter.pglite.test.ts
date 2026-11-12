@@ -54,6 +54,7 @@ const {
   getVersionShowcases,
   bustVersionShowcasesForUser,
   getShowcaseCommunityCovers,
+  dropInvalidCommunityCovers,
   repointVersionShowcases,
 } = await import('../version-showcase.service');
 const { getImagesForModelVersion } = await import('../image.service');
@@ -275,6 +276,19 @@ describe('when a featured image stops qualifying', () => {
     await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [banned]);
 
     await bustVersionShowcasesForUser(banned);
+
+    expect(saveModelCovers).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
+    );
+  });
+
+  it('judges a cover against the current state when its showcase cache is stale', async () => {
+    const banned = await featured();
+    await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [banned, MODEL]);
+    expect(await served()).toContain(banned);
+    await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [banned]);
+
+    await dropInvalidCommunityCovers([MODEL]);
 
     expect(saveModelCovers).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })

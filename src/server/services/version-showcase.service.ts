@@ -309,19 +309,12 @@ const coverKey = (modelId: number, imageId: number) => `${modelId}:${imageId}`;
  */
 export async function getShowcaseCommunityCovers(
   covers: { modelId: number; imageId: number }[],
-  {
-    primary = false,
-    refreshed = false,
-  }: {
-    primary?: boolean;
-    /** The caller just refreshed these versions' showcases from the primary. */
-    refreshed?: boolean;
-  } = {}
+  { primary = false }: { primary?: boolean } = {}
 ): Promise<ShowcaseCommunityCovers> {
   const found: ShowcaseCommunityCovers = new Map();
   if (!covers.length) return found;
   try {
-    return await findShowcaseCommunityCovers(covers, primary, refreshed, found);
+    return await findShowcaseCommunityCovers(covers, primary, found);
   } catch (error) {
     // Validation (primary) fails closed; a reader drawing a card falls back to the default cover.
     if (primary) throw error;
@@ -342,7 +335,6 @@ export function isShowcaseCoverImage(
 async function findShowcaseCommunityCovers(
   covers: { modelId: number; imageId: number }[],
   primary: boolean,
-  refreshed: boolean,
   found: ShowcaseCommunityCovers
 ) {
   const db = primary ? dbWrite : dbRead;
@@ -364,7 +356,7 @@ async function findShowcaseCommunityCovers(
   if (!rows.length) return found;
   const versionIds = [...new Set(rows.map((row) => row.modelVersionId))];
   // Validation judges the current state, not a cache a missed bust left behind.
-  if (primary && !refreshed) await refreshVersionShowcases(versionIds);
+  if (primary) await refreshVersionShowcases(versionIds);
   const showcases = await getVersionShowcases(versionIds);
   for (const { modelVersionId, modelId, imageId } of rows) {
     for (const image of showcases[modelVersionId]?.community ?? []) {
@@ -407,8 +399,8 @@ export async function getShowcaseVersionsForPosts(postIds: number[]) {
 
 /**
  * Clears any model cover that is a community image no longer allowed there (removed, its author
- * banned, opted out or blocked, the image moderated). Runs after the showcase caches are refreshed,
- * so it judges the current state. The creator's own covers are left alone.
+ * banned, opted out or blocked, the image moderated), judged against the current state. The
+ * creator's own covers are left alone.
  */
 export async function dropInvalidCommunityCovers(modelIds: number[]) {
   const ids = [...new Set(modelIds)];
@@ -441,8 +433,8 @@ export async function dropInvalidCommunityCovers(modelIds: number[]) {
       .map(([site, imageId]) => ({ modelId: model.id, site, imageId: imageId as number }))
   );
   if (!candidates.length) return;
-  // Every caller refreshes the affected showcases just before this.
-  const valid = await getShowcaseCommunityCovers(candidates, { primary: true, refreshed: true });
+  // Refreshes the versions holding the covers, which need not be the ones the caller refreshed.
+  const valid = await getShowcaseCommunityCovers(candidates, { primary: true });
   const { saveModelCovers } = await import('~/server/services/model-cover.service');
   for (const { modelId, site, imageId } of candidates) {
     if (isShowcaseCoverImage(valid, { modelId, imageId, site })) continue;
