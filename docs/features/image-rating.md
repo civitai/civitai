@@ -34,7 +34,8 @@ For the `nsfwLevel` bitflag itself and browsing-level filtering, see [nsfw-filte
    scan nor a tag recompute (`update_nsfw_levels_new`) writes an unlocked, unblocked level below it,
    and the scan's checks run at no less than it. A raise into an NSFW level sends the image back
    through the scan (`Rescan`). Approval in such a collection requires that collection's rating,
-   not a `legacy` one, on a scanned (`scanJobs` has a `workflowId`), unblocked image. An older
+   not a `legacy` one, on a scanned (`scanJobs` has a `workflowId`), unblocked image that is not
+   held for moderator review (`needsReview`); the AI review skips a held item too. An older
    upload that was never scanned (`PendingManualAssignment`, or `Scanned` with no `workflowId`) is
    sent to the scan (`Rescan`) the first time a judge rates or approves it, with its current level
    seeded as a `legacy` rating (`legacyJudgeRatingSeedSql`) so the rescan can't drop below it, and

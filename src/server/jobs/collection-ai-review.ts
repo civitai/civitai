@@ -107,8 +107,8 @@ export async function reviewCollection(collectionId: number, config: CollectionA
     WHERE ci."collectionId" = ${collectionId}
       AND ci.status = 'REVIEW'
       AND ci."reviewedById" IS NULL
-      -- Where judges apply the rating, an item waits for a judge's rating before it is reviewed,
-      -- so it is not reclassified, and re-billed, on every run until then.
+      -- Where judges apply the rating, an item waits for a judge's rating (and for any moderator
+      -- hold to clear) before it is reviewed, so it is not reclassified, and re-billed, every run.
       AND (
         NOT EXISTS (
           SELECT 1 FROM "Collection" c
@@ -462,8 +462,8 @@ async function applyOutcomes({
           : Prisma.empty
       }
       ${
-        // Where judges apply the rating, an accept needs a judge's rating: an unrated item stays
-        // in REVIEW, unclaimed, and the rest of the batch goes ahead.
+        // Where judges apply the rating, an accept needs a judge's rating and no moderator hold: such
+        // an item stays in REVIEW, unclaimed, and the rest of the batch goes ahead.
         acceptIds.length
           ? Prisma.sql`AND NOT (
               ci.id IN (${Prisma.join(acceptIds)})
