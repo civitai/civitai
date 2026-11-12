@@ -44,7 +44,7 @@ const feedSearch = vi.fn(async () => ({ items: [], nextCursor: undefined }));
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: vi.fn(async () => ({ items: [], nextCursor: undefined })),
   getAllImagesIndex: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-  getImagesFromFeedSearch: (...args: unknown[]) => feedSearch(...(args as [])),
+  getImagesFromFeedServiceForRest: (...args: unknown[]) => feedSearch(...(args as [])),
 }));
 
 import { runImageSearch } from '../image-search.service';

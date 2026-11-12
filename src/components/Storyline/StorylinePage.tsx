@@ -224,7 +224,7 @@ export function StorylineHeader({
               component={Link}
               href={storylineWriteChapterUrl(storyline.id)}
               size="lg"
-              className="grow basis-[140px] sm:grow-0 sm:basis-auto"
+              className="grow basis-full sm:grow-0 sm:basis-auto"
               leftSection={<IconPlus size={18} />}
             >
               Write chapter 1
