@@ -73,7 +73,7 @@
       {:else if ANNOUNCEMENT_URL}
         <a class="announcement" href={ANNOUNCEMENT_URL} target="_blank" rel="noopener">Read the announcement</a>
       {/if}
-      <button type="submit" class="ov-primary" disabled={submitting} data-autofocus>Start judging</button>
+      <button type="submit" class="ov-primary" disabled={submitting} data-autofocus>Got it</button>
     </form>
   </div>
 </div>

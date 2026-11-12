@@ -103,13 +103,10 @@ describe("home: what's new", () => {
     expect(seenStore.get).toHaveBeenCalledTimes(1);
   });
 
-  it('records it as seen through the form action, then sends the player to judge', async () => {
+  it('records it as seen through the form action and leaves the player on /home', async () => {
     seenStore.get.mockResolvedValue({ rank: 'Knight', level: 12, guide: false });
     const dismiss = (actions as Record<string, (e: never) => Promise<unknown>>).dismissWhatsNew;
-    await expect(dismiss({ locals: { user: { id: 7 } } } as never)).rejects.toMatchObject({
-      status: 303,
-      location: '/play',
-    });
+    expect(await dismiss({ locals: { user: { id: 7 } } } as never)).toBeUndefined();
     expect(seenStore.set).toHaveBeenCalledWith(7, {
       rank: 'Knight',
       level: 12,
