@@ -13,6 +13,7 @@ import { PlacementSpaceSection } from '~/components/Account/PlacementSpaceSectio
 import { RemixGallerySettings } from '~/components/RemixGallery/RemixGallerySettings';
 import { PromotionSettings } from '~/components/Promotion/PromotionSettings';
 import { ShowcaseOptOutSetting } from '~/components/CreatorJourney/ShowcaseOptOutSetting';
+import { VersionShowcaseOptOutSetting } from '~/components/Model/VersionShowcase/VersionShowcaseOptOutSetting';
 import { SettingRow, SettingsSection, UpsellPanel } from '~/components/Account/SettingsLayout';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -124,6 +125,7 @@ export function CreatorControlsCard({
     return (
       <div id="creator-controls" className="flex flex-col gap-8">
         <ShowcaseOptOutSetting flat />
+        <VersionShowcaseOptOutSetting flat />
         {flags.creatorControls && (
           <SettingsSection
             id="metric-visibility"
@@ -171,6 +173,7 @@ export function CreatorControlsCard({
         <Title order={2}>Creator Controls</Title>
 
         <ShowcaseOptOutSetting />
+        <VersionShowcaseOptOutSetting />
 
         <PlacementSpaceSection />
 
