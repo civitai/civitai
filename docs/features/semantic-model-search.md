@@ -77,12 +77,14 @@ It reads `postgres.Model`, `postgres.ModelVersion` and `postgres.TagsOnModels`, 
 for `VECTOR_SYNC_DEBOUNCE_MS`, and runs the same sync as the backfill, committing offsets only
 after the writes land.
 
-- It needs `CDC_MODEL_ENABLED=true`, which adds `public.Model` and `public.ModelVersion` to the
-  connector, without their large text and JSON columns (a record over the producer's size limit would
-  fail the connector for every table). That changes the Debezium publication, and the metrics
-  watcher recreates the connector when its table or column list changes, so set it on the watcher with
-  infra and the consumer together. Off by default: a deploy without it leaves the connector as
-  it was.
+- The connector must stream `public.Model` and `public.ModelVersion`, without their large text and
+  JSON columns (a record over the producer's size limit would fail the connector for every table).
+  Where the metrics watcher manages the connector (`DEBEZIUM_CONNECT_URL` set on it),
+  `CDC_MODEL_ENABLED=true` on the watcher does that, recreating the connector. Where the connector
+  is configured outside this app, add both tables and the column exclusions
+  (`DebeziumManager.getColumnExclusions`) there, and add the tables to the Debezium publication
+  first if the connector's role cannot. The consumer needs `CDC_MODEL_ENABLED=true` in its own
+  env either way: it refuses to start without it.
 - Start it before the backfill. A new consumer group starts at the latest offset, so changes
   before its first join are only covered by a backfill that runs after it.
 - It embeds only with `VECTOR_SYNC_EMBED_ENABLED`, once the collection has a recorded model (the

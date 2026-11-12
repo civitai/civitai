@@ -191,7 +191,9 @@ the metrics watcher and never configures the Debezium connector.
 `public.Image` is not in the connector by default. `CDC_IMAGE_ENABLED=true` adds it to the
 connector's `table.include.list` and to nothing the metrics watcher consumes. Set it first on
 **the metrics watcher**, which manages the connector and creates the topic, and then on the
-vector-sync consumer, which then subscribes to the topic. When it is flipped on the watcher:
+vector-sync consumer, which then subscribes to the topic. (This applies where the watcher has
+`DEBEZIUM_CONNECT_URL` set. A connector configured outside this app is changed there instead; the
+flag then only tells the consumer what to expect.) When it is flipped on the watcher:
 
 - The watcher sees the include list differ on startup and **deletes and recreates the
   connector** under the same name, slot and publication. With
