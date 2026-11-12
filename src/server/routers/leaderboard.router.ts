@@ -11,6 +11,7 @@ import {
   getLeaderboards,
   getLeaderboardPositions,
   getLeaderboardLegends,
+  leaderboardDay,
 } from '~/server/services/leaderboard.service';
 import { middleware, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -57,6 +58,15 @@ const skipEdgeCacheForModerators = middleware(({ ctx, next }) => {
   return next({ ctx: { ...ctx, cache: { ...ctx.cache, skip: true } } });
 });
 
+// The client sends no `date`, so without this the cacheIt key carries no day: an entry written
+// just after the midnight purge kept serving the previous day's board until the next one.
+// `.use()` it BEFORE `cacheIt`, like the domain stamp below.
+const stampLeaderboardDay = middleware(({ input, next }) => {
+  const dated = input as { date?: Date } | undefined;
+  if (dated) dated.date = new Date(leaderboardDay(dated.date));
+  return next();
+});
+
 // `applyRequestBoardDomainColor` must be `.use()`d BEFORE `cacheIt` on every
 // procedure here: cacheIt hashes the input to build its Redis key, so a domain
 // stamped after it would leave one entry shared across colors.
@@ -72,6 +82,7 @@ export const leaderboardRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getLeaderboardPositionsSchema)
     .use(applyRequestBoardDomainColor)
+    .use(stampLeaderboardDay)
     .use(
       cacheIt({
         ttl: CacheTTL.day,
@@ -90,6 +101,7 @@ export const leaderboardRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getLeaderboardSchema)
     .use(applyRequestBoardDomainColor)
+    .use(stampLeaderboardDay)
     .use(
       cacheIt({
         ttl: CacheTTL.day,
@@ -113,6 +125,7 @@ export const leaderboardRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getLeaderboardSchema)
     .use(applyRequestBoardDomainColor)
+    .use(stampLeaderboardDay)
     .use(
       cacheIt({
         ttl: CacheTTL.day,

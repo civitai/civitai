@@ -93,6 +93,14 @@ export async function getLeaderboards(input: GetLeaderboardsInput) {
   return leaderboards;
 }
 
+/**
+ * The board day (YYYY-MM-DD) for `date`, default now. prepare-leaderboard stamps rows with
+ * `current_date` and picks tomorrow by the UTC hour, so a board's day is the UTC calendar day.
+ */
+export function leaderboardDay(date?: Date) {
+  return dayjs.utc(date ?? new Date()).format('YYYY-MM-DD');
+}
+
 type LeaderboardPosition = {
   leaderboardId: string;
   position: number;
@@ -103,9 +111,7 @@ export async function getLeaderboardPositions(input: GetLeaderboardPositionsInpu
   const userId = input.userId;
   if (!userId) return [] as LeaderboardPosition[];
 
-  // strip time from date
-  let date = input.date ?? new Date();
-  date = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const date = new Date(leaderboardDay(input.date));
 
   const positions = await dbRead.leaderboardResult.findMany({
     where: {
@@ -158,7 +164,7 @@ type LeaderboardRaw = {
   } | null;
 };
 export async function getLeaderboard(input: GetLeaderboardInput) {
-  const date = dayjs(input.date ?? dayjs().utc()).format('YYYY-MM-DD');
+  const date = leaderboardDay(input.date);
 
   const leaderboardResultsRaw = await dbRead.$queryRaw<LeaderboardRaw[]>`
     WITH yesterday AS (
