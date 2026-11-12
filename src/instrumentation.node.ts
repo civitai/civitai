@@ -331,11 +331,14 @@ if (!OTEL_ENABLED) {
     // The previous form listened on SIGTERM only and awaited NEITHER promise, so the
     // final batch raced process termination — immaterial while this pipeline carried one
     // record per boot, a real loss path the moment it carries traffic. registerOtelShutdown
-    // adds SIGINT, awaits both shutdowns, and is idempotent across a second signal.
+    // adds SIGINT, awaits the flush and both shutdowns, and is idempotent across signals.
     //
-    // The log line below is deliberate: whether the framework installs its own SIGTERM
-    // handler that exits before ours runs is NOT answerable by any test we can write, so
-    // its presence (or absence) in a terminating process's final output is the check.
+    // Both servers this runs in (Next's start-server and scripts/trpc-server/server.cjs)
+    // install their own SIGTERM/SIGINT handler that drains and then calls process.exit().
+    // On the signal registerOtelShutdown only flushes; it holds that exit while it shuts
+    // both down, for at most OTEL_SHUTDOWN_EXIT_HOLD_MS. The framework's graceful shutdown
+    // is unchanged, and records from before the signal and from the drain are exported.
+    // If the shutdown runs out the cap, it logs "telemetry flush still running" first.
     registerOtelShutdown([loggerProvider, sdk], {
       log: (message) => console.log(`[instrumentation.node] ${message}`),
       onError: (reason) => console.error('[instrumentation.node] OTEL shutdown error:', reason),
