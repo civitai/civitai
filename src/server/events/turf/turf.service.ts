@@ -108,9 +108,11 @@ const hatArt = (cosmeticId: Prisma.Sql) => Prisma.sql`(SELECT CASE WHEN hc.data 
       'canvas', hc.data -> 'fit' -> 'canvas', 'bounds', hc.data -> 'fit' -> 'bounds') END
   FROM "Cosmetic" hc WHERE hc.id = ${cosmeticId})`;
 
-// Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest, or
-// entered in one of the event's flag Crucibles while it runs. Uncorrelated, so it is hashed once per
-// query: CrucibleEntry has no imageId index.
+// Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest,
+// entered in one of the event's flag Crucibles while it runs, or one of today's flags (a flag takes
+// flag hats only, so its old Turf hats neither show nor earn until the next swap). Both subqueries
+// are uncorrelated, so each runs once per query: CrucibleEntry has no imageId index, and the latest
+// FlagDay is one index read.
 const contestEntry = (imageId: Prisma.Sql, event: string) => Prisma.sql`(EXISTS (
   SELECT 1 FROM "CollectionItem" ci JOIN "Collection" c ON c.id = ci."collectionId"
   WHERE ci."imageId" = ${imageId} AND c.mode = 'Contest'
@@ -118,7 +120,9 @@ const contestEntry = (imageId: Prisma.Sql, event: string) => Prisma.sql`(EXISTS 
   SELECT ce."imageId" FROM "Crucible" cr JOIN "CrucibleEntry" ce ON ce."crucibleId" = cr.id
   WHERE cr.status = 'Active'::"CrucibleStatus"
     AND cr."eventTags" @> ARRAY[${flagCrucibleTag(event)}]::text[] AND ce."imageId" IS NOT NULL
-))`;
+) OR ${imageId} = ANY(COALESCE((
+  SELECT f."imageIds" FROM "FlagDay" f WHERE f.event = ${event} ORDER BY f."startsAt" DESC LIMIT 1
+), '{}'::int[])))`;
 
 /**
  * FROM and WHERE for the stickers the feed draws, narrowed by `and`: live, placed by an active user,
@@ -1225,7 +1229,17 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
 async function swapFlagDayFor(event: TurfEvent, now: Date) {
   try {
     const { flags } = await readFlagRaceConfig(event.name);
-    if (flags) await swapFlagDay(event, flags, now);
+    if (!flags) return;
+    const before = await currentFlagDay(event.name, now);
+    const day = await swapFlagDay(event, flags, now);
+    // Today's flags lose their Turf (contestEntry) and yesterday's get it back: resync both now
+    // rather than at the next reconcile, so no old hat earns on a flag in between.
+    if (day)
+      await syncTurfImages(
+        event,
+        [...new Set([...day.imageIds, ...(before?.imageIds ?? [])])],
+        now
+      );
   } catch (error) {
     void logToAxiom({ type: 'error', name: 'flag-race-swap', event: event.name, error }).catch(
       () => null

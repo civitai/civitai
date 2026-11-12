@@ -83,10 +83,11 @@ beforeAll(async () => {
     -- Read by the contest-entry rule; empty, so no image here is a contest entry.
     CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
-    -- contestEntry also reads running flag Crucibles.
+    -- contestEntry also reads running flag Crucibles and today's flags.
     CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
     CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[]);
     CREATE TABLE "CrucibleEntry" (id serial PRIMARY KEY, "crucibleId" int, "imageId" int);
+    CREATE TABLE "FlagDay" (id serial PRIMARY KEY, event text, "startsAt" timestamp(3), "imageIds" int[]);
     INSERT INTO "Cosmetic" VALUES (11, 'ContentDecoration', '{"event":"e","team":"Blue"}');
   `);
 });

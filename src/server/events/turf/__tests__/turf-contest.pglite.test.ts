@@ -86,10 +86,11 @@ beforeAll(async () => {
     );
     CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
-    -- contestEntry also reads running flag Crucibles.
+    -- contestEntry also reads running flag Crucibles and today's flags.
     CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
     CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[]);
     CREATE TABLE "CrucibleEntry" (id serial PRIMARY KEY, "crucibleId" int, "imageId" int);
+    CREATE TABLE "FlagDay" (id serial PRIMARY KEY, event text, "startsAt" timestamp(3), "imageIds" int[]);
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" ("userId" int, "cosmeticId" int);
     CREATE TABLE "EventCosmeticPlacement" (
@@ -222,6 +223,52 @@ describe('Hat Turf on contest entries', () => {
     expect(of(BOOKMARKED)?.counts).not.toBeNull();
     expect(of(BOOKMARKED)?.stickers).toHaveLength(1);
     expect(of(CONTEST_ENTRY)).toEqual({ imageId: CONTEST_ENTRY, counts: null, stickers: [] });
+  });
+
+  it("today's flag shows no Turf anywhere until the next swap; an image that isn't a flag keeps its hats", async () => {
+    const flag = BOOKMARKED;
+    const control = 903;
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (${control}, ${OWNER}, 1);
+      INSERT INTO "EventTurfSticker" (event, "imageId", "userId", team, "cosmeticId", data)
+        VALUES ('e', ${control}, ${PLACER}, 'Blue', 11, '{}');
+      INSERT INTO "FlagDay" (event, "startsAt", "imageIds") VALUES ('e', '2026-11-01', '{${flag}}');
+    `);
+    try {
+      expect((await getTurfStickers('e', flag, PLACER)).stickers).toEqual([]);
+      expect(Object.keys(await getTurfStickersForImages('e', [flag, control], 5))).toEqual([
+        String(control),
+      ]);
+      expect((await getTurfSummaries('e', [flag, control], PLACER)).hidden).toEqual({
+        [flag]: true,
+      });
+
+      // Nothing earns on it either: a sync pushes it with no counts, as for a contest entry, so a
+      // reaction finds no team to pay.
+      redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
+      redisMock.sysRedis.incr.mockResolvedValue(1 as never);
+      pushTurfCounts.mockClear();
+      await syncTurfImages((await getTurfEvent('e'))!, [flag, control]);
+      const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
+      const of = (id: number) =>
+        pushed.find((push: { imageId: number }) => push.imageId === id) as
+          | { counts: unknown; stickers: unknown[] | null }
+          | undefined;
+      expect(of(flag)).toEqual({ imageId: flag, counts: null, stickers: [] });
+      expect(of(control)?.counts).not.toBeNull();
+
+      // The next swap moves the flags on: the old flag's hats come back.
+      await db.exec(
+        `INSERT INTO "FlagDay" (event, "startsAt", "imageIds") VALUES ('e', '2026-11-02', '{${OTHER}}')`
+      );
+      expect((await getTurfStickers('e', flag, PLACER)).stickers).toHaveLength(1);
+    } finally {
+      await db.exec(`
+        DELETE FROM "FlagDay";
+        DELETE FROM "EventTurfSticker" WHERE "imageId" = ${control};
+        DELETE FROM "Image" WHERE id = ${control};
+      `);
+    }
   });
 
   it('placing on a contest entry is refused', async () => {
