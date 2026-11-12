@@ -321,6 +321,23 @@ describe('manageInvoicePaid — membership bonus needs a billed month', () => {
     expect(mockRecordMembershipPaymentReward).toHaveBeenCalledTimes(1);
   });
 
+  it('keys each gifted month on its invoice, so a redelivery or a re-minted residual cannot grant month one twice', async () => {
+    const gifted = (id: string, subscription: string) =>
+      fakeInvoice({
+        id,
+        subscription,
+        billing_reason: 'subscription_create',
+        amount_paid: 0,
+        total: 0,
+      } as unknown as Partial<Stripe.Invoice>);
+    await manageInvoicePaid(gifted('in_month_1', 'sub_first'));
+    await manageInvoicePaid(gifted('in_month_1', 'sub_first'));
+    await manageInvoicePaid(gifted('in_remint_month_2', 'sub_remint'));
+
+    const keys = mockCreateBuzzTransaction.mock.calls.map(([tx]) => tx.externalTransactionId);
+    expect(keys).toEqual(['in_month_1', 'in_month_1', 'in_remint_month_2']);
+  });
+
   it('a renewal paid from customer balance (amount_paid 0, total > 0) keeps the bonus', async () => {
     await manageInvoicePaid(fakeInvoice({ amount_paid: 0, total: 1000 }));
     expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
