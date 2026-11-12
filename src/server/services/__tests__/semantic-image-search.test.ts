@@ -529,6 +529,25 @@ describe('the query audit and the browsing level', () => {
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), false);
   });
 
+  it.each([
+    ['R and X', 4 | 8],
+    ['XXX alone', 16],
+  ])('gives a non-moderator who asks only for %s the public level', async (_name, level) => {
+    const seen: unknown[] = [];
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = async (args) => {
+      seen.push((args as { browsingLevel?: number }).browsingLevel);
+      return visibleOnly(new Set([101]))(args);
+    };
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: level }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
+    expect(seen).toEqual([PG]);
+  });
+
   it("keeps a moderator's requested level", async () => {
     const { calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
