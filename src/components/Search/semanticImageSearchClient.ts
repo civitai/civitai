@@ -137,11 +137,15 @@ type PagedResult<I> = {
  * InstantSearch pages by number; the semantic search pages by an offset into its ranking, because
  * hydration drops candidates. The offset each page starts at is remembered per query, and the
  * result is shaped as a Meilisearch page.
+ *
+ * Tied scores can reorder between requests, so a later page can repeat an id an earlier page showed;
+ * InstantSearch appends pages, so those repeats are dropped here.
  */
 export function createOffsetPager() {
   const pageCursors = new Map<string, number | undefined>();
+  const pageIds = new Map<string, number[]>();
 
-  return async function fetchPage<F extends object, I, H>({
+  return async function fetchPage<F extends object, I extends { id: number }, H>({
     query,
     filters,
     hitsPerPage,
@@ -165,10 +169,18 @@ export function createOffsetPager() {
 
     const result = await search({ ...filters, query, limit: hitsPerPage, cursor: offset });
     if (result.nextCursor !== undefined) pageCursors.set(`${key}:${page + 1}`, result.nextCursor);
-    const shown = page * hitsPerPage + result.items.length;
+    const earlier = new Set(
+      Array.from({ length: page }, (_, i) => pageIds.get(`${key}:${i}`) ?? []).flat()
+    );
+    const items = result.items.filter((item) => !earlier.has(item.id));
+    pageIds.set(
+      `${key}:${page}`,
+      items.map((item) => item.id)
+    );
+    const shown = page * hitsPerPage + items.length;
 
     return {
-      hits: result.items.map(toHit),
+      hits: items.map(toHit),
       nbHits: result.nextCursor !== undefined ? shown + hitsPerPage : shown,
       nbPages: result.nextCursor !== undefined ? page + 2 : page + 1,
       processingTimeMS: result.latencyMs,

@@ -30,14 +30,14 @@
 # one libc. Their install-script output is kept apart too (the pnpm store is per LIBC, below).
 ARG LIBC=musl
 
-FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS base-musl
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS base-musl
 RUN apk add --no-cache libc6-compat
 
 # openssl: Prisma detects the OpenSSL version to pick its engine and loads libssl at runtime;
 # the slim image ships neither (no libssl3 package). adduser is already in the slim image; it
 # is listed so the runner stage's `addgroup`/`adduser` lines, shared with Alpine, do not rely
 # on that.
-FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS base-glibc
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS base-glibc
 RUN apt-get update && \
     apt-get install -y --no-install-recommends openssl ca-certificates adduser && \
     rm -rf /var/lib/apt/lists/*
@@ -238,7 +238,7 @@ COPY --from=builder /app/server-maps/ /server-maps/
 
 # The runtime bases, one per LIBC (see the top of this file). The musl one is the bare Alpine
 # image, exactly what the runner stage used before (no libc6-compat: only the deps stage has it).
-FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS runtime-musl
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runtime-musl
 FROM base-glibc AS runtime-glibc
 
 FROM runtime-${LIBC} AS runner

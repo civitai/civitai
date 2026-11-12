@@ -16,7 +16,7 @@ import type { PGlite } from '@electric-sql/pglite';
 // The moderator spoke's harness: the REAL `Feedback` migrations (the manual-apply app-block one
 // included) applied to an in-process Postgres. Relative, because `~` does not reach `apps/`.
 import {
-  freshAppFeedbackDb,
+  freshAppFeedbackSourceDb,
   seedUser,
 } from '../../../../../apps/moderator/src/lib/server/__tests__/feedback-pglite.harness';
 
@@ -80,6 +80,7 @@ const {
   modListAppFeedback,
   modListConditions,
   modSetAppFeedbackHidden,
+  readFeedbackForkOrigin,
   resolveAppFeedbackTarget,
   setAppFeedbackOwnerStatus,
   toOwnerFeedbackDto,
@@ -154,7 +155,7 @@ const ACCESS: Record<string, AccessRow> = {
 type StatusRow = {
   status: string;
   name: string;
-  appBlock: { version: string; currentVersionSha: string | null } | null;
+  appBlock: { id: string; version: string; currentVersionSha: string | null } | null;
 };
 let STATUS: Record<string, StatusRow>;
 let SLUGS: Record<string, { id: string; revisionOfId: string | null }>;
@@ -166,13 +167,13 @@ function freshFixtures() {
     [PARENT]: {
       status: 'approved',
       name: 'Cool App',
-      appBlock: { version: '1.4.2', currentVersionSha: 'sha-parent-91c' },
+      appBlock: { id: 'blk_parent', version: '1.4.2', currentVersionSha: 'sha-parent-91c' },
     },
     [SHADOW]: { status: 'draft', name: 'Cool App (draft)', appBlock: null },
     [OFFSITE]: {
       status: 'approved',
       name: 'Far Away',
-      appBlock: { version: '9.9.9', currentVersionSha: 'sha-offsite-zz' },
+      appBlock: { id: 'blk_offsite', version: '9.9.9', currentVersionSha: 'sha-offsite-zz' },
     },
   };
   SLUGS = {
@@ -250,6 +251,7 @@ describe('resolveAppFeedbackTarget', () => {
         appName: 'Cool App',
         appBlockVersion: '1.4.2',
         appBlockSha: 'sha-parent-91c',
+        appBlockId: 'blk_parent',
       },
     });
   });
@@ -304,6 +306,7 @@ describe('resolveAppFeedbackTarget', () => {
         appName: 'Cool App',
         appBlockVersion: '1.4.2',
         appBlockSha: 'sha-parent-91c',
+        appBlockId: 'blk_parent',
       },
     });
   });
@@ -337,6 +340,7 @@ describe('resolveAppFeedbackTarget', () => {
     appName: 'Cool App',
     appBlockVersion: '1.4.2',
     appBlockSha: 'sha-parent-91c',
+    appBlockId: 'blk_parent',
   };
 
   it('admits the canonical owner (page and slot surfaces)', async () => {
@@ -392,6 +396,7 @@ describe('resolveAppFeedbackTarget', () => {
           appName: 'Cool App',
           appBlockVersion: '1.4.2',
           appBlockSha: 'sha-parent-91c',
+          appBlockId: 'blk_parent',
         },
       });
     }
@@ -438,6 +443,7 @@ describe('resolveAppFeedbackTarget', () => {
       appName: 'Far Away',
       appBlockVersion: null,
       appBlockSha: null,
+      appBlockId: null,
     };
     for (const id of [REPORTER, OFFSITE_OWNER])
       expect(await resolveAppFeedbackTarget(user(id), { slug: 'far-away' })).toEqual({
@@ -494,6 +500,93 @@ describe('createAppFeedback', () => {
     });
     expect(dbMock.dbWrite.feedback.create.mock.calls[0][0].data.context).toEqual({
       surface: 'slot',
+    });
+  });
+
+  describe("the developer's source commit", () => {
+    // Distinct from the platform sha the fixture serves, so a stamp of the wrong one shows.
+    const LIVE_COMMIT = '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901';
+    /** The raw UPDATE's text and its values (commit, dirty, feedback id). */
+    const sourceWrites = () =>
+      dbMock.dbWrite.$executeRaw.mock.calls.map(([strings, ...values]) => ({
+        sql: norm((strings as TemplateStringsArray).join('?')),
+        values,
+      }));
+
+    it('stamps the commit of the approved request that built the serving sha', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        sourceCommit: LIVE_COMMIT,
+        sourceDirty: true,
+      });
+      await expect(createAppFeedback({ user: user(REPORTER), input })).resolves.toEqual({
+        id: 555,
+      });
+      expect(dbMock.dbRead.appBlockPublishRequest.findFirst).toHaveBeenCalledWith({
+        where: {
+          appBlockId: 'blk_parent',
+          status: 'approved',
+          forgejoCommitSha: 'sha-parent-91c',
+        },
+        orderBy: { reviewedAt: 'desc' },
+        select: { sourceCommit: true, sourceDirty: true },
+      });
+      expect(sourceWrites()).toEqual([
+        {
+          sql: 'UPDATE "Feedback" SET "appSourceCommit" = ?, "appSourceDirty" = ? WHERE "id" = ?',
+          values: [LIVE_COMMIT, true, 555],
+        },
+      ]);
+    });
+
+    it('keeps an unknown dirty flag NULL rather than calling it clean', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        sourceCommit: LIVE_COMMIT,
+        sourceDirty: null,
+      });
+      await createAppFeedback({ user: user(REPORTER), input });
+      expect(sourceWrites()[0].values).toEqual([LIVE_COMMIT, null, 555]);
+    });
+
+    it('writes nothing when no approved request carries the serving sha', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+      await createAppFeedback({ user: user(REPORTER), input });
+      expect(sourceWrites()).toEqual([]);
+    });
+
+    it('looks nothing up for an off-site app or a block that has no serving sha', async () => {
+      await createAppFeedback({
+        user: user(REPORTER),
+        input: { ...input, target: { slug: 'far-away' } },
+      });
+      STATUS[PARENT].appBlock!.currentVersionSha = null;
+      await createAppFeedback({ user: user(REPORTER), input });
+      expect(dbMock.dbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+      expect(sourceWrites()).toEqual([]);
+    });
+
+    it('still creates the report before the migration is applied (missing column)', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        sourceCommit: LIVE_COMMIT,
+        sourceDirty: false,
+      });
+      dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(
+        Object.assign(new Error('column "appSourceCommit" does not exist'), { code: '42703' })
+      );
+      await expect(createAppFeedback({ user: user(REPORTER), input })).resolves.toEqual({
+        id: 555,
+      });
+      expect(sourceWrites()).toHaveLength(1);
+    });
+
+    it('never names the new columns on the Prisma create, so it cannot fail on them', async () => {
+      dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        sourceCommit: LIVE_COMMIT,
+        sourceDirty: true,
+      });
+      await createAppFeedback({ user: user(REPORTER), input });
+      const call = dbMock.dbWrite.feedback.create.mock.calls[0][0];
+      expect(JSON.stringify(call)).not.toMatch(/appSource/);
+      expect(call.select).toEqual({ id: true });
     });
   });
 
@@ -660,7 +753,11 @@ const ownerRow = {
   createdAt: new Date('2026-10-01T10:00:00Z'),
   appBlockVersion: '1.4.2',
   appBlockSha: 'sha-row-77',
+  appSourceCommit: 'c0ffee1234567890c0ffee1234567890c0ffee12',
+  appSourceDirty: false,
   surface: 'slot',
+  recentErrors: null as unknown,
+  environment: null as unknown,
   ownerStatus: 'acknowledged',
   ownerStatusAt: new Date('2026-10-02T11:00:00Z'),
   ownerFlaggedAt: null,
@@ -675,12 +772,16 @@ describe('the owner projection', () => {
       [
         'appBlockSha',
         'appBlockVersion',
+        'appSourceCommit',
+        'appSourceDirty',
         'createdAt',
+        'environment',
         'id',
         'message',
         'ownerFlaggedAt',
         'ownerStatus',
         'ownerStatusAt',
+        'recentErrors',
         'reporter',
         'surface',
       ].sort()
@@ -713,6 +814,35 @@ describe('the owner projection', () => {
 
   it('drops a surface outside the closed set', () => {
     expect(toOwnerFeedbackDto({ ...ownerRow, surface: 'javascript:alert(1)' }).surface).toBeNull();
+  });
+
+  it('re-validates the environment, stripping extras and dropping a block the schema refuses', () => {
+    const environment = { browser: { family: 'chrome', major: 131 }, appRoute: '/a' };
+    expect(
+      toOwnerFeedbackDto({ ...ownerRow, environment: { ...environment, userAgent: 'UA' } })
+        .environment
+    ).toStrictEqual(environment);
+    expect(
+      toOwnerFeedbackDto({ ...ownerRow, environment: { browser: { family: 'netscape' } } })
+        .environment
+    ).toBeNull();
+  });
+
+  it('re-validates recentErrors entry by entry, dropping what the schema refuses', () => {
+    const good = { method: 'SUBMIT_WORKFLOW', message: 'nope', at: 1, count: 1 };
+    const dto = toOwnerFeedbackDto({
+      ...ownerRow,
+      recentErrors: [
+        { ...good, smuggled: 'SMUGGLED_SENTINEL' },
+        { ...good, method: '<script>' },
+        'not an entry',
+      ],
+    });
+    expect(dto.recentErrors).toStrictEqual([good]);
+    expect(toOwnerFeedbackDto({ ...ownerRow, recentErrors: null }).recentErrors).toEqual([]);
+    expect(
+      toOwnerFeedbackDto({ ...ownerRow, recentErrors: Array(25).fill(good) }).recentErrors
+    ).toHaveLength(10);
   });
 });
 
@@ -751,6 +881,8 @@ describe('listAppFeedbackForListing', () => {
       'f."appBlockVersion"',
       'f."appBlockSha"',
       "f.context->>'surface' AS surface",
+      `f.context->'recentErrors' AS "recentErrors"`,
+      `f.context->'environment' AS "environment"`,
       'f."ownerStatus"',
       'f."ownerStatusAt"',
       'f."ownerFlaggedAt"',
@@ -802,6 +934,120 @@ describe('listAppFeedbackForListing', () => {
     const res = await listAppFeedbackForListing({ userId: OWNER, input: { ...input, limit: 2 } });
     expect(res.items.map((i) => i.id)).toEqual([30, 20]);
     expect(res.nextCursor).toBeUndefined();
+  });
+});
+
+const NO_SOURCE = { appSourceCommit: null, appSourceDirty: null };
+
+describe('the source commit on the read paths (no-type columns, raw SQL)', () => {
+  const COMMIT = '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901';
+  const list = () =>
+    listAppFeedbackForListing({ userId: OWNER, input: { appListingId: PARENT, limit: 50 } });
+
+  it('merges the source commit of each row from its own query, by id', async () => {
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([
+        { ...ownerRow, id: 30 },
+        { ...ownerRow, id: 20 },
+      ])
+      .mockResolvedValueOnce([{ id: 20, appSourceCommit: COMMIT, appSourceDirty: false }]);
+    const res = await list();
+    expect(res.items.map((i) => [i.id, i.appSourceCommit, i.appSourceDirty])).toEqual([
+      [30, null, null],
+      [20, COMMIT, false],
+    ]);
+    const q = dbMock.dbRead.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+    expect(norm(q.sql)).toBe(
+      'SELECT f.id, f."appSourceCommit", f."appSourceDirty" FROM "Feedback" f WHERE f.id IN (?,?)'
+    );
+    expect(q.values).toEqual([30, 20]);
+  });
+
+  it('still lists every row before the migration is applied, with no source commit', async () => {
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([{ ...ownerRow, id: 30 }])
+      .mockRejectedValueOnce(Object.assign(new Error('column does not exist'), { code: '42703' }));
+    const res = await list();
+    expect(res.items.map((i) => [i.id, i.appSourceCommit, i.appSourceDirty])).toEqual([
+      [30, null, null],
+    ]);
+  });
+
+  it('issues no source query for an empty page', async () => {
+    await list();
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('readFeedbackForkOrigin — the upstream of a fork', () => {
+  const FORKED_AT = '3f9c2ab81d0e3f9c2ab81d0e3f9c2ab81d0e3f9c';
+  const forkRow = { parentBlockId: 'blk_up', forkedAtCommit: FORKED_AT, parentListingId: 'apl_up' };
+  beforeEach(() => {
+    STATUS['apl_up'] = { status: 'approved', name: 'Up', appBlock: null, slug: 'up-app' } as never;
+    dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue({ version: '1.2.0' });
+  });
+
+  it('a listing that is not a fork has none', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([
+      { parentBlockId: null, forkedAtCommit: null, parentListingId: null },
+    ]);
+    expect(await readFeedbackForkOrigin(PARENT)).toBeNull();
+  });
+
+  it('names a public upstream and the version whose commit the fork started at', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([forkRow]);
+    expect(await readFeedbackForkOrigin(PARENT)).toStrictEqual({
+      upstreamSlug: 'up-app',
+      upstreamVersion: '1.2.0',
+      forkedAtCommit: FORKED_AT,
+    });
+    expect(dbMock.dbRead.appBlockPublishRequest.findFirst).toHaveBeenCalledWith({
+      where: { appBlockId: 'blk_up', status: 'approved', forgejoCommitSha: FORKED_AT },
+      orderBy: { reviewedAt: 'desc' },
+      select: { version: true },
+    });
+  });
+
+  it.each([
+    ['not approved', () => ((STATUS['apl_up'] as { status: string }).status = 'suspended')],
+    [
+      'not public',
+      () =>
+        mocks.readListingVisibility.mockResolvedValue({ available: true, visibility: 'testers' }),
+    ],
+    [
+      'of unknown visibility',
+      () => mocks.readListingVisibility.mockResolvedValue({ available: false, visibility: null }),
+    ],
+    ['deleted', () => delete STATUS['apl_up']],
+  ])('an upstream that is %s is not named', async (_label, arrange) => {
+    arrange();
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([forkRow]);
+    expect(await readFeedbackForkOrigin(PARENT)).toStrictEqual({
+      upstreamSlug: null,
+      upstreamVersion: null,
+      forkedAtCommit: FORKED_AT,
+    });
+  });
+
+  it('any read failure reads as not a fork', async () => {
+    dbMock.dbRead.$queryRaw.mockRejectedValueOnce(new Error('column does not exist'));
+    expect(await readFeedbackForkOrigin(PARENT)).toBeNull();
+  });
+
+  it('every listed row carries it', async () => {
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([
+        { ...ownerRow, id: 30 },
+        { ...ownerRow, id: 20 },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([forkRow]);
+    const res = await listAppFeedbackForListing({
+      userId: OWNER,
+      input: { appListingId: PARENT, limit: 50 },
+    });
+    expect(res.items.map((i) => i.forkOf?.upstreamSlug)).toEqual(['up-app', 'up-app']);
   });
 });
 
@@ -1150,8 +1396,23 @@ describe('moderator procedures', () => {
     ]);
     const res = await modListAppFeedback({ limit: 2, hidden: 'all', cursor: 999 });
     expect(res.items).toEqual([
-      { ...modRow, surface: 'page', modelId: 31337 },
-      { ...modRow, id: 702, surface: null, modelId: null },
+      {
+        ...modRow,
+        ...NO_SOURCE,
+        surface: 'page',
+        modelId: 31337,
+        recentErrors: [],
+        environment: null,
+      },
+      {
+        ...modRow,
+        ...NO_SOURCE,
+        id: 702,
+        surface: null,
+        modelId: null,
+        recentErrors: [],
+        environment: null,
+      },
     ]);
     expect(res.nextCursor).toBe(702);
     const q = lastModListQuery();
@@ -1238,7 +1499,7 @@ describe('hasAnyAppFeedbackForListing — authz parity with listForListing', () 
 });
 
 /**
- * The same two functions against REAL rows: `freshAppFeedbackDb()` applies the actual `Feedback`
+ * The same two functions against REAL rows: `freshAppFeedbackSourceDb()` applies the actual `Feedback`
  * migrations to PGlite, and `$queryRaw` runs each `Prisma.Sql` as the parameterised statement the
  * driver would send. Access resolution stays on the db mock above (only the raw SQL is under test).
  */
@@ -1248,7 +1509,7 @@ describe('hasAnyAppFeedbackForListing — real SQL on PGlite, against listForLis
   let banned: number;
 
   beforeEach(async () => {
-    pg = await freshAppFeedbackDb();
+    pg = await freshAppFeedbackSourceDb();
     // The harness's stand-in `User` has only id + username; the visibility predicate reads
     // `bannedAt`, which the real table has.
     await pg.exec('ALTER TABLE "User" ADD COLUMN "bannedAt" TIMESTAMP(3)');

@@ -435,23 +435,34 @@ export const getArticles = async ({
     // tiebreaker so pages are deterministic even when many articles share
     // the same sort value (e.g. the INT_MAX sentinel).
     const NULL_RANK_SENTINEL = 2147483647; // max int32 — sorts after any real rank under ASC
-    const rankExpr = (col: string) => `COALESCE(rank."${col}${period}Rank", ${NULL_RANK_SENTINEL})`;
+    const liveCounts = {
+      collectedCount: `am."collectedCount"`,
+      commentCount: `am."commentCount"`,
+      reactionCount: `am."heartCount" + am."likeCount" + am."dislikeCount" + am."laughCount" + am."cryCount"`,
+    };
+    // Period rank columns are never filled (only AllTime metrics are kept), so shorter periods sort by live AllTime counts; 'stats' mode ranks by all-time counts.
+    const useLiveCounts = period !== MetricTimeframe.AllTime;
+    const metricSort = (col: keyof typeof liveCounts): [string, 'ASC' | 'DESC'] =>
+      useLiveCounts
+        ? [`COALESCE(${liveCounts[col]}, 0)`, 'DESC']
+        : [`COALESCE(rank."${col}${period}Rank", ${NULL_RANK_SENTINEL})`, 'ASC'];
 
     let sortExpr: string;
     let sortDir: 'ASC' | 'DESC';
+    let joinMetric = false;
     switch (sort) {
       case ArticleSort.MostBookmarks:
       case ArticleSort.MostCollected:
-        sortExpr = rankExpr('collectedCount');
-        sortDir = 'ASC';
+        [sortExpr, sortDir] = metricSort('collectedCount');
+        joinMetric = useLiveCounts;
         break;
       case ArticleSort.MostComments:
-        sortExpr = rankExpr('commentCount');
-        sortDir = 'ASC';
+        [sortExpr, sortDir] = metricSort('commentCount');
+        joinMetric = useLiveCounts;
         break;
       case ArticleSort.MostReactions:
-        sortExpr = rankExpr('reactionCount');
-        sortDir = 'ASC';
+        [sortExpr, sortDir] = metricSort('reactionCount');
+        joinMetric = useLiveCounts;
         break;
       case ArticleSort.RecentlyUpdated:
         sortExpr = `extract(epoch from a."updatedAt")`;
@@ -487,6 +498,11 @@ export const getArticles = async ({
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
+      ${
+        joinMetric
+          ? Prisma.sql`LEFT JOIN "ArticleMetric" am ON am."articleId" = a.id AND am.timeframe = 'AllTime'::"MetricTimeframe"`
+          : Prisma.empty
+      }
       ${collectionJoin}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;

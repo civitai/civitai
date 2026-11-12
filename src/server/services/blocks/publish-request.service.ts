@@ -3290,6 +3290,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // Push-originated requests (git-push webhook) carry an empty bundleKey
       // and this real sha — approve reconstructs the bundle from Forgejo at it.
       forgejoCommitSha: true,
+      // The submitting client's source claim, carried into the approve commit's trailers.
+      sourceCommit: true,
+      sourceDirty: true,
       submittedByUserId: true,
       appBlockId: true,
       // The reviewed file list, which the permission-hook pin below cross-checks with the bytes.
@@ -4425,7 +4428,37 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
 
   // (5) Atomic single-commit replacement of the repo contents on
   // civitai-apps/<slug>. This commit fires the git-push webhook.
-  const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
+  // The subject is unchanged; trailers map the snapshot to the request and to the developer's
+  // source (approve-provenance.ts). A push-originated request's pushed sha is `Pushed-Commit`,
+  // never `Source-Commit`: the latter is only ever the client's own claim.
+  //
+  // An empty bundleKey is NOT enough to call `forgejoCommitSha` the developer's push: approve
+  // overwrites a request's `forgejoCommitSha` with its own snapshot, and reset-to-pending clones
+  // that approved row (bundleKey '' included) into a new pending request. A sha some approved
+  // request already holds is the platform's own commit, so it is not a `Pushed-Commit`.
+  let pushedCommit: string | null = null;
+  if (!request.bundleKey && request.forgejoCommitSha) {
+    const platformOwn = await dbRead.appBlockPublishRequest.findFirst({
+      where: {
+        slug: request.slug,
+        status: 'approved',
+        forgejoCommitSha: request.forgejoCommitSha,
+        NOT: { id: request.id },
+      },
+      select: { id: true },
+    });
+    if (!platformOwn) pushedCommit = request.forgejoCommitSha;
+  }
+  const { buildApproveCommitMessage } = await import('./approve-provenance');
+  const commitMessage = buildApproveCommitMessage({
+    publishRequestId: request.id,
+    slug: request.slug,
+    version: request.version,
+    sourceCommit: request.sourceCommit,
+    sourceDirty: request.sourceDirty,
+    sourceRepo: (manifest as { repository?: unknown }).repository,
+    pushedCommit,
+  });
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,
     files: filesForCommit,
@@ -4437,7 +4470,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // publish request. These two writes are the durable proof that THIS sha
   // went through moderator review — the git-push webhook keys its
   // no-trust-on-push gate off `current_version_sha` (and, as a race backstop,
-  // an `approved` publish request with this `forgejoCommitSha`). Any push
+  // an `approved` publish request with this `forgejoCommitSha`). The webhook for
+  // THIS commit usually arrives before these writes; it recognises the commit
+  // from the `Publish-Request` trailer above and the pushing account. Any push
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
   await dbWrite.appBlock.update({
@@ -4463,6 +4498,36 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       appBlockId,
     },
   });
+
+  // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag
+  // already names another commit, `approved-<request id>`; see decideVersionTag). Runs after the
+  // approval markers are durable and before the build trigger. LOG-AND-CONTINUE: a tag is a
+  // pointer for developers, and a Forgejo error here must never fail an approve whose code is
+  // committed or keep its build from starting.
+  try {
+    const { ensureApprovalTag } = await import('./forgejo.service');
+    const tagged = await ensureApprovalTag({
+      slug: request.slug,
+      version: request.version,
+      publishRequestId: request.id,
+      sha: forgejoCommitSha,
+      message: commitMessage,
+    });
+    if (tagged.status === 'skipped' || tagged.fallbackFrom) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] version tag (slug=${request.slug}, id=${request.id}): ${JSON.stringify(
+          tagged
+        )}`
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] version tag not created (slug=${request.slug}, id=${request.id}); ` +
+        `approve/deploy CONTINUES: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // (6b) FORK PROVENANCE — if this request carries a parent (server-written onto the REQUEST at
   // creation; 🔴 never read from `manifest`), stamp it onto the block and link this app's store
@@ -4517,11 +4582,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // approve supersedes are left to the sweep (`jobs/sweep-review-storage.ts`).
   void teardownReviewStorageForRequest(request.id);
 
-  // (6b) Supersede any OTHER request still 'pending' for this slug. If the
-  // git-push webhook raced ahead of (6) it may have parked a duplicate
-  // pending-review row for THIS approved sha; withdraw it (and any older
-  // pending submission) so the queue reflects that the slug is now approved.
-  // Scoped to NOT touch the row we just approved.
+  // (6b) Supersede any OTHER request still 'pending' for this slug so the queue
+  // reflects that the slug is now approved. Scoped to NOT touch the row we just
+  // approved. This does not stop the webhook from parking this approve's own
+  // commit as a second request, because a row the webhook writes after this
+  // update survives it. The webhook recognises that commit by its
+  // `Publish-Request` trailer and pusher (git-push.ts ownApproveCommitRequest).
   await dbWrite.appBlockPublishRequest.updateMany({
     where: { slug: request.slug, status: 'pending', NOT: { id: request.id } },
     data: { status: 'withdrawn' },

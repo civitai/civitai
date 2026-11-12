@@ -255,6 +255,107 @@ describe('/api/upload/complete — error classification', () => {
   });
 });
 
+describe('/api/upload/complete — a malformed body is a 400, not a 500', () => {
+  /**
+   * The mock throws the SDK serializer's `TypeError: Expected a non-null value for
+   * UploadId` for a null UploadId, as the real SDK does before any request is sent, so a
+   * handler that reaches S3 without the guard returns 500 instead of passing on a stub.
+   */
+  const reqWithBody = (overrides: Record<string, unknown>) => {
+    const req = makeReq();
+    req.body = { ...req.body, ...overrides };
+    return req;
+  };
+
+  beforeEach(() => {
+    vi.mocked(logToAxiom).mockClear();
+    mockCompleteMultipartUpload.mockImplementation(async (_b, _k, uploadId) => {
+      if (uploadId == null) throw new TypeError('Expected a non-null value for UploadId');
+      return { Location: 'https://cdn/x' };
+    });
+  });
+
+  const errorEvent = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((c) => c?.name === 's3-upload-complete-error');
+
+  it('missing uploadId → 400 + no-store, and S3 is never called', async () => {
+    const res = makeRes();
+    await handler(reqWithBody({ uploadId: undefined }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'Missing or invalid bucket, key, uploadId or parts' });
+    expect(res.headers['Cache-Control']).toBe('no-store');
+    expect(mockCompleteMultipartUpload).not.toHaveBeenCalled();
+    expect(mockS3Send).not.toHaveBeenCalled();
+    expect(errorEvent()).toBeUndefined();
+  });
+
+  it.each([
+    ['missing key', { key: undefined }],
+    ['empty key', { key: '' }],
+    ['missing bucket', { bucket: undefined }],
+    ['empty uploadId', { uploadId: '' }],
+    ['non-string uploadId', { uploadId: 123 }],
+    ['non-array, non-null parts', { parts: { ETag: 'e', PartNumber: 1 } }],
+  ])('%s → 400, and S3 is never called', async (_label, overrides) => {
+    const res = makeRes();
+    await handler(reqWithBody(overrides), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockCompleteMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  // An empty manifest is a backend STATE fault with re-upload semantics; the 400 guard
+  // must not swallow it.
+  it('an empty parts array still reaches S3 and keeps the 422 re-upload path', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(
+      s3Error({
+        name: 'InvalidRequest',
+        message: 'You must specify at least one part',
+        $metadata: { httpStatusCode: 400 },
+      })
+    );
+    const res = makeRes();
+    await handler(reqWithBody({ parts: [] }), res);
+    expect(mockCompleteMultipartUpload).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(422);
+  });
+
+  // Missing `parts` does not throw in the SDK, so it must get past the guard to the
+  // backend (and its 422), not be widened into the 400.
+  it('absent parts still reaches S3 and keeps the 422 re-upload path', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(
+      s3Error({
+        name: 'MalformedXML',
+        message: 'The XML you provided was not well-formed',
+        $metadata: { httpStatusCode: 400 },
+      })
+    );
+    const res = makeRes();
+    await handler(reqWithBody({ parts: undefined }), res);
+    expect(mockCompleteMultipartUpload).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(422);
+  });
+
+  it('a literal null JSON body → 400, not a destructuring 500', async () => {
+    const req = makeReq();
+    req.body = null;
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+    expect(mockCompleteMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it('a valid body still reaches completion → 200', async () => {
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(mockCompleteMultipartUpload).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('https://cdn/x');
+  });
+});
+
 describe('/api/upload/complete — the completion LOG must record the completion SHAPE', () => {
   /**
    * WHY THIS EXISTS. A multipart completion can resolve WITHOUT THROWING and still

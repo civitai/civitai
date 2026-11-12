@@ -33,8 +33,36 @@ export const flagRaceConfigSchema = z.object({
       ),
     })
     .optional(),
+  flags: z
+    .object({
+      // Off stops new swaps and freezes; flags already frozen keep counting.
+      on: z.boolean(),
+      // The Collection the home block shows. Only the swap writes to it.
+      homeCollectionId: z.number().int().positive(),
+      size: z.number().int().min(1).max(10).default(10),
+      // The pot per distinct participant: the step whose `from` is latest at or before the flag's cut
+      // applies, read once at its freeze, so a new step never reprices a frozen flag.
+      pot: z.object({
+        steps: z
+          .array(
+            z.object({
+              from: z.coerce.date(),
+              perPerson: z.number().int().nonnegative(),
+              upTo: z.number().int().nonnegative(),
+              after: z.number().int().nonnegative(),
+            })
+          )
+          .min(1),
+        cap: z.number().int().positive(),
+      }),
+      // How strongly the winner's points lean toward the team behind: the turf catch-up
+      // multiplier, its square root, or none.
+      lean: z.enum(['full', 'sqrt', 'none']).default('sqrt'),
+    })
+    .optional(),
 });
 export type FlagRaceConfig = z.infer<typeof flagRaceConfigSchema>;
+export type FlagsConfig = NonNullable<FlagRaceConfig['flags']>;
 
 const OFF: FlagRaceConfig = { mode: 'off' };
 
@@ -142,9 +170,13 @@ export async function loadAwardResults(
  * The settle's freeze step. A failure is logged and skipped: nothing is lost, the next settle freezes
  * it, and the award still counts from its own date.
  */
-export async function freezeEventAwards(event: FreezeEvent) {
+export async function freezeEventAwards(event: FreezeEvent, now = new Date()) {
   try {
-    return await freezeCruciblePlacements(event, await readFlagRaceConfig(event.name));
+    const config = await readFlagRaceConfig(event.name);
+    const places = await freezeCruciblePlacements(event, config);
+    if (!config.flags) return places;
+    const { freezeFlagDays } = await import('~/server/events/turf/flag-freeze');
+    return places + (await freezeFlagDays(event, config.flags, now));
   } catch (error) {
     logToAxiom({
       type: 'error',

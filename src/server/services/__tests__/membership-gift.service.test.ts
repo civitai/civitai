@@ -1032,17 +1032,110 @@ describe('honorGiftResidualsForUser', () => {
     expect(coupon.duration_in_months).toBe(2);
   });
 
-  it('ends the subscription when the owed months run out', async () => {
-    mockDbWrite.membershipGift.findMany.mockResolvedValue([{ id: 'gift_1' }]);
-    mockDbWrite.membershipGift.findUnique.mockResolvedValue(halfUsed);
+  describe('ends on a period boundary of the subscription Stripe created', () => {
+    // Stripe stamps the subscription a moment after we ask for it. An end date read off our
+    // clock lands just short of the boundary, and Stripe bills the first month as a proration
+    // line, which grants no Membership bonus.
+    const now = dayjs.utc('2026-01-31T12:00:00Z');
+    const anchor = now.add(1, 'second');
 
-    await honorGiftResidualsForUser({ userId: 2 });
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(now.toDate());
+      mockDbWrite.membershipGift.findMany.mockResolvedValue([{ id: 'gift_1' }]);
+      mockStripe.subscriptions.create.mockResolvedValue({
+        id: 'sub_residual',
+        status: 'active',
+        billing_cycle_anchor: anchor.unix(),
+        current_period_start: anchor.unix(),
+        current_period_end: anchor.add(1, 'month').unix(),
+      });
+    });
+    afterEach(() => vi.useRealTimers());
 
-    const args = mockStripe.subscriptions.create.mock.calls[0][0];
-    // Whole-month diffs truncate on sub-second drift, so compare against the date itself:
-    // covering `months` instead of `monthsRemaining` would land a month out, not hours.
-    const driftHours = Math.abs(dayjs.unix(args.cancel_at).diff(dayjs().add(2, 'month'), 'hour'));
-    expect(driftHours).toBeLessThan(24);
+    // Any end date sent with the create is read off our clock, which is the bug.
+    const effectiveCancelAt = () => {
+      const created = mockStripe.subscriptions.create.mock.calls[0][0];
+      expect(created.cancel_at).toBeUndefined();
+      const update = mockStripe.subscriptions.update.mock.calls.find(
+        ([id, args]) => id === 'sub_residual' && 'cancel_at' in args
+      );
+      if (update) return update[1].cancel_at;
+      return created.cancel_at_period_end ? anchor.add(1, 'month').unix() : null;
+    };
+
+    it('ends after exactly the months owed, counted from the anchor', async () => {
+      mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...halfUsed, monthsRemaining: 3 });
+      await honorGiftResidualsForUser({ userId: 2 });
+
+      // Jan 31 + 3 months clamps to Apr 30, as Stripe's monthly cycle does.
+      expect(effectiveCancelAt()).toBe(dayjs.utc('2026-04-30T12:00:01Z').unix());
+      const update = mockStripe.subscriptions.update.mock.calls[0][1];
+      // Stripe rejects the update if cancel_at_period_end rides along with cancel_at.
+      expect(update).toEqual({ cancel_at: effectiveCancelAt(), proration_behavior: 'none' });
+    });
+
+    it('needs no second call for a single month', async () => {
+      mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...halfUsed, monthsRemaining: 1 });
+      await honorGiftResidualsForUser({ userId: 2 });
+
+      expect(effectiveCancelAt()).toBe(anchor.add(1, 'month').unix());
+      expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+    });
+
+    it('still completes the gift when setting the end date fails, leaving a one-month subscription', async () => {
+      mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...halfUsed, monthsRemaining: 3 });
+      mockStripe.subscriptions.update.mockRejectedValue(new Error('Stripe is down'));
+
+      await expect(honorGiftResidualsForUser({ userId: 2 })).resolves.toEqual({ minted: 1 });
+
+      // The fallback: no end date of our own, and Stripe ends it after the first period.
+      const created = mockStripe.subscriptions.create.mock.calls[0][0];
+      expect(created.cancel_at).toBeUndefined();
+      expect(created.cancel_at_period_end).toBe(true);
+      expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'Completed',
+            stripeSubscriptionId: 'sub_residual',
+          }),
+        })
+      );
+    });
+  });
+
+  it('re-mints the rest when a residual whose end date never got written ends after month one', async () => {
+    // The fallback of a failed cancel_at write: Stripe ends the 3-month residual at its first
+    // period end. Month one was delivered (and its invoice granted the bonus), so 2 come back
+    // and a fresh residual covers them under a new coupon and idempotency key.
+    const start = dayjs().subtract(1, 'month');
+    const completed = {
+      ...baseGift,
+      status: 'Completed',
+      monthsRemaining: 0,
+      monthsConsumed: 3,
+      stripeSubscriptionId: 'sub_residual',
+      stripeCouponId: 'gift_gift_1_residual_m1',
+    };
+    mockDbWrite.membershipGift.findUnique.mockImplementation(async () =>
+      mockDbWrite.membershipGift.updateMany.mock.calls.length
+        ? { ...completed, status: 'Active', monthsRemaining: 2, monthsConsumed: 1 }
+        : completed
+    );
+    mockDbWrite.membershipGift.findMany.mockImplementation(async () =>
+      mockDbWrite.membershipGift.updateMany.mock.calls.length ? [{ id: 'gift_1' }] : []
+    );
+
+    await honorGiftResidualsForUser({
+      userId: 2,
+      endedSubscription: residualSub({ start, endedAt: start.add(1, 'month') }),
+    });
+
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ monthsRemaining: 2 }) })
+    );
+    const [, options] = mockStripe.subscriptions.create.mock.calls[0];
+    expect(options.idempotencyKey).toBe('gift_gift_1_residual_m2');
   });
 
   it('does nothing when no months are owed', async () => {

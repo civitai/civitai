@@ -15,3 +15,22 @@ export function dealAcceptedChatLine({
   const stop = /[.!?]$/.test(cleanTitle) ? '' : '.';
   return `Deal accepted: ${owner} **${cleanTitle}**${stop} [Open the deal](/services/deals/${dealId})`;
 }
+
+/**
+ * Posted when the overdue sweep cancels a deal, so both parties see why when they open the chat. A
+ * revision round was cancelled for the undelivered revision, not for missing the due date.
+ */
+export function dealOverdueCancelledChatLine({
+  dealId,
+  days,
+  revision,
+}: {
+  dealId: number;
+  days: number;
+  revision: boolean;
+}) {
+  const why = revision
+    ? `the requested revision wasn't delivered within ${days} days`
+    : `nothing was delivered within ${days} days of the due date`;
+  return `This deal was cancelled automatically because ${why}. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${dealId})`;
+}

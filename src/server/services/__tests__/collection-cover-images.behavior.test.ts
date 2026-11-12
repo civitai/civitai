@@ -73,6 +73,7 @@ beforeAll(async () => {
       "name"        text,
       "url"         text NOT NULL,
       "nsfwLevel"   integer NOT NULL DEFAULT 1,
+      "modelRestricted" boolean NOT NULL DEFAULT false,
       "width"       integer,
       "height"      integer,
       "hash"        text,

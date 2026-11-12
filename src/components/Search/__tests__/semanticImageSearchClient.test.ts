@@ -75,6 +75,27 @@ describe('withSemanticImageSearch', () => {
     expect(search.mock.calls[1][0]).toMatchObject({ cursor: 87 });
   });
 
+  it('drops an image any earlier page already showed', async () => {
+    const search = fakeSearch([
+      { ids: [1, 2], nextCursor: 2 },
+      { ids: [2, 3], nextCursor: 4 },
+      { ids: [1, 4] },
+    ]);
+    const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
+    type Response = { results: { hits: { id: number }[] }[] };
+
+    await client.search([imageRequest({ hitsPerPage: 2 })] as never);
+    const second = (await client.search([
+      imageRequest({ hitsPerPage: 2, page: 1 }),
+    ] as never)) as Response;
+    const third = (await client.search([
+      imageRequest({ hitsPerPage: 2, page: 2 }),
+    ] as never)) as Response;
+
+    expect(second.results[0].hits.map((hit) => hit.id)).toEqual([3]);
+    expect(third.results[0].hits.map((hit) => hit.id)).toEqual([4]);
+  });
+
   it('passes other indexes through, keeping the order of the results', async () => {
     const search = fakeSearch([{ ids: [7] }]);
     const base = meili();
