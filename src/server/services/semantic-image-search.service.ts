@@ -15,6 +15,8 @@ import {
   semanticQueryRefusal,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
+import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
+import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -143,8 +145,17 @@ export async function searchSemanticImages({
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
   }
+  const timed = <T>(stage: 'candidates' | 'hydrate', work: Promise<T>) => {
+    const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
+    return work.finally(() => end());
+  };
   const hydrate: Hydrate<HydratedImage> = (ids) =>
-    fetchVisible(ids, level, { tags: tagIds, excludedTagIds });
+    timed('hydrate', fetchVisible(ids, level, { tags: tagIds, excludedTagIds }));
+  const cachedSource = withCandidateCache(
+    IMAGE_COLLECTION,
+    candidateSource,
+    user?.isModerator ? 'mod' : 'user'
+  );
 
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
@@ -180,7 +191,7 @@ export async function searchSemanticImages({
   let correctedReviewed: boolean | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
-      const result = await candidateSource({ query, filter, offset, limit });
+      const result = await timed('candidates', cachedSource({ query, filter, offset, limit }));
       // The service embeds its spelling correction, not the text audited above.
       if (correctedReviewed === undefined && result.correctedQuery !== undefined)
         correctedReviewed =

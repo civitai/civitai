@@ -615,6 +615,8 @@ export const serverSchema = z
     // When saturated, additional calls fail fast with MeiliCallTimeoutError
     // rather than queueing forever and pressuring the event loop.
     MEILI_CALL_CONCURRENCY: z.coerce.number().optional().default(50),
+    // Search-service calls in flight per pod; past it a search gets 429 "Server busy".
+    SEMANTIC_SEARCH_CONCURRENCY: z.coerce.number().int().positive().optional().default(8),
     // Per-backend circuit breaker (see src/server/meilisearch/client.ts). If
     // `MEILI_CIRCUIT_TRIP_THRESHOLD` MeiliCallTimeoutErrors accumulate within
     // `MEILI_CIRCUIT_WINDOW_SECONDS` on a backend, the circuit OPENs and all

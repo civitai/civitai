@@ -287,7 +287,7 @@ type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
  */
 const failOpenInFlight = new Map<string, Promise<unknown>>();
 
-function fetchThroughCacheFailOpen<T>(key: string, fetchFn: () => Promise<T>): Promise<T> {
+export function singleFlight<T>(key: string, fetchFn: () => Promise<T>): Promise<T> {
   const existing = failOpenInFlight.get(key) as Promise<T> | undefined;
   if (existing) return existing;
   // Promise.resolve().then(fetchFn) so even a SYNCHRONOUS throw inside fetchFn becomes
@@ -329,7 +329,7 @@ export async function fetchThroughCache<T>(
     cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress, cacheName });
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'fetchThroughCache get (cache cluster)', err, { key });
-    return fetchThroughCacheFailOpen(key, fetchFn);
+    return singleFlight(key, fetchFn);
   }
 
   // A malformed entry (no `data`, or a non-numeric `cachedAt`) is treated as a MISS
@@ -359,7 +359,7 @@ export async function fetchThroughCache<T>(
       // origin fetch (per-pod bounded) instead of throwing a 500.
       logSysRedisFailOpen('read-degraded', 'fetchThroughCache lock (cache cluster)', err, { key });
       if (cachedData) return cachedData.data;
-      return fetchThroughCacheFailOpen(key, fetchFn);
+      return singleFlight(key, fetchFn);
     }
     if (!gotLock) {
       if (cachedData) return cachedData.data;
