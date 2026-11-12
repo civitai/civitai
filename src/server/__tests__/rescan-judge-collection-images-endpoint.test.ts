@@ -109,7 +109,7 @@ async function seedBase() {
   `);
 }
 
-type SnapshotRow = { id: number; queued: number; metadata: unknown };
+type SnapshotRow = { id: number; ingestion: string; queued: number; metadata: unknown };
 const snapshot = async () =>
   (
     await db.query(
