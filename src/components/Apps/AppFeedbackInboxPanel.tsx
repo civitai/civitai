@@ -17,6 +17,7 @@ import { useMemo, useState } from 'react';
 import type { InboxActionError, InboxStatusFilter } from '~/components/Apps/appFeedbackInbox';
 import {
   buildSetOwnerStatusInput,
+  feedbackEnvironmentLine,
   feedbackRowMeta,
   INBOX_STATUS_FILTERS,
   inboxActionError,
@@ -145,6 +146,7 @@ function FeedbackRow({
   });
   const busy = setStatus.isPending || flag.isPending;
   const meta = feedbackRowMeta(item);
+  const environment = feedbackEnvironmentLine(item.environment);
   const testId = (part: string) => `app-feedback-${part}-${item.id}`;
 
   return (
@@ -189,6 +191,12 @@ function FeedbackRow({
         <Text size="sm" style={{ whiteSpace: 'pre-wrap' }} data-testid={testId('message')}>
           {item.message}
         </Text>
+
+        {environment && (
+          <Text size="xs" c="dimmed" data-testid={testId('environment')}>
+            {environment}
+          </Text>
+        )}
 
         {item.recentErrors.length > 0 && (
           <Paper withBorder p="xs" radius="sm" data-testid={testId('recent-errors')}>

@@ -1,5 +1,8 @@
 import { listingEditHref } from '~/components/Apps/appListingEditorTabs';
 import type {
+  AppFeedbackBrowserFamily,
+  AppFeedbackEnvironment,
+  AppFeedbackOsFamily,
   AppFeedbackOwnerStatusFilter,
   AppFeedbackRecentError,
   AppFeedbackSurface,
@@ -118,6 +121,53 @@ export function feedbackRowMeta(row: {
   return [version, feedbackSourceLabel(row), surface].filter(
     (part): part is string => part !== null
   );
+}
+
+const BROWSER_LABELS: Readonly<Record<AppFeedbackBrowserFamily, string>> = Object.freeze({
+  chrome: 'Chrome',
+  edge: 'Edge',
+  firefox: 'Firefox',
+  safari: 'Safari',
+  opera: 'Opera',
+  samsung: 'Samsung Internet',
+  other: 'Other browser',
+});
+
+const OS_LABELS: Readonly<Record<AppFeedbackOsFamily, string>> = Object.freeze({
+  windows: 'Windows',
+  macos: 'macOS',
+  linux: 'Linux',
+  chromeos: 'ChromeOS',
+  android: 'Android',
+  ios: 'iOS',
+  other: 'other OS',
+});
+
+/**
+ * The reporter's environment as one line, e.g.
+ * "Chrome 131 on Windows · 1280×720 @2x · classic scrollbars · app route /gallery/12",
+ * or `null` when the report carries none.
+ */
+export function feedbackEnvironmentLine(env: AppFeedbackEnvironment | null): string | null {
+  if (!env) return null;
+  const browserName = env.browser
+    ? `${BROWSER_LABELS[env.browser.family]}${
+        env.browser.major !== undefined ? ` ${env.browser.major}` : ''
+      }`
+    : null;
+  const os = env.os ? OS_LABELS[env.os] : null;
+  const browser = browserName && os ? `${browserName} on ${os}` : browserName ?? os;
+  const viewport = env.viewport
+    ? `${env.viewport.width}×${env.viewport.height}${
+        env.devicePixelRatio && env.devicePixelRatio !== 1 ? ` @${env.devicePixelRatio}x` : ''
+      }`
+    : null;
+  const scrollbars = env.scrollbars ? `${env.scrollbars} scrollbars` : null;
+  const route = env.appRoute ? `app route ${env.appRoute}` : null;
+  const parts = [browser, viewport, scrollbars, route].filter(
+    (part): part is string => part !== null
+  );
+  return parts.length ? parts.join(' · ') : null;
 }
 
 export const RECENT_ERRORS_HEADING = 'Recent app errors before this report';

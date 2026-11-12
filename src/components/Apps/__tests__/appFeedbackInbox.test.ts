@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildSetOwnerStatusInput,
+  feedbackEnvironmentLine,
   feedbackRowMeta,
   feedbackSourceLabel,
   INBOX_EMPTY_MESSAGE,
@@ -259,5 +260,41 @@ describe('recentErrorLine — one failed SDK call in the inbox', () => {
         count: 1,
       })
     ).toBe('00:00:09 UTC GET_BUZZ_BALANCE: request failed');
+  });
+});
+
+describe('feedbackEnvironmentLine', () => {
+  it('browser, window and route as one line', () => {
+    expect(
+      feedbackEnvironmentLine({
+        browser: { family: 'samsung', major: 26 },
+        viewport: { width: 412, height: 915 },
+        devicePixelRatio: 2.63,
+        appRoute: '/gallery/12',
+      })
+    ).toBe('Samsung Internet 26 · 412×915 @2.63x · app route /gallery/12');
+  });
+
+  it('names the OS and the scrollbar kind', () => {
+    expect(
+      feedbackEnvironmentLine({
+        browser: { family: 'chrome', major: 131 },
+        os: 'windows',
+        viewport: { width: 1280, height: 720 },
+        scrollbars: 'classic',
+      })
+    ).toBe('Chrome 131 on Windows · 1280×720 · classic scrollbars');
+    expect(feedbackEnvironmentLine({ os: 'linux', scrollbars: 'overlay' })).toBe(
+      'Linux · overlay scrollbars'
+    );
+  });
+
+  it('omits a DPR of 1 and whatever is missing', () => {
+    expect(
+      feedbackEnvironmentLine({ viewport: { width: 1280, height: 720 }, devicePixelRatio: 1 })
+    ).toBe('1280×720');
+    expect(feedbackEnvironmentLine({ browser: { family: 'other' } })).toBe('Other browser');
+    expect(feedbackEnvironmentLine({})).toBeNull();
+    expect(feedbackEnvironmentLine(null)).toBeNull();
   });
 });

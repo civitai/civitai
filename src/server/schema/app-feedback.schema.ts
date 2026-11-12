@@ -59,18 +59,65 @@ export const appFeedbackRecentErrorsSchema = z
   .array(appFeedbackRecentErrorSchema)
   .max(APP_FEEDBACK_RECENT_ERRORS_MAX);
 
+export const APP_FEEDBACK_BROWSER_FAMILIES = [
+  'chrome',
+  'edge',
+  'firefox',
+  'safari',
+  'opera',
+  'samsung',
+  'other',
+] as const;
+export type AppFeedbackBrowserFamily = (typeof APP_FEEDBACK_BROWSER_FAMILIES)[number];
+export const APP_FEEDBACK_OS_FAMILIES = [
+  'windows',
+  'macos',
+  'linux',
+  'chromeos',
+  'android',
+  'ios',
+  'other',
+] as const;
+export type AppFeedbackOsFamily = (typeof APP_FEEDBACK_OS_FAMILIES)[number];
+/** `classic` scrollbars take layout width (Windows, most Linux); `overlay` ones float over it. */
+export const APP_FEEDBACK_SCROLLBAR_KINDS = ['overlay', 'classic'] as const;
+export const APP_FEEDBACK_APP_ROUTE_MAX = 200;
+
+const pixels = z.number().int().min(0).max(100_000);
+
+/**
+ * Where the report was written: the browser family and major version and the OS family (never the
+ * user-agent string), the window size, the scrollbar kind, and the app's own route when the host
+ * knows it.
+ */
+export const appFeedbackEnvironmentSchema = z.object({
+  browser: z
+    .object({
+      family: z.enum(APP_FEEDBACK_BROWSER_FAMILIES),
+      major: z.number().int().min(0).max(9999).optional(),
+    })
+    .optional(),
+  os: z.enum(APP_FEEDBACK_OS_FAMILIES).optional(),
+  scrollbars: z.enum(APP_FEEDBACK_SCROLLBAR_KINDS).optional(),
+  viewport: z.object({ width: pixels, height: pixels }).optional(),
+  devicePixelRatio: z.number().min(0.1).max(16).optional(),
+  appRoute: z.string().max(APP_FEEDBACK_APP_ROUTE_MAX).optional(),
+});
+export type AppFeedbackEnvironment = z.infer<typeof appFeedbackEnvironmentSchema>;
+
 /**
  * The ONLY context an `app-block` row stores. A separate schema from the generic
  * `feedbackContextSchema` on purpose: that one carries host-page diagnostics (console and network
  * errors, the Faro session, screenshots), which describe civitai.com rather than the sandboxed app
- * and are not collected for this area. `recentErrors` is about the APP: failed replies to its own
- * SDK calls. `z.object` strips every undeclared key, at every level, so a hand-crafted client
- * cannot smuggle anything else in.
+ * and are not collected for this area. `recentErrors` is about the APP (failed replies to its own
+ * SDK calls) and `environment` about the viewer's browser window, not the page. `z.object` strips
+ * every undeclared key, at every level, so a hand-crafted client cannot smuggle anything else in.
  */
 export const appFeedbackContextSchema = z.object({
   surface: z.enum(APP_FEEDBACK_SURFACES),
   modelId: z.number().int().positive().optional(),
   recentErrors: appFeedbackRecentErrorsSchema.optional(),
+  environment: appFeedbackEnvironmentSchema.optional(),
 });
 export type AppFeedbackContext = z.infer<typeof appFeedbackContextSchema>;
 

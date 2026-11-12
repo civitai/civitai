@@ -227,12 +227,37 @@ describe("withAppFeedbackDiagnostics — the app session's failures on the repor
     const one = withAppFeedbackDiagnostics(slot, { recentErrors: [failure('a')] });
     const two = withAppFeedbackDiagnostics(slot, { recentErrors: [failure('a'), failure('b')] });
     expect(appFeedbackAttachmentNotice(one.context)).toBe(
-      '1 recent app error from this session will be attached, to help the developer find the problem.'
+      '1 recent app error will be attached, to help the developer find the problem.'
     );
     expect(appFeedbackAttachmentNotice(two.context)).toBe(
-      '2 recent app errors from this session will be attached, to help the developer find the problem.'
+      '2 recent app errors will be attached, to help the developer find the problem.'
     );
     expect(appFeedbackAttachmentNotice(slot.context)).toBeNull();
+  });
+
+  it('attaches the environment, and names everything attached in the notice', () => {
+    const environment = {
+      browser: { family: 'firefox' as const, major: 132 },
+      viewport: { width: 1280, height: 720 },
+      appRoute: '/gallery',
+    };
+    const request = withAppFeedbackDiagnostics(slot, {
+      recentErrors: [failure('a'), failure('b')],
+      environment,
+    });
+    const input = buildAppFeedbackCreateInput(request, 'it broke');
+    expect(input.context.environment).toStrictEqual(environment);
+    expect(createAppFeedbackSchema.parse(input)).toStrictEqual(input);
+    expect(appFeedbackAttachmentNotice(request.context)).toBe(
+      "Your browser, its version and your operating system, your window size and scrollbar type, the app page you're on and 2 recent app errors will be attached, to help the developer find the problem."
+    );
+    expect(
+      appFeedbackAttachmentNotice(
+        withAppFeedbackDiagnostics(slot, { environment: { browser: { family: 'other' } } }).context
+      )
+    ).toBe(
+      'Your browser, its version and your operating system will be attached, to help the developer find the problem.'
+    );
   });
 });
 

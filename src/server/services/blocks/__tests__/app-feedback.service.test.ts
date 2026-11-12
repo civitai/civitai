@@ -728,6 +728,7 @@ const ownerRow = {
   appSourceDirty: false,
   surface: 'slot',
   recentErrors: null as unknown,
+  environment: null as unknown,
   ownerStatus: 'acknowledged',
   ownerStatusAt: new Date('2026-10-02T11:00:00Z'),
   ownerFlaggedAt: null,
@@ -745,6 +746,7 @@ describe('the owner projection', () => {
         'appSourceCommit',
         'appSourceDirty',
         'createdAt',
+        'environment',
         'id',
         'message',
         'ownerFlaggedAt',
@@ -783,6 +785,18 @@ describe('the owner projection', () => {
 
   it('drops a surface outside the closed set', () => {
     expect(toOwnerFeedbackDto({ ...ownerRow, surface: 'javascript:alert(1)' }).surface).toBeNull();
+  });
+
+  it('re-validates the environment, stripping extras and dropping a block the schema refuses', () => {
+    const environment = { browser: { family: 'chrome', major: 131 }, appRoute: '/a' };
+    expect(
+      toOwnerFeedbackDto({ ...ownerRow, environment: { ...environment, userAgent: 'UA' } })
+        .environment
+    ).toStrictEqual(environment);
+    expect(
+      toOwnerFeedbackDto({ ...ownerRow, environment: { browser: { family: 'netscape' } } })
+        .environment
+    ).toBeNull();
   });
 
   it('re-validates recentErrors entry by entry, dropping what the schema refuses', () => {
@@ -841,6 +855,7 @@ describe('listAppFeedbackForListing', () => {
       'f."appSourceDirty"',
       "f.context->>'surface' AS surface",
       `f.context->'recentErrors' AS "recentErrors"`,
+      `f.context->'environment' AS "environment"`,
       'f."ownerStatus"',
       'f."ownerStatusAt"',
       'f."ownerFlaggedAt"',
@@ -1240,8 +1255,8 @@ describe('moderator procedures', () => {
     ]);
     const res = await modListAppFeedback({ limit: 2, hidden: 'all', cursor: 999 });
     expect(res.items).toEqual([
-      { ...modRow, surface: 'page', modelId: 31337, recentErrors: [] },
-      { ...modRow, id: 702, surface: null, modelId: null, recentErrors: [] },
+      { ...modRow, surface: 'page', modelId: 31337, recentErrors: [], environment: null },
+      { ...modRow, id: 702, surface: null, modelId: null, recentErrors: [], environment: null },
     ]);
     expect(res.nextCursor).toBe(702);
     const q = lastModListQuery();

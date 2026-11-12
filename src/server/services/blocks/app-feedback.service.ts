@@ -9,6 +9,7 @@ import {
 } from '~/server/notifications/app-feedback.notifications';
 import { APP_LISTING_OWNER_SQL } from '~/server/notifications/comment.notifications';
 import type {
+  AppFeedbackEnvironment,
   AppFeedbackOwnerStatusFilter,
   AppFeedbackRecentError,
   AppFeedbackSurface,
@@ -24,6 +25,7 @@ import type {
 import {
   APP_FEEDBACK_RECENT_ERRORS_MAX,
   APP_FEEDBACK_SURFACES,
+  appFeedbackEnvironmentSchema,
   appFeedbackRecentErrorSchema,
 } from '~/server/schema/app-feedback.schema';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
@@ -386,6 +388,7 @@ export type OwnerFeedbackRow = {
   appSourceDirty: boolean | null;
   surface: string | null;
   recentErrors: unknown;
+  environment: unknown;
   ownerStatus: string | null;
   ownerStatusAt: Date | null;
   ownerFlaggedAt: Date | null;
@@ -407,6 +410,8 @@ export type OwnerFeedbackDto = {
   surface: AppFeedbackSurface | null;
   /** Failed replies to the app's SDK calls before the report, oldest first. Untrusted text. */
   recentErrors: AppFeedbackRecentError[];
+  /** Browser family/major, window size, app route. Client-reported. */
+  environment: AppFeedbackEnvironment | null;
   ownerStatus: FeedbackOwnerStatus | null;
   ownerStatusAt: Date | null;
   ownerFlaggedAt: Date | null;
@@ -428,6 +433,12 @@ export function readRecentErrors(value: unknown): AppFeedbackRecentError[] {
   });
 }
 
+/** `context.environment` re-validated on the way out; anything outside the schema reads as none. */
+export function readEnvironment(value: unknown): AppFeedbackEnvironment | null {
+  const parsed = appFeedbackEnvironmentSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 /**
  * The owner-facing projection, built key by key from a row rather than spread from it, so a
  * column added to the query later does not reach an owner unless it is added here too.
@@ -445,6 +456,7 @@ export function toOwnerFeedbackDto(row: OwnerFeedbackRow): OwnerFeedbackDto {
     // `context` is a client claim; only a value from the closed set is shown, never used for authz.
     surface: isSurface(row.surface) ? row.surface : null,
     recentErrors: readRecentErrors(row.recentErrors),
+    environment: readEnvironment(row.environment),
     ownerStatus: row.ownerStatus as FeedbackOwnerStatus | null,
     ownerStatusAt: row.ownerStatusAt,
     ownerFlaggedAt: row.ownerFlaggedAt,
@@ -475,6 +487,7 @@ export async function listAppFeedbackForListing({
       f."appSourceDirty",
       f.context->>'surface' AS surface,
       f.context->'recentErrors' AS "recentErrors",
+      f.context->'environment' AS "environment",
       f."ownerStatus",
       f."ownerStatusAt",
       f."ownerFlaggedAt",
@@ -668,12 +681,19 @@ function readContext(context: unknown): {
   surface: AppFeedbackSurface | null;
   modelId: number | null;
   recentErrors: AppFeedbackRecentError[];
+  environment: AppFeedbackEnvironment | null;
 } {
-  const ctx = (context ?? {}) as { surface?: unknown; modelId?: unknown; recentErrors?: unknown };
+  const ctx = (context ?? {}) as {
+    surface?: unknown;
+    modelId?: unknown;
+    recentErrors?: unknown;
+    environment?: unknown;
+  };
   return {
     surface: isSurface(ctx.surface) ? ctx.surface : null,
     modelId: typeof ctx.modelId === 'number' && Number.isInteger(ctx.modelId) ? ctx.modelId : null,
     recentErrors: readRecentErrors(ctx.recentErrors),
+    environment: readEnvironment(ctx.environment),
   };
 }
 

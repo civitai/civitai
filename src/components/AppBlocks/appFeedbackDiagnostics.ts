@@ -1,5 +1,11 @@
-import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema';
+import type {
+  AppFeedbackBrowserFamily,
+  AppFeedbackEnvironment,
+  AppFeedbackOsFamily,
+  AppFeedbackRecentError,
+} from '~/server/schema/app-feedback.schema';
 import {
+  APP_FEEDBACK_APP_ROUTE_MAX,
   APP_FEEDBACK_ERROR_MESSAGE_MAX,
   APP_FEEDBACK_RECENT_ERRORS_MAX,
 } from '~/server/schema/app-feedback.schema';
@@ -20,7 +26,7 @@ const NO_WORKFLOW_ID = 'failed';
 const FALLBACK_MESSAGE = 'request failed';
 
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 export function clampErrorText(text: string): string {
   const flat = text.replace(CONTROL_CHARS, ' ').replace(/\s+/g, ' ').trim();
@@ -160,4 +166,148 @@ export function recentErrorsAt(
   now: number
 ): AppFeedbackRecentError[] {
   return list.filter((e) => now - e.at <= APP_FEEDBACK_RECENT_ERRORS_MAX_AGE_MS);
+}
+
+type Brand = { brand: string; version: string };
+
+/** Most specific first: Edge, Opera and Samsung Internet also say "Chrome", and Chrome "Safari". */
+const UA_BROWSERS: ReadonlyArray<[AppFeedbackBrowserFamily, RegExp]> = [
+  ['edge', /\bEdg(?:e|A|iOS)?\/(\d+)/],
+  ['opera', /\b(?:OPR|Opera)\/(\d+)/],
+  ['samsung', /\bSamsungBrowser\/(\d+)/],
+  ['firefox', /\b(?:Firefox|FxiOS)\/(\d+)/],
+  ['chrome', /\b(?:Chrome|CriOS)\/(\d+)/],
+  ['safari', /\bVersion\/(\d+)[^ ]* (?:Mobile\/\S+ )?Safari\//],
+];
+
+const BRANDS: ReadonlyArray<[AppFeedbackBrowserFamily, string]> = [
+  ['edge', 'Microsoft Edge'],
+  ['opera', 'Opera'],
+  ['samsung', 'Samsung Internet'],
+  ['chrome', 'Google Chrome'],
+  ['chrome', 'Chromium'],
+];
+
+const major = (value: string | undefined) => {
+  const n = Number.parseInt(value ?? '', 10);
+  return Number.isInteger(n) && n >= 0 && n <= 9999 ? n : undefined;
+};
+
+/**
+ * Browser family and major version, the only part of the user agent a report keeps. Client hints
+ * first (they name the browser directly), then the user-agent string.
+ */
+export function browserFromUserAgent(
+  userAgent: string,
+  brands?: readonly Brand[]
+): NonNullable<AppFeedbackEnvironment['browser']> {
+  for (const [family, name] of BRANDS) {
+    const brand = brands?.find((b) => b.brand === name);
+    if (brand) {
+      const version = major(brand.version);
+      return version === undefined ? { family } : { family, major: version };
+    }
+  }
+  for (const [family, pattern] of UA_BROWSERS) {
+    const match = pattern.exec(userAgent);
+    if (match) {
+      const version = major(match[1]);
+      return version === undefined ? { family } : { family, major: version };
+    }
+  }
+  return { family: 'other' };
+}
+
+/** Most specific first: Android says "Linux", iPadOS can say "Macintosh". */
+const UA_OS: ReadonlyArray<[AppFeedbackOsFamily, RegExp]> = [
+  ['android', /\bAndroid\b/],
+  ['ios', /\b(?:iPhone|iPad|iPod)\b/],
+  ['chromeos', /\bCrOS\b/],
+  ['windows', /\bWindows\b/],
+  ['macos', /\bMac OS X\b|\bMacintosh\b/],
+  ['linux', /\bLinux\b|\bX11\b/],
+];
+
+const HINT_OS: Readonly<Record<string, AppFeedbackOsFamily>> = {
+  Windows: 'windows',
+  macOS: 'macos',
+  Linux: 'linux',
+  'Chrome OS': 'chromeos',
+  ChromeOS: 'chromeos',
+  Android: 'android',
+  iOS: 'ios',
+};
+
+/** OS family only, from the client-hint platform when there is one, else the user-agent string. */
+export function osFromUserAgent(userAgent: string, platform?: string): AppFeedbackOsFamily {
+  if (platform && HINT_OS[platform]) return HINT_OS[platform];
+  for (const [family, pattern] of UA_OS) if (pattern.test(userAgent)) return family;
+  return 'other';
+}
+
+const dimension = (value: number) =>
+  Number.isFinite(value) ? Math.min(Math.max(Math.round(value), 0), 100_000) : 0;
+
+/** The environment block, from values the caller read off `window` / `navigator`. */
+export function buildAppFeedbackEnvironment(input: {
+  userAgent: string;
+  brands?: readonly Brand[];
+  platform?: string;
+  /** Width a scrolling box loses to its scrollbar; 0 = overlay scrollbars. */
+  scrollbarWidth?: number;
+  innerWidth: number;
+  innerHeight: number;
+  devicePixelRatio: number;
+  appRoute?: string;
+}): AppFeedbackEnvironment {
+  const dpr = Math.round(input.devicePixelRatio * 100) / 100;
+  const route = input.appRoute
+    ?.replace(CONTROL_CHARS, '')
+    .trim()
+    .slice(0, APP_FEEDBACK_APP_ROUTE_MAX);
+  return {
+    browser: browserFromUserAgent(input.userAgent, input.brands),
+    os: osFromUserAgent(input.userAgent, input.platform),
+    ...(input.scrollbarWidth !== undefined && Number.isFinite(input.scrollbarWidth)
+      ? { scrollbars: input.scrollbarWidth > 0 ? ('classic' as const) : ('overlay' as const) }
+      : {}),
+    viewport: { width: dimension(input.innerWidth), height: dimension(input.innerHeight) },
+    ...(dpr >= 0.1 && dpr <= 16 ? { devicePixelRatio: dpr } : {}),
+    ...(route ? { appRoute: route } : {}),
+  };
+}
+
+function measureScrollbarWidth(): number | undefined {
+  if (typeof document === 'undefined' || !document.body) return undefined;
+  const probe = document.createElement('div');
+  probe.style.cssText =
+    'position:absolute;top:-9999px;width:100px;height:100px;overflow:scroll;visibility:hidden';
+  document.body.appendChild(probe);
+  try {
+    return probe.offsetWidth - probe.clientWidth;
+  } finally {
+    probe.remove();
+  }
+}
+
+/** `buildAppFeedbackEnvironment` over this window; `undefined` outside a browser. */
+export function readAppFeedbackEnvironment(appRoute?: string): AppFeedbackEnvironment | undefined {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return undefined;
+  try {
+    const hints = (
+      navigator as Navigator & { userAgentData?: { brands?: Brand[]; platform?: string } }
+    ).userAgentData;
+    return buildAppFeedbackEnvironment({
+      userAgent: navigator.userAgent,
+      brands: hints?.brands,
+      platform: hints?.platform,
+      scrollbarWidth: measureScrollbarWidth(),
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio,
+      appRoute,
+    });
+  } catch {
+    return undefined;
+  }
 }

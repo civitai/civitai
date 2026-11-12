@@ -1,5 +1,6 @@
 import type {
   AppFeedbackContext,
+  AppFeedbackEnvironment,
   AppFeedbackRecentError,
   AppFeedbackTarget,
   CreateAppFeedbackInput,
@@ -100,7 +101,10 @@ export function appFeedbackEntryRequest({
  */
 export function withAppFeedbackDiagnostics(
   request: AppFeedbackRequest,
-  diagnostics: { recentErrors?: readonly AppFeedbackRecentError[] }
+  diagnostics: {
+    recentErrors?: readonly AppFeedbackRecentError[];
+    environment?: AppFeedbackEnvironment;
+  }
 ): AppFeedbackRequest {
   const recentErrors = diagnostics.recentErrors?.slice(-APP_FEEDBACK_RECENT_ERRORS_MAX) ?? [];
   const { surface, modelId } = request.context;
@@ -110,6 +114,7 @@ export function withAppFeedbackDiagnostics(
       surface,
       ...(modelId !== undefined ? { modelId } : {}),
       ...(recentErrors.length ? { recentErrors } : {}),
+      ...(diagnostics.environment ? { environment: diagnostics.environment } : {}),
     },
   };
 }
@@ -117,10 +122,19 @@ export function withAppFeedbackDiagnostics(
 /** What the modal tells the reporter is attached besides their text, or `null` for nothing. */
 export function appFeedbackAttachmentNotice(context: AppFeedbackContext): string | null {
   const errors = context.recentErrors?.length ?? 0;
-  if (!errors) return null;
-  return `${
-    errors === 1 ? '1 recent app error' : `${errors} recent app errors`
-  } from this session will be attached, to help the developer find the problem.`;
+  const env = context.environment;
+  const parts = [
+    env?.browser || env?.os ? 'your browser, its version and your operating system' : null,
+    env?.viewport || env?.scrollbars ? 'your window size and scrollbar type' : null,
+    env?.appRoute ? "the app page you're on" : null,
+    errors === 1 ? '1 recent app error' : errors > 1 ? `${errors} recent app errors` : null,
+  ].filter((part): part is string => part !== null);
+  if (!parts.length) return null;
+  const list =
+    parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
+  return `${list.charAt(0).toUpperCase()}${list.slice(
+    1
+  )} will be attached, to help the developer find the problem.`;
 }
 
 /** The exact `appFeedback.create` input. Text and the server-whitelisted context, nothing else. */

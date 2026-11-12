@@ -5988,6 +5988,7 @@ export function PageBlockHost({
         canOpenPage={canOpenPage}
         launchOrigin={launchOrigin}
         getRecentFailures={recentFailures}
+        appRoute={subPath ? `/${subPath}` : '/'}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
           incident that motivated it, is in `resolveHostConsentNotice`

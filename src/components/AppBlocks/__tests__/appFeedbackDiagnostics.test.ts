@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
   APP_FEEDBACK_RECENT_ERRORS_MAX_AGE_MS,
+  browserFromUserAgent,
+  buildAppFeedbackEnvironment,
   clampErrorText,
   failureFromHostMessage,
+  osFromUserAgent,
   pushRecentError,
   recentErrorsAt,
   requestHintFromBlockMessage,
   withRequestHint,
 } from '~/components/AppBlocks/appFeedbackDiagnostics';
 import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema';
-import { appFeedbackRecentErrorSchema } from '~/server/schema/app-feedback.schema';
+import {
+  appFeedbackEnvironmentSchema,
+  appFeedbackRecentErrorSchema,
+} from '~/server/schema/app-feedback.schema';
 
 const AT = 1_762_000_000_000;
 
@@ -115,7 +121,7 @@ describe('clampErrorText', () => {
   });
 
   it('flattens control and bidi characters to spaces', () => {
-    expect(clampErrorText('a\nb‮c\u0000d')).toBe('a b c d');
+    expect(clampErrorText('a\nb\u202ec\u0000d')).toBe('a b c d');
   });
 });
 
@@ -202,5 +208,116 @@ describe('requestHintFromBlockMessage — ids and enum keys from the request, no
       withRequestHint(failure, { method: 'SUBMIT_WORKFLOW', input: { modelVersionId: 812 } })
     ).toStrictEqual({ ...failure, method: 'SUBMIT_WORKFLOW', input: { modelVersionId: 812 } });
     expect(withRequestHint(failure, undefined)).toBe(failure);
+  });
+});
+
+const UA = {
+  chrome:
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  edge: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.2849.80',
+  firefox: 'Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0',
+  safari:
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
+  iosSafari:
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1',
+  iosChrome:
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/129.0.6668.69 Mobile/15E148 Safari/604.1',
+  samsung:
+    'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/26.0 Chrome/122.0.0.0 Mobile Safari/537.36',
+  opera:
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 OPR/114.0.0.0',
+};
+
+describe('browserFromUserAgent — family and major version only', () => {
+  it.each([
+    ['chrome', UA.chrome, { family: 'chrome', major: 131 }],
+    ['edge', UA.edge, { family: 'edge', major: 130 }],
+    ['firefox', UA.firefox, { family: 'firefox', major: 132 }],
+    ['safari', UA.safari, { family: 'safari', major: 17 }],
+    ['iOS safari', UA.iosSafari, { family: 'safari', major: 17 }],
+    ['iOS chrome', UA.iosChrome, { family: 'chrome', major: 129 }],
+    ['samsung', UA.samsung, { family: 'samsung', major: 26 }],
+    ['opera', UA.opera, { family: 'opera', major: 114 }],
+    ['unknown', 'curl/8.4.0', { family: 'other' }],
+  ])('%s', (_label, ua, expected) => {
+    expect(browserFromUserAgent(ua)).toStrictEqual(expected);
+  });
+
+  it('prefers client hints, naming Edge over the Chromium brand it also carries', () => {
+    expect(
+      browserFromUserAgent(UA.chrome, [
+        { brand: 'Chromium', version: '130' },
+        { brand: 'Microsoft Edge', version: '130' },
+        { brand: 'Not?A_Brand', version: '99' },
+      ])
+    ).toStrictEqual({ family: 'edge', major: 130 });
+  });
+});
+
+describe('osFromUserAgent — OS family only', () => {
+  it.each([
+    ['windows', UA.chrome],
+    ['linux', UA.firefox],
+    ['macos', UA.safari],
+    ['ios', UA.iosSafari],
+    ['ios', UA.iosChrome],
+    ['android', UA.samsung],
+    ['chromeos', 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 Chrome/131.0.0.0'],
+    ['other', 'curl/8.4.0'],
+  ])('%s', (expected, ua) => {
+    expect(osFromUserAgent(ua)).toBe(expected);
+  });
+
+  it('prefers the client-hint platform', () => {
+    expect(osFromUserAgent(UA.firefox, 'Windows')).toBe('windows');
+    expect(osFromUserAgent(UA.firefox, 'Plan 9')).toBe('linux');
+  });
+});
+
+describe('buildAppFeedbackEnvironment', () => {
+  const base = {
+    userAgent: UA.firefox,
+    innerWidth: 1279.6,
+    innerHeight: 719.2,
+    devicePixelRatio: 1.3333333,
+  };
+
+  it('rounds the window, keeps two decimals of DPR, and keeps none of the user-agent string', () => {
+    const env = buildAppFeedbackEnvironment({ ...base, appRoute: '/gallery/12' });
+    expect(env).toStrictEqual({
+      browser: { family: 'firefox', major: 132 },
+      os: 'linux',
+      viewport: { width: 1280, height: 719 },
+      devicePixelRatio: 1.33,
+      appRoute: '/gallery/12',
+    });
+    expect(JSON.stringify(env)).not.toMatch(/Mozilla|Gecko|Linux/);
+    expect(appFeedbackEnvironmentSchema.parse(env)).toStrictEqual(env);
+  });
+
+  it('classic scrollbars take width, overlay ones take none, unmeasured says nothing', () => {
+    expect(buildAppFeedbackEnvironment({ ...base, scrollbarWidth: 17 }).scrollbars).toBe('classic');
+    expect(buildAppFeedbackEnvironment({ ...base, scrollbarWidth: 0 }).scrollbars).toBe('overlay');
+    expect(buildAppFeedbackEnvironment(base)).not.toHaveProperty('scrollbars');
+  });
+
+  it('cleans and caps the app route, and omits an empty one', () => {
+    const long = buildAppFeedbackEnvironment({ ...base, appRoute: `/a\u0000b/${'x'.repeat(400)}` });
+    expect(long.appRoute).toHaveLength(200);
+    expect(long.appRoute!.startsWith('/ab/')).toBe(true);
+    expect(buildAppFeedbackEnvironment({ ...base, appRoute: '  ' })).not.toHaveProperty('appRoute');
+    expect(buildAppFeedbackEnvironment(base)).not.toHaveProperty('appRoute');
+  });
+
+  it('clamps nonsense window values into the schema instead of failing the report', () => {
+    const env = buildAppFeedbackEnvironment({
+      ...base,
+      innerWidth: Number.NaN,
+      innerHeight: 1e9,
+      devicePixelRatio: 0,
+    });
+    expect(env.viewport).toStrictEqual({ width: 0, height: 100_000 });
+    expect(env).not.toHaveProperty('devicePixelRatio');
+    expect(appFeedbackEnvironmentSchema.safeParse(env).success).toBe(true);
   });
 });

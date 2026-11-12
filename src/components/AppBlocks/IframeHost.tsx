@@ -33,6 +33,7 @@ import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
 import { resolveAppFeedbackRequest, withAppFeedbackDiagnostics } from './appFeedbackChrome';
+import { readAppFeedbackEnvironment } from './appFeedbackDiagnostics';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
@@ -411,6 +412,7 @@ export function AppBlockChrome({
   canOpenPage = false,
   launchOrigin = 'store',
   getRecentFailures,
+  appRoute,
 }: {
   blockInstanceId: string;
   /** The approved AppBlock id of the running app. When present, the ⋯ menu
@@ -467,6 +469,8 @@ export function AppBlockChrome({
   launchOrigin?: AppsRunOrigin;
   /** The host bridge's failed replies to this app, attached to a feedback report. */
   getRecentFailures?: () => AppFeedbackRecentError[];
+  /** The app's own route on the page host, attached to a feedback report. */
+  appRoute?: string;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -501,6 +505,7 @@ export function AppBlockChrome({
       ...target,
       request: withAppFeedbackDiagnostics(target.request, {
         recentErrors: getRecentFailures?.(),
+        environment: readAppFeedbackEnvironment(appRoute),
       }),
     });
 

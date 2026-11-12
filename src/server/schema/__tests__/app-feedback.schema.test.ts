@@ -67,3 +67,34 @@ describe('appFeedbackContextSchema — recentErrors', () => {
       expect(parse({ recentErrors: [{ ...error, ...bad }] }).success).toBe(false);
   });
 });
+
+describe('appFeedbackContextSchema — environment', () => {
+  const environment = {
+    browser: { family: 'chrome', major: 131 },
+    viewport: { width: 1280, height: 720 },
+    devicePixelRatio: 2,
+    appRoute: '/gallery/12',
+  };
+
+  it('keeps a well-formed block exactly, and strips a raw user agent or anything else', () => {
+    const res = parse({
+      environment: {
+        ...environment,
+        userAgent: 'Mozilla/5.0 UA_SENTINEL',
+        browser: { ...environment.browser, fullVersion: '131.0.6778.85' },
+      },
+    });
+    expect(res.success && res.data.context.environment).toStrictEqual(environment);
+    expect(JSON.stringify(res.data)).not.toMatch(/UA_SENTINEL|6778/);
+  });
+
+  it('refuses a family outside the closed set and a route past 200 characters', () => {
+    expect(parse({ environment: { browser: { family: 'netscape' } } }).success).toBe(false);
+    expect(parse({ environment: { os: 'windows', scrollbars: 'classic' } }).success).toBe(true);
+    expect(parse({ environment: { os: 'beos' } }).success).toBe(false);
+    expect(parse({ environment: { scrollbars: 'thin' } }).success).toBe(false);
+    expect(parse({ environment: { appRoute: 'r'.repeat(200) } }).success).toBe(true);
+    expect(parse({ environment: { appRoute: 'r'.repeat(201) } }).success).toBe(false);
+    expect(parse({ environment: { viewport: { width: -1, height: 2 } } }).success).toBe(false);
+  });
+});
