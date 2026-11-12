@@ -51,6 +51,9 @@ const TRANSIENT_REASON_PATTERNS = [
   'connection reset',
   'connection refused',
   'temporarily unavailable',
+  // A flapping worker pool: a fresh re-submit mostly lands on a worker that serves the job.
+  'no provider supports this job',
+  'retracted support',
 ];
 
 // Orchestrator middleware / step markers that are infra-transient regardless of message.
@@ -106,6 +109,18 @@ export function classifyImageScanFailure(input: {
     return ImageScanFailureClass.Permanent;
 
   return ImageScanFailureClass.Unknown;
+}
+
+// Minutes after a failed submit before the cron re-sends it. Transient failures clear fastest,
+// and their bound is the per-run pull (IMAGE_SCANNING_MAX_PER_RUN), not this delay.
+export const IMAGE_SCAN_TRANSIENT_RETRY_DELAY_MINUTES = 15;
+export const IMAGE_SCAN_ERROR_RETRY_DELAY_MINUTES = 60;
+
+/** Minutes an `Error` image of this failure class waits before its next retry. */
+export function getImageScanRetryDelayMinutes(failureClass?: string | null): number {
+  return failureClass === ImageScanFailureClass.Transient
+    ? IMAGE_SCAN_TRANSIENT_RETRY_DELAY_MINUTES
+    : IMAGE_SCAN_ERROR_RETRY_DELAY_MINUTES;
 }
 
 /** Absolute retry ceiling for a stored failure class (defaults to the conservative cap). */
