@@ -16,8 +16,7 @@ const { mockGetVaeFiles, mockGetImages, mockGetPaidAccess, mockHold } = vi.hoist
   mockHold: vi.fn(),
 }));
 
-// The metric-privacy read (`prepareModelVersionResponse`) is a Kysely statement; no row is a version
-// with no privacy inputs, as the Prisma `null` was.
+// No privacy row: a version with no privacy inputs.
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
   ...(await importOriginal<typeof HotReads6>()),
   getModelVersionPrivacyRow: vi.fn(async () => undefined),
