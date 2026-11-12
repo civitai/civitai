@@ -83,6 +83,10 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
       flag === real.FLIPT_FEATURE_FLAGS.APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT ? h.variant() : null,
   };
 });
+// The per-user caps resolver reads the session user; unmocked, it reaches the real redis client.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
 }));
