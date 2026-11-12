@@ -106,3 +106,36 @@ export const isImageReviewed = ({
     scanFailureClass !== PERMANENT_SCAN_FAILURE
   );
 };
+
+/**
+ * The `ingestion` a scan verdict writes. A row that reads NotFound keeps it when the verdict is
+ * Scanned: a hidden image (its original is gone) must not be republished by a stale clean result.
+ * A requested rescan moves the row to Rescan/Pending first, so its result is unaffected, and a
+ * Blocked verdict still lands. Only the ingestion assignment is guarded: the block, minor, POI and
+ * level columns beside it are written as before.
+ */
+export const ingestionAfterVerdictSql = (verdict: string) => Prisma.sql`(CASE
+  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus"
+    AND ${verdict}::"ImageIngestionStatus" = 'Scanned'::"ImageIngestionStatus"
+  THEN "ingestion"
+  ELSE ${verdict}::"ImageIngestionStatus"
+END)`;
+
+/**
+ * The `ingestion` a failed scan writes: Error, except that a NotFound image stays NotFound. An Error
+ * row with a locked rating counts as reviewed (`imageReviewedSql`) and the retry cron re-sends it,
+ * so a failure result would republish a hidden image.
+ */
+export const ingestionAfterScanErrorSql = () => Prisma.sql`(CASE
+  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" THEN "ingestion"
+  ELSE ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
+END)`;
+
+/** The state `ingestionAfterVerdictSql` leaves, for the caller that reports it onward. */
+export const ingestionKeptAfterVerdict = (
+  current: ImageIngestionStatus | string,
+  verdict: ImageIngestionStatus
+) =>
+  current === ImageIngestionStatus.NotFound && verdict === ImageIngestionStatus.Scanned
+    ? ImageIngestionStatus.NotFound
+    : verdict;
