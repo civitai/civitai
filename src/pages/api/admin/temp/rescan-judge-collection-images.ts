@@ -7,9 +7,16 @@ import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 /**
  * Queues a normal rescan for images posted to collections whose judges apply the browsing level,
- * when the image is `Scanned` with no `scanJobs`, or `PendingManualAssignment`. Writes only the queue: `ingestion = 'Rescan'` and a `JobQueue`
- * `ImageScan` row. Dry run by default, returning per-cohort counts and a scope check on one image
- * each side of the scope. Logs counts, never ids.
+ * when the image is `Scanned` with no `scanJobs`, or `PendingManualAssignment`. Run it only once the
+ * judge-rating floor (`metadata.judgeRating`, honoured by `resolveScanOutcome`) is deployed.
+ *
+ * Writes, per image: `ingestion = 'Rescan'`, a `JobQueue` `ImageScan` row, and, when the image has a
+ * single browsing level and no judge rating yet, a legacy `metadata.judgeRating` carrying that level,
+ * so the level the judges applied stays a floor under the rescan. Nothing else.
+ *
+ * A dry run (the default, and the only thing a GET does) writes nothing and returns counts: per
+ * cohort, the same markers outside the flag's collections, and two checks on the scope from an
+ * independent signal, scanner tags. Logs counts, never ids.
  */
 
 const BATCH_SIZE = 500;
@@ -20,14 +27,19 @@ const schema = z.object({
   concurrency: z.coerce.number().min(1).max(10).default(1),
 });
 
-const inJudgeCollection = Prisma.sql`EXISTS (
+const inCollectionPost = (flagged: boolean) => Prisma.sql`EXISTS (
   SELECT 1 FROM "Post" p
   JOIN "Collection" c ON c.id = p."collectionId"
-  WHERE p.id = i."postId" AND c.metadata->>'judgesApplyBrowsingLevel' = 'true'
+  WHERE p.id = i."postId"
+  ${flagged ? Prisma.sql`AND c.metadata->>'judgesApplyBrowsingLevel' = 'true'` : Prisma.empty}
 )`;
+const inJudgeCollection = inCollectionPost(true);
 const scannedNoJobs = Prisma.sql`(i.ingestion = 'Scanned'::"ImageIngestionStatus" AND i."scanJobs" IS NULL)`;
 const pendingManual = Prisma.sql`(i.ingestion = 'PendingManualAssignment'::"ImageIngestionStatus")`;
 const inScope = Prisma.sql`(${inJudgeCollection} AND (${scannedNoJobs} OR ${pendingManual}))`;
+const hasScannerTags = Prisma.sql`EXISTS (
+  SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi.source != 'User'::"TagSource"
+)`;
 
 const idFilter = (ids?: number[]) =>
   ids ? Prisma.sql`AND i.id IN (${Prisma.join(ids)})` : Prisma.empty;
@@ -43,6 +55,41 @@ async function countCohorts(ids?: number[]) {
   return row ?? { scannedNoJobs: 0, pendingManual: 0 };
 }
 
+/**
+ * The same markers without the flag: `PendingManualAssignment` anywhere, and `Scanned` without
+ * `scanJobs` in any collection's post. Rows here and not in the cohorts are in a collection whose
+ * flag is off now; they are reported, not queued.
+ */
+async function countWide() {
+  const [row] = await dbRead.$queryRaw<{ pendingManual: number; scannedNoJobs: number }[]>`
+    SELECT
+      (SELECT count(*)::int FROM "Image" i WHERE ${pendingManual}) AS "pendingManual",
+      (SELECT count(*)::int FROM "Image" i WHERE ${scannedNoJobs} AND ${inCollectionPost(
+    false
+  )}) AS "scannedNoJobs"
+  `;
+  return row ?? { pendingManual: 0, scannedNoJobs: 0 };
+}
+
+/**
+ * Checks the scope against scanner tags, which the markers do not read: an image in scope should
+ * have none, and a Scanned image in the same collections that is out of scope should have them.
+ */
+async function scopeControls() {
+  const [row] = await dbRead.$queryRaw<
+    { inScopeWithScannerTags: number; outOfScopeScannedWithoutScannerTags: number }[]
+  >`
+    SELECT
+      (SELECT count(*)::int FROM "Image" i WHERE ${inScope} AND ${hasScannerTags})
+        AS "inScopeWithScannerTags",
+      (SELECT count(*)::int FROM "Image" i
+        WHERE ${inJudgeCollection} AND NOT ${inScope}
+          AND i.ingestion = 'Scanned'::"ImageIngestionStatus" AND NOT ${hasScannerTags})
+        AS "outOfScopeScannedWithoutScannerTags"
+  `;
+  return row ?? { inScopeWithScannerTags: 0, outOfScopeScannedWithoutScannerTags: 0 };
+}
+
 async function inScopeIds(ids?: number[]) {
   if (ids && !ids.length) return [];
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
@@ -51,24 +98,43 @@ async function inScopeIds(ids?: number[]) {
   return rows.map((r) => r.id);
 }
 
-/** One image each side of the scope, picked now, run through the same check the run uses. */
-async function scopeControls() {
-  const [inside] = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT i.id FROM "Image" i WHERE ${inScope} LIMIT 1
+/** Queues one batch; returns how many rows were still in scope and queued. */
+async function queueBatch(batch: number[]) {
+  // The scope is checked again on write, so a row that changed since the read is skipped. The
+  // legacy rating keeps the level the judges applied as the floor under the rescan.
+  const updated = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "Image" i SET
+      ingestion = 'Rescan'::"ImageIngestionStatus",
+      "metadata" = CASE
+        WHEN i."nsfwLevel" IN (1, 2, 4, 8, 16) AND NOT COALESCE(i."metadata" ? 'judgeRating', false)
+        THEN COALESCE(i."metadata", '{}'::jsonb) || jsonb_build_object('judgeRating', jsonb_build_object(
+          'userId', NULL,
+          'nsfwLevel', i."nsfwLevel",
+          'ratedAt', i."updatedAt",
+          'legacy', true,
+          'collectionId', p."collectionId"
+        ))
+        ELSE i."metadata"
+      END
+    FROM "Post" p
+    WHERE p.id = i."postId" AND i.id IN (${Prisma.join(batch)}) AND ${inScope}
+    RETURNING i.id
   `;
-  const [outside] = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT i.id FROM "Image" i WHERE ${inJudgeCollection} AND NOT ${inScope} LIMIT 1
-  `;
-  const insideMatched = inside ? (await inScopeIds([inside.id])).length === 1 : null;
-  const outsideMatched = outside ? (await inScopeIds([outside.id])).length === 1 : null;
-  return {
-    inScope: insideMatched === null ? 'none found' : insideMatched ? 'included' : 'MISMATCH',
-    outOfScope: outsideMatched === null ? 'none found' : outsideMatched ? 'MISMATCH' : 'excluded',
-  };
+  if (updated.length) {
+    await dbWrite.$executeRaw`
+      INSERT INTO "JobQueue" (type, "entityType", "entityId")
+      SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", id
+      FROM unnest(ARRAY[${Prisma.join(updated.map((r) => r.id))}]::int[]) AS id
+      ON CONFLICT DO NOTHING
+    `;
+  }
+  return updated.length;
 }
 
 export default WebhookEndpoint(async (req, res) => {
   const { dryRun, ids, concurrency } = schema.parse(req.query);
+  if (!dryRun && req.method !== 'POST')
+    return res.status(405).json({ error: 'Only a POST may write; a GET is a dry run' });
 
   if (ids) {
     const matched = await inScopeIds(ids);
@@ -83,7 +149,13 @@ export default WebhookEndpoint(async (req, res) => {
   console.log(
     `rescan-judge-collection-images: scannedNoJobs=${cohorts.scannedNoJobs} pendingManual=${cohorts.pendingManual} dryRun=${dryRun}`
   );
-  if (dryRun) return res.status(200).json({ dryRun, cohorts, controls: await scopeControls() });
+  if (dryRun) {
+    const [wide, controls] = await Promise.all([countWide(), scopeControls()]);
+    console.log(
+      `rescan-judge-collection-images: wide pendingManual=${wide.pendingManual} scannedNoJobs=${wide.scannedNoJobs}; controls inScopeWithScannerTags=${controls.inScopeWithScannerTags} outOfScopeScannedWithoutScannerTags=${controls.outOfScopeScannedWithoutScannerTags}`
+    );
+    return res.status(200).json({ dryRun, cohorts, wide, controls });
+  }
 
   let queued = 0;
   await batchProcessor({
@@ -92,23 +164,10 @@ export default WebhookEndpoint(async (req, res) => {
     batchFetcher: async () => [],
     processor: async ({ batch, batchNumber, batchCount }) => {
       if (!batch.length) return;
-      // The scope is checked again on write, so a row that changed since the read is skipped.
-      const updated = await dbWrite.$queryRaw<{ id: number }[]>`
-        UPDATE "Image" i SET ingestion = 'Rescan'::"ImageIngestionStatus"
-        WHERE i.id IN (${Prisma.join(batch)}) AND ${inScope}
-        RETURNING i.id
-      `;
-      if (updated.length) {
-        await dbWrite.$executeRaw`
-          INSERT INTO "JobQueue" (type, "entityType", "entityId")
-          SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", id
-          FROM unnest(ARRAY[${Prisma.join(updated.map((r) => r.id))}]::int[]) AS id
-          ON CONFLICT DO NOTHING
-        `;
-      }
-      queued += updated.length;
+      const count = await queueBatch(batch);
+      queued += count;
       console.log(
-        `rescan-judge-collection-images: batch ${batchNumber} of ${batchCount}: queued ${updated.length}`
+        `rescan-judge-collection-images: batch ${batchNumber} of ${batchCount}: queued ${count}`
       );
     },
   });

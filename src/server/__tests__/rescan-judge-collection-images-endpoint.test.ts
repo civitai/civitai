@@ -7,8 +7,7 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 /**
  * The rescan endpoint's real SQL against an in-process Postgres: it touches only images posted to
  * a judge-rated collection that are Scanned without scanJobs or PendingManualAssignment, and writes
- * only the scan queue.
- * Ids are invented.
+ * only the scan queue plus a legacy judge rating. Ids are invented.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -30,12 +29,14 @@ const JUDGE_COLLECTION = 1;
 const PLAIN_COLLECTION = 2;
 const JUDGE_POST = 10;
 const PLAIN_POST = 20;
+const X = 8;
 
-// In scope: 101 Scanned without scanJobs, 102 pending manual assignment.
+// In scope: 101 Scanned without scanJobs (level X), 102 pending manual assignment (unrated).
 // Out of scope: 103 scanned normally, 104 blocked, 105 pending scan, 106/107 in a plain collection.
 const IN_SCOPE = [101, 102];
 
 let db: PGlite;
+let raw: ReturnType<typeof pgliteRaw>;
 
 beforeAll(async () => {
   db = new PGlite();
@@ -44,6 +45,7 @@ beforeAll(async () => {
       ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "JobQueueType" AS ENUM ('ImageScan', 'CleanUp');
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "TagSource" AS ENUM ('User', 'WD14', 'Rekognition');
     CREATE TABLE "Collection" (id int PRIMARY KEY, metadata jsonb NOT NULL DEFAULT '{}');
     CREATE TABLE "Post" (id int PRIMARY KEY, "collectionId" int REFERENCES "Collection"(id));
     CREATE TABLE "Image" (
@@ -52,7 +54,12 @@ beforeAll(async () => {
       ingestion "ImageIngestionStatus" NOT NULL,
       "scanJobs" jsonb,
       "blockedFor" text,
-      "nsfwLevel" int NOT NULL DEFAULT 0
+      "nsfwLevel" int NOT NULL DEFAULT 0,
+      metadata jsonb,
+      "updatedAt" timestamp(3) NOT NULL DEFAULT '2025-01-02 03:04:05'
+    );
+    CREATE TABLE "TagsOnImageDetails" (
+      "imageId" int NOT NULL, "tagId" int NOT NULL, source "TagSource" NOT NULL
     );
     CREATE TABLE "JobQueue" (
       type "JobQueueType" NOT NULL,
@@ -61,40 +68,40 @@ beforeAll(async () => {
       PRIMARY KEY ("entityType", "entityId", type)
     );
   `);
-  const raw = pgliteRaw(db);
-  dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
-  dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
-  dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+  raw = pgliteRaw(db);
 });
 afterAll(() => db.close());
 
 async function seedBase() {
   await db.exec(`
-    DELETE FROM "JobQueue"; DELETE FROM "Image"; DELETE FROM "Post"; DELETE FROM "Collection";
+    DELETE FROM "JobQueue"; DELETE FROM "TagsOnImageDetails"; DELETE FROM "Image";
+    DELETE FROM "Post"; DELETE FROM "Collection";
     INSERT INTO "Collection" (id, metadata) VALUES
       (${JUDGE_COLLECTION}, '{"judgesApplyBrowsingLevel": true}'),
       (${PLAIN_COLLECTION}, '{}');
     INSERT INTO "Post" (id, "collectionId") VALUES
       (${JUDGE_POST}, ${JUDGE_COLLECTION}), (${PLAIN_POST}, ${PLAIN_COLLECTION});
-    INSERT INTO "Image" (id, "postId", ingestion, "scanJobs", "blockedFor") VALUES
-      (101, ${JUDGE_POST}, 'Scanned', NULL, NULL),
-      (102, ${JUDGE_POST}, 'PendingManualAssignment', NULL, NULL),
-      (103, ${JUDGE_POST}, 'Scanned', '{"x": 1}', NULL),
-      (104, ${JUDGE_POST}, 'Blocked', NULL, 'tos'),
-      (105, ${JUDGE_POST}, 'Pending', NULL, NULL),
-      (106, ${PLAIN_POST}, 'Scanned', NULL, NULL),
-      (107, ${PLAIN_POST}, 'PendingManualAssignment', NULL, NULL);
+    INSERT INTO "Image" (id, "postId", ingestion, "scanJobs", "blockedFor", "nsfwLevel") VALUES
+      (101, ${JUDGE_POST}, 'Scanned', NULL, NULL, ${X}),
+      (102, ${JUDGE_POST}, 'PendingManualAssignment', NULL, NULL, 0),
+      (103, ${JUDGE_POST}, 'Scanned', '{"workflowId": "wf"}', NULL, 1),
+      (104, ${JUDGE_POST}, 'Blocked', NULL, 'tos', 32),
+      (105, ${JUDGE_POST}, 'Pending', NULL, NULL, 0),
+      (106, ${PLAIN_POST}, 'Scanned', NULL, NULL, 1),
+      (107, ${PLAIN_POST}, 'PendingManualAssignment', NULL, NULL, 0);
+    INSERT INTO "TagsOnImageDetails" VALUES (103, 1, 'WD14'), (101, 2, 'User');
   `);
 }
 
+type SnapshotRow = { id: number; queued: number; metadata: unknown };
 const snapshot = async () =>
   (
     await db.query(
-      `SELECT i.id, i.ingestion, i."scanJobs", i."blockedFor", i."nsfwLevel",
+      `SELECT i.id, i.ingestion, i."scanJobs", i."blockedFor", i."nsfwLevel", i.metadata,
         (SELECT count(*)::int FROM "JobQueue" q WHERE q."entityId" = i.id) AS queued
        FROM "Image" i ORDER BY i.id`
     )
-  ).rows;
+  ).rows as SnapshotRow[];
 
 const rescanned = async () =>
   (
@@ -105,10 +112,10 @@ const rescanned = async () =>
     )
   ).rows.map((r) => r.id);
 
-async function call(query: Record<string, string>) {
+async function call(query: Record<string, string>, method = 'POST') {
   let statusCode = 0;
   let body: Record<string, unknown> = {};
-  const req = { method: 'POST', query: { token: 'test-token', ...query }, headers: {} } as never;
+  const req = { method, query: { token: 'test-token', ...query }, headers: {} } as never;
   const res = {
     status(code: number) {
       statusCode = code;
@@ -128,11 +135,14 @@ async function call(query: Record<string, string>) {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+  dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
   await seedBase();
 });
 
-describe('rescan-judge-collection-images', () => {
-  it('is a dry run by default: counts each cohort, checks the scope, writes nothing', async () => {
+describe('rescan-judge-collection-images: dry run', () => {
+  it('is the default: counts, wide markers and scanner-tag checks, and writes nothing', async () => {
     const before = await snapshot();
 
     const { statusCode, body } = await call({});
@@ -141,28 +151,113 @@ describe('rescan-judge-collection-images', () => {
     expect(body).toEqual({
       dryRun: true,
       cohorts: { scannedNoJobs: 1, pendingManual: 1 },
-      controls: { inScope: 'included', outOfScope: 'excluded' },
+      // 106 and 107 carry the same markers in a collection without the flag.
+      wide: { scannedNoJobs: 2, pendingManual: 2 },
+      controls: { inScopeWithScannerTags: 0, outOfScopeScannedWithoutScannerTags: 0 },
     });
     expect(await snapshot()).toEqual(before);
   });
 
-  it('queues a rescan for both cohorts and nothing else, leaving the rest of the row alone', async () => {
+  it('reports scope rows the scanner tags disagree with', async () => {
+    await db.exec(`
+      INSERT INTO "TagsOnImageDetails" VALUES (101, 3, 'WD14');
+      DELETE FROM "TagsOnImageDetails" WHERE "imageId" = 103;
+    `);
+
+    const { body } = await call({});
+
+    expect(body.controls).toEqual({
+      inScopeWithScannerTags: 1,
+      outOfScopeScannedWithoutScannerTags: 1,
+    });
+  });
+
+  it('refuses to write from a GET', async () => {
+    const before = await snapshot();
+
+    const { statusCode } = await call({ dryRun: 'false' }, 'GET');
+
+    expect(statusCode).toBe(405);
+    expect(await snapshot()).toEqual(before);
+  });
+});
+
+describe('rescan-judge-collection-images: a run', () => {
+  it('queues both cohorts and nothing else, keeping the applied level as a floor', async () => {
+    const before = await snapshot();
+
     const { statusCode, body } = await call({ dryRun: 'false' });
 
     expect(statusCode).toBe(200);
     expect(body).toMatchObject({ dryRun: false, queued: 2 });
     expect(await rescanned()).toEqual(IN_SCOPE);
     const rows = await snapshot();
-    for (const row of rows.filter((r) => !IN_SCOPE.includes(rowId(r))))
-      expect(row).toMatchObject({ queued: 0 });
-    expect(rows.find((r) => rowId(r) === 104)).toMatchObject({
-      ingestion: 'Blocked',
-      blockedFor: 'tos',
-    });
-    expect(rows.filter((r) => IN_SCOPE.includes(rowId(r)))).toEqual([
-      { id: 101, ingestion: 'Rescan', scanJobs: null, blockedFor: null, nsfwLevel: 0, queued: 1 },
-      { id: 102, ingestion: 'Rescan', scanJobs: null, blockedFor: null, nsfwLevel: 0, queued: 1 },
+    expect(rows.filter((r) => !IN_SCOPE.includes(r.id))).toEqual(
+      before.filter((r) => !IN_SCOPE.includes(r.id))
+    );
+    expect(rows.filter((r) => IN_SCOPE.includes(r.id))).toEqual([
+      {
+        id: 101,
+        ingestion: 'Rescan',
+        scanJobs: null,
+        blockedFor: null,
+        nsfwLevel: X,
+        metadata: {
+          judgeRating: {
+            userId: null,
+            nsfwLevel: X,
+            ratedAt: '2025-01-02T03:04:05',
+            legacy: true,
+            collectionId: JUDGE_COLLECTION,
+          },
+        },
+        queued: 1,
+      },
+      // Unrated: no level to keep.
+      {
+        id: 102,
+        ingestion: 'Rescan',
+        scanJobs: null,
+        blockedFor: null,
+        nsfwLevel: 0,
+        metadata: null,
+        queued: 1,
+      },
     ]);
+  });
+
+  it('keeps a judge rating already on the row', async () => {
+    const existing = { userId: 5, nsfwLevel: 4, collectionId: JUDGE_COLLECTION };
+    await db.query(`UPDATE "Image" SET metadata = $1 WHERE id = 101`, [{ judgeRating: existing }]);
+
+    await call({ dryRun: 'false' });
+
+    expect((await snapshot()).find((r) => r.id === 101)?.metadata).toEqual({
+      judgeRating: existing,
+    });
+  });
+
+  it('skips a row that left the scope after it was read', async () => {
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      ...args: Parameters<typeof raw.queryRaw>
+    ) => {
+      const rows = await raw.queryRaw(...args);
+      const text = Array.isArray(args[0]) ? (args[0] as string[]).join('') : '';
+      // The id read the run batches from; 101 is scanned before its batch is written.
+      if (text.includes('ORDER BY i.id'))
+        await db.exec(`UPDATE "Image" SET "scanJobs" = '{"workflowId": "wf"}' WHERE id = 101`);
+      return rows;
+    }) as never);
+
+    const { body } = await call({ dryRun: 'false' });
+
+    expect(body).toMatchObject({ queued: 1 });
+    expect(await rescanned()).toEqual([102]);
+    expect((await snapshot()).find((r) => r.id === 101)).toMatchObject({
+      ingestion: 'Scanned',
+      metadata: null,
+      queued: 0,
+    });
   });
 
   it('refuses a list with any id outside the scope, and writes nothing', async () => {
@@ -209,5 +304,3 @@ describe('rescan-judge-collection-images', () => {
     expect(await rescanned()).toEqual(IN_SCOPE);
   });
 });
-
-const rowId = (r: unknown) => (r as { id: number }).id;

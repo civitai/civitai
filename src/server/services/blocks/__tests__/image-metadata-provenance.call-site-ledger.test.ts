@@ -626,6 +626,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 1,
   },
+  'src/pages/api/admin/temp/rescan-judge-collection-images.ts#queueBatch': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
   'src/server/services/image-scan-pipeline.ts#resolveScanOutcome': {
     decision: 'raw-mod-rule-metadata',
     sites: 1,
