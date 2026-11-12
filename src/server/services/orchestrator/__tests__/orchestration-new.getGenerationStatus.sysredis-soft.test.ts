@@ -1,30 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * STEP-6 sysRedis soft-dependency — the LOCAL getGenerationStatus dup in
- * orchestration-new.service.ts, exercised through its exported caller
- * buildGenerationContext. Same contract as the generation.service reader: it
- * already try/catch fail-opens to schema defaults; STEP-6 adds the wall-clock
- * deadline so a silent half-open rejects instead of parking ~11min while the
- * generation context is built.
+ * The SUBMIT path's view of the generation kill switch and the gate rules on a sysRedis failure:
+ * buildGenerationContext (every generation surface: onsite, API, App Blocks) over the REAL
+ * generation.service readers. Only resolveTestingAccess is stubbed.
  *
- * resolveTestingAccess + getGateRules are imported from generation.service
- * and mocked here, so the ONLY withSysReadDeadline call is the local status read
- * under test. The SLOW test is fail-on-revert (hGet never settles).
+ * This file used to pin a LOCAL getGenerationStatus duplicate in orchestration-new.service.ts that
+ * failed OPEN to schema defaults ("enabled") — a disabled generator read as enabled at submit. The
+ * duplicate is gone; the submit path now reads the one generation.service reader, which serves
+ * the last value read and, with none, fails closed.
+ *
+ * Fault injection: sysRedis reads that reject, and one that never settles while the read deadline
+ * rejects (fail-on-revert: without the deadline the build would hang). The last-known state is
+ * reset before each test.
  */
 
-const { mockHGet, mockWithSysReadDeadline, mockLogSysRedisFailOpen } = vi.hoisted(() => ({
-  mockHGet: vi.fn(),
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
-  mockLogSysRedisFailOpen: vi.fn(),
-}));
+const { mockHGet, mockGet, mockHGetAll, mockWithSysReadDeadline, mockLogSysRedisFailOpen } =
+  vi.hoisted(() => ({
+    mockHGet: vi.fn(),
+    mockGet: vi.fn(),
+    mockHGetAll: vi.fn(),
+    mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+    mockLogSysRedisFailOpen: vi.fn(),
+  }));
 
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
   const keyProxy = make();
   return {
     redis: { packed: { get: vi.fn(), set: vi.fn() }, get: vi.fn(), set: vi.fn() },
-    sysRedis: { hGet: mockHGet },
+    sysRedis: { hGet: mockHGet, get: mockGet, hGetAll: mockHGetAll },
     REDIS_KEYS: keyProxy,
     REDIS_SYS_KEYS: keyProxy,
     REDIS_SUB_KEYS: keyProxy,
@@ -47,13 +52,19 @@ vi.mock('@civitai/db', () => ({
   loadDbEnv: vi.fn(() => ({})),
 }));
 
-// The two sibling readers buildGenerationContext composes — mock so the only
-// deadline-wrapped read is the local getGenerationStatus under test, and so the
-// heavy generation.service graph doesn't load.
-vi.mock('~/server/services/generation/generation.service', () => ({
+// The REAL kill-switch and gate-rule readers; only the testing-access flag lookup is stubbed.
+vi.mock('~/server/services/generation/generation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/services/generation/generation.service')>()),
   resolveTestingAccess: vi.fn(async () => false),
-  getGateRules: vi.fn(async () => []),
-  getSelfHostedDisabledEcosystems: vi.fn(() => [] as string[]),
+}));
+// generation.service's own heavy neighbours, never reached by these reads.
+vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: vi.fn() }));
+vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: vi.fn() }));
+vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: {} }));
+vi.mock('~/server/services/model.service', () => ({ getFeaturedModels: vi.fn() }));
+vi.mock('~/server/services/model-version.service', () => ({ getLinkedVaeIds: vi.fn() }));
+vi.mock('~/server/services/generation/version-generation-state.service', () => ({
+  getVisibleSystemWildcardSetIdsByVersionId: vi.fn(),
 }));
 
 // image.service (pulled transitively via cosmetic.service) imports the private
@@ -66,49 +77,111 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 
 import { buildGenerationContext } from '~/server/services/orchestrator/orchestration-new.service';
-import { dbMock } from '~/__tests__/mocks/db.mock';
+import * as generationService from '~/server/services/generation/generation.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockHGet.mockReset();
+  mockGet.mockReset();
+  mockHGetAll.mockReset();
+  mockWithSysReadDeadline.mockReset();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
+  // Each test starts as a fresh process: nothing read before. Optional-called so the file also
+  // runs against a build without the last-known state (where there is nothing to reset).
+  (
+    generationService as { __resetGenerationConfigLastKnownForTests?: () => void }
+  ).__resetGenerationConfigLastKnownForTests?.();
 });
 
-describe('buildGenerationContext → local getGenerationStatus — sysRedis soft-dependency', () => {
-  it('happy path: reads status through withSysReadDeadline, resolves, no fail-open', async () => {
-    mockHGet.mockResolvedValue(
-      JSON.stringify({ mode: 'disabled', message: 'maintenance', selfHostedMode: 'memberOnly' })
-    );
+const hiddenRule = {
+  id: 'r1',
+  name: 'pre-launch',
+  availableTo: 'moderators',
+  presentation: 'hidden',
+  ecosystems: [],
+  workflows: [],
+  modelVersionIds: [123],
+};
+
+/** sysRedis answering: the kill switch, and the gate-rule hash (already migrated). */
+function sysRedisUp(status: object, rules: object[] = []) {
+  mockHGet.mockResolvedValue(JSON.stringify(status));
+  mockGet.mockResolvedValue('1');
+  mockHGetAll.mockResolvedValue(Object.fromEntries(rules.map((r: any) => [r.id, JSON.stringify(r)])));
+}
+function sysRedisDown() {
+  const down = () => Promise.reject(new Error('sysRedis connection is down'));
+  mockHGet.mockImplementation(down);
+  mockGet.mockImplementation(down);
+  mockHGetAll.mockImplementation(down);
+}
+
+describe('buildGenerationContext — kill switch and gate rules on a sysRedis failure', () => {
+  it('happy path: the stored status and rules reach the context', async () => {
+    sysRedisUp({ mode: 'disabled', message: 'maintenance', selfHostedMode: 'memberOnly' }, [
+      hiddenRule,
+    ]);
 
     const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
     expect(result.status).toEqual({ mode: 'disabled', message: 'maintenance' });
     expect(result.externalCtx.selfHostedMode).toBe('memberOnly');
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(result.externalCtx.gateRules.map((r) => r.id)).toEqual(['r1']);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
-  it('DOWN: hGet throws → local status fails open to defaults, resolves, logs defaults-firing', async () => {
+  it('sysRedis down after a "disabled" read: the generator STAYS disabled at submit', async () => {
+    sysRedisUp({ mode: 'disabled', message: 'maintenance' }, [hiddenRule]);
+    await buildGenerationContext('free', {}, {}, 'onsite');
+    sysRedisDown();
+
+    const result = await buildGenerationContext('free', {}, {}, 'onsite');
+
+    expect(result.status).toEqual({ mode: 'disabled', message: 'maintenance' });
+    // ...and the last-known hidden model stays gated.
+    expect(result.externalCtx.gateRules.map((r) => r.id)).toEqual(['r1']);
+  });
+
+  it('sysRedis down with nothing read before: refused with a clear error, never enabled', async () => {
+    sysRedisDown();
+
+    await expect(buildGenerationContext('free', {}, {}, 'onsite')).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'Generation is temporarily unavailable. Please try again in a few minutes.',
+    });
+  });
+
+  it('...for a moderator and an App Blocks caller too', async () => {
+    sysRedisDown();
+
+    await expect(
+      buildGenerationContext('free', undefined, { id: 1, isModerator: true }, 'block')
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+  });
+
+  it('only the kill switch unreadable (rules readable), nothing known: status reads DISABLED', async () => {
+    sysRedisUp({}, []);
     mockHGet.mockRejectedValue(new Error('sysRedis connection is down'));
 
     const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
-    expect(result.status).toEqual({ mode: 'enabled', message: undefined });
-    expect(result.externalCtx.selfHostedMode).toBe('enabled');
-    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
-    const [subtype, fn] = mockLogSysRedisFailOpen.mock.calls[0];
-    expect(subtype).toBe('defaults-firing');
-    expect(fn).toBe('getGenerationStatus orchestration-new');
+    expect(result.status).toEqual({
+      mode: 'disabled',
+      message: 'Generation is temporarily unavailable. Please try again in a few minutes.',
+    });
+    expect(result.externalCtx.selfHostedMode).toBe('disabled');
+    expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('defaults-firing');
   });
 
-  it('SLOW/half-open: hGet NEVER settles + deadline REJECTS → fails open to defaults (fail-on-revert)', async () => {
+  it('SLOW/half-open: reads NEVER settle + the deadline REJECTS → refused, not hung (fail-on-revert)', async () => {
     mockHGet.mockReturnValue(new Promise(() => undefined));
+    mockGet.mockReturnValue(new Promise(() => undefined));
+    mockHGetAll.mockReturnValue(new Promise(() => undefined));
     mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
-    const result = await buildGenerationContext('free', {}, {}, 'onsite');
-
-    expect(result.status).toEqual({ mode: 'enabled', message: undefined });
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('defaults-firing');
+    await expect(buildGenerationContext('free', {}, {}, 'onsite')).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(2);
   });
 });
