@@ -3510,12 +3510,6 @@ export type Image = {
   nsfw: Generated<NsfwLevel>;
   nsfwLevel: Generated<number>;
   nsfwLevelLocked: Generated<boolean>;
-  /**
-   * Rating axes as one-hot bit groups: sexual 0-4, violence 5-9, language 10-12, sexual
-   * high-water 13-17, bit 18 set by a moderator. NULL: not rated by an axis-capable rater.
-   * Layout and write rules: src/server/services/image-nsfw-axes.ts.
-   */
-  nsfwAxes: number | null;
   tosViolation: Generated<boolean>;
   analysis: unknown | null;
   generationProcess: ImageGenerationProcess | null;

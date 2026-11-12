@@ -1698,7 +1698,6 @@ export interface Image {
   nsfw: NsfwLevel;
   nsfwLevel: number;
   nsfwLevelLocked: boolean;
-  nsfwAxes: number | null;
   tosViolation: boolean;
   analysis: JsonValue | null;
   generationProcess: ImageGenerationProcess | null;

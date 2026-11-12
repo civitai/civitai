@@ -4,7 +4,8 @@
 --
 -- NOT AUTO-APPLIED: a human runs this file by hand (see CLAUDE.md -> Database), dev first, then
 -- production. Apply it before turning on the `image-axis-shadow-write` flag. Until it exists the
--- scan writes its verdict without the axes.
+-- scan writes its verdict without the axes. The column is `@no-type` (raw SQL only), so Prisma never
+-- selects it and the code may deploy before or after this runs.
 --
 -- A nullable column with no default is a catalog-only change: no table rewrite, existing rows
 -- untouched. Nothing indexes it. Idempotent; safe to re-run.

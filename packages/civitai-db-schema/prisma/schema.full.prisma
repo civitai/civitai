@@ -2191,10 +2191,10 @@ model Image {
   nsfw              NsfwLevel               @default(None)
   nsfwLevel         Int                     @default(0)
   nsfwLevelLocked   Boolean                 @default(false)
-  /// Rating axes as one-hot bit groups: sexual 0-4, violence 5-9, language 10-12, sexual
-  /// high-water 13-17, bit 18 set by a moderator. NULL: not rated by an axis-capable rater.
-  /// Layout and write rules: src/server/services/image-nsfw-axes.ts.
-  nsfwAxes          Int?
+  // Rating axes as one-hot bit groups: sexual 0-4, violence 5-9, language 10-12, sexual high-water
+  // 13-17, bit 18 set by a moderator. NULL: not rated by an axis-capable rater. Raw SQL only, so
+  // Prisma never selects it and code may deploy before the migration. src/server/services/image-nsfw-axes.ts.
+  nsfwAxes          Int? // @no-type
   tosViolation      Boolean                 @default(false)
   analysis          Json?
   generationProcess ImageGenerationProcess?

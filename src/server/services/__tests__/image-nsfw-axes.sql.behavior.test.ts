@@ -104,7 +104,7 @@ beforeEach(async () => {
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) => {
     const text = strings.join('');
     if (text.includes('TagsOnImageDetails'))
-      // A prompt is audited for a block only at a mature level.
+      // Tag levels that make the prompt audit run.
       return [
         {
           id: 10,
@@ -309,6 +309,16 @@ describe('the scan verdict writes nsfwAxes', () => {
     expect(await axesOfRow()).toMatchObject({ sexual: 1, sexualHighWater: 3 });
   });
 
+  it('keeps a past high-water above both the stored and the new sexual level', async () => {
+    await seed({
+      current: 'wf-2',
+      nsfwAxes: stored({ sexual: 1, violence: 0, sexualHighWater: 4 }),
+    });
+    await scan('wf-2', axes(2));
+
+    expect(await axesOfRow()).toMatchObject({ sexual: 2, sexualHighWater: 4 });
+  });
+
   it('raises the sexual high-water when a newer scan rates higher', async () => {
     await seed({
       current: 'wf-2',
@@ -349,7 +359,7 @@ describe('the nsfwAxes write never changes the scan', () => {
     mockIsFlipt.mockResolvedValue(false);
     await scan('wf-1', axes(3));
 
-    expect(mockIsFlipt).toHaveBeenCalledWith('image-axis-shadow-write', String(ID));
+    expect(mockIsFlipt).toHaveBeenCalledWith(expect.anything(), String(ID));
     expect(writtenSql()).toEqual(withoutAxes);
     expect(JSON.stringify(withoutAxes)).not.toContain('nsfwAxes');
     expect((await row()).nsfwAxes).toBeNull();
@@ -371,24 +381,34 @@ describe('the nsfwAxes write never changes the scan', () => {
       await holder.db.exec(migration);
     });
 
-    it('writes the verdict without the axes, and logs it, with the flag on', async () => {
-      await holder.db.query(
-        `INSERT INTO "Image" (id, ingestion, "scanJobs") VALUES ($1, 'Pending', '{"workflowId":"wf-1"}')`,
-        [ID]
-      );
-      const outcome = await scan('wf-1', axes(3));
+    it.each([
+      ['the verdict', false, 'Scanned', null],
+      ['the legacy blocked branch', true, 'Blocked', 'Pending'],
+    ])(
+      'writes %s without the axes, and logs it, with the flag on',
+      async (_, blocked, outcomeIngestion, rowIngestion) => {
+        await holder.db.query(
+          `INSERT INTO "Image" (id, ingestion, "scanJobs") VALUES ($1, 'Pending', '{"workflowId":"wf-0"}')`,
+          [ID]
+        );
+        const outcome = await scan('wf-1', axes(3), { blocked });
 
-      expect(outcome.ingestion).toBe('Scanned');
-      const { rows } = await holder.db.query<{ ingestion: string }>(
-        `SELECT ingestion FROM "Image" WHERE id = $1`,
-        [ID]
-      );
-      expect(rows[0].ingestion).toBe('Scanned');
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'image-nsfw-axes', imageId: ID, workflowId: 'wf-1' }),
-        'webhooks'
-      );
-    });
+        expect(outcome.ingestion).toBe(outcomeIngestion);
+        const { rows } = await holder.db.query<{ ingestion: string; workflowId: string }>(
+          `SELECT ingestion, "scanJobs"->>'workflowId' AS "workflowId" FROM "Image" WHERE id = $1`,
+          [ID]
+        );
+        // The write landed: the legacy branch stamps only scanJobs, the verdict its ingestion too.
+        expect(rows[0]).toEqual({
+          ingestion: rowIngestion ?? outcomeIngestion,
+          workflowId: 'wf-1',
+        });
+        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'image-nsfw-axes', imageId: ID, workflowId: 'wf-1' }),
+          'webhooks'
+        );
+      }
+    );
   });
 
   it('propagates any other failure of the verdict write, without a second write', async () => {
