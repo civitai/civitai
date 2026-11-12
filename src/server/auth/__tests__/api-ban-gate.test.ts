@@ -56,7 +56,6 @@ const {
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession,
   maybeRollHubCookie: vi.fn(),
-  maybeUpgradeLegacySession: vi.fn(),
   sessionClient: { getSessionUserById },
 }));
 vi.mock('~/utils/s3-utils', () => ({

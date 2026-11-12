@@ -115,3 +115,31 @@ describe('applyImageCaptionTextScan', () => {
     expect(w.imageCaption.updateMany).not.toHaveBeenCalled();
   });
 });
+
+// RESTRICT site of the minor content rule: a minor at a missing, unrated or mature rating is
+// refused. The un-refuse branch must stay its exact complement on a current verdict.
+describe('applyImageCaptionTextScan minor content truth table', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    w.imageCaption.findUnique.mockResolvedValue(CAPTION as never);
+    w.imageCaption.updateMany.mockResolvedValue({ count: 1 } as never);
+  });
+
+  it.each([
+    [true, undefined, true],
+    [true, 0, true],
+    [false, 0, false],
+    [true, NsfwLevel.PG, false],
+    [true, NsfwLevel.PG13, false],
+    [true, NsfwLevel.R, true],
+    [true, NsfwLevel.X, true],
+    [true, NsfwLevel.XXX, true],
+    [false, undefined, false],
+    [false, NsfwLevel.PG, false],
+    [false, NsfwLevel.R, false],
+    [false, NsfwLevel.XXX, false],
+  ])('minor %s at rating %s refuses: %s', async (minor, nsfw, refused) => {
+    await applyImageCaptionTextScan(args({ nsfw, poi: false, minor }) as never);
+    expect(refusal()?.data).toEqual({ refused });
+  });
+});

@@ -63,6 +63,7 @@ const GLOBALS = [
   '__civitaiPrismaClients',
   '__civitaiRedisClients',
   'globalClickhouse',
+  'globalClickhouseLongQueries',
   'globalPgWrite',
   'globalPgRead',
   'globalPgReadLong',
@@ -129,11 +130,13 @@ describe('process-global server singletons (production)', () => {
     expect(b.sysRedis).toBe(a.sysRedis);
   });
 
-  it('ClickHouse client: one per process', async () => {
+  it('ClickHouse clients: one shared and one long-query client per process', async () => {
     const [a, b] = await evaluateTwice(() => import('~/server/clickhouse/client'));
-    expect(factories.createClickhouseClient).toHaveBeenCalledTimes(1);
+    expect(factories.createClickhouseClient).toHaveBeenCalledTimes(2);
     expect(a.clickhouse).toBeDefined();
     expect(b.clickhouse).toBe(a.clickhouse);
+    expect(a.clickhouseLongQueries).toBeDefined();
+    expect(b.clickhouseLongQueries).toBe(a.clickhouseLongQueries);
   });
 
   it('primary pg pools: one write/read/read-long set per process', async () => {

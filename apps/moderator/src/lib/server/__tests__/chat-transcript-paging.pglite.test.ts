@@ -15,7 +15,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ insert: async () => undefined }) }));
 
-const { getTranscript, getUserMessages } = await import('../chat-audit.service');
+const { getTranscript, transcriptPosition } = await import('../chat-audit.service');
 
 const READER = 99 as Reader;
 let db: PGlite;
@@ -78,27 +78,24 @@ describe('a transcript longer than one page', () => {
     expect(t.hasNewer).toBe(false);
   });
 
+  it('opens on a message with it in the middle, and pages on from either side of it', async () => {
+    const t = await getTranscript(READER, 1, { around: 4 }, 3);
+    expect(ids(t)).toEqual([3, 4, 5]);
+    expect([t.hasOlder, t.hasNewer]).toEqual([true, true]);
+    expect(ids(await getTranscript(READER, 1, { before: 3 }, 3))).toEqual([1, 2]);
+    expect(ids(await getTranscript(READER, 1, { after: 5 }, 3))).toEqual([6, 7]);
+  });
+
+  it('says where a page sits in the chat', async () => {
+    expect(await transcriptPosition(1, 4)).toEqual({ before: 3, total: 7 });
+    expect(await transcriptPosition(1, 5)).toEqual({ before: 4, total: 7 });
+  });
+
   it("opens the newest page for a cursor that is another chat's message", async () => {
-    const t = await getTranscript(READER, 1, { before: 8 }, 3);
-    expect(ids(t)).toEqual([5, 6, 7]);
-    expect(t.hasNewer).toBe(false);
-  });
-});
-
-describe("an account's messages across chats, a page at a time", () => {
-  it('continues past the oldest message shown, and says when it has left the newest page', async () => {
-    const first = await getUserMessages(READER, 'alice', undefined, 2);
-    expect(first!.rows.map((r) => r.id)).toEqual([8, 7]);
-    expect([first!.truncated, first!.hasNewer]).toEqual([true, false]);
-
-    const next = await getUserMessages(READER, 'alice', 7, 2);
-    expect(next!.rows.map((r) => r.id)).toEqual([5, 3]);
-    expect([next!.truncated, next!.hasNewer]).toEqual([true, true]);
-  });
-
-  it("ignores a cursor that is someone else's message", async () => {
-    const page = await getUserMessages(READER, 'alice', 6, 2);
-    expect(page!.rows.map((r) => r.id)).toEqual([8, 7]);
-    expect(page!.hasNewer).toBe(false);
+    for (const cursor of [{ before: 8 }, { around: 8 }]) {
+      const t = await getTranscript(READER, 1, cursor, 3);
+      expect(ids(t)).toEqual([5, 6, 7]);
+      expect(t.hasNewer).toBe(false);
+    }
   });
 });

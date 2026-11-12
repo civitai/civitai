@@ -162,6 +162,9 @@ export type StoreScopeEntrypoint =
   // The signed-in "My apps" home (`appListings.listMyApps`): a store read keyed on the
   // viewer's own rows, gated like the grid.
   | 'trpc-my-apps'
+  // A developer's track record on a listing page (`appListings.getDeveloperTrackRecord`): a count
+  // over the store-visible listings of one developer, under the grid's predicate.
+  | 'trpc-track-record'
   | 'rest-list'
   | 'rest-detail'
   // The registry adapter's catalog read (`src/server/registry-adapter`), a separate process that

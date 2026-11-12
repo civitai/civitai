@@ -564,6 +564,9 @@ const featureFlags = createFeatureFlags({
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
+  // The Flag Race: the badge on the home flag row and adding hats to a flag. Testers get it before
+  // launch; it goes public when the first flags swap in. The row itself is gated by its block's featureFlag.
+  flagRace: { availability: ['mod'], fliptKey: 'birthday2026-flag-race' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -732,14 +735,6 @@ const featureFlags = createFeatureFlags({
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the
   // default (see `image/krea3.graph.ts`).
   krea3Ultra: { availability: ['mod'], fliptKey: 'krea3-ultra' },
-  // Gates the whole MiniMaxH3Image ecosystem: off ⇒ it is hidden from the picker and a
-  // submission naming it is refused (see `generation/ecosystem-gates.ts`). No Flipt key, so
-  // opening it past moderators is a code change.
-  minimaxH3ImageGenerator: { availability: ['mod'] },
-  // Gates Seedream v5.5 like krea3Ultra: off ⇒ v5.5 is not offered, v5.0-pro stays the default, and a
-  // submitted v5.5 falls back to v5.0-pro (see `image/seedream.graph.ts`). Dark until the
-  // orchestrator release that accepts v5.5 is live; Flipt alone opens it.
-  seedream55: { availability: [], fliptKey: 'seedream-5-5' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay

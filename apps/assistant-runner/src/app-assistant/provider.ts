@@ -16,6 +16,7 @@ import {
   createDocsTool,
   createFeedbackTools,
   createGateCore,
+  createSourceSaveScheduler,
   chosenAppOf,
   createSandboxClient,
   openApp,
@@ -160,6 +161,12 @@ export interface AppAssistantToolsOptions {
    * `app_activity` says it cannot read it here.
    */
   appActivity?(runId: string, signal: AbortSignal): ReturnType<CivitaiAppActivity['forRun']>;
+  /**
+   * civitai's source-repo save with one run's grant (`CivitaiSourceSaves.forRun`): told the open
+   * app after the assistant changed its files, once the reply pauses and when the run ends. Unset,
+   * nothing is saved.
+   */
+  sourceSaves?(runId: string): (app: string) => Promise<void>;
   log: Logger;
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
@@ -277,6 +284,9 @@ export class AppAssistantTools implements ToolProvider {
           return opened;
         },
       });
+      // The app's source repo commits each spell of changes (one per pause, and one at the end).
+      const saveSource = this.#options.sourceSaves?.(runId);
+      const sourceSaves = saveSource ? createSourceSaveScheduler({ save: saveSource }) : null;
       const core = createGateCore({
         refuse: (name) =>
           // Features are planned for an app, so not before one exists.
@@ -290,6 +300,7 @@ export class AppAssistantTools implements ToolProvider {
         unjustifiedScopes: () => unjustifiedManifestScopes(sandbox, signal),
         // A sandbox with run_checks is told to run it; the others, npm test and tsc.
         sandboxFeatures: () => sandbox.features,
+        ...(sourceSaves ? { onAppChanged: (app: string) => sourceSaves.changed(app) } : {}),
       });
       core.restore({
         conversationId,
@@ -422,6 +433,13 @@ export class AppAssistantTools implements ToolProvider {
         // The run's end stops keeping its preview alive; the preview itself idles out later.
         close: async () => {
           preview?.close();
+          // The reply's last changes: civitai reads them from the sandbox service itself (not over
+          // this run's MCP connection), so the end of the run waits for it only so long.
+          if (sourceSaves)
+            await Promise.race([
+              sourceSaves.flush(),
+              new Promise((resolve) => setTimeout(resolve, SOURCE_SAVE_FLUSH_WAIT_MS).unref?.()),
+            ]);
           await sandbox.close();
         },
         // The runner's variant names only tools it has (no web or guide tool, no tunnel).
@@ -447,6 +465,9 @@ export class AppAssistantTools implements ToolProvider {
     }
   }
 }
+
+/** How long a run's end waits for its last source-repo save (which carries on after it). */
+export const SOURCE_SAVE_FLUSH_WAIT_MS = 15_000;
 
 /**
  * The sandbox tools whose success opens the preview by itself: a start, and a restart (a later

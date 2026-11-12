@@ -105,6 +105,7 @@ import type {
   TechniqueType,
   AppealStatus,
   AppealCategory,
+  ImageAxisSource,
   AuctionType,
   ModerationRuleAction,
   ChangelogType,
@@ -3132,6 +3133,24 @@ export type EntityModeration = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type EventAwardResult = {
+  id: Generated<number>;
+  event: string;
+  sourceId: string;
+  kind: string;
+  team: string | null;
+  points: number;
+  /**
+   * When the award counts from: the Crucible's end, or the flag's cut.
+   */
+  at: Timestamp;
+  /**
+   * What the result was computed from, kept for audit.
+   */
+  inputs: unknown;
+  frozenAt: Generated<Timestamp>;
+  voidedAt: Timestamp | null;
+};
 export type EventCosmeticPlacement = {
   id: Generated<string>;
   event: string;
@@ -3162,6 +3181,17 @@ export type EventCosmeticScoreDaily = {
   modelLikes: Generated<number>;
   points: Generated<number>;
   updatedAt: Generated<Timestamp>;
+};
+export type EventTurfFlagSticker = {
+  id: Generated<string>;
+  event: string;
+  flagDayId: number;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  count: number;
+  createdAt: Generated<Timestamp>;
 };
 export type EventTurfSticker = {
   id: Generated<string>;
@@ -3294,6 +3324,23 @@ export type File = {
   entityId: number;
   entityType: string;
   metadata: unknown | null;
+};
+export type FlagDay = {
+  id: Generated<number>;
+  event: string;
+  crucibleId: number;
+  startsAt: Timestamp;
+  /**
+   * Random within the day's last hour, so nobody can time a last-second pile-on. Never sent to a
+   * client before it passes.
+   */
+  cutAt: Timestamp;
+  /**
+   * The end of the hour the cut falls in: public, unlike the cut.
+   */
+  closesAt: Timestamp;
+  imageIds: number[];
+  createdAt: Generated<Timestamp>;
 };
 export type GameFrameGame = {
   id: Generated<number>;
@@ -3500,6 +3547,38 @@ export type ImageAudioScan = {
   error: string | null;
   createdAt: Generated<Timestamp>;
   completedAt: Timestamp | null;
+};
+export type ImageAxisRating = {
+  imageId: number;
+  source: ImageAxisSource;
+  sexualLevel: number | null;
+  /**
+   * Highest sexualLevel any scan has rated; only a moderator lowers it.
+   */
+  sexualHighWater: number | null;
+  violenceLevel: number | null;
+  /**
+   * No rater produces a language axis yet.
+   */
+  languageLevel: number | null;
+  /**
+   * The rater's modelRef; null on a moderator row.
+   */
+  rater: string | null;
+  /**
+   * The rater checkpoint's sha256; null on a moderator row.
+   */
+  raterVersion: string | null;
+  /**
+   * The scan workflow's completion time; an older result never replaces a newer one.
+   */
+  ratedAt: Timestamp;
+  workflowId: string | null;
+  /**
+   * The moderator's user id on a moderator row.
+   */
+  setBy: number | null;
+  updatedAt: Generated<Timestamp>;
 };
 export type ImageCaption = {
   imageId: number;
@@ -6672,8 +6751,10 @@ export type DB = {
   EntityMetric: EntityMetric;
   EntityMetricImage: EntityMetricImage;
   EntityModeration: EntityModeration;
+  EventAwardResult: EventAwardResult;
   EventCosmeticPlacement: EventCosmeticPlacement;
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
+  EventTurfFlagSticker: EventTurfFlagSticker;
   EventTurfSticker: EventTurfSticker;
   EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
@@ -6683,6 +6764,7 @@ export type DB = {
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;
+  FlagDay: FlagDay;
   GameFrameGame: GameFrameGame;
   GameFrameGameReport: GameFrameGameReport;
   GameFrameReportReceipt: GameFrameReportReceipt;
@@ -6696,6 +6778,7 @@ export type DB = {
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
   ImageAudioScan: ImageAudioScan;
+  ImageAxisRating: ImageAxisRating;
   ImageCaption: ImageCaption;
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;

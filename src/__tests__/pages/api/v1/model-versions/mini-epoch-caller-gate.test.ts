@@ -343,6 +343,7 @@ describe('mini/[id] epoch arm, log', () => {
         'mode',
         'modelVersionId',
         'name',
+        'pick',
         'resolvedAs',
         'type',
         'wouldRefuse',

@@ -6,7 +6,7 @@ import type {
   FluxDevFastImageResourceTrainingInput,
   ImageResourceTrainingStep,
   ImageResourceTrainingStepTemplate,
-  KohyaImageResourceTrainingInput,
+  ImageResourceTrainingInput,
   MusubiImageResourceTrainingInput,
   TrainingStepTemplate,
   ZipTrainingData,
@@ -134,7 +134,7 @@ const createTrainingStep_Run = (
   };
 
   if (engine === 'kohya') {
-    const input: KohyaImageResourceTrainingInput = {
+    const input: ImageResourceTrainingInput = {
       ...inputBase,
       ...(params as any),
       engine,

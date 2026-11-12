@@ -7,11 +7,16 @@ import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/servi
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
-import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
-  nsfwBrowsingLevelsArray,
-  publicBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+  anchorBrowsingLevel,
+  recordRefusal,
+  resolveSemanticBrowsingLevel,
+  semanticQueryRefusal,
+  type QueryTracker,
+} from '~/server/services/semantic-query-guard';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -35,18 +40,24 @@ const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
   notFoundMessage: 'Image not found',
 });
 
+const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
+
 export async function searchSemanticImages({
   input,
   user,
   domain,
+  track,
   candidateSource = searchServiceCandidates,
 }: {
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
   user?: SessionUser;
   domain?: DomainColor;
+  track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
+  const browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+
   const [hidden, addonData, blockedTags, userIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),
@@ -67,9 +78,18 @@ export async function searchSemanticImages({
   if (strip.emptyResult) return { items: [], nextCursor: undefined, correctedQuery: undefined };
   const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
-  const addons = resolveBrowsingSettingsAddons(addonData, input.browsingLevel, {
+  const addons = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
     isModerator: user?.isModerator,
   });
+  const refusalOf = async (text: string) => {
+    const refusal = await semanticQueryRefusal(text, {
+      browsingLevel,
+      disablePoi: addons.disablePoi,
+    });
+    recordRefusal(track, refusal, text, 'images_semantic');
+    return refusal;
+  };
+  if (input.query && (await refusalOf(input.query))) return emptyPage();
   const excludedUserIds = [
     ...new Set(
       [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
@@ -83,12 +103,51 @@ export async function searchSemanticImages({
     .filter((x) => !x.tagId || hiddenTagIds.includes(x.tagId))
     .map((x) => x.id);
 
+  // The feed's own fetch path decides visibility (publish state, privacy, blocks, moderation,
+  // browsing level, hidden users and tags); Qdrant only proposes candidates.
+  const fetchVisible = async (
+    ids: number[],
+    level: number,
+    filters: { tags?: number[]; excludedTagIds: number[] }
+  ) => {
+    const { items } = await getAllImages({
+      ...getInfiniteImagesSchema.parse({
+        ids,
+        limit: ids.length,
+        sort: ImageSort.Newest,
+        browsingLevel: level,
+        ...filters,
+        excludedUserIds,
+        disablePoi: addons.disablePoi,
+        disableMinor: addons.disableMinor,
+        include: ['cosmetics', 'tagIds'],
+      }),
+      user,
+      domain,
+      headers: { src: 'semanticImageSearch' },
+    });
+    return items;
+  };
+
+  // "More like this" from an image the viewer cannot see would reveal what it resembles.
+  let level = browsingLevel;
+  if (input.imageId) {
+    const [anchor] = await fetchVisible([input.imageId], browsingLevel, {
+      excludedTagIds: viewerExcludedTagIds,
+    });
+    if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+    if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
+      level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
+  }
+  const hydrate: Hydrate<HydratedImage> = (ids) =>
+    fetchVisible(ids, level, { tags: tagIds, excludedTagIds });
+
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
   const filter: CandidateFilter = {
     gate: {
       kind: 'level',
-      nsfwLevels: Flags.instanceToArray(input.browsingLevel || publicBrowsingLevelsFlag),
+      nsfwLevels: Flags.instanceToArray(level),
     },
     tagIds,
     anyOf: { baseModels: input.baseModels, type: input.types },
@@ -109,46 +168,20 @@ export async function searchSemanticImages({
     ],
   };
 
-  // The feed's own fetch path decides visibility (publish state, privacy, blocks, moderation,
-  // browsing level, hidden users and tags); Qdrant only proposes candidates.
-  const fetchVisible = async (
-    ids: number[],
-    filters: { tags?: number[]; excludedTagIds: number[] }
-  ) => {
-    const { items } = await getAllImages({
-      ...getInfiniteImagesSchema.parse({
-        ids,
-        limit: ids.length,
-        sort: ImageSort.Newest,
-        browsingLevel: input.browsingLevel,
-        ...filters,
-        excludedUserIds,
-        disablePoi: addons.disablePoi,
-        disableMinor: addons.disableMinor,
-        include: ['cosmetics', 'tagIds'],
-      }),
-      user,
-      domain,
-      headers: { src: 'semanticImageSearch' },
-    });
-    return items;
-  };
-  const hydrate: Hydrate<HydratedImage> = (ids) =>
-    fetchVisible(ids, { tags: tagIds, excludedTagIds });
-
-  // "More like this" from an image the viewer cannot see would reveal what it resembles.
-  if (input.imageId) {
-    const [anchor] = await fetchVisible([input.imageId], { excludedTagIds: viewerExcludedTagIds });
-    if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
-  }
   const query: SearchQuery = input.imageId
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
 
   let correctedQuery: string | undefined;
+  let correctedReviewed: boolean | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await candidateSource({ query, filter, offset, limit });
+      // The service embeds its spelling correction, not the text audited above.
+      if (correctedReviewed === undefined && result.correctedQuery !== undefined)
+        correctedReviewed =
+          result.correctedQuery === input.query || !(await refusalOf(result.correctedQuery));
+      if (correctedReviewed === false) return [];
       correctedQuery ??= result.correctedQuery;
       return result.ids;
     },
@@ -157,5 +190,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
+  if (correctedReviewed === false) return emptyPage();
   return { ...page, correctedQuery };
 }

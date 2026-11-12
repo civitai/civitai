@@ -30,12 +30,24 @@ vi.mock('~/server/flipt/client', () => ({
 const redisGet = redisMock.redis.get;
 const logToAxiom = loggingMock.logToAxiom;
 
-function setLists({ domains = [], patterns = [] }: { domains?: string[]; patterns?: string[] }) {
+function setLists({
+  domains = [],
+  patterns = [],
+  patternListId,
+}: {
+  domains?: string[];
+  patterns?: string[];
+  patternListId?: number;
+}) {
   redisGet.mockImplementation(async (key: string) => {
     if (key.endsWith(`:${BlocklistType.LinkDomain}`))
       return JSON.stringify({ type: BlocklistType.LinkDomain, data: domains });
     if (key.endsWith(`:${BlocklistType.MessagePattern}`))
-      return JSON.stringify({ type: BlocklistType.MessagePattern, data: patterns });
+      return JSON.stringify({
+        id: patternListId,
+        type: BlocklistType.MessagePattern,
+        data: patterns,
+      });
     return null;
   });
 }
@@ -50,6 +62,13 @@ beforeEach(() => {
 });
 
 describe('findBlockedUserContent — hits', () => {
+  it('names the list row and entry position a pattern hit came from', async () => {
+    setLists({ patterns: ['other', PHISH], patternListId: 12 });
+    await expect(findBlockedUserContent(`<p>${PHISH}</p>`)).resolves.toEqual([
+      { kind: 'pattern', index: 0, matched: PHISH, patternId: 1, listId: 12 },
+    ]);
+  });
+
   it('returns nothing for ordinary content', async () => {
     await expect(findBlockedUserContent(['A title', '<p>A body.</p>'])).resolves.toEqual([]);
   });
@@ -59,26 +78,26 @@ describe('findBlockedUserContent — hits', () => {
       findBlockedUserContent(['an ordinary title', `<p>see ${LINK}</p>`, `<p>${PHISH}</p>`])
     ).resolves.toEqual([
       { kind: 'link', index: 1, matched: [LINK] },
-      { kind: 'pattern', index: 2, matched: PHISH, patternId: 0 },
+      { kind: 'pattern', index: 2, matched: PHISH, patternId: 0, listId: null },
     ]);
   });
 
   it('keeps the caller’s index across absent and empty values', async () => {
     await expect(findBlockedUserContent([null, '', undefined, `<p>${PHISH}</p>`])).resolves.toEqual(
-      [{ kind: 'pattern', index: 3, matched: PHISH, patternId: 0 }]
+      [{ kind: 'pattern', index: 3, matched: PHISH, patternId: 0, listId: null }]
     );
   });
 
   it('reports both lists on one value, link first', async () => {
     await expect(findBlockedUserContent(`<p>${LINK} ${PHISH}</p>`)).resolves.toEqual([
       { kind: 'link', index: 0, matched: [LINK] },
-      { kind: 'pattern', index: 0, matched: PHISH, patternId: 0 },
+      { kind: 'pattern', index: 0, matched: PHISH, patternId: 0, listId: null },
     ]);
   });
 
   it('reports one pattern hit per value, not one per scanned form', async () => {
     await expect(findBlockedUserContent(`<p>${PHISH}</p><p>${PHISH}</p>`)).resolves.toEqual([
-      { kind: 'pattern', index: 0, matched: PHISH, patternId: 0 },
+      { kind: 'pattern', index: 0, matched: PHISH, patternId: 0, listId: null },
     ]);
   });
 
@@ -94,7 +113,7 @@ describe('findBlockedUserContent — hits', () => {
   it('does match the same pattern inside one value', async () => {
     setLists({ patterns: ['balance now'] });
     await expect(findBlockedUserContent(['check your balance now'])).resolves.toEqual([
-      { kind: 'pattern', index: 0, matched: 'balance now', patternId: 0 },
+      { kind: 'pattern', index: 0, matched: 'balance now', patternId: 0, listId: null },
     ]);
   });
 

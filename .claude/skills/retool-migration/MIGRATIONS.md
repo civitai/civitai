@@ -581,7 +581,9 @@ on /admin — keep that deliberate.
       **Every branch orders before it limits.** `SELECT DISTINCT chatId ... LIMIT 50` with no ORDER BY
       is satisfied by a sort/unique, so it returned the 50 LOWEST ids — the OLDEST chats — which the
       summary step then re-sorted by recency, so the list READ as newest-first. `discord.gg` matches
-      4,620 chats.
+      4,620 chats. Now paged rather than capped: 25 chats a page (`spage`), ordered by each chat's
+      newest matching message, with each chat's match count; message-text search has no total, since
+      counting would scan again. The search box sits on the Search tab (route `chats`) only.
       **All-digit terms above int4 are usernames, not chat ids.** `Chat.id` is `integer`, so a larger
       value ERRORS the query and 500s the page; 978 users with a 10+ digit numeric username have chat
       messages. `@` forces username mode, and an all-digit term that is also a real username surfaces
@@ -596,7 +598,10 @@ on /admin — keep that deliberate.
       rows, and dropping them made the list and the member panel disagree about who was in a chat.
 - [x] **Transcript + members** — `FindChatById`, `FindChatMembers`. Pages of 300 in reading order,
       opening on the newest; `msgBefore` / `msgAfter` in the URL (`chat-transcript-cursor.ts`) walk
-      older and newer, so no message is unreachable. Ordered by `(createdAt, id)`, not `id`: by id the
+      older and newer, so no message is unreachable, and `msgAround` opens the page centred on one
+      message, which is where a search result opens. The open chat (`?chat=`) is the right-hand pane on
+      every tab, with a "Messages X–Y of N" line, and marks the search that found it: the searched
+      account's messages outlined, or the term highlighted. Ordered by `(createdAt, id)`, not `id`: by id the
       planner walks the primary key backwards (2.2s against ~40ms for the oldest page of a 17k-message
       chat). System rows excluded: 274,106 are `Embed` type whose content is raw JSON,
       rendered verbatim attributed to "civitai".
