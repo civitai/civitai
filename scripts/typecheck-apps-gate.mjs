@@ -13,7 +13,7 @@
  * closing the gap is a matter of reaching that script from here rather than widening `include`:
  * tsc cannot parse `.svelte` at all.
  */
-export function typecheckAppsGateDecision(env) {
+export function typecheckAppsGateDecision(env, args = []) {
   // CI gates them in its own step: the "Typecheck apps" step of .github/workflows/apps.yml runs
   // scripts/ci/typecheck-apps.mjs on any PR touching apps/** or packages/**. Running them here
   // as well would double that work on every CI typecheck.
@@ -25,6 +25,11 @@ export function typecheckAppsGateDecision(env) {
   // svelte-check per app would make each of them minutes long.
   if (env.TYPECHECK_TSC_PATH) {
     return { run: false, why: 'the tsc test seam drives the root classifier only' };
+  }
+  // Any argument narrows the run (`-p tsconfig.scripts.json`, `--listFilesOnly`), the same rule as
+  // scripts/typecheck-queue.mjs. A caller asking tsc a narrow question is not asking about apps/*.
+  if (args.length > 0) {
+    return { run: false, why: 'arguments narrow the run to what they name' };
   }
   return { run: true };
 }

@@ -292,7 +292,7 @@ child.on('close', async (code, signal) => {
     // The run above is bounded by the root tsconfig `include`, which has no `apps/*` entry, so
     // on its own this command reports OK over a type error in any app (#4832). The apps are
     // checked by their own `typecheck` scripts, through the script CI uses.
-    const appsGate = typecheckAppsGateDecision(process.env);
+    const appsGate = typecheckAppsGateDecision(process.env, tscArgs);
     if (!appsGate.run) {
       console.log(`typecheck: apps/* not checked here — ${appsGate.why}.`);
       process.exit(0);
@@ -300,24 +300,32 @@ child.on('close', async (code, signal) => {
 
     let runTypecheckApps;
     try {
-      // In-process rather than spawning `pnpm run typecheck:apps`: this run may already hold the
-      // dev-server queue's `typecheck` lane, and that wrapper would try to take the
-      // `typecheckApps` lane while this one is still holding its own.
+      // In-process, the same function `pnpm run typecheck:apps` and CI call, so all three run the
+      // same app set and report the same way.
       ({ runTypecheckApps } = await import('./ci/typecheck-apps.mjs'));
     } catch (err) {
       console.error(`typecheck: cannot load the apps/* gate (${err?.message ?? err}).`);
       process.exit(2);
     }
 
-    const appsCode = runTypecheckApps({
-      // Resolve from this file, not cwd, so a copy of these scripts in a throwaway repo
-      // discovers that repo's apps/ rather than this one.
-      repoRoot: resolve(dirname(fileURLToPath(import.meta.url)), '..'),
-    });
+    let appsCode;
+    try {
+      appsCode = runTypecheckApps({
+        // Resolve from this file, not cwd, so a copy of these scripts in a throwaway repo
+        // discovers that repo's apps/ rather than this one.
+        repoRoot: resolve(dirname(fileURLToPath(import.meta.url)), '..'),
+      });
+    } catch (err) {
+      console.error(`typecheck: the apps/* gate could not run (${err?.message ?? err}).`);
+      console.log('typecheck: FAILED — the apps/* gate could not run (see stderr).');
+      process.exit(2);
+    }
     if (appsCode !== 0) {
       console.error(
         '\ntypecheck: the root tsc run was clean, but an apps/* typecheck failed (above).'
       );
+      // The OK line above went to stdout; a reader of stdout alone must see the verdict too.
+      console.log('typecheck: FAILED — root clean, but an apps/* typecheck failed (see stderr).');
     }
     process.exit(appsCode);
   }

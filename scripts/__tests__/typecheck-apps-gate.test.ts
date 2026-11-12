@@ -88,8 +88,8 @@ function makeRepo({ apps, pnpmCode }: { apps: string[]; pnpmCode: number }) {
   return dir;
 }
 
-function run(dir: string, env: Record<string, string> = {}) {
-  const r = spawnSync(process.execPath, ['scripts/typecheck.mjs'], {
+function run(dir: string, env: Record<string, string> = {}, args: string[] = []) {
+  const r = spawnSync(process.execPath, ['scripts/typecheck.mjs', ...args], {
     cwd: dir,
     encoding: 'utf8',
     env: {
@@ -103,7 +103,7 @@ function run(dir: string, env: Record<string, string> = {}) {
       ...env,
     },
   });
-  return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}`, stdout: r.stdout ?? '' };
 }
 
 describe('typecheckAppsGateDecision', () => {
@@ -132,6 +132,23 @@ describe('pnpm run typecheck covers apps/*', () => {
     expect(res.out).toContain('typecheck: OK');
     expect(res.out).toContain('moderator');
     expect(res.out).toContain('an apps/* typecheck failed');
+  });
+
+  it('puts the failure verdict on stdout too, after the root OK line', () => {
+    // A caller reading stdout alone would otherwise see only `typecheck: OK`.
+    const { stdout } = run(makeRepo({ apps: ['moderator'], pnpmCode: 1 }));
+
+    expect(stdout).toContain('typecheck: FAILED');
+    expect(stdout.indexOf('typecheck: FAILED')).toBeGreaterThan(stdout.indexOf('typecheck: OK'));
+  });
+
+  it('leaves apps/* alone when arguments narrow the run', () => {
+    // scripts/ci/typecheck-scripts-gate.mjs calls this wrapper with `-p tsconfig.scripts.json`.
+    const res = run(makeRepo({ apps: ['moderator'], pnpmCode: 1 }), {}, ['-p', 'tsconfig.json']);
+
+    expect(res.code).toBe(0);
+    expect(res.out).toContain('apps/* not checked here');
+    expect(res.out).not.toContain('ARGV');
   });
 
   it('passes when the root run and every app are clean', () => {
