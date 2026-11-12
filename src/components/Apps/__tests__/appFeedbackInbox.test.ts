@@ -359,8 +359,9 @@ describe('INBOX_COMMITS_NOTE — the checkout advice must be a command that runs
     for (const rest of invocations) expect(rest).toContain('--app');
   });
 
-  it('places the platform commit in the build repository, not in a source-repository clone', () => {
-    expect(INBOX_COMMITS_NOTE).toContain('build repository');
-    expect(INBOX_COMMITS_NOTE).toContain('source repository');
+  it('places the platform commit in the build repository, and says how a source clone reaches it', () => {
+    expect(INBOX_COMMITS_NOTE).toBe(
+      "The platform commit is this release's commit in the app's build repository (civitai-apps/<slug>). For an app with no source repository, `civitai app pull <dir> --app <slug>` clones it; a clone of the source repository has to fetch it first: `git fetch` its origin URL with `civitai-apps-src` swapped for `civitai-apps`. Then `git checkout <sha>`. The reported source commit is what the developer's CLI said at submit; nothing verifies it."
+    );
   });
 });
