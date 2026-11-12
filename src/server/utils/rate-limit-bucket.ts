@@ -5,7 +5,10 @@ import { isDev, isPreview, isTest } from '~/env/other';
 import { CacheTTL } from '~/server/common/constants';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
+import {
+  ClusterCacheUnavailableError,
+  clusterCacheGuard,
+} from '~/server/redis/cluster-cache-guard';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { noteRateLimitUsage } from '~/server/trpc/rate-limit-headers';
 import { markActiveLimit } from '~/server/utils/active-rate-limits';
@@ -97,12 +100,24 @@ async function readAttemptsOrLocal(
 }
 
 /**
- * The recorded attempts (epoch ms) in a bucket. When the store cannot answer, the attempts this
- * process counted locally while it was unavailable (see `localAttempts`), as the limiter itself
- * reads them.
+ * The recorded attempts (epoch ms) in a bucket, for REPORTING (`peekRateLimit`). A store failure
+ * throws — bounded by the cluster-cache guard, with the store's own error when it gave one.
+ *
+ * Deliberately NOT the limiter's per-process fallback: that local count exists so enforcement never
+ * switches off, and it starts empty on every process, so as a usage report it would tell a caller
+ * they have their whole quota left when the store says otherwise. A report with no data errors.
  */
 export async function readRateLimitAttempts(bucket: RateLimitBucket) {
-  return (await readAttemptsOrLocal(bucket)).attempts;
+  try {
+    const stored = await clusterCacheGuard.call(
+      'rate-limit-bucket.peek',
+      () => redis.packed.hGet<number[]>(bucket.cacheKey, bucket.hashKey),
+      { logExtra: { cacheKey: bucket.cacheKey } }
+    );
+    return stored ?? [];
+  } catch (err) {
+    throw err instanceof ClusterCacheUnavailableError && err.cause ? err.cause : err;
+  }
 }
 
 /**

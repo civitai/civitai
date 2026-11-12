@@ -65,6 +65,11 @@ async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
  */
 const lastKnown = new Map<string, { dto: BlocklistDTO; at: number }>();
 
+/** Tests only: forget every last-known copy, so one test's reads cannot answer another's. */
+export function resetBlocklistLastKnownForTests() {
+  lastKnown.clear();
+}
+
 function remember(type: string, dto: BlocklistDTO) {
   lastKnown.set(type, { dto, at: Date.now() });
 }
