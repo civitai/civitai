@@ -7,6 +7,7 @@ import {
   controlSql,
   insertRetryRowsSql,
   modActivitySql,
+  parseApplyOptions,
   pendingSql,
   readbackSql,
   recheckSetSql,
@@ -131,13 +132,46 @@ describe('the stop guard', () => {
     expect(result).toEqual({ queued: 2, stoppedAt: 3 });
   });
 
-  it('keeps going while the checker answers some of each batch', async () => {
+  it('stops when a degraded checker answers only 1 in 4', async () => {
+    const { inserted, deps: d } = deps((ids) => new Set(ids.slice(1)));
+
+    const result = await runBatches(chunksFrom([1, 2, 3, 4, 5, 6, 7, 8], 4), 300_000, d);
+
+    expect(inserted).toEqual([[1, 2, 3, 4]]);
+    expect(result).toEqual({ queued: 4, stoppedAt: 5 });
+  });
+
+  it('keeps going while the checker answers half of each batch, pausing between batches', async () => {
     const { inserted, deps: d } = deps((ids) => new Set(ids.slice(1)));
 
     const result = await runBatches(chunksFrom([1, 2, 3, 4, 5], 2), 300_000, d);
 
     expect(inserted).toEqual([[1, 2], [3, 4], [5]]);
     expect(result).toEqual({ queued: 5, stoppedAt: undefined });
+    expect(d.sleep).toHaveBeenCalledTimes(2);
+    expect(d.sleep).toHaveBeenCalledWith(300_000);
+  });
+});
+
+describe('the --apply options', () => {
+  it('takes the defaults', () => {
+    expect(parseApplyOptions({})).toEqual({
+      batch: 20,
+      everyMs: 300_000,
+      from: 0,
+      limit: undefined,
+    });
+  });
+
+  it.each([
+    [{ batch: '0' }, '--batch'],
+    [{ batch: '2.5' }, '--batch'],
+    [{ every: 'soon' }, '--every'],
+    [{ every: '60' }, 'one job run'],
+    [{ from: '-1' }, '--from'],
+    [{ limit: 'x' }, '--limit'],
+  ])('refuses %o', (values, message) => {
+    expect(() => parseApplyOptions(values)).toThrow(message);
   });
 });
 
@@ -174,6 +208,7 @@ describe('readback controls', () => {
   it("counts the re-check's removals of these models since the run started", async () => {
     const since = new Date('2026-11-12T20:00:00Z');
     await activity(1, 'removeComFace', '2026-11-12T20:30:00Z');
+    await activity(1, 'removeComFace', '2026-11-12T20:45:00Z'); // the same model twice
     await activity(2, 'comFaceRecheckGaveUp', '2026-11-12T21:00:00Z');
     await activity(3, 'removeComFace', '2026-11-12T19:00:00Z'); // before the run
     await activity(4, 'removeComFace', '2026-11-12T20:30:00Z'); // not in the run

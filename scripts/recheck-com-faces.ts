@@ -35,10 +35,11 @@ import { chunksFrom, parseIdsCsv } from './recompute-mature-model-nsfw-levels';
  *               CSV; keep it outside the repo.
  *   --apply     Inserts the retry rows in ascending id order, in batches of --batch, --every seconds
  *               apart (at least one job run). ON CONFLICT DO NOTHING: a model already waiting keeps
- *               its deadline, and a re-run adds nothing. Before each batch after the first, if every
- *               row of the previous batch is still waiting, the checker is not keeping up (or is down):
- *               the run stops instead of starting more 24-hour countdowns, and prints the --from id to
- *               resume at. --limit caps how many ids are queued. Prints its start time for --since.
+ *               its deadline, and a re-run adds nothing. Before each batch after the first, if more
+ *               than half of the previous batch is still waiting (STALL_PENDING_SHARE), the checker is
+ *               not keeping up (or is down): the run stops instead of starting more 24-hour countdowns,
+ *               and prints the --from id to resume at. --limit caps how many ids are queued. Prints
+ *               its start time for --since.
  *   --readback  Read-only on the replica: kept / removed / unverified / waiting over the ids; a control
  *               over faced models outside them (none should be waiting); and with --since, the
  *               ModActivity removals since the run started, which must equal removed + unverified.
@@ -75,9 +76,38 @@ export const pendingSql = (modelIds: number[]) => Prisma.sql`
   WHERE key = ANY(SELECT ${RETRY_KEY_PREFIX} || id::text FROM unnest(${modelIds}::int[]) AS id)
 `;
 
-/** Every row of the previous batch is still waiting: the checker has not answered any of them. */
+/** More than this share of the previous batch still waiting means the checker is not keeping up. */
+export const STALL_PENDING_SHARE = 0.5;
+
+/** Too much of the previous batch is still waiting (no verdict yet, or no verdict available). */
 export function checkerStalled(previousBatch: number[], pending: Set<number>) {
-  return previousBatch.length > 0 && previousBatch.every((id) => pending.has(id));
+  if (!previousBatch.length) return false;
+  const waiting = previousBatch.filter((id) => pending.has(id)).length;
+  return waiting / previousBatch.length > STALL_PENDING_SHARE;
+}
+
+/** The --apply pacing options, refused before anything is written when they are not usable. */
+export function parseApplyOptions(values: {
+  batch?: string;
+  every?: string;
+  from?: string;
+  limit?: string;
+}) {
+  const int = (name: string, raw: string | undefined, min: number) => {
+    const value = Number(raw);
+    if (raw === undefined || raw.trim() === '' || !Number.isInteger(value) || value < min)
+      throw new Error(`--${name} must be an integer of at least ${min}`);
+    return value;
+  };
+  const options = {
+    batch: int('batch', values.batch ?? '20', 1),
+    everyMs: int('every', values.every ?? '300', 1) * 1000,
+    from: int('from', values.from ?? '0', 0),
+    limit: values.limit === undefined ? undefined : int('limit', values.limit, 0),
+  };
+  if (options.everyMs < COM_FACE_RUN_BUDGET_MS)
+    throw new Error(`--every must be at least one job run (${COM_FACE_RUN_BUDGET_MS / 1000}s)`);
+  return options;
 }
 
 type RunDeps = {
@@ -96,7 +126,7 @@ export async function runBatches(chunks: number[][], everyMs: number, deps: RunD
       const previous = chunks[index - 1];
       if (checkerStalled(previous, await deps.pending(previous))) {
         deps.log(
-          `stopped: all ${previous.length} rows of batch ${index} are still waiting after ` +
+          `stopped: more than half of the ${previous.length} rows of batch ${index} still waiting after ` +
             `${Math.round(everyMs / 1000)}s; resume with --from ${
               chunk[0]
             } once the checker answers`
@@ -200,15 +230,12 @@ async function main() {
   }
 
   if (!ids?.length) throw new Error('--apply needs --ids or --ids-file (from the dry run)');
-  const size = Number(values.batch);
-  let queue = chunksFrom(ids, ids.length, Number(values.from)).flat();
-  if (values.limit) queue = queue.slice(0, Number(values.limit));
-  const everyMs = Number(values.every) * 1000;
-  if (everyMs < COM_FACE_RUN_BUDGET_MS)
-    throw new Error(`--every must be at least one job run (${COM_FACE_RUN_BUDGET_MS / 1000}s)`);
+  const { batch: size, everyMs, from, limit } = parseApplyOptions(values);
+  let queue = chunksFrom(ids, ids.length, from).flat();
+  if (limit !== undefined) queue = queue.slice(0, limit);
 
   const startedAt = new Date();
-  console.log(`apply: ${queue.length} ids, batches of ${size}, ${values.every}s apart`);
+  console.log(`apply: ${queue.length} ids, batches of ${size}, ${everyMs / 1000}s apart`);
   const result = await runBatches(chunksFrom(queue, size), everyMs, {
     insert: (chunk) => dbWrite.$executeRaw(insertRetryRowsSql(chunk, new Date())),
     pending: async (chunk) =>
