@@ -45,8 +45,15 @@ const { listAvailableListings } = await import('~/server/services/blocks/app-lis
 
 const DEV = 4101;
 const OTHER_DEV = 4202;
+/** A banned developer: their apps leave the store with them (`storeOwnerEligibleWhere`). */
+const BANNED_DEV = 4303;
 
 const SCHEMA = (withVisibility: boolean) => `
+  -- The listing owners: the store predicate admits a listing only while its owner exists and is
+  -- neither banned nor deleted.
+  CREATE TABLE "User" ("id" INT PRIMARY KEY, "bannedAt" TIMESTAMPTZ, "deletedAt" TIMESTAMPTZ);
+  INSERT INTO "User" ("id", "bannedAt") VALUES
+    (${DEV}, NULL), (${OTHER_DEV}, NULL), (${BANNED_DEV}, now());
   CREATE TABLE "app_blocks" (
     "id" TEXT PRIMARY KEY,
     "current_version_deployed_at" TIMESTAMPTZ
@@ -84,7 +91,8 @@ async function seed(pg: PGlite) {
     INSERT INTO "app_blocks" ("id", "current_version_deployed_at") VALUES
       ('ab_v1', now()), ('ab_v3', now()), ('ab_private', now()), ('ab_draft', now()),
       ('ab_removed', now()), ('ab_mature', now()), ('ab_pending', now()),
-      ('ab_undeployed', NULL), ('ab_rejected', now()), ('ab_other', now());
+      ('ab_undeployed', NULL), ('ab_rejected', now()), ('ab_other', now()),
+      ('ab_banned', now());
     INSERT INTO "app_listings"
       ("id", "slug", "name", "kind", "status", "visibility", "content_rating", "user_id", "app_block_id", "revision_of_id")
     VALUES
@@ -102,7 +110,9 @@ async function seed(pg: PGlite) {
       -- A shadow revision of a visible app: a draft with a public level, never a store row.
       ('apl_dev_revision', 'dev-revision', 'Dev One (revision)', 'onsite', 'draft', 'public', 'g', ${DEV}, NULL, 'apl_dev_v1'),
       -- Another developer's visible app.
-      ('apl_other_v1', 'other-v1', 'Other One', 'onsite', 'approved', NULL, 'g', ${OTHER_DEV}, 'ab_other', NULL);
+      ('apl_other_v1', 'other-v1', 'Other One', 'onsite', 'approved', NULL, 'g', ${OTHER_DEV}, 'ab_other', NULL),
+      -- A banned developer's otherwise store-visible app.
+      ('apl_banned_v1', 'banned-v1', 'Banned One', 'onsite', 'approved', NULL, 'g', ${BANNED_DEV}, 'ab_banned', NULL);
     INSERT INTO "app_listing_metrics"
       ("app_listing_id", "thumbs_up_count", "thumbs_down_count", "install_count", "open_count")
     VALUES
@@ -117,7 +127,8 @@ async function seed(pg: PGlite) {
       ('apl_dev_undeployed', 2000, 0, 0, 0),
       ('apl_dev_rejected', 4000, 0, 0, 0),
       ('apl_dev_revision', 8000, 0, 0, 0),
-      ('apl_other_v1', 16000, 0, 0, 0);
+      ('apl_other_v1', 16000, 0, 0, 0),
+      ('apl_banned_v1', 32000, 0, 0, 0);
   `);
 }
 
@@ -154,6 +165,13 @@ describe('with the visibility column', () => {
     await expect(getDeveloperTrackRecord({ userId: OTHER_DEV, ...sfwPublic })).resolves.toEqual({
       appCount: 1,
       reviewCount: 16000,
+    });
+  });
+
+  it("🔴 a banned developer's apps are not counted: their record is empty", async () => {
+    await expect(getDeveloperTrackRecord({ userId: BANNED_DEV, ...sfwPublic })).resolves.toEqual({
+      appCount: 0,
+      reviewCount: 0,
     });
   });
 
@@ -201,6 +219,18 @@ describe('with the visibility column', () => {
     expect(page!.rows.map((r) => r.id).sort()).toEqual([...VISIBLE].sort());
   });
 
+  it("🔴 a banned developer's rail is empty", async () => {
+    await listAvailableListings(
+      { kind: 'all', sort: 'popular', limit: 10, userId: BANNED_DEV },
+      sfwPublic
+    ).catch(() => undefined);
+    const page = h.pages.find((p) => p.key.startsWith('listAvailableAppListings:'));
+    expect(page, 'the rail never read its id page').toBeDefined();
+    expect(page!.rows).toEqual([]);
+  });
+
+  // Also shows the banned developer's app is out of the unfiltered store page, while the
+  // identically shaped app of an active developer is in it.
   it('positive control: without the developer the same page includes other developers', async () => {
     await listAvailableListings({ kind: 'all', sort: 'popular', limit: 10 }, sfwPublic).catch(
       () => undefined
