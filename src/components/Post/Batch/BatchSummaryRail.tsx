@@ -9,7 +9,16 @@ import { SchedulePreview } from './SchedulePreview';
 
 export type BatchSummaryRailProps = {
   variant: 'desktop' | 'mobile';
-  totals: { uploaded: number; eligible: number; posts: number; excluded: number };
+  totals: {
+    uploaded: number;
+    eligible: number;
+    posts: number;
+    excluded: number;
+    blocked: number;
+    scanning: number;
+  };
+  /** "12 PG · 3 PG-13 · 1 R" over the rated media; empty until a scan finishes. */
+  levels: string;
   first: Date | null;
   last: Date | null;
   cadence: string;
@@ -53,7 +62,7 @@ export function BatchSummaryRail(props: BatchSummaryRailProps) {
   );
 }
 
-function Totals({ totals, first, last, cadence }: BatchSummaryRailProps) {
+function Totals({ totals, levels, first, last, cadence }: BatchSummaryRailProps) {
   return (
     <div className="flex flex-col gap-0.5" data-testid="batch-totals">
       <Text fw={600}>
@@ -63,6 +72,18 @@ function Totals({ totals, first, last, cadence }: BatchSummaryRailProps) {
       {totals.excluded > 0 && (
         <Text size="sm" c="dimmed">
           {totals.eligible} of {totals.uploaded} will be posted.
+        </Text>
+      )}
+      {(levels || totals.scanning > 0) && (
+        <Text size="sm" c="dimmed" data-testid="batch-levels">
+          {[levels, totals.scanning > 0 ? `${totals.scanning} still scanning` : '']
+            .filter(Boolean)
+            .join(' · ')}
+        </Text>
+      )}
+      {totals.blocked > 0 && (
+        <Text size="sm" c="red" data-testid="batch-blocked">
+          {totals.blocked} blocked and won&apos;t be posted.
         </Text>
       )}
       {first && last && (

@@ -171,6 +171,7 @@ import { userScoreHealthCheckJob } from '~/server/jobs/user-score-health-check';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
+import { batchDraftImagesCleanup } from '~/server/jobs/batch-draft-images';
 import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
 import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
 import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
@@ -218,6 +219,7 @@ export const jobs: Job[] = [
   cdnAccessSync,
   cdnAccessReconcile,
   removeReplacedImages,
+  batchDraftImagesCleanup,
   purgeFeedbackCaptures,
   retryImageStorageDeletes,
   retryUploadPromptScansJob,
