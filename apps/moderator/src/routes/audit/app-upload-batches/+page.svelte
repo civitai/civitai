@@ -15,8 +15,8 @@
 <header class="page-header">
   <h1>App Upload Batches</h1>
   <p>
-    Private files apps uploaded for a viewer in one confirmed batch. Each batch is kept 7 days from
-    when it started.
+    Private files apps uploaded for a viewer in one confirmed batch. The files are kept for at least
+    30 days from when the batch started.
   </p>
 </header>
 

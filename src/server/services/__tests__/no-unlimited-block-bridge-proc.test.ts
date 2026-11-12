@@ -232,7 +232,7 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   startMediaUploadBatch: {
     buckets: [],
-    why: 'NONE OF THESE BUCKETS. Charged the viewer’s own UTC-day batch quota instead (1,200 files and 5 GiB across all apps, sysRedis, fail-closed) in media-upload-batch.service, which this file’s derivation does not read; pinned in media-upload-batch.service.test.ts.',
+    why: 'NONE OF THESE BUCKETS. Charged the viewer’s own UTC-day batch quota instead (1,200 files and 10 GiB across all apps, sysRedis, fail-closed) in media-upload-batch.service, which this file’s derivation does not read; pinned in media-upload-batch.service.test.ts.',
   },
   submitWorkflow: {
     buckets: ['submit', 'submit-user'],

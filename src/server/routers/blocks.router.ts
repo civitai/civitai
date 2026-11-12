@@ -449,6 +449,7 @@ import {
   MEDIA_UPLOAD_BATCH_DISABLED_ERROR,
   MEDIA_UPLOAD_BATCH_MAX_BYTES,
   MEDIA_UPLOAD_BATCH_MAX_ITEMS,
+  MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR,
 } from '~/shared/constants/media-upload-batch.constants';
 
 // G6 — the terminal orchestrator states (as mapped onto the block-contract
@@ -6040,7 +6041,7 @@ export const blocksRouter = router({
           .refine(
             (items) =>
               items.reduce((sum, i) => sum + i.sizeBytes, 0) <= MEDIA_UPLOAD_BATCH_MAX_BYTES,
-            { message: 'the batch exceeds the 5 GB limit' }
+            { message: MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR }
           ),
       })
     )

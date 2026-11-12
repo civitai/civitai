@@ -55,7 +55,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const VIEWER_ID = 42;
 const OTHER_USER_ID = 7;
-const EXPIRES = new Date('2026-11-18T10:00:00.000Z');
+const EXPIRES = new Date('2026-12-11T10:00:00.000Z');
 
 function claims(over: Record<string, unknown> = {}) {
   return {
@@ -122,7 +122,7 @@ describe('blocks.*MediaUploadBatch*', () => {
   it('start records the TOKEN’s app identity and the token subject', async () => {
     await expect(calls.start()).resolves.toEqual({
       batchId: 91,
-      expiresAt: '2026-11-18T10:00:00.000Z',
+      expiresAt: '2026-12-11T10:00:00.000Z',
     });
     expect(h.start).toHaveBeenCalledWith({
       actor: {
@@ -146,7 +146,7 @@ describe('blocks.*MediaUploadBatch*', () => {
   });
 
   it('record appends to this viewer’s batch for this app', async () => {
-    await expect(calls.record()).resolves.toEqual({ expiresAt: '2026-11-18T10:00:00.000Z' });
+    await expect(calls.record()).resolves.toEqual({ expiresAt: '2026-12-11T10:00:00.000Z' });
     expect(h.record).toHaveBeenCalledWith({
       actor: { userId: VIEWER_ID, appBlockId: 'apb_alpha' },
       batchId: 91,

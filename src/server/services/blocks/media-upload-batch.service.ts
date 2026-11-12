@@ -6,7 +6,7 @@ import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/
 import {
   MEDIA_UPLOAD_BATCH_DAILY_BYTES,
   MEDIA_UPLOAD_BATCH_DAILY_ITEMS,
-  MEDIA_UPLOAD_BATCH_TTL_MS,
+  MEDIA_UPLOAD_BATCH_RETENTION_MS,
   MEDIA_UPLOAD_BATCH_UNAVAILABLE_ERROR,
   mediaUploadBatchQuotaError,
 } from '~/shared/constants/media-upload-batch.constants';
@@ -27,10 +27,10 @@ import {
  * in step 2 is bounded per file the batch declared, so a batch cannot upload more files than it
  * was charged for.
  *
- * EXPIRY: the files are meant to expire `MEDIA_UPLOAD_BATCH_TTL_MS` after the batch starts, and the
- * row records that as `expires_at`. The orchestrator can pin a blob's expiry, but exposes no HTTP
- * endpoint for it, so nothing here sets it: each file keeps the orchestrator's default expiry until
- * it does.
+ * EXPIRY: nothing here pins a file's expiry (the orchestrator exposes no endpoint for it), so each
+ * file keeps the orchestrator's default consumer-blob retention, at least 30 days. The row records
+ * `expires_at` = start + `MEDIA_UPLOAD_BATCH_RETENTION_MS` as that lower bound, not as a deletion
+ * time.
  */
 
 /** Upload URLs one file may take: its first try and the client's one retry. */
@@ -129,7 +129,7 @@ export async function startMediaUploadBatch({
 }): Promise<{ batchId: number; expiresAt: Date }> {
   const totalBytes = items.reduce((sum, item) => sum + item.sizeBytes, 0);
   const release = await reserveMediaUploadBatchQuota(actor.userId, items.length, totalBytes, now);
-  const expiresAt = new Date(now.getTime() + MEDIA_UPLOAD_BATCH_TTL_MS);
+  const expiresAt = new Date(now.getTime() + MEDIA_UPLOAD_BATCH_RETENTION_MS);
   try {
     const app = await dbRead.appBlock.findUnique({
       where: { id: actor.appBlockId },

@@ -14,14 +14,20 @@ export const MEDIA_UPLOAD_BATCH_MAX_ITEMS = 1200;
  */
 export const MEDIA_UPLOAD_BATCH_DAILY_ITEMS = 1200;
 
-/** Raw bytes one viewer may upload through batches per UTC day, across all apps. Adjustable. */
-export const MEDIA_UPLOAD_BATCH_DAILY_BYTES = 5 * 1024 ** 3;
+/** Raw bytes one viewer may upload through batches per UTC day, across all apps: 10 GiB. Adjustable. */
+export const MEDIA_UPLOAD_BATCH_DAILY_BYTES = 10 * 1024 ** 3;
 
 /** Raw bytes one batch may hold: a whole day's byte quota. */
 export const MEDIA_UPLOAD_BATCH_MAX_BYTES = MEDIA_UPLOAD_BATCH_DAILY_BYTES;
+/** The refusal for a batch over `MEDIA_UPLOAD_BATCH_MAX_BYTES`. The SDK's mock host spells the same. */
+export const MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR = 'the batch exceeds the 10 GB limit';
 
-/** How long a batch's files are meant to be kept, from when the batch started. */
-export const MEDIA_UPLOAD_BATCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * How long a batch's files are kept at least, from when the batch started: the orchestrator's default
+ * consumer-blob retention (30 days, renewed when a blob is refreshed). Nothing here pins it; this is
+ * the `expires_at` the audit row records, not a promise of deletion.
+ */
+export const MEDIA_UPLOAD_BATCH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** How many of a batch's files the page host uploads at once. */
 export const MEDIA_UPLOAD_BATCH_CONCURRENCY = 3;

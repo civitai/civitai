@@ -80,7 +80,7 @@ const baseProps = {
 };
 
 const WAV_MS = 250;
-const EXPIRES_AT = '2026-11-18T10:00:00.000Z';
+const EXPIRES_AT = '2026-12-11T10:00:00.000Z';
 const GIF = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0, 0]).buffer;
 
 function makeWav(ms: number): ArrayBuffer {
@@ -348,7 +348,7 @@ describe('PageBlockHost OPEN_MEDIA_UPLOAD_BATCH — validation, scan and limits'
   test('a batch the server refuses (the daily quota) uploads nothing and relays the reason', async () => {
     const replies = await mountReady();
     const quota =
-      "You've reached today's batch upload limit (1,200 files or 5 GB). It resets at midnight UTC.";
+      "You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC.";
     h.start.mockRejectedValueOnce(
       Object.assign(new Error(quota), { data: { code: 'TOO_MANY_REQUESTS', httpStatus: 429 } })
     );

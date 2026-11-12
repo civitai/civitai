@@ -12,6 +12,7 @@
 import {
   MEDIA_UPLOAD_BATCH_MAX_BYTES,
   MEDIA_UPLOAD_BATCH_MAX_ITEMS,
+  MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR,
 } from '~/shared/constants/media-upload-batch.constants';
 import {
   MEDIA_UPLOAD_FAILED_ERROR,
@@ -28,7 +29,7 @@ import {
 
 export const MEDIA_UPLOAD_BATCH_INVALID_ERROR = 'invalid media-upload batch request';
 export const MEDIA_UPLOAD_BATCH_COUNT_ERROR = `a batch holds 1 to ${MEDIA_UPLOAD_BATCH_MAX_ITEMS} files`;
-export const MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR = 'the batch exceeds the 5 GB limit';
+export { MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR };
 
 /** One item that passed the per-file checks, ready to upload. */
 export type MediaUploadBatchFile = {
@@ -152,7 +153,7 @@ export function buildMediaUploadBatchConfirmCopy(args: {
     title: 'Upload files?',
     message: `Upload ${noun} (${formatMegabytes(
       bytes
-    )}) for ${app}? They are uploaded privately to your account, checked by our content scan, and kept for 7 days.`,
+    )}) for ${app}? They are uploaded privately to your account, checked by our content scan, and kept for at least 30 days.`,
     confirmLabel: 'Upload',
   };
 }

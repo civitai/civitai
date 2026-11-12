@@ -70,16 +70,23 @@ describe('resolveMediaUploadBatchRequest — the whole batch', () => {
     });
   });
 
-  it('admits exactly 5 GiB in total and refuses one byte more', () => {
-    // 1,024 × 5 MiB = 5 GiB. One shared buffer, so the fixture holds 10 MiB, not 5 GiB.
-    const fiveMiB = buf(PNG, 5 * 1024 * 1024);
-    const items = Array.from({ length: 1024 }, () => ({ kind: 'image', bytes: fiveMiB }));
+  it('admits exactly 10 GiB in total and refuses one byte more', () => {
+    // 1,024 × 10 MiB = 10 GiB (10,737,418,240 bytes). One shared buffer, so the fixture holds
+    // 20 MiB, not 10 GiB.
+    const tenMiB = buf(PNG, 10_485_760);
+    const items = Array.from({ length: 1024 }, () => ({ kind: 'image', bytes: tenMiB }));
     expect(plan(req(items)).files).toHaveLength(1024);
-    const over = [...items.slice(1), { kind: 'image', bytes: buf(PNG, 5 * 1024 * 1024 + 1) }];
+    const over = [...items.slice(1), { kind: 'image', bytes: buf(PNG, 10_485_761) }];
     expect(resolveMediaUploadBatchRequest(req(over))).toMatchObject({
       kind: 'refuse',
-      error: 'the batch exceeds the 5 GB limit',
+      error: 'the batch exceeds the 10 GB limit',
     });
+  });
+
+  it('admits a batch between 5 GiB and 10 GiB (about 6.8 GiB)', () => {
+    const tenMiB = buf(PNG, 10_485_760);
+    const items = Array.from({ length: 700 }, () => ({ kind: 'image', bytes: tenMiB }));
+    expect(plan(req(items)).files).toHaveLength(700);
   });
 });
 
@@ -220,9 +227,9 @@ describe('buildMediaUploadBatchConfirmCopy', () => {
       kind: 'image' as const,
       bytes: new ArrayBuffer(Math.round(3.9 * 1024 * 1024)),
     }));
-    expect(buildMediaUploadBatchConfirmCopy({ appName: 'Caption Lab', files }).message).toMatch(
-      /^Upload 80 images \(312 MB\) for “Caption Lab”\?/
-    );
+    const { message } = buildMediaUploadBatchConfirmCopy({ appName: 'Caption Lab', files });
+    expect(message).toMatch(/^Upload 80 images \(312 MB\) for “Caption Lab”\?/);
+    expect(message).toContain('kept for at least 30 days');
   });
 
   it('says "files" for a mix of kinds and "this app" with no name', () => {

@@ -25,7 +25,6 @@ const USER = 42;
 const ACTOR = { userId: USER, appBlockId: 'apb_alpha', appId: 'app_alpha', blockId: 'alpha-app' };
 const NOW = new Date('2026-11-11T10:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
-const GIB = 1024 ** 3;
 
 const counters = new Map<string, number>();
 const missingTable = () =>
@@ -72,20 +71,22 @@ describe('the daily batch quota', () => {
     await expect(reserveMediaUploadBatchQuota(USER, 1, 10, NOW)).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message:
-        "You've reached today's batch upload limit (1,200 files or 5 GB). It resets at midnight UTC.",
+        "You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC.",
     });
     // The refused charge was handed back: the day still reads exactly 1,200.
     expect(used('items')).toBe(1200);
   });
 
-  it('admits 5 GiB in a day and refuses one byte more', async () => {
-    await reserveMediaUploadBatchQuota(USER, 1, 5 * GIB - 1, NOW);
+  it('admits 10 GiB in a day and refuses one byte more', async () => {
+    // 10 GiB = 10,737,418,240 bytes; the first charge alone is above the old 5 GiB cap.
+    await reserveMediaUploadBatchQuota(USER, 1, 6_442_450_944, NOW);
+    await reserveMediaUploadBatchQuota(USER, 1, 4_294_967_295, NOW);
     await reserveMediaUploadBatchQuota(USER, 1, 1, NOW);
     await expect(reserveMediaUploadBatchQuota(USER, 1, 1, NOW)).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
-    expect(used('bytes')).toBe(5 * GIB);
-    expect(used('items')).toBe(2);
+    expect(used('bytes')).toBe(10_737_418_240);
+    expect(used('items')).toBe(3);
   });
 
   it('is per UTC day: a new day starts from zero', async () => {
@@ -118,9 +119,9 @@ describe('the daily batch quota', () => {
 });
 
 describe('startMediaUploadBatch', () => {
-  it('writes the audit row with the token’s app identity and expires_at = start + 7 days', async () => {
+  it('writes the audit row with the token’s app identity and expires_at = start + 30 days', async () => {
     const out = await startMediaUploadBatch({ actor: ACTOR, items: items(3, 2000), now: NOW });
-    const expiresAt = new Date(NOW.getTime() + 7 * DAY_MS);
+    const expiresAt = new Date('2026-12-11T10:00:00.000Z');
     expect(out).toEqual({ batchId: 91, expiresAt });
     expect(dbMock.dbWrite.appBlockUploadBatch.create).toHaveBeenCalledWith({
       data: {
@@ -220,7 +221,7 @@ describe('recordMediaUploadBatchItem', () => {
   const KEY = `${'0123456789abcdef'.repeat(2)}.jpeg`;
 
   it('appends the key and returns the batch’s expiry', async () => {
-    const expiresAt = new Date(NOW.getTime() + 7 * DAY_MS);
+    const expiresAt = new Date('2026-12-11T10:00:00.000Z');
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ expires_at: expiresAt }]);
     await expect(
       recordMediaUploadBatchItem({ actor: ACTOR, batchId: 91, blobKey: KEY, now: NOW })

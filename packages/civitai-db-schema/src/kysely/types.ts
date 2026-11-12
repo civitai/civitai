@@ -434,7 +434,8 @@ export type AppBlockUploadBatch = {
   blob_keys: Generated<string[]>;
   created_at: Generated<Timestamp>;
   /**
-   * When the files are meant to expire: `created_at` + 7 days.
+   * `created_at` + 30 days: the files are kept at least this long (the orchestrator's default
+   * consumer-blob retention). Not a deletion time.
    */
   expires_at: Timestamp;
 };

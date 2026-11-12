@@ -4980,7 +4980,8 @@ model AppBlockUploadBatch {
   /// The consumer blob keys of the files uploaded, in upload-completion order.
   blobKeys     String[] @default([]) @map("blob_keys")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  /// When the files are meant to expire: `created_at` + 7 days.
+  /// `created_at` + 30 days: the files are kept at least this long (the orchestrator's default
+  /// consumer-blob retention). Not a deletion time.
   expiresAt    DateTime @map("expires_at") @db.Timestamptz(6)
 
   @@index([userId, createdAt(sort: Desc)], map: "app_block_upload_batches_user_created_idx")

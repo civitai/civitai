@@ -539,22 +539,23 @@ read that file. As of this writing the families are:
   dataset to caption, say) as private generation inputs, behind ONE confirm in
   host chrome ("Upload 80 images (312 MB) for <app>?"). Request
   `{ requestId, purpose: 'generationSource', items: [{ kind, bytes, mimeType? }] }`,
-  1 to 1,200 items and at most 5 GB in total. Each item is checked exactly as an
+  1 to 1,200 items and at most 10 GB in total. Each item is checked exactly as an
   `OPEN_MEDIA_UPLOAD` bytes upload is, before the confirm, and a refused item is
   answered for that item only; nothing uploads until the viewer confirms. There is
   no per-minute window: the host uploads at most 3 files at a time, and the
-  server charges a per-viewer daily quota across all apps (1,200 files and 5 GB
+  server charges a per-viewer daily quota across all apps (1,200 files and 10 GB
   per UTC day) when the batch starts. Every upload URL is minted with the
   viewer's own orchestrator token, so every file gets the orchestrator's content
   scan, and a blocked file is answered as an error for that item. Each batch is
   recorded for moderators (`app_block_upload_batches`: viewer, app, file count,
-  size, the blob keys, and an `expires_at` 7 days after it started), viewable in
+  size, the blob keys, and an `expires_at` 30 days after it started), viewable in
   the moderator app under Audit → App Upload Batches. The answer is
   `{ requestId, results, expiresAt }` with one `{ index, selected }` or
   `{ index, error }` per item, `{ requestId }` when the viewer declined (or in
   review mode / not ready), or `{ requestId, error }` when the whole batch was
-  refused. ⚠️ The files currently keep the orchestrator's default expiry;
-  `expires_at` is the intended one. Logic:
+  refused. The files keep the orchestrator's default consumer-blob retention,
+  so they are kept for at least 30 days (`expires_at` is that lower bound, not
+  a deletion time; nothing pins a file's expiry yet). Logic:
   `src/components/AppBlocks/mediaUploadBatchLogic.ts` and
   `src/server/services/blocks/media-upload-batch.service.ts`.
 - **Model file contents** (page host only, no scope, session-authed): the host
