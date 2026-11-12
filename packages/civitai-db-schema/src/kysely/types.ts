@@ -3933,6 +3933,7 @@ export type MembershipGift = {
   stripeSubscriptionId: string | null;
   armedCouponId: string | null;
   armedAt: Timestamp | null;
+  revertPriceId: string | null;
   fulfilledAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;

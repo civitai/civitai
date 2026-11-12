@@ -74,7 +74,7 @@ function PendingGiftItem({
           offer.tier
         )}, free for ${offer.months} ${
           offer.months === 1 ? 'month' : 'months'
-        }. After that it renews at the ${capitalize(offer.tier)} price unless you change it.`;
+        }. After that you go back to ${capitalize(offer.fromTier)} at the price you pay now.`;
       case 'value-discount':
         return `Takes ${formatMoney(offer.amountPerMonth, offer.currency)} off each of your next ${
           offer.months
