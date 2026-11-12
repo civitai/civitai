@@ -181,6 +181,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
               Report image
             </Menu.Item>
           </LoginRedirect>
+          <Menu.Divider />
           <HideImageButton as="menu-item" imageId={imageId} />
           {_userId && !isCapture && <HideUserButton as="menu-item" userId={_userId} />}
           {_userId && !isCapture && <BlockUserButton userId={_userId} as="menu-item" />}
