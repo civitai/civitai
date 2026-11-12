@@ -53,6 +53,17 @@ describe('useFeedSearchSync', () => {
     expect(replacedQueries()).toEqual([{ baseModels: 'Illustrious', query: 'red dragon' }]);
   });
 
+  it('waits for a second letter before searching, but clears at once', () => {
+    router.query = { query: 'cat' };
+    const render = mount();
+    hook.markTyped();
+    render({ debouncedSearch: 'r' });
+    expect(router.replace).not.toHaveBeenCalled();
+    render({ debouncedSearch: 're' });
+    render({ debouncedSearch: '' });
+    expect(replacedQueries()).toEqual([{ query: 're' }, {}]);
+  });
+
   it('seeds the bar from a URL it did not write, without writing the URL back', () => {
     router.query = { query: 'red dragon' };
     mount();

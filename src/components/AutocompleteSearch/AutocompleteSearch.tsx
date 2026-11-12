@@ -59,7 +59,11 @@ import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
 import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
-import { resolveSearchTarget } from '~/components/Search/search-target';
+import {
+  offersImageSearch,
+  resolveSearchTarget,
+  searchesImagesFeedInPlace,
+} from '~/components/Search/search-target';
 import {
   buildFeedSearchUrl,
   buildSearchPageUrl,
@@ -151,8 +155,7 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   const pathname = usePathname();
   const currentSection = pathname.split('/')[1] || 'models';
   // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
-  // Feed search answers images from the semantic search on its own, so either flag offers Images.
-  const imageSearchOn = !!features.imageSearch || !!features.feedSearch;
+  const imageSearchOn = offersImageSearch(features);
   const searchTarget = resolveSearchTarget(
     targetData.find((t) => t.value === currentSection)?.value ?? 'models',
     { imageSearch: imageSearchOn }
@@ -304,8 +307,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
 
   // Search v3: on a feed that answers `?query=`, the bar filters that feed as you type.
-  const filtersFeedInPlace =
-    !!features.feedSearch && indexNameProp === 'images' && router.pathname === '/images';
+  const filtersFeedInPlace = searchesImagesFeedInPlace(features, indexNameProp, router.pathname);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 

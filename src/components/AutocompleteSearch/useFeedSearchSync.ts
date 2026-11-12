@@ -2,6 +2,8 @@ import { useRouter } from 'next/router';
 import { useEffect, useRef } from 'react';
 import { nextFeedSearchQuery } from '~/components/AutocompleteSearch/autocomplete-query';
 
+const MIN_TYPED_QUERY_LENGTH = 2;
+
 /**
  * Search v3: keeps the header bar and the feed's `?query=` in step, on a feed that answers it. Only
  * typing writes the URL; a URL change from elsewhere (first load, Back, the feed's Clear search)
@@ -53,7 +55,11 @@ export function useFeedSearchSync({
   }, [enabled, feedQuery]);
 
   useEffect(() => {
-    if (typedSinceSeed.current) apply(debouncedSearch);
+    // Each applied query is a semantic search; a one-letter one finds nothing worth the call.
+    // Emptying the bar still applies at once, and so does Enter.
+    const text = debouncedSearch.trim();
+    if (typedSinceSeed.current && (!text || text.length >= MIN_TYPED_QUERY_LENGTH))
+      apply(debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, debouncedSearch, blocked]);
 

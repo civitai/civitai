@@ -26,3 +26,28 @@ export function resolveSearchTarget(
   if (supported && !supported.includes('models')) return target;
   return 'models';
 }
+
+type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>>;
+
+/**
+ * Images can be searched: on the search pages (`imageSearch`) or on the images feed (`feedSearch`).
+ * `feedSearch` alone is enough, so a rollout of it moves people to the new search.
+ */
+export const offersImageSearch = (features: ImageSearchFlags) =>
+  !!features.imageSearch || !!features.feedSearch;
+
+/** The header bar filters the images feed as you type, rather than opening a search page. */
+export const searchesImagesFeedInPlace = (
+  features: ImageSearchFlags,
+  index: SearchIndexKey,
+  pathname: string
+) => !!features.feedSearch && index === 'images' && pathname === '/images';
+
+/** Where /search/images sends a viewer: the images feed, the models search, or nowhere (it stays). */
+export function legacyImageSearchDestination(
+  features: ImageSearchFlags
+): 'images-feed' | 'models-search' | undefined {
+  if (features.feedSearch) return 'images-feed';
+  if (!features.imageSearch) return 'models-search';
+  return undefined;
+}

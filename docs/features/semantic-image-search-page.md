@@ -72,8 +72,9 @@ shape, and every other index passes through to Meilisearch.
 - An empty query shows a prompt instead of results, and a request refined by a filter the index
   cannot apply yet (aspect ratio, tools, techniques) returns nothing. The sidebar offers browsing
   level, posted date, users, tags and base model.
-- `imageSearch` gates these surfaces too: without it the Images entry is not offered and
-  /search/images redirects to /search/models.
+- `imageSearch` gates these surfaces too: without it, and without `feedSearch`, the Images entry
+  is not offered and /search/images redirects to /search/models. With `feedSearch` on,
+  /search/images redirects to /images instead (below).
 
 ## Search v3: searching the images feed
 

@@ -63,7 +63,8 @@ async function openWhileSearching() {
   await expect.element(page.getByText('Not available while searching')).toBeVisible();
 }
 
-const greyed = (label: string) => page.getByRole('checkbox', { name: label, disabled: true });
+const greyed = (label: string) =>
+  page.getByRole('checkbox', { name: label, exact: true, disabled: true });
 
 describe('MediaFiltersDropdown while a search is set', () => {
   beforeEach(() => {
@@ -73,20 +74,20 @@ describe('MediaFiltersDropdown while a search is set', () => {
   test('greys the filters the search cannot apply instead of offering them', async () => {
     await openWhileSearching();
     await expect.element(greyed('Tools')).toBeInTheDocument();
-    await expect.element(greyed('Remixes only')).toBeInTheDocument();
+    await expect.element(greyed('Remixes Only')).toBeInTheDocument();
     expect(
-      page.getByRole('checkbox', { name: 'Remixes only', disabled: false }).query()
+      page.getByRole('checkbox', { name: 'Remixes Only', exact: true, disabled: false }).query()
     ).toBeNull();
   });
 
   test('a regular viewer gets no moderator filters, greyed or not', async () => {
     await openWhileSearching();
-    expect(greyed('POI only').query()).toBeNull();
+    expect(greyed('POI').query()).toBeNull();
   });
 
   test('a moderator sees their filters greyed too', async () => {
     state.viewer = { id: 1, isModerator: true };
     await openWhileSearching();
-    await expect.element(greyed('POI only')).toBeInTheDocument();
+    await expect.element(greyed('POI')).toBeInTheDocument();
   });
 });

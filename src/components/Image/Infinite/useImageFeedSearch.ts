@@ -1,7 +1,5 @@
-import { useMemo } from 'react';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { normalizeFeedQuery } from '~/components/Image/Infinite/image-feed-search';
-import { useImageQueryParams } from '~/components/Image/image.utils';
+import { useFeedImageItems, useImageQueryParams } from '~/components/Image/image.utils';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
@@ -28,18 +26,7 @@ export function useSemanticImageFeed(input: SemanticImageSearchInput | undefined
     trpc: { context: { skipBatch: true }, abortOnUnmount: true },
   });
 
-  const flatData = useMemo(() => {
-    const seen = new Set<number>();
-    return (data?.pages.flatMap((page) => page.items) ?? []).filter(
-      (item) => !seen.has(item.id) && !!seen.add(item.id)
-    );
-  }, [data]);
-  // The server already leaves out what the viewer hides; this keeps a just-hidden image off the page.
-  const { items } = useApplyHiddenPreferences({
-    type: 'images',
-    data: flatData,
-    isRefetching: rest.isRefetching,
-  });
+  const { items } = useFeedImageItems(data?.pages, { isRefetching: rest.isRefetching });
 
   return { ...rest, images: items, correctedQuery: data?.pages[0]?.correctedQuery };
 }

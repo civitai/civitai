@@ -13,6 +13,7 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { resolveTagIds } from '~/server/services/semantic-search-client';
 import { imageFeedUrlFromLegacySearch } from '~/components/Image/Infinite/image-feed-search';
+import { legacyImageSearchDestination } from '~/components/Search/search-target';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
@@ -234,14 +235,15 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, ctx }) => {
-    if (features?.feedSearch)
+    const destination = legacyImageSearchDestination(features ?? {});
+    if (destination === 'images-feed')
       return {
         redirect: {
           destination: await imageFeedUrlFromLegacySearch(ctx.query, resolveTagIds),
           permanent: false,
         },
       };
-    if (!features?.imageSearch)
+    if (destination === 'models-search')
       return { redirect: { destination: '/search/models', permanent: false } };
   },
 });
