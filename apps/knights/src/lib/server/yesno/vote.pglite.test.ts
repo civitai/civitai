@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
@@ -86,8 +87,10 @@ describe('an answer', () => {
   it('lands in the ledger under the item, pays flat XP at once and holds the gold as pending', async () => {
     const ids = await seed([row('a')]);
     await knights(1);
+    const before = await counterValue('knights_votes_total', { kind: 'yesno' });
 
     expect(await vote(1, ids.a, 'yes')).toEqual({ status: 'recorded' });
+    expect(await counterValue('knights_votes_total', { kind: 'yesno' })).toBe(before + 1);
 
     expect(await votes(ids.a)).toMatchObject([
       {

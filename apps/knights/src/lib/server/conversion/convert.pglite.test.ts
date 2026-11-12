@@ -3,6 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedPlayer, setGold } from '../../../test/seed';
 import { getGoldBalance } from './balance';
@@ -162,6 +163,7 @@ describe('a definitive Buzz rejection', () => {
     const log = vi.fn();
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
+    const failedBefore = await counterValue('knights_buzz_grants_total', { outcome: 'failed' });
 
     expect(await reserveAndSettle(buzz.port, { log })).toEqual({
       status: 'failed',
@@ -176,6 +178,9 @@ describe('a definitive Buzz rejection', () => {
     expect(log).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'knights-gold-conversion-rejected' })
     );
+    expect(await counterValue('knights_buzz_grants_total', { outcome: 'failed' })).toBe(
+      failedBefore + 1
+    );
   });
 
   it('does not block the next conversion', async () => {
@@ -183,10 +188,14 @@ describe('a definitive Buzz rejection', () => {
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
     await reserveAndSettle(buzz.port);
+    const paidBefore = await counterValue('knights_buzz_grants_total', { outcome: 'paid' });
 
     const next = await reserveAndSettle(fakeBuzz().port);
 
     expect(next).toMatchObject({ status: 'converted', buzz: 500 });
+    expect(await counterValue('knights_buzz_grants_total', { outcome: 'paid' })).toBe(
+      paidBefore + 1
+    );
     expect(await row(1)).toEqual({ goldConverted: 10_000 });
   });
 
@@ -217,10 +226,14 @@ describe('a definitive Buzz rejection', () => {
     const log = vi.fn();
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
+    const retryBefore = await counterValue('knights_buzz_grants_total', { outcome: 'retry' });
 
     const result = await reserveAndSettle(fakeBuzz({ failFirst: true }).port, { log });
 
     expect(result.status).toBe('pending');
+    expect(await counterValue('knights_buzz_grants_total', { outcome: 'retry' })).toBe(
+      retryBefore + 1
+    );
     expect(log).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'knights-gold-conversion-unconfirmed' })
     );

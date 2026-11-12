@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import {
@@ -122,7 +123,13 @@ describe('grading', () => {
     for (let i = 1; i <= 5; i++) await player(i);
     await image(10);
     const id = await item(10);
+    const goldBefore = await counterValue('knights_gold_earned_total', { source: 'vote' });
     await resolve(id, 1, '4', 1);
+
+    // Players 1-4 answered right: each earns the base gold.
+    expect(await counterValue('knights_gold_earned_total', { source: 'vote' })).toBe(
+      goldBefore + 4 * PROGRESSION.baseGold
+    );
 
     expect(await who(1)).toMatchObject({
       exp: PROGRESSION.voteXp + PROGRESSION.correctXp,

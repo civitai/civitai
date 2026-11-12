@@ -240,6 +240,35 @@ describe('POST /api/jobs/tick', () => {
   });
 });
 
+describe('POST /api/jobs/tick partial failures', () => {
+  beforeEach(() => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+  });
+
+  it('answers 500 when a rating write-back failed, after running the other steps', async () => {
+    applyPendingResolutions.mockResolvedValue({ applied: 1, failed: 1, rerouted: 0 });
+
+    const response = await run();
+
+    expect(runLabelPass).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(500);
+  });
+
+  it('answers 500 when a shop Buzz grant retry failed', async () => {
+    applyPendingResolutions.mockResolvedValue({ applied: 0, failed: 0, rerouted: 0 });
+    retryPendingConversions.mockResolvedValue({ retried: 2, paid: 1, failed: 1 });
+
+    expect((await run()).status).toBe(500);
+  });
+
+  it('answers 200 when write-backs and Buzz grant retries report no failures', async () => {
+    applyPendingResolutions.mockResolvedValue({ applied: 2, failed: 0, rerouted: 1 });
+    retryPendingConversions.mockResolvedValue({ retried: 2, paid: 2, failed: 0 });
+
+    expect((await run()).status).toBe(200);
+  });
+});
+
 describe('POST /api/jobs/tick shop purchases', () => {
   it('retries membership purchases even while the Buzz kill switch is on', async () => {
     escalateExpired.mockResolvedValue({ escalated: 0 });

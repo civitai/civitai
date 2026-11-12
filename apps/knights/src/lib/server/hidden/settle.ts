@@ -4,6 +4,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import { payOutVotes, type GradedVote } from '../progression/progression';
+import { metrics } from '../metrics';
 import { SMITES } from '../smites/config';
 import { issueSmite, resetNow, type ResetDeps } from '../smites/smites.service';
 import type { HiddenCheckSettings } from './config';
@@ -28,7 +29,7 @@ export async function settleHiddenChecks(
   const { now, settings } = deps;
   const cutoff = new Date(now.getTime() - settings.settleDelayMinutes * 60_000);
 
-  const { graded, failed, xp, resetFor } = await db.transaction().execute(async (trx) => {
+  const { graded, failed, xp, resetFor, verdicts } = await db.transaction().execute(async (trx) => {
     const due: Due[] = await trx
       .selectFrom('KnightsVote')
       .select(['itemId', 'playerId', 'verdict', 'gold', 'createdAt', 'answer'])
@@ -41,7 +42,9 @@ export async function settleHiddenChecks(
       .limit(deps.limit ?? 200)
       .forUpdate()
       .execute();
-    if (due.length === 0) return { graded: 0, failed: 0, xp: [], resetFor: [] as number[] };
+    if (due.length === 0) {
+      return { graded: 0, failed: 0, xp: [], resetFor: [] as number[], verdicts: [] as string[] };
+    }
 
     // A check whose image has since gone (removed, blocked, unpublished) is not graded: nothing is paid or penalised.
     const known = new Map(
@@ -133,9 +136,11 @@ export async function settleHiddenChecks(
       failed: gradedVotes.filter((v) => v.verdict === 'failed').length,
       xp: paid.xp,
       resetFor: [...resetFor],
+      verdicts: gradedVotes.map((v) => v.verdict),
     };
   });
 
+  for (const verdict of verdicts) metrics.hiddenCheckGraded(verdict);
   await mirrorXp(deps.mirrorXp, xp);
   let resets = 0;
   for (const playerId of resetFor) if (await resetNow(playerId, deps)) resets++;

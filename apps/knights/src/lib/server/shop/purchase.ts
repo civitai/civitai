@@ -7,6 +7,7 @@ import type { BuzzPort } from '../conversion/buzz';
 import { spendableOf } from '../conversion/balance';
 import { markForfeited, releaseReservation, settleConversion } from '../conversion/convert';
 import { heldSql } from '../conversion/held';
+import { metrics } from '../metrics';
 import { rankIndex } from '../ranks';
 import {
   PENDING_PURCHASE_ALERT_ATTEMPTS,
@@ -248,7 +249,11 @@ export async function buyItem(
 
   if ('refused' in reserved) return reserved.refused;
   const { purchase, replayed, held } = reserved;
-  return deliver(db, deps, purchase, { replayed, held, now });
+  const result = await deliver(db, deps, purchase, { replayed, held, now });
+  if (!replayed && result.status !== 'refused') {
+    metrics.shopPurchase(purchase.kind, result.status, purchase.gold);
+  }
+  return result;
 }
 
 /** Moves a reserved purchase toward delivered, and says where it stands. Safe to repeat: every downstream call carries the purchase's key. */

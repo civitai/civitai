@@ -87,6 +87,7 @@ export const POST: RequestHandler = async ({ request }) => {
   if (
     !expired.ok ||
     !writeBacks.ok ||
+    writeBacks.value.failed > 0 ||
     !progression.ok ||
     progression.value.failed > 0 ||
     !hidden.ok ||
@@ -96,6 +97,7 @@ export const POST: RequestHandler = async ({ request }) => {
     !resets.ok ||
     resets.value.failed > 0 ||
     !conversions.ok ||
+    conversions.value.failed > 0 ||
     !purchases.ok ||
     !labels.ok
   ) {
