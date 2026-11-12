@@ -85,7 +85,7 @@ visitor as one entity, so a percentage rollout splits signed-in users only.
 
 With it on:
 
-- On /images the header bar filters the feed as you type (`?query=`), answered by
+- On /images the header bar filters the feed on Enter or blur (`?query=`), answered by
   `semanticImageSearch.search`. The feed's filters the index can apply carry into the search; the
   rest are greyed under "Not available while searching". Sort is locked to Best match.
 - /search/images redirects to /images with its query, user, base model and tags.
