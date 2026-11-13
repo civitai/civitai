@@ -28,8 +28,8 @@ import {
 import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { Tooltip } from '~/components/MantineOverlays';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
+import { MUSIC_UP_NEXT_Z_INDEX, PlayerTooltip } from '~/components/MusicPlayer/MusicPlayerLayers';
 import {
   ACCENT,
   accentAt,
@@ -96,7 +96,7 @@ export function MusicUpNextPanel({
   }, [dragId, onClose]);
 
   const ids = useMemo(
-    () => [current.id, ...queued, ...list].map((t) => t.id),
+    () => [...new Set([current, ...queued, ...list].map((t) => t.id))],
     [current, queued, list]
   );
   const covers = useMusicPlayerCovers(ids);
@@ -170,10 +170,11 @@ export function MusicUpNextPanel({
       <section
         ref={setPanel}
         aria-label="Up next"
-        className="fixed right-5 z-[202] flex w-[400px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-2xl border border-gray-4 bg-white shadow-[0_14px_36px_#000000AA] dark:border-dark-3 dark:bg-dark-5"
+        className="fixed right-5 flex w-[400px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-2xl border border-gray-4 bg-white shadow-[0_14px_36px_#000000AA] dark:border-dark-3 dark:bg-dark-5"
         style={
           {
             ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
+            zIndex: MUSIC_UP_NEXT_Z_INDEX,
             bottom: 'calc(112px + var(--safe-area-inset-bottom) + 12px)',
             maxHeight:
               'calc(100dvh - var(--header-height, 0px) - 112px - var(--safe-area-inset-bottom) - 24px)',
@@ -248,7 +249,7 @@ function PanelHeader({ summary }: { summary: string }) {
         <span className={clsx('text-xl font-bold leading-tight', brightText)}>Up next</span>
         <span className={clsx('text-xs', dimmed)}>{summary}</span>
       </div>
-      <Tooltip label="Shuffle">
+      <PlayerTooltip label="Shuffle">
         <button
           type="button"
           aria-label="Shuffle"
@@ -258,8 +259,10 @@ function PanelHeader({ summary }: { summary: string }) {
         >
           <IconArrowsShuffle size={16} />
         </button>
-      </Tooltip>
-      <Tooltip label={repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat'}>
+      </PlayerTooltip>
+      <PlayerTooltip
+        label={repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat'}
+      >
         <button
           type="button"
           aria-label="Repeat"
@@ -269,11 +272,12 @@ function PanelHeader({ summary }: { summary: string }) {
         >
           {repeat === 'one' ? <IconRepeatOnce size={16} /> : <IconRepeat size={16} />}
         </button>
-      </Tooltip>
+      </PlayerTooltip>
       <button
         type="button"
         onClick={() => store().clearUpNext()}
-        className="ml-1 rounded px-1 text-[13px] font-semibold text-blue-6 hover:underline dark:text-blue-4"
+        // Pencil `PPbvV`: blue 3 in dark.
+        className="ml-1 rounded px-1 text-[13px] font-semibold text-blue-6 hover:underline dark:text-blue-3"
       >
         Clear
       </button>
@@ -360,23 +364,25 @@ function UpNextRow({
         cover={cover}
         className={clsx(faded && 'opacity-40')}
         handle={
-          <button
-            ref={setActivatorNodeRef}
-            type="button"
-            {...attributes}
-            {...listeners}
-            aria-label={`Reorder ${title}`}
-            aria-roledescription="sortable"
-            className={clsx(
-              'flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded',
-              dimmed
-            )}
-          >
-            <IconGripVertical size={16} />
-          </button>
+          <PlayerTooltip label="Drag to reorder">
+            <button
+              ref={setActivatorNodeRef}
+              type="button"
+              {...attributes}
+              {...listeners}
+              aria-label={`Reorder ${title}`}
+              aria-roledescription="sortable"
+              className={clsx(
+                'flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded',
+                dimmed
+              )}
+            >
+              <IconGripVertical size={16} />
+            </button>
+          </PlayerTooltip>
         }
         remove={
-          <Tooltip label="Remove">
+          <PlayerTooltip label="Remove">
             <button
               type="button"
               aria-label={`Remove ${title} from up next`}
@@ -385,7 +391,7 @@ function UpNextRow({
             >
               <IconX size={16} />
             </button>
-          </Tooltip>
+          </PlayerTooltip>
         }
       />
       {hint === 'after' && <DropIndicator />}

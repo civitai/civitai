@@ -3,9 +3,10 @@
 import '../../../test/cascade-layer-order.css';
 import '@mantine/core/styles.layer.css';
 import '~/styles/globals.css';
+import { Modal } from '@mantine/core';
 import { encode } from 'blurhash';
 import { act } from 'react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -16,7 +17,6 @@ import type { MusicTrack } from '~/store/music-player.store';
 import type * as Trpc from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({
-  covers: [] as PlayerSongCover[],
   browsingLevel: 1,
   openAddToCollectionModal: vi.fn(),
   seekMusicPlayer: vi.fn(),
@@ -24,15 +24,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
-  return {
-    ...actual,
-    trpc: new Proxy(actual.trpc, {
-      get: (target, key) =>
-        key === 'image'
-          ? { getSongCovers: { useQuery: () => ({ data: mocks.covers }) } }
-          : Reflect.get(target, key),
-    }),
-  };
+  const { withSongCoversStub } = await import('./__tests__/song-covers-trpc-stub');
+  return { ...actual, trpc: withSongCoversStub(actual.trpc) };
 });
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevelProvider>()),
@@ -50,6 +43,9 @@ vi.mock('~/components/MusicPlayer/MusicPlayerAudio', async (importOriginal) => (
   seekMusicPlayer: mocks.seekMusicPlayer,
 }));
 
+import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
+import { DialogProvider, useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
@@ -76,6 +72,11 @@ const coverRated = (nsfwLevel: number): PlayerSongCover => ({
 });
 
 const player = () => useMusicPlayerStore.getState();
+/** The element a pointer at the middle of `el` lands on. */
+const hitAt = (el: Element) => {
+  const { left, top, width, height } = el.getBoundingClientRect();
+  return document.elementFromPoint(left + width / 2, top + height / 2);
+};
 const bar = () => document.querySelector('[data-music-player-bar]') as HTMLElement;
 const button = (name: string) => page.getByRole('button', { name, exact: true });
 
@@ -83,7 +84,7 @@ beforeEach(async () => {
   // The desktop width the bar is drawn for; the phone layout has its own test.
   await page.viewport(1440, 800);
   vi.clearAllMocks();
-  mocks.covers = [];
+  songCovers.reset();
   mocks.browsingLevel = 1;
   window.isAuthed = true;
   player().close();
@@ -146,6 +147,39 @@ describe('the global player bar', () => {
     await expect.element(button('Pause')).toBeInTheDocument();
   });
 
+  test('the small icon buttons light up on hover like the 36px ones', async () => {
+    // The end colour at once, without the fade.
+    const noFade = document.head.appendChild(document.createElement('style'));
+    noFade.textContent = '* { transition: none !important; }';
+    try {
+      await renderWithProviders(<MusicPlayerBar />);
+      const background = (el: Element) => getComputedStyle(el).backgroundColor;
+
+      await userEvent.hover(button('Save'));
+      const hovered = background(button('Save').element());
+      expect(hovered).not.toBe('rgba(0, 0, 0, 0)');
+
+      for (const name of ['Shuffle', 'Previous', 'Next', 'Repeat', 'Mute']) {
+        expect(background(button(name).element())).toBe('rgba(0, 0, 0, 0)');
+        await userEvent.hover(button(name));
+        expect(background(button(name).element())).toBe(hovered);
+      }
+    } finally {
+      noFade.remove();
+    }
+  });
+
+  test('play/pause names itself in a tooltip shown over the bar', async () => {
+    await renderWithProviders(<MusicPlayerBar />);
+
+    await userEvent.hover(button('Pause'));
+    const tooltip = page.getByRole('tooltip', { name: 'Pause' });
+    await expect.element(tooltip).toBeVisible();
+    // Tooltips let the pointer through; take it for the hit test, to see what is on top.
+    (tooltip.element() as HTMLElement).style.pointerEvents = 'auto';
+    expect(tooltip.element().contains(hitAt(tooltip.element()))).toBe(true);
+  });
+
   test('mutes and unmutes from the volume icon', async () => {
     await renderWithProviders(<MusicPlayerBar />);
 
@@ -156,18 +190,18 @@ describe('the global player bar', () => {
   });
 
   test('takes its accent from a shown cover and carries none without one', async () => {
-    mocks.covers = [coverRated(1)];
+    songCovers.served = [coverRated(1)];
     const { rerender } = await renderWithProviders(<MusicPlayerBar />);
     await expect.element(button('Pause')).toBeInTheDocument();
     expect(bar().style.getPropertyValue('--music-accent')).toMatch(/^#[0-9a-f]{6}$/);
 
-    mocks.covers = [];
+    songCovers.served = [];
     await rerender(<MusicPlayerBar />);
     expect(bar().style.getPropertyValue('--music-accent')).toBe('');
   });
 
   test('shows the placeholder and no accent for a cover above the browsing level', async () => {
-    mocks.covers = [coverRated(4)];
+    songCovers.served = [coverRated(4)];
     mocks.browsingLevel = 1;
     const { rerender } = await renderWithProviders(<MusicPlayerBar />);
     await expect.element(page.getByTestId('music-cover-placeholder')).toBeInTheDocument();
@@ -178,6 +212,90 @@ describe('the global player bar', () => {
     await rerender(<MusicPlayerBar />);
     expect(page.getByTestId('music-cover-placeholder').elements()).toHaveLength(0);
     expect(bar().querySelector('img')).not.toBeNull();
+  });
+
+  test('stays above an open dialog: never dimmed, and its controls and Up next still work', async () => {
+    function Lightbox() {
+      const dialog = useDialogContext();
+      return (
+        <Modal {...dialog} title="Lightbox">
+          Image
+        </Modal>
+      );
+    }
+    dialogStore.closeAll();
+    await renderWithProviders(
+      <div className="flex h-screen flex-col">
+        <main className="flex-1">Page</main>
+        <MusicPlayerBar />
+        <DialogProvider />
+      </div>
+    );
+    dialogStore.trigger({ component: Lightbox });
+    await expect.element(page.getByRole('dialog', { name: 'Lightbox' })).toBeVisible();
+
+    const pause = button('Pause').element();
+    expect(pause.contains(hitAt(pause))).toBe(true);
+    await button('Pause').click();
+    expect(player().playing).toBe(false);
+
+    await button('Up next').click();
+    const upNext = page.getByRole('region', { name: 'Up next' }).element();
+    expect(upNext.contains(hitAt(upNext))).toBe(true);
+    dialogStore.closeAll();
+  });
+
+  describe('the waveform download', () => {
+    // A song no other test decoded: decoded peaks are cached per song for the page's lifetime.
+    let songUrl = '';
+    let run = 0;
+    const songRequests = (fetch: ReturnType<typeof vi.spyOn>) =>
+      fetch.mock.calls.filter(([input]) => String(input).includes(songUrl));
+    const listen = (listenedSec: number) =>
+      act(() =>
+        useMusicPlayerStore.setState((s) => ({
+          playback: s.playback && { ...s.playback, listenedSec },
+        }))
+      );
+    let fetch: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      songUrl = `waveform-song-${++run}`;
+      player().playTrack({ ...song, url: songUrl });
+      // Never answers on its own; rejects when aborted.
+      fetch = vi
+        .spyOn(window, 'fetch')
+        .mockImplementation(
+          (_, init) =>
+            new Promise((_, reject) =>
+              init?.signal?.addEventListener('abort', () =>
+                reject(new DOMException('Aborted', 'AbortError'))
+              )
+            )
+        );
+    });
+    afterEach(() => fetch.mockRestore());
+
+    test('starts only after the song has played a second, and stops when the song changes', async () => {
+      await renderWithProviders(<MusicPlayerBar />);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(songRequests(fetch)).toHaveLength(0);
+
+      listen(1.2);
+      await expect.poll(() => songRequests(fetch)).toHaveLength(1);
+      const signal = (songRequests(fetch)[0][1] as RequestInit).signal as AbortSignal;
+      expect(signal.aborted).toBe(false);
+
+      act(() => player().playTrack({ ...song, id: 7, url: 'other-song' }));
+      expect(signal.aborted).toBe(true);
+    });
+
+    test('never starts on the phone bar', async () => {
+      await page.viewport(390, 800);
+      await renderWithProviders(<MusicPlayerBar />);
+      listen(30);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(songRequests(fetch)).toHaveLength(0);
+    });
   });
 
   test('saves the playing song through the image collection flow', async () => {

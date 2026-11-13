@@ -19,6 +19,15 @@ function luminance(hex: string) {
   });
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
+function hue(hex: string) {
+  const [r, g, b] = rgb(hex).map((c) => c / 255);
+  const [max, min] = [Math.max(r, g, b), Math.min(r, g, b)];
+  const d = max - min;
+  if (!d) return 0;
+  const h =
+    max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return h * 60;
+}
 const contrast = (a: string, b: string) => {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
@@ -74,12 +83,22 @@ describe('the artwork accent', () => {
     expect(b).toBeGreaterThan(g);
   });
 
-  it('gives a second colour for the wash, different from the accent', () => {
-    const accent = musicAccentFromHash(flatHash(0xe6, 0x49, 0x80));
+  it.each([
+    ['pink', [0xe6, 0x49, 0x80]],
+    ['teal', [0x0c, 0x85, 0x99]],
+    ['yellow', [255, 230, 0]],
+    ['red', [200, 30, 30]],
+  ] as const)(
+    "gives the wash a darker second colour within the %s artwork's hues",
+    (_, [r, g, b]) => {
+      const accent = musicAccentFromHash(flatHash(r, g, b))!;
 
-    expect(accent!.accent2).toMatch(/^#[0-9a-f]{6}$/);
-    expect(accent!.accent2).not.toBe(accent!.accent);
-  });
+      expect(accent.accent2).toMatch(/^#[0-9a-f]{6}$/);
+      expect(luminance(accent.accent2)).toBeLessThan(luminance(accent.accent));
+      const turn = Math.abs(hue(accent.accent2) - hue(accent.accent)) % 360;
+      expect(Math.min(turn, 360 - turn)).toBeLessThanOrEqual(20);
+    }
+  );
 
   it.each([null, undefined, '', 'not a hash', 'L'])(
     'is null for a missing or invalid hash (%s)',

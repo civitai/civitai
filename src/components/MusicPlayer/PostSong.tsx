@@ -6,7 +6,7 @@ import {
   IconPlaylistAdd,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Menu } from '~/components/MantineOverlays';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { dimmed, SongArt } from '~/components/MusicPlayer/MusicPlayerParts';
 import { useMusicPlayerCovers } from '~/components/MusicPlayer/useMusicPlayerCover';
 import type { MusicTrack } from '~/store/music-player.store';
@@ -73,44 +73,49 @@ export function PostSongTile({
   const playNow = usePlayNow(song, list);
 
   return (
-    <div className="flex items-center gap-4 p-4 pr-14">
-      <SongArt url={cover?.url} width={96} iconSize={40} className="size-24 rounded-xl" />
+    // Right padding clears the card's ⋯ button; under `sm` the cover shrinks so the title has room.
+    <div className="flex items-center gap-3 p-4 pr-11 sm:gap-4 sm:pr-14">
+      <SongArt
+        url={cover?.url}
+        width={96}
+        iconSize={32}
+        className="size-16 rounded-xl sm:size-24"
+      />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="truncate text-lg font-bold leading-tight text-black dark:text-white">
           {title}
         </span>
         <span className={clsx('text-sm', dimmed)}>{formatPlaybackTime(track.durationSec)}</span>
       </div>
-      <button
-        type="button"
-        aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
-        onClick={() => (isCurrent ? store().togglePlay() : playNow())}
-        className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--mantine-primary-color-filled)] text-[var(--mantine-primary-color-contrast)] transition-transform hover:scale-105"
-      >
-        {playing ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
-      </button>
+      <Tooltip label={playing ? 'Pause' : 'Play'}>
+        <button
+          type="button"
+          aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
+          onClick={() => (isCurrent ? store().togglePlay() : playNow())}
+          className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--mantine-primary-color-filled)] text-[var(--mantine-primary-color-contrast)] transition-transform hover:scale-105"
+        >
+          {playing ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
+        </button>
+      </Tooltip>
     </div>
   );
 }
 
 /** The song items of a card's ⋯ menu (Pencil `rUDmm`). */
 export function SongMenuItems({ song, list }: { song: SongImage; list: SongList }) {
-  const item = 'text-[13px]';
   const playNow = usePlayNow(song, list);
   return (
     <>
-      <Menu.Item className={item} leftSection={<IconPlayerPlay size={16} />} onClick={playNow}>
+      <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={playNow}>
         Play now
       </Menu.Item>
       <Menu.Item
-        className={item}
         leftSection={<IconPlaylistAdd size={16} />}
         onClick={() => store().addToUpNext(songTrack(song))}
       >
         Add to up next
       </Menu.Item>
       <Menu.Item
-        className={item}
         leftSection={<IconPlayerTrackNext size={16} />}
         onClick={() => store().playNext(songTrack(song))}
       >

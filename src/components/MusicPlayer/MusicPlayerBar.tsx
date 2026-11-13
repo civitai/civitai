@@ -21,10 +21,10 @@ import { useAudioPeaks } from '~/components/Audio/useAudioPeaks';
 import { WaveformBars } from '~/components/Audio/WaveformBars';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { Tooltip } from '~/components/MantineOverlays';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import { withAlpha } from '~/components/MusicPlayer/music-accent';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
+import { MUSIC_PLAYER_Z_INDEX, PlayerTooltip } from '~/components/MusicPlayer/MusicPlayerLayers';
 import {
   ACCENT,
   accentAt,
@@ -43,9 +43,20 @@ import { CollectionType } from '~/shared/utils/prisma/enums';
 
 const SEEK_STEP_SECONDS = 5;
 const WAVEFORM_BARS = 100;
+// The waveform decode downloads the whole song: wait until it has played this long, so skipping
+// through songs costs nothing.
+const WAVEFORM_AFTER_LISTENED_SEC = 1;
 
-const iconButton =
-  'flex size-9 shrink-0 items-center justify-center rounded-lg text-gray-9 transition-colors hover:bg-gray-1 dark:text-dark-0 dark:hover:bg-dark-5';
+const hoverSurface = 'transition-colors hover:bg-gray-1 dark:hover:bg-dark-5';
+const iconButton = clsx(
+  'flex size-9 shrink-0 items-center justify-center rounded-lg text-gray-9 dark:text-dark-0',
+  hoverSurface
+);
+// The transport's and the volume's small icon buttons: the 36px buttons' hover, in 28px.
+const smallIconButton = clsx(
+  'flex size-7 shrink-0 items-center justify-center rounded-md',
+  hoverSurface
+);
 
 const store = useMusicPlayerStore.getState;
 
@@ -79,7 +90,7 @@ function CompactBar({ track }: { track: MusicTrack }) {
       role="region"
       aria-label="Music player"
       className={clsx(
-        'relative z-[201] flex shrink-0 flex-col overflow-hidden',
+        'relative flex shrink-0 flex-col overflow-hidden',
         !onColour && 'border-t border-gray-3 bg-gray-0 dark:border-dark-4 dark:bg-dark-6'
       )}
       style={
@@ -89,6 +100,7 @@ function CompactBar({ track }: { track: MusicTrack }) {
             '--music-accent-2': accent.accent2,
             background: `linear-gradient(#14151740, #14151740), linear-gradient(90deg, ${accent.accent2}, ${accent.accent})`,
           }),
+          zIndex: MUSIC_PLAYER_Z_INDEX,
           height: 'calc(62px + var(--safe-area-inset-bottom))',
           paddingBottom: 'var(--safe-area-inset-bottom)',
         } as CSSProperties
@@ -173,10 +185,11 @@ function Bar({ track }: { track: MusicTrack }) {
       data-music-player-bar=""
       role="region"
       aria-label="Music player"
-      className="relative z-[201] flex shrink-0 items-center gap-3.5 overflow-hidden border-t border-gray-3 bg-gray-0 px-5 dark:border-dark-4 dark:bg-dark-6"
+      className="relative flex shrink-0 items-center gap-3.5 overflow-hidden border-t border-gray-3 bg-gray-0 px-5 dark:border-dark-4 dark:bg-dark-6"
       style={
         {
           ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
+          zIndex: MUSIC_PLAYER_Z_INDEX,
           // The last in-flow row of `#__next`: the viewport's bottom edge, as the ad bar was.
           height: 'calc(112px + var(--safe-area-inset-bottom))',
           paddingBottom: 'var(--safe-area-inset-bottom)',
@@ -250,55 +263,59 @@ function Transport({ playing }: { playing: boolean }) {
   const toggleColour = (on: boolean) => (on ? { color: ACCENT } : undefined);
   return (
     <div className="flex w-[200px] shrink-0 items-center justify-center gap-2.5">
-      <Tooltip label="Shuffle">
+      <PlayerTooltip label="Shuffle">
         <button
           type="button"
           aria-label="Shuffle"
           aria-pressed={shuffle}
           onClick={() => store().toggleShuffle()}
-          className={clsx('flex size-6 items-center justify-center', !shuffle && dimmed)}
+          className={clsx(smallIconButton, !shuffle && dimmed)}
           style={toggleColour(shuffle)}
         >
           <IconArrowsShuffle size={18} />
         </button>
-      </Tooltip>
+      </PlayerTooltip>
       <button
         type="button"
         aria-label="Previous"
         onClick={() => store().previous()}
-        className="flex size-6 items-center justify-center text-gray-9 dark:text-dark-0"
+        className={clsx(smallIconButton, 'text-gray-9 dark:text-dark-0')}
       >
         <IconPlayerSkipBackFilled size={20} />
       </button>
-      <button
-        type="button"
-        aria-label={playing ? 'Pause' : 'Play'}
-        onClick={() => store().togglePlay()}
-        className="flex size-11 shrink-0 items-center justify-center rounded-full text-white transition-transform hover:scale-105"
-        style={{ backgroundColor: ACCENT }}
-      >
-        {playing ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
-      </button>
+      <PlayerTooltip label={playing ? 'Pause' : 'Play'}>
+        <button
+          type="button"
+          aria-label={playing ? 'Pause' : 'Play'}
+          onClick={() => store().togglePlay()}
+          className="flex size-11 shrink-0 items-center justify-center rounded-full text-white transition-transform hover:scale-105"
+          style={{ backgroundColor: ACCENT }}
+        >
+          {playing ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
+        </button>
+      </PlayerTooltip>
       <button
         type="button"
         aria-label="Next"
         onClick={() => store().next()}
-        className="flex size-6 items-center justify-center text-gray-9 dark:text-dark-0"
+        className={clsx(smallIconButton, 'text-gray-9 dark:text-dark-0')}
       >
         <IconPlayerSkipForwardFilled size={20} />
       </button>
-      <Tooltip label={repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat'}>
+      <PlayerTooltip
+        label={repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat'}
+      >
         <button
           type="button"
           aria-label="Repeat"
           aria-pressed={repeat !== 'off'}
           onClick={() => store().cycleRepeat()}
-          className={clsx('flex size-6 items-center justify-center', repeat === 'off' && dimmed)}
+          className={clsx(smallIconButton, repeat === 'off' && dimmed)}
           style={toggleColour(repeat !== 'off')}
         >
           {repeat === 'one' ? <IconRepeatOnce size={18} /> : <IconRepeat size={18} />}
         </button>
-      </Tooltip>
+      </PlayerTooltip>
     </div>
   );
 }
@@ -309,7 +326,10 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
   const duration = useMusicPlayheadStore((s) => s.duration) || track.durationSec;
   const sliderRef = useRef<HTMLDivElement>(null);
   const { url } = useEdgeUrl(track.url, { type: 'audio' });
-  const peaks = useAudioPeaks(url, WAVEFORM_BARS, sliderRef);
+  const listened = useMusicPlayerStore(
+    (s) => (s.playback?.listenedSec ?? 0) >= WAVEFORM_AFTER_LISTENED_SEC
+  );
+  const peaks = useAudioPeaks(url, WAVEFORM_BARS, sliderRef, { enabled: listened });
   const progress = playbackProgress(currentTime, duration);
   const played = playing ? ACCENT : accentAt(50);
 
@@ -413,16 +433,16 @@ function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | 
         />
       )}
       <div className="flex items-center gap-2 px-1.5">
-        <Tooltip label={muted ? 'Unmute' : 'Mute'}>
+        <PlayerTooltip label={muted ? 'Unmute' : 'Mute'}>
           <button
             type="button"
             aria-label={muted ? 'Unmute' : 'Mute'}
             onClick={() => store().toggleMute()}
-            className="flex size-6 items-center justify-center text-gray-9 dark:text-dark-0"
+            className={clsx(smallIconButton, 'text-gray-9 dark:text-dark-0')}
           >
             {muted ? <IconVolumeOff size={18} /> : <IconVolume size={18} />}
           </button>
-        </Tooltip>
+        </PlayerTooltip>
         <Slider
           w={56}
           className="[--slider-track-bg:theme(colors.gray.4)] dark:[--slider-track-bg:theme(colors.dark.3)]"
@@ -461,7 +481,7 @@ const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconB
   ref
 ) {
   return (
-    <Tooltip label={label}>
+    <PlayerTooltip label={label}>
       <button
         ref={ref}
         type="button"
@@ -471,6 +491,6 @@ const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconB
       >
         {children}
       </button>
-    </Tooltip>
+    </PlayerTooltip>
   );
 });

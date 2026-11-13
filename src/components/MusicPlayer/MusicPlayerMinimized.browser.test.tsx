@@ -10,15 +10,8 @@ import type * as Trpc from '~/utils/trpc';
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
-  return {
-    ...actual,
-    trpc: new Proxy(actual.trpc, {
-      get: (target, key) =>
-        key === 'image'
-          ? { getSongCovers: { useQuery: () => ({ data: [] }) } }
-          : Reflect.get(target, key),
-    }),
-  };
+  const { withSongCoversStub } = await import('./__tests__/song-covers-trpc-stub');
+  return { ...actual, trpc: withSongCoversStub(actual.trpc) };
 });
 vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof ToursProvider>()),

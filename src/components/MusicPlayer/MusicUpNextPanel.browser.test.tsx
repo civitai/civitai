@@ -3,28 +3,27 @@ import '@mantine/core/styles.layer.css';
 import '~/styles/globals.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as ToursProvider from '~/components/Tours/ToursProvider';
 import type { MusicTrack } from '~/store/music-player.store';
 import type * as Trpc from '~/utils/trpc';
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
-  return {
-    ...actual,
-    trpc: new Proxy(actual.trpc, {
-      get: (target, key) =>
-        key === 'image'
-          ? { getSongCovers: { useQuery: () => ({ data: [] }) } }
-          : Reflect.get(target, key),
-    }),
-  };
+  const { withSongCoversStub } = await import('./__tests__/song-covers-trpc-stub');
+  return { ...actual, trpc: withSongCoversStub(actual.trpc) };
 });
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelProvider>()),
+  useBrowsingLevelDebounced: () => 1,
+}));
 vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof ToursProvider>()),
   useTourContext: () => ({ running: false, pauseTour: vi.fn(), activeTour: null }),
 }));
 
+import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 
@@ -60,6 +59,7 @@ async function openPanel() {
 
 beforeEach(async () => {
   await page.viewport(1440, 800);
+  songCovers.reset();
   player().close();
   if (player().shuffle) player().toggleShuffle();
   while (player().repeat !== 'off') player().cycleRepeat();
@@ -109,6 +109,29 @@ describe('the Up next panel', () => {
     ]);
   });
 
+  test('reads the covers of the playing song and of every song in Up next, once each', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm, chrome] } });
+    player().addToUpNext(rain);
+    songCovers.served = [
+      { songId: rain.id, id: 90, url: LOADABLE_IMAGE_DATA_URI, hash: null, nsfwLevel: 1 },
+    ];
+    await openPanel();
+
+    const row = panel().getByRole('button', { name: 'Play Rain on Shibuya' });
+    await expect.poll(() => row.element().querySelector('img')).not.toBeNull();
+    expect(row.getByTestId('music-cover-placeholder').elements()).toHaveLength(0);
+    // A song without a cover keeps the placeholder.
+    await expect
+      .element(
+        panel()
+          .getByRole('button', { name: 'Play Palm Static' })
+          .getByTestId('music-cover-placeholder')
+      )
+      .toBeInTheDocument();
+    expect(songCovers.requests).not.toContain('invalid');
+    expect(songCovers.requests).toContainEqual([nowPlaying.id, rain.id, palm.id, chrome.id]);
+  });
+
   test('counts one song in the singular and says so when nothing is queued', async () => {
     player().playTrack(nowPlaying);
     await openPanel();
@@ -132,6 +155,33 @@ describe('the Up next panel', () => {
     await inPanel('Play Chrome Heart').click();
     expect(player().current?.title).toBe('Chrome Heart');
     expect(player().list).toEqual([]);
+  });
+
+  test('Clear is Civitai blue 3 in dark', async () => {
+    player().playTrack(nowPlaying);
+    await openPanel();
+    const scheme = document.documentElement.getAttribute('data-mantine-color-scheme');
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+    try {
+      expect(getComputedStyle(inPanel('Clear').element()).color).toBe('rgb(116, 192, 252)');
+    } finally {
+      if (scheme) document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+      else document.documentElement.removeAttribute('data-mantine-color-scheme');
+    }
+  });
+
+  test('the drag handle says what it does in a tooltip over the panel', async () => {
+    player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm, chrome] } });
+    await openPanel();
+
+    await userEvent.hover(inPanel('Reorder Chrome Heart'));
+    const tooltip = page.getByRole('tooltip', { name: 'Drag to reorder' });
+    await expect.element(tooltip).toBeVisible();
+    const el = tooltip.element() as HTMLElement;
+    // Tooltips let the pointer through; take it for the hit test, to see what is on top.
+    el.style.pointerEvents = 'auto';
+    const { left, top, width, height } = el.getBoundingClientRect();
+    expect(el.contains(document.elementFromPoint(left + width / 2, top + height / 2))).toBe(true);
   });
 
   test('Clear empties Up next and leaves the song playing', async () => {

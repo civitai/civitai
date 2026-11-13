@@ -1,5 +1,8 @@
+// The real cascade, so the tile lays out as on the site.
+import '../../../../test/cascade-layer-order.css';
+import '@mantine/core/styles.layer.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import type * as Trpc from '~/utils/trpc';
 
 // Browser mode only: the song tile and its menu render real Mantine.
@@ -39,16 +42,19 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
+  const { withSongCoversStub } = await import(
+    '~/components/MusicPlayer/__tests__/song-covers-trpc-stub'
+  );
   return {
     ...actual,
-    trpc: new Proxy(actual.trpc, {
-      get: (target, key) =>
-        key === 'image'
-          ? { getSongCovers: { useQuery: () => ({ data: [] }) } }
-          : key === 'post'
-          ? { get: { useQuery: () => ({ data: { id: 100, title: 'Night Drive' } }) } }
-          : Reflect.get(target, key),
-    }),
+    trpc: withSongCoversStub(
+      new Proxy(actual.trpc, {
+        get: (target, key) =>
+          key === 'post'
+            ? { get: { useQuery: () => ({ data: { id: 100, title: 'Night Drive' } }) } }
+            : Reflect.get(target, key),
+      })
+    ),
   };
 });
 vi.mock('~/components/UserSettings/hooks', async (importOriginal) => ({
@@ -62,7 +68,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
 vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   const ImageGuard2 = ({ children }: any) => <>{children(true)}</>;
   ImageGuard2.BlurToggle = function BlurToggle() {
-    return null;
+    return <span data-testid="rating">PG</span>;
   };
   return { ImageGuard2 };
 });
@@ -87,7 +93,10 @@ vi.mock('~/components/Image/ContextMenu/ImageContextMenu', async () => {
           <Menu.Target>
             <button type="button">Menu {image.id}</button>
           </Menu.Target>
-          <Menu.Dropdown>{leadingMenuItems}</Menu.Dropdown>
+          <Menu.Dropdown>
+            {leadingMenuItems}
+            <Menu.Item>Report</Menu.Item>
+          </Menu.Dropdown>
         </Menu>
       ) : null;
     },
@@ -162,6 +171,49 @@ describe('a song on the post page', () => {
     (items('Add to up next')[0] as HTMLElement).click();
     (items('Play next')[1] as HTMLElement).click();
     expect(ids(player().queued)).toEqual([3, 1]);
+  });
+
+  test('at phone width the tile fits its title beside a 64px cover that carries the rating', async () => {
+    await page.viewport(390, 800);
+    await renderWithProviders(
+      <div className="px-4">
+        <PostImages postId={100} images={[audio(1, 'Paper Lanterns')] as any} />
+      </div>
+    );
+    const title = page.getByText('Paper Lanterns');
+    await expect.element(title).toBeVisible();
+    expect(title.element().scrollWidth).toBeLessThanOrEqual(title.element().clientWidth);
+
+    const cover = page.getByTestId('music-cover-placeholder').element()
+      .parentElement as HTMLElement;
+    const coverBox = cover.getBoundingClientRect();
+    expect(coverBox.width).toBe(64);
+    const rating = page.getByTestId('rating').element().getBoundingClientRect();
+    expect(rating.left).toBeGreaterThanOrEqual(coverBox.left);
+    expect(rating.top).toBeGreaterThanOrEqual(coverBox.top);
+    expect(rating.right).toBeLessThanOrEqual(coverBox.right);
+    expect(rating.bottom).toBeLessThanOrEqual(coverBox.bottom);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+  });
+
+  test('the play button names itself in a tooltip', async () => {
+    await renderWithProviders(
+      <PostImages postId={100} images={[audio(1, 'Paper Lanterns')] as any} />
+    );
+    await userEvent.hover(page.getByRole('button', { name: 'Play Paper Lanterns' }));
+    await expect.element(page.getByRole('tooltip', { name: 'Play' })).toBeVisible();
+  });
+
+  test('the song items are the same size as the rest of the menu', async () => {
+    mocks.menuOpened = true;
+    await renderWithProviders(
+      <PostImages postId={100} images={[audio(1, 'Paper Lanterns')] as any} />
+    );
+    const size = (name: string) =>
+      getComputedStyle(page.getByRole('menuitem', { name, exact: true }).element()).fontSize;
+    await expect.element(page.getByRole('menuitem', { name: 'Report' })).toBeInTheDocument();
+    for (const name of ['Play now', 'Add to up next', 'Play next'])
+      expect(size(name)).toBe(size('Report'));
   });
 
   test('with the flag off, a song renders the native element as before', async () => {

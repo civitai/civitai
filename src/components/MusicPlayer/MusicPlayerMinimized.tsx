@@ -8,8 +8,8 @@ import {
 import clsx from 'clsx';
 import type { CSSProperties, PointerEvent, ReactNode } from 'react';
 import { useRef, useState } from 'react';
-import { Tooltip } from '~/components/MantineOverlays';
 import { pixelsToPosition, positionToPixels } from '~/components/MusicPlayer/minimized-position';
+import { MUSIC_PLAYER_Z_INDEX, PlayerTooltip } from '~/components/MusicPlayer/MusicPlayerLayers';
 import { ACCENT, accentAt, SongArt } from '~/components/MusicPlayer/MusicPlayerParts';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import type { MusicTrack } from '~/store/music-player.store';
@@ -111,11 +111,12 @@ function Minimized({ track }: { track: MusicTrack }) {
       data-music-player-minimized=""
       role="region"
       aria-label="Music player"
-      className="group fixed z-[201] size-20 cursor-grab touch-none select-none active:cursor-grabbing"
+      className="group fixed size-20 cursor-grab touch-none select-none active:cursor-grabbing"
       style={
         {
           ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
           ...placement,
+          zIndex: MUSIC_PLAYER_Z_INDEX,
         } as CSSProperties
       }
       onPointerDown={onPointerDown}
@@ -203,7 +204,7 @@ function CornerButton({
   children: ReactNode;
 }) {
   return (
-    <Tooltip label={label}>
+    <PlayerTooltip label={label}>
       <button
         type="button"
         aria-label={label}
@@ -215,6 +216,6 @@ function CornerButton({
       >
         {children}
       </button>
-    </Tooltip>
+    </PlayerTooltip>
   );
 }

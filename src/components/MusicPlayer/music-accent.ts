@@ -49,8 +49,9 @@ const toHex = (rgb: number[]) => `#${rgb.map((c) => c.toString(16).padStart(2, '
 const MIN_LUMINANCE = 0.17;
 const MAX_LUMINANCE = 0.27;
 const MAX_SATURATION = 0.85;
-// The wash's second colour: the accent's hue turned towards violet, as the sample song's pair is.
-const SECOND_HUE_SHIFT = -84;
+// The wash's second colour stays inside the artwork's hues: the same hue, turned a little and darker.
+const SECOND_HUE_SHIFT = -12;
+const SECOND_LIGHTNESS = 0.7;
 
 /** `hsl` with its lightness moved until its luminance reaches `target`. */
 function withLuminance(hsl: { h: number; s: number; l: number }, target: number) {
@@ -79,7 +80,11 @@ export function musicAccentFromHash(hash: string | null | undefined): MusicAccen
   if (lum < MIN_LUMINANCE) hsl = withLuminance(hsl, MIN_LUMINANCE);
   else if (lum > MAX_LUMINANCE) hsl = withLuminance(hsl, MAX_LUMINANCE);
 
-  const second = { ...hsl, h: (hsl.h + SECOND_HUE_SHIFT + 360) % 360 };
+  const second = {
+    ...hsl,
+    h: (hsl.h + SECOND_HUE_SHIFT + 360) % 360,
+    l: hsl.l * SECOND_LIGHTNESS,
+  };
   return { accent: toHex(hslToRgb(hsl)), accent2: toHex(hslToRgb(second)) };
 }
 

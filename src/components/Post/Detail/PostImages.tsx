@@ -151,7 +151,13 @@ export function PostImages({
                             <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
                             <Group
                               gap={4}
-                              className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+                              className={clsx(
+                                'absolute z-10',
+                                // A song's rating sits on its cover, which the tile insets by 16px.
+                                isSong
+                                  ? 'left-6 top-6'
+                                  : 'left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2'
+                              )}
                               style={imageMediaHatClearLeft(
                                 showEventCosmetics ? image.eventDecoration : null,
                                 true
