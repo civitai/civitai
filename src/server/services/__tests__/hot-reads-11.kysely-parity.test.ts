@@ -28,7 +28,10 @@ import {
  * the Prisma metric reads have no `select`, so their rows also carry every other column, which the
  * shared type hides and the caller never reads). Prisma has no `orderBy`, so the metric and meta
  * lists are compared sorted by key; the linked components are ALSO compared in order, on rows
- * inserted in key order, because the caller keeps the last VAE row per version.
+ * inserted in key order and never updated, because the caller keeps the last VAE row per version.
+ * That is parity on a fresh heap only: once a linked row is UPDATEd, Prisma's unordered read can
+ * return it out of key order, so for a version with several linked VAE rows the two paths may pick
+ * different VAEs (OFF: arbitrary; ON: highest id). This suite does not cover that case.
  *
  * Runs in CI: the `unit` job points KYSELY_HOT_READS_11_PARITY_DATABASE_URL at its throwaway
  * Postgres service, and a test below fails if that wiring is lost. Locally, KYSELY_PARITY_DATABASE_URL
@@ -195,7 +198,8 @@ describe.skipIf(!parityUrl)('hot reads 11: Kysely returns exactly what Prisma re
         (${V_B1}, 'null'),
         (${V_OTHER}, '{"other":1}')
     `);
-    // In key order, so the heap order Prisma's unordered read follows is the key order.
+    // In key order and never updated, so the heap order Prisma's unordered read follows is the
+    // key order here (an UPDATE would move a row and break that).
     await exec(`
       INSERT INTO ${t('RecommendedResource')} (id, "sourceId", "resourceId", settings) VALUES
         (12101, ${V_A1}, 12151, '${JSON.stringify(VAE_1)}'),

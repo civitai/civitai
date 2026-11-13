@@ -27,8 +27,9 @@ import { jsonBuildObject } from './infra/helpers';
 //   matches nothing.
 // - None of the Prisma reads has an `orderBy`. Every aggregate here is ordered by its table's key.
 //   Only the linked-component order can matter to the caller (it keeps the LAST VAE row per
-//   version), and key order is the order Prisma's unordered read gives on a heap filled in
-//   insertion order.
+//   version). That order is NOT guaranteed equal: Prisma's unordered read follows heap order,
+//   which is key order only until a row is UPDATEd (an update moves it), so for a version with
+//   several linked VAE rows the OFF path's pick is arbitrary and this path's is the highest id.
 //
 // Relations: base tables only, none declared `/// @view`.
 

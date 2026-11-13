@@ -91,8 +91,9 @@ export async function readModelsWithVersionsStatsViaKysely(
   const row = await getModelsWithVersionsStatsRow(db, ids);
   return {
     vaeLinkedRows: row.vaeLinks as ModelsWithVersionsStats['vaeLinkedRows'],
-    metrics: row.modelMetrics,
-    versionMetrics: row.versionMetrics,
+    // A scalar subquery is typed nullable; `coalesce(…, '[]')` means it never is at runtime.
+    metrics: row.modelMetrics ?? [],
+    versionMetrics: row.versionMetrics ?? [],
     versionMetaRows: row.versionMeta as ModelsWithVersionsStats['versionMetaRows'],
   };
 }
