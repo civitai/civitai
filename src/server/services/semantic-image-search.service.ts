@@ -175,7 +175,7 @@ export async function searchSemanticImages({
       lte: input.postedBefore?.toISOString(),
     },
     // The licence rule (no NSFW on a restricted base model) is left to hydration, which applies it
-    // to every image; as a nested must_not it cost Qdrant several times the rest of the filter.
+    // to every image.
   };
 
   const query: SearchQuery = input.imageId
