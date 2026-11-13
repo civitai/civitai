@@ -8,6 +8,9 @@ import { getRedis } from './clients/redis';
 import { health } from './health';
 import { redisErrorsTotal } from './metrics';
 
+/** What {@link redisWithin} saw: the value, or that the call failed or ran out of time. */
+export type RedisSettled<T> = { ok: true; value: T } | { ok: false; reason: 'error' | 'timeout' };
+
 const NOTIFICATION_CACHE_TIME = 60 * 60 * 24 * 7; // one week
 // Written only by setUser, in the same EVAL as the counts. A hash without it was assembled by increments
 // (or by a build before this field existed) and is not the user's whole count. Its value is "0" so a build
@@ -32,7 +35,7 @@ function userKey(userId: number) {
  * `.catch()` degrade to no-op); this makes it scrapeable via `notifications_redis_errors_total{operation}`
  * and feeds each outcome to the /health redis check.
  */
-async function withRedisErrorCount<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+export async function withRedisErrorCount<T>(operation: string, fn: () => Promise<T>): Promise<T> {
   try {
     const result = await fn();
     health.recordRedisSuccess();
@@ -41,6 +44,39 @@ async function withRedisErrorCount<T>(operation: string, fn: () => Promise<T>): 
     redisErrorsTotal.inc({ operation });
     health.recordRedisFailure();
     throw err;
+  }
+}
+
+/**
+ * Settle one best-effort redis call within `ms`, never throwing, for a caller that routes around the
+ * failure (the worker's counter bump, the count path). A timeout is counted exactly as an error is —
+ * `notifications_redis_errors_total{operation}` plus the /health redis signal — so a hung redis is as
+ * visible as a failing one. Errors are counted where the call is made (withRedisErrorCount), not here.
+ * The abandoned call carries on in the background; its late rejection is handled.
+ */
+export async function redisWithin<T>(
+  operation: string,
+  work: () => Promise<T>,
+  ms: number
+): Promise<RedisSettled<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<RedisSettled<T>>((resolve) => {
+    timer = setTimeout(() => {
+      redisErrorsTotal.inc({ operation });
+      health.recordRedisFailure();
+      resolve({ ok: false, reason: 'timeout' });
+    }, ms);
+  });
+  const settled = Promise.resolve()
+    .then(work)
+    .then(
+      (value): RedisSettled<T> => ({ ok: true, value }),
+      (): RedisSettled<T> => ({ ok: false, reason: 'error' })
+    );
+  try {
+    return await Promise.race([settled, timedOut]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

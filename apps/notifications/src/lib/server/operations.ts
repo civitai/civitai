@@ -15,11 +15,10 @@ import type {
   NotificationRow,
 } from '@civitai/notifications';
 import { notifDbRead, notifDbWrite } from './clients/db';
-import { notificationCache, type NotificationCategoryCount } from './cache';
+import { notificationCache, redisWithin, type NotificationCategoryCount } from './cache';
 import { getNotifDbWithoutLag, isWritePool, preventReplicationLag } from './lag';
 import { logToAxiom, safeError } from './clients/axiom';
-import { settleWithin } from './deadline';
-import { countRedisDeadlineMs } from '../../env';
+import { countDbFallbackEnabled, countRedisDeadlineMs } from '../../env';
 
 const bulkBatchSize = 5000;
 
@@ -194,24 +193,33 @@ async function countNotificationsImpl(input: {
   // Check the lag flag BEFORE the cache — if a recent write flagged this user, bust the cache and read
   // the primary to avoid a stale count. Only the cacheable variant interacts with the cache at all.
   //
-  // Every redis call here is bounded and may fail without failing the count: redis holds a cache and a
-  // lag flag, and the DB is the truth. When the lag flag can't be read, read the replica (at worst one
-  // poll interval stale) and leave the cache alone, since a replica count could be the stale one the
-  // flag exists to keep out of it. When a cache call fails, skip the rest of the cache work too.
-  const lag = await settleWithin(() => getNotifDbWithoutLag(userId), countRedisDeadlineMs);
+  // Every redis call here is bounded (countRedisDeadlineMs) and counted when it fails or times out. What
+  // a failure then answers is countDbFallbackEnabled's call: off, an empty count at once (the badge the
+  // main app already shows when this service is down, corrected by the next poll); on, the DB — the
+  // replica when the lag flag is unreadable, leaving the cache alone, since a replica count could be the
+  // stale one the flag exists to keep out of it. After a failed cache call, skip the rest of the cache.
+  const fallback = countDbFallbackEnabled();
+  const lag = await redisWithin('lag', () => getNotifDbWithoutLag(userId), countRedisDeadlineMs);
+  if (!lag.ok && !fallback) return [];
   const db = lag.ok ? lag.value : notifDbRead();
   let useCache = cacheable && lag.ok;
   if (useCache) {
     if (isWritePool(db)) {
-      useCache = (
-        await settleWithin(() => notificationCache.bustUser(userId), countRedisDeadlineMs)
-      ).ok;
+      const bust = await redisWithin(
+        'bustUser',
+        () => notificationCache.bustUser(userId),
+        countRedisDeadlineMs
+      );
+      if (!bust.ok && !fallback) return [];
+      useCache = bust.ok;
     } else {
-      const cached = await settleWithin(
+      const cached = await redisWithin(
+        'get',
         () => notificationCache.getUser(userId),
         countRedisDeadlineMs
       );
       if (cached.ok && cached.value) return cached.value;
+      if (!cached.ok && !fallback) return [];
       useCache = cached.ok;
     }
   }
@@ -239,7 +247,7 @@ async function countNotificationsImpl(input: {
   const truncated = rows.reduce((sum, { count }) => sum + Number(count), 0) > COUNT_ROW_LIMIT;
   const result = truncated ? rows.map((row) => ({ ...row, floor: true })) : rows;
   if (useCache)
-    await settleWithin(() => notificationCache.setUser(userId, result), countRedisDeadlineMs);
+    await redisWithin('set', () => notificationCache.setUser(userId, result), countRedisDeadlineMs);
   return result;
 }
 
