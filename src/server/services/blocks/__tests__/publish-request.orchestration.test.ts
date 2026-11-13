@@ -10,6 +10,7 @@ vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOrig
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import type * as ForgejoService from '~/server/services/blocks/forgejo.service';
 import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
+import type * as PublishRequestFinalise from '~/server/services/blocks/publish-request-finalise.service';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
@@ -263,6 +264,16 @@ const { mockOnNewPendingSubmission, mockDeleteReviewResources } = vi.hoisted(() 
   mockOnNewPendingSubmission: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
   mockDeleteReviewResources: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
 }));
+// Calls through, so every approve here still runs the real final step (holds check included);
+// the spy proves approveRequest reaches it.
+const { finaliseSpy } = vi.hoisted(() => ({ finaliseSpy: { fn: null as unknown } }));
+vi.mock('~/server/services/blocks/publish-request-finalise.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof PublishRequestFinalise>();
+  const fn = vi.fn(actual.finaliseOnsiteApprove);
+  finaliseSpy.fn = fn;
+  return { ...actual, finaliseOnsiteApprove: fn };
+});
+
 vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReviewAutodeployService>()),
   onNewPendingSubmission: (...a: unknown[]) => mockOnNewPendingSubmission(...a),
@@ -2046,6 +2057,7 @@ describe('approveRequest', () => {
 
   it('first-version happy path wires the 4 external systems in order', async () => {
     const { approveRequest } = await import('../publish-request.service');
+    (finaliseSpy.fn as ReturnType<typeof vi.fn>).mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
     mockBundleBuffer.current = await makeValidBundle();
@@ -2058,6 +2070,18 @@ describe('approveRequest', () => {
 
     expect(result.isFirstVersion).toBe(true);
     expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+
+    // 🔴 The approved flip goes through the final hold check, never around it.
+    expect(finaliseSpy.fn).toHaveBeenCalledTimes(1);
+    expect(finaliseSpy.fn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        publishRequestId: 'pubreq_1',
+        reviewerUserId: 999,
+        forgejoCommitSha: 'commit_sha_abc',
+        holdDecision: expect.objectContaining({ slug: 'hello' }),
+      })
+    );
 
     // Order of operations checks
     expect(mockDbWrite.oauthClient.create).toHaveBeenCalledOnce();
@@ -2904,6 +2928,7 @@ describe('approveRequest', () => {
 
   it('subsequent-version happy path skips OauthClient + repo create', async () => {
     const { approveRequest } = await import('../publish-request.service');
+    (finaliseSpy.fn as ReturnType<typeof vi.fn>).mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue({
       id: 'apb_existing',
@@ -2925,6 +2950,18 @@ describe('approveRequest', () => {
 
     expect(result.isFirstVersion).toBe(false);
     expect(result.appBlockId).toBe('apb_existing');
+
+    // 🔴 The approved flip goes through the final hold check, never around it.
+    expect(finaliseSpy.fn).toHaveBeenCalledTimes(1);
+    expect(finaliseSpy.fn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        publishRequestId: 'pubreq_1',
+        reviewerUserId: 999,
+        forgejoCommitSha: 'commit_sha_abc',
+        holdDecision: expect.objectContaining({ slug: 'hello' }),
+      })
+    );
 
     expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
     expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();

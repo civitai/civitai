@@ -10,7 +10,7 @@ vi.mock('~/server/services/blocks/publish-request-holds.service', () => ({
   resolveHoldsAtApprove,
 }));
 
-import { finaliseOnsiteApprove } from '~/server/services/blocks/publish-request.service';
+import { finaliseOnsiteApprove } from '~/server/services/blocks/publish-request-finalise.service';
 import '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 
