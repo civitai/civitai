@@ -128,12 +128,13 @@ export const serverSchema = z
     // 1000: a 1s bound rarely fires on a healthy store and halves what each read costs while the
     // store is hung.
     REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(1000),
-    // Process-wide breaker for the hot request-path reads that opt in with withSysReadBreaker
-    // (redis/sys-read-breaker.ts): after THRESHOLD consecutive failed reads (a timeout or a client/connection
-    // error; an error reply from the store does not count), those
-    // reads reject at once instead of waiting out the deadline, until COOLDOWN passes and one probe
-    // read succeeds. Dark by default — while off, they wait on the client as before. Plain
-    // withSysReadDeadline reads never consult it.
+    // Process-wide breakers for the hot request-path reads (redis/sys-read-breaker.ts): one shared by the
+    // reads that opt in with withSysReadBreaker, and one for the session revocation read alone
+    // (withRevocationReadBreaker); these three settings apply to both. After THRESHOLD consecutive failed
+    // reads through one breaker (a timeout or a client/connection error; an error reply from the store does
+    // not count), its reads reject at once instead of waiting out the deadline, until COOLDOWN passes and
+    // one probe read succeeds. Dark by default — while off, they wait on the client as before. Plain
+    // withSysReadDeadline reads never consult either.
     REDIS_SYS_READ_BREAKER_ENABLED: zc.booleanString.default(false),
     REDIS_SYS_READ_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
     REDIS_SYS_READ_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),
@@ -649,6 +650,9 @@ export const serverSchema = z
     // When saturated, additional calls fail fast with MeiliCallTimeoutError
     // rather than queueing forever and pressuring the event loop.
     MEILI_CALL_CONCURRENCY: z.coerce.number().optional().default(50),
+    // Search-service calls in flight per pod; past it a search gets 429 "Server busy". A safety valve:
+    // one page can need two calls, and the cluster-wide limit belongs in the search service.
+    SEMANTIC_SEARCH_CONCURRENCY: z.coerce.number().int().positive().optional().default(4),
     // Per-backend circuit breaker (see src/server/meilisearch/client.ts). If
     // `MEILI_CIRCUIT_TRIP_THRESHOLD` MeiliCallTimeoutErrors accumulate within
     // `MEILI_CIRCUIT_WINDOW_SECONDS` on a backend, the circuit OPENs and all
@@ -795,6 +799,10 @@ export const serverSchema = z
     BLOCKS_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
     PRESET_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
     TRAINING_STATUS_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
+    // SESSION_REVOCATION_CACHE: a failed session-revocation read still denies a revocation this process
+    // has already read (@civitai/auth createRevocationCheck `markerCache`); off restores the plain
+    // fail-open, with nothing recorded.
+    SESSION_REVOCATION_CACHE: z.string().optional().transform(isEnvSwitchOn),
     // Dark measurement probe for "would a moderation-result cache pay?". Empty/unset = OFF, and
     // deliberately so: it ships inert, gets armed in config, and the metric's ARMING DATE is then
     // visible as the instant its series appear — which is the only thing that distinguishes "no

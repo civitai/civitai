@@ -1,4 +1,5 @@
 import { setWithSpanSkipUnsampledGate } from '@civitai/telemetry/otel-helpers';
+import { setRootPresampleGate } from '~/server/otel-root-presample-state';
 import {
   ensureFliptInitialized,
   FLIPT_FEATURE_FLAGS,
@@ -60,5 +61,16 @@ export function readFliptSwitch(flag: () => FlagKey): () => boolean | null {
 export function registerWithSpanSkipUnsampledGate(): void {
   setWithSpanSkipUnsampledGate(
     createCachedFlagGate(() => isFliptSync(FLIPT_FEATURE_FLAGS.OTEL_WITHSPAN_SKIP_UNSAMPLED))
+  );
+}
+
+/**
+ * Arm inbound-request root pre-sampling behind the `otel-root-presample` Flipt flag. Called once at
+ * boot from src/instrumentation.node.ts, only when the OTel SDK is started. See
+ * ~/server/otel-root-presample.
+ */
+export function registerRootPresampleGate(): void {
+  setRootPresampleGate(
+    createCachedFlagGate(() => isFliptSync(FLIPT_FEATURE_FLAGS.OTEL_ROOT_PRESAMPLE))
   );
 }
