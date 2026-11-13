@@ -85,6 +85,11 @@ A song play is an `entityMetricEvents` row: `entityType: 'Image'`, the song's im
 `metricType: 'Play'`, value 1. The rule: "Play = 30 s listened or full track if shorter"; the owner's own plays count
 too (user decision, 2026-11-13).
 
+The rule follows the streaming industry's standard: Spotify and Apple Music count a play at 30 s
+listened, and a replay past 30 s counts again. Two deliberate differences: a song shorter than 30 s
+counts when it finishes (those services never count one), and the owner's plays count. A percentage
+of the song was considered and rejected: it makes long songs need minutes of listening to count.
+
 - **The server is the only writer.** The client reports a start and a complete
   (`track.songPlayStart`, `track.songPlay`); `src/server/services/song-play.service.ts` decides,
   against its own clock since the start, and emits through `updateEntityMetric`; `track.songPlay`
