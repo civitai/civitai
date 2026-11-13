@@ -361,8 +361,16 @@ export const ensureModel3DFromWorkflow = async ({
 
     const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
-    const sourceImageId =
+    // Workflow metadata is user-patchable: keep the source image only if it is the caller's own.
+    const claimedSourceImageId =
       typeof meta.sourceImageId === 'number' ? (meta.sourceImageId as number) : undefined;
+    const sourceImage = claimedSourceImageId
+      ? await dbRead.image.findUnique({
+          where: { id: claimedSourceImageId },
+          select: { userId: true },
+        })
+      : null;
+    const sourceImageId = sourceImage?.userId === user.id ? claimedSourceImageId : undefined;
 
     await handlePolyGenWorkflowResult({
       workflowId: input.workflowId,
