@@ -2272,6 +2272,10 @@ export const REDIS_SYS_KEYS = {
     // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
     FEE_ALLOWANCE_BOOST: 'system:pricing:fee-allowance-boost',
   },
+  ARTICLE_VERDICT_RESUBMITS: {
+    // Forced resubmits per article text — `system:article-verdict-resubmits:${articleId}:${textHash}`.
+    ATTEMPTS: 'system:article-verdict-resubmits',
+  },
   COLLECTION_AI_REVIEW: {
     // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
     ATTEMPTS: 'system:collection-ai-review:attempts',

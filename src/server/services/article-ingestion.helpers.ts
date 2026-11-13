@@ -1,4 +1,5 @@
 import { ArticleIngestionStatus } from '~/shared/utils/prisma/enums';
+import { removeTags } from '~/utils/string-helpers';
 
 export type ArticleIngestionInputs = {
   imageBlocked: boolean;
@@ -62,4 +63,20 @@ export function articleOwnImageIds(article: {
 }): number[] {
   const ids = [article.coverId, article.bannerId].filter((id): id is number => id != null);
   return [...new Set(ids)];
+}
+
+/**
+ * The text an article's XGuard check scans. Every submitter and the verdict-hash comparison build
+ * it here, so a verdict's stored hash can be compared with the article's current text.
+ */
+export function articleModerationText(title: string | null | undefined, content: string | null) {
+  return [title ?? '', removeTags(content ?? '')].filter(Boolean).join(' ');
+}
+
+/** The fields an article's text scan reads, hashed into the verdict's `textHash`. */
+export function articleTextScanFields(title: string | null, content: string | null) {
+  return [
+    { heading: 'Title', text: title },
+    { heading: 'Content', text: content ? removeTags(content) : null },
+  ];
 }
