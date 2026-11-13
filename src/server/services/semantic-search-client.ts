@@ -131,6 +131,8 @@ export type CandidateSource = (args: {
   filter: CandidateFilter;
   offset: number;
   limit: number;
+  // newest: the service orders its best matches by date and pages within them. Text queries only.
+  sort?: 'relevance' | 'newest';
 }) => Promise<{ ids: number[]; correctedQuery?: string }>;
 
 async function searchServiceRequest<T>(path: string, body: unknown, notFound: string): Promise<T> {
@@ -163,7 +165,7 @@ export function searchServiceSource(
   collection: SearchCollection,
   { notFoundMessage = 'Not found' }: { notFoundMessage?: string } = {}
 ): CandidateSource {
-  return async ({ query, filter, offset, limit }) => {
+  return async ({ query, filter, offset, limit, sort }) => {
     const qdrantFilter = buildQdrantFilter(collection, filter);
     if ('similarTo' in query) {
       // The source is always its own best match.
@@ -191,7 +193,15 @@ export function searchServiceSource(
       hits: { id: number | string }[];
     }>(
       '/v1/search',
-      { collection, query: query.text, filter: qdrantFilter, offset, limit },
+      {
+        collection,
+        query: query.text,
+        filter: qdrantFilter,
+        offset,
+        limit,
+        // Only when asked: a relevance search sends the request it always has.
+        ...(sort === 'newest' ? { sort } : {}),
+      },
       notFoundMessage
     );
     return {
