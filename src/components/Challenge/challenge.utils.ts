@@ -54,14 +54,19 @@ export function useQueryChallenges(
   const input = { ...defaultFilters, ...filters, browsingLevel };
 
   const query = input.query?.trim();
-  const semanticEnabled = !!query && !!features.semanticChallengeSearch;
+  // Cancelled challenges are not indexed: a Cancelled-only filter is the feed's to answer.
+  const searchStatus = input.status?.filter(
+    (s): s is Exclude<ChallengeStatus, typeof ChallengeStatus.Cancelled> =>
+      s !== ChallengeStatus.Cancelled
+  );
+  const semanticEnabled =
+    !!query &&
+    !!features.semanticChallengeSearch &&
+    !(input.status?.length && !searchStatus?.length);
   const semantic = trpc.semanticChallengeSearch.search.useInfiniteQuery(
     {
       query: query ?? '',
-      status: input.status?.filter(
-        (s): s is Exclude<ChallengeStatus, typeof ChallengeStatus.Cancelled> =>
-          s !== ChallengeStatus.Cancelled
-      ),
+      status: searchStatus,
       source: input.source,
       includeEnded: input.includeEnded,
       userId: input.userId,
