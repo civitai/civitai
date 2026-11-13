@@ -66,6 +66,7 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import { publicModel3dParams } from '~/shared/form-graph/generation/model3d/model3d-params';
 import { NsfwLevel } from '~/server/common/enums';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import {
@@ -234,6 +235,56 @@ const periodStartDate = (period: MetricTimeframe): Date | null => {
 // Read helpers
 // ---------------------------------------------------------------------------
 
+// Anyone but its owner and moderators gets a model, and its images, as the feed shows them: a
+// model rated within the viewer's level, and images scanned, out of review, never blocked, not
+// flagged, within that level, and not a restricted model's mature image.
+const model3dAccess = ({
+  ownerId,
+  nsfwLevel,
+  userId,
+  isModerator,
+  browsingLevel,
+}: {
+  ownerId: number;
+  nsfwLevel: number;
+  userId?: number;
+  isModerator: boolean;
+  /** The viewer's resolved, capped level. */
+  browsingLevel: number;
+}) => {
+  const levels = parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel));
+  const exempt = isModerator || ownerId === userId;
+  const servable = async (imageId: number) => {
+    const state = await dbRead.image.findUnique({
+      where: { id: imageId },
+      select: {
+        nsfwLevel: true,
+        ingestion: true,
+        blockedFor: true,
+        needsReview: true,
+        minor: true,
+        poi: true,
+      },
+    });
+    return (
+      !!state &&
+      state.ingestion === 'Scanned' &&
+      !state.blockedFor &&
+      !state.needsReview &&
+      !state.minor &&
+      !state.poi &&
+      levels.includes(state.nsfwLevel) &&
+      !(await restrictedMatureImageIds([imageId])).has(imageId)
+    );
+  };
+  return {
+    exempt,
+    modelVisible: exempt || levels.includes(nsfwLevel),
+    servableImage: async <T extends { id: number }>(image: T | null) =>
+      image && (exempt || (await servable(image.id))) ? image : null,
+  };
+};
+
 export type Model3DGetById = NonNullable<Awaited<ReturnType<typeof getModel3DById>>>;
 export const getModel3DById = async ({
   id,
@@ -268,44 +319,19 @@ export const getModel3DById = async ({
     )
       throw throwNotFoundError(`No 3D model with id ${id}`);
 
-    // Anyone but its owner and moderators gets a model, and its images, as the feed shows them: a
-    // model rated within the viewer's level, and images scanned, out of review, never blocked, not
-    // flagged, within that level, and not a restricted model's mature image.
-    const levels = parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel));
-    const exempt = isModerator || model3d.userId === user?.id;
-    if (!exempt && !levels.includes(model3d.nsfwLevel))
-      throw throwNotFoundError(`No 3D model with id ${id}`);
-    const servable = async (imageId: number) => {
-      const state = await dbRead.image.findUnique({
-        where: { id: imageId },
-        select: {
-          nsfwLevel: true,
-          ingestion: true,
-          blockedFor: true,
-          needsReview: true,
-          minor: true,
-          poi: true,
-        },
-      });
-      return (
-        !!state &&
-        state.ingestion === 'Scanned' &&
-        !state.blockedFor &&
-        !state.needsReview &&
-        !state.minor &&
-        !state.poi &&
-        levels.includes(state.nsfwLevel) &&
-        !(await restrictedMatureImageIds([imageId])).has(imageId)
-      );
-    };
-    const sourceImage =
-      model3d.sourceImage && (exempt || (await servable(model3d.sourceImage.id)))
-        ? model3d.sourceImage
-        : null;
-    const thumbnailImage =
-      model3d.thumbnailImage && (exempt || (await servable(model3d.thumbnailImage.id)))
-        ? model3d.thumbnailImage
-        : null;
+    const access = model3dAccess({
+      ownerId: model3d.userId,
+      nsfwLevel: model3d.nsfwLevel,
+      userId: user?.id,
+      isModerator,
+      browsingLevel,
+    });
+    if (!access.modelVisible) throw throwNotFoundError(`No 3D model with id ${id}`);
+    const sourceImage = await access.servableImage(model3d.sourceImage);
+    const thumbnailImage = await access.servableImage(model3d.thumbnailImage);
+    const generationParams = access.exempt
+      ? model3d.generationParams
+      : publicModel3dParams(model3d.generationParams);
 
     // The signed-in user's own recommend (thumbs-up), so the detail page can
     // render the gold thumbs-up toggle in its correct state.
@@ -320,6 +346,7 @@ export const getModel3DById = async ({
       ...model3d,
       sourceImage,
       thumbnailImage,
+      generationParams,
       tags: model3d.tags.map((t) => t.tag),
       userReview,
     };
@@ -1280,9 +1307,12 @@ export const restoreModel3D = async ({ id, user }: RestoreModel3DInput & { user:
 export const getModel3DFiles = async ({
   input,
   user,
+  browsingLevel = publicBrowsingLevelsFlag,
 }: {
   input: GetModel3DFilesInput;
   user?: SessionUser | null;
+  /** The viewer's resolved, capped level; unset reads PG only. */
+  browsingLevel?: number;
 }) => {
   const isModerator = !!user?.isModerator;
   const model3d = await dbRead.model3D.findUnique({
@@ -1293,6 +1323,7 @@ export const getModel3DFiles = async ({
       status: true,
       deletedAt: true,
       tosViolation: true,
+      nsfwLevel: true,
       files: {
         select: model3dFileSelect,
         orderBy: [
@@ -1315,6 +1346,14 @@ export const getModel3DFiles = async ({
     })
   )
     throw throwNotFoundError(`No 3D model with id ${input.id}`);
+  const access = model3dAccess({
+    ownerId: model3d.userId,
+    nsfwLevel: model3d.nsfwLevel,
+    userId: user?.id,
+    isModerator,
+    browsingLevel,
+  });
+  if (!access.modelVisible) throw throwNotFoundError(`No 3D model with id ${input.id}`);
 
   // Sign each file URL. Two URL shapes can land in Model3DFile.url:
   //   - **Full URL** (e.g. https://civitai-media-uploads.s3.../key.glb) — this
@@ -1365,7 +1404,13 @@ export const getModel3DByPostId = async ({
   postId,
   userId,
   isModerator = false,
-}: GetModel3DByPostIdInput & { userId?: number; isModerator?: boolean }) => {
+  browsingLevel = publicBrowsingLevelsFlag,
+}: GetModel3DByPostIdInput & {
+  userId?: number;
+  isModerator?: boolean;
+  /** The viewer's resolved, capped level; unset reads PG only. */
+  browsingLevel?: number;
+}) => {
   const post = await dbRead.post.findUnique({
     where: { id: postId },
     select: {
@@ -1377,6 +1422,7 @@ export const getModel3DByPostId = async ({
           status: true,
           deletedAt: true,
           tosViolation: true,
+          nsfwLevel: true,
           thumbnailImage: { select: { id: true, url: true, name: true } },
         },
       },
@@ -1396,11 +1442,19 @@ export const getModel3DByPostId = async ({
     })
   )
     return null;
+  const access = model3dAccess({
+    ownerId: model3d.userId,
+    nsfwLevel: model3d.nsfwLevel,
+    userId,
+    isModerator,
+    browsingLevel,
+  });
+  if (!access.modelVisible) return null;
 
   return {
     id: model3d.id,
     name: model3d.name,
-    thumbnailImage: model3d.thumbnailImage,
+    thumbnailImage: await access.servableImage(model3d.thumbnailImage),
   };
 };
 

@@ -13,6 +13,8 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 
 const {
   getModel3DById,
+  getModel3DByPostId,
+  getModel3DFiles,
   getModel3DsInfinite,
   publishModel3D,
   restoreModel3D,
@@ -105,6 +107,16 @@ const MODEL = {
   thumbnailImage: image(1),
   sourceImage: image(2),
   tags: [],
+  files: [],
+  generationParams: {
+    ecosystem: 'PolyGen',
+    prompt: 'a chair',
+    seed: 42,
+    images: ['https://image.civitai.com/source.jpeg'],
+    sourceImageUrl: 'https://image.civitai.com/source.jpeg',
+    texturePrompt: 'https://image.civitai.com/texture.jpeg',
+    nested: { url: 'https://image.civitai.com/nested.jpeg' },
+  },
 };
 
 beforeEach(() => {
@@ -284,5 +296,88 @@ describe("a 3D model's thumbnail and rating", () => {
     expect(
       (await getModel3DById({ id: 9, user: { id: 6 } as never, browsingLevel: 1 | 4 })).id
     ).toBe(9);
+  });
+});
+
+describe("a 3D model's files and post chip", () => {
+  const passing = {
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    blockedFor: null,
+    needsReview: null,
+    minor: false,
+    poi: false,
+  };
+  const rated = (nsfwLevel: number) => {
+    dbMock.dbRead.model3D.findUnique.mockImplementation((async (args: { select: Select }) =>
+      applySelect({ ...MODEL, nsfwLevel }, args.select)) as never);
+    dbMock.dbRead.post.findUnique.mockImplementation((async (args: {
+      select: { model3d: { select: Select } };
+    }) => ({
+      model3d: applySelect({ ...MODEL, nsfwLevel }, args.select.model3d.select),
+    })) as never);
+  };
+  const files = (user: unknown, browsingLevel: number) =>
+    getModel3DFiles({ input: { id: 9 }, user: user as never, browsingLevel });
+  const chip = (user: { id: number; isModerator?: boolean } | null, browsingLevel = 1) =>
+    getModel3DByPostId({
+      postId: 3,
+      userId: user?.id,
+      isModerator: !!user?.isModerator,
+      browsingLevel,
+    });
+
+  it.each([
+    ['rated above the viewer level', 4],
+    ['unrated', 0],
+  ])('are not found by another viewer when the model is %s', async (_, level) => {
+    rated(level);
+    for (const user of [null, { id: 6 }]) {
+      await expect(files(user, 1)).rejects.toThrow(/No 3D model/);
+      expect(await chip(user)).toBeNull();
+    }
+    for (const user of [{ id: 5 }, { id: 1, isModerator: true }]) {
+      expect((await files(user, 1)).id).toBe(9);
+      expect((await chip(user))?.id).toBe(9);
+    }
+  });
+
+  it('are found by a viewer whose level includes its rating (control)', async () => {
+    rated(4);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...passing, nsfwLevel: 4 } as never);
+    expect((await files({ id: 6 }, 1 | 4)).id).toBe(9);
+    expect((await chip({ id: 6 }, 1 | 4))?.thumbnailImage?.id).toBe(1);
+  });
+
+  it('the chip leaves out a thumbnail the feed would not show, for another viewer', async () => {
+    rated(1);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...passing, blockedFor: 'tos' } as never);
+    for (const user of [null, { id: 6 }]) {
+      const result = await chip(user);
+      expect(result?.id).toBe(9);
+      expect(result?.thumbnailImage).toBeNull();
+    }
+    for (const user of [{ id: 5 }, { id: 1, isModerator: true }])
+      expect((await chip(user))?.thumbnailImage?.id).toBe(1);
+  });
+});
+
+describe("a 3D model's generation params", () => {
+  const paramsFor = async (user: unknown) =>
+    (await getModel3DById({ id: 9, user: user as never })).generationParams;
+
+  it('never carry an image or a URL to another viewer, and keep what the page draws', async () => {
+    for (const user of [null, { id: 6 }]) {
+      const params = await paramsFor(user);
+      expect(params).toEqual({ ecosystem: 'PolyGen', prompt: 'a chair', seed: 42 });
+      expect(JSON.stringify(params)).not.toMatch(/https?:/);
+    }
+  });
+
+  it.each([
+    ['the model owner', { id: 5 }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('reach %s whole', async (_, user) => {
+    expect(await paramsFor(user)).toEqual(MODEL.generationParams);
   });
 });

@@ -145,6 +145,7 @@ export const model3dRouter = router({
         ...input,
         userId: ctx.user?.id,
         isModerator: !!ctx.user?.isModerator,
+        browsingLevel: relatedPostsBrowsingLevel(ctx, undefined),
       })
     ),
   // Lazy materialization for the "Post from Generation" CTA. The webhook
@@ -187,7 +188,13 @@ export const model3dRouter = router({
   getFiles: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DFilesSchema)
-    .query(({ input, ctx }) => getModel3DFiles({ input, user: ctx.user })),
+    .query(({ input, ctx }) =>
+      getModel3DFiles({
+        input,
+        user: ctx.user,
+        browsingLevel: relatedPostsBrowsingLevel(ctx, undefined),
+      })
+    ),
   // Fire-and-forget download tracking. Writes a ClickHouse `files` Download
   // event (entityType 'Model3D') the same way the AI-model download path does,
   // so the metrics job can roll it up into Model3DMetric.downloadCount and the

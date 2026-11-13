@@ -45,15 +45,18 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const queryUtils = trpc.useUtils();
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onSuccess: (_, variables) => {
-      // These lists are filtered on the server by these two, read from the session, which this
+      // These reads are filtered on the server by these two, read from the session, which this
       // mutation has refreshed by the time it returns: the app image picker's posted list, a 3D
-      // model's related posts, and a shop's services (mature ones show only at the viewer's
-      // level). A list fetched before that was filtered at the old level. A no-op for a list
-      // that has not been opened.
+      // model's page, files, post chip and related posts, and a shop's services (mature ones show
+      // only at the viewer's level). One fetched before that was filtered at the old level. A
+      // no-op for one that has not been opened.
       if (variables.showNsfw !== undefined || variables.browsingLevel !== undefined) {
         void queryUtils.blockImagePicker.getPosted.reset();
         void queryUtils.creatorService.getForShop.reset();
         void queryUtils.model3d.getRelatedPosts.reset();
+        void queryUtils.model3d.getById.reset();
+        void queryUtils.model3d.getFiles.reset();
+        void queryUtils.model3d.getByPostId.reset();
       }
       // A 3D model's related posts also leave out the viewer's hidden tags unless hiding is off.
       if (variables.disableHidden !== undefined) void queryUtils.model3d.getRelatedPosts.reset();

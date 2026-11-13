@@ -9,6 +9,9 @@ const h = vi.hoisted(() => ({
     getPosted: vi.fn(),
     getForShop: vi.fn(),
     getRelatedPosts: vi.fn(),
+    getById: vi.fn(),
+    getFiles: vi.fn(),
+    getByPostId: vi.fn(),
   },
 }));
 
@@ -29,7 +32,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         useUtils: () => ({
           blockImagePicker: { getPosted: { reset: h.resets.getPosted } },
           creatorService: { getForShop: { reset: h.resets.getForShop } },
-          model3d: { getRelatedPosts: { reset: h.resets.getRelatedPosts } },
+          model3d: {
+            getRelatedPosts: { reset: h.resets.getRelatedPosts },
+            getById: { reset: h.resets.getById },
+            getFiles: { reset: h.resets.getFiles },
+            getByPostId: { reset: h.resets.getByPostId },
+          },
           user: { getSettings: { cancel: vi.fn(), setData: vi.fn() } },
         }),
       }
@@ -94,13 +102,14 @@ describe('lists filtered by browsing level, after a settings change', () => {
     expect(h.resets.getPosted).toHaveBeenCalledTimes(1);
     expect(h.resets.getForShop).toHaveBeenCalledTimes(1);
     expect(h.resets.getRelatedPosts).toHaveBeenCalledTimes(1);
+    expect(h.resets.getById).toHaveBeenCalledTimes(1);
+    expect(h.resets.getFiles).toHaveBeenCalledTimes(1);
+    expect(h.resets.getByPostId).toHaveBeenCalledTimes(1);
   });
 
   test('a change that does not move the level keeps them', async () => {
     await change({ blurNsfw: false });
-    expect(h.resets.getPosted).not.toHaveBeenCalled();
-    expect(h.resets.getForShop).not.toHaveBeenCalled();
-    expect(h.resets.getRelatedPosts).not.toHaveBeenCalled();
+    Object.values(h.resets).forEach((fn) => expect(fn).not.toHaveBeenCalled());
   });
 
   test("turning hiding off or on drops only a 3D model's related posts", async () => {
@@ -108,5 +117,6 @@ describe('lists filtered by browsing level, after a settings change', () => {
     expect(h.resets.getRelatedPosts).toHaveBeenCalledTimes(1);
     expect(h.resets.getPosted).not.toHaveBeenCalled();
     expect(h.resets.getForShop).not.toHaveBeenCalled();
+    expect(h.resets.getById).not.toHaveBeenCalled();
   });
 });
