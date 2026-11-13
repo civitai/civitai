@@ -115,6 +115,24 @@ export type FliptFeatureFlags = {
    */
   getCacheStats(): { boolean: TtlCacheStats; variant: TtlCacheStats };
   /**
+   * A number that changes whenever the flag state this process evaluates against may have changed:
+   * the live client received a snapshot body that differs from the one before it, or the client
+   * that answers evaluations (`getClientSync()`) is a different object than at the previous read —
+   * the first live init, a snapshot seed, the switch from a seeded client to a live one, or no
+   * client at all. Never changes otherwise, so a caller can memoize anything derived from flag
+   * evaluations until it moves.
+   *
+   * It moves TWICE per changed snapshot: once when the body is read, and once on a later macrotask,
+   * after the SDK has applied the body to its engine (the SDK reads the body, then applies it on its
+   * next microtask). Something derived between those two reads may hold the OLD state under the
+   * first new number; the second move retires it.
+   *
+   * 🔴 It does not cover the eval cache: evaluations cached before the change keep answering for up
+   * to `evalCacheTtlMs` after it. A caller memoizing evaluations must not keep anything computed
+   * within `evalCacheTtlMs` of observing a move for longer than it would have without this.
+   */
+  getStateVersion(): number;
+  /**
    * Set (or replace) the last-known snapshot store after construction — for an app whose storage
    * client must not be imported by the module that builds this instance. Read when it is needed
    * (a failed init, a live fetch), so registering it before the first init FAILS is enough.
@@ -165,6 +183,32 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   let attempted = false;
 
   const current = () => instance ?? seeded;
+
+  // See `getStateVersion`. `stateVersionClient` is the client seen at the last read, so a swap of
+  // `instance`/`seeded` moves the version wherever the swap happens, without each assignment site
+  // having to remember to.
+  let stateVersion = 0;
+  let stateVersionClient: FliptNodeClient | null = null;
+  // What the last snapshot body was, to tell a changed body from a re-sent one: its ETag when Flipt
+  // sends one, else the body itself, serialized (once per poll, only when Flipt omits the ETag).
+  let lastSnapshotSignature: string | null = null;
+
+  function noteSnapshotBody(data: unknown, etag: string | null) {
+    let signature: string;
+    try {
+      signature = etag ? `etag:${etag}` : `body:${JSON.stringify(data)}`;
+    } catch {
+      signature = `unserializable:${Date.now()}:${Math.random()}`;
+    }
+    if (signature === lastSnapshotSignature) return;
+    lastSnapshotSignature = signature;
+    stateVersion++;
+    // The SDK applies the body after this callback returns (on a later microtask); move again once
+    // that has surely happened. See `getStateVersion`.
+    setTimeout(() => {
+      stateVersion++;
+    }, 0);
+  }
 
   // The newest snapshot this process holds from live fetches, and when it last saved one.
   let liveData: unknown;
@@ -245,6 +289,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
           onSnapshot: (data, etag) => {
             liveData = data;
             liveEtag = etag;
+            noteSnapshotBody(data, etag);
             saveSnapshot(true);
           },
           onConfirmed: () => saveSnapshot(false),
@@ -461,6 +506,14 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     },
     getCacheStats() {
       return { boolean: boolCache.stats(), variant: variantCache.stats() };
+    },
+    getStateVersion() {
+      const client = current();
+      if (client !== stateVersionClient) {
+        stateVersionClient = client;
+        stateVersion++;
+      }
+      return stateVersion;
     },
     setSnapshotStore(store) {
       snapshotStore = store;

@@ -13,6 +13,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
 import { formatDate } from '~/utils/date-helpers';
+import { createCachedFlagGate } from '~/server/utils/cached-flag-gate';
 
 export type ServerAvailability = ColorDomain;
 
@@ -1245,9 +1246,12 @@ function isFeatureFlagKeyPresent(
   return true;
 }
 
-function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
-  // Build the Flipt context once and reuse for every flag (was rebuilt per flag).
-  const fliptContext = buildFliptContext(ctx.user);
+function computeFeatureFlags(
+  ctx: FeatureAccessContext,
+  // Build the Flipt context once and reuse for every flag (was rebuilt per flag). A caller that
+  // already built it (the version-keyed cache, which keys on it) passes it in.
+  fliptContext: Record<string, string> = buildFliptContext(ctx.user)
+): FeatureAccess {
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
     // Delegate the per-key decision to the shared evaluator so eager output is
@@ -1298,6 +1302,10 @@ function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccess
 }
 
 export const getFeatureFlags = (ctx: FeatureAccessContext): FeatureAccess => {
+  if (isStateVersionCacheEnabled()) {
+    const version = readFliptStateVersion();
+    if (version !== null) return getFeatureFlagsVersioned(ctx, version);
+  }
   const now = Date.now();
   const key = featureAccessKey(ctx);
 
@@ -1325,6 +1333,172 @@ export const getFeatureFlags = (ctx: FeatureAccessContext): FeatureAccess => {
   featureAccessCur.set(key, { value, expiresAt: now + FEATURE_ACCESS_TTL_MS });
   return { ...value };
 };
+
+// ---------------------------------------------------------------------------------------------
+// Version-keyed whole-result cache, behind `feature-flags-state-version-cache` (default OFF).
+//
+// The 10-second cache above misses for most signed-in requests (a user rarely makes two
+// whole-registry reads within 10s), and every miss evaluates the whole registry, each
+// Flipt-backed key through the wasm engine. That TTL exists ONLY to bound how stale a Flipt change
+// can be. This cache bounds it by the Flipt state itself instead: every entry belongs to one
+// `getFliptStateVersion()` value, and the whole cache is dropped the moment that value moves (a
+// changed snapshot body, or a different client answering). So an entry can live much longer —
+// `FEATURE_ACCESS_VERSIONED_TTL_MS` — without serving a Flipt change any later than the 10s cache
+// would.
+//
+// PROPAGATION BOUND (a Flipt change reaching `getFeatureFlags`), unchanged from the 10s cache:
+//   config poll interval + eval-cache TTL + 10s.
+//   - The poll interval is how long until this process's client sees the change at all; the
+//     version moves then (see the package's `getStateVersion`), and every entry dies with it.
+//   - Evaluations the eval cache in @civitai/flipt holds from BEFORE the change keep answering for
+//     up to its TTL after it. An entry computed in that window may embed one, so an entry computed
+//     less than `getFliptEvalCacheTtlMs()` after this cache first saw the new version gets the old
+//     10-second TTL, not the long one. ("First saw" is never earlier than the move itself, so the
+//     window is never short.)
+//
+// KEY COMPLETENESS IS A CORRECTNESS INVARIANT, and matters more here because entries live longer.
+// The key is built from every input `hasFeature` and `isFeatureFlagKeyPresent` read:
+//   - the Flipt context ITSELF (every property, so whatever `buildFliptContext` sends to Flipt is
+//     in the key without this list having to track it — e.g. `isInCreatorProgram`, which the 10s
+//     cache's hand-listed key leaves out) and the entity id;
+//   - the static rules' user inputs: moderator flag and tier (both already in the Flipt context),
+//     login state (likewise), and the sorted `permissions` (granted flags);
+//   - host (domain gating), the FULL region, and whether that region is restricted right now
+//     (`isRegionRestricted` depends on the date as well as the region, so a restriction taking
+//     effect changes the key instead of waiting for an expiry).
+// Env overrides, `isDev` and the registry are fixed for the life of the process.
+//
+// Memory: values are interned (one shared object per distinct result per version), so an entry
+// costs its key and a reference; callers always get a shallow copy, never the shared object.
+export const FEATURE_ACCESS_VERSIONED_TTL_MS = 10 * 60_000;
+const FEATURE_ACCESS_VERSIONED_MAX = 20_000;
+const FEATURE_ACCESS_VERSIONED_MAX_VALUES = 5_000;
+
+type VersionedFeatureAccessState = {
+  version: number;
+  /** When this cache first read `version` — never earlier than the move itself. */
+  seenAt: number;
+  cur: Map<string, FeatureAccessEntry>;
+  prev: Map<string, FeatureAccessEntry>;
+  values: Map<string, FeatureAccess>;
+};
+let versionedFeatureAccess: VersionedFeatureAccessState | null = null;
+
+function readStateVersionCacheSwitch(): boolean | null {
+  const flipt = _fliptModule;
+  const key = flipt?.FLIPT_FEATURE_FLAGS?.FEATURE_FLAGS_STATE_VERSION_CACHE;
+  if (!flipt || !key) return null;
+  return flipt.isFliptSync(key);
+}
+
+// Global boolean, read at most once per 5s per process. `null` (unknown key, Flipt not loaded or
+// not initialized) and any throw read as OFF, so the 10-second cache is the default and fallback.
+let isStateVersionCacheEnabled = createCachedFlagGate(readStateVersionCacheSwitch);
+
+/** `null` when the Flipt module is not loaded, or does not expose a state version. */
+function readFliptStateVersion(): number | null {
+  const getVersion = _fliptModule?.getFliptStateVersion;
+  if (typeof getVersion !== 'function') return null;
+  try {
+    const version = getVersion();
+    return typeof version === 'number' ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+function readFliptEvalCacheTtlMs(): number {
+  try {
+    const ttl = _fliptModule?.getFliptEvalCacheTtlMs?.();
+    // Unknown reads as the package default, never as 0 (0 would treat every entry as settled).
+    return typeof ttl === 'number' && ttl >= 0 ? ttl : 10_000;
+  } catch {
+    return 10_000;
+  }
+}
+
+function versionedFeatureAccessKey(
+  { user, req, host = req?.headers.host }: FeatureAccessContext,
+  fliptContext: Record<string, string>
+): string {
+  // Same region rule as `featureAccessKey`: dev bypasses region checks; a nullish req has none.
+  const region = isDev || !req ? undefined : getRegion(req);
+  const restricted = region ? (isRegionRestricted(region) ? '1' : '0') : '';
+  const flipt = Object.keys(fliptContext)
+    .sort()
+    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(fliptContext[k])}`)
+    .join('&');
+  const entity = user ? `u:${encodeURIComponent(String(user.id))}` : 'anon';
+  const permissions = user
+    ? (user.permissions ?? [])
+        .slice()
+        .sort()
+        .map((p) => encodeURIComponent(p))
+        .join(',')
+    : '';
+  return `${entity}|f:${flipt}|p:${permissions}|h:${encodeURIComponent(host ?? '')}|r:${
+    region ? JSON.stringify(region) : ''
+  }|rr:${restricted}`;
+}
+
+function getFeatureFlagsVersioned(ctx: FeatureAccessContext, version: number): FeatureAccess {
+  const now = Date.now();
+  let state = versionedFeatureAccess;
+  if (!state || state.version !== version) {
+    state = versionedFeatureAccess = {
+      version,
+      seenAt: now,
+      cur: new Map(),
+      prev: new Map(),
+      values: new Map(),
+    };
+  }
+
+  const fliptContext = buildFliptContext(ctx.user);
+  const key = versionedFeatureAccessKey(ctx, fliptContext);
+
+  let entry = state.cur.get(key);
+  if (entry) {
+    if (entry.expiresAt > now) return { ...entry.value };
+    state.cur.delete(key);
+  }
+  entry = state.prev.get(key);
+  if (entry) {
+    if (entry.expiresAt > now) {
+      state.prev.delete(key);
+      state.cur.set(key, entry); // promote so hot keys survive rotation
+      return { ...entry.value };
+    }
+    state.prev.delete(key);
+  }
+
+  const computed = computeFeatureFlags(ctx, fliptContext);
+  // Intern: keys are inserted in registry order, so equal key lists mean equal results.
+  const signature = Object.keys(computed).join(',');
+  let value = state.values.get(signature);
+  if (!value) {
+    if (state.values.size >= FEATURE_ACCESS_VERSIONED_MAX_VALUES) state.values.clear();
+    state.values.set(signature, computed);
+    value = computed;
+  }
+
+  const settled = now - state.seenAt >= readFliptEvalCacheTtlMs();
+  const ttl = settled ? FEATURE_ACCESS_VERSIONED_TTL_MS : FEATURE_ACCESS_TTL_MS;
+  if (state.cur.size >= FEATURE_ACCESS_VERSIONED_MAX) {
+    state.prev = state.cur;
+    state.cur = new Map();
+  }
+  state.cur.set(key, { value, expiresAt: now + ttl });
+  return { ...value };
+}
+
+/** Tests only: forget the cached switch read and every version-keyed entry. */
+export function resetFeatureFlagsStateVersionCacheForTests() {
+  isStateVersionCacheEnabled = createCachedFlagGate(readStateVersionCacheSwitch);
+  versionedFeatureAccess = null;
+  featureAccessCur = new Map();
+  featureAccessPrev = new Map();
+}
 
 /**
  * PER-FLAG lazy FeatureAccess. Accessing `features.X` evaluates ONLY key `X`

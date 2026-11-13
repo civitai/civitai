@@ -263,6 +263,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
   // at most once per 5s per process.
   FEATURE_FLAGS_LAZY_PROTO = 'feature-flags-lazy-proto',
+  // Picks how long `getFeatureFlags` (feature-flags.service.ts) keeps a whole-registry result: ON =
+  // until the Flipt state version moves (a changed snapshot or a client swap) or 10 minutes,
+  // keyed on every input the evaluation reads, the full Flipt context included; OFF = 10 seconds,
+  // as before. Same value per key either way, and a flag change in Flipt reaches it no later than
+  // with OFF. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized
+  // client, which keeps the 10-second cache. Global boolean, evaluated with no entity or context,
+  // at most once per 5s per process.
+  //
+  // Add the key (enabled: false) to flag state before this code serves traffic. A missing key
+  // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
+  // at most once per 5s per process.
+  FEATURE_FLAGS_STATE_VERSION_CACHE = 'feature-flags-state-version-cache',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path
@@ -683,6 +695,11 @@ export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.
 export const getFliptCacheStats = flipt.getCacheStats;
+// Moves whenever the flag state this process evaluates against may have changed (see the package's
+// `getStateVersion`), and the eval-cache TTL that bounds how long evaluations cached before such a
+// move keep answering. For `getFeatureFlags`' version-keyed result cache (feature-flags.service.ts).
+export const getFliptStateVersion = flipt.getStateVersion;
+export const getFliptEvalCacheTtlMs = (): number => flipt.config.evalCacheTtlMs;
 // The underlying SDK client (or `null` before init), for a short-lived process that must
 // `close()` it on the way out — its config poller is a timer that otherwise keeps the
 // process alive. `getClientSync` closes over the instance (no `this`), like the above.
