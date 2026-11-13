@@ -496,6 +496,31 @@ describe('mini/[id] ?epoch= from the query string', () => {
     expect(body.downloadUrls).toEqual([EARLY]);
   });
 
+  it('serves the named epoch from epochs written as epochNumber', async () => {
+    const v2 = {
+      ...twoEpochs,
+      metadata: {
+        ...twoEpochs.metadata,
+        trainingResults: {
+          epochs: [
+            { epochNumber: 5, modelUrl: EARLY },
+            { epochNumber: 10, modelUrl: EPOCH_URL },
+          ],
+        },
+      },
+    };
+    const { status, body } = await request(owner, {}, v2, undefined, { epoch: '5' });
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EARLY]);
+  });
+
+  it('400s a repeated epoch', async () => {
+    const { status } = await request(owner, {}, twoEpochs, undefined, {
+      epoch: ['5', '10'] as unknown as string,
+    });
+    expect(status).toBe(400);
+  });
+
   it('serves the latest epoch when none is named', async () => {
     const { status, body } = await ask({});
     expect(status).toBe(200);
