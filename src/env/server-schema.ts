@@ -67,6 +67,8 @@ export const serverSchema = z
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
     DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
+    // Seconds before a pooled node-pg connection is closed and replaced; 0 (default) = never by age.
+    DATABASE_POOL_MAX_LIFETIME_SECONDS: intString(0).default(0),
     DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
     DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
     REDIS_URL: z.url(),
