@@ -544,6 +544,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
   // Evaluated with the reporter's id.
   FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
+  // On: the site-search proxy (`/api/search/*`) sends Meilisearch's 200 body to the browser as
+  // the bytes it received when no hit in it is shaped for the viewer (`hitsNeedShaping`), instead
+  // of parsing it and serializing it again. Responses with shaped hits, and every non-200, are
+  // parsed as before. Off (and unknown, or a client that has not initialised): every response is
+  // parsed, as before.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`, `~/server/services/site-search-passthrough`). The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
+  SITE_SEARCH_PASSTHROUGH = 'site-search-passthrough',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

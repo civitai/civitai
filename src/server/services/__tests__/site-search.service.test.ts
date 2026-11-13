@@ -1,16 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
+  TOOLS_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { filterableAttributesByIndex } from '~/server/search-index/filterable-attributes';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
 import {
   SITE_SEARCH_INDEXES,
+  SiteSearchError,
+  hitsNeedShaping,
   shapeModelHit,
+  siteFacetSearch,
   siteIndexSearch,
   siteMultiSearch,
   viewerSearchClauses,
@@ -368,5 +374,144 @@ describe('collection images', () => {
       (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, uncapped)).body
     );
     expect(hit).toMatchObject({ image: cover, images, srcs });
+  });
+});
+
+describe('passthrough (site-search-passthrough)', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const uncapped = { showSfwFace: false };
+  const on = { passthrough: true };
+  // Spacing and a \u escape that a parse and re-serialize would both rewrite, so only the
+  // upstream bytes themselves can equal this.
+  const upstream =
+    '{ "hits" : [ { "id" : 1, "username" : "caf\\u00e9" } ], "estimatedTotalHits" : 1 }\n';
+  const respondRaw = (text: string, status = 200) => {
+    const fetchMock = vi.fn(async () => new Response(text, { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  };
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('hitsNeedShaping: models always; comics, bounties and collections only under a cap; others never', () => {
+    for (const viewer of [capped, uncapped]) {
+      expect(hitsNeedShaping(MODELS_SEARCH_INDEX, viewer)).toBe(true);
+      for (const index of [USERS_SEARCH_INDEX, ARTICLES_SEARCH_INDEX, TOOLS_SEARCH_INDEX])
+        expect(hitsNeedShaping(index, viewer), index).toBe(false);
+    }
+    for (const index of [COMICS_SEARCH_INDEX, BOUNTIES_SEARCH_INDEX, COLLECTIONS_SEARCH_INDEX]) {
+      expect(hitsNeedShaping(index, capped), index).toBe(true);
+      expect(hitsNeedShaping(index, uncapped), index).toBe(false);
+    }
+  });
+
+  it('an index whose hits are never shaped is sent as the exact upstream bytes', async () => {
+    respondRaw(upstream);
+    const response = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped, on);
+    expect(response.status).toBe(200);
+    expect(response.body).toBeUndefined();
+    expect(response.raw?.toString('utf8')).toBe(upstream);
+  });
+
+  it('with passthrough off, the same response is parsed, as before', async () => {
+    respondRaw(upstream);
+    const response = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped);
+    expect(response.raw).toBeUndefined();
+    expect(response.body).toEqual({
+      hits: [{ id: 1, username: 'caf\u00e9' }],
+      estimatedTotalHits: 1,
+    });
+  });
+
+  it('model hits are always shaped, passthrough or not: no sfwName reaches the viewer', async () => {
+    respondRaw(JSON.stringify({ hits: [{ id: 1, name: 'Red', sfwName: 'Com' }] }));
+    const response = await siteIndexSearch(MODELS_SEARCH_INDEX, { q: 'x' }, uncapped, on);
+    expect(response.raw).toBeUndefined();
+    expect(response.body).toEqual({ hits: [{ id: 1, name: 'Red' }] });
+  });
+
+  it("a capped viewer's comic hits are shaped; an uncapped viewer's pass through", async () => {
+    const cover = 'https://image.test/cover.jpeg';
+    const comic = JSON.stringify({
+      hits: [{ id: 1, coverImageUrl: cover, coverImageNsfwLevel: NsfwLevel.R }],
+    });
+    respondRaw(comic);
+    const shaped = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: 'x' }, capped, on);
+    expect(shaped.raw).toBeUndefined();
+    expect(shaped.body).toEqual({ hits: [{ id: 1, coverImageNsfwLevel: NsfwLevel.R }] });
+
+    respondRaw(comic);
+    const passed = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: 'x' }, uncapped, on);
+    expect(passed.raw?.toString('utf8')).toBe(comic);
+  });
+
+  it('a multi-search passes through only when no query in it is shaped', async () => {
+    const multi = '{ "results" : [ { "indexUid" : "a", "hits" : [] } ] }';
+    respondRaw(multi);
+    const passed = await siteMultiSearch(
+      {
+        queries: [
+          { indexUid: USERS_SEARCH_INDEX, q: 'x' },
+          { indexUid: ARTICLES_SEARCH_INDEX, q: 'x' },
+        ],
+      },
+      capped,
+      on
+    );
+    expect(passed.raw?.toString('utf8')).toBe(multi);
+
+    respondRaw(
+      JSON.stringify({
+        results: [
+          { indexUid: USERS_SEARCH_INDEX, hits: [] },
+          { indexUid: MODELS_SEARCH_INDEX, hits: [{ id: 1, name: 'Red', sfwName: 'Com' }] },
+        ],
+      })
+    );
+    const shaped = await siteMultiSearch(
+      {
+        queries: [
+          { indexUid: USERS_SEARCH_INDEX, q: 'x' },
+          { indexUid: MODELS_SEARCH_INDEX, q: 'x' },
+        ],
+      },
+      uncapped,
+      on
+    );
+    expect(shaped.raw).toBeUndefined();
+    const [, models] = (shaped.body as { results: { hits: Record<string, unknown>[] }[] }).results;
+    expect(models.hits[0]).not.toHaveProperty('sfwName');
+  });
+
+  it('a facet search passes through', async () => {
+    const facets = '{ "facetHits" : [ { "value" : "LORA", "count" : 3 } ], "facetQuery" : null }';
+    respondRaw(facets);
+    const response = await siteFacetSearch(
+      MODELS_SEARCH_INDEX,
+      { facetName: 'type', facetQuery: null },
+      capped,
+      on
+    );
+    expect(response.raw?.toString('utf8')).toBe(facets);
+  });
+
+  it('a cut-off 200 is the same 502 it is with passthrough off, not a 200', async () => {
+    for (const options of [on, {}]) {
+      respondRaw('{"hits": [');
+      const error = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped, options).catch(
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(SiteSearchError);
+      expect((error as SiteSearchError).status).toBe(502);
+    }
+  });
+
+  it('a rejected query (4xx) is parsed and returned as before, never passed through', async () => {
+    const rejection = { message: 'bad filter', code: 'invalid_search_filter' };
+    respondRaw(JSON.stringify(rejection), 400);
+    const response = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped, on);
+    expect(response.status).toBe(400);
+    expect(response.raw).toBeUndefined();
+    expect(response.body).toEqual(rejection);
   });
 });
