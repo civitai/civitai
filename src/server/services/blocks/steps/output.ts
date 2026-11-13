@@ -182,16 +182,14 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * forwarded raw — reachable by the app, invisible to both the publish path and
  * the per-viewer gated read.
  *
- * 🔴 THE MARGIN IS ONE LEVEL, NOT "room". The deepest strip the catalog requires
- * today is `training.epochs`(1) → an epoch(2) → `samples`(3) → its members(4). A
- * new upstream `$type` is ALLOWED by construction, so one extra wrapper level in
- * a future output reopens exactly this leak with no detector. Say the CATALOG
- * DEPTH when you re-measure; do not say "with room". (Re-derivable from the
- * orchestrator spec; the overflow threshold below is not.)
- *
+ * 🔴 PAST THE CAP THE SUBTREE IS DROPPED, NOT FORWARDED. The catalog's deepest
+ * strip is 4 (`training.epochs` → an epoch → `samples` → its members), but the
+ * app controls nesting through `merge`, so a forwarded subtree past the cap would
+ * carry unwalked blobs raw. A legitimate output that reaches the cap loses that
+ * subtree instead, and `civitai_app_block_output_truncated_total` counts it.
+
  * 🔴 IT IS A STACK BOUND, NOT ONLY A COST BOUND — AND NOT CYCLE PROTECTION. The
- * walked value is the orchestrator's JSON-parsed `step.output`, not the app's
- * `input`, so it is acyclic and no declared output type echoes the request back.
+ * walked value is the orchestrator's JSON-parsed `step.output`, so it is acyclic.
  * What it is NOT is depth-limited: V8 parses JSON iteratively (ten million
  * nested levels parse fine) while this walk is recursive and overflows the stack
  * a few thousand levels in. 🔴 THE ORDER IS THE FACT, NOT THE FIGURE — that
@@ -203,10 +201,9 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * `snapshotFromWorkflow` on `submitPassThroughStepWorkflow`'s post-submit path,
  * where a throw is caught by a handler that refunds every cap leg it reserved and
  * rethrows — on a generation the orchestrator has already created and will bill,
- * so the caps understate real spend permanently. Closing the residue means an
- * ITERATIVE walk.
+ * so the caps understate real spend permanently.
  */
-const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
+const PASS_THROUGH_OUTPUT_WALK_DEPTH = 32;
 
 /**
  * Strip every blob-shaped value out of an orchestrator step output, returning
@@ -253,11 +250,12 @@ export function splitPassThroughStepOutput(output: unknown): {
   media: StepOutputMedia[];
   rest: unknown;
   model3d: Model3dOutputLabel[];
+  /** Subtrees nested past the walk cap, nulled rather than forwarded. */
+  truncated: number;
 } {
-  const media: StepOutputMedia[] = [];
-  const model3d: Model3dOutputLabel[] = [];
-  const rest = walkPassThroughOutput(output, { media, model3d }, 0, []);
-  return { media, rest, model3d };
+  const sink: PassThroughOutputSink = { media: [], model3d: [], truncated: 0 };
+  const rest = walkPassThroughOutput(output, sink, 0, []);
+  return { media: sink.media, rest, model3d: sink.model3d, truncated: sink.truncated };
 }
 
 /**
@@ -282,7 +280,11 @@ export type Model3dOutputLabel = { url: string; format: string; variant: string 
 /** The `Model3dBlob` discriminator, from `@civitai/orchestration-client`'s generated types. */
 const MODEL3D_BLOB_TYPE = 'model3d';
 
-type PassThroughOutputSink = { media: StepOutputMedia[]; model3d: Model3dOutputLabel[] };
+type PassThroughOutputSink = {
+  media: StepOutputMedia[];
+  model3d: Model3dOutputLabel[];
+  truncated: number;
+};
 
 /** Lift one blob-shaped value into the sink: its media, and its 3D label if it is one. */
 function liftBlob(value: OrchestratorBlobLike, sink: PassThroughOutputSink, path: string[]) {
@@ -349,13 +351,13 @@ export function splitPassThroughStep(
   const trainedEpochs: TrainedEpoch[] = [];
   const sampleUrls: string[] = [];
   const stripped = stripTrainingEpochs(stepType, output, trainedEpochs, sampleUrls);
-  const { media, rest, model3d } = splitPassThroughStepOutput(stripped);
+  const { media, rest, model3d, truncated } = splitPassThroughStepOutput(stripped);
   for (const url of sampleUrls) media.push({ url, width: null, height: null, nsfwLevel: null });
   const approved =
     output !== null &&
     typeof output === 'object' &&
     (output as Record<string, unknown>).moderationStatus === 'approved';
-  return { media, rest, trainedEpochs: approved ? trainedEpochs : [], model3d };
+  return { media, rest, trainedEpochs: approved ? trainedEpochs : [], model3d, truncated };
 }
 
 /**
@@ -416,9 +418,12 @@ function walkPassThroughOutput(
     liftBlob(value as OrchestratorBlobLike, sink, path);
     return {};
   }
-  // Past the cap the value is forwarded as-is. See PASS_THROUGH_OUTPUT_WALK_DEPTH
-  // for the measured margin this leaves.
-  if (depth >= PASS_THROUGH_OUTPUT_WALK_DEPTH) return value;
+  // 🔴 Past the cap the subtree is dropped, never forwarded: it is unwalked, so
+  // anything blob-shaped inside it would otherwise reach the block raw.
+  if (depth >= PASS_THROUGH_OUTPUT_WALK_DEPTH) {
+    sink.truncated += 1;
+    return null;
+  }
   if (Array.isArray(value)) {
     // 🔴 PER ELEMENT, NOT ALL-OR-NOTHING. An earlier rule qualified the whole
     // array on `some(isBlobLike)` and replaced it wholesale, which lost a blob

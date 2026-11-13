@@ -253,6 +253,7 @@ describe('splitPassThroughStepOutput', () => {
       media: [],
       rest: { capacity },
       model3d: [],
+      truncated: 0,
     });
   });
 
@@ -273,37 +274,40 @@ describe('splitPassThroughStepOutput', () => {
   // suite, and without it a pure-array chain never increments, so the cap never
   // fires at all and a deep orchestrator response overflows the stack (see
   // `PASS_THROUGH_OUTPUT_WALK_DEPTH`).
-  it('counts array levels toward the depth cap', () => {
-    const atCap = splitPassThroughStepOutput({ a: [{ b: [{ url: BLOB_URL, available: true }] }] });
-    expect(atCap.media.map((m) => m.url)).toEqual([BLOB_URL]);
-    expect(JSON.stringify(atCap.rest)).not.toContain(BLOB_URL);
+  // 🔴 BOTH SIDES OF THE BOUNDARY, or the cap is pinned only from one side.
+  const WALK_CAP = 32;
+  const nest = (levels: number, leaf: unknown, viaArrays = false): unknown =>
+    levels === 0
+      ? leaf
+      : viaArrays && levels % 2
+      ? [nest(levels - 1, leaf, viaArrays)]
+      : { k: nest(levels - 1, leaf, viaArrays) };
+  const blob = { id: 'b1', url: BLOB_URL, available: true, blockedReason: 'Blocked' };
 
-    const pastCap = splitPassThroughStepOutput({
-      z: { a: [{ b: [{ url: BLOB_URL, available: true }] }] },
-    });
-    expect(pastCap.media).toEqual([]);
-    expect(JSON.stringify(pastCap.rest)).toContain(BLOB_URL);
-  });
-
-  // 🔴 BOTH SIDES OF THE BOUNDARY, or the constant is pinned to an INTERVAL. A
-  // negative case alone bounds it from above only; this pair pins the value.
-  // (An earlier version of this note justified it by the `epochs` fixture
-  // needing ≥3 — true of the all-or-nothing array rule that preceded the
-  // per-element walk, and stale the moment that changed. The structural reason
-  // is the one that survives a fixture reshape.)
   it('reaches a blob at exactly the deepest level the cap examines', () => {
-    const { media, rest } = splitPassThroughStepOutput({
-      a: { b: { c: { d: { url: BLOB_URL, available: true } } } },
-    });
-    expect(media.map((m) => m.url)).toEqual([BLOB_URL]);
-    expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+    for (const viaArrays of [false, true]) {
+      const { media, rest, truncated } = splitPassThroughStepOutput(
+        nest(WALK_CAP, { ...blob, blockedReason: null }, viaArrays)
+      );
+      expect(media.map((m) => m.url)).toEqual([BLOB_URL]);
+      expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+      expect(truncated).toBe(0);
+    }
   });
 
-  it('does NOT descend past the depth cap', () => {
-    const deep = { a: { b: { c: { d: { e: { url: BLOB_URL, available: true } } } } } };
-    const { media, rest } = splitPassThroughStepOutput(deep);
-    expect(media).toEqual([]);
-    expect(JSON.stringify(rest)).toContain(BLOB_URL);
+  it('drops a subtree past the cap instead of forwarding it: no url, id or blockedReason survives', () => {
+    for (const viaArrays of [false, true]) {
+      const { media, rest, truncated } = splitPassThroughStepOutput(
+        nest(WALK_CAP + 1, blob, viaArrays)
+      );
+      expect(media).toEqual([]);
+      const wire = JSON.stringify(rest);
+      expect(wire).not.toContain(BLOB_URL);
+      expect(wire).not.toContain('"b1"');
+      expect(wire).not.toContain('blockedReason');
+      expect(wire).not.toContain('available');
+      expect(truncated).toBe(1);
+    }
   });
 
   // 🔴 THE UNCONDITIONAL STRIP AT THE WHOLE-VALUE SITE — the per-key site has its
@@ -313,11 +317,12 @@ describe('splitPassThroughStepOutput', () => {
   it('strips a whole-value blob that produced NO media', () => {
     expect(
       splitPassThroughStepOutput({ id: 'b', available: false, url: BLOB_URL, tier: 'm' })
-    ).toEqual({ media: [], rest: {}, model3d: [] });
+    ).toEqual({ media: [], rest: {}, model3d: [], truncated: 0 });
     expect(splitPassThroughStepOutput([{ url: BLOB_URL, available: false }])).toEqual({
       media: [],
       rest: [],
       model3d: [],
+      truncated: 0,
     });
   });
 
@@ -331,8 +336,14 @@ describe('splitPassThroughStepOutput', () => {
       media: [],
       rest: {},
       model3d: [],
+      truncated: 0,
     });
-    expect(splitPassThroughStepOutput(blocked)).toEqual({ media: [], rest: {}, model3d: [] });
+    expect(splitPassThroughStepOutput(blocked)).toEqual({
+      media: [],
+      rest: {},
+      model3d: [],
+      truncated: 0,
+    });
     expect(JSON.stringify(splitPassThroughStepOutput({ blob: blocked }).rest)).not.toContain(
       'csam-policy'
     );
@@ -346,11 +357,13 @@ describe('splitPassThroughStepOutput', () => {
       media: [],
       rest: 'just text',
       model3d: [],
+      truncated: 0,
     });
     expect(splitPassThroughStepOutput(undefined)).toEqual({
       media: [],
       rest: undefined,
       model3d: [],
+      truncated: 0,
     });
   });
 });

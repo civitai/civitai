@@ -385,7 +385,7 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
         [
           repeatOverImages({
             $type: 'training',
-            input: { triggerWord: { $ref: 'item', path: 'url' } },
+            input: { triggerWord: { $ref: 'item', path: 'text' } },
           }),
         ],
         { images: [{ url: 'a' }] }

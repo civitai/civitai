@@ -757,6 +757,7 @@ type Bundle = {
   spendCapRejectionsTotal: Counter<string>;
   confirmedQuoteOverchargeTotal: Counter<string>;
   succeededWithoutMediaTotal: Counter<string>;
+  outputTruncatedTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
   consentRevocationRefusalsTotal: Counter<string>;
@@ -1135,6 +1136,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_succeeded_without_media_total',
     'App Blocks workflows that SUCCEEDED (and so were charged) with at least one bridge-submitted MEDIA step that succeeded but produced no media of its own, whatever its sibling steps delivered (text from a text step does not cancel it). Media steps: native image/video $types, registered steps whose moderation posture produces media, and pass-through steps that returned nothing at all. Text-posture, training, suppressOutput and non-bridge steps are never media steps, so a text-only workflow is never counted. ALERT ON reason="absent": the location the step\'s extractor reads held no blobs at all (the #8132 defect shape, a bridge bug). reason="unavailable": blobs were there but all pending, withheld or blocked by the orchestrator (not a bridge bug; expected non-zero). With several empty steps, absent wins. step_type = the empty media step\'s orchestrator $type when native or registered, `passthrough` for a pass-through $type, `mixed` when several. Counted once per workflow, when the terminal poll first records `succeeded` in block_workflows. A LOWER bound: not counted when the workflow has no block_workflows row, when another writer recorded `succeeded` first, or when it was never polled to terminal through pollWorkflow (tab closed, or the app reconciles through queryAppWorkflows/useAppWorkflows).',
     ['step_type', 'reason']
+  );
+
+  const outputTruncatedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_output_truncated_total',
+    'Pass-through step output subtrees nested past the output walk cap, dropped (nulled) instead of forwarded to the block. Counted on the snapshot path, per subtree. step_type = `passthrough` (the $type is app-supplied, an open set). Non-zero means a block received a step output with a part removed.',
+    ['step_type']
   );
 
   // ── REST approved-status GATE verdicts ───────────────────────────────────────
@@ -1585,6 +1593,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     spendCapRejectionsTotal,
     confirmedQuoteOverchargeTotal,
     succeededWithoutMediaTotal,
+    outputTruncatedTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
     consentRevocationRefusalsTotal,
@@ -1853,6 +1862,18 @@ export function recordSucceededWithoutMedia(
     succeededWithoutMediaTotal.inc({ step_type: stepType, reason });
   } catch {
     /* instrument-only — never let a metrics error touch the poll */
+  }
+}
+
+/** Fail-soft emit of pass-through output subtrees dropped past the walk cap (see the counter). */
+export function recordOutputTruncated(count: number): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().outputTruncatedTotal.inc(
+      { step_type: 'passthrough' },
+      count
+    );
+  } catch {
+    /* instrument-only */
   }
 }
 

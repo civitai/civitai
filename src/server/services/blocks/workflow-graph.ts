@@ -210,14 +210,14 @@ export const MERGE_SHAPE_ERROR =
  * The step or `$arguments` each field of a `merge` reads, or `null` when that
  * cannot be read for certain (same fail-closed rule as `readRepeatInput`).
  */
-function readMergeSources(input: unknown): string[] | null {
+function readMergeSources(input: unknown): Array<{ source: string; path: unknown }> | null {
   if (!isPlainObject(input)) return null;
   if (Object.keys(input).some((key) => key !== 'fields' && key.toLowerCase() === 'fields')) {
     return null;
   }
   const { fields } = input;
   if (!isPlainObject(fields)) return null;
-  const sources: string[] = [];
+  const sources: Array<{ source: string; path: unknown }> = [];
   for (const field of Object.values(fields)) {
     if (!isPlainObject(field)) return null;
     if (Object.keys(field).some((key) => key !== '$ref' && key.toLowerCase() === '$ref')) {
@@ -226,7 +226,7 @@ function readMergeSources(input: unknown): string[] | null {
     // Without `reduce` the entry is a plain reference object, which the
     // orchestrator replaces with whatever it points at before reading the field.
     if (typeof field.$ref !== 'string' || !('reduce' in field)) return null;
-    sources.push(field.$ref);
+    sources.push({ source: field.$ref, path: field.path });
   }
   return sources;
 }
@@ -277,6 +277,159 @@ export function collectBlockStepTemplates(
   return null;
 }
 
+/**
+ * Step `$type`s (lowercased) that may take a reference into media: generators
+ * whose own output the platform scans before it is served, so what they make
+ * from an earlier output carries a fresh verdict, and the analysers above. Every other consumer may only
+ * reference text (`TEXT_REF_LEAVES`). 🔴 An allow-list: a new `$type` starts
+ * refused. Each entry was confirmed against the orchestrator's upload path.
+ */
+/**
+ * Analysers: they read media and answer with text and labels only. A test walks
+ * each one's declared output type at every depth and fails on any url-, blob- or
+ * id-like field, so one that starts returning media cannot stay here.
+ */
+export const MEDIA_REF_ANALYSERS: readonly string[] = [
+  'wdTagging',
+  'mediaCaptioning',
+  'mediaRating',
+  'ageClassification',
+  'audioCaptioning',
+  'mediaHash',
+  'videoMetadata',
+];
+
+const MEDIA_REF_CONSUMERS: ReadonlySet<string> = new Set([
+  ...MEDIA_REF_ANALYSERS.map((type) => type.toLowerCase()),
+  'imagegen',
+  'texttoimage',
+  'imageupscaler',
+  'imagebackgroundremoval',
+  'videoenhancement',
+  'videobackgroundremoval',
+  'preprocessvideo',
+  'videoupscaler',
+  'videointerpolation',
+]);
+
+/**
+ * `videoGen` engines whose output the platform scans itself. Other engines hand
+ * moderation to their provider, so a reference would send an earlier output out
+ * with no verdict of ours. 🔴 An allow-list: a new engine starts refused, and an
+ * engine that is not a literal string (a reference, `$arguments`) fails closed.
+ */
+export const SCANNED_VIDEO_GEN_ENGINES: ReadonlySet<string> = new Set([
+  'wan',
+  'ltx2',
+  'ltx2.3',
+  'ltx2.5',
+  'hunyuan',
+  'mochi',
+  'lightricks',
+]);
+
+/**
+ * The last path segments a non-media consumer may reference: text and scalar
+ * fields that cannot carry a url, a blob id or a blob. Anything else fails closed.
+ */
+const TEXT_REF_LEAVES: ReadonlySet<string> = new Set(
+  [
+    'text',
+    'content',
+    'prompt',
+    'negativePrompt',
+    'enhancedPrompt',
+    'caption',
+    'captions',
+    'summary',
+    'title',
+    'description',
+    'lyrics',
+    'transcript',
+    'language',
+    'tags',
+    'tag',
+    'labels',
+    'label',
+    'score',
+    'scores',
+    'nsfwLevel',
+    'seed',
+    'width',
+    'height',
+    'duration',
+    'count',
+    'status',
+  ].map((leaf) => leaf.toLowerCase())
+);
+
+export const MEDIA_REF_ERROR =
+  'this step may only reference text fields of other steps (a prompt, a caption, tags…), not ' +
+  'their media, urls or ids';
+
+export const WRITE_TARGET_ERROR = 'a step input may not name an output destination';
+
+function lowerType(stepType: unknown) {
+  return typeof stepType === 'string' ? stepType.toLowerCase() : '';
+}
+
+/** Whether `stepType` (with this literal `input`) may take a reference into media. */
+export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
+  const type = lowerType(stepType);
+  if (MEDIA_REF_CONSUMERS.has(type)) return true;
+  if (!isPlainObject(input)) return false;
+  if (type === 'videogen') {
+    return typeof input.engine === 'string' && SCANNED_VIDEO_GEN_ENGINES.has(input.engine);
+  }
+  if (type === 'composemedia') {
+    return isPlainObject(input.output) && input.output.type === 'video';
+  }
+  return false;
+}
+
+/** A reference path that ends on a text field (`TEXT_REF_LEAVES`), never on media. */
+export function isTextRefPath(path: unknown): boolean {
+  if (typeof path !== 'string') return false;
+  const segments = path.split(/[.[\]]+/).filter(Boolean);
+  const last = segments[segments.length - 1];
+  return !!last && TEXT_REF_LEAVES.has(last.toLowerCase());
+}
+
+const MEDIA_LIKE_SEGMENT =
+  /url|uri|blob|^id$|Id$|^(images?|videos?|frames|svg|audio|model|mesh|samples?|preview|thumbnail)$/i;
+
+/**
+ * Whether a reference may reach media. Another step's output (or a repeat
+ * variable) must end on a known text leaf; `$arguments` are the app's own values,
+ * so only a path that names a url, an id or a blob container is refused there.
+ */
+export function refMayReachMedia(source: string, path: unknown): boolean {
+  if (source !== WORKFLOW_ARGUMENTS_REF) return !isTextRefPath(path);
+  if (typeof path !== 'string') return true;
+  return path
+    .split(/[.[\]]+/)
+    .filter(Boolean)
+    .some((segment) => MEDIA_LIKE_SEGMENT.test(segment));
+}
+
+/** The first input key naming an output destination, at any depth, or `null`. */
+function findWriteTargetKey(value: unknown, depth = 0): string | null {
+  if (typeof value !== 'object' || value === null || depth > WORKFLOW_INPUT_DEPTH_MAX) return null;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = findWriteTargetKey(entry, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (/destination/i.test(key)) return key;
+    const found = findWriteTargetKey(entry, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
 /** The orchestrator's reference predicate: `$ref` and `path`, and no other key but `default`/`format`. */
 function isRefObject(value: Record<string, unknown>): boolean {
   if (!('$ref' in value) || !('path' in value)) return false;
@@ -284,7 +437,7 @@ function isRefObject(value: Record<string, unknown>): boolean {
   return true;
 }
 
-type WalkState = { refs: number; loopVars: Set<string> };
+type WalkState = { refs: number; loopVars: Set<string>; mediaRefsAllowed: boolean };
 
 /** A refusal message, or `null` when `value` is fine. */
 function checkValue(
@@ -316,7 +469,12 @@ function checkValue(
     ) {
       return 'a reference "format" must be a string';
     }
-    return checkSource(object.$ref, sources, state);
+    const sourceProblem = checkSource(object.$ref, sources, state);
+    if (sourceProblem) return sourceProblem;
+    if (!state.mediaRefsAllowed && refMayReachMedia(object.$ref, object.path)) {
+      return MEDIA_REF_ERROR;
+    }
+    return null;
   }
   for (const entry of Object.values(object)) {
     const problem = checkValue(entry, depth + 1, sources, state);
@@ -355,16 +513,19 @@ function checkStepInput(
   sources: ReadonlySet<string>,
   state: WalkState
 ): string | null {
+  if (findWriteTargetKey(input)) return WRITE_TARGET_ERROR;
+  state.mediaRefsAllowed = acceptsMediaRefs(stepType, input);
   if (isMergeStepType(stepType)) {
     const mergeSources = readMergeSources(input);
     if (!mergeSources) return MERGE_SHAPE_ERROR;
-    for (const source of mergeSources) {
+    for (const { source, path } of mergeSources) {
       // A merge waits on its sources as STEPS, so a loop variable is not one.
       if (state.loopVars.has(source)) {
         return `a merge field cannot read the repeat variable ${JSON.stringify(source)}`;
       }
       const problem = checkSource(source, sources, state);
       if (problem) return problem;
+      if (refMayReachMedia(source, path)) return MEDIA_REF_ERROR;
     }
     return checkValue(input, depth, sources, state);
   }
@@ -425,7 +586,7 @@ export function resolveBlockWorkflowGraph(body: {
   const steps: ResolvedBlockWorkflowStep[] = [];
   const earlier = new Set<string>([WORKFLOW_ARGUMENTS_REF]);
   const taken = new Set<string>();
-  const state: WalkState = { refs: 0, loopVars: new Set() };
+  const state: WalkState = { refs: 0, loopVars: new Set(), mediaRefsAllowed: false };
 
   for (let index = 0; index < body.steps.length; index += 1) {
     const step = body.steps[index];
