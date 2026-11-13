@@ -54,9 +54,10 @@ export type FliptOptions = Partial<FliptConfig> & {
    * Last-known flag state, shared between processes. With it, a process that cannot reach Flipt
    * at startup evaluates from the newest stored snapshot (no older than `snapshotMaxAgeMs`) instead
    * of answering `false` for every flag, and a process with live state keeps the stored copy current.
-   * While Flipt stays unreachable, each failed retry reloads the store and picks up a newer
-   * snapshot; once the one in use is older than `snapshotMaxAgeMs` it is dropped and flags answer
-   * as if none had been stored.
+   * While Flipt stays unreachable, each failed retry reloads the store and switches to a newer
+   * snapshot when one was saved. `snapshotMaxAgeMs` is the admission limit for the FIRST seed only:
+   * a seeded snapshot is never dropped for age, so a fleet-wide Flipt outage longer than the limit
+   * does not turn every seeded process's flags off at once.
    */
   snapshotStore?: FliptSnapshotStore;
 };
@@ -157,9 +158,8 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   );
 
   // `instance` is the live client: it polls Flipt. `seeded` evaluates a stored snapshot and never
-  // polls; it serves only until a live client exists, and only while that snapshot is younger than
-  // `snapshotMaxAgeMs` (`seededSavedAt` is the snapshot's `savedAt`). Each failed retry reloads the
-  // store and swaps in a newer snapshot when one was saved since.
+  // polls; it serves until a live client exists. `seededSavedAt` is its snapshot's `savedAt`: each
+  // failed retry reloads the store and swaps in a snapshot saved after it.
   let instance: FliptNodeClient | null = null;
   let seeded: FliptNodeClient | null = null;
   let seededSavedAt = 0;
@@ -181,21 +181,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     }
   }
 
-  // The client to evaluate with: the live one, else the seeded one while its snapshot is within
-  // `snapshotMaxAgeMs`. Past that, the seeded state is dropped and the instance answers as if no
-  // snapshot had been stored (defaults / false) until a newer snapshot or a live client arrives.
-  function current(): FliptNodeClient | null {
-    if (instance) return instance;
-    if (seeded && Date.now() - seededSavedAt > config.snapshotMaxAgeMs) {
-      log(
-        `[flipt] Flipt still unreachable; the snapshot saved ` +
-          `${new Date(seededSavedAt).toISOString()} is now over the ` +
-          `${Math.round(config.snapshotMaxAgeMs / 1000)}s limit — no longer used`
-      );
-      dropSeeded();
-    }
-    return seeded;
-  }
+  const current = () => instance ?? seeded;
 
   // The newest snapshot this process holds from live fetches, and when it last saved one.
   let liveData: unknown;
@@ -215,7 +201,10 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
 
   // Runs after every failed init attempt, not just the first, so a process that alone cannot reach
   // Flipt follows the snapshots its healthy siblings keep saving instead of evaluating its boot-time
-  // one forever. A stored snapshot no newer than the seeded one changes nothing.
+  // one forever. A stored snapshot no newer than the seeded one changes nothing. The age limit
+  // admits the first seed only: once seeded, a newer snapshot is always an improvement, and the
+  // seeded one is never dropped for age (a fleet-wide outage past the limit must not flip every
+  // seeded process's flags off together while live processes keep theirs).
   async function seedFromSnapshot(): Promise<void> {
     const store = snapshotStore;
     if (!store || config.snapshotMaxAgeMs <= 0) return;
@@ -231,15 +220,14 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
         }),
       ]);
       if (!snapshot) {
-        if (!current()) {
+        if (!seeded) {
           log('[flipt] Flipt unreachable and no stored snapshot; flags evaluate to their defaults');
         }
         return;
       }
-      // `current()` first, so a seeded snapshot that has aged out is dropped before comparing.
-      if (current() && snapshot.savedAt <= seededSavedAt) return;
+      if (seeded && snapshot.savedAt <= seededSavedAt) return;
       const ageMs = Date.now() - snapshot.savedAt;
-      if (ageMs > config.snapshotMaxAgeMs) {
+      if (!seeded && ageMs > config.snapshotMaxAgeMs) {
         log(
           `[flipt] Flipt unreachable; stored snapshot is ${Math.round(ageMs / 1000)}s old, over ` +
             `the ${Math.round(config.snapshotMaxAgeMs / 1000)}s limit — not used`
