@@ -37,7 +37,7 @@ import {
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
@@ -763,6 +763,12 @@ function EditDetail() {
     return !!review && review.reviewRecommended == null;
   };
   const namedResources = sortByModelTypes(resources).filter((x) => !!x.modelName);
+  // A row stays open once it has been seen unrated, so rating it in place doesn't make it vanish.
+  const openVersionIds = useRef(new Set<number>());
+  for (const r of namedResources)
+    if (r.modelVersionId && isUnrated(r)) openVersionIds.current.add(r.modelVersionId);
+  const isKeptOpen = (r: ResourceHelper) =>
+    !!r.modelVersionId && openVersionIds.current.has(r.modelVersionId);
 
   // The review stepper may target a rated resource hidden behind "Show All"; unrated ones are never hidden.
   const reviewFocus = useReviewFocusStore((state) => state.target);
@@ -770,7 +776,7 @@ function EditDetail() {
     if (reviewFocus?.imageId !== image.id) return;
     const visible = sortByModelTypes(image.resourceHelper).filter((x) => !!x.modelName);
     const targetIndex = visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId);
-    if (targetIndex >= COLLAPSED_RESOURCE_COUNT && !isUnrated(visible[targetIndex]))
+    if (targetIndex >= COLLAPSED_RESOURCE_COUNT && !isKeptOpen(visible[targetIndex]))
       setShowMoreResources(true);
     useReviewFocusStore.setState({ target: null });
   }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -985,13 +991,13 @@ function EditDetail() {
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
                 {namedResources.map((resource, i) =>
-                  showMoreResources || i < COLLAPSED_RESOURCE_COUNT || isUnrated(resource) ? (
+                  showMoreResources || i < COLLAPSED_RESOURCE_COUNT || isKeptOpen(resource) ? (
                     <ResourceRow key={`${image.id}-${i}`} resource={resource} i={i} />
                   ) : null
                 )}
                 {(showMoreResources ||
                   namedResources.some(
-                    (r, i) => i >= COLLAPSED_RESOURCE_COUNT && !isUnrated(r)
+                    (r, i) => i >= COLLAPSED_RESOURCE_COUNT && !isKeptOpen(r)
                   )) && (
                   <div>
                     <Button
