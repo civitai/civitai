@@ -141,7 +141,7 @@ const written = () => mockTx.modelVersion.update.mock.calls[0]?.[0]?.data;
 beforeEach(() => {
   vi.clearAllMocks();
   // `storedWords` sets a stored row; without this it leaks into later tests.
-  dbMock.dbWrite.modelVersion.findUnique.mockReset();
+  dbMock.dbWrite.modelVersion.findUnique.mockReset().mockResolvedValue(null as never);
   dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: typeof mockTx) => unknown) =>
     fn(mockTx)
   );

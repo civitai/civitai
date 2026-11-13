@@ -28,8 +28,8 @@ export const COM_FACE_INTENT_RECORDED = 'listing intent verdict';
 type RetryState = { since: string; attempt: number; nextAt: string };
 
 /**
- * Queues the intent re-check for a model whose listing (name, description or trigger words) an
- * owner just changed. Call after the write commits; it never throws, so a queue failure cannot fail
+ * Queues the .com face re-check for a model whose listing (name, description, version names or
+ * trigger words) an owner just changed. Call after the write commits; it never throws, so a queue failure cannot fail
  * the save. Models without a .com face are skipped when the job runs.
  *
  * When the queue is unavailable the edit goes in as a due retry row instead, under the same window
@@ -101,8 +101,8 @@ async function readModel(modelId: number) {
 /**
  * Re-checks a model's face after a listing edit. The version names and trigger words, which .com
  * shows unchanged, are rated as the .com title is; a mature rating takes the face off .com (the .com
- * cover is cleared, the .com title and description stay). The listing intent verdict is recorded
- * for moderators.
+ * cover is cleared, the .com title and description stay). A detected or unanswered listing intent
+ * verdict is recorded for moderators.
  */
 export async function recheckComFace(modelId: number): Promise<RecheckResult> {
   const model = await readModel(modelId);
@@ -231,7 +231,8 @@ export const COM_FACE_RESTORE_QUIET_MS = 2 * 60_000;
 const restoreKey = (modelId: number) => `${RESTORE_KEY_PREFIX}${modelId}`;
 
 /**
- * Arms the restore check after an owner edit to a model's .red title, description or trigger words.
+ * Arms the restore check after an owner edit to a model's .red title, description, version names or
+ * trigger words.
  * Writes nothing unless the re-check took the model's face off .com. Each edit pushes the check
  * back. Call after the write commits; it never throws.
  */

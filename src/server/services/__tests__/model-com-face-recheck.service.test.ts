@@ -192,7 +192,7 @@ describe('the .com face listing re-check', () => {
     expect(counts.allowed).toBe(1);
   });
 
-  it('retries an unrated version text even when the intent check detected the listing', async () => {
+  it('retries when the version rating gets no verdict, whatever the listing verdict', async () => {
     arrange({ fresh: [MODEL_ID] });
     mockPreviewComFaceIntent.mockResolvedValue(intent(true));
     mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
@@ -366,6 +366,20 @@ describe('the .com face listing re-check', () => {
     expect(coverCleared()).toBe(false);
     expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
     expect(db.keyValue.upsert).not.toHaveBeenCalled();
+  });
+
+  it('takes the face off .com as unverified when neither check answers within the window', async () => {
+    arrange({
+      waiting: [{ since: ago(COM_FACE_RECHECK_WINDOW_MS), attempt: 30, nextAt: NOW.toISOString() }],
+    });
+    mockPreviewComFaceIntent.mockResolvedValue({ status: 'unavailable' });
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expect(coverCleared()).toBe(true);
+    expect(marker()).toMatchObject({ reason: 'recheck-unverified' });
+    expect(counts.gaveUp).toBe(1);
   });
 
   it('takes the face off .com as unverified once the window has passed without a rating', async () => {
