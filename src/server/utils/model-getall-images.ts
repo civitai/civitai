@@ -1,3 +1,6 @@
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
+
 /**
  * Wire-shape trimming for the browse-feed `model.getAll` tRPC response — the #1
  * producer of oversized / event-loop-freezing tRPC responses in the
@@ -228,6 +231,44 @@ export function stripGetAllModelImage<T extends Record<string, unknown>>(image: 
  *     guarantees any viewer with a visible image in the full set keeps one in the
  *     slice, driving the feed-drop regression to ~0. See that fn's docs.
  */
+/**
+ * The images a viewer may be sent, by the rule the client's hidden-preferences filter
+ * (`useApplyHiddenPreferences`, models path) applies to level, poi and minor, so the server never
+ * drops one the client would have shown. A model marked `nsfw` keeps everything up to the viewer's
+ * highest level; an unrated image is kept only for its owner or a moderator.
+ */
+export function filterImagesForViewer<
+  T extends { nsfwLevel: number; userId?: number; poi?: boolean | null; minor?: boolean | null }
+>(
+  images: T[],
+  {
+    browsingLevel,
+    modelNsfw,
+    disablePoi,
+    disableMinor,
+    viewer,
+  }: {
+    browsingLevel: number;
+    modelNsfw?: boolean | null;
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+    viewer?: { id: number; isModerator?: boolean | null };
+  }
+) {
+  const maxLevel = Math.max(0, ...parseBitwiseBrowsingLevel(browsingLevel));
+  return images.filter((image) => {
+    const isOwner = !!viewer && image.userId === viewer.id;
+    if (image.nsfwLevel === 0) return isOwner || !!viewer?.isModerator;
+    const levelShown = modelNsfw
+      ? image.nsfwLevel <= maxLevel
+      : Flags.intersects(image.nsfwLevel, browsingLevel);
+    if (!levelShown) return false;
+    if (image.poi && disablePoi && !isOwner) return false;
+    if (image.minor && disableMinor && !isOwner) return false;
+    return true;
+  });
+}
+
 export function buildGetAllModelImages<T extends Record<string, unknown>>(
   images: T[],
   limit = GET_ALL_IMAGES_PER_MODEL,

@@ -262,6 +262,7 @@ import {
 } from '~/server/utils/minor-flag-meta';
 import {
   buildGetAllModelImages,
+  filterImagesForViewer,
   GET_ALL_IMAGES_PER_MODEL,
 } from '~/server/utils/model-getall-images';
 import {
@@ -1872,8 +1873,10 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
+  // getModelsRaw resolves the viewer's poi/minor exclusions onto this copy; the images use them too.
+  const rawInput = { ...input, take: input.limit };
   const { items, isPrivate, nextCursor } = await getModelsRaw({
-    input: { ...input, take: input.limit },
+    input: rawInput,
     user,
     domain,
     include: ['cosmetics'],
@@ -1979,11 +1982,21 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!version) {
           return null;
         }
-        const versionImages = imagesForFace(
+        const faceImages = imagesForFace(
           hoistCoverImage(modelVersionImages[version.id]?.images ?? [], coverImages.get(model.id)),
           model,
           showSfwFace
         );
+        // The image cache holds every level; send only what this viewer's settings show.
+        const versionImages = input.browsingLevel
+          ? filterImagesForViewer(faceImages, {
+              browsingLevel: input.browsingLevel,
+              modelNsfw: model.nsfw,
+              disablePoi: rawInput.disablePoi,
+              disableMinor: rawInput.disableMinor,
+              viewer: user,
+            })
+          : faceImages;
         const filteredImages = excludedTagIds
           ? versionImages.filter(
               (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
