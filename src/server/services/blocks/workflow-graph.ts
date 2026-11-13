@@ -210,6 +210,19 @@ export function isMergeStepType(stepType: unknown): boolean {
   return typeof stepType === 'string' && fold(stepType) === 'merge';
 }
 
+/** A merge input with `reduce` taken off each field, so each field reads as its reference. */
+function withoutMergeReduce(input: unknown): unknown {
+  if (!isPlainObject(input) || !isPlainObject(input.fields)) return input;
+  const fields = Object.fromEntries(
+    Object.entries(input.fields).map(([name, field]) => {
+      if (!isPlainObject(field)) return [name, field];
+      const { reduce: _reduce, ...ref } = field;
+      return [name, ref];
+    })
+  );
+  return { ...input, fields };
+}
+
 /** The refusal for a `merge` step whose sources cannot be read for certain. */
 export const MERGE_SHAPE_ERROR =
   'a merge step needs a "fields" object whose entries each carry a string "$ref" and a "reduce"';
@@ -364,15 +377,19 @@ export const SCANNED_VIDEO_GEN_PROVIDERS: ReadonlySet<string> = new Set(['comfy'
 export const VIDEO_GEN_ENGINES_NEEDING_PROVIDER: ReadonlySet<string> = new Set(['wan']);
 
 const CHAT_IMAGE_MODALITY_ERROR = 'a chat step may not generate images';
+/** The chat output modalities a block may ask for: an allow-list, so anything else refuses. */
+const CHAT_OUTPUT_MODALITIES: ReadonlySet<string> = new Set(['text', 'audio']);
 
 /** A chatCompletion input that asks for image output, or whose modalities cannot be read. */
 export function chatImageModalityProblem(stepType: unknown, input: unknown): string | null {
   if (lowerType(stepType) !== 'chatcompletion' || !isPlainObject(input)) return null;
   if (hasRecasedTwin(input, 'modalities')) return CHAT_IMAGE_MODALITY_ERROR;
-  if (!('modalities' in input) || input.modalities == null) return null;
+  if (!('modalities' in input)) return null;
   const { modalities } = input;
   if (!Array.isArray(modalities)) return CHAT_IMAGE_MODALITY_ERROR;
-  return modalities.every((m) => typeof m === 'string' && fold(m) !== 'image')
+  return modalities.every(
+    (m) => typeof m === 'string' && CHAT_OUTPUT_MODALITIES.has(m.toLowerCase())
+  )
     ? null
     : CHAT_IMAGE_MODALITY_ERROR;
 }
@@ -434,8 +451,11 @@ export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
       return false;
     }
     if (!('provider' in input)) return !VIDEO_GEN_ENGINES_NEEDING_PROVIDER.has(input.engine);
+    // A value is matched as the orchestrator reads it: ASCII, case-insensitive.
     return (
-      typeof input.provider === 'string' && SCANNED_VIDEO_GEN_PROVIDERS.has(fold(input.provider))
+      typeof input.provider === 'string' &&
+      /^[\x20-\x7e]+$/.test(input.provider) &&
+      SCANNED_VIDEO_GEN_PROVIDERS.has(input.provider.toLowerCase())
     );
   }
   if (type === 'composemedia') {
@@ -547,6 +567,18 @@ const RECASED_REF_ERROR = 'a reference key must be spelled "$ref", "path", "defa
  * Whether the orchestrator binds a re-cased key is not something this repo can
  * know, so such an object is refused rather than walked as plain data.
  */
+const MALFORMED_REF_ERROR = 'a reference may carry only "$ref", "path", "default" and "format"';
+
+/** `$ref` and `path` with another key: not a reference here, and not plain data either. */
+function isMalformedRef(value: Record<string, unknown>): boolean {
+  const keys = Object.keys(value);
+  return (
+    keys.some(isRefKey) &&
+    keys.some((key) => fold(key) === 'path') &&
+    keys.some((key) => !REF_KEYS.has(fold(key)))
+  );
+}
+
 function hasRecasedRefKey(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
   if (!keys.some(isRefKey)) return false;
@@ -575,6 +607,7 @@ function checkValue(
   }
   const object = value as Record<string, unknown>;
   if (hasRecasedRefKey(object)) return RECASED_REF_ERROR;
+  if (isMalformedRef(object)) return MALFORMED_REF_ERROR;
   if (isRefObject(object)) {
     if (typeof object.$ref !== 'string' || typeof object.path !== 'string') {
       return 'a reference needs a string "$ref" and a string "path"';
@@ -660,11 +693,10 @@ function checkStepInput(
       if (state.loopVars.has(source)) {
         return `a merge field cannot read the repeat variable ${JSON.stringify(source)}`;
       }
-      const problem = checkSource(source, sources, state);
-      if (problem) return problem;
       if (refMayReachMedia(source, path)) return MEDIA_REF_ERROR;
     }
-    return checkValue(input, depth, sources, state);
+    // Each field is a reference plus `reduce`: walked as the reference it holds.
+    return checkValue(withoutMergeReduce(input), depth, sources, state);
   }
   if (!isRepeatStepType(stepType)) return checkValue(input, depth, sources, state);
   const repeat = readRepeatInput(input);

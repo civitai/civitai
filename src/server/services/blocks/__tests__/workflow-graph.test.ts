@@ -166,19 +166,19 @@ describe('resolveBlockWorkflowGraph — references', () => {
     expect(r.error).toBe('workflow step 0: a reference "format" must be a string');
   });
 
-  it('does NOT treat an object with other keys as a reference', () => {
-    // The orchestrator's own predicate: `$ref` + `path` and nothing but
-    // `default` / `format`. A JSON-schema `$ref`, or an object with an extra key,
-    // is plain data and is forwarded whatever it names.
-    const steps = resolved([
-      step({
-        input: {
-          schema: { $ref: '#/definitions/thing' },
-          notARef: { $ref: 'nowhere', path: 'p', extra: true },
-        },
-      }),
-    ]);
-    expect(steps).toHaveLength(1);
+  it('does NOT treat a `$ref` with no `path` as a reference', () => {
+    // The orchestrator reads `$ref` + `path` as a reference; a JSON-schema `$ref` is plain data.
+    expect(resolved([step({ input: { schema: { $ref: '#/definitions/thing' } } })])).toHaveLength(
+      1
+    );
+  });
+
+  it('🔴 refuses a `$ref` + `path` object carrying another key, rather than forward it as data', () => {
+    for (const extra of [{ extra: true }, { reduce: 'first' }]) {
+      expect(
+        refusal([step({ input: { x: { $ref: '$arguments', path: 'p', ...extra } } })]).error
+      ).toBe('workflow step 0: a reference may carry only "$ref", "path", "default" and "format"');
+    }
   });
 
   it(`accepts ${WORKFLOW_MAX_REFS} references and refuses one more`, () => {
@@ -815,6 +815,29 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
       ).toBe('workflow step 0: a chat step may not generate images');
     }
   );
+
+  it.each([
+    ['null', null],
+    ['a non-text entry', ['images']],
+    ['a padded entry', [' image']],
+  ])('🔴 chat modalities refuse %s', (_label, modalities) => {
+    expect(
+      refusal([step({ $type: 'chatCompletion', input: { messages: [], modalities } })]).error
+    ).toBe('workflow step 0: a chat step may not generate images');
+  });
+
+  it('🔴 a provider spelled with a dotless ı is not a scanned provider', () => {
+    mediaRefused(
+      [
+        gen,
+        step({
+          $type: 'videoGen',
+          input: { engine: 'wan', provider: 'cıvıtaı', images: [ref('gen')] },
+        }),
+      ],
+      1
+    );
+  });
 
   it('CONTROL: a chat step asking for text output is fine', () => {
     expect(
