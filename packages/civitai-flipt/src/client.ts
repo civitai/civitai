@@ -208,6 +208,9 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   let stateVersionClient: FliptNodeClient | null = null;
   // What the last snapshot body was, to tell a changed body from a re-sent one: its ETag when Flipt
   // sends one, else the body itself, serialized (once per poll, only when Flipt omits the ETag).
+  // A body field that changed on every poll would move the version on every poll, so a
+  // version-keyed cache would keep entries for at most one poll interval: a smaller saving, never
+  // a staler answer.
   let lastSnapshotSignature: string | null = null;
 
   function noteSnapshotBody(data: unknown, etag: string | null) {

@@ -2,6 +2,7 @@ import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createFliptClient } from '../client';
+import type { FliptSnapshot, FliptSnapshotStore } from '../snapshot';
 
 // `getStateVersion` is what lets an app memoize flag evaluations until the flag state changes
 // (feature-flags.service's version-keyed cache). The REAL SDK and wasm engine, against a real HTTP
@@ -141,5 +142,117 @@ describe('getStateVersion', () => {
     await nextMacrotask();
     expect(flipt.getStateVersion()).not.toBe(settled);
     expect(flipt.isEnabledSync('switch')).toBe(true);
+  });
+});
+
+// A seeded client (Flipt unreachable, state from a stored snapshot) is built from the store, not
+// from a live fetch, so no snapshot body is ever noted for it: only the client-swap check in
+// `getStateVersion` can see it appear or be replaced.
+describe('getStateVersion across snapshot-seeded clients', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  /** A URL nothing listens on: bind a port, then close it. */
+  async function downUrl() {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    return `http://127.0.0.1:${port}`;
+  }
+
+  function memoryStore(initial: FliptSnapshot) {
+    let stored = initial;
+    const store: FliptSnapshotStore = {
+      load: async () => stored,
+      save: async (snapshot) => {
+        stored = snapshot;
+      },
+    };
+    return store;
+  }
+
+  function seedingClient(url: string, store: FliptSnapshotStore) {
+    const flipt = createFliptClient({
+      url,
+      clientToken: 'token',
+      environment: 'test-env',
+      localOverrides: {},
+      log: () => {},
+      onInitError: () => {},
+      snapshotStore: store,
+      snapshotMaxAgeMs: DAY,
+      failureCooldownMs: 0,
+      evalCacheTtlMs: 0,
+    });
+    clients.push(flipt);
+    return flipt;
+  }
+
+  /** Start init attempts (no cooldown) until `check` holds, or give up after `ms`. */
+  async function retryUntil(
+    flipt: ReturnType<typeof seedingClient>,
+    check: () => boolean,
+    ms = 2000
+  ) {
+    const deadline = performance.now() + ms;
+    while (performance.now() < deadline) {
+      await flipt.ensureInitialized();
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  // Fails with the swap check removed: Flipt is down, so no body is ever noted and nothing else
+  // moves the version. Entries computed with no client (every flag at its fallback) would then
+  // outlive the seeded state's arrival.
+  it('moves when a seeded client appears', async () => {
+    const store = memoryStore({ savedAt: Date.now() - 60_000, etag: '"v1"', data: state(true) });
+    const flipt = seedingClient(await downUrl(), store);
+
+    const before = flipt.getStateVersion();
+    expect(await flipt.isEnabled('switch')).toBe(true); // POSITIVE CONTROL: seeded state answers
+    expect(flipt.getStateVersion()).not.toBe(before);
+  });
+
+  // Fails with the swap check removed, for the same reason: a newer stored snapshot replaces the
+  // seeded client while Flipt stays down.
+  it('moves when a newer snapshot replaces the seeded client', async () => {
+    const store = memoryStore({ savedAt: Date.now() - 60_000, etag: '"v1"', data: state(true) });
+    const flipt = seedingClient(await downUrl(), store);
+    expect(await flipt.isEnabled('switch')).toBe(true);
+    const seededVersion = flipt.getStateVersion();
+
+    await store.save({ savedAt: Date.now(), etag: '"v2"', data: state(false) }, true);
+    await retryUntil(flipt, () => flipt.isEnabledSync('switch') === false);
+    expect(flipt.isEnabledSync('switch')).toBe(false); // POSITIVE CONTROL: the replacement happened
+    expect(flipt.getStateVersion()).not.toBe(seededVersion);
+  });
+
+  // The seeded → live switch with the live body carrying the SAME ETag as the seed. Pins that the
+  // switch moves the version. Not a guard on the swap check alone: the live client's first body is
+  // also noted (the seed never records a signature), which moves the version on its own.
+  it('moves when the live client takes over, even with the same ETag as the seed', async () => {
+    const served = state(true);
+    let up = false;
+    const server = createServer((req, res) => {
+      if (!up) return void res.writeHead(503).end();
+      if (req.url !== SNAPSHOT_PATH) return void res.writeHead(404).end('{}');
+      res.writeHead(200, { 'content-type': 'application/json', etag: '"v1"' });
+      res.end(JSON.stringify(served));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const store = memoryStore({ savedAt: Date.now() - 60_000, etag: '"v1"', data: served });
+    const flipt = seedingClient(url, store);
+    expect(await flipt.isEnabled('switch')).toBe(true); // seeded
+    const seededClient = flipt.getClientSync();
+    const seededVersion = flipt.getStateVersion();
+
+    up = true;
+    await retryUntil(flipt, () => flipt.getClientSync() !== seededClient);
+    expect(flipt.getClientSync()).not.toBe(seededClient); // POSITIVE CONTROL: the live client took over
+    expect(flipt.getStateVersion()).not.toBe(seededVersion);
   });
 });

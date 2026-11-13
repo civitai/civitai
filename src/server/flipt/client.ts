@@ -281,17 +281,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
   // at most once per 5s per process.
   FEATURE_FLAGS_LAZY_PROTO = 'feature-flags-lazy-proto',
-  // Picks how long `getFeatureFlags` (feature-flags.service.ts) keeps a whole-registry result: ON =
-  // until the Flipt state version moves (a changed snapshot or a client swap) or 10 minutes,
-  // keyed on every input the evaluation reads, the full Flipt context included; OFF = 10 seconds,
-  // as before. Same value per key either way, and a flag change in Flipt reaches it no later than
-  // with OFF. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized
-  // client, which keeps the 10-second cache. Global boolean, evaluated with no entity or context,
-  // at most once per 5s per process.
+  // `getFeatureFlags` result cache: ON = keep a whole-registry result until the Flipt state version
+  // moves (or 10 min); OFF/unknown = the 10-second cache. Global boolean, read at most once per 5s.
   //
-  // Add the key (enabled: false) to flag state before this code serves traffic. A missing key
-  // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
-  // at most once per 5s per process.
+  // The key exists in flag state, enabled: false. Were it missing it would read as off:
+  // `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it, at most once
+  // per 5s per process.
   FEATURE_FLAGS_STATE_VERSION_CACHE = 'feature-flags-state-version-cache',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt

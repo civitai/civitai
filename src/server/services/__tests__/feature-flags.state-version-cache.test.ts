@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
+import type * as FliptClientModule from '~/server/flipt/client';
 
 /**
  * `getFeatureFlags` behind `feature-flags-state-version-cache`: whole-registry results kept until
@@ -61,15 +62,14 @@ function fakeIsFliptSync(
   return m === 1;
 }
 
-vi.mock('~/server/flipt/client', () => ({
+// The real module (its FLIPT_FEATURE_FLAGS, so a renamed key fails here), with every function the
+// service calls on it replaced: nothing reaches a real Flipt.
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClientModule>()),
   isFliptSync: (...a: Parameters<typeof fakeIsFliptSync>) => fakeIsFliptSync(...a),
   ensureFliptInitialized: async () => undefined,
   getFliptStateVersion: () => flipt.version,
   getFliptEvalCacheTtlMs: () => flipt.evalCacheTtlMs,
-  FLIPT_FEATURE_FLAGS: {
-    FEATURE_FLAGS_LAZY_PROTO: 'feature-flags-lazy-proto',
-    FEATURE_FLAGS_STATE_VERSION_CACHE: 'feature-flags-state-version-cache',
-  },
 }));
 
 import {
