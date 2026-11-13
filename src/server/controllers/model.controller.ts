@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { Flags } from '~/shared/utils/flags';
 import { getSponsoredModel } from '~/server/services/promotion.service';
 import { sponsoredSlotIndex } from '~/shared/utils/promotion';
@@ -688,6 +689,7 @@ export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
     const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
     const queryOptions = {
       user: ctx.user,
+      heldViewer: isSessionOrFullUserKey(ctx),
       domain: getRequestBoardDomainColor(ctx.req),
       imagesPerModel,
       biasImageSlice: slim,
