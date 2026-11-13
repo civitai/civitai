@@ -1,3 +1,5 @@
+// vitest is the workspace root's dev dependency; package test files run from the root suite.
+// eslint-disable-next-line import/no-extraneous-dependencies
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BuzzApiError, createBuzzClient, writeMayHaveLanded } from './client';
 
