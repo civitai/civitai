@@ -66,7 +66,6 @@ export async function searchSemanticArticles({
   // A named user or tag that does not exist can match nothing.
   if (userIds && !userIds.length) return none;
   if (tagIds && tagIds.length < new Set(input.tagNames).size) return none;
-  // The feed applies these in the browser; here they are applied server-side.
   const addonsFor = (level: number) =>
     resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
   let addons = addonsFor(browsingLevel);

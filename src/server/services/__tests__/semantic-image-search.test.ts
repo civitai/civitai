@@ -672,16 +672,11 @@ describe('the query audit and the browsing level', () => {
 
   const clampOn = () => h.evalBoolean.mockReturnValue({ enabled: true });
 
-  it('searches a non-moderator at their own level while the clamp switch is off', async () => {
-    const { calls } = await run({ browsingLevel: ALL_LEVELS });
-    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
-    expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
-  });
-
   it('lifts the clamp when the key is present and disabled', async () => {
     h.evalBoolean.mockReturnValue({ enabled: false });
     const { calls } = await run({ browsingLevel: ALL_LEVELS });
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
+    expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
   });
 
   it.each([
