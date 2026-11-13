@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * - cache read rejects or is never answered → the row is read from the database, within the
  *   cache-read deadline rather than the client's 15s backstop;
- * - database also unavailable → the copy this process last read, if it has one;
- * - neither → it throws (fails closed), never `{ data: [] }`.
+ * - a copy this process read within the cache TTL is served without a database read;
+ * - otherwise database unavailable too → it throws (fails closed), never `{ data: [] }`.
  */
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
@@ -86,7 +86,9 @@ describe('getBlocklistDTO with the cache unavailable', () => {
     expect(await getBlocklistDTO({ type: BlocklistType.LinkDomain })).toEqual(updated);
   });
 
-  it('cache and database both down, last copy older than the cache TTL: still serves that copy', async () => {
+  it('cache and database both down, last copy older than the cache TTL: throws rather than serve it', async () => {
+    // A copy past the TTL is staler than the cache itself would ever serve; with the database also
+    // down, the read fails closed instead.
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
     const { getBlocklistDTO } = await load();
@@ -97,7 +99,7 @@ describe('getBlocklistDTO with the cache unavailable', () => {
     redisMock.redis.get.mockRejectedValue(new Error('cluster down'));
     dbMock.dbWrite.blocklist.findMany.mockRejectedValue(new Error('db down'));
 
-    await expect(getBlocklistDTO({ type: BlocklistType.LinkDomain })).resolves.toEqual(ROW);
+    await expect(getBlocklistDTO({ type: BlocklistType.LinkDomain })).rejects.toThrow('db down');
     expect(dbMock.dbWrite.blocklist.findMany).toHaveBeenCalled();
   });
 

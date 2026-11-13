@@ -4,9 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * fetchThroughCache serve-stale-on-origin-error (FETCH_THROUGH_CACHE_SERVE_STALE, dark).
  *
  * Entries live for ttl*2 but are refreshed after ttl, so between the two an expired copy is still
- * readable. With the switch on, an origin fetch that throws during that refresh answers with the
- * expired copy instead of the error. A caller that must never see an expired value opts out with
- * `serveStaleOnError: false`, and nothing is served when there is no copy at all.
+ * readable. Serving it on an origin error is OPT-IN per caller (`serveStaleOnError: true`) and only
+ * while the switch is on: a caller that did not opt in sees the error even with the switch on, and
+ * nothing is served when there is no copy at all.
  */
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
@@ -29,30 +29,34 @@ beforeEach(() => {
 });
 
 describe('fetchThroughCache serve-stale on origin error', () => {
-  it('switch on: an origin error during refresh answers with the expired entry', async () => {
-    setEnv({ FETCH_THROUGH_CACHE_SERVE_STALE: true });
-
-    await expect(fetchThroughCache(KEY, originDown, { ttl: 60 })).resolves.toEqual(STALE);
-  });
-
-  it('switch on, caller opted out: the origin error propagates', async () => {
+  it('switch on, caller opted in: an origin error during refresh answers with the expired entry', async () => {
     setEnv({ FETCH_THROUGH_CACHE_SERVE_STALE: true });
 
     await expect(
-      fetchThroughCache(KEY, originDown, { ttl: 60, serveStaleOnError: false })
+      fetchThroughCache(KEY, originDown, { ttl: 60, serveStaleOnError: true })
+    ).resolves.toEqual(STALE);
+  });
+
+  it('switch on, caller did not opt in: the origin error propagates', async () => {
+    setEnv({ FETCH_THROUGH_CACHE_SERVE_STALE: true });
+
+    await expect(fetchThroughCache(KEY, originDown, { ttl: 60 })).rejects.toThrow('origin down');
+  });
+
+  it('switch off, caller opted in: the origin error propagates', async () => {
+    setEnv({ FETCH_THROUGH_CACHE_SERVE_STALE: false });
+
+    await expect(
+      fetchThroughCache(KEY, originDown, { ttl: 60, serveStaleOnError: true })
     ).rejects.toThrow('origin down');
   });
 
-  it('switch off: the origin error propagates', async () => {
-    setEnv({ FETCH_THROUGH_CACHE_SERVE_STALE: false });
-
-    await expect(fetchThroughCache(KEY, originDown, { ttl: 60 })).rejects.toThrow('origin down');
-  });
-
-  it('switch on, nothing cached: the origin error propagates', async () => {
+  it('switch on, opted in, nothing cached: the origin error propagates', async () => {
     setEnv({ FETCH_THROUGH_CACHE_SERVE_STALE: true });
     redisMock.redis.packed.get.mockResolvedValue(null);
 
-    await expect(fetchThroughCache(KEY, originDown, { ttl: 60 })).rejects.toThrow('origin down');
+    await expect(
+      fetchThroughCache(KEY, originDown, { ttl: 60, serveStaleOnError: true })
+    ).rejects.toThrow('origin down');
   });
 });
