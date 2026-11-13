@@ -1,8 +1,10 @@
-import { Alert, Card, Center, Group, Loader, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { Alert, Center, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle, IconCoin } from '@tabler/icons-react';
 
+import { AuthorFeeCard, GOODS_ABSENT, GoodsSalesCard } from '~/components/AppBlocks/RevenuePanel';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import type { AppEarningsResult } from '~/server/services/blocks/app-collaborator-earnings.service';
+import type { AuthorFeeEarnings } from '~/server/services/blocks/author-fee-earnings.service';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -39,15 +41,14 @@ import { trpc } from '~/utils/trpc';
  * would show them the owner's ENTIRE PORTFOLIO. This reads ONE listing, resolving the
  * caller's role on it server-side.
  *
+ * It renders `RevenuePanel`'s two money cards (author fees, digital goods) over this app's
+ * figures, with "on this app" empty copy instead of "attributed to you": the figures are the
+ * whole app's, owed to its current owner. The card-purchase revenue share is recorded but
+ * never paid out, so it is not shown.
+ *
  * The type is imported with `import type`, so nothing from the service's module graph
- * (which reaches `dbRead`) survives into the client bundle. That is deliberately unlike
- * `RevenuePanel`, which re-declares its server union locally with a "keep in lockstep"
- * comment — a lockstep nothing enforces.
+ * (which reaches `dbRead`) survives into the client bundle.
  */
-
-function dollars(cents: number | null | undefined) {
-  return `$${((cents ?? 0) / 100).toFixed(2)}`;
-}
 
 type Unavailable = Extract<AppEarningsResult, { ok: false }>['reason'];
 
@@ -119,60 +120,21 @@ export function AppEarningsPanelView({
     );
   }
 
-  const { summary } = data;
-  const cards: Array<{ key: string; label: string; cents: number; count: number; color?: string }> =
-    [
-      {
-        key: 'pending',
-        label: 'Pending',
-        cents: summary.pending.shareCents,
-        count: summary.pending.count,
-      },
-      {
-        key: 'confirmed',
-        label: 'Confirmed (unpaid)',
-        cents: summary.confirmed.shareCents,
-        count: summary.confirmed.count,
-        color: 'green',
-      },
-      {
-        key: 'paidOut',
-        label: 'Paid out',
-        cents: summary.paidOut.shareCents,
-        count: summary.paidOut.count,
-      },
-      {
-        key: 'voided',
-        label: 'Voided',
-        cents: summary.voided.grossCents,
-        count: summary.voided.count,
-        color: 'dimmed',
-      },
-    ];
-
   return (
     <Stack gap="md" data-testid="apps-earnings-panel">
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-        {cards.map((card) => (
-          <Card
-            key={card.key}
-            padding="md"
-            radius="md"
-            withBorder
-            data-testid={`apps-earnings-${card.key}`}
-          >
-            <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-              {card.label}
-            </Text>
-            <Title order={3} mt={4} c={card.color}>
-              {dollars(card.cents)}
-            </Title>
-            <Text size="xs" c="dimmed">
-              {card.count} purchase{card.count === 1 ? '' : 's'}
-            </Text>
-          </Card>
-        ))}
-      </SimpleGrid>
+      {/* `data` is a wire payload: an API process older than this bundle omits both keys.
+          Absent author fees render as "could not be loaded" and absent goods as the
+          unreadable shape, never as zeros. */}
+      <AuthorFeeCard
+        authorFees={data.authorFees as AuthorFeeEarnings | undefined}
+        scoped
+        emptyText="No author fees on this app."
+      />
+      <GoodsSalesCard
+        goods={data.goods ?? GOODS_ABSENT}
+        scoped
+        emptyText="No digital goods sales on this app yet."
+      />
       {/* 🔴 The scope is stated on screen. An EDITOR reaching this panel is seeing ONE
           app's figures, never the owner's portfolio — and saying so is what stops the
           number being read as "everything this owner earns". */}
