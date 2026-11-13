@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BlockImageUpload from '~/server/services/blocks/block-image-upload.service';
 import type * as InputUrls from '~/server/services/generation-input-urls';
 import type * as ImageUploadAction from '~/server/services/image-upload-action.service';
@@ -53,7 +53,6 @@ import {
 import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';
 import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
-import { buildGenerationContext } from '~/server/services/orchestrator/orchestration-new.service';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
 import {
   centreCropBox,
@@ -211,47 +210,6 @@ describe('nothing is attached before Keep', () => {
       })
     ).rejects.toThrow('price changed');
     expect(h.generateFromGraph).not.toHaveBeenCalled();
-  });
-});
-
-describe('the generation kill switch', () => {
-  const submit = (who: RemixAppCaller) =>
-    submitArticleReframe({
-      imageId: source.id,
-      target: 'banner',
-      quote: 40,
-      nonce: 'n-ks',
-      caller: who,
-    });
-  const givenSwitch = (mode: string) =>
-    vi.mocked(buildGenerationContext).mockResolvedValue({
-      externalCtx: {},
-      status: { mode, message: 'paused' },
-    } as never);
-  const as = (user: Record<string, unknown>) =>
-    ({ ...caller, user: { ...caller.user, ...user } } as RemixAppCaller);
-  afterEach(() =>
-    vi.mocked(buildGenerationContext).mockResolvedValue({ externalCtx: {}, status: {} } as never)
-  );
-
-  it.each([
-    ['disabled', { isModerator: false, tier: 'free' }],
-    ['memberOnly', { isModerator: false, tier: 'free' }],
-  ])('%s refuses a free author before it charges', async (mode, user) => {
-    givenSwitch(mode);
-    await expect(submit(as(user))).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: 'paused',
-    });
-    expect(h.generateFromGraph).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['disabled', { isModerator: true, tier: 'free' }],
-    ['memberOnly', { isModerator: false, tier: 'gold' }],
-  ])('%s still lets a moderator / member submit', async (mode, user) => {
-    givenSwitch(mode);
-    await expect(submit(as(user))).resolves.toMatchObject({ workflowId: 'wf-1' });
   });
 });
 

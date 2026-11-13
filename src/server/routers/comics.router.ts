@@ -60,6 +60,7 @@ import {
   getPresetModelConfig,
   pickAspectRatioSize,
   PRESET_MODEL_CONFIG,
+  assertPresetGenerationAllowed,
   submitPresetImageGen,
   whatIfPresetImageGen,
   type PresetModelConfig,
@@ -4613,6 +4614,9 @@ export const comicsRouter = router({
         isModerator: ctx.user?.isModerator,
         surface: 'comic',
       });
+      // Every panel here is submitted now or queued for the job, so the kill switch refuses the
+      // whole create up front rather than leaving a chapter of panels that fail later.
+      await assertPresetGenerationAllowed(ctx.user! as SessionUser);
       // Check how many queue slots the user has available upfront.
       // Panels that fit will be submitted immediately; the rest get enqueued
       // for the background job to process when slots free up.

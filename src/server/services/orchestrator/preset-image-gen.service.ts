@@ -282,6 +282,22 @@ function graphInputOf(args: GraphInputArgs, forWhatIf: boolean) {
 }
 
 /**
+ * The generation kill switch for a preset action that commits work before it submits: comics'
+ * smart create, which queues panels for the job to submit later. Same rule and off-switch as
+ * `submitPresetImageGen`, so a refused caller is turned away before anything is written instead
+ * of leaving panels that fail later. A switch that cannot be read is refused, as it is there.
+ */
+export async function assertPresetGenerationAllowed(
+  user: Pick<SessionUser, 'isModerator' | 'tier'>
+): Promise<void> {
+  if (!env.PRESET_ENFORCE_GENERATION_STATUS) return;
+  const generation = await import('~/server/services/generation/generation.service');
+  const { status, known } = await generation.getGenerationStatusState();
+  if (!known) throw generation.generationConfigUnavailableError();
+  assertGenerationStatusAllows(status, { isModerator: user.isModerator, tier: user.tier });
+}
+
+/**
  * Submit a preset image generation through the generation graph.
  *
  * `generateFromGraph` audits the prompt internally and enriches the resource
