@@ -75,6 +75,10 @@ const EXPECTED_REFS: [reason: string, table: string, column: string][] = [
   ['challenge-entry-standing', 'ChallengeEntryStanding', 'imageId'],
   ['event-turf-sticker', 'EventTurfSticker', 'imageId'],
   ['event-turf-flag-sticker', 'EventTurfFlagSticker', 'imageId'],
+  ['challenge-entry-comparison', 'ChallengeEntryComparison', 'imageIdA'],
+  ['challenge-entry-comparison', 'ChallengeEntryComparison', 'imageIdB'],
+  ['challenge-entry-comparison', 'ChallengeEntryComparison', 'firstSeatImageId'],
+  ['challenge-entry-comparison', 'ChallengeEntryComparison', 'winnerImageId'],
   ['image-connection', 'ImageConnection', 'imageId'],
 ];
 const REF_TABLES = [...new Set(EXPECTED_REFS.map(([, table]) => table))];
@@ -816,6 +820,15 @@ describe('hide-lost-original-images', () => {
     const { deps } = makeDeps();
     await expect(run(options(), GONE, deps)).rejects.toThrow(/control failed/);
     expect(await ingestion(1)).toBe('Scanned');
+  });
+
+  it('parseArgs refuses a repeated flag, so an appended --limit 1 cannot lose to an earlier --limit 50', () => {
+    expect(() => parseArgs(['--ids', 'a', '--log', 'l', '--limit', '50', '--limit', '1'])).toThrow(
+      /repeated argument/
+    );
+    expect(() => parseArgs(['--ids', 'a', '--log', 'l', '--apply', '--apply'])).toThrow(
+      /repeated argument/
+    );
   });
 
   it('parseArgs refuses --limit with --undo or --rebust, which would not honour it', () => {

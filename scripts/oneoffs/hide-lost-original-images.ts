@@ -25,7 +25,7 @@
  *     `--include-unconfirmed` to cover them (it can also cover rows that went NotFound by themselves).
  *
  * Usage (dry run is the default):
- *   npm run tsscript scripts/oneoffs/hide-lost-original-images.ts --ids <file> --log <file>
+ *   pnpm run tsscript scripts/oneoffs/hide-lost-original-images.ts --ids <file> --log <file>
  *   ... --apply --limit 1       # one id first, then read it back
  *   ... --apply                 # the rest
  *   ... --undo --log <file> --apply
@@ -94,7 +94,12 @@ const VALUE_FLAGS = new Set([
 export function parseArgs(argv: string[]): RunOptions {
   // Every token is a known flag or the value of one. A typo (`--limt 1`, `-limit 1`, an en dash, a
   // stray positional) must not turn the one-row canary into a full apply.
+  const seen = new Set<string>();
   for (let i = 0; i < argv.length; i++) {
+    // A repeated flag would silently take its first value: `... --limit 50` recalled from history
+    // with `--limit 1` appended must not run 50.
+    if (seen.has(argv[i])) throw new Error(`repeated argument ${argv[i]}`);
+    if (VALUE_FLAGS.has(argv[i]) || BOOLEAN_FLAGS.has(argv[i])) seen.add(argv[i]);
     if (VALUE_FLAGS.has(argv[i])) i++;
     else if (!BOOLEAN_FLAGS.has(argv[i]))
       throw new Error(`unknown argument ${argv[i].split('=')[0]}`);
@@ -203,6 +208,11 @@ export const DISPLAY_REFS: { reason: string; table: string; columns: string[] }[
   { reason: 'challenge-entry-standing', table: 'ChallengeEntryStanding', columns: ['imageId'] },
   { reason: 'event-turf-sticker', table: 'EventTurfSticker', columns: ['imageId'] },
   { reason: 'event-turf-flag-sticker', table: 'EventTurfFlagSticker', columns: ['imageId'] },
+  {
+    reason: 'challenge-entry-comparison',
+    table: 'ChallengeEntryComparison',
+    columns: ['imageIdA', 'imageIdB', 'firstSeatImageId', 'winnerImageId'],
+  },
   // Moderation Lead: any entityType (bounty and bounty entry included); when unsure, keep.
   { reason: 'image-connection', table: 'ImageConnection', columns: ['imageId'] },
 ];
