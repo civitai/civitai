@@ -15,6 +15,7 @@ export type ReportedServiceOffering = {
   description: string;
   status: string;
   maxNsfwLevel: number;
+  ingestion: string;
   sellerId: number;
   sellerUsername: string | null;
   removedReason: string | null;
@@ -32,6 +33,7 @@ const selectOffering = (db: typeof dbRead) =>
       'o.description',
       'o.status',
       'o.maxNsfwLevel',
+      'o.ingestion',
       'o.sellerId',
       'u.username as sellerUsername',
       'o.removedReason',
@@ -130,5 +132,40 @@ export async function takedownServiceOffering({
       });
     }
   }
+  return { ...offering, changed };
+}
+
+/**
+ * Releases an offering its content check held: it is shown again with the rating it has. Applies
+ * only to a held offering, so a release can't skip a check still running. The activity is recorded
+ * only by the write that released it.
+ *
+ * Null when the offering no longer exists.
+ */
+export async function releaseServiceOffering({
+  offeringId,
+  moderatorId,
+}: {
+  offeringId: number;
+  moderatorId: number;
+}): Promise<(ReportedServiceOffering & { changed: boolean }) | null> {
+  const { numUpdatedRows } = await dbWrite
+    .updateTable('ServiceOffering')
+    .set({ ingestion: 'Scanned', scannedAt: new Date(), updatedAt: new Date() })
+    .where('id', '=', offeringId)
+    .where('ingestion', '=', 'Blocked')
+    .executeTakeFirst();
+
+  const offering = await selectOffering(dbWrite).where('o.id', '=', offeringId).executeTakeFirst();
+  if (!offering) return null;
+
+  const changed = numUpdatedRows > 0n;
+  if (changed)
+    await recordModActivity({
+      userId: moderatorId,
+      entityType: 'serviceOffering',
+      entityId: offeringId,
+      activity: 'release',
+    });
   return { ...offering, changed };
 }

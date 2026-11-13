@@ -1,6 +1,12 @@
 import { getHighestBrowsingLevelBit, NsfwLevel, nsfwBrowsingLevelsFlag } from './browsing-levels';
 
-export type ScanFloorEntityType = 'Article' | 'Post' | 'Bounty' | 'BountyEntry' | 'Collection';
+export type ScanFloorEntityType =
+  | 'Article'
+  | 'Post'
+  | 'Bounty'
+  | 'BountyEntry'
+  | 'Collection'
+  | 'ServiceOffering';
 export type DerivedNsfwEntityType = 'Post' | 'Bounty' | 'BountyEntry';
 
 const SCAN_FLOOR_ENTITY_TYPES: readonly string[] = [
@@ -9,6 +15,7 @@ const SCAN_FLOOR_ENTITY_TYPES: readonly string[] = [
   'Bounty',
   'BountyEntry',
   'Collection',
+  'ServiceOffering',
 ];
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 const INTERNAL_ALIASES = new Set(['i', 'ic', 'em', 'd', 'ar', 'r']);
@@ -47,6 +54,14 @@ export function articleModerationFloorText(idColumn: string) {
   return `GREATEST(CASE WHEN EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'Article' AND em."entityId" = ${id} AND em.result->>'version' IS NULL AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))) OR EXISTS (SELECT 1 FROM "ArticleReport" ar JOIN "Report" r ON r.id = ar."reportId" WHERE ar."articleId" = ${id} AND r.reason = 'NSFW'::"ReportReason" AND r.status = 'Actioned'::"ReportStatus") THEN ${
     NsfwLevel.R
   } ELSE 0 END, ${scanFloorText('Article', id)})`;
+}
+
+/** R for a flagged XGuard row, else the detected level of a text-scan verdict, else 0. */
+export function serviceOfferingTextFloorText(idColumn: string) {
+  const id = identifier(idColumn);
+  return `GREATEST(CASE WHEN EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'ServiceOffering' AND em."entityId" = ${id} AND em.result->>'version' IS NULL AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))) THEN ${
+    NsfwLevel.R
+  } ELSE 0 END, ${scanFloorText('ServiceOffering', id)})`;
 }
 
 export function collectionTextFloorBucketText(alias: string, bucket: number) {

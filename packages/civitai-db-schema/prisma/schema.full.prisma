@@ -2260,6 +2260,7 @@ model Image {
   appSubListingPendingImages AppSubListing[] @relation("AppSubListingPendingImage")
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
+  serviceOfferingCovers  ServiceOffering[]      @relation("ServiceOfferingCover")
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
@@ -10963,6 +10964,13 @@ enum ServiceOfferingStatus {
   Removed
 }
 
+enum ServiceOfferingIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
 /// What the seller shows before the buyer accepts. `None` skips the preview: the
 /// buyer accepts the delivery on trust.
 enum ServicePreviewKind {
@@ -11061,11 +11069,19 @@ model ServiceOffering {
   title             String
   description       String
   coverImageId      Int?
+  coverImage        Image?                @relation("ServiceOfferingCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   price             Int
   acceptsBlue       Boolean               @default(false)
   previewKind       ServicePreviewKind    @default(Image)
-  /// The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+  /// The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Written only by
+  /// `updateServiceOfferingNsfwLevels`: the highest of `declaredNsfwLevel`, the text scan's level
+  /// and the scanned cover's level.
   maxNsfwLevel      Int                   @default(2)
+  /// The rating the seller picked. It can raise `maxNsfwLevel`, never lower it.
+  declaredNsfwLevel Int                   @default(2)
+  /// Where the title and description are in their content check.
+  ingestion         ServiceOfferingIngestionStatus @default(Pending)
+  scannedAt         DateTime?
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
@@ -11088,6 +11104,7 @@ model ServiceOffering {
   @@unique([id, sellerId])
   @@index([sellerId, status])
   @@index([status, createdAt])
+  @@index([coverImageId])
 }
 
 model ServiceOfferingReport {

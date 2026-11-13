@@ -1924,6 +1924,7 @@ export const unusedAuthorImage = (ownerId: number) =>
     crucibles: { none: {} },
     crucibleHeroes: { none: {} },
     crucibleEntries: { none: {} },
+    serviceOfferingCovers: { none: {} },
     storylineCovers: { none: {} },
     storylineHeroes: { none: {} },
     storylineSparks: { none: {} },

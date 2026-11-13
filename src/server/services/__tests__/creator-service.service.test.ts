@@ -18,7 +18,11 @@ import {
   SERVICES_TERMS_VERSION,
 } from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
-import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
+import {
+  ImageIngestionStatus,
+  ServiceOfferingIngestionStatus,
+  ServiceOfferingStatus,
+} from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allBrowsingLevelsFlag,
@@ -391,6 +395,21 @@ describe('storefront read', () => {
           status: ServiceOfferingStatus.Active,
           seller: { bannedAt: null, deletedAt: null, muted: false },
           maxNsfwLevel: { lte: NsfwLevel.PG13 },
+          ingestion: ServiceOfferingIngestionStatus.Scanned,
+          AND: [
+            {
+              OR: [
+                { coverImageId: null },
+                {
+                  coverImage: {
+                    ingestion: ImageIngestionStatus.Scanned,
+                    needsReview: null,
+                    nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13] },
+                  },
+                },
+              ],
+            },
+          ],
         },
       })
     );
@@ -541,14 +560,14 @@ describe('storefront ratings', () => {
   it('accepts one rating bit and refuses Blocked or a mask with a 400', () => {
     const base = { ...fields };
     // Omitted stays omitted: an update must not reset a mature offering to PG-13.
-    expect(upsertServiceOfferingSchema.parse(base).maxNsfwLevel).toBeUndefined();
+    expect(upsertServiceOfferingSchema.parse(base).declaredNsfwLevel).toBeUndefined();
     expect(
-      upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: NsfwLevel.X }).success
+      upsertServiceOfferingSchema.safeParse({ ...base, declaredNsfwLevel: NsfwLevel.X }).success
     ).toBe(true);
     for (const bad of [NsfwLevel.Blocked, NsfwLevel.PG | NsfwLevel.R, 0, 3])
-      expect(upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: bad }).success).toBe(
-        false
-      );
+      expect(
+        upsertServiceOfferingSchema.safeParse({ ...base, declaredNsfwLevel: bad }).success
+      ).toBe(false);
   });
 });
 

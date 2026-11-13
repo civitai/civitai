@@ -5,7 +5,15 @@ import { SellerAffirmationCheckbox } from '~/components/CreatorShop/Services/Sel
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-service.util';
-import { Form, InputNumber, InputSelect, InputText, InputTextArea, useForm } from '~/libs/form';
+import {
+  Form,
+  InputNumber,
+  InputSelect,
+  InputSimpleImageUpload,
+  InputText,
+  InputTextArea,
+  useForm,
+} from '~/libs/form';
 import { upsertServiceOfferingSchema } from '~/server/schema/creator-service.schema';
 import {
   SERVICE_DELIVERY_DAYS_MAX,
@@ -60,7 +68,13 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
       revisionsIncluded: offering?.revisionsIncluded ?? 2,
       maxOpenDeals: offering?.maxOpenDeals ?? 3,
       previewKind: offering?.previewKind ?? ServicePreviewKind.Image,
-      maxNsfwLevel: offering?.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
+      declaredNsfwLevel: offering?.declaredNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
+      coverImage: offering?.coverImage
+        ? {
+            ...offering.coverImage,
+            metadata: (offering.coverImage.metadata as MixedObject | null) ?? undefined,
+          }
+        : null,
     },
   });
 
@@ -91,6 +105,11 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
             minRows={3}
             maxLength={SERVICE_DESCRIPTION_MAX}
             withAsterisk
+          />
+          <InputSimpleImageUpload
+            name="coverImage"
+            label="Cover image"
+            description="Shown at the top of your service card once it has been reviewed."
           />
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
             <InputNumber
@@ -134,9 +153,9 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
             />
           </SimpleGrid>
           <InputSelect
-            name="maxNsfwLevel"
+            name="declaredNsfwLevel"
             label="Highest rating you deliver"
-            description="Buyers only see this service where that rating is allowed. Changing it later applies to new requests only."
+            description="Buyers only see this service where its rating is allowed. Our content check can rate it higher than you pick, never lower. Changing it later applies to new requests only."
             data={ratingOptions}
             withAsterisk
           />

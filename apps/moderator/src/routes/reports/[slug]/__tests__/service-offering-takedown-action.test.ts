@@ -6,9 +6,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * service-offering-takedown.pglite.test.ts.
  */
 
-const { setReportStatus, takedownServiceOffering, getReportServiceOfferingId } = vi.hoisted(() => ({
+const {
+  setReportStatus,
+  takedownServiceOffering,
+  releaseServiceOffering,
+  getReportServiceOfferingId,
+} = vi.hoisted(() => ({
   setReportStatus: vi.fn(async () => ({ ok: true })),
   takedownServiceOffering: vi.fn(async () => ({ changed: true })),
+  releaseServiceOffering: vi.fn(
+    async (): Promise<{ changed: boolean } | null> => ({
+      changed: true,
+    })
+  ),
   getReportServiceOfferingId: vi.fn(async () => 5),
 }));
 
@@ -34,6 +44,7 @@ vi.mock('$lib/server/service-offering-takedown.service', () => ({
   getReportedServiceOfferings: vi.fn(async () => []),
   getReportServiceOfferingId,
   takedownServiceOffering,
+  releaseServiceOffering,
 }));
 vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));
 
@@ -90,5 +101,38 @@ describe('taking down a reported service', () => {
     takedownServiceOffering.mockResolvedValueOnce(null as never);
     expect(status(await takeDown({ id: '9', reason: 'spam' }))).toBe(410);
     expect(setReportStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('releasing a held service', () => {
+  const release = (fields: Record<string, string>, slug = 'service') => {
+    const body = new FormData();
+    for (const [k, v] of Object.entries(fields)) body.set(k, v);
+    return (actions.releaseServiceOffering as (event: unknown) => Promise<unknown>)({
+      request: new Request('https://mod.example/reports/service', { method: 'POST', body }),
+      locals: { user: { id: MOD } },
+      params: { slug },
+      getClientAddress: () => '127.0.0.1',
+    });
+  };
+
+  it('releases the reported offering, then sets the report Unactioned', async () => {
+    const result = await release({ id: '9' });
+    expect(releaseServiceOffering).toHaveBeenCalledWith({ offeringId: 5, moderatorId: MOD });
+    expect(setReportStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 9, status: 'Unactioned', userId: MOD })
+    );
+    expect(result).toMatchObject({ success: true });
+  });
+
+  it('leaves the report alone when the offering was not held', async () => {
+    releaseServiceOffering.mockResolvedValueOnce({ changed: false });
+    expect(status(await release({ id: '9' }))).toBe(409);
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('is refused on another report type', async () => {
+    expect(status(await release({ id: '9' }, 'model'))).toBe(403);
+    expect(releaseServiceOffering).not.toHaveBeenCalled();
   });
 });

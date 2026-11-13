@@ -34,8 +34,12 @@ vi.mock('../db', () => ({
 vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('../notifications', () => ({ getNotifications: () => ({ createNotification }) }));
 
-const { takedownServiceOffering, getReportServiceOfferingId, getReportedServiceOfferings } =
-  await import('../service-offering-takedown.service');
+const {
+  takedownServiceOffering,
+  releaseServiceOffering,
+  getReportServiceOfferingId,
+  getReportedServiceOfferings,
+} = await import('../service-offering-takedown.service');
 
 const migration = (name: string) =>
   readFileSync(
@@ -76,10 +80,12 @@ beforeEach(async () => {
   await pg.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "Report" (id serial PRIMARY KEY);
+    CREATE TABLE "Image" (id int PRIMARY KEY);
   `);
   await pg.exec(migration('20261025120000_creator_services_foundation'));
   await pg.exec(migration('20261028150000_creator_service_max_nsfw_level'));
   await pg.exec(migration('20261028170000_creator_service_offering_takedown'));
+  await pg.exec(migration('20270106120000_service_offering_content_scan'));
   await pg.exec(`
     INSERT INTO "User" (id, username) VALUES (${SELLER}, 'badgesmith');
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", status, "updatedAt")
@@ -173,5 +179,41 @@ describe('service offering takedown from the report queue', () => {
       })
     ).toBeNull();
     expect(createNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe('releasing a held service offering from the report queue', () => {
+  const ingestion = async () =>
+    (
+      await pg.query<{ ingestion: string; scannedAt: Date | null }>(
+        `SELECT ingestion::text, "scannedAt" FROM "ServiceOffering" WHERE id = $1`,
+        [OFFERING]
+      )
+    ).rows[0];
+  const hold = () =>
+    pg.query(`UPDATE "ServiceOffering" SET ingestion = 'Blocked' WHERE id = $1`, [OFFERING]);
+
+  it('shows a held offering again and records the moderator', async () => {
+    await hold();
+    const released = await releaseServiceOffering({ offeringId: OFFERING, moderatorId: MOD });
+    expect(released).toMatchObject({ id: OFFERING, ingestion: 'Scanned', changed: true });
+    expect((await ingestion()).scannedAt).not.toBeNull();
+    expect(recordModActivity).toHaveBeenCalledWith({
+      userId: MOD,
+      entityType: 'serviceOffering',
+      entityId: OFFERING,
+      activity: 'release',
+    });
+  });
+
+  it('leaves an offering whose check is still running as it is', async () => {
+    // The migration leaves existing offerings Pending.
+    const released = await releaseServiceOffering({ offeringId: OFFERING, moderatorId: MOD });
+    expect(released).toMatchObject({ ingestion: 'Pending', changed: false });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('is null for an offering that no longer exists', async () => {
+    expect(await releaseServiceOffering({ offeringId: 999, moderatorId: MOD })).toBeNull();
   });
 });

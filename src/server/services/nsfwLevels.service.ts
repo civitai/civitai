@@ -18,6 +18,7 @@ import {
   articleModerationFloorSql,
   collectionTextFloorBucketSql,
   ratedEntityDerivedNsfwLevelSql,
+  serviceOfferingTextFloorSql,
 } from '~/server/services/text-scan/scan-floor';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
@@ -36,38 +37,45 @@ const idQueryLimiter = () => Limiter({ batchSize: ID_QUERY_BATCH_SIZE, limit: 2 
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
-  const [images, connections, articles, collectionItems, model3ds] = await Promise.all([
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.image.findMany({
-        where: { id: { in: ids } },
-        select: { postId: true },
-      })
-    ),
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.imageConnection.findMany({
-        where: { imageId: { in: ids } },
-        select: { entityType: true, entityId: true },
-      })
-    ),
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.article.findMany({
-        where: { OR: [{ coverId: { in: ids } }, { bannerId: { in: ids } }] },
-        select: { id: true },
-      })
-    ),
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.collectionItem.findMany({
-        where: { imageId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
-        select: { collectionId: true },
-      })
-    ),
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.model3D.findMany({
-        where: { thumbnailImageId: { in: ids } },
-        select: { id: true },
-      })
-    ),
-  ]);
+  const [images, connections, articles, collectionItems, model3ds, serviceOfferings] =
+    await Promise.all([
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.image.findMany({
+          where: { id: { in: ids } },
+          select: { postId: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.imageConnection.findMany({
+          where: { imageId: { in: ids } },
+          select: { entityType: true, entityId: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.article.findMany({
+          where: { OR: [{ coverId: { in: ids } }, { bannerId: { in: ids } }] },
+          select: { id: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.collectionItem.findMany({
+          where: { imageId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+          select: { collectionId: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.model3D.findMany({
+          where: { thumbnailImageId: { in: ids } },
+          select: { id: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.serviceOffering.findMany({
+          where: { coverImageId: { in: ids } },
+          select: { id: true },
+        })
+      ),
+    ]);
 
   const comicProjectIds = await getComicProjectIdsForImages(imageIds);
 
@@ -90,6 +98,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
     comicProjectIds,
     collectionIds: collectionItems.map((x) => x.collectionId),
     model3dIds: model3ds.map((x) => x.id),
+    serviceOfferingIds: serviceOfferings.map((x) => x.id),
   };
 }
 
@@ -174,6 +183,7 @@ export async function getNsfwLevelRelatedEntities(source: {
   let modelVersionIds: number[] = [];
   let comicProjectIds: number[] = [];
   let model3dIds: number[] = [];
+  let serviceOfferingIds: number[] = [];
 
   function mergeRelated(
     data: Partial<{
@@ -186,6 +196,7 @@ export async function getNsfwLevelRelatedEntities(source: {
       modelVersionIds: number[];
       comicProjectIds: number[];
       model3dIds: number[];
+      serviceOfferingIds: number[];
     }>
   ) {
     if (data.postIds) postIds = uniq(postIds.concat(data.postIds));
@@ -197,6 +208,8 @@ export async function getNsfwLevelRelatedEntities(source: {
     if (data.modelVersionIds) modelVersionIds = uniq(modelVersionIds.concat(data.modelVersionIds));
     if (data.comicProjectIds) comicProjectIds = uniq(comicProjectIds.concat(data.comicProjectIds));
     if (data.model3dIds) model3dIds = uniq(model3dIds.concat(data.model3dIds));
+    if (data.serviceOfferingIds)
+      serviceOfferingIds = uniq(serviceOfferingIds.concat(data.serviceOfferingIds));
   }
 
   if (source.imageIds?.length) {
@@ -243,6 +256,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     modelVersionIds,
     comicProjectIds: uniq([...(source.comicProjectIds ?? []), ...comicProjectIds]),
     model3dIds,
+    serviceOfferingIds,
   };
 }
 
@@ -271,6 +285,7 @@ export async function updateNsfwLevels({
   modelVersionIds,
   comicProjectIds = [],
   model3dIds = [],
+  serviceOfferingIds = [],
 }: {
   postIds: number[];
   articleIds: number[];
@@ -281,6 +296,7 @@ export async function updateNsfwLevels({
   modelVersionIds: number[];
   comicProjectIds?: number[];
   model3dIds?: number[];
+  serviceOfferingIds?: number[];
 }) {
   const updatePosts = batcher(postIds, async (ids) =>
     notifyPostFloorRaises(await updatePostNsfwLevels(ids))
@@ -296,6 +312,7 @@ export async function updateNsfwLevels({
   // across child entities, so it can run in the leaf batch alongside Posts /
   // Articles / Bounties (none of those depend on Model3D either).
   const updateModel3Ds = batcher(model3dIds, updateModel3DNsfwLevels);
+  const updateServiceOfferings = batcher(serviceOfferingIds, updateServiceOfferingNsfwLevels);
   // Collections are processed by separate optimized job
   // const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
 
@@ -307,6 +324,7 @@ export async function updateNsfwLevels({
       updateBountyEntries,
       updateComicChapters,
       updateModel3Ds,
+      updateServiceOfferings,
     ],
     [updateModelVersions, updateComicProjects],
     [updateModels],
@@ -433,6 +451,37 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
     articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
     { reason: 'nsfw-level' }
   );
+}
+
+/**
+ * A service offering's rating: the highest of the seller's declared level, its text floor and its
+ * cover's level once the cover is scanned, capped at XXX.
+ */
+export async function updateServiceOfferingNsfwLevels(offeringIds: number[]) {
+  if (!offeringIds.length) return;
+  await dbWrite.$executeRaw(Prisma.sql`
+    WITH level AS (
+      SELECT
+        o.id,
+        LEAST(
+          GREATEST(
+            o."declaredNsfwLevel",
+            ${serviceOfferingTextFloorSql('o.id')},
+            COALESCE(cover."nsfwLevel", 0)
+          ),
+          ${NsfwLevel.XXX}
+        ) AS "nsfwLevel"
+      FROM "ServiceOffering" o
+      LEFT JOIN "Image" cover
+        ON cover.id = o."coverImageId"
+        AND cover."ingestion" = 'Scanned'
+      WHERE o.id IN (${Prisma.join(offeringIds)})
+    )
+    UPDATE "ServiceOffering" o
+    SET "maxNsfwLevel" = level."nsfwLevel"
+    FROM level
+    WHERE level.id = o.id AND o."maxNsfwLevel" IS DISTINCT FROM level."nsfwLevel"
+  `);
 }
 
 export async function updateBountyNsfwLevels(bountyIds: number[]) {

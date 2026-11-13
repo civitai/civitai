@@ -37,6 +37,7 @@ export type TextScanEntityType =
   | 'Collection'
   | 'Storyline'
   | 'ImageCaption'
+  | 'ServiceOffering'
   | 'ModelRules';
 
 export type TextScanField = { heading: string; text: string | null | undefined };

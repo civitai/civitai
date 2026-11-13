@@ -142,6 +142,7 @@ const LATER_MIGRATIONS = [
   '20261128150000_creator_service_final_malware_scan',
   '20261208120000_creator_service_dispute_review',
   '20261224150000_service_deal_file_removed_at',
+  '20270106120000_service_offering_content_scan',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -282,6 +283,9 @@ beforeAll(async () => {
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "Report" (id serial PRIMARY KEY);
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TABLE "Image" (id serial PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
+      "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0);
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
@@ -323,11 +327,11 @@ beforeEach(async () => {
   chat.createMessage.mockResolvedValue({});
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement" RESTART IDENTITY;
+    TRUNCATE "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER});
-    INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
-      VALUES (${SELLER}, 'Cat portraits', 'desc', ${PRICE}, 3, 1, 'Video', 'Active', now());
+    INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
+      VALUES (${SELLER}, 'Cat portraits', 'desc', ${PRICE}, 3, 1, 'Video', 'Active', 'Scanned', now());
   `);
 });
 
@@ -2422,6 +2426,51 @@ describe('reasons and reason codes', () => {
       await mute(BUYER);
       expect(await listed()).toEqual(['acceptDelivery', 'requestCancellation']);
     });
+  });
+});
+
+// An offering is shown, and takes requests, once its content checks and its cover's are done.
+describe('content checks', () => {
+  const setIngestion = (ingestion: string) =>
+    q(`UPDATE "ServiceOffering" SET ingestion = $1::"ServiceOfferingIngestionStatus"`, [ingestion]);
+  const cover = async (ingestion: string, nsfwLevel: number, needsReview: string | null = null) => {
+    await q(
+      `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "needsReview") VALUES (1, $1::"ImageIngestionStatus", $2, $3)`,
+      [ingestion, nsfwLevel, needsReview]
+    );
+    await q(`UPDATE "ServiceOffering" SET "coverImageId" = 1`);
+  };
+  const dealLevel = async (id: number) =>
+    (
+      await q<{ maxNsfwLevel: number }>(`SELECT "maxNsfwLevel" FROM "ServiceDeal" WHERE id = $1`, [
+        id,
+      ])
+    )[0].maxNsfwLevel;
+
+  it.each(['Pending', 'Error', 'Blocked'])(
+    'takes no request while its check is %s',
+    async (ingestion) => {
+      await setIngestion(ingestion);
+      await expect(request()).rejects.toThrow(/Service not found/);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['unscanned', 'Pending', null],
+    ['blocked', 'Blocked', null],
+    ['held for review', 'Scanned', 'minor'],
+  ] as const)('takes no request with a cover that is %s', async (_, ingestion, needsReview) => {
+    await cover(ingestion, PG, needsReview);
+    await expect(request()).rejects.toThrow(/Service not found/);
+  });
+
+  it("rates the deal with a scanned cover's level before the offering is recomputed", async () => {
+    // Stored rating PG-13, cover scanned R: a PG-only buyer is refused, an R buyer gets an R deal.
+    await cover('Scanned', R);
+    await expect(request({ consentLevels: PG })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const { id } = await request({ consentLevels: PG | R });
+    expect(await dealLevel(id)).toBe(R);
   });
 });
 

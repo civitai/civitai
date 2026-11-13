@@ -47,6 +47,7 @@ import {
 } from '~/shared/constants/creator-services.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { ServiceDealEventType, ServiceDealStatus } from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   dealActions,
   dealActorRole,
@@ -262,6 +263,20 @@ const notBlockedBetween = (buyer: Prisma.Sql, seller: Prisma.Sql) => Prisma.sql`
       OR (ue."userId" = ${seller} AND ue."targetUserId" = ${buyer}))
 )`;
 
+/** `serviceOfferingShowableWhere`, as SQL: the offering's content checks, and its cover's, are done. */
+const offeringShowable = Prisma.sql`(o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus"
+  AND (o."coverImageId" IS NULL OR EXISTS (
+    SELECT 1 FROM "Image" ci
+    WHERE ci."id" = o."coverImageId" AND ci."ingestion" = 'Scanned'::"ImageIngestionStatus"
+      AND ci."needsReview" IS NULL AND ci."nsfwLevel" > 0
+  )))`;
+
+// The stored rating with the cover's folded in, so a cover rated since the last recompute counts.
+const offeringLevel = Prisma.sql`LEAST(GREATEST(o."maxNsfwLevel", COALESCE((
+    SELECT ci."nsfwLevel" FROM "Image" ci
+    WHERE ci."id" = o."coverImageId" AND ci."ingestion" = 'Scanned'::"ImageIngestionStatus"
+  ), 0)), ${NsfwLevel.XXX}::int)`;
+
 type OfferingRow = {
   id: number;
   sellerId: number;
@@ -273,6 +288,7 @@ type OfferingRow = {
   deliveryDays: number;
   blocked: boolean;
   sellerOk: boolean;
+  showable: boolean;
   maxNsfwLevel: number;
 };
 
@@ -327,13 +343,15 @@ export async function requestServiceDeal({
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
-      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk", o."maxNsfwLevel"
+      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk",
+      ${offeringShowable} AS "showable", ${offeringLevel} AS "maxNsfwLevel"
     FROM "ServiceOffering" o WHERE o."id" = ${offeringId}::int`;
   // A mature service on a domain that does not serve it is hidden there, so it is not found.
   if (
     !offering ||
     offering.status !== 'Active' ||
     !offering.sellerOk ||
+    !offering.showable ||
     !(offering.maxNsfwLevel & servableLevels)
   )
     throw throwNotFoundError('Service not found');
@@ -373,7 +391,7 @@ export async function requestServiceDeal({
         "updatedAt", "maxNsfwLevel")
       SELECT o."id", ${buyerId}::int, o."sellerId", o."price", ${buzzType}::"ServiceBuzzType",
         0, o."revisionsIncluded", o."deliveryDays", o."previewKind", 'Requested'::"ServiceDealStatus",
-        ${requestText}::text, now(), o."maxNsfwLevel"
+        ${requestText}::text, now(), ${offeringLevel}
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
@@ -382,9 +400,10 @@ export async function requestServiceDeal({
         AND o."deliveryDays" = ${expectedDeliveryDays}::int
         AND o."sellerId" <> ${buyerId}::int
         -- serviceRequestAllowed: SFW always; mature only where served, to a buyer who opted in.
-        AND (o."maxNsfwLevel" <= ${SERVICE_SFW_MAX_NSFW_LEVEL}::int OR (
-          (o."maxNsfwLevel" & ${servableLevels}::int) <> 0
-          AND (o."maxNsfwLevel" & ${consentLevels}::int) <> 0
+        AND ${offeringShowable}
+        AND (${offeringLevel} <= ${SERVICE_SFW_MAX_NSFW_LEVEL}::int OR (
+          (${offeringLevel} & ${servableLevels}::int) <> 0
+          AND (${offeringLevel} & ${consentLevels}::int) <> 0
         ))
         -- One unanswered request per buyer per offering: a retried or doubled submit must not
         -- become a second deal and a second hold. Race-free under the offering lock above.

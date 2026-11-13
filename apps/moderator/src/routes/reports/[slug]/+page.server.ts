@@ -13,6 +13,7 @@ import { liftStorylineScanTakedown } from '$lib/server/storyline-scan-lift.servi
 import {
   getReportedServiceOfferings,
   getReportServiceOfferingId,
+  releaseServiceOffering,
   takedownServiceOffering,
 } from '$lib/server/service-offering-takedown.service';
 import { isServiceOfferingTakedownReason } from '@civitai/shared/service-offering-takedown';
@@ -171,6 +172,35 @@ export const actions: Actions = {
       success: true,
       serviceOfferingTakedown: offering.changed ? 'Taken down' : 'Already taken down',
     };
+  },
+
+  /**
+   * Shows an offering its content check held, after a moderator has read it, then sets the report
+   * Unactioned: nothing was wrong with it. An offering that is not held is left as it is.
+   */
+  releaseServiceOffering: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'serviceOffering' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const offeringId = await getReportServiceOfferingId(id);
+    if (!offeringId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const offering = await releaseServiceOffering({ offeringId, moderatorId: locals.user.id });
+    if (!offering) return fail(410, { error: 'That service no longer exists.', gone: true });
+    if (!offering.changed) return fail(409, { error: 'That service is not held.' });
+
+    const result = await setReportStatus({
+      id,
+      status: ReportStatus.Unactioned,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok) return fail(410, { error: `Released, but ${result.error}`, gone: true });
+    return { success: true, serviceOfferingTakedown: 'Released' };
   },
 
   /** Leaves the report's status as it is. */
