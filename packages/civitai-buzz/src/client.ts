@@ -74,22 +74,20 @@ export type BuzzLogFn = (message: string, ...args: unknown[]) => void;
 
 /** Default bound on a read (GET). A per-call `timeoutMs` overrides it. */
 export const DEFAULT_READ_TIMEOUT_MS = 10_000;
-// Single- and multi-transaction writes (and refunds) get NO default bound from this client (the
-// runtime's own fetch transport timeouts still apply underneath every call): a write the client
+// Writes (single, multi, batch and refunds) get NO default bound from this client (the runtime's
+// own fetch transport timeouts still apply underneath every call): a write the client
 // stops waiting for has an unknown outcome, because the service may still commit it, and a caller
 // that reads the throw as "not charged" lets the user pay again on retry. Bounding one is the
 // caller's decision (`timeoutMs` per call, or `transactionTimeoutMs` on the client), and a caller
 // that makes it must resolve a timeout by external id before reporting a failure.
-/** Default bound on the batch write, which carries up to hundreds of transactions in one body. */
-export const DEFAULT_BATCH_WRITE_TIMEOUT_MS = 60_000;
 /** Reads retry once: a second GET is harmless, a fourth against a struggling service is load. */
 export const DEFAULT_READ_RETRIES = 1;
 /** Writes retry only failures `isSafeToRetry` accepts, so a budget of 3 costs milliseconds. */
 export const DEFAULT_WRITE_RETRIES = 3;
 
 /**
- * Off-switch for the default deadlines above, the read and batch-write bounds (not for the write
- * retry rule, which is a correctness rule, not a tuning knob). `BUZZ_CLIENT_UNBOUNDED=true` makes
+ * Off-switch for the default read deadline above (not for the write retry rule, which is a
+ * correctness rule, not a tuning knob). `BUZZ_CLIENT_UNBOUNDED=true` makes
  * every call that does not pass its own `timeoutMs` wait without a deadline, including one that
  * would otherwise use the client's `readTimeoutMs` or `transactionTimeoutMs`. Read per request, so
  * it needs no client rebuild.
@@ -100,7 +98,7 @@ function defaultDeadlinesDisabled() {
 
 export type CreateBuzzClientOptions = Partial<BuzzConfig> & {
   /**
-   * Default request timeout for single- and multi-transaction writes and refunds. Absent means no
+   * Default request timeout for every write: single, multi, batch and refunds. Absent means no
    * deadline: the call waits for the service's answer. Set it only where every write's caller
    * resolves a timeout by external id (see `BuzzWriteOptions`).
    */
@@ -563,12 +561,7 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
     return post(
       '/transactions',
       transactions.map((t) => toApiTransaction(t)),
-      {
-        ...opts,
-        timeoutMs:
-          opts?.timeoutMs ??
-          (defaultDeadlinesDisabled() ? undefined : DEFAULT_BATCH_WRITE_TIMEOUT_MS),
-      }
+      opts
     ) as Promise<CreateTransactionsResponse>;
   };
 

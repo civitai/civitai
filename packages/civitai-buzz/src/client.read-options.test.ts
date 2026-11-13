@@ -144,9 +144,19 @@ describe('writes wait for the outcome by default', () => {
     expect(signalOf(1)).toBeUndefined();
   });
 
-  it('keeps the batch write bounded by default', async () => {
+  it('sends a batch write with no abort signal when no options are passed', async () => {
     await createBuzzClient({ endpoint: ENDPOINT }).createTransactions([tx]);
 
-    expect(signalOf(0)).toBeInstanceOf(AbortSignal);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(signalOf(0)).toBeUndefined();
+  });
+
+  it('bounds a batch write when the caller asks, per call or on the client', async () => {
+    await createBuzzClient({ endpoint: ENDPOINT }).createTransactions([tx], { timeoutMs: 1000 });
+    await createBuzzClient({ endpoint: ENDPOINT, transactionTimeoutMs: 1000 }).createTransactions([
+      tx,
+    ]);
+
+    for (const call of [0, 1]) expect(signalOf(call)).toBeInstanceOf(AbortSignal);
   });
 });
