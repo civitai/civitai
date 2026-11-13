@@ -15,8 +15,10 @@ export type CreateNotificationResult = {
 
 /**
  * Resolve the recipient set, drop users who opted out of this notification `type`, and UPSERT the
- * PendingNotification queue row. Best-effort by contract: a failure is logged and swallowed (the
- * monolith did the same) so a producer's request never fails on a notification hiccup.
+ * PendingNotification queue row. A failure is logged and rethrown, so the route answers 503 and the
+ * producer's client retries: the upsert is keyed on `key` and merges recipients, so a retry of a write
+ * that did land cannot double-queue. Swallowing it would answer 202 for a notification nobody queued.
+ * Producers still never fail on a notification hiccup — their side of the client wraps and logs.
  */
 export async function createNotification(
   data: CreateNotificationPendingRow
@@ -78,6 +80,6 @@ export async function createNotification(
       message: error.message,
       stack: error.stack,
     }).catch(() => {});
-    return { queued: 0 };
+    throw e;
   }
 }
