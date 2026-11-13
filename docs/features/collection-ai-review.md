@@ -119,11 +119,17 @@ Existing contest collections keep their current behavior.
 
 For the Buzz Beggars Board to show reaction counts, its operator must separately change its mode
 from `Contest` to the normal collection mode (`null`), retaining its AI review configuration and
-`Review` write configuration. This is a configuration change, not a schema migration. Before
-changing mode, review its submission settings: the server currently enforces `maxItemsPerUser`
-and submission windows through contest entry validation. Clearing the mode also removes those
-contest checks; enabling AI review alone does not replace them. The board's expiry job is
-independent of collection mode.
+`Review` write configuration. This is a configuration change, not a schema migration.
+`maxItemsPerUser` is enforced for both contest and normal collections: accepted and pending
+entries consume slots, rejected entries do not, and saving an existing entry does not consume
+another slot in normal collections. Single-item and bulk writes to normal collections share a
+transaction lock per collection and submitter. Contest entry validation retains its existing
+prechecks, including checking the quota before charging entry fees or publishing a post.
+Moderators retain their quota exemption. The collection page shows the configured entry limit
+in either mode.
+
+Submission windows still depend on contest entry validation, so review those settings before
+changing an existing collection's mode. The board's expiry job is independent of collection mode.
 
 ## Operational notes
 

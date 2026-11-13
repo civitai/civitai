@@ -29,6 +29,7 @@ import {
 } from '~/server/services/contest-collection-items.cache';
 import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
+import { withCollectionSubmissionLimits } from '~/server/services/collection-submission-limit';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
@@ -1128,6 +1129,13 @@ export const saveItemInCollections = async ({
     await assertImagesVisibleToViewer({ ids: [input.imageId as number], userId, isModerator });
   }
 
+  const deferContestFees = collections.some(
+    (c) =>
+      c.mode !== CollectionMode.Contest &&
+      (c.metadata as CollectionMetadataSchema | null)?.maxItemsPerUser &&
+      !unwrittenCollectionIds.has(c.id)
+  );
+
   // Check if any contest collections are involved and validate ONCE
   const contestCollections = collections.filter(
     (c) => c.mode === CollectionMode.Contest && !unwrittenCollectionIds.has(c.id)
@@ -1141,6 +1149,7 @@ export const saveItemInCollections = async ({
         userId,
         isModerator,
         canAccessUserChallenges,
+        deferEntryFeeCharge: deferContestFees,
         [`${itemKey}s`]: [input[itemKey]],
       });
     }
@@ -1173,7 +1182,7 @@ export const saveItemInCollections = async ({
   // permission on any of them, or the empty-transaction guard below).
   const followCollectionIds: number[] = [];
 
-  const data = (
+  let data = (
     await Promise.all(
       upsertCollectionItems.map(async (upsertCollection) => {
         const { collectionId, tagId } = upsertCollection;
@@ -1248,12 +1257,14 @@ export const saveItemInCollections = async ({
     )
   ).filter(isDefined);
 
-  const transactions: Prisma.PrismaPromise<Prisma.BatchPayload | number>[] = [];
+  const transactions: ((
+    tx: Prisma.TransactionClient
+  ) => Prisma.PrismaPromise<Prisma.BatchPayload | number>)[] = [];
   let removedCount = 0;
 
   if (data.length > 0) {
     transactions.push(
-      dbWrite.$executeRaw`
+      (tx) => tx.$executeRaw`
       INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "${Prisma.raw(
         itemKey
       )}", "tagId")
@@ -1309,8 +1320,8 @@ export const saveItemInCollections = async ({
     removedCount = removeAllowedCollectionItemIds.length;
 
     if (autoFeaturedIds.length > 0) {
-      transactions.push(
-        dbWrite.collectionItem.updateMany({
+      transactions.push((tx) =>
+        tx.collectionItem.updateMany({
           where: { id: { in: autoFeaturedIds } },
           data: {
             status: CollectionItemStatus.REJECTED,
@@ -1323,8 +1334,8 @@ export const saveItemInCollections = async ({
 
     // if we have items to remove, add a deleteMany mutation to the transaction
     if (deletableIds.length > 0) {
-      transactions.push(
-        dbWrite.collectionItem.deleteMany({
+      transactions.push((tx) =>
+        tx.collectionItem.deleteMany({
           where: { id: { in: deletableIds } },
         })
       );
@@ -1340,19 +1351,58 @@ export const saveItemInCollections = async ({
     );
   }
 
-  await dbWrite.$transaction(transactions);
+  const limitedCollections = collections
+    .filter((c) => c.mode !== CollectionMode.Contest)
+    .map((c) => ({ id: c.id, metadata: c.metadata as CollectionMetadataSchema | null }))
+    .filter((c) => c.metadata?.maxItemsPerUser && data.some((item) => item.collectionId === c.id));
+  if (limitedCollections.length && !isModerator) {
+    await withCollectionSubmissionLimits(
+      { userId, collections: limitedCollections, items: data },
+      async (tx) => {
+        for (const transaction of transactions) await transaction(tx);
+      }
+    );
+  } else {
+    await dbWrite.$transaction(transactions.map((transaction) => transaction(dbWrite)));
+  }
+  let deferredFeeError: unknown;
+  if (deferContestFees && itemKey === 'imageId' && input.imageId) {
+    const imageId = input.imageId;
+    const chargedCollections = contestCollections.filter(
+      (collection) =>
+        !existingItemsByCollection.has(collection.id) &&
+        data.some((item) => item.collectionId === collection.id)
+    );
+    const failedIds = new Set<number>();
+    for (const collection of chargedCollections) {
+      try {
+        await finalizeContestEntryFees({
+          collectionId: collection.id,
+          userId,
+          imageIds: [imageId],
+          metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
+        });
+      } catch (error) {
+        deferredFeeError ??= error;
+        failedIds.add(collection.id);
+      }
+    }
+    data = data.filter((item) => !failedIds.has(item.collectionId));
+  }
   if (itemKey === 'imageId') await bustContestCollectionItemsCache([input.imageId]);
 
   if (followCollectionIds.length > 0) {
     await Promise.all(
-      followCollectionIds.map((collectionId) =>
-        addContributorToCollection({
-          targetUserId: userId,
-          userId,
-          collectionId,
-          permissionFlags: permissionsMap.get(collectionId),
-        })
-      )
+      followCollectionIds
+        .filter((id) => data.some((item) => item.collectionId === id))
+        .map((collectionId) =>
+          addContributorToCollection({
+            targetUserId: userId,
+            userId,
+            collectionId,
+            permissionFlags: permissionsMap.get(collectionId),
+          })
+        )
     );
   }
 
@@ -1418,6 +1468,7 @@ export const saveItemInCollections = async ({
     );
   }
 
+  if (deferredFeeError) throw deferredFeeError;
   return data.length > 0 ? 'added' : removedCount > 0 ? 'removed' : null;
 };
 
@@ -3602,6 +3653,75 @@ const validateFeaturedCollectionEntry = async ({
   }
 };
 
+async function finalizeContestEntryFees({
+  collectionId,
+  userId,
+  imageIds,
+  metadata,
+}: {
+  collectionId: number;
+  userId: number;
+  imageIds: number[];
+  metadata: CollectionMetadataSchema;
+}) {
+  const chargeImageIds = imageIds;
+  const rollbackItems = async (imageIds: number[], originalError: unknown) => {
+    await dbWrite.collectionItem
+      .deleteMany({
+        where: { collectionId, addedById: userId, imageId: { in: imageIds } },
+      })
+      .catch((rollbackError) => {
+        // Rollback failed → unpaid entries persist. Surface loudly; the caller still throws
+        // the original error so the user sees the real failure.
+        logToAxiom({
+          type: 'error',
+          name: 'contest-entry-fee-rollback-failed',
+          message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          stack: rollbackError instanceof Error ? rollbackError.stack : undefined,
+          originalError: originalError instanceof Error ? originalError.message : undefined,
+          collectionId,
+          userId,
+          imageIds,
+        });
+      });
+    await bustContestCollectionItemsCache(imageIds);
+  };
+
+  let chargeResult;
+  try {
+    chargeResult = await chargeContestEntryFeesForCollection({
+      collectionId,
+      userId,
+      imageIds: chargeImageIds,
+    });
+  } catch (e) {
+    // Transport/service failure — per-image payment state is unknown, so remove every row
+    // this call wrote (leaving one would risk an unpaid committed entry). Any legs that DID
+    // charge stay in the ledger and settle as idempotency conflicts on retry.
+    if (chargeImageIds.length > 0) await rollbackItems(chargeImageIds, e);
+    throw e;
+  }
+
+  if (chargeResult && chargeResult.unpaidImageIds.length > 0) {
+    await rollbackItems(chargeResult.unpaidImageIds, new Error('insufficient funds'));
+    // The paid entries above stay committed, so tag and bust the cache before aborting
+    // the request. The unpaid ones were just deleted and must NOT be tagged — a rolled-back
+    // submission that stayed tagged would be filtered out of feeds for an entry that never
+    // landed, with nothing to undo it.
+    if (chargeResult.paidImageIds.length > 0) {
+      await applyCollectionAutoTag(metadata, chargeResult.paidImageIds);
+      await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
+    }
+    throw throwInsufficientFundsError(
+      chargeResult.paidImageIds.length > 0
+        ? `You ran out of Buzz partway through: ${chargeResult.paidImageIds.length} ${
+            chargeResult.paidImageIds.length === 1 ? 'entry was' : 'entries were'
+          } submitted, ${chargeResult.unpaidImageIds.length} could not be paid for.`
+        : 'You do not have enough Buzz to pay the entry fee.'
+    );
+  }
+}
+
 export const bulkSaveItems = async ({
   input: {
     userId,
@@ -3623,6 +3743,10 @@ export const bulkSaveItems = async ({
   };
   permissions: CollectionContributorPermissionFlags;
 }) => {
+  articleIds = uniq(articleIds);
+  modelIds = uniq(modelIds);
+  imageIds = uniq(imageIds);
+  postIds = uniq(postIds);
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
     select: collectionWithoutImageSelect,
@@ -3780,7 +3904,14 @@ export const bulkSaveItems = async ({
       }));
   }
 
-  const { count } = await dbWrite.collectionItem.createMany({ data });
+  const createItems = (tx: Prisma.TransactionClient) => tx.collectionItem.createMany({ data });
+  const { count } =
+    collection.mode === CollectionMode.Contest
+      ? await createItems(dbWrite)
+      : await withCollectionSubmissionLimits(
+          { userId, isModerator, collections: [{ id: collectionId, metadata }], items: data },
+          createItems
+        );
   const savedImageIds = data.map((d) => d.imageId).filter(isDefined);
   await bustContestCollectionItemsCache(savedImageIds);
 
@@ -3789,62 +3920,7 @@ export const bulkSaveItems = async ({
   // refunded (see challenge-funding.ts) — on a partial charge we keep the paid entries and
   // roll back only the unpaid rows; a Buzz charge can't be undone by a Postgres rollback.
   if (collection.mode === CollectionMode.Contest) {
-    const chargeImageIds = savedImageIds;
-    const rollbackItems = async (imageIds: number[], originalError: unknown) => {
-      await dbWrite.collectionItem
-        .deleteMany({
-          where: { collectionId, addedById: userId, imageId: { in: imageIds } },
-        })
-        .catch((rollbackError) => {
-          // Rollback failed → unpaid entries persist. Surface loudly; the caller still throws
-          // the original error so the user sees the real failure.
-          logToAxiom({
-            type: 'error',
-            name: 'contest-entry-fee-rollback-failed',
-            message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-            stack: rollbackError instanceof Error ? rollbackError.stack : undefined,
-            originalError: originalError instanceof Error ? originalError.message : undefined,
-            collectionId,
-            userId,
-            imageIds,
-          });
-        });
-      await bustContestCollectionItemsCache(imageIds);
-    };
-
-    let chargeResult;
-    try {
-      chargeResult = await chargeContestEntryFeesForCollection({
-        collectionId,
-        userId,
-        imageIds: chargeImageIds,
-      });
-    } catch (e) {
-      // Transport/service failure — per-image payment state is unknown, so remove every row
-      // this call wrote (leaving one would risk an unpaid committed entry). Any legs that DID
-      // charge stay in the ledger and settle as idempotency conflicts on retry.
-      if (chargeImageIds.length > 0) await rollbackItems(chargeImageIds, e);
-      throw e;
-    }
-
-    if (chargeResult && chargeResult.unpaidImageIds.length > 0) {
-      await rollbackItems(chargeResult.unpaidImageIds, new Error('insufficient funds'));
-      // The paid entries above stay committed, so tag and bust the cache before aborting
-      // the request. The unpaid ones were just deleted and must NOT be tagged — a rolled-back
-      // submission that stayed tagged would be filtered out of feeds for an entry that never
-      // landed, with nothing to undo it.
-      if (chargeResult.paidImageIds.length > 0) {
-        await applyCollectionAutoTag(metadata, chargeResult.paidImageIds);
-        await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
-      }
-      throw throwInsufficientFundsError(
-        chargeResult.paidImageIds.length > 0
-          ? `You ran out of Buzz partway through: ${chargeResult.paidImageIds.length} ${
-              chargeResult.paidImageIds.length === 1 ? 'entry was' : 'entries were'
-            } submitted, ${chargeResult.unpaidImageIds.length} could not be paid for.`
-          : 'You do not have enough Buzz to pay the entry fee.'
-      );
-    }
+    await finalizeContestEntryFees({ collectionId, userId, imageIds: savedImageIds, metadata });
   }
 
   // Tag AFTER the entry-fee block, so anything rolled back for non-payment is never tagged.
