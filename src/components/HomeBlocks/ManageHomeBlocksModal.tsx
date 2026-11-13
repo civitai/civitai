@@ -47,14 +47,14 @@ type Props = { onClose: VoidFunction };
 export function ManageHomeBlocks({ onClose }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const {
-    data: homeBlocks,
-    isLoading: isLoadingOwnedHomeBlocks,
-    isError: ownedHomeBlocksFailed,
-  } = trpc.homeBlock.getHomeBlocks.useQuery({
-    withCoreData: true,
-    ownedOnly: true,
-  });
+  const { data: homeBlocks, isLoading: isLoadingOwnedHomeBlocks } =
+    trpc.homeBlock.getHomeBlocks.useQuery({
+      withCoreData: true,
+      ownedOnly: true,
+    });
+  // Saving sets the whole list, so it needs the list: not after an error, and not while a first
+  // load made offline sits paused (no data, neither loading nor errored).
+  const ownedHomeBlocksMissing = homeBlocks === undefined;
   const { data: systemHomeBlocks = [], isLoading: isLoadingSystemHomeBlocks } =
     trpc.homeBlock.getSystemHomeBlocks.useQuery({
       permanent: false,
@@ -222,8 +222,7 @@ export function ManageHomeBlocks({ onClose }: Props) {
           collisionDetection={rectIntersection}
         >
           <SortableContext items={items} strategy={verticalListSortingStrategy}>
-            {/* Saving sets the whole list, so a list that failed to load must not be saved. */}
-            {ownedHomeBlocksFailed && (
+            {ownedHomeBlocksMissing && (
               <AlertWithIcon
                 py={5}
                 my="xs"
@@ -236,7 +235,7 @@ export function ManageHomeBlocks({ onClose }: Props) {
                 <Text>Close this and try again. Saving is off until your blocks load.</Text>
               </AlertWithIcon>
             )}
-            {!ownedHomeBlocksFailed && items.length === 0 && (
+            {!ownedHomeBlocksMissing && items.length === 0 && (
               <AlertWithIcon
                 py={5}
                 my="xs"
@@ -260,7 +259,7 @@ export function ManageHomeBlocks({ onClose }: Props) {
       </Stack>
 
       <Stack>
-        <Button mt="sm" disabled={isUpdating || ownedHomeBlocksFailed} onClick={handleSave}>
+        <Button mt="sm" disabled={isUpdating || ownedHomeBlocksMissing} onClick={handleSave}>
           {isUpdating ? 'Updating settings...' : 'Save'}
         </Button>
       </Stack>

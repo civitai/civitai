@@ -205,9 +205,12 @@ describe('Unlisted collections', () => {
 
     const fakeCached = vi.mocked(getHomeBlockCached).getMockImplementation();
     const fakeCollection = vi.mocked(getCollectionById).getMockImplementation();
+    const fakeGet = redisMock.redis.packed.get.getMockImplementation();
     afterEach(() => {
       vi.mocked(getHomeBlockCached).mockImplementation(fakeCached!);
       vi.mocked(getCollectionById).mockImplementation(fakeCollection!);
+      if (fakeGet) redisMock.redis.packed.get.mockImplementation(fakeGet);
+      else redisMock.redis.packed.get.mockReset();
     });
 
     beforeEach(async () => {
@@ -228,6 +231,8 @@ describe('Unlisted collections', () => {
     });
 
     // Unlisted counts as shared for the entry, so keeping this block out of it is all that holds.
+    // Asserted on the write itself, so a second path to the entry fails it too, not only a call
+    // to getHomeBlockCached.
     it("never writes someone else's Unlisted collection to it, for the block's owner or a stranger", async () => {
       seed({ read: 'Unlisted', userId: COLLECTION_OWNER, type: 'Image' }, BLOCK_OWNER);
       expect(itemsOf(await loadAs({ id: BLOCK_OWNER }))).toEqual(['for-viewer']);

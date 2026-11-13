@@ -10,15 +10,22 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
  * must not be saved: it would save as empty and remove every block they had.
  */
 
-const { mutate, ownedList } = vi.hoisted(() => ({
+const { mutate, ownedList, renders } = vi.hoisted(() => ({
   mutate: vi.fn(),
   ownedList: { current: {} as Record<string, unknown> },
+  // Renders of the modal: a state loop fails the test here instead of hanging the browser.
+  renders: { count: 0 },
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: makeTrpcProxy({
-    'homeBlock.getHomeBlocks': { useQuery: () => ownedList.current },
+    'homeBlock.getHomeBlocks': {
+      useQuery: () => {
+        if (++renders.count > 100) throw new Error(`render loop: ${renders.count} renders`);
+        return ownedList.current;
+      },
+    },
     'homeBlock.getSystemHomeBlocks': { useQuery: () => ({ data: [], isLoading: false }) },
     'homeBlock.setHomeBlockOrder': { useMutation: () => ({ mutate, isPending: false }) },
   }),
@@ -36,11 +43,16 @@ const OWN_BLOCK = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  renders.count = 0;
 });
 
 describe('ManageHomeBlocks Save', () => {
-  test('is off when the list of your blocks failed to load', async () => {
-    ownedList.current = { data: undefined, isLoading: false, isError: true };
+  test.each([
+    ['failed to load', { data: undefined, isLoading: false, isError: true }],
+    // React Query parks a first fetch made offline: no data, neither loading nor errored.
+    ['is paused offline', { data: undefined, isLoading: false, isError: false }],
+  ])('is off when the list of your blocks %s', async (_label, query) => {
+    ownedList.current = query;
     renderWithProviders(<ManageHomeBlocks onClose={() => undefined} />);
 
     await expect.element(page.getByText('Your home blocks could not be loaded')).toBeVisible();
@@ -48,6 +60,7 @@ describe('ManageHomeBlocks Save', () => {
     await expect.element(save).toBeDisabled();
     await userEvent.click(save, { force: true });
     expect(mutate).not.toHaveBeenCalled();
+    expect(renders.count).toBeLessThan(20);
   });
 
   test('saves the loaded list (control)', async () => {
