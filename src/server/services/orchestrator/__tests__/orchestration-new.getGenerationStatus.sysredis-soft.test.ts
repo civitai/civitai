@@ -164,18 +164,44 @@ describe('buildGenerationContext — kill switch and gate rules on a sysRedis fa
     ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
   });
 
-  it('only the kill switch unreadable (rules readable), nothing known: status reads DISABLED', async () => {
-    sysRedisUp({}, []);
+  // The kill switch unknown while the gate rules ARE known: a model-page read cached the rules,
+  // then sysRedis failed before this process ever read the status. Refused like unknown gates —
+  // moderators included, every surface (the router's mode check skips moderators, and the App
+  // Blocks bridge never reads `status.mode`).
+  async function gatesKnownStatusNeverRead() {
+    sysRedisUp({}, [hiddenRule]);
     mockHGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    await generationService.getCanGenerateHiddenGates({}); // reads the gate rules only
+    sysRedisDown();
+  }
 
-    const result = await buildGenerationContext('free', {}, {}, 'onsite');
+  it('kill switch unknown, gate rules known: a moderator on site is refused', async () => {
+    await gatesKnownStatusNeverRead();
 
-    expect(result.status).toEqual({
-      mode: 'disabled',
+    await expect(
+      buildGenerationContext('free', {}, { id: 1, isModerator: true }, 'onsite')
+    ).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
       message: 'Generation is temporarily unavailable. Please try again in a few minutes.',
     });
-    expect(result.externalCtx.selfHostedMode).toBe('disabled');
-    expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('defaults-firing');
+    expect(mockLogSysRedisFailOpen.mock.calls.map((c) => c[0])).toContain('defaults-firing');
+  });
+
+  it('kill switch unknown, gate rules known: an App Blocks caller is refused', async () => {
+    await gatesKnownStatusNeverRead();
+
+    await expect(
+      buildGenerationContext('free', undefined, { id: 2, isModerator: false }, 'block')
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+  });
+
+  it('kill switch last-known "enabled", then sysRedis down: generation proceeds on the known value', async () => {
+    sysRedisUp({ mode: 'enabled' }, [hiddenRule]);
+    await buildGenerationContext('free', {}, {}, 'onsite');
+    sysRedisDown();
+
+    const result = await buildGenerationContext('free', undefined, { id: 2 }, 'block');
+    expect(result.status).toEqual({ mode: 'enabled', message: undefined });
   });
 
   it('SLOW/half-open: reads NEVER settle + the deadline REJECTS → refused, not hung (fail-on-revert)', async () => {

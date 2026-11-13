@@ -136,6 +136,9 @@ function parseJson<T>(raw: string | null | undefined): T | null {
  *     it current, so the stored copy is not a newer state this caller missed).
  * A process whose own copy is merely unchanged and differs from the stored one leaves it alone: it
  * may be the one behind.
+ *
+ * Before enabling FLIPT_SNAPSHOT_MAX_AGE_MS, confirm Flipt sends an ETag on the snapshot endpoint:
+ * without one every response is a full body, so every process rewrites the snapshot on every poll.
  */
 export function createKvSnapshotStore({
   kv,

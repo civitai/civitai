@@ -189,11 +189,16 @@ const failOpenExtra = (last: { ageMs: number } | undefined) => ({
 const generationStatusRead = lastKnownGood<string | null>();
 
 /**
- * The generation kill switch. On a sysRedis failure it answers with the last value this process
- * read; when there is none it answers DISABLED (global and self-hosted) with
- * GENERATION_CONFIG_UNAVAILABLE_MESSAGE, never the schema default "enabled".
+ * The generation kill switch, with whether it is KNOWN. On a sysRedis failure it answers with the
+ * last value this process read; when there is none, `known: false` and a DISABLED status (global
+ * and self-hosted) with GENERATION_CONFIG_UNAVAILABLE_MESSAGE, never the schema default "enabled".
+ * Callers that ENFORCE refuse on `known: false` (buildGenerationContext); the public status
+ * endpoint must not edge-cache that fallback.
  */
-export async function getGenerationStatus() {
+export async function getGenerationStatusState(): Promise<{
+  status: GenerationStatus;
+  known: boolean;
+}> {
   const read = await generationStatusRead.read(
     // Wall-clock deadline so a silent sysRedis half-open can't park this read
     // (runs in getGenerationConfig's Promise.all on every gen submit) ~11min.
@@ -217,7 +222,12 @@ export async function getGenerationStatus() {
         message: GENERATION_CONFIG_UNAVAILABLE_MESSAGE,
       });
 
-  return status as GenerationStatus;
+  return { status: status as GenerationStatus, known: read.known };
+}
+
+/** The kill switch; see getGenerationStatusState (this drops `known`). */
+export async function getGenerationStatus(): Promise<GenerationStatus> {
+  return (await getGenerationStatusState()).status;
 }
 
 export async function setGenerationStatus(input: {

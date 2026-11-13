@@ -70,9 +70,10 @@ vi.mock('@civitai/db', () => ({
 vi.mock('~/server/services/generation/generation.service', async () => ({
   resolveTestingAccess: vi.fn(async () => false),
   // An unset kill switch (schema defaults) and no gate rules, both read successfully.
-  getGenerationStatus: vi.fn(async () =>
-    (await import('~/server/schema/generation.schema')).generationStatusSchema.parse({})
-  ),
+  getGenerationStatusState: vi.fn(async () => ({
+    status: (await import('~/server/schema/generation.schema')).generationStatusSchema.parse({}),
+    known: true,
+  })),
   getGateRuleState: vi.fn(async () => ({ known: true, value: [], source: 'live', ageMs: 0 })),
   generationConfigUnavailableError: vi.fn(() => new Error('generation config unavailable')),
   getSelfHostedDisabledEcosystems: vi.fn(() => [] as string[]),

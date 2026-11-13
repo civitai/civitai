@@ -54,7 +54,7 @@ import { resourceSchema, type ResourceData } from '~/shared/generation/values';
 import {
   generationConfigUnavailableError,
   getGateRuleState,
-  getGenerationStatus,
+  getGenerationStatusState,
   resolveTestingAccess,
   getResourceData,
   getSelfHostedDisabledEcosystems,
@@ -373,15 +373,17 @@ export async function buildGenerationContext(
   user: { id?: number; isModerator?: boolean } | undefined,
   surface: GenerationSurface
 ): Promise<GenerationContextResult> {
-  const [status, hasTestingAccess, gateRuleState] = await Promise.all([
-    getGenerationStatus(),
+  const [statusState, hasTestingAccess, gateRuleState] = await Promise.all([
+    getGenerationStatusState(),
     resolveTestingAccess(user ?? {}),
     getGateRuleState(),
   ]);
-  // Gate rules hide and disable models. Unknown (sysRedis down, never read in this process) is
-  // refused for every caller and every surface, moderators included: an empty rule set would let
-  // a hidden model through.
-  if (!gateRuleState.known) throw generationConfigUnavailableError();
+  // The kill switch and the gate rules are moderation controls. Either one UNKNOWN (sysRedis down,
+  // never read in this process) is refused for every caller and every surface, moderators included:
+  // the router's mode check skips moderators and the App Blocks bridge never reads `status.mode`,
+  // and an empty rule set would let a hidden model through.
+  if (!statusState.known || !gateRuleState.known) throw generationConfigUnavailableError();
+  const status = statusState.status;
   const gateRules = gateRuleState.value;
   const limits = status.limits[userTier];
 
