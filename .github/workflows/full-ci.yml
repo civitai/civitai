@@ -42,6 +42,26 @@ name: Full CI on label
 #
 # Not for fork PRs: their branch is not in this repo, so there is nothing here to dispatch on,
 # and their token cannot dispatch anyway. The `if` skips them.
+#
+# ── NO DISPATCH WHEN THE PR'S OWN RUN ALREADY HAS THE SHARDS ─────────────────────────────────
+#
+# A PR opened WITH the label (`gh pr create --label full-ci`) gets `opened` and `labeled` at
+# once. The `opened` Lint run already reads the label and starts the four `Unit tests` shards,
+# so dispatching here too ran the whole suite twice on the same commit. Measured over one day
+# (2026-11-12): 102 of the 122 dispatches this job made (84%) were on a head commit whose
+# pull_request Lint run had started the shards, a median 28 s earlier: ~9,100 job-minutes
+# (~150 job-hours) of duplicate suites in a day, on a plan whose concurrent-job limit is
+# saturated.
+#
+# So before dispatching, this job looks for a pull_request Lint run on the PR's head commit with
+# a `Unit tests (<n>)` job that was not cancelled. The `(<n>)` suffix is the test: GitHub expands
+# the matrix only for a job whose `if` passed, and a skipped `unit` job is listed as plain
+# `Unit tests` (checked over 700+ jobs: every skipped one has no suffix, every run one has one).
+# If it finds one, the PR run is the full run, in the checks list, and nothing is dispatched;
+# the summary links it. Otherwise (label added to an existing PR, the PR run not created yet
+# after ~90 s, a docs-only PR the Lint `paths:` filter skips) it dispatches as before.
+# On a skip, apps.yml and moderator-boot.yml are not dispatched either: their PR runs follow
+# their `paths:` filters, exactly as on every later push with the label on.
 
 on:
   pull_request:
@@ -70,9 +90,34 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # Does a pull_request Lint run on this head commit already run the unit shards? See the
+          # header. Polled because the `opened` run can be created a few seconds after this job
+          # starts; an API error counts as "not found", which falls back to dispatching.
+          covered=""
+          for attempt in 1 2 3 4 5 6 7; do
+            for id in $(gh api "repos/$REPO/actions/workflows/lint.yml/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=20" \
+                --jq '.workflow_runs[].id' || true); do
+              n=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+                --jq '[.jobs[] | select((.name | test("^Unit tests \\([0-9]+\\)$")) and .conclusion != "cancelled")] | length' \
+                || echo 0)
+              if [ "${n:-0}" -gt 0 ]; then covered=$id; break 2; fi
+            done
+            if [ "$attempt" -lt 7 ]; then sleep 15; fi
+          done
+          if [ -n "$covered" ]; then
+            url="https://github.com/$REPO/actions/runs/$covered"
+            echo "The PR's own Lint run on $HEAD_SHA already runs the unit shards: $url. Nothing dispatched."
+            {
+              echo "### Full CI already running in the PR's own checks"
+              echo "The pull_request Lint run on \`$HEAD_SHA\` runs every suite, unit shards included: $url"
+              echo "App suites and Moderator boot smoke follow their \`paths:\` filters, as on every push with the label on."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
           gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"
           # moderator-boot.yml arrived in #7673: a branch cut before it has no such workflow, and the

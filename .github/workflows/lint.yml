@@ -164,7 +164,8 @@ name: Lint
 #
 # ADDING the label does not fire this workflow: `types` deliberately omits
 # `labeled`. full-ci.yml listens for it and DISPATCHES this workflow (`only: all`)
-# and apps.yml on the PR branch, so the full suite starts at once; read its header
+# and apps.yml on the PR branch, so the full suite starts at once (not when the PR's own run on
+# that commit already started the shards, e.g. a PR opened with the label); read its header
 # for why (a run started by any other label overlays the PR's real check results).
 # scripts/__tests__/full-ci-label.test.ts pins this shape.
 on:

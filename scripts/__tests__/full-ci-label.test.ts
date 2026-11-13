@@ -184,5 +184,22 @@ describe('the full-ci label', () => {
       expect(step.run).toContain('gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"');
       expect(step.run).toContain('gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF"');
     });
+
+    // A PR opened with the label already runs the shards in its own `opened` run; dispatching as
+    // well ran the suite twice on one commit (84% of dispatches on 2026-11-12). The check must
+    // come BEFORE the first dispatch, key on the head commit, and match only an EXPANDED matrix
+    // job: a skipped `unit` job is named plain `Unit tests`, so matching that would skip the
+    // dispatch on exactly the PRs that need it.
+    it('skips the dispatch only when a PR run on the head commit already runs the unit shards', () => {
+      const step = (jobs[0].steps ?? []).find((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
+      const run = step?.run ?? '';
+      expect(step?.env?.HEAD_SHA).toBe('${{ github.event.pull_request.head.sha }}');
+      expect(run).toContain(
+        'repos/$REPO/actions/workflows/lint.yml/runs?event=pull_request&head_sha=$HEAD_SHA'
+      );
+      const matcher = 'test("^Unit tests \\\\([0-9]+\\\\)$")';
+      expect(run).toContain(matcher);
+      expect(run.indexOf(matcher)).toBeLessThan(run.indexOf('gh workflow run lint.yml'));
+    });
   });
 });
