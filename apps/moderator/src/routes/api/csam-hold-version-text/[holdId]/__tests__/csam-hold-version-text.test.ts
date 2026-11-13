@@ -20,9 +20,9 @@ const status = (response: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks();
   canAccess.mockImplementation(() => true);
-  getHoldVersionTexts.mockResolvedValue([
-    { versionId: 700, field: 'name', text: 'v one', inHeldText: true },
-  ]);
+  getHoldVersionTexts.mockResolvedValue({
+    hits: [{ versionId: 700, field: 'name', text: 'v one', state: 'unchanged' }],
+  });
 });
 
 describe('/api/csam-hold-version-text', () => {
@@ -30,7 +30,7 @@ describe('/api/csam-hold-version-text', () => {
     const res = await call('7');
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(await res.json()).toEqual({
-      hits: [{ versionId: 700, field: 'name', text: 'v one', inHeldText: true }],
+      hits: [{ versionId: 700, field: 'name', text: 'v one', state: 'unchanged' }],
     });
     expect(getHoldVersionTexts).toHaveBeenCalledWith(7);
   });

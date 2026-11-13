@@ -10,17 +10,36 @@ export type VersionTextHit =
   | { versionId: number; field: 'name' }
   | { versionId: number; field: 'trainedWords'; index: number };
 
+/**
+ * How the current value compares with what was flagged. `unchanged` / `edited` come from the check
+ * value the hold stored; holds written before it only say whether the held text has the value.
+ */
+export type VersionTextHitState =
+  | 'unchanged'
+  | 'edited'
+  | 'gone'
+  | 'in-held-text'
+  | 'not-in-held-text';
+
 export type VersionTextHitText = VersionTextHit & {
-  /** The version's current value, which may have changed since the hold; null once it is gone. */
+  /** The version's current value; null once it is gone. */
   text: string | null;
-  /** Whether the held text still carries it in that field; false means it was edited after the hold. */
-  inHeldText: boolean;
+  state: VersionTextHitState;
 };
 
+/** A position as stored, with its check value. The check value never leaves the server. */
+export type StoredVersionTextHit = VersionTextHit & { hash?: string };
+
+const hash = z.string().regex(/^[0-9a-f]{64}$/);
 const hitSchema = z.union([
-  z.object({ versionId: id, field: z.literal('name') }).strict(),
+  z.object({ versionId: id, field: z.literal('name'), hash: hash.optional() }).strict(),
   z
-    .object({ versionId: id, field: z.literal('trainedWords'), index: z.number().int().min(0) })
+    .object({
+      versionId: id,
+      field: z.literal('trainedWords'),
+      index: z.number().int().min(0),
+      hash: hash.optional(),
+    })
     .strict(),
 ]);
 
@@ -31,7 +50,7 @@ export const versionTextHitKey = (hit: VersionTextHit) =>
   `${hit.versionId}:${hit.field}:${hit.field === 'trainedWords' ? hit.index : ''}`;
 
 /** The hits a Model hold's meta names, each once; malformed entries are dropped, and none at all is null. */
-export function parseVersionTextHits(value: unknown): VersionTextHit[] | null {
+export function parseVersionTextHits(value: unknown): StoredVersionTextHit[] | null {
   if (!Array.isArray(value) || value.length > VERSION_TEXT_HITS_MAX) return null;
   const seen = new Set<string>();
   const hits = value.flatMap((entry) => {
@@ -42,6 +61,25 @@ export function parseVersionTextHits(value: unknown): VersionTextHit[] | null {
   });
   return hits.length ? hits : null;
 }
+
+/**
+ * A Model hold's positions, unless they describe held text a later scan has since replaced
+ * (`comVersionTextHoldHash` no longer the hold's `textHash`). Holds written before that value have
+ * no such check.
+ */
+export function holdVersionTextHits(meta: unknown, textHash: string) {
+  const { comVersionTextHits, comVersionTextHoldHash } = (meta ?? {}) as Record<string, unknown>;
+  const hits = parseVersionTextHits(comVersionTextHits);
+  const stale =
+    !!hits && typeof comVersionTextHoldHash === 'string' && comVersionTextHoldHash !== textHash;
+  return { hits: stale ? null : hits, stale };
+}
+
+/** A position without its check value, for anything sent to the browser. */
+export const publicVersionTextHit = (hit: StoredVersionTextHit): VersionTextHit =>
+  hit.field === 'name'
+    ? { versionId: hit.versionId, field: 'name' }
+    : { versionId: hit.versionId, field: 'trainedWords', index: hit.index };
 
 const HEADINGS: Record<VersionTextHit['field'], string> = {
   name: 'Version name',

@@ -1,11 +1,14 @@
 // No `$app/*` imports: the sidebar counts import this, and the node suites that load them cannot
 // resolve `$app/server`.
+import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { CsamHoldSort, CsamHoldStatusFilter } from '$lib/csam-holds/hold-filters';
 import {
   heldTextHas,
-  parseVersionTextHits,
+  holdVersionTextHits,
+  publicVersionTextHit,
   type VersionTextHit,
+  type VersionTextHitState,
   type VersionTextHitText,
 } from '$lib/csam-holds/version-text-hits';
 import { PREVIEW_COUNT_CAP } from '$lib/minor-flags/model-detail';
@@ -57,6 +60,8 @@ export type CsamHoldRow = {
   otherPendingInChat: number;
   /** For a Model hold from the civitai.com version-text check: which version names or trigger words were flagged. */
   versionTextHits: VersionTextHit[] | null;
+  /** The positions describe held text a later scan replaced, so they are not shown. */
+  versionTextHitsStale: boolean;
 };
 
 export type CsamHoldSearch = { id: number } | { username: string };
@@ -229,7 +234,9 @@ export async function listCsamHolds({
       ruledBefore,
       textUpdatedAt,
       comVersionTextHits,
+      comVersionTextHoldHash,
     } = (meta ?? {}) as {
+      comVersionTextHoldHash?: unknown;
       comVersionTextHits?: unknown;
       textUpdatedAt?: unknown;
       previous?: unknown;
@@ -261,28 +268,43 @@ export async function listCsamHolds({
       messageIds: chatMessageIds(messageIds),
       senderId: typeof senderId === 'number' ? senderId : null,
       decision: typeof decision === 'string' ? decision : null,
-      versionTextHits: row.entityType === 'Model' ? parseVersionTextHits(comVersionTextHits) : null,
+      ...listVersionTextHits(
+        row.entityType,
+        { comVersionTextHits, comVersionTextHoldHash },
+        row.textHash
+      ),
     };
   });
   return { items, hasMore: rows.length > limit };
 }
 
+function listVersionTextHits(entityType: string, meta: unknown, textHash: string) {
+  if (entityType !== 'Model') return { versionTextHits: null, versionTextHitsStale: false };
+  const { hits, stale } = holdVersionTextHits(meta, textHash);
+  return { versionTextHits: hits?.map(publicVersionTextHit) ?? null, versionTextHitsStale: stale };
+}
+
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
 /**
  * The current version names and trigger words a Model hold's meta points at, read only from the
- * hold's own model. Null when the hold is missing, not a Model hold, or names no positions.
+ * hold's own model, each compared with what was flagged. Null when the hold is missing, not a Model
+ * hold, or names no positions; `stale` when the positions describe held text since replaced.
  */
-export async function getHoldVersionTexts(holdId: number): Promise<VersionTextHitText[] | null> {
+export async function getHoldVersionTexts(
+  holdId: number
+): Promise<{ hits: VersionTextHitText[] } | { stale: true } | null> {
   const hold = await dbRead
     .selectFrom('TextScanHold')
-    .select(['entityId', 'text', 'meta'])
+    .select(['entityId', 'text', 'textHash', 'meta'])
     .where('id', '=', holdId)
     .where('label', '=', 'csam')
     .where('entityType', '=', 'Model')
     .executeTakeFirst();
-  const hits = parseVersionTextHits(
-    (hold?.meta as { comVersionTextHits?: unknown } | null)?.comVersionTextHits
-  );
-  if (!hold || !hits) return null;
+  if (!hold) return null;
+  const { hits, stale } = holdVersionTextHits(hold.meta, hold.textHash);
+  if (stale) return { stale: true };
+  if (!hits) return null;
 
   const versions = await dbRead
     .selectFrom('ModelVersion')
@@ -291,12 +313,24 @@ export async function getHoldVersionTexts(holdId: number): Promise<VersionTextHi
     .where('id', 'in', [...new Set(hits.map((hit) => hit.versionId))])
     .execute();
   const byId = new Map(versions.map((version) => [version.id, version]));
-  return hits.map((hit) => {
-    const version = byId.get(hit.versionId);
-    const text =
-      (hit.field === 'name' ? version?.name : version?.trainedWords?.[hit.index]) ?? null;
-    return { ...hit, text, inHeldText: text !== null && heldTextHas(hold.text, hit.field, text) };
-  });
+  return {
+    hits: hits.map((hit) => {
+      const version = byId.get(hit.versionId);
+      const text =
+        (hit.field === 'name' ? version?.name : version?.trainedWords?.[hit.index]) ?? null;
+      const state: VersionTextHitState =
+        text === null
+          ? 'gone'
+          : hit.hash
+          ? sha256(text) === hit.hash
+            ? 'unchanged'
+            : 'edited'
+          : heldTextHas(hold.text, hit.field, text)
+          ? 'in-held-text'
+          : 'not-in-held-text';
+      return { ...publicVersionTextHit(hit), text, state };
+    }),
+  };
 }
 
 export type AuthorHoldSummary = {

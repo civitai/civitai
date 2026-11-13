@@ -8,11 +8,11 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   const holdId = requireIdParam(locals, params.holdId, '/csam/text-holds', 'holdId');
   requirePermission(locals, 'csam.report.file');
 
-  const hits = await getHoldVersionTexts(holdId).catch((err) => {
+  const found = await getHoldVersionTexts(holdId).catch((err) => {
     // Name only: a database error message can echo the text it was reading.
     console.error('CSAM hold version text lookup failed', { holdId, errorName: err?.name });
     error(500, 'Could not load the flagged version text.');
   });
-  if (!hits) error(404, 'No flagged version text on this hold.');
-  return json({ hits }, { headers: { 'cache-control': 'no-store' } });
+  if (!found) error(404, 'No flagged version text on this hold.');
+  return json(found, { headers: { 'cache-control': 'no-store' } });
 };
