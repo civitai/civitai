@@ -7,6 +7,7 @@ import {
 } from '@civitai/auth/client';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import {
+  recordFeedGoShadowEncode,
   recordFeedGoShadowOutcome,
   type FeedGoShadowOutcome,
 } from '~/server/prom/feed-go-shadow.metrics';
@@ -25,7 +26,8 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  *     unknown flag or uninitialized client reads as off).
  *
  * The user's request is never slowed or failed by it:
- *  - the sample decision is a few property reads, a cached flag read and one `Math.random()`;
+ *  - the sample decision is a few property reads, a cached flag read, one `Math.random()` and,
+ *    for a request that passes all of those, one clock read for the per-second budget;
  *  - the response body is captured at serialize time by REFERENCE (the superjson envelope Node
  *    already built for the wire); nothing is copied or encoded on the request path;
  *  - the payload is encoded and POSTed from `setImmediate`, after the handler has written the
@@ -33,6 +35,16 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  *  - at most `FEED_GO_SHADOW_MAX_IN_FLIGHT` samples per process are in flight; a sample beyond
  *    that is dropped at decision time (`dropped_overload`), before anything is captured;
  *  - every failure is swallowed into `civitai_app_feed_go_shadow_samples_total{outcome}`.
+ *
+ * The send is off the sampled request, but NOT off the event loop: encoding a feed page
+ * (`JSON.stringify`, plus a full `superjson.serialize` when the response was written as devalue)
+ * runs synchronously on the same thread as every other request in the process. The in-flight cap
+ * does not bound that work (a slot frees as soon as feed-go answers), so a per-process token
+ * bucket does: at most `FEED_GO_SHADOW_MAX_PER_SECOND` samples begin per second, whatever the
+ * sample rate and however fast feed-go answers; a sample beyond it is dropped at decision time
+ * (`dropped_rate_limit`). The encode cost actually paid is counted in
+ * `civitai_app_feed_go_shadow_encode_seconds_total` and `..._encode_bytes_total`, so the rate can
+ * be tuned from evidence.
  *
  * What is forwarded is only what feed-go's answer depends on: the raw `input` query value, the
  * `host`, the country / region / UK headers, the verified-crawler header, whether the request
@@ -51,6 +63,7 @@ export const FEED_GO_SHADOW_PATH = `/internal/shadow/${FEED_GO_SHADOW_PROCEDURE}
 export const SHADOW_DEFAULT_TIMEOUT_MS = 2_000;
 export const SHADOW_MAX_TIMEOUT_MS = 10_000;
 export const SHADOW_DEFAULT_MAX_IN_FLIGHT = 8;
+export const SHADOW_DEFAULT_MAX_PER_SECOND = 5;
 
 /** The session cookie names feed-go reads (dev, `__Secure-` and `__Host-` slots). */
 const SESSION_COOKIE_NAMES = new Set([
@@ -74,6 +87,8 @@ export type FeedGoShadowConfig = {
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
+  /** Samples allowed to BEGIN per second per process (token bucket, burst = one second's worth). */
+  maxPerSecond: number;
 };
 
 type Env = Record<string, string | undefined>;
@@ -110,6 +125,12 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     ),
     maxInFlight: Math.floor(
       envNumber(env.FEED_GO_SHADOW_MAX_IN_FLIGHT, SHADOW_DEFAULT_MAX_IN_FLIGHT, 1, 256)
+    ),
+    maxPerSecond: envNumber(
+      env.FEED_GO_SHADOW_MAX_PER_SECOND,
+      SHADOW_DEFAULT_MAX_PER_SECOND,
+      0.1,
+      1000
     ),
   };
 }
@@ -171,6 +192,10 @@ export type FeedGoShadowDeps = {
   random?: () => number;
   fetch?: typeof fetch;
   record?: (outcome: FeedGoShadowOutcome) => void;
+  /** Counts the encode work one send paid (seconds of synchronous CPU, bytes of body). */
+  recordEncode?: (seconds: number, bytes: number) => void;
+  /** Milliseconds clock for the per-second budget (production: `performance.now`). */
+  now?: () => number;
   /** Runs the send after the request (production: `setImmediate`). */
   schedule?: (fn: () => void) => void;
 };
@@ -181,9 +206,26 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
+  const recordEncode = deps.recordEncode ?? recordFeedGoShadowEncode;
+  const now = deps.now ?? (() => performance.now());
   const schedule = deps.schedule ?? ((fn: () => void) => void setImmediate(fn));
   const storage = new AsyncLocalStorage<FeedGoShadowSample>();
   let inFlight = 0;
+  // Token bucket for `maxPerSecond`: starts full, refills continuously, holds at most one
+  // second's worth (and at least one token, so a rate below 1/s still admits a sample).
+  const bucketCap = Math.max(1, config.maxPerSecond);
+  let tokens = bucketCap;
+  let refilledAt: number | undefined;
+
+  function takeToken(): boolean {
+    const t = now();
+    if (refilledAt !== undefined)
+      tokens = Math.min(bucketCap, tokens + ((t - refilledAt) / 1000) * config.maxPerSecond);
+    refilledAt = t;
+    if (tokens < 1) return false;
+    tokens -= 1;
+    return true;
+  }
 
   function release(sample: FeedGoShadowSample) {
     if (sample.done) return;
@@ -208,6 +250,10 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       if (random() >= config.rate) return undefined;
       if (inFlight >= config.maxInFlight) {
         record('dropped_overload');
+        return undefined;
+      }
+      if (!takeToken()) {
+        record('dropped_rate_limit');
         return undefined;
       }
       const headers = pickShadowHeaders(req);
@@ -243,9 +289,14 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   function send(sample: FeedGoShadowSample): void {
     let body: string;
     try {
+      const started = now();
       const captured = sample.captured!;
       const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
       body = JSON.stringify({ input: sample.input, headers: sample.headers, node });
+      // Drop the reference to the captured page now that it is encoded: only `body` is needed
+      // while the POST is in flight.
+      sample.captured = undefined;
+      recordEncode((now() - started) / 1000, Buffer.byteLength(body));
     } catch {
       record('skipped_encode');
       release(sample);

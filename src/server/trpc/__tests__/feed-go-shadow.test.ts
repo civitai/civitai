@@ -16,6 +16,7 @@ import {
   pickShadowHeaders,
   readFeedGoShadowConfig,
   SHADOW_DEFAULT_MAX_IN_FLIGHT,
+  SHADOW_DEFAULT_MAX_PER_SECOND,
   SHADOW_DEFAULT_TIMEOUT_MS,
   type FeedGoShadowConfig,
 } from '~/server/trpc/feed-go-shadow';
@@ -24,7 +25,7 @@ const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInf
 const INPUT = '{"json":{"modelId":7,"limit":50},"meta":{"values":{"cursor":["undefined"]}}}';
 
 function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig {
-  return { url: URL_, rate: 1, timeoutMs: 500, maxInFlight: 4, ...overrides };
+  return { url: URL_, rate: 1, timeoutMs: 500, maxInFlight: 4, maxPerSecond: 1000, ...overrides };
 }
 
 function request(overrides: Record<string, unknown> = {}) {
@@ -47,9 +48,11 @@ function harness(
     enabled?: boolean;
     random?: number;
     fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
+    now?: () => number;
   } = {}
 ) {
   const outcomes: string[] = [];
+  const encodes: Array<{ seconds: number; bytes: number }> = [];
   const queued: Array<() => void> = [];
   const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
     opts.fetchImpl ?? (async () => new Response(null, { status: 202 }))
@@ -60,6 +63,8 @@ function harness(
     random: () => opts.random ?? 0,
     fetch: fetchMock as unknown as typeof fetch,
     record: (o) => void outcomes.push(o),
+    recordEncode: (seconds, bytes) => void encodes.push({ seconds, bytes }),
+    now: opts.now ?? (() => 0),
     schedule: (fn) => void queued.push(fn),
   });
   const flush = async () => {
@@ -67,7 +72,7 @@ function harness(
     // Let the fetch promise chain settle.
     for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
   };
-  return { shadow, outcomes, fetchMock, flush, queued };
+  return { shadow, outcomes, encodes, fetchMock, flush, queued };
 }
 
 /** Run one request through begin → handler (serializing `written`) → finish. */
@@ -89,6 +94,7 @@ describe('readFeedGoShadowConfig', () => {
       rate: 0,
       timeoutMs: SHADOW_DEFAULT_TIMEOUT_MS,
       maxInFlight: SHADOW_DEFAULT_MAX_IN_FLIGHT,
+      maxPerSecond: SHADOW_DEFAULT_MAX_PER_SECOND,
     });
   });
 
@@ -98,12 +104,14 @@ describe('readFeedGoShadowConfig', () => {
       FEED_GO_SHADOW_SAMPLE_RATE: '0.25',
       FEED_GO_SHADOW_TIMEOUT_MS: '750',
       FEED_GO_SHADOW_MAX_IN_FLIGHT: '3',
+      FEED_GO_SHADOW_MAX_PER_SECOND: '2.5',
     });
     expect(c).toEqual({
       url: `http://feed-go.internal.test:9090${FEED_GO_SHADOW_PATH}`,
       rate: 0.25,
       timeoutMs: 750,
       maxInFlight: 3,
+      maxPerSecond: 2.5,
     });
   });
 
@@ -113,11 +121,13 @@ describe('readFeedGoShadowConfig', () => {
       FEED_GO_SHADOW_SAMPLE_RATE: '7',
       FEED_GO_SHADOW_TIMEOUT_MS: '999999',
       FEED_GO_SHADOW_MAX_IN_FLIGHT: '-2',
+      FEED_GO_SHADOW_MAX_PER_SECOND: '0',
     });
     expect(c.url).toBeUndefined();
     expect(c.rate).toBe(1);
     expect(c.timeoutMs).toBe(10_000);
     expect(c.maxInFlight).toBe(1);
+    expect(c.maxPerSecond).toBe(0.1);
     expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_URL: 'not a url' }).url).toBeUndefined();
     expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_SAMPLE_RATE: 'abc' }).rate).toBe(0);
   });
@@ -268,6 +278,45 @@ describe('createFeedGoShadow — never on the user path', () => {
     expect(h.shadow.inFlight()).toBe(0);
     expect(h.outcomes).toEqual(['dropped_overload', 'sent', 'sent']);
     expect(serve(h)).toBeDefined();
+  });
+
+  it('caps samples per second whatever the in-flight count (encode work is on the event loop)', async () => {
+    let t = 0;
+    // feed-go answers instantly, so the in-flight cap never binds: only the budget can.
+    const h = harness({ config: { maxPerSecond: 3, maxInFlight: 100 }, now: () => t });
+    for (let i = 0; i < 3; i++) {
+      expect(serve(h)).toBeDefined();
+      await h.flush();
+    }
+    expect(h.shadow.inFlight()).toBe(0);
+    expect(serve(h)).toBeUndefined();
+    expect(h.outcomes).toEqual(['sent', 'sent', 'sent', 'dropped_rate_limit']);
+    // A third of a second refills one token (3/s), and no more than one.
+    t = 334;
+    expect(serve(h)).toBeDefined();
+    expect(serve(h)).toBeUndefined();
+    // A long idle refills to one second's worth, never beyond it.
+    t = 60_000;
+    await h.flush();
+    expect([serve(h), serve(h), serve(h), serve(h)].filter(Boolean)).toHaveLength(3);
+    expect(h.fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('a budget below one per second still admits one sample', () => {
+    const h = harness({ config: { maxPerSecond: 0.1 }, now: () => 0 });
+    expect(serve(h)).toBeDefined();
+    expect(serve(h)).toBeUndefined();
+  });
+
+  it('counts the encode cost it paid, and drops the captured page once encoded', async () => {
+    let t = 0;
+    const h = harness({ now: () => (t += 5) });
+    const sample = serve(h)!;
+    expect(sample.captured).toBeDefined();
+    await h.flush();
+    const body = h.fetchMock.mock.calls[0][1].body as string;
+    expect(h.encodes).toEqual([{ seconds: 0.005, bytes: Buffer.byteLength(body) }]);
+    expect(sample.captured).toBeUndefined();
   });
 
   it('skips a non-200 answer and frees the slot', async () => {

@@ -36,6 +36,7 @@ vi.mock('~/shared/utils/trpc-union-transformer', async (importOriginal) => ({
   },
 }));
 const flag = vi.hoisted(() => ({ shadow: null as boolean | null }));
+const handler = vi.hoisted(() => ({ fail: false }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
@@ -61,7 +62,10 @@ vi.mock('~/server/routers', async () => {
   return {
     appRouter: router({
       image: router({
-        getImagesAsPostsInfinite: publicProcedure.query(() => PAYLOAD),
+        getImagesAsPostsInfinite: publicProcedure.query(() => {
+          if (handler.fail) throw new Error('handler failed');
+          return PAYLOAD;
+        }),
         getInfinite: publicProcedure.query(() => PAYLOAD),
       }),
     }),
@@ -120,6 +124,7 @@ afterAll(async () => {
   delete process.env.FEED_GO_SHADOW_URL;
   delete process.env.FEED_GO_SHADOW_SAMPLE_RATE;
   delete process.env.FEED_GO_SHADOW_TIMEOUT_MS;
+  delete process.env.FEED_GO_SHADOW_MAX_IN_FLIGHT;
   resetFeedGoShadowForTests();
 });
 
@@ -137,11 +142,13 @@ beforeEach(() => {
   feedGo.hold = undefined;
   feedGo.onReceived = undefined;
   flag.shadow = true;
+  handler.fail = false;
   h.writeDevalue = false;
   configure({
     FEED_GO_SHADOW_URL: fakeBase,
     FEED_GO_SHADOW_SAMPLE_RATE: '1',
     FEED_GO_SHADOW_TIMEOUT_MS: '2000',
+    FEED_GO_SHADOW_MAX_IN_FLIGHT: undefined,
   });
 });
 
@@ -264,6 +271,26 @@ describe('feed-go shadow, end to end', () => {
     )
       await new Promise((r) => setTimeout(r, 10));
     expect((await outcomeCounts()).rejected).toBe((before.rejected ?? 0) + 1);
+  });
+
+  it('a failing handler frees its in-flight slot through the route (the next request is sampled)', async () => {
+    // One slot: if the route did not finish the failed request's sample, the next one would be
+    // dropped as overload and never reach feed-go.
+    configure({ FEED_GO_SHADOW_MAX_IN_FLIGHT: '1' });
+    const before = await outcomeCounts();
+    handler.fail = true;
+    expect((await get(PROCEDURE)).status).not.toBe(200);
+    const start = Date.now();
+    while (
+      ((await outcomeCounts()).skipped_status ?? 0) === (before.skipped_status ?? 0) &&
+      Date.now() - start < 1000
+    )
+      await new Promise((r) => setTimeout(r, 10));
+    expect((await outcomeCounts()).skipped_status).toBe((before.skipped_status ?? 0) + 1);
+    handler.fail = false;
+    expect((await get(PROCEDURE)).status).toBe(200);
+    expect(await receivedWithin(1)).toHaveLength(1);
+    expect((await outcomeCounts()).dropped_overload ?? 0).toBe(before.dropped_overload ?? 0);
   });
 
   it('feed-go timing out is counted as timeout', async () => {

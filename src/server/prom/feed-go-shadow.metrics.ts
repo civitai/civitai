@@ -24,6 +24,8 @@ export const FEED_GO_SHADOW_OUTCOMES = [
   'error',
   // Sampled, but FEED_GO_SHADOW_MAX_IN_FLIGHT samples were already in flight: dropped.
   'dropped_overload',
+  // Sampled, but FEED_GO_SHADOW_MAX_PER_SECOND samples already began this second: dropped.
+  'dropped_rate_limit',
   // Sampled, but Node did not answer 200 (an error or a client abort): nothing to compare.
   'skipped_status',
   // Sampled, but no response body was captured at serialize time.
@@ -61,6 +63,46 @@ try {
 export function recordFeedGoShadowOutcome(outcome: FeedGoShadowOutcome): void {
   try {
     feedGoShadowCounter.inc({ outcome });
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+// The synchronous encode work the sampler adds to the event loop, after the sampled response is
+// written (`superjson.serialize` for a devalue response, then `JSON.stringify`). Two unlabelled
+// counters: seconds of encode time and bytes of request body. Divide by the `sent` + `rejected` +
+// `timeout` + `error` outcomes for a per-sample cost.
+
+const ENCODE_SECONDS = 'civitai_app_feed_go_shadow_encode_seconds_total';
+const ENCODE_BYTES = 'civitai_app_feed_go_shadow_encode_bytes_total';
+
+const encodeSecondsCounter = registerInstrumentationMetric(
+  ENCODE_SECONDS,
+  () =>
+    new client.Counter({
+      name: ENCODE_SECONDS,
+      help:
+        'Seconds of synchronous event-loop time spent encoding feed-go shadow samples ' +
+        '(after the sampled response was written).',
+      registers: [instrumentationRegistry],
+    })
+);
+
+const encodeBytesCounter = registerInstrumentationMetric(
+  ENCODE_BYTES,
+  () =>
+    new client.Counter({
+      name: ENCODE_BYTES,
+      help: 'Bytes of request body encoded for feed-go shadow samples.',
+      registers: [instrumentationRegistry],
+    })
+);
+
+/** Count one sample's encode cost. Never throws. */
+export function recordFeedGoShadowEncode(seconds: number, bytes: number): void {
+  try {
+    if (seconds > 0) encodeSecondsCounter.inc(seconds);
+    if (bytes > 0) encodeBytesCounter.inc(bytes);
   } catch {
     /* never throw from telemetry */
   }
