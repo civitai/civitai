@@ -198,15 +198,31 @@ describe('a CSAM hold on the text', () => {
     await expect(del(id)).rejects.toThrow(/held/);
   });
 
-  it("holds it, once confirmed with a report, for the report's retention and then lets it go", async () => {
+  const citing = JSON.stringify({ contextText: [{ source: 'postDescription', id: 1, postId: 1 }] });
+
+  it("holds it, once confirmed with a report quoting its post, for the report's retention and then lets it go", async () => {
     const id = await addText(1, { csamHeld: true });
     await decide(id, 'Confirmed');
     await pg.query(
-      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES ($1, now() - interval '364 days', now())`,
-      [AUTHOR]
+      `INSERT INTO "CsamReport" ("userId", details, "reportSentAt", "archivedAt") VALUES ($1, $2, now() - interval '364 days', now())`,
+      [OTHER, citing]
     );
     await expect(del(id)).rejects.toThrow(/held/);
     await pg.query(`UPDATE "CsamReport" SET "reportSentAt" = now() - interval '366 days'`);
+    await del(id);
+    expect(await texts()).toEqual([]);
+  });
+
+  it("isn't let go by an old report on the author that doesn't quote the post", async () => {
+    const id = await addText(1, { csamHeld: true });
+    await decide(id, 'Confirmed');
+    await pg.query(
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES ($1, now() - interval '400 days', now())`,
+      [AUTHOR]
+    );
+    await expect(del(id)).rejects.toThrow(/held/);
+    // The control: a report as old that quotes the post has ended its retention.
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [citing]);
     await del(id);
     expect(await texts()).toEqual([]);
   });
@@ -216,8 +232,8 @@ describe('a CSAM hold on the text', () => {
     await decide(id, 'Confirmed');
     await decide(id, 'Pending');
     await pg.query(
-      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES ($1, now() - interval '2 years', now())`,
-      [AUTHOR]
+      `INSERT INTO "CsamReport" ("userId", details, "reportSentAt", "archivedAt") VALUES ($1, $2, now() - interval '2 years', now())`,
+      [AUTHOR, citing]
     );
     await expect(del(id)).rejects.toThrow(/held/);
   });

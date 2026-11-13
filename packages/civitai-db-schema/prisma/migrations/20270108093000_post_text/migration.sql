@@ -1,6 +1,6 @@
 -- Storylines: text items in a post's reading order (PostText). Held text, and the post that holds
 -- it, cannot be deleted until the hold is released: a text is held while its CSAM hold is pending,
--- or confirmed with no CSAM report on it (`csamHeld`); while a CSAM report that still holds
+-- or confirmed with no CSAM report quoting its post (`csamHeld`); while a CSAM report that still holds
 -- (pending, not yet archived, or sent within the year) names its author or quotes its post; or
 -- while an evidence hold covers its author. The trigger refuses every delete of such a row,
 -- including the cascade from "Post" and raw SQL. Its Comment v3 thread is
@@ -51,8 +51,9 @@ DECLARE
   marked BOOLEAN := false;
 BEGIN
   -- `csamHeld` keeps the text from readers for good; as a delete hold it stands until a moderator
-  -- confirms the hold AND a CSAM report names the author or quotes the post. From then on that
-  -- report's own retention (below) holds the text, and ends when the report stops holding.
+  -- confirms the hold AND a CSAM report quotes the post. From then on that report's own retention
+  -- (below) holds the text, and ends when the report stops holding. A report on the author alone
+  -- does not count: an old one would end the hold on text confirmed long after it.
   IF csam_held AND (
     EXISTS (
       SELECT 1 FROM "TextScanHold" h
@@ -66,10 +67,8 @@ BEGIN
     )
     OR NOT EXISTS (
       SELECT 1 FROM "CsamReport" r
-      WHERE r."userId" = author_id
-        OR r.details ->> 'secondaryUserId' = author_id::text
-        OR (jsonb_typeof(r.details -> 'contextText') = 'array'
-            AND r.details -> 'contextText' @> jsonb_build_array(jsonb_build_object('postId', post_id)))
+      WHERE jsonb_typeof(r.details -> 'contextText') = 'array'
+        AND r.details -> 'contextText' @> jsonb_build_array(jsonb_build_object('postId', post_id))
     )
   ) THEN
     RETURN true;
