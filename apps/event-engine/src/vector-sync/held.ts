@@ -18,8 +18,15 @@ const CSAM_LISTED_IMAGE_IDS = `SELECT listed.id FROM (
   WHERE listed.id IS NOT NULL`;
 
 /** The user `column` is named on a CsamReport (subject or secondary) or under an evidence hold. */
+/** An alias (`ti`) or an aliased column (`m."userId"`): the SQL below splices it as written. */
+function sqlRef(ref: string) {
+  if (!/^[a-z_][a-z0-9_]*(\."[a-z_][a-z0-9_]*")?$/i.test(ref))
+    throw new Error(`Bad SQL reference: ${ref}`);
+  return ref;
+}
+
 export const heldUserSql = (column: string) => `(
-    EXISTS (SELECT 1 FROM "CsamReport" ur WHERE ur."userId" = ${column})
+    EXISTS (SELECT 1 FROM "CsamReport" ur WHERE ur."userId" = ${sqlRef(column)})
     OR EXISTS (
       SELECT 1 FROM "CsamReport" us
       WHERE CASE WHEN us.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
@@ -33,7 +40,7 @@ export const heldUserSql = (column: string) => `(
  * lists it. Never NULL, so NOT of it is safe on an unflagged image.
  */
 export const heldImageSql = (image: string) => `COALESCE((
-    ${image}."needsReview" = 'csam'
+    ${sqlRef(image)}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
     OR (${image}."userId" <> ${PLACEHOLDER_OWNER_ID}
       AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(
