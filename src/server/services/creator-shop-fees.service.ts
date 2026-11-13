@@ -59,7 +59,7 @@ export type SubmissionFeeKind = keyof typeof SUBMISSION_FEE_PREFIX;
  * The fee charge's external id for one submission. With the client's key (a uuid, minted once per
  * submission and resent on its retries) it is the same on every retry, so the ledger holds one
  * charge for it. The user id comes first and has no '-', so one user's key never names another
- * user's charge. Without a key (a client from before keys), a new id per call, as before.
+ * user's charge. Without a key, a new id per call (no dedup).
  */
 export function submissionFeeTransactionId(
   kind: SubmissionFeeKind,
@@ -77,8 +77,7 @@ export const SUBMISSION_ALREADY_COMPLETED_MESSAGE =
  * refunding the fee if `write` fails. `write` gets the transaction its inserts must use and the
  * fee's ledger transaction id.
  *
- * Without a key (a client from before keys): charged under a new id, then `write` in its own
- * transaction, as before.
+ * Without a key: charged under a new id (no dedup), then `write` in its own transaction.
  *
  * With a key:
  * - the charge is chargeByExternalId's, outside any transaction: a fee the ledger already holds

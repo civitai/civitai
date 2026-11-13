@@ -67,7 +67,7 @@ type KeyedChargeInput = Parameters<typeof createBuzzTransaction>[0] & {
   externalTransactionId: string;
 };
 
-/** The old answer to a clean "insufficient funds" from the ledger, kept for that case. */
+/** The message for a charge the ledger declined for insufficient funds (no transaction back). */
 export const CHARGE_DECLINED_MESSAGE = 'Unable to charge this payment';
 
 /**
