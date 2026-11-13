@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { VaultSort } from '~/server/common/enums';
 import { paginationSchema } from '~/server/schema/base.schema';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { ModelType, ScanResultCode } from '~/shared/utils/prisma/enums';
 
 export type GetPaginatedVaultItemsSchema = z.infer<typeof getPaginatedVaultItemsSchema>;
 export const getPaginatedVaultItemsSchema = paginationSchema.merge(
@@ -60,5 +60,9 @@ export const vaultItemFilesSchema = z.array(
     sizeKB: z.number(),
     url: z.string(),
     displayName: z.string(),
+    // The file's scan verdict, copied when it is vaulted and again when its row is deleted (a
+    // ModelFile trigger), so the download can still judge it once the row is gone.
+    pickleScanResult: z.enum(ScanResultCode).optional(),
+    virusScanResult: z.enum(ScanResultCode).optional(),
   })
 );

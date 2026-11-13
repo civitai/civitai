@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as FailedScan from '~/server/utils/failed-scan';
 
 /** A vault copy of a model file that failed its scan is refused like the site download. */
 
@@ -18,6 +19,15 @@ vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: mockHasEnt
 vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl: mockResolveDownloadUrl }));
 
 vi.mock('~/utils/s3-utils', () => ({ getGetUrlByKey: vi.fn() }));
+
+const mockRefuseUnjudged = vi.hoisted(() => vi.fn());
+vi.mock('~/server/utils/failed-scan', async (importOriginal) => {
+  const actual = await importOriginal<typeof FailedScan>();
+  return { ...actual, refuseUnjudgedVaultFile: mockRefuseUnjudged };
+});
+const { refuseUnjudgedVaultFile: realRefuseUnjudged } = await vi.importActual<typeof FailedScan>(
+  '~/server/utils/failed-scan'
+);
 
 const TEST_USER = { id: 4242, isModerator: false };
 
@@ -54,6 +64,7 @@ function run() {
 describe('/api/download/vault/[vaultItemId] — a file that failed its scan', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRefuseUnjudged.mockReset().mockImplementation(realRefuseUnjudged);
     TEST_USER.isModerator = false;
     setEnv({ S3_VAULT_BUCKET: 'vault-bucket' });
     dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null);
@@ -169,6 +180,97 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
     const { promise, res } = run();
     await promise;
     expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+  });
+
+  describe('a file whose own row is gone, judged by its vault snapshot', () => {
+    const vaultedWith = (scan: { pickleScanResult?: string; virusScanResult?: string }) =>
+      mockVaultItemFindUnique.mockResolvedValue({
+        id: 31,
+        modelVersionId: 9,
+        modelName: 'model',
+        versionName: 'v1',
+        files: [
+          { id: 1, url: 'files/model.safetensors', displayName: 'model.safetensors', ...scan },
+        ],
+      });
+    const noRows = (live: unknown[] = []) => {
+      dbMock.dbRead.modelFile.findUnique.mockResolvedValue(null);
+      dbMock.dbRead.modelFile.findMany.mockResolvedValue(live as never);
+    };
+    const DANGER = { pickleScanResult: 'Success', virusScanResult: 'Danger' };
+    const CLEAN = { pickleScanResult: 'Success', virusScanResult: 'Success' };
+
+    it('refuses a Danger snapshot with 403', async () => {
+      vaultedWith(DANGER);
+      noRows();
+      const { promise, res } = run();
+      await promise;
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('refuses a Danger snapshot even when a live row with the same bytes is clean', async () => {
+      vaultedWith(DANGER);
+      noRows([{ type: 'Model', ...CLEAN }]);
+      const { promise, res } = run();
+      await promise;
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('serves a clean snapshot without consulting the unjudged-file policy', async () => {
+      vaultedWith(CLEAN);
+      noRows();
+      const { promise, res } = run();
+      await promise;
+      expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+      expect(mockRefuseUnjudged).not.toHaveBeenCalled();
+    });
+
+    it('serves a Danger snapshot to a moderator', async () => {
+      TEST_USER.isModerator = true;
+      vaultedWith(DANGER);
+      noRows();
+      const { promise, res } = run();
+      await promise;
+      expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+    });
+
+    it('leaves a file with no row and no snapshot to the unjudged-file policy', async () => {
+      noRows();
+      mockRefuseUnjudged.mockReturnValueOnce(true);
+      const { promise, res } = run();
+      await promise;
+      expect(mockRefuseUnjudged).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, url: 'files/model.safetensors' })
+      );
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('keeps the 404 for training data with no row, whatever the unjudged-file policy', async () => {
+      mockVaultItemFindUnique.mockResolvedValue({
+        id: 31,
+        modelVersionId: 9,
+        modelName: 'model',
+        versionName: 'v1',
+        files: [{ id: 1, url: 'files/data.zip', displayName: 'Training Data' }],
+      });
+      noRows();
+      mockRefuseUnjudged.mockReturnValue(true);
+      const { promise, res } = run();
+      await promise;
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('serves a moderator a file the unjudged-file policy would refuse', async () => {
+      TEST_USER.isModerator = true;
+      noRows();
+      mockRefuseUnjudged.mockReturnValue(true);
+      const { promise, res } = run();
+      await promise;
+      expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+    });
   });
 
   it('serves a file whose scan only errored', async () => {

@@ -227,6 +227,8 @@ export const addModelVersionToVault = async ({
       sizeKB: file.sizeKB,
       url: file.url,
       displayName: getFileDisplayName({ file, modelType: modelVersion.model.type }),
+      pickleScanResult: file.pickleScanResult,
+      virusScanResult: file.virusScanResult,
     };
   });
   const modelSizeKb = modelVersionFiles.reduce((acc, file) => acc + (file.sizeKB ?? 0), 0);

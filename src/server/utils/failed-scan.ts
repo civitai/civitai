@@ -33,6 +33,23 @@ export function excludedFromCoverage(file: {
   );
 }
 
+/** A vault entry's own copy of its file's verdict, present once it was vaulted or its row deleted. */
+export function hasScanSnapshot(entry: {
+  pickleScanResult?: ScanResultCode | null;
+  virusScanResult?: ScanResultCode | null;
+}) {
+  return entry.pickleScanResult != null || entry.virusScanResult != null;
+}
+
+/**
+ * A vault file with no row by id or url and no snapshot of its verdict: whether a non-moderator is
+ * refused it. The one place that policy is set.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- the policy may come to read the entry
+export function refuseUnjudgedVaultFile(entry: { id: number; url: string }) {
+  return false;
+}
+
 export const failedScanFileWhere: Prisma.ModelFileWhereInput = {
   OR: [{ pickleScanResult: ScanResultCode.Danger }, { virusScanResult: ScanResultCode.Danger }],
 };
