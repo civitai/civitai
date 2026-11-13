@@ -20,6 +20,7 @@ vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
 import {
   actedOn,
   appendDurable,
+  keyShape,
   CROSS_CHECK_EXPIRES,
   parseArgs,
   readIds,
@@ -394,6 +395,39 @@ describe('hide-lost-original-images', () => {
     expect(propagated).toEqual([]);
   });
 
+  it('appendDurable writes the whole line when the disk takes a short write', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hide-test-'));
+    const log = path.join(dir, 'log');
+    const real = fs.writeSync;
+    let first = true;
+    const spy = vi.spyOn(fs, 'writeSync').mockImplementation(((
+      fd: number,
+      buf: Uint8Array,
+      offset?: number
+    ) => {
+      if (first) {
+        first = false;
+        return real(fd, buf, offset ?? 0, Math.ceil((buf.length - (offset ?? 0)) / 2));
+      }
+      return real(fd, buf, offset ?? 0);
+    }) as never);
+    try {
+      appendDurable(log, '{"id":1,"prior":"Scanned"}\n');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.readFileSync(log, 'utf8')).toBe('{"id":1,"prior":"Scanned"}\n');
+  });
+
+  it('refuses a log line that is not an entry, unless it is the torn last line', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hide-test-'));
+    const log = path.join(dir, 'log');
+    fs.writeFileSync(log, 'null\n{"id":2,"prior":"Scanned"}\n');
+    expect(() => readLog(log)).toThrow();
+    fs.writeFileSync(log, '{"id":2,"prior":"Scanned"}\nnull\n');
+    expect(readLog(log).map((e) => e.id)).toEqual([2]);
+  });
+
   it('reads the log with a torn last line, and the ids file strictly', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hide-test-'));
     const log = path.join(dir, 'log');
@@ -458,6 +492,31 @@ describe('hide-lost-original-images', () => {
     expect(counts['skipped:odd-url']).toBe(1);
   });
 
+  it('skips a target whose key shape no control image has, without a HEAD', async () => {
+    await db.exec(`
+      UPDATE "Image" SET url = '/gone-1' WHERE id = 1;
+      UPDATE "Image" SET url = 'gone-2.jpg' WHERE id = 2;
+    `);
+    const heads: string[] = [];
+    const { deps } = makeDeps({
+      head: async (u) => {
+        heads.push(u);
+        return u.startsWith('gone-') ? 'missing' : 'present';
+      },
+    });
+    const counts = await run(options(), GONE, deps);
+    expect(heads).not.toContain('/gone-1');
+    expect(heads).not.toContain('gone-2.jpg');
+    expect(counts['skipped:odd-url']).toBe(2);
+    expect(counts.hidden).toBe(1);
+  });
+
+  it('describes a key by its structure, not its characters', () => {
+    expect(keyShape('3f2b9c1e-0a4d-4b7e-9c11-2f6d8a5e7b10')).toBe('a-a-a-a-a');
+    expect(keyShape('3f2b9c1e-0a4d-4b7e-9c11-2f6d8a5e7b10.jpg')).toBe('a-a-a-a-a.a');
+    expect(keyShape('/3f2b9c1e')).toBe('/a');
+  });
+
   it('reports how many control images vouched for the HEADs', async () => {
     const { deps } = makeDeps();
     const counts = await run(options({ apply: false }), GONE, deps);
@@ -489,5 +548,6 @@ describe('hide-lost-original-images', () => {
     expect(() => parseArgs(['--ids', 'a'])).toThrow(/--log/);
     expect(() => parseArgs(['--log', 'l'])).toThrow(/--ids/);
     expect(parseArgs(['--log', 'l', '--undo']).undo).toBe(true);
+    expect(() => parseArgs(['--ids', 'same', '--log', 'same'])).toThrow(/ids file/);
   });
 });

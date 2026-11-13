@@ -92,6 +92,7 @@ export function parseArgs(argv: string[]): RunOptions {
     options.rebust = rebustArg;
   }
   if (!options.logFile) throw new Error('--log is required');
+  if (options.logFile === options.idsFile) throw new Error('--log must not be the ids file');
   if (!options.undo && !options.rebust && !options.idsFile) throw new Error('--ids is required');
   return options;
 }
@@ -259,14 +260,26 @@ export async function rebust(
   return n;
 }
 
-/** A sample of live images must all HEAD present; otherwise a 404 means nothing. */
+/**
+ * The structure of a storage key, runs of letters and digits collapsed: a uuid and a uuid with an
+ * extension differ, so do a leading slash, a path prefix and whitespace.
+ */
+export const keyShape = (url: string) => url.replace(/[0-9A-Za-z]+/g, 'a');
+
+/**
+ * A sample of live images, one per quantile of the targets, must all HEAD present; otherwise a 404
+ * means nothing. Returns how many vouched and the key shapes they cover: a target in a shape the
+ * control never saw is not vouched for.
+ */
 export async function controlOk(ids: number[], deps: Pick<Deps, 'query' | 'head' | 'isExternal'>) {
   const rows = await deps.query<{ url: string | null }>(controlSql(ids));
   // One checkable image per quantile pick, or the control no longer covers the era it vouches for.
   const checkable = rows.filter((r): r is { url: string } => !!r.url && !deps.isExternal(r.url));
-  if (!rows.length || checkable.length !== rows.length) return 0;
+  if (!rows.length || checkable.length !== rows.length)
+    return { count: 0, shapes: new Set<string>() };
   const results = await Promise.all(checkable.map((r) => deps.head(r.url).catch(() => 'error')));
-  return results.every((r) => r === 'present') ? checkable.length : 0;
+  if (!results.every((r) => r === 'present')) return { count: 0, shapes: new Set<string>() };
+  return { count: checkable.length, shapes: new Set(checkable.map((r) => keyShape(r.url))) };
 }
 
 export async function run(options: RunOptions, ids: number[], deps: Deps) {
@@ -274,7 +287,8 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
     throw new Error(
       'the Moderation Lead cross-check has expired: re-run it, then pass --cross-check-rerun'
     );
-  const controls = await controlOk(ids, deps);
+  const control = await controlOk(ids, deps);
+  const controls = control.count;
   if (!controls)
     throw new Error(
       'control failed: not every quantile has a live image that HEADs present; no HEAD is trusted'
@@ -302,8 +316,8 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
     const eligible = rows.filter((r) => {
       if (r.skip) bump(counts, `skipped:${r.skip}`);
       else if (deps.isExternal(r.url)) bump(counts, 'skipped:external-url');
-      // A key with whitespace is not the form the control images use; a HEAD for it proves nothing.
-      else if (!/^\S+$/.test(r.url)) bump(counts, 'skipped:odd-url');
+      // A key in a shape no control image has: a 404 for it would not show the original is gone.
+      else if (!control.shapes.has(keyShape(r.url))) bump(counts, 'skipped:odd-url');
       else return true;
       return false;
     });
@@ -328,7 +342,7 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
     bump(counts, 'still-404', gone.length);
 
     // A bucket incident part-way through would 404 live images; the start-of-run control cannot see it.
-    if (options.apply && gone.length && !(await controlOk(ids, deps)))
+    if (options.apply && gone.length && !(await controlOk(ids, deps)).count)
       throw new Error('control failed mid-run: stopped before this chunk was written');
 
     const room = options.limit - hidden;
@@ -410,7 +424,10 @@ export function appendDurable(file: string, text: string) {
   }
   const fd = fs.openSync(file, 'a', 0o600);
   try {
-    fs.writeSync(fd, text);
+    fs.fchmodSync(fd, 0o600);
+    // writeSync may write less than asked (a full disk); a torn line must not look written.
+    const bytes = Buffer.from(text);
+    for (let at = 0; at < bytes.length; ) at += fs.writeSync(fd, bytes, at);
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
@@ -423,7 +440,10 @@ export function readLog(file: string): LogEntry[] {
   const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
   return lines.flatMap((l, n) => {
     try {
-      return [JSON.parse(l) as LogEntry];
+      const entry = JSON.parse(l) as LogEntry;
+      if (!Number.isInteger(entry?.id) || typeof entry.prior !== 'string')
+        throw new Error('log line is not an entry');
+      return [entry];
     } catch (e) {
       if (n === lines.length - 1) return [];
       throw e;
@@ -504,7 +524,11 @@ async function main() {
   const acted = () => actedOn(readLog(logFile), options.includeUnconfirmed);
   if (options.rebust) await rebust(acted(), options.rebust, options, deps);
   else if (options.undo) await undo(acted(), options, deps);
-  else await run(options, readIds(options.idsFile as string), deps);
+  else {
+    const ids = readIds(options.idsFile as string);
+    if (!ids.length) throw new Error('ids file is empty');
+    await run(options, ids, deps);
+  }
   if (!options.apply) deps.log('dry run: nothing written (pass --apply to write)');
   if (fs.existsSync(logFile))
     deps.log(`log sha256: ${createHash('sha256').update(fs.readFileSync(logFile)).digest('hex')}`);
@@ -515,7 +539,9 @@ if (process.argv[1]?.includes(SCRIPT_BASENAME)) {
   main()
     .then(() => process.exit(0))
     .catch((e) => {
-      console.error(e);
+      // Our own errors carry a plain message; a database error can echo a bound value.
+      const own = e instanceof Error && e.constructor === Error;
+      console.error(own ? (e as Error).message : `failed: ${(e as Error)?.name ?? 'error'}`);
       process.exit(1);
     });
 }
