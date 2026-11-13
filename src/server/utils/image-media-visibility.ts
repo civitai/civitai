@@ -8,6 +8,8 @@ import { requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
 import { storedSourceImageIds } from '~/server/utils/source-image-ids';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { Flags } from '~/shared/utils/flags';
+import type { BearerCredential } from '~/server/auth/full-user-credential';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 
 type MediaFields = {
   url: string;
@@ -16,17 +18,25 @@ type MediaFields = {
   user: { id: number };
 };
 
+/** The request's credential, read by `isSessionOrFullUserKey`; a browser session carries none. */
+type Credential = BearerCredential & { apiKeyId?: number | null };
+
 /**
  * Whether a single-image response may carry the media: the request's domain cap on the image's own
- * rating, always allowed for the owner and moderators (`viewerCanSeeImageMedia` adds collection
- * managers). Not identical to `Gated`: it ignores a contest's forced level and withholds mixed
- * ratings.
+ * rating, always allowed for the owner and moderators on a session or a full-access key
+ * (`viewerCanSeeImageMedia` adds collection managers). Not identical to `Gated`: it ignores a
+ * contest's forced level and withholds mixed ratings.
  */
 export function canViewImageMedia(
-  ctx: Pick<Context, 'user' | 'features' | 'req'>,
+  ctx: Pick<Context, 'user' | 'features' | 'req'> & Credential,
   image: Pick<MediaFields, 'nsfwLevel' | 'user'>
 ) {
-  if (ctx.user && (ctx.user.isModerator || ctx.user.id === image.user.id)) return true;
+  if (
+    ctx.user &&
+    isSessionOrFullUserKey(ctx) &&
+    (ctx.user.isModerator || ctx.user.id === image.user.id)
+  )
+    return true;
   const cap = requestDomainBrowsingLevelCap(ctx);
   // Under a cap, every bit of the rating must be inside it; unrated (0) and mixed ratings fail closed.
   return cap === undefined || (image.nsfwLevel !== 0 && Flags.hasFlag(cap, image.nsfwLevel));
@@ -80,7 +90,8 @@ export async function managesPostCollection({
 }
 
 export type MediaViewer = Pick<Context, 'user' | 'features' | 'req'> &
-  Partial<Pick<Context, 'cache'>>;
+  Partial<Pick<Context, 'cache'>> &
+  Credential;
 
 /**
  * `canViewImageMedia` with the post-collection manager exemption `getImageHandler` grants, for an
