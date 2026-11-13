@@ -8,10 +8,13 @@ import { TRPCError } from '@trpc/server';
  * The generate path used to pass no signal at all, so an orchestrator that accepted the
  * connection and never answered parked the request for as long as the socket lived, three times
  * over (the wrapper retries a status-less failure). Each attempt is now capped and the whole
- * submit has one deadline. Because a timed-out attempt may still have been accepted (and
- * charged), a retry is only made when the body carries an idempotency key (`externalId`), and the
- * final error says the job may be queued — so a re-click is a decision the user makes after
- * looking, not a blind second charge.
+ * submit has one deadline. A timed-out attempt may still have been accepted (and charged), and
+ * it may still be in flight, so it is never retried, key or not: the error says the job may be
+ * queued, and a re-click is a decision the user makes after looking, not a blind second charge.
+ * A 5xx or a network error is still retried, as before.
+ *
+ * A caller that asks the orchestrator to hold the request open (`query.wait`, in seconds) gets a
+ * budget of at least that wait plus a margin, so the bound never cuts off a wait it asked for.
  *
  * The orchestrator stub settles ONLY when the signal it was handed aborts: with no signal it
  * never settles at all, which is exactly the pre-fix behaviour, and the bounded loop below turns
@@ -96,7 +99,7 @@ describe('submitWorkflow — a real submit to an orchestrator that never answers
     ['resolves on abort', settleOnlyOnAbort],
     ['rejects on abort', rejectOnlyOnAbort],
   ])(
-    'ends in a 503 saying the request may be queued, within the 60s deadline (client %s)',
+    'ends in a 503 saying the request may be queued, after one 30s attempt (client %s)',
     async (_label, stub) => {
       mockSubmitWorkflow.mockImplementation(stub);
 
@@ -109,16 +112,16 @@ describe('submitWorkflow — a real submit to an orchestrator that never answers
       expect(err.code).toBe('SERVICE_UNAVAILABLE');
       expect(err.message).toMatch(/may already be queued/i);
       expect(err.message).toMatch(/check your queue before retrying/i);
-      // The first attempt gets its full 30s; the whole submit is done by the 60s deadline.
+      // The attempt gets its full 30s, and is the only one.
       expect(elapsedMs).toBeGreaterThanOrEqual(30_000);
-      expect(elapsedMs).toBeLessThanOrEqual(61_000);
+      expect(elapsedMs).toBeLessThanOrEqual(31_000);
 
-      // Bounded on EVERY attempt, and retried (the key makes a retry safe).
-      const calls = mockSubmitWorkflow.mock.calls.map((c) => c[0] as StubOptions);
-      expect(calls.length).toBeGreaterThanOrEqual(2);
-      for (const call of calls) expect(call.signal).toBeInstanceOf(AbortSignal);
-      // One idempotency key across every attempt, so the orchestrator collapses them to one job.
-      expect(new Set(calls.map((c) => c.body?.externalId))).toEqual(new Set([KEY]));
+      // Bounded, and NOT retried even though it carries a key: attempt 1 may still be in flight,
+      // and a second attempt is only safe if the orchestrator's dedupe is atomic.
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect((mockSubmitWorkflow.mock.calls[0][0] as StubOptions).signal).toBeInstanceOf(
+        AbortSignal
+      );
     }
   );
 
@@ -165,15 +168,16 @@ describe('submitWorkflow — a real submit to an orchestrator that never answers
     }
   );
 
-  it('recovers when the first attempt hangs and the retry is answered', async () => {
+  it('still retries a 5xx, with the same key, and succeeds', async () => {
     mockSubmitWorkflow
-      .mockImplementationOnce(settleOnlyOnAbort)
+      .mockResolvedValueOnce({ data: undefined, response: { status: 502 } })
       .mockResolvedValueOnce({ data: { id: 'wf-1' }, response: { status: 200 } });
 
     const { settled } = await runUntilSettled(() => generate());
 
     expect(settled).toEqual({ ok: true, value: { id: 'wf-1' } });
-    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+    const keys = mockSubmitWorkflow.mock.calls.map((c) => (c[0] as StubOptions).body?.externalId);
+    expect(keys).toEqual([KEY, KEY]);
   });
 
   it('ORCHESTRATOR_SUBMIT_BOUNDS=off restores the unbounded submit (the off-switch works)', async () => {
@@ -184,5 +188,58 @@ describe('submitWorkflow — a real submit to an orchestrator that never answers
 
     expect(settled).toEqual({ ok: true, value: { id: 'wf-1' } });
     expect((mockSubmitWorkflow.mock.calls[0][0] as StubOptions).signal).toBeUndefined();
+  });
+});
+
+/** Answers successfully after `ms`, unless the signal it was handed aborts first. */
+const answerAfter =
+  (ms: number) =>
+  ({ signal }: StubOptions) =>
+    new Promise((resolve) => {
+      const timer = setTimeout(
+        () => resolve({ data: { id: 'wf-wait' }, response: { status: 200 } }),
+        ms
+      );
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(timer);
+          resolve({ data: undefined, response: undefined, error: signal.reason });
+        },
+        { once: true }
+      );
+    });
+
+describe('submitWorkflow — a caller that asks the orchestrator to wait (query.wait)', () => {
+  // `wait` is in seconds. Callers hold the request open for a chat completion or a scan; the
+  // per-attempt cap and the deadline must not cut that off, or the user is charged for a
+  // workflow they are told failed.
+  it.each([[45_000], [80_000]])(
+    'a wait=90 submit answered at %ims succeeds instead of being cut off',
+    async (answerMs) => {
+      mockSubmitWorkflow.mockImplementation(answerAfter(answerMs));
+
+      const { settled, elapsedMs } = await runUntilSettled(() =>
+        submitWorkflow({ token: 'tok', body: { steps: [] } as never, query: { wait: 90 } })
+      );
+
+      expect(settled).toEqual({ ok: true, value: { id: 'wf-wait' } });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(elapsedMs).toBeGreaterThanOrEqual(answerMs);
+    }
+  );
+
+  it('a wait=90 submit that never answers is still bounded: one attempt, ended by 106s', async () => {
+    mockSubmitWorkflow.mockImplementation(settleOnlyOnAbort);
+
+    const { settled, elapsedMs } = await runUntilSettled(() =>
+      submitWorkflow({ token: 'tok', body: { steps: [] } as never, query: { wait: 90 } })
+    );
+
+    expect(settled, 'submit never settled within 120s of fake time').toBeDefined();
+    expect((settled?.value as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    expect(elapsedMs).toBeGreaterThanOrEqual(90_000);
+    expect(elapsedMs).toBeLessThanOrEqual(106_000);
   });
 });
