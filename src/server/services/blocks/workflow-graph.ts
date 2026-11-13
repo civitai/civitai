@@ -210,12 +210,13 @@ export function isMergeStepType(stepType: unknown): boolean {
   return typeof stepType === 'string' && fold(stepType) === 'merge';
 }
 
-/** A merge input with `reduce` taken off each field, so each field reads as its reference. */
+/** A merge input with a string `reduce` taken off each field, so each field reads as its reference. */
 function withoutMergeReduce(input: unknown): unknown {
   if (!isPlainObject(input) || !isPlainObject(input.fields)) return input;
   const fields = Object.fromEntries(
     Object.entries(input.fields).map(([name, field]) => {
-      if (!isPlainObject(field)) return [name, field];
+      // Only a string `reduce` is dropped; anything else stays, and the field refuses.
+      if (!isPlainObject(field) || typeof field.reduce !== 'string') return [name, field];
       const { reduce: _reduce, ...ref } = field;
       return [name, ref];
     })
@@ -386,7 +387,7 @@ export function chatImageModalityProblem(stepType: unknown, input: unknown): str
   if (hasRecasedTwin(input, 'modalities')) return CHAT_IMAGE_MODALITY_ERROR;
   if (!('modalities' in input)) return null;
   const { modalities } = input;
-  if (!Array.isArray(modalities)) return CHAT_IMAGE_MODALITY_ERROR;
+  if (!Array.isArray(modalities) || modalities.length === 0) return CHAT_IMAGE_MODALITY_ERROR;
   return modalities.every(
     (m) => typeof m === 'string' && CHAT_OUTPUT_MODALITIES.has(m.toLowerCase())
   )

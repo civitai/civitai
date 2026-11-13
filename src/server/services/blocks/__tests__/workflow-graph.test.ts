@@ -697,6 +697,21 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     }
   });
 
+  it.each([
+    ['a media reference', { $ref: 'clip', path: 'output.video.url' }],
+    ['an unknown source', { $ref: 'nope', path: 'text' }],
+    ['many references', Array.from({ length: 200 }, () => ({ $ref: 'clip', path: 'output.text' }))],
+  ])('🔴 a merge field whose `reduce` holds %s is refused', (_label, reduce) => {
+    const r = refusal([
+      video,
+      step({
+        $type: 'merge',
+        input: { onMissing: 'fail', fields: { x: { $ref: 'clip', path: 'output.text', reduce } } },
+      }),
+    ]);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+  });
+
   it('a merge may still read text and scalar fields', () => {
     expect(
       resolved([
@@ -818,6 +833,7 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
 
   it.each([
     ['null', null],
+    ['an empty list', []],
     ['a non-text entry', ['images']],
     ['a padded entry', [' image']],
   ])('🔴 chat modalities refuse %s', (_label, modalities) => {
