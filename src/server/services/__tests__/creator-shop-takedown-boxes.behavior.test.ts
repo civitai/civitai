@@ -642,6 +642,45 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     ]);
   });
 
+  it('files no clawback for a late payout already reversed on the ledger', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'payout-1',
+        externalTransactionId: `${sourceKey}:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 560,
+      },
+    ]);
+    buzz.getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id === 'refund-payout-1' ? { externalTransactionId: id } : null
+    );
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([]);
+  });
+
+  it('files no clawback for a late payout whose own reversal the sweep is still finishing', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    const { sourceKey } = await seedOpening(boxId, {
+      meta: { payoutReversal: { transactionId: 'payout-1', at: 'x' } },
+    });
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'payout-1',
+        externalTransactionId: `${sourceKey}:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 560,
+      },
+    ]);
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([]);
+  });
+
   // The payout failed, or landed after the refund began and reversed itself: nothing is owed.
   it('files no clawback for a creator box sale whose ledger shows no unreversed payout', async () => {
     const boxId = await seedBox({ sellerId: CREATOR });

@@ -2573,13 +2573,19 @@ async function refundPurchasePrefix(input: {
   } satisfies PrefixRefund;
 }
 
-/** The purchase's `:sell:` payout legs on the ledger that its refund did not reverse. */
-async function unreversedPayoutLegs(buzzTransactionId: string, refund: PrefixRefund) {
-  const reversed = new Set(refund.refundedTransactions.map((t) => t.originalTransactionId));
-  return (await getMultiAccountTransactionsByPrefix(buzzTransactionId)).filter(
+/**
+ * The purchase's `:sell:` payout legs with no refund on the ledger, by whichever run made it (this
+ * refund, or the payout's own reversal when it landed on a sale already refunded). A reversal the
+ * payout recorded and the sweep has yet to finish is the sweep's, not a moderator's.
+ */
+async function unreversedPayoutLegs(buzzTransactionId: string, meta: Prisma.JsonValue) {
+  const owedReversal = (meta as { payoutReversal?: { transactionId?: string } } | null)
+    ?.payoutReversal?.transactionId;
+  const { missing } = await getPrefixRefundState(buzzTransactionId);
+  return missing.filter(
     (leg) =>
       (leg.externalTransactionId ?? '').startsWith(`${buzzTransactionId}:sell:`) &&
-      !reversed.has(leg.transactionId)
+      leg.transactionId !== owedReversal
   );
 }
 
@@ -2982,9 +2988,10 @@ export const takedownCosmeticShopItem = async ({
       // creator (the payout failed, or landed after the refund began and reversed itself), so the
       // ledger decides: only a payout leg the refund above didn't reverse is left to a moderator.
       else if (!recordedPayouts && purchase.sellerId !== null) {
-        const unreversed = await unreversedPayoutLegs(purchase.buzzTransactionId, refund).catch(
-          () => null
-        );
+        const unreversed = await unreversedPayoutLegs(
+          purchase.buzzTransactionId,
+          purchase.meta
+        ).catch(() => null);
         if (unreversed === null || unreversed.length)
           failures.push({
             stage: 'clawback',
