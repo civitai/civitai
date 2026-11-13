@@ -86,8 +86,8 @@ const PEOPLE_PG = image({ id: 5, nsfwLevel: NsfwLevel.PG, tags: [PEOPLE_TAG] });
 const UNTAGGED_R = image({ id: 6, nsfwLevel: NsfwLevel.R });
 const UNTAGGED_PG13 = image({ id: 7, nsfwLevel: NsfwLevel.PG13 });
 const CHILD_PG = image({ id: 8, nsfwLevel: NsfwLevel.PG, tags: [CHILD_TAG] });
-// No tag ids read for it, as the tag cache answers for an image with none.
-const UNKNOWN_TAGS_PG = {
+// No entry in the tag read, as the tag cache answers for an image with no tags.
+const NO_TAG_ROWS_PG = {
   ...image({ id: 9, nsfwLevel: NsfwLevel.PG }),
   tags: undefined as unknown as number[],
 };
@@ -208,7 +208,7 @@ const servedIds = (version: any) => version.images.map((i: any) => Number(i.url.
 const noStore = (res: ReturnType<typeof fakeRes>) =>
   res.headers['Cache-Control'] === 'private, no-store';
 
-const MIXED = [UNTAGGED_PG, CHILD_R, POI_R, MINOR_R, PEOPLE_PG, UNTAGGED_R, UNKNOWN_TAGS_PG];
+const MIXED = [UNTAGGED_PG, CHILD_R, POI_R, MINOR_R, PEOPLE_PG, UNTAGGED_R, NO_TAG_ROWS_PG];
 const ROUTES: Route[] = ['id', 'by-hash', 'by-hash batch'];
 const HOSTS = ['civitai.com', 'civitai.red'];
 
@@ -220,11 +220,11 @@ beforeEach(() => {
 
 describe.each(ROUTES)('%s, anonymous', (route) => {
   describe.each(HOSTS)('on %s', (host) => {
-    it('serves no child-tagged R+, poi, minor, people-tagged or unknown-tags image; untagged ones stay', async () => {
+    it('serves no child-tagged R+, poi, minor or people-tagged image; untagged ones stay', async () => {
       serve(NsfwLevel.PG | NsfwLevel.R, MIXED);
       const { res, version } = await call(route, host);
       expect(res.statusCode).toBe(200);
-      expect(servedIds(version)).toEqual([UNTAGGED_PG.id, UNTAGGED_R.id]);
+      expect(servedIds(version)).toEqual([UNTAGGED_PG.id, UNTAGGED_R.id, NO_TAG_ROWS_PG.id]);
       expect(version.images[0]).not.toHaveProperty('tags');
     });
 
@@ -232,7 +232,7 @@ describe.each(ROUTES)('%s, anonymous', (route) => {
       region.restricted = true;
       serve(NsfwLevel.PG | NsfwLevel.R, MIXED);
       const { version } = await call(route, host);
-      expect(servedIds(version)).toEqual([UNTAGGED_PG.id]);
+      expect(servedIds(version)).toEqual([UNTAGGED_PG.id, NO_TAG_ROWS_PG.id]);
     });
 
     it('resolves the exclusions at the SFW level for a region held to it', async () => {

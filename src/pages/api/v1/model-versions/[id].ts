@@ -205,13 +205,15 @@ export async function getVersionShowcaseImages(modelVersionIds: number[], browsi
   const excludedTagIds = withinSfw.excludedTagIds.filter((id) =>
     withinAll.excludedTagIds.includes(id)
   );
-  return getImagesForModelVersion({
+  const images = await getImagesForModelVersion({
     modelVersionIds,
     include: ['meta', 'tags'],
     imagesPerVersion: 10,
     browsingLevel,
     excludedTagIds,
   });
+  // The tag read answered for every image (it throws otherwise); one it has no entry for has no tags.
+  return images.map((image) => ({ ...image, tags: image.tags ?? [] }));
 }
 
 const aboveSfw = (nsfwLevel: number) => (nsfwLevel & ~sfwBrowsingLevelsFlag) !== 0;
