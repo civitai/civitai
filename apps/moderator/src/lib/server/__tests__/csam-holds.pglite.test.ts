@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +37,7 @@ const {
   getCleanRescans,
   getChatHold,
   getHoldAuthorHolds,
+  getHoldVersionTexts,
 } = await import('../csam-holds.queries');
 
 const OLDEST_PENDING: CsamHoldQuery = {
@@ -992,5 +994,145 @@ describe('decideAuthorHolds', () => {
       { holdId: 150, ok: false, error: 'Too many holds at once.' },
       { holdId: 151, ok: false, error: 'Too many holds at once.' },
     ]);
+  });
+});
+
+describe('version text hits on Model holds', () => {
+  const HELD = '## Name\nA model name\n\n## Version name\nv one\n\n## Trained words\nalpha, beta';
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+  const holdWith = (id: number, meta: unknown, entityType = 'Model', textHash = `h-${id}`) =>
+    db.query(
+      `INSERT INTO "TextScanHold" ("id","entityType","entityId","label","textHash","status","userId",
+         "text","reason","createdAt","updatedAt","meta")
+       VALUES ($1,$2,70,'csam',$3,'Pending',10,$4,'neutral reason','2026-10-05','2026-10-05',$5::jsonb)`,
+      [id, entityType, textHash, HELD, JSON.stringify(meta)]
+    );
+  const item = async (id: number) =>
+    (await listCsamHolds({ ...OLDEST_PENDING, limit: 50 })).items.find((row) => row.id === id);
+
+  beforeEach(async () => {
+    await db.exec(`
+      ALTER TABLE "ModelVersion" ADD COLUMN "name" TEXT, ADD COLUMN "trainedWords" TEXT[];
+      INSERT INTO "Model" VALUES (71, 'Another model', 'Published');
+      INSERT INTO "ModelVersion" ("id","modelId","name","trainedWords") VALUES
+        (700, 70, '  v one  ', '{alpha," beta "}'),
+        (701, 70, 'v two', '{gamma}'),
+        (702, 70, 'alpha', '{"v one",alp,"A model name"}'),
+        (710, 71, 'other model', '{secret}');
+    `);
+  });
+
+  it('lists the positions a Model hold names once each, dropping malformed ones', async () => {
+    await holdWith(90, {
+      comVersionTextHits: [
+        { versionId: 700, field: 'name' },
+        { versionId: 700, field: 'name' },
+        { versionId: 700, field: 'trainedWords', index: 1 },
+        { versionId: 2_147_483_648, field: 'name' },
+        { versionId: 700, field: 'trainedWords' },
+        { versionId: 700, field: 'description' },
+      ],
+    });
+    expect((await item(90))?.versionTextHits).toEqual([
+      { versionId: 700, field: 'name' },
+      { versionId: 700, field: 'trainedWords', index: 1 },
+    ]);
+    expect((await item(1))?.versionTextHits).toBeNull();
+  });
+
+  it('tells unchanged from edited by the stored check value, even after a reorder or delete', async () => {
+    await holdWith(91, {
+      comVersionTextHits: [
+        { versionId: 700, field: 'trainedWords', index: 0, hash: sha('alpha') },
+        { versionId: 700, field: 'trainedWords', index: 1, hash: sha('flagged word') },
+        { versionId: 701, field: 'trainedWords', index: 0, hash: sha('flagged word') },
+        { versionId: 701, field: 'trainedWords', index: 3, hash: sha('flagged word') },
+      ],
+      comVersionTextHoldHash: 'h-91',
+    });
+    await expect(getHoldVersionTexts(91)).resolves.toEqual({
+      hits: [
+        { versionId: 700, field: 'trainedWords', index: 0, text: 'alpha', state: 'unchanged' },
+        // Index 1 now holds a word that is also in the held text: only the check value catches it.
+        { versionId: 700, field: 'trainedWords', index: 1, text: ' beta ', state: 'edited' },
+        { versionId: 701, field: 'trainedWords', index: 0, text: 'gamma', state: 'edited' },
+        { versionId: 701, field: 'trainedWords', index: 3, text: null, state: 'gone' },
+      ],
+    });
+  });
+
+  it('falls back to the held text for a hold written without check values, never claiming unchanged', async () => {
+    await holdWith(92, {
+      comVersionTextHits: [
+        { versionId: 700, field: 'name' },
+        { versionId: 700, field: 'trainedWords', index: 1 },
+        { versionId: 702, field: 'name' },
+        { versionId: 702, field: 'trainedWords', index: 0 },
+        { versionId: 702, field: 'trainedWords', index: 1 },
+      ],
+    });
+    await expect(getHoldVersionTexts(92)).resolves.toEqual({
+      hits: [
+        { versionId: 700, field: 'name', text: '  v one  ', state: 'in-held-text' },
+        { versionId: 700, field: 'trainedWords', index: 1, text: ' beta ', state: 'in-held-text' },
+        // A whole value of its own field only: not a substring, not another field's value.
+        { versionId: 702, field: 'name', text: 'alpha', state: 'not-in-held-text' },
+        {
+          versionId: 702,
+          field: 'trainedWords',
+          index: 0,
+          text: 'v one',
+          state: 'not-in-held-text',
+        },
+        { versionId: 702, field: 'trainedWords', index: 1, text: 'alp', state: 'not-in-held-text' },
+      ],
+    });
+  });
+
+  it('hides positions written for held text a later scan replaced', async () => {
+    const meta = {
+      comVersionTextHits: [{ versionId: 700, field: 'name', hash: sha('  v one  ') }],
+      comVersionTextHoldHash: 'h-older-text',
+    };
+    await holdWith(93, meta);
+    await expect(getHoldVersionTexts(93)).resolves.toEqual({ stale: true });
+    expect(await item(93)).toMatchObject({ versionTextHits: null, versionTextHitsStale: true });
+
+    await db.query(`UPDATE "TextScanHold" SET meta = $1::jsonb WHERE id = 93`, [
+      JSON.stringify({ ...meta, comVersionTextHoldHash: 'h-93' }),
+    ]);
+    await expect(getHoldVersionTexts(93)).resolves.toMatchObject({
+      hits: [{ versionId: 700, state: 'unchanged' }],
+    });
+    expect(await item(93)).toMatchObject({ versionTextHitsStale: false });
+  });
+
+  it('never sends a check value to the browser', async () => {
+    const hash = sha('  v one  ');
+    await holdWith(95, {
+      comVersionTextHits: [{ versionId: 700, field: 'name', hash }],
+      comVersionTextHoldHash: 'h-95',
+    });
+    const sent = JSON.stringify([await item(95), await getHoldVersionTexts(95)]);
+    expect(sent).toContain('"versionId":700');
+    expect(sent).not.toContain(hash);
+    expect(sent).not.toContain('comVersionTextHoldHash');
+  });
+
+  it("never reads another model's version, whatever the meta names", async () => {
+    await holdWith(96, { comVersionTextHits: [{ versionId: 710, field: 'name' }] });
+    await expect(getHoldVersionTexts(96)).resolves.toEqual({
+      hits: [{ versionId: 710, field: 'name', text: null, state: 'gone' }],
+    });
+  });
+
+  it('has nothing for a hold that is not a Model hold or names no positions', async () => {
+    await holdWith(97, {});
+    await holdWith(98, { comVersionTextHits: [{ versionId: 700, field: 'name' }] }, 'Post');
+    await expect(getHoldVersionTexts(97)).resolves.toBeNull();
+    await expect(getHoldVersionTexts(98)).resolves.toBeNull();
+    await expect(getHoldVersionTexts(1)).resolves.toBeNull();
+    await expect(getHoldVersionTexts(999)).resolves.toBeNull();
+    expect(await item(98)).toMatchObject({ versionTextHits: null, versionTextHitsStale: false });
   });
 });
