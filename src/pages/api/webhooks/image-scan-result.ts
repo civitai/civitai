@@ -1,6 +1,7 @@
 import { getWorkflow, type WorkflowEvent } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { logToAxiom } from '~/server/logging/client';
+import { logFrameLimitHit } from '~/server/services/image-scan-frame-limit';
 import { imageScanWebhookCounter } from '~/server/prom/client';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import {
@@ -91,35 +92,4 @@ async function loadScanEvent(req: NextApiRequest) {
   };
 
   return { imageScanning: isImageScanningWorkflow(steps), input: { ...input, steps } };
-}
-
-type FrameExtractionStep = {
-  $type?: string;
-  input?: { maxFrames?: number };
-  output?: { frames?: unknown[] };
-};
-
-/** A video longer than the extraction cap is rated on its first `maxFrames` frames only. */
-function logFrameLimitHit({
-  steps,
-  imageId,
-  workflowId,
-}: {
-  steps: unknown[];
-  imageId: number;
-  workflowId: string;
-}) {
-  const step = (steps as FrameExtractionStep[]).find((x) => x.$type === 'videoFrameExtraction');
-  const maxFrames = step?.input?.maxFrames;
-  const frames = step?.output?.frames?.length;
-  if (!maxFrames || frames === undefined || frames < maxFrames) return;
-  logToAxiom({
-    name: 'image-scan-frame-limit',
-    type: 'warning',
-    message: `video frame extraction hit maxFrames (${maxFrames})`,
-    imageId,
-    workflowId,
-    frames,
-    maxFrames,
-  }).catch(() => null);
 }
