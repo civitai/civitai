@@ -63,6 +63,14 @@ export const GLOBAL_SCOPE_ACTIVITY_OR: { OR: Prisma.BlockScopeInvocationWhereInp
 export const PRIVATE_RUN_INVOCATION_SOURCE = 'private-run';
 
 /**
+ * A row recording something the VIEWER did to an app's permissions in host UI (raising their
+ * daily Buzz limit for it), not a call the app made. Shown on the viewer's own Activity feed;
+ * excluded from every owner aggregate, since an owner learning that viewers changed their
+ * limits is not app usage.
+ */
+export const VIEWER_CONSENT_INVOCATION_SOURCE = 'viewer-consent';
+
+/**
  * The COMPLETE value space of `block_scope_invocations.source`, in one place.
  *
  * 🔴 IT EXISTS SO NOTHING HAS TO WIDEN TO `string` TO EXPRESS THE THIRD VALUE. The writer's
@@ -103,7 +111,10 @@ export type BlockScopeInvocationSource =
  * the verified claim — enforced at runtime as well, because a type declaration is not a code
  * path.
  */
-export type BlockScopeInvocationInputSource = 'app-block' | 'external-oauth';
+export type BlockScopeInvocationInputSource =
+  | 'app-block'
+  | 'external-oauth'
+  | typeof VIEWER_CONSENT_INVOCATION_SOURCE;
 
 /**
  * 🔴 THE ONE DEFINITION of "exclude private-run activity", for every OWNER-VISIBLE read of
@@ -154,7 +165,7 @@ export type BlockScopeInvocationInputSource = 'app-block' | 'external-oauth';
  * `userId` ⇒ self-visible ⇒ do not.
  */
 export const OWNER_VISIBLE_INVOCATION_FILTER = {
-  source: { not: PRIVATE_RUN_INVOCATION_SOURCE },
+  source: { notIn: [PRIVATE_RUN_INVOCATION_SOURCE, VIEWER_CONSENT_INVOCATION_SOURCE] },
 } satisfies Prisma.BlockScopeInvocationWhereInput;
 
 /**

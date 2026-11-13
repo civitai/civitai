@@ -876,6 +876,9 @@ const featureFlags = createFeatureFlags({
   // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
   // fail-closed `isAppLimitsUpgradePromptEnabled`, so the two agree while the flag is absent.
   appLimitsUpgradePrompt: { availability: [], fliptKey: 'app-limits-upgrade-prompt' },
+  // The in-app raise of a viewer's own per-app daily Buzz limit. `[]`: dark for everyone until
+  // the Flipt flag turns it on; the server twin `isAppDailyLimitRaiseEnabled` gates the procedures.
+  appDailyLimitRaise: { availability: [], fliptKey: 'app-daily-limit-raise' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
