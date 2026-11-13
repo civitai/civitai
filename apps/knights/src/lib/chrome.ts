@@ -15,14 +15,19 @@ type Watch = {
   streak?: number;
 };
 
-/** What the Watch strip says; the cap note wins because it explains why gold stopped. */
+const capNote = 'Gold cap reached · XP still counts';
+
+/**
+ * What the Watch strip says. Before the Watch is done the cap note wins because it explains why gold stopped; once it is
+ * done the completed line leads (the streak bonus does not count against the cap) and the cap note moves to `sub`.
+ */
 export function watchStrip(daily: Watch) {
   const value = Math.min(daily.votes, daily.watchSize);
   const gold = count(daily.bonusGold);
-  const note = daily.capReached
-    ? 'Gold cap reached · XP still counts'
-    : daily.watchDone
+  const note = daily.watchDone
     ? `Watch complete, +${gold} gold streak bonus`
+    : daily.capReached
+    ? capNote
     : `+${gold} gold at the end`;
   return {
     label: `Today's Watch · ${value} of ${daily.watchSize}`,
@@ -30,6 +35,7 @@ export function watchStrip(daily: Watch) {
     max: daily.watchSize,
     done: daily.watchDone,
     note,
+    sub: daily.watchDone && daily.capReached ? capNote : undefined,
   };
 }
 

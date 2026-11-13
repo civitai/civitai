@@ -57,6 +57,14 @@ describe('watchStrip', () => {
     );
   });
 
+  it('says a done Watch at the gold cap is complete, with the cap note as secondary text', () => {
+    expect(watchStrip({ ...daily, votes: 10, watchDone: true, capReached: true })).toMatchObject({
+      done: true,
+      note: 'Watch complete, +500 gold streak bonus',
+      sub: 'Gold cap reached · XP still counts',
+    });
+  });
+
   it('formats a large bonus with separators', () => {
     expect(watchStrip({ ...daily, bonusGold: 1500 }).note).toBe('+1,500 gold at the end');
   });
