@@ -30,6 +30,10 @@ import {
   listHeldItems,
 } from '~/server/services/item.service';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
+import {
+  assertCreatorBoxSellable,
+  payCreatorBoxSaleAfterGrant,
+} from '~/server/services/creator-box-payout.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, lockItemHolder } from '~/server/services/item-holder-lock';
 import {
   assertConfirmedPrice,
@@ -809,6 +813,7 @@ export async function purchaseMysteryBox({
   payWith = 'default',
   buzzType,
   mysteryBoxEnabled,
+  creatorMysteryPacksEnabled,
   countryCode,
 }: {
   userId: number;
@@ -820,6 +825,8 @@ export async function purchaseMysteryBox({
   payWith?: 'default' | 'blue-first';
   buzzType: BuzzSpendType;
   mysteryBoxEnabled: boolean | undefined;
+  /** `creatorMysteryPacksEnabled(features)`: a creator's box is sold only behind it. */
+  creatorMysteryPacksEnabled?: boolean;
   countryCode: string | null | undefined;
 }): Promise<MysteryBoxPurchaseResult> {
   const shopItemId = shopItem.id;
@@ -870,8 +877,14 @@ export async function purchaseMysteryBox({
       throw throwBadRequestError('This box is not available');
     if (!box || box.type !== ITEM_TYPE.box || box.status !== ITEM_DEFINITION_STATUS.published)
       throw throwBadRequestError('This box is not available');
-    // A creator's pack isn't sold until its sale pays the creator; approving one doesn't open it.
-    if (box.sellerId != null) throw throwBadRequestError('This box is not available');
+    if (box.sellerId != null)
+      await assertCreatorBoxSellable({
+        sellerId: box.sellerId,
+        buyerId: userId,
+        enabled: creatorMysteryPacksEnabled,
+        isPack: !!pack,
+        buzzType,
+      });
 
     if (isMysteryBoxBlockedIn(countryCode, await getMysteryBoxBlockedRegions()))
       throw throwBadRequestError('Mystery boxes are not available in your region');
@@ -997,8 +1010,9 @@ export async function purchaseMysteryBox({
   );
   if (!transaction.transactionCount) throw new Error('There was an error creating the transaction');
 
+  let items: { id: bigint; itemDefinitionId: number }[];
   try {
-    const items = await dbWrite.$transaction(async (tx) => {
+    items = await dbWrite.$transaction(async (tx) => {
       // The lock comes first here, unlike the shelf grant: the availability check counts this claim
       // as pending until the box exists, so the claim turning paid and the box appearing must be
       // seen together by anyone holding the lock. A concurrent grant of the same claim waits on the
@@ -1034,7 +1048,6 @@ export async function purchaseMysteryBox({
         );
       return granted;
     });
-    return purchaseResult(items);
   } catch (error) {
     // With a client key, a unique violation here means a request with the same key recorded this
     // purchase first; the prefix is shared with it, so it is not refunded from here.
@@ -1055,6 +1068,18 @@ export async function purchaseMysteryBox({
     );
     throw throwBadRequestError('Failed to purchase box');
   }
+
+  // After the grant commits, outside its try: a failed payout must never refund the buyer.
+  if (box.sellerId != null)
+    await payCreatorBoxSaleAfterGrant({
+      buzzTransactionId: transactionId,
+      buyerId: userId,
+      sellerId: box.sellerId,
+      unitAmount,
+      color: buzzType,
+      title: shopItem.title,
+    });
+  return purchaseResult(items);
 }
 
 export type MysteryBoxOpenResult = {
@@ -1207,17 +1232,13 @@ export async function openMysteryBox({
       // FOR SHARE holds the version until commit: a builder save locks this row FOR NO KEY UPDATE
       // and waits for opens in flight, so this open cannot pass the check at one version and draw
       // from the next one's tiers and contents. After the Item lock, never before it.
-      const [box] = await tx.$queryRaw<
-        { id: number; type: string; version: number; sellerId: number | null }[]
-      >`
-        SELECT "id", "type", "version", "sellerId" FROM "ItemDefinition"
+      const [box] = await tx.$queryRaw<{ id: number; type: string; version: number }[]>`
+        SELECT "id", "type", "version" FROM "ItemDefinition"
         WHERE "id" = ${item.itemDefinitionId}
         FOR SHARE
       `;
       if (!box || box.type !== ITEM_TYPE.box)
         throw throwBadRequestError('This box cannot be opened');
-      // Not sold or granted yet; whatever path reached one, it doesn't open before it pays its creator.
-      if (box.sellerId != null) throw throwBadRequestError('This box cannot be opened');
       // The holder was shown this version's contents and odds.
       if (expectedVersion !== box.version)
         throw throwBadRequestError("This box's contents changed. Check them and try again.");

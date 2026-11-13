@@ -425,6 +425,16 @@ describe('opening a mystery box', () => {
     });
   });
 
+  // Its money moved at purchase; opening a creator's box is the same no-money draw.
+  it("opens a creator's mystery pack like any other box", async () => {
+    (world.box as { sellerId?: number }).sellerId = 10;
+    mocks.randomInt.mockReturnValueOnce(3).mockReturnValueOnce(0);
+
+    await open();
+
+    expect(world.owned).toEqual([expect.objectContaining({ userId: HOLDER, cosmeticId: 1003 })]);
+  });
+
   it('rolls with crypto.randomInt below the eligible weight, then below the tier size', async () => {
     mocks.randomInt.mockReturnValueOnce(2).mockReturnValueOnce(1);
     const result = await open();
@@ -828,13 +838,6 @@ describe('refusals keep the box', () => {
     await expect(open()).rejects.toThrow('not yours');
     expect(world.owned).toEqual([]);
     expect(world.items).toHaveLength(1);
-  });
-
-  it("a creator's mystery pack, before anything is drawn", async () => {
-    (world.box as { sellerId?: number }).sellerId = 10;
-    await expect(open()).rejects.toThrow('cannot be opened');
-    nothingOpened();
-    expect(mocks.randomInt).not.toHaveBeenCalled();
   });
 
   it('an item that is not a box, before anything is drawn', async () => {
