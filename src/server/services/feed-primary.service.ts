@@ -4,6 +4,7 @@ import { registerCounterWithLabels, registerHistogram } from '~/server/prom/clie
 import {
   admitFeedCall,
   feedDegradeEnabled,
+  feedTimeoutWidened,
   lastGoodKey,
   readLastGood,
   recordFeedCall,
@@ -19,10 +20,14 @@ import {
   type FeedAnswer,
 } from '~/server/services/feed-shadow.service';
 
-// The feed service's own query time over 7 days (2026-11, feed_query_duration_milliseconds):
-// 0.09% of queries over 2.5s, 0.04% over 5s. A failing call holds a heavy-route slot for the whole
-// budget, so 2.5s frees it twice as fast for about 0.05% more slow pages turned away.
+// Over 7 days (2026-11) the feed service's own query time was over 2.5s for 0.09% of queries and
+// over 5s for 0.04%. That is server time, a lower bound on what this caller waits: network and
+// queueing are not in it. At the old 5s budget the caller timed out on 0.035% of requests, about
+// the server's own 0.04%, so that gap was small at the tail. A failing call holds a heavy-route
+// slot for the whole budget, so 2.5s frees it twice as fast for at least ~0.05% more slow pages
+// turned away. `feed-service-timeout-widen` (Flipt, default off) puts the budget back to 5s.
 export const FEED_PRIMARY_TIMEOUT_MS = 2_500;
+export const FEED_PRIMARY_WIDE_TIMEOUT_MS = 5_000;
 const HUB_ROUTES = new Set(['union-walk', 'union-gather', 'empty']);
 
 const requestCounter = registerCounterWithLabels({
@@ -236,12 +241,13 @@ export async function serveFromFeed<T extends { id: number }>(
   // Behind feed-service-degrade: a circuit breaker on the call, and an anonymous first page the
   // feed fails to answer is served from the last good copy (see feed-primary-degrade).
   const degrade = feedDegradeEnabled();
+  const lastGoodRoute = deps.route ?? 'website';
   const cacheKey = degrade ? lastGoodKey(input, mapping.query) : undefined;
   let stale = false;
   let answer: FeedAnswer;
   const admission = degrade ? admitFeedCall() : undefined;
   if (admission && !admission.admitted) {
-    const cached = readLastGood(cacheKey, 'breaker');
+    const cached = readLastGood(lastGoodRoute, cacheKey, 'breaker');
     if (!cached) {
       count('breaker');
       return { ok: false, reason: 'breaker' };
@@ -251,7 +257,10 @@ export async function serveFromFeed<T extends { id: number }>(
   } else {
     let failure: string | undefined;
     try {
-      answer = await deps.fetchFeed(mapping.query, deps.timeoutMs ?? FEED_PRIMARY_TIMEOUT_MS);
+      const timeoutMs =
+        deps.timeoutMs ??
+        (feedTimeoutWidened() ? FEED_PRIMARY_WIDE_TIMEOUT_MS : FEED_PRIMARY_TIMEOUT_MS);
+      answer = await deps.fetchFeed(mapping.query, timeoutMs);
       if (answer.status >= 500) failure = `status:${answer.status}`;
     } catch (e) {
       const name = (e as Error)?.name;
@@ -260,7 +269,8 @@ export async function serveFromFeed<T extends { id: number }>(
       answer = { status: 0, ms: 0, ids: [] };
     }
     if (admission) recordFeedCall(admission, failure !== undefined);
-    const cached = failure && degrade ? readLastGood(cacheKey, reasonLabel(failure)) : undefined;
+    const cached =
+      failure && degrade ? readLastGood(lastGoodRoute, cacheKey, reasonLabel(failure)) : undefined;
     if (cached) {
       answer = cached;
       stale = true;
@@ -268,7 +278,7 @@ export async function serveFromFeed<T extends { id: number }>(
       count(failure, failure === 'error' ? 'fetch' : '');
       return { ok: false, reason: failure };
     } else if (cacheKey && answer.status === 200) {
-      writeLastGood(cacheKey, answer);
+      writeLastGood(lastGoodRoute, cacheKey, answer);
     }
   }
   if (answer.status !== 200) {

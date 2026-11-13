@@ -17,7 +17,9 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  *   query, not the feed being down, and never counts. While OPEN the call is not made at all.
  *
  * - A last-good page cache for ANONYMOUS FIRST PAGES only (no viewer, no cursor/offset/time cut),
- *   keyed by the exact feed query string. It holds the feed's answer (ids, cursor, route), not
+ *   keyed by the exact feed query string, with one LRU per route: the website's default pages are
+ *   the ones a feed outage costs most, and a burst of distinct anonymous REST queries must not
+ *   evict them, so REST gets its own, smaller bound. It holds the feed's answer (ids, cursor, route), not
  *   rows: a stale page is hydrated from Postgres per request like a fresh one, so the request's
  *   own filters still apply to the rows. It is read only when the feed call fails or the breaker
  *   is open. A signed-in viewer never reads or writes it — their query carries their own
@@ -28,11 +30,17 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  */
 
 export const FEED_BREAKER = { threshold: 10, windowMs: 30_000, cooldownMs: 15_000 } as const;
-export const FEED_LAST_GOOD = { ttlMs: 10 * 60_000, maxEntries: 500 } as const;
+export const FEED_LAST_GOOD = {
+  ttlMs: 10 * 60_000,
+  maxEntries: { website: 500, rest: 100 },
+} as const;
+type LastGoodRoute = keyof typeof FEED_LAST_GOOD.maxEntries;
+type LastGoodCache = Map<string, { answer: FeedAnswer; storedAt: number }>;
 
 type BreakerState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 type DegradeState = {
   enabled: () => boolean;
+  widenTimeout: () => boolean;
   breaker: {
     state: BreakerState;
     failures: number[];
@@ -41,7 +49,7 @@ type DegradeState = {
     // so that a call that never reported back cannot hold the circuit open for good.
     trialStartedAt: number;
   };
-  lastGood: Map<string, { answer: FeedAnswer; storedAt: number }>;
+  lastGood: Record<LastGoodRoute, LastGoodCache>;
 };
 
 declare global {
@@ -52,8 +60,11 @@ declare global {
 function state(): DegradeState {
   return (globalThis.__civitaiFeedDegradeState ??= {
     enabled: createCachedFlagGate(readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_SERVICE_DEGRADE)),
+    widenTimeout: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_SERVICE_TIMEOUT_WIDEN)
+    ),
     breaker: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialStartedAt: 0 },
-    lastGood: new Map(),
+    lastGood: { website: new Map(), rest: new Map() },
   });
 }
 
@@ -69,6 +80,8 @@ const lastGoodCounter = registerCounterWithLabels({
 });
 
 export const feedDegradeEnabled = () => state().enabled();
+/** The off-switch for the feed call's shorter budget (see FEED_PRIMARY_TIMEOUT_MS). */
+export const feedTimeoutWidened = () => state().widenTimeout();
 
 function transition(next: BreakerState, now: number) {
   const b = state().breaker;
@@ -134,21 +147,26 @@ export function lastGoodKey(
   return query;
 }
 
-export function writeLastGood(key: string, answer: FeedAnswer) {
-  const cache = state().lastGood;
+export function writeLastGood(route: LastGoodRoute, key: string, answer: FeedAnswer) {
+  const cache = state().lastGood[route];
   cache.delete(key);
   cache.set(key, { answer, storedAt: Date.now() });
-  while (cache.size > FEED_LAST_GOOD.maxEntries) {
+  while (cache.size > FEED_LAST_GOOD.maxEntries[route]) {
     const oldest = cache.keys().next().value as string;
     cache.delete(oldest);
   }
 }
 
 /** The cached answer for `key` within its TTL; counts the lookup either way. */
-export function readLastGood(key: string | undefined, reason: string): FeedAnswer | undefined {
-  const entry = key ? state().lastGood.get(key) : undefined;
+export function readLastGood(
+  route: LastGoodRoute,
+  key: string | undefined,
+  reason: string
+): FeedAnswer | undefined {
+  const cache = state().lastGood[route];
+  const entry = key ? cache.get(key) : undefined;
   const fresh = entry && Date.now() - entry.storedAt <= FEED_LAST_GOOD.ttlMs ? entry : undefined;
-  if (entry && !fresh && key) state().lastGood.delete(key);
+  if (entry && !fresh && key) cache.delete(key);
   lastGoodCounter.inc({ result: fresh ? 'served' : key ? 'miss' : 'uncacheable', reason });
   return fresh?.answer;
 }
