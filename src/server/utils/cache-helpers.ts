@@ -106,10 +106,19 @@ type cachedQueryOptions = {
 };
 
 /**
+ * Misses in flight in THIS process, by cache key. A guarded read that times out is a miss, so a
+ * cache latency spike would otherwise make every concurrent request for one key run the same query
+ * against the database at once; concurrent misses for one key share the first one's query instead.
+ * An entry lives only while its query (and write-back) runs, so this holds no rows afterwards.
+ */
+const queryCacheMissesInFlight = new Map<string, Promise<object[]>>();
+
+/**
  * The one body behind `queryCache` and `queryCacheRaw`: read the cached rows, else run the query and
  * cache them. Both cache calls go through the cluster-cache guard (bounded, breaker-aware), so a
  * cache that fails or never answers is a miss on the read and a skipped write-back — the query's
- * rows are returned either way, never an error or a 15s wait for a cache.
+ * rows are returned either way, never an error or a 15s wait for a cache. Concurrent misses for one
+ * key in this process run the query once (queryCacheMissesInFlight).
  */
 async function queryThroughCache<T extends object[]>(
   run: () => Promise<T>,
@@ -139,16 +148,29 @@ async function queryThroughCache<T extends object[]>(
   }
 
   cacheMissCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-  const result = await run();
-  await clusterCacheGuard.writeBestEffort(
-    'cache-helpers.queryCache set',
-    async () => {
-      await redis.packed.set(cacheKey, result, { EX: options?.ttl });
-      if (options?.tag) await tagCacheKey(cacheKey, options.tag);
-    },
-    { logExtra: { cache: key } }
-  );
-  return result;
+  const inFlight = queryCacheMissesInFlight.get(cacheKey) as Promise<T> | undefined;
+  // A joiner gets its OWN copy: callers mutate the rows they get (post.service pops the cursor row
+  // off the page), and a cache hit never shares objects between callers either. The copy is taken
+  // as the query settles, before the first caller's write-back lets it return the original.
+  if (inFlight) return inFlight.then((rows) => structuredClone(rows));
+
+  const pending = run();
+  queryCacheMissesInFlight.set(cacheKey, pending);
+  try {
+    const result = await pending;
+    await clusterCacheGuard.writeBestEffort(
+      'cache-helpers.queryCache set',
+      async () => {
+        await redis.packed.set(cacheKey, result, { EX: options?.ttl });
+        if (options?.tag) await tagCacheKey(cacheKey, options.tag);
+      },
+      { logExtra: { cache: key } }
+    );
+    return result;
+  } finally {
+    if (queryCacheMissesInFlight.get(cacheKey) === pending)
+      queryCacheMissesInFlight.delete(cacheKey);
+  }
 }
 
 export function queryCache(db: PrismaClient, key: string, version?: string) {

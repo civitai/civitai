@@ -74,3 +74,55 @@ describe('queryCacheRaw with the cache unavailable', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 });
+
+describe('queryCache single-flight on a miss', () => {
+  it('N concurrent misses for one key run the query once, and each caller gets its own rows', async () => {
+    redisMock.redis.packed.get.mockImplementation(never); // every read times out: a miss
+    redisMock.redis.packed.set.mockResolvedValue('OK');
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const queryRaw = vi.fn(async () => {
+      await gate;
+      return [{ id: 1 }, { id: 2 }, { id: 3 }];
+    });
+    const db = { $queryRaw: queryRaw } as never as Parameters<typeof queryCache>[0];
+    const cached = queryCache(db, 'qc-single-flight');
+
+    const calls = Array.from({ length: 5 }, () => cached(SQL, { ttl: 60, tag: 't' }));
+    // Let every read time out and join before the query settles.
+    await new Promise((r) => setTimeout(r, 400));
+    release();
+    const results = await within(Promise.all(calls), 3000);
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(results).not.toBe(HUNG);
+    const rows = results as { id: number }[][];
+    for (const r of rows) expect(r).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    // A caller that pops its cursor row (post.service does) must not shorten anyone else's page.
+    rows[0].pop();
+    for (const r of rows.slice(1)) expect(r).toHaveLength(3);
+  });
+
+  it('control: misses for different keys each run their own query', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(null);
+    redisMock.redis.packed.set.mockResolvedValue('OK');
+    const queryRaw = vi.fn(async () => ROWS);
+    const db = { $queryRaw: queryRaw } as never as Parameters<typeof queryCache>[0];
+    await Promise.all([
+      queryCache(db, 'qc-sf-a')(SQL, { ttl: 60, tag: 't' }),
+      queryCache(db, 'qc-sf-b')(SQL, { ttl: 60, tag: 't' }),
+    ]);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('a miss after the first one settled runs the query again (nothing is held)', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(null);
+    redisMock.redis.packed.set.mockResolvedValue('OK');
+    const queryRaw = vi.fn(async () => ROWS);
+    const db = { $queryRaw: queryRaw } as never as Parameters<typeof queryCache>[0];
+    const cached = queryCache(db, 'qc-sf-seq');
+    await cached(SQL, { ttl: 60, tag: 't' });
+    await cached(SQL, { ttl: 60, tag: 't' });
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+});

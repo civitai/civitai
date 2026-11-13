@@ -19,7 +19,13 @@ vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: vi.fn() }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
 import { hSetWithTTL } from '~/server/redis/atomic';
-import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
+import {
+  __localRateLimitBucketCountForTests,
+  __resetLocalRateLimitBucketsForTests,
+  claimRateLimitAttempt,
+  readRateLimitAttempts,
+  rateLimitBucket,
+} from '~/server/utils/rate-limit-bucket';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const hGet = redisMock.redis.packed.hGet;
@@ -44,6 +50,8 @@ async function attempt(req: NextApiRequest, keyName = 'store-down:test') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
+  __resetLocalRateLimitBucketsForTests();
   vi.mocked(hSetWithTTL).mockResolvedValue(undefined as never);
 });
 
@@ -88,16 +96,96 @@ describe('claimRateLimitAttempt with the store unavailable', () => {
     await expect(attempt(b)).resolves.toBeUndefined();
   });
 
-  it('clears the local counts once the store answers again, so a later outage starts fresh', async () => {
+  it("drops a bucket's local count once the store answers for THAT bucket", async () => {
     const req = freshReq();
     hGet.mockRejectedValue(new Error('cluster down'));
     for (let i = 0; i < 3; i++) await attempt(req);
     await expect(attempt(req)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
 
-    hGet.mockResolvedValue([]); // the store is back
-    await attempt(freshReq());
+    hGet.mockResolvedValue([]); // the store is back, and answers for this bucket
+    await attempt(req);
 
     hGet.mockRejectedValue(new Error('cluster down again'));
     await expect(attempt(req)).resolves.toBeUndefined();
+  });
+
+  it("partial outage: another bucket's successful reads do not reset a failing bucket's count", async () => {
+    // Bucket A's reads keep failing (its shard is down); bucket B's are answered.
+    hGet.mockImplementation(async (cacheKey: string) => {
+      if (String(cacheKey).endsWith(':shard-down')) throw new Error('shard down');
+      return [];
+    });
+    const a = freshReq();
+    const b = freshReq();
+
+    for (let i = 0; i < 3; i++) {
+      await expect(attempt(a, 'store-down:shard-down')).resolves.toBeUndefined();
+      await expect(attempt(b, 'store-down:shard-up')).resolves.toBeUndefined();
+    }
+    await expect(attempt(b, 'store-down:shard-up')).resolves.toBeUndefined();
+
+    await expect(attempt(a, 'store-down:shard-down')).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+  });
+});
+
+describe('the local fallback count holds bounded memory', () => {
+  it('past the bucket cap the least recently written bucket is dropped, and only that one', async () => {
+    __resetLocalRateLimitBucketsForTests({ maxBuckets: 3 });
+    hGet.mockRejectedValue(new Error('cluster down'));
+    const one = [{ limit: 1, period: 60 }];
+    const once = async (req: NextApiRequest) =>
+      (await claimRateLimitAttempt({ rules: one, keyName: 'cap:test', user: undefined, req }))();
+    const [r1, r2, r3, r4] = [freshReq(), freshReq(), freshReq(), freshReq()];
+
+    for (const r of [r1, r2, r3]) await once(r);
+    expect(__localRateLimitBucketCountForTests()).toBe(3);
+    await once(r4); // a fourth bucket: r1's, the oldest, goes
+
+    expect(__localRateLimitBucketCountForTests()).toBe(3);
+    await expect(once(r2)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    await expect(once(r1)).resolves.toBeUndefined();
+  });
+
+  it("a bucket ages out once its newest attempt is older than the bucket's window", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+    vi.setSystemTime(t0);
+    hGet.mockRejectedValue(new Error('cluster down'));
+
+    await attempt(freshReq()); // window 60s
+    expect(__localRateLimitBucketCountForTests()).toBe(1);
+
+    // Past the window and the sweep interval, the next local write sweeps the expired bucket.
+    vi.setSystemTime(t0 + 61_000 + 60_000);
+    await attempt(freshReq());
+    expect(__localRateLimitBucketCountForTests()).toBe(1);
+  });
+});
+
+describe('readRateLimitAttempts (the usage report) with the store unavailable', () => {
+  const bucket = () => rateLimitBucket('peek:test', undefined, freshReq());
+
+  it("a rejecting read rejects with the store's own error", async () => {
+    const cause = new Error('cluster down');
+    hGet.mockRejectedValue(cause);
+    await expect(readRateLimitAttempts(bucket())).rejects.toBe(cause);
+  });
+
+  it('a read that never answers rejects within 750ms', async () => {
+    hGet.mockImplementation(() => new Promise(() => undefined));
+    const started = Date.now();
+    const outcome = await within(
+      readRateLimitAttempts(bucket()).then(
+        () => 'resolved',
+        (e: unknown) => e
+      ),
+      2000
+    );
+    expect(outcome).not.toBe(HUNG);
+    expect(outcome).toBeInstanceOf(Error);
+    expect(outcome).not.toBe('resolved');
+    expect(Date.now() - started).toBeLessThan(750);
   });
 });
