@@ -38,6 +38,12 @@ export { setRootPresampleGate } from '~/server/otel-root-presample-state';
  * reads undefined or invalid inside it. Outbound `traceContextHeaders()` still sends an unsampled
  * `traceparent` (see @civitai/telemetry/otel-helpers), so callees decide exactly as before.
  *
+ * ⚠ One loss is NOT trace-only: the HTTP instrumentation records its own server duration metric
+ * (`http.server.duration` / `http.server.request.duration`) only when it closes the request's
+ * span, which an ignored request never has. In a process that exports OTel metrics, those
+ * histograms then cover only the pre-sampled requests plus those with a `traceparent`, an
+ * undercount with no error. Check that nothing reads them before turning the flag on.
+ *
  * State (the gate and the one-shot mark) lives in ~/server/otel-root-presample-state, on
  * `globalThis`.
  */

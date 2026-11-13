@@ -24,7 +24,10 @@ export const rootPresampleState = (globalThis.__civitaiOtelRootPresample ??= {
   pendingSampled: false,
 });
 
-/** Install (or, with `undefined`, remove) the switch. Called on every inbound request: keep it cheap. */
+/**
+ * Install (or, with `undefined`, remove) the switch. Installed once at boot; the GATE it installs
+ * is what runs on every inbound request (without a `traceparent`), so that must stay cheap.
+ */
 export function setRootPresampleGate(gate: (() => boolean) | undefined): void {
   rootPresampleState.gate = gate;
 }

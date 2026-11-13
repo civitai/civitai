@@ -1,15 +1,25 @@
-import type { IncomingMessage } from 'http';
-import { ROOT_CONTEXT, SpanKind, trace, type Context } from '@opentelemetry/api';
+import { createServer, get, type IncomingMessage, type Server } from 'http';
+import type { AddressInfo } from 'net';
+import {
+  context,
+  propagation,
+  ROOT_CONTEXT,
+  SpanKind,
+  trace,
+  type Context,
+} from '@opentelemetry/api';
 import {
   AlwaysOffSampler,
   AlwaysOnSampler,
   BasicTracerProvider,
   InMemorySpanExporter,
+  NodeTracerProvider,
   ParentBasedSampler,
   SimpleSpanProcessor,
   TraceIdRatioBasedSampler,
   type Sampler,
 } from '@opentelemetry/sdk-trace-node';
+import { isTracingSuppressed } from '@opentelemetry/core';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -247,5 +257,127 @@ describe('buildOtelInstrumentations wiring', () => {
     const [http] = buildOtelInstrumentations({}) as HttpInstrumentation[];
     built.push(http);
     expect(http.getConfig().ignoreIncomingRequestHook).toBeUndefined();
+  });
+});
+
+// The tests above replay "hook, then the root SERVER span" by hand. This block drives the REAL
+// instrumentation-http incoming-request wrapper on a real loopback server, so a version of the
+// instrumentation that calls the hook after starting the span, or starts another span (and so
+// runs the sampler) in between, fails here. Only this one server's `emit` is wrapped (the
+// instrumentation stays disabled, so nothing global is patched), through the same private
+// `_getPatchIncomingRequestFunction` the instrumentation's own `http` patch uses. If a version
+// renames it, these tests fail loudly — re-check the ordering against that version's source.
+describe('through the real HTTP instrumentation', () => {
+  type PatchIncoming = (original: Server['emit']) => Server['emit'];
+  let tp: NodeTracerProvider | undefined;
+  let server: Server | undefined;
+
+  afterEach(async () => {
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    server = undefined;
+    await tp?.shutdown();
+    tp = undefined;
+    context.disable();
+    trace.disable();
+    propagation.disable();
+  });
+
+  /** One request through a server whose `emit` the instrumentation wraps; resolves once the
+   * response has closed (the instrumentation's own close listener, which ends the root span,
+   * was registered first and so has run). */
+  async function oneRequest(opts: {
+    delegate: Sampler;
+    draw: number;
+    headers?: Record<string, string>;
+  }) {
+    const exporter = new InMemorySpanExporter();
+    tp = new NodeTracerProvider({
+      sampler: new PresampledRootSampler(opts.delegate),
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    tp.register(); // async-local-storage context manager + W3C propagator, as in the app
+    const instrumentation = new HttpInstrumentation({
+      enabled: false,
+      ignoreIncomingRequestHook: createRootPresampleIgnoreHook(RATIO, () => opts.draw),
+    });
+    instrumentation.setTracerProvider(tp);
+    const tracer = tp.getTracer('handler');
+
+    let suppressedInHandler: boolean | undefined;
+    let closed!: Promise<void>;
+    const srv = createServer((_req, res) => {
+      closed = new Promise((resolve) => res.on('close', () => resolve()));
+      suppressedInHandler = isTracingSuppressed(context.active());
+      tracer.startActiveSpan('render route', (span) => span.end());
+      res.end('ok');
+    });
+    const patch = (
+      instrumentation as unknown as { _getPatchIncomingRequestFunction(c: string): PatchIncoming }
+    )._getPatchIncomingRequestFunction('http');
+    srv.emit = patch(srv.emit);
+    server = srv;
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+    const { port } = srv.address() as AddressInfo;
+
+    await new Promise<void>((resolve, reject) => {
+      get(
+        { host: '127.0.0.1', port, path: '/models/123', headers: opts.headers, agent: false },
+        (res) => {
+          res.resume();
+          res.on('end', () => resolve());
+        }
+      ).on('error', reject);
+    });
+    await closed;
+    return { spans: exporter.getFinishedSpans(), suppressedInHandler };
+  }
+
+  it('flag on, sampled draw: the root SERVER span and its child are recorded under a ratio-0 delegate', async () => {
+    setRootPresampleGate(() => true);
+    const { spans, suppressedInHandler } = await oneRequest({
+      delegate: appSampler(0),
+      draw: 0.01,
+    });
+    expect(suppressedInHandler).toBe(false);
+    const root = spans.find((s) => s.kind === SpanKind.SERVER);
+    expect(root).toBeDefined();
+    expect(root!.parentSpanContext).toBeUndefined();
+    const child = spans.find((s) => s.name === 'render route');
+    expect(child?.parentSpanContext?.spanId).toBe(root!.spanContext().spanId);
+    expect(spans).toHaveLength(2);
+  });
+
+  it('POSITIVE CONTROL: flag off, same draw and delegate: nothing is recorded', async () => {
+    setRootPresampleGate(() => false);
+    const { spans, suppressedInHandler } = await oneRequest({
+      delegate: appSampler(0),
+      draw: 0.01,
+    });
+    expect(suppressedInHandler).toBe(false);
+    expect(spans).toHaveLength(0);
+  });
+
+  it('flag on, unsampled draw: the request runs suppressed, nothing recorded even under an always-on delegate', async () => {
+    setRootPresampleGate(() => true);
+    const { spans, suppressedInHandler } = await oneRequest({
+      delegate: new AlwaysOnSampler(),
+      draw: 0.5,
+    });
+    expect(suppressedInHandler).toBe(true);
+    expect(spans).toHaveLength(0);
+  });
+
+  it('flag on, with a sampled traceparent: joins the caller trace through the normal sampler', async () => {
+    setRootPresampleGate(() => true);
+    const traceId = '4bf92f3577b34da6a3ce929d0e0e4736';
+    const { spans, suppressedInHandler } = await oneRequest({
+      delegate: appSampler(1),
+      draw: 0.5, // would be ignored if the traceparent check were missing
+      headers: { traceparent: `00-${traceId}-00f067aa0ba902b7-01` },
+    });
+    expect(suppressedInHandler).toBe(false);
+    const root = spans.find((s) => s.kind === SpanKind.SERVER);
+    expect(root?.spanContext().traceId).toBe(traceId);
+    expect(root?.parentSpanContext?.spanId).toBe('00f067aa0ba902b7');
   });
 });
