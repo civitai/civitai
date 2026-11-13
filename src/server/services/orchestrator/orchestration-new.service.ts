@@ -2161,7 +2161,8 @@ export async function generateFromGraph({
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       // Always an idempotency key: the form sends one per click, an API caller may send none,
-      // and without one a retried attempt (5xx, timeout) could create a second, charged workflow.
+      // and without one a retried attempt (5xx, network error) could create a second, charged
+      // workflow.
       // Minted once here, so every retry of this submit carries the same key.
       externalId: externalId || randomUUID(),
       ...(boostDownloads ? { downloadPriority } : {}),
