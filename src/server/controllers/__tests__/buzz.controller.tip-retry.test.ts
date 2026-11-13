@@ -224,6 +224,8 @@ describe('on-site tip across an unknown outcome', () => {
   it('takes the lock on the tip id', async () => {
     await imageTip(KEY);
     expect(locks.taken()).toEqual([`tip:${TIPPER}:${KEY}:100:Image:77`]);
+    // Every Buzz write under the lock has a deadline, so the lock cannot outlive a hung write.
+    expect(buzz.createBuzzTransactionMany.mock.calls[0][1]).toEqual({ timeoutMs: 15_000 });
   });
 
   it('two requests with one key in flight: the Buzz moves once and the tip is recorded once', async () => {

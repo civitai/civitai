@@ -210,9 +210,22 @@ describe('a donation across an unknown outcome', () => {
     expect(donations).toHaveLength(1);
   });
 
+  it('a lookup that fails before charging is "may have gone through", and charges nothing', async () => {
+    ledger.failLookups();
+
+    await expect(donate(KEY)).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+    });
+    expect(ledger.charges()).toHaveLength(0);
+    expect(donations).toHaveLength(0);
+  });
+
   it('takes the lock on the donation prefix', async () => {
     await donate(KEY);
     expect(locks.taken()).toEqual([`donation-k-${GOAL_ID}-${DONOR}-500-${KEY}`]);
+    // Every Buzz write under the lock has a deadline, so the lock cannot outlive a hung write.
+    expect(buzz.createMultiAccountBuzzTransaction.mock.calls[0][1]).toEqual({ timeoutMs: 15_000 });
   });
 
   it('two requests with one key in flight: one charge, one donation', async () => {

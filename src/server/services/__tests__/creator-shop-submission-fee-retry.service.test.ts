@@ -317,9 +317,24 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
     expect(buzz.resendBuzzTransaction).not.toHaveBeenCalled();
   });
 
+  // Without the lookup there is no telling a retry whose charge landed from a fresh submission;
+  // charging anyway could be a second charge.
+  it('a lookup that fails before charging is "may have gone through", and charges nothing', async () => {
+    ledger.failLookups();
+
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+    });
+    expect(ledger.charges()).toHaveLength(0);
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+  });
+
   it('takes the lock on the fee charge id', async () => {
     await site.submit({ idempotencyKey: KEY });
     expect(locks.taken()).toEqual([submissionFeeTransactionId(site.kind, USER, KEY)]);
+    // Every Buzz write under the lock has a deadline, so the lock cannot outlive a hung write.
+    expect(buzz.createBuzzTransaction.mock.calls[0][1]).toEqual({ timeoutMs: 15_000 });
   });
 
   // A hung charge: the client times out and retries while the first request is still running.
