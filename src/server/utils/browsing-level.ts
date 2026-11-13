@@ -190,6 +190,19 @@ export function resolveRequestBrowsingLevels(
   if (cap !== undefined) clampRequestBrowsingLevels(input, cap);
 }
 
+/**
+ * The level a listing of other people's posts is filtered to: the request's level (or, signed in,
+ * the saved preference), held to the domain cap; PG where neither says anything.
+ */
+export function relatedPostsBrowsingLevel(
+  ctx: Pick<Context, 'user' | 'features' | 'req'>,
+  requested: number | undefined
+) {
+  const levels: RequestBrowsingLevels = { browsingLevel: requested };
+  resolveRequestBrowsingLevels(levels, ctx);
+  return viewerBrowsingLevel(ctx as Context, levels.browsingLevel || publicBrowsingLevelsFlag);
+}
+
 /** The levels the public API v1 serves: every level, or only the safe ones in a restricted region. */
 export function apiBrowsingLevel(req: NextApiRequest) {
   return isRegionRestricted(getRegion(req)) ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;

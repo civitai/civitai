@@ -25,6 +25,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
+  nsfwBrowsingLevelsFlag,
+  onlySelectableLevels,
   parseBitwiseBrowsingLevel,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -65,6 +67,7 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import {
   getPolyGenPostBlock,
@@ -1558,13 +1561,36 @@ export const upsertModel3DFromWorkflow = async ({
 // Related Posts ("Makes & Uses") + Review summary
 // ---------------------------------------------------------------------------
 
+/** Every post level (a combination of image levels, Blocked included) sharing a level with `level`. */
+const postLevelsWithin = (level: number) =>
+  Array.from({ length: 2 * NsfwLevel.Blocked - 1 }, (_, i) => i + 1).filter(
+    (v) => (v & level) !== 0
+  );
+
+/** Images a post card may fall back to when an earlier one is a restricted model's. */
+const COVER_CANDIDATES = 3;
+
+/** Of these images, the mature ones of a restricted model, which the image feeds never show. */
+async function restrictedMatureImageIds(ids: number[]) {
+  if (!ids.length) return new Set<number>();
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT i.id FROM "Image" i
+    WHERE i.id IN (${Prisma.join(ids)})
+      AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND i."modelRestricted"
+  `;
+  return new Set(rows.map((row) => row.id));
+}
+
 export type Model3DRelatedPost = AsyncReturnType<typeof getModel3DRelatedPosts>['items'][number];
 export const getModel3DRelatedPosts = async ({
   input,
   user,
+  browsingLevel = publicBrowsingLevelsFlag,
 }: {
   input: GetModel3DRelatedPostsInput;
   user?: SessionUser | null;
+  /** The viewer's resolved, capped level (`relatedPostsBrowsingLevel`); unset reads PG only. */
+  browsingLevel?: number;
 }) => {
   try {
     const { model3dId, limit, cursor } = input;
@@ -1580,13 +1606,36 @@ export const getModel3DRelatedPosts = async ({
 
     // Visibility:
     //  - Moderators see everything.
-    //  - Everyone else sees published+public posts AND their own posts
+    //  - Everyone else sees published+public posts rated within their level AND their own posts
     //    (any state, so a user who just created a draft post linked to this
     //    model3d sees it on the page immediately, before they hit Publish).
+    // A post's level is its images' combined level: it is listed when it shares a level with the
+    // viewer's, as the post feed does, and an unrated post (0) never is; nor is one with no cover
+    // the viewer may see. Blocked is never a level a viewer browses at.
+    const level = onlySelectableLevels(browsingLevel);
+    // The cover, for a post that is not the viewer's, as the feed shows images: scanned, within
+    // their level, out of review and never blocked. A mature image of a restricted model is
+    // dropped below: that column is not in the Prisma schema.
+    const coverGate: Prisma.ImageWhereInput = {
+      ingestion: 'Scanned',
+      nsfwLevel: { in: parseBitwiseBrowsingLevel(level) },
+      needsReview: null,
+      blockedFor: null,
+      acceptableMinor: false,
+      poi: false,
+      minor: false,
+    };
     const publishedClause: Prisma.PostWhereInput = {
       publishedAt: { lte: new Date() },
       availability: { not: 'Private' },
+      nsfwLevel: { in: postLevelsWithin(level) },
+      images: { some: coverGate },
     };
+    const coverWhere: Prisma.ImageWhereInput | undefined = isModerator
+      ? undefined
+      : viewerId
+      ? { OR: [{ userId: viewerId }, coverGate] }
+      : coverGate;
     const visibility: Prisma.PostWhereInput = isModerator
       ? {}
       : viewerId
@@ -1612,12 +1661,30 @@ export const getModel3DRelatedPosts = async ({
         nsfwLevel: true,
         user: { select: userWithCosmeticsSelect },
         images: {
-          take: 1,
+          where: coverWhere,
+          take: COVER_CANDIDATES,
           orderBy: { index: 'asc' },
           select: imageSelect,
         },
       },
     });
+    const restricted = isModerator
+      ? new Set<number>()
+      : await restrictedMatureImageIds(
+          items.flatMap((post) =>
+            post.images.filter((image) => image.userId !== viewerId).map((image) => image.id)
+          )
+        );
+    for (const post of items) {
+      post.images = post.images
+        .filter((image) => !restricted.has(image.id))
+        .slice(0, 1)
+        .map((image) =>
+          image.hideMeta && !isModerator && image.userId !== viewerId
+            ? { ...image, meta: null }
+            : image
+        );
+    }
 
     let nextCursor: number | undefined;
     if (items.length > take) {
