@@ -280,6 +280,22 @@ describe('a CSAM hold on the text', () => {
     expect(await texts()).toEqual([]);
   });
 
+  it("isn't let go by a capture taken after an earlier, dismissed hold but before the confirmed one", async () => {
+    const id = await addText(1, { csamHeld: true });
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status, "createdAt")
+       VALUES ('PostText', $1, 'csam', 'Dismissed', (now() - interval '3 days') AT TIME ZONE 'UTC')`,
+      [id]
+    );
+    await decide(id, 'Confirmed');
+    await oldReport(capture({ capturedAt: new Date(Date.now() - 2 * 86_400_000).toISOString() }));
+    await expect(del(id)).rejects.toThrow(/held/);
+    // The control: a capture after the confirmed hold.
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [citing]);
+    await del(id);
+    expect(await texts()).toEqual([]);
+  });
+
   /** An instant written at a UTC offset, e.g. 2026-01-01T05:00:00.000+05:00. */
   const atOffset = (ms: number, offsetMinutes: number) => {
     const wall = new Date(ms + offsetMinutes * 60_000).toISOString().slice(0, -1);
@@ -299,7 +315,8 @@ describe('a CSAM hold on the text', () => {
     await oldReport(capture({ capturedAt: atOffset(holdAt() - 2 * HOUR, 5 * 60) }));
     await expect(del(id)).rejects.toThrow(/held/);
     // 'tomorrow' parses as a time, after the hold: only the ISO shape check refuses it.
-    for (const capturedAt of ['tomorrow', '', 12345, null]) {
+    // Date-only and a prefixed ISO time parse as after the hold: only the anchored ISO check refuses.
+    for (const capturedAt of ['tomorrow', '2099-12-31', 'x2099-12-31T00:00:00Z', '', 12345, null]) {
       await pg.query(`UPDATE "CsamReport" SET details = $1`, [capture({ capturedAt })]);
       await expect(del(id)).rejects.toThrow(/held/);
     }
