@@ -70,7 +70,10 @@ export interface HibernationRepo {
   removeAll(userId: number): Promise<HibernationRow[]>;
   /** Which of `keys` a row records (as its archive or its secrets object). */
   referencedKeys(keys: string[]): Promise<Set<string>>;
-  /** Users that are deleted but still have rows: an account-deletion step that failed. */
+  /**
+   * Users that are deleted but still have rows (an account-deletion step that failed), a random
+   * `limit` of them.
+   */
   deletedAccountsWithRows(limit: number): Promise<number[]>;
 }
 
@@ -180,11 +183,14 @@ export const hibernationSql = {
     UNION
     SELECT "secrets_object_key" AS "key" FROM "app_sandbox_hibernations"
     WHERE "secrets_object_key" = ANY(${keys}::text[])`,
+  /** In RANDOM order, so a batch cap never starves the accounts past it. */
   deletedAccountsWithRows: (limit: number) => Prisma.sql`
-    SELECT DISTINCT h."user_id" AS "userId" FROM "app_sandbox_hibernations" h
-    JOIN "User" u ON u."id" = h."user_id"
-    WHERE u."deletedAt" IS NOT NULL
-    ORDER BY h."user_id"
+    SELECT d."userId" FROM (
+      SELECT DISTINCT h."user_id" AS "userId" FROM "app_sandbox_hibernations" h
+      JOIN "User" u ON u."id" = h."user_id"
+      WHERE u."deletedAt" IS NOT NULL
+    ) d
+    ORDER BY random()
     LIMIT ${limit}`,
   removeAll: (userId: number) => Prisma.sql`
     DELETE FROM "app_sandbox_hibernations"

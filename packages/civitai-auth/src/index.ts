@@ -61,6 +61,7 @@ export {
 } from './revocation-check';
 export type {
   RevocationCheckConfig,
+  RevocationDegradedVerdict,
   RevocationFailureReason,
   RevocationOutcome,
 } from './revocation-check';

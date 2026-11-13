@@ -13,6 +13,8 @@ import {
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var __civitaiSysReadBreaker: CircuitBreaker | undefined;
+  // eslint-disable-next-line no-var, vars-on-top
+  var __civitaiRevocationReadBreaker: CircuitBreaker | undefined;
 }
 
 /** Read per call, so a changed env (or a test's setEnv) applies without rebuilding the guard. */
@@ -26,15 +28,26 @@ function sysReadGuardConfigFromEnv(): SysReadGuardConfig {
   };
 }
 
-// The process-wide guard and its breaker (globalThis, because the server evaluates this module once per
-// bundler module graph). NOT exported: withSysReadBreaker below is the only way to reach the breaker, so the
-// call-site ledger (sys-read-breaker.call-site-ledger.test.ts) sees every opted-in read.
+// The process-wide guards and their breakers (globalThis, because the server evaluates this module once per
+// bundler module graph). NOT exported: withSysReadBreaker and withRevocationReadBreaker below are the only
+// ways to reach a breaker, so the call-site ledger (sys-read-breaker.call-site-ledger.test.ts) sees every
+// opted-in read.
 const sysReadGuard = createSysReadGuard({
   config: sysReadGuardConfigFromEnv,
   breaker: (globalThis.__civitaiSysReadBreaker ??= createCircuitBreaker((to) =>
-    sysReadBreakerTransitionCounter.inc({ to })
+    sysReadBreakerTransitionCounter.inc({ guard: 'shared', to })
   )),
-  onFailure: (reason) => sysReadGuardRejectionCounter.inc({ reason }),
+  onFailure: (reason) => sysReadGuardRejectionCounter.inc({ guard: 'shared', reason }),
+});
+
+// The session revocation read's own breaker. Sharing one would let failures on the other opted-in reads
+// refuse the revocation read while the store still answers, accepting a revoked session.
+const revocationReadGuard = createSysReadGuard({
+  config: sysReadGuardConfigFromEnv,
+  breaker: (globalThis.__civitaiRevocationReadBreaker ??= createCircuitBreaker((to) =>
+    sysReadBreakerTransitionCounter.inc({ guard: 'revocation', to })
+  )),
+  onFailure: (reason) => sysReadGuardRejectionCounter.inc({ guard: 'revocation', reason }),
 });
 
 /**
@@ -71,7 +84,7 @@ export function withSysReadDeadline<T>(
 }
 
 /**
- * withSysReadDeadline plus the process-wide read breaker (./sys-read-breaker.ts), for the
+ * withSysReadDeadline plus the process-wide shared read breaker (./sys-read-breaker.ts), for the
  * hot reads a hung store multiplies per request. With REDIS_SYS_READ_BREAKER_ENABLED off
  * (the default) it is withSysReadDeadline exactly. Once the breaker has tripped it rejects
  * at once with a SysReadUnavailableError('breaker-open'); the command was already issued
@@ -86,4 +99,15 @@ export function withSysReadBreaker<T>(
   ms: number = env.REDIS_SYS_READ_TIMEOUT_MS
 ): Promise<T> {
   return sysReadGuard.withBreaker(p, ms);
+}
+
+/**
+ * withSysReadBreaker for the session revocation read alone, over a breaker no other read feeds or
+ * consults. Same flag, threshold and cooldown as the shared breaker.
+ */
+export function withRevocationReadBreaker<T>(
+  p: Promise<T>,
+  ms: number = env.REDIS_SYS_READ_TIMEOUT_MS
+): Promise<T> {
+  return revocationReadGuard.withBreaker(p, ms);
 }
