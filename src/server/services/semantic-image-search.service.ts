@@ -130,7 +130,12 @@ export async function searchSemanticImages({
   const fetchVisible = async (
     ids: number[],
     level: number,
-    filters: { tags?: number[]; excludedTagIds: number[]; fromPlatform?: boolean }
+    filters: {
+      tags?: number[];
+      excludedTagIds: number[];
+      fromPlatform?: boolean;
+      withMeta?: boolean;
+    }
   ) => {
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
@@ -163,7 +168,12 @@ export async function searchSemanticImages({
   }
   // "Made On-site" is judged from the image's meta, so only hydration applies it.
   const hydrate: Hydrate<HydratedImage> = (ids) =>
-    fetchVisible(ids, level, { tags: tagIds, excludedTagIds, fromPlatform: input.fromPlatform });
+    fetchVisible(ids, level, {
+      tags: tagIds,
+      excludedTagIds,
+      fromPlatform: input.fromPlatform,
+      withMeta: input.withMeta,
+    });
 
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
