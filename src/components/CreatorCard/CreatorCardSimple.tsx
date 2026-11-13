@@ -12,13 +12,12 @@ import {
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
+import { DomainLinkIcons } from '~/components/DomainIcon/DomainLinkIcons';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
 import { constants, creatorCardStatsDefaults } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
-import { getDomainLinkLabel, sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import type { UserStats } from '../UserStatBadges/UserStatBadges';
 import { UserStatBadgesV2 } from '../UserStatBadges/UserStatBadges';
@@ -35,7 +34,6 @@ import { ElementInView, useElementInView } from '~/components/IntersectionObserv
 import { Metrics } from '~/components/Metrics';
 import classes from './CreatorCard.module.css';
 import { cardGlowOf } from './card-glow';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { UserCreator } from '~/server/services/user.service';
 
 /** The 70px avatar offset plus about 100px of name. */
@@ -257,19 +255,7 @@ const CreatorCardSimpleContent = ({
           py={5}
         >
           <Group gap={4}>
-            {sortDomainLinks(creator.links).map((link, index) => (
-              <LegacyActionIcon
-                key={index}
-                component="a"
-                href={link.url}
-                target="_blank"
-                rel="nofollow noreferrer"
-                size={32}
-                aria-label={getDomainLinkLabel(link)}
-              >
-                <DomainIcon domain={link.domain} size={20} />
-              </LegacyActionIcon>
-            ))}
+            <DomainLinkIcons links={creator.links} size={32} iconSize={20} />
           </Group>
         </Card.Section>
       ) : null}

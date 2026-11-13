@@ -30,7 +30,7 @@ import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
+import { DomainLinkIcons } from '~/components/DomainIcon/DomainLinkIcons';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { AnnouncementMuteToggle } from '~/components/Announcements/AnnouncementMuteToggle';
@@ -49,7 +49,6 @@ import {
 } from '~/components/Cosmetics/EventDecoration/AvatarHat';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
-import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
@@ -392,18 +391,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       )}
       {!muted && (
         <Group gap={4}>
-          {sortDomainLinks(user.links).map((link, index) => (
-            <LegacyActionIcon
-              key={index}
-              component="a"
-              href={link.url}
-              target="_blank"
-              rel="nofollow noreferrer"
-              size={24}
-            >
-              <DomainIcon domain={link.domain} size={sizeOpts.icons} />
-            </LegacyActionIcon>
-          ))}
+          <DomainLinkIcons links={user.links} size={24} iconSize={sizeOpts.icons} />
         </Group>
       )}
       {!isMobile && !user?.bannedAt && (
