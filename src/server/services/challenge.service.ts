@@ -4119,6 +4119,47 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 
 // ─── Previous Winners Page ───────────────────────────────────────────────────
 
+/**
+ * A challenge's winners, only when the viewer may see the challenge in a public list
+ * (challengeVisibilityConditions); otherwise the same empty list as an unknown id. Moderators keep
+ * the detail page's exemptions (getChallengeDetail): every gate but the userChallenges flag.
+ */
+export async function getVisibleChallengeWinners({
+  challengeId,
+  isGreen,
+  viewerId,
+  isModerator = false,
+  canAccessUserChallenges = false,
+  browsingLevel,
+}: {
+  challengeId: number;
+  isGreen: boolean;
+  viewerId?: number;
+  isModerator?: boolean;
+  canAccessUserChallenges?: boolean;
+  browsingLevel?: number;
+}) {
+  const conditions: Prisma.Sql[] = [Prisma.sql`c.id = ${challengeId}`];
+  if (isModerator) {
+    if (!canAccessUserChallenges)
+      conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
+  } else {
+    conditions.push(
+      ...(await challengeVisibilityConditions({
+        isGreen,
+        viewerId,
+        canAccessUserChallenges,
+        browsingLevel,
+      }))
+    );
+  }
+  const visible = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id FROM "Challenge" c WHERE ${Prisma.join(conditions, ' AND ')}
+  `;
+  if (!visible.length) return [];
+  return getChallengeWinners(challengeId, { isGreen, viewerId });
+}
+
 export async function getCompletedChallengesWithWinners(
   input: GetCompletedChallengesWithWinnersInput & {
     isGreen: boolean;

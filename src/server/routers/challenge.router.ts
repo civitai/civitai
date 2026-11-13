@@ -47,7 +47,7 @@ import {
   getChallengeDetail,
   getChallengeForEdit,
   getChallengeEvents,
-  getChallengeWinners,
+  getVisibleChallengeWinners,
   getCompletedChallengesWithWinners,
   getDailyChallenges,
   getInfiniteChallenges,
@@ -150,9 +150,13 @@ export const challengeRouter = router({
     .input(getChallengeWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) =>
-      getChallengeWinners(input.challengeId, {
+      getVisibleChallengeWinners({
+        challengeId: input.challengeId,
+        browsingLevel: input.browsingLevel,
         isGreen: ctx.features.isGreen,
         viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator ?? false,
+        canAccessUserChallenges: ctx.features.userChallenges,
       })
     ),
 
