@@ -21,7 +21,6 @@ const {
   mockPassthroughOn: vi.fn(),
 }));
 
-// The `site-search-passthrough` switch, without a Flipt client.
 vi.mock('~/server/services/site-search-passthrough', () => ({
   isSiteSearchPassthroughOn: mockPassthroughOn,
 }));
@@ -350,7 +349,6 @@ describe('passthrough (site-search-passthrough)', () => {
       queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x' }],
     });
     expect(res.status).toBe(200);
-    // Written with `end`, never `send`: Next's `send` JSON.stringifies a Buffer for its ETag.
     expect(res.sent).toBeUndefined();
     expect(Buffer.isBuffer(res.ended)).toBe(true);
     expect(res.ended.toString('utf8')).toBe(upstream);

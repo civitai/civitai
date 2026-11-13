@@ -97,10 +97,8 @@ export default MixedAuthEndpoint(
         passthrough: isSiteSearchPassthroughOn(),
       });
       if (raw) {
-        // Meilisearch's own JSON, unparsed: the same content type `res.json` would set. Written
-        // with `res.end`, never `res.send`: Next's `send` JSON.stringifies any object body to hash
-        // an ETag, and a Buffer stringifies as `{"type":"Buffer","data":[123,...]}` — several
-        // times the bytes, more work than the parse this path exists to skip.
+        // Meilisearch's own JSON, unparsed: the same content type `res.json` would set.
+        // Written with `res.end`: Next's `res.send` JSON.stringifies a Buffer to hash its ETag.
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.setHeader('Content-Length', raw.length);
         res.status(status);

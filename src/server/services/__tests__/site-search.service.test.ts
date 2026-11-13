@@ -379,8 +379,6 @@ describe('collection images', () => {
 });
 
 describe('passthrough (site-search-passthrough)', () => {
-  // Typed as the viewer: `hitsNeedShaping` takes only `browsingLevelCap`, and a literal without
-  // it has no property in common with that type.
   const capped: SiteSearchViewer = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
   const uncapped: SiteSearchViewer = { showSfwFace: false };
   const on = { passthrough: true };
@@ -498,15 +496,16 @@ describe('passthrough (site-search-passthrough)', () => {
     expect(response.raw?.toString('utf8')).toBe(facets);
   });
 
-  it('a cut-off 200 is the same 502 it is with passthrough off, not a 200', async () => {
-    for (const options of [on, {}]) {
-      respondRaw('{"hits": [');
-      const error = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped, options).catch(
-        (e: unknown) => e
-      );
-      expect(error).toBeInstanceOf(SiteSearchError);
-      expect((error as SiteSearchError).status).toBe(502);
-    }
+  it('an empty or cut-off 200 is the same 502 it is with passthrough off, not a 200', async () => {
+    for (const options of [on, {}])
+      for (const body of ['{"hits": [', '', '  \n']) {
+        respondRaw(body);
+        const error = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped, options).catch(
+          (e: unknown) => e
+        );
+        expect(error, JSON.stringify(body)).toBeInstanceOf(SiteSearchError);
+        expect((error as SiteSearchError).status, JSON.stringify(body)).toBe(502);
+      }
   });
 
   it('a rejected query (4xx) is parsed and returned as before, never passed through', async () => {
