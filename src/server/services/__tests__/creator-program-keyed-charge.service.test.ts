@@ -510,19 +510,20 @@ describe('cash withdrawal with a client key', () => {
   });
 
   it('a retry while the first request is still sending the payment is "may have gone through", not done', async () => {
-    let releasePayment!: () => void;
+    // A holder, not a `let`: assigned in a callback, which control-flow narrowing cannot see.
+    const payment: { release?: () => void } = {};
     tipalti.payToTipaltiAccount.mockImplementationOnce(
       ({ requestId }: { requestId: string }) =>
         new Promise((resolve) => {
-          releasePayment = () => resolve({ paymentBatchId: 'batch-1', paymentRefCode: requestId });
+          payment.release = () => resolve({ paymentBatchId: 'batch-1', paymentRefCode: requestId });
         })
     );
     const first = withdraw(KEY);
-    for (let i = 0; i < 200 && !releasePayment; i++) await settle();
+    for (let i = 0; i < 200 && payment.release === undefined; i++) await settle();
     expect(rows, 'the first request recorded its row').toHaveLength(1);
 
     const second = await outcome(withdraw(KEY));
-    releasePayment();
+    payment.release?.();
     await first;
 
     expect((second as Error).message).toBe(PAYMENT_OUTCOME_UNKNOWN_MESSAGE);
