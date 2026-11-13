@@ -912,6 +912,13 @@ describe('fast lane — agent-clean submissions sort first on the pending queue'
     }
   );
 
+  it('🔴 an open review hold keeps an otherwise clean row out of the fast lane', () => {
+    expect(reviewRowLane({ ...newClean, openHoldCount: 1 })).toEqual({
+      lane: 'flagged',
+      reasons: ['the app has an open review hold'],
+    });
+  });
+
   it('a viewer without the agentic surface (no agentReview field) gets no lane', () => {
     const noSurface = onsiteRequestToUnifiedRow(
       onsite({ id: 'x', previewState: 'preview-live' } as never),

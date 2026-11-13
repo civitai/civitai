@@ -25,6 +25,11 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { trpcKeepalive } from '~/utils/trpc-keepalive';
 import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
+import {
+  holdOverrideSatisfied,
+  PublishRequestHoldsPanel,
+  useOpenPublishRequestHolds,
+} from '~/components/Apps/PublishRequestHoldsPanel';
 
 /**
  * The moderator approve/reject control surface for an App Block review — extracted
@@ -127,6 +132,9 @@ export function ReviewActionBar({
     request.approveRating && mediaSplit && mediaSplit !== MEDIA_SPLIT_NO_DECISION
       ? mediaSplit
       : undefined;
+  const openHolds = useOpenPublishRequestHolds(mode === 'pending' ? request.slug : null);
+  const [holdOverrideReason, setHoldOverrideReason] = useState('');
+  const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async () => {
@@ -173,6 +181,12 @@ export function ReviewActionBar({
     publishRequestId: request.id,
     approvalNotes: approvalNotes.trim() || undefined,
     ...(mediaSplitDecision ? { mediaSplit: mediaSplitDecision } : {}),
+    ...(openHolds.length
+      ? {
+          holdOverrideReason: holdOverrideReason.trim(),
+          holdOverrideIds: openHolds.map((h) => h.id),
+        }
+      : {}),
   });
 
   const approveLater = () => {
@@ -273,6 +287,15 @@ export function ReviewActionBar({
       </Stack>
     ) : (
       <Stack gap="xs">
+        <PublishRequestHoldsPanel
+          slug={request.slug}
+          publishRequestId={request.id}
+          kind="onsite"
+          holds={openHolds}
+          overrideReason={holdOverrideReason}
+          onOverrideReasonChange={setHoldOverrideReason}
+          disabled={busy}
+        />
         {floorBlocked && (
           <Alert color="orange" variant="light" data-testid="apps-review-approve-floor">
             {listingFloorApproveRefusal(floorMissing)}
@@ -335,7 +358,7 @@ export function ReviewActionBar({
                 variant="default"
                 leftSection={<IconCheck size={14} />}
                 onClick={() => approveMut.mutate(approveInput())}
-                disabled={busy || splitStateUnknown || floorBlocked}
+                disabled={busy || splitStateUnknown || floorBlocked || holdBlocked}
                 loading={approveMut.isPending}
                 title="Approve now, with no undo window"
                 data-testid="apps-review-approve-now-button"
@@ -346,7 +369,7 @@ export function ReviewActionBar({
                 color="green"
                 rightSection={<IconArrowRight size={14} />}
                 onClick={approveLater}
-                disabled={busy || splitStateUnknown || floorBlocked}
+                disabled={busy || splitStateUnknown || floorBlocked || holdBlocked}
                 data-testid="apps-review-approve-next"
               >
                 Approve &amp; next
@@ -357,7 +380,7 @@ export function ReviewActionBar({
               color="green"
               leftSection={<IconCheck size={14} />}
               onClick={() => approveMut.mutate(approveInput())}
-              disabled={busy || splitStateUnknown || floorBlocked}
+              disabled={busy || splitStateUnknown || floorBlocked || holdBlocked}
               loading={approveMut.isPending}
             >
               Approve + build

@@ -119,6 +119,8 @@ export type ReviewedRequestCommon = {
   id: string;
   appBlockId: string | null;
   slug: string;
+  /** Pending rows: open review holds on the app (`listPendingRequests`). */
+  openHoldCount?: number;
   version: string;
   submittedAt: string | Date;
   bundleSizeBytes: string;

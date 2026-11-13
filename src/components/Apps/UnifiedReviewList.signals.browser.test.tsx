@@ -178,6 +178,15 @@ describe('pending rows carry the decision signals', () => {
     expect(chip('onsite:b', 'sensitive')?.textContent).toBe('No sensitive perms');
   });
 
+  test('🔴 an app with open review holds shows "On hold" with the count; one without shows none', async () => {
+    renderPending([onsite('a', { openHoldCount: 2 }), onsite('b', { openHoldCount: 0 })]);
+    await expect
+      .element(page.getByTestId('apps-unified-review-signals-onsite:a'))
+      .toBeInTheDocument();
+    expect(chip('onsite:a', 'hold')?.textContent).toBe('On hold · 2');
+    expect(chip('onsite:b', 'hold')).toBeNull();
+  });
+
   test('a listing row (no code) has no signals — an em dash, not empty chips', async () => {
     renderPending([onsite('a')]);
     await expect

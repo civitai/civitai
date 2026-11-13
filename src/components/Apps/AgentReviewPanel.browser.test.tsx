@@ -148,6 +148,7 @@ vi.mock('~/utils/trpc', () => {
       useUtils: () => utils,
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
+        listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
         rejectRequest: { useMutation: mutation('reject') },
         getReviewStatus: {
           useQuery: () => ({ data: mocks.reviewStatus, isLoading: false, error: null }),

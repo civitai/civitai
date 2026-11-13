@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { approveExternalRequest } from '~/server/services/blocks/offsite-listing.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -14,7 +14,6 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
   assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
   assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
 }));
-
 
 /**
  * App Store Listings (W13) — OAuth-CONNECT APPROVE service tests (PR3).
@@ -112,17 +111,19 @@ beforeEach(() => {
  * Stage a first-time CONNECT approve: a pending connect request → a DRAFT connect
  * listing (externalUrl null, revisionOfId null), on both the replica + primary.
  */
-function stageConnectApprove(overrides: {
-  requestedScopes?: number;
-  justifications?: Record<string, string>;
-  /** In-tx (PRIMARY) row overrides — defaults mirror the replica row. Lets a test
-   * diverge the primary from the replica to exercise the in-tx TOCTOU re-gate. */
-  primaryRequestedScopes?: number;
-  primaryJustifications?: Record<string, string>;
-  primaryAllowedScopes?: number;
-  /** The listing's destination. `null` → the actionability gate refuses go-live. */
-  externalUrl?: string | null;
-} = {}) {
+function stageConnectApprove(
+  overrides: {
+    requestedScopes?: number;
+    justifications?: Record<string, string>;
+    /** In-tx (PRIMARY) row overrides — defaults mirror the replica row. Lets a test
+     * diverge the primary from the replica to exercise the in-tx TOCTOU re-gate. */
+    primaryRequestedScopes?: number;
+    primaryJustifications?: Record<string, string>;
+    primaryAllowedScopes?: number;
+    /** The listing's destination. `null` → the actionability gate refuses go-live. */
+    externalUrl?: string | null;
+  } = {}
+) {
   mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
     id: 'alpr_c',
     status: 'pending',
@@ -168,6 +169,65 @@ function stageConnectApprove(overrides: {
     connectRequestedScopes: overrides.primaryRequestedScopes ?? requestedScopes,
     connectScopeJustifications: overrides.primaryJustifications ?? justifications,
     connectClient: { allowedScopes: overrides.primaryAllowedScopes ?? CEILING },
+  });
+}
+
+/** Stage a connect REVISION approve: a pending request on a shadow of the live `apl_parent`. */
+function stageConnectRevision(scopes: number, justifications: Record<string, string>) {
+  mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+    id: 'alpr_r',
+    status: 'pending',
+    kind: 'offsite',
+    slug: 'parent-slug',
+    appListingId: 'apl_shadow',
+  });
+  // approveExternalRequest reads the SHADOW (revisionOfId set) on the replica →
+  // routes into applyApprovedRevision; applyApprovedRevision then reads the PARENT.
+  mockRead.appListing.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
+    if (args.where.id === 'apl_shadow') {
+      return {
+        id: 'apl_shadow',
+        status: 'draft',
+        externalUrl: CONNECT_URL,
+        iconId: 1,
+        coverId: 2,
+        revisionOfId: 'apl_parent',
+        connectClientId: CLIENT_ID,
+        connectRequestedScopes: scopes,
+        connectScopeJustifications: justifications,
+        userId: CALLER,
+        name: 'Connect App',
+        slug: 'parent-slug',
+      };
+    }
+    if (args.where.id === 'apl_parent') {
+      return { id: 'apl_parent', slug: 'parent-slug', status: 'approved', kind: 'offsite' };
+    }
+    return null;
+  });
+  // The in-tx (PRIMARY) shadow re-read.
+  mockWrite.appListing.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
+    if (args.where.id === 'apl_shadow') {
+      return {
+        id: 'apl_shadow',
+        status: 'draft',
+        revisionOfId: 'apl_parent',
+        name: 'Connect App',
+        tagline: null,
+        description: null,
+        category: 'utility',
+        contentRating: 'g',
+        externalUrl: CONNECT_URL,
+        connectClientId: CLIENT_ID,
+        connectRequestedScopes: scopes,
+        connectScopeJustifications: justifications,
+        // The in-tx subset re-assert (N2) reads the client ceiling; scopes ⊆ CEILING.
+        connectClient: { allowedScopes: CEILING },
+        iconId: 1,
+        coverId: 2,
+      };
+    }
+    return null;
   });
 }
 
@@ -241,7 +301,9 @@ describe('approveExternalRequest — CONNECT approve→live (validateExternalUrl
     // The first-time flip only sets status + contentRating; it never rewrites the
     // connect fields, so the reviewed connectClientId/scopes/justifications persist
     // on the same (now-approved) row.
-    const flip = mockWrite.appListing.updateMany.mock.calls[0][0] as { data: Record<string, unknown> };
+    const flip = mockWrite.appListing.updateMany.mock.calls[0][0] as {
+      data: Record<string, unknown>;
+    };
     expect(flip.data).toEqual({ status: 'approved', contentRating: 'g' });
     expect(flip.data).not.toHaveProperty('connectRequestedScopes');
   });
@@ -254,64 +316,14 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
       ModelsWrite: 'still editing models',
       MediaWrite: 'now also publishing media',
     };
-    mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
-      id: 'alpr_r',
-      status: 'pending',
-      kind: 'offsite',
-      slug: 'parent-slug',
-      appListingId: 'apl_shadow',
-    });
-    // approveExternalRequest reads the SHADOW (revisionOfId set) on the replica →
-    // routes into applyApprovedRevision; applyApprovedRevision then reads the PARENT.
-    mockRead.appListing.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
-      if (args.where.id === 'apl_shadow') {
-        return {
-          id: 'apl_shadow',
-          status: 'draft',
-          externalUrl: CONNECT_URL,
-          iconId: 1,
-          coverId: 2,
-          revisionOfId: 'apl_parent',
-          connectClientId: CLIENT_ID,
-          connectRequestedScopes: UPDATED,
-          connectScopeJustifications: UPDATED_JUST,
-          userId: CALLER,
-          name: 'Connect App',
-          slug: 'parent-slug',
-        };
-      }
-      if (args.where.id === 'apl_parent') {
-        return { id: 'apl_parent', slug: 'parent-slug', status: 'approved', kind: 'offsite' };
-      }
-      return null;
-    });
-    // The in-tx (PRIMARY) shadow re-read.
-    mockWrite.appListing.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
-      if (args.where.id === 'apl_shadow') {
-        return {
-          id: 'apl_shadow',
-          status: 'draft',
-          revisionOfId: 'apl_parent',
-          name: 'Connect App',
-          tagline: null,
-          description: null,
-          category: 'utility',
-          contentRating: 'g',
-          externalUrl: CONNECT_URL,
-          connectClientId: CLIENT_ID,
-          connectRequestedScopes: UPDATED,
-          connectScopeJustifications: UPDATED_JUST,
-          // The in-tx subset re-assert (N2) reads the client ceiling; UPDATED ⊆ CEILING.
-          connectClient: { allowedScopes: CEILING },
-          iconId: 1,
-          coverId: 2,
-        };
-      }
-      return null;
-    });
+    stageConnectRevision(UPDATED, UPDATED_JUST);
 
     const res = await approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD });
-    expect(res).toEqual({ publishRequestId: 'alpr_r', listingId: 'apl_parent', slug: 'parent-slug' });
+    expect(res).toEqual({
+      publishRequestId: 'alpr_r',
+      listingId: 'apl_parent',
+      slug: 'parent-slug',
+    });
 
     // The copy onto the LIVE parent carries the UPDATED connect scopes.
     const copy = mockWrite.appListing.update.mock.calls[0][0] as {
@@ -326,7 +338,7 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
     });
   });
 
-  it('🔴 a REVISION that would strip the live listing\'s destination is REFUSED — nothing copied', async () => {
+  it("🔴 a REVISION that would strip the live listing's destination is REFUSED — nothing copied", async () => {
     // The "break an already-live listing" case. A revision writes NO status, so the
     // status-transition gates never see it — but it copies `externalUrl` /
     // `connectClientId` straight onto an approved parent. A shadow with no
@@ -610,5 +622,82 @@ describe('approveExternalRequest — external-link revision still validates its 
     });
     // Rolled back before the parent copy.
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('approveExternalRequest — review holds', () => {
+  const hold = {
+    id: 7,
+    slug: 'connect-app',
+    publishRequestId: 'alpr_c',
+    requestKind: 'listing',
+    placedByUserId: MOD,
+    placedByUsername: 'mod',
+    placedByLabel: 'code-check',
+    reason: 'security check still running',
+    createdAt: new Date(),
+    clearedAt: null,
+    clearedByUserId: null,
+    clearedKind: null,
+    clearedReason: null,
+  };
+  /** The holds table answers `early` to the first open-hold read and `final` to every later one. */
+  function holdsTable(early: unknown[], final: unknown[]) {
+    let reads = 0;
+    mockWrite.$queryRaw.mockImplementation(async (strings: unknown) => {
+      const text = Array.isArray(strings) ? (strings as string[]).join('?') : '';
+      if (!text.includes('FROM app_publish_request_holds')) return [];
+      return reads++ === 0 ? early : final;
+    });
+  }
+  afterEach(() => {
+    mockWrite.$queryRaw.mockReset().mockResolvedValue([]);
+  });
+
+  it('🔴 refuses a first-time approve while a hold is open; nothing flips', async () => {
+    stageConnectApprove();
+    holdsTable([hold], [hold]);
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).rejects.toThrow(/open review hold/);
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a hold that appears after the first check refuses inside the transaction; the request does not flip', async () => {
+    stageConnectApprove();
+    holdsTable([], [hold]);
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).rejects.toThrow(/open review hold/);
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a REVISION approve: a hold that appears after the first check refuses inside its transaction', async () => {
+    stageConnectRevision(REQUESTED, JUSTIFIED);
+    holdsTable([], [{ ...hold, slug: 'parent-slug' }]);
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD })
+    ).rejects.toThrow(/open review hold/);
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('an override passes both checks, marks the hold overridden and records the ModActivity row', async () => {
+    stageConnectApprove();
+    holdsTable([hold], [hold]);
+    await approveExternalRequest({
+      publishRequestId: 'alpr_c',
+      reviewerUserId: MOD,
+      holdOverrideReason: 'checked by hand, a false alarm',
+      holdOverrideIds: [7],
+    });
+    expect(mockWrite.appListingPublishRequest.updateMany).toHaveBeenCalled();
+    const writes = mockWrite.$executeRaw.mock.calls.map((c) =>
+      Array.isArray(c[0]) ? (c[0] as string[]).join('?') : ''
+    );
+    expect(writes.some((w) => w.includes("cleared_kind = 'overridden'"))).toBe(true);
+    expect(writes.some((w) => w.includes('INSERT INTO "ModActivity"'))).toBe(true);
   });
 });

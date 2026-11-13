@@ -187,6 +187,8 @@ export type UnifiedReviewRow = {
    * an approved app's listing edit. Absent / null = not checked (no identity change).
    */
   listingEditCheck?: ListingEditCheckSummary | null;
+  /** PENDING rows: open review holds on the app; approving needs an override while above 0. */
+  openHoldCount?: number;
 };
 
 export type ReviewRowSignals = {
@@ -291,6 +293,7 @@ export function onsiteRequestToUnifiedRow(
     submitter: req.submittedBy,
     submittedAt: toDate(reviewedAt ?? req.submittedAt),
     onReview: () => openOnsiteReview(req),
+    openHoldCount: req.openHoldCount ?? 0,
     // Carried for code+media pairing + the combined surface.
     appBlockId: req.appBlockId,
     onsiteRequest: req,
@@ -346,6 +349,7 @@ export type OffsiteReviewRequest = {
   reviewMedia?: ListingReviewMedia | null;
   /** PENDING queue only: the impersonation check on an approved app's listing edit. */
   listingEditCheck?: ListingEditCheckSummary | null;
+  openHoldCount?: number;
 };
 
 /**
@@ -413,6 +417,7 @@ export function offsiteRequestToUnifiedRow(
     coverUrl: req.coverUrl ?? null,
     reviewMedia: req.reviewMedia ?? null,
     listingEditCheck: req.listingEditCheck ?? null,
+    openHoldCount: req.openHoldCount ?? 0,
   };
 }
 
@@ -487,6 +492,8 @@ function combineCodeAndMediaRows(
       // the listing-edit impersonation check.
       signals: code.signals,
       listingEditCheck: media.listingEditCheck ?? null,
+      // Holds are per app, so both halves report the same count.
+      openHoldCount: Math.max(code.openHoldCount ?? 0, media.openHoldCount ?? 0),
     });
   }
 
@@ -531,11 +538,14 @@ function combineCodeAndMediaRows(
  * expired, missing or still-building preview keeps it out.
  */
 export function reviewRowLane(
-  row: Pick<UnifiedReviewRow, 'signals' | 'listingEditCheck'>
+  row: Pick<UnifiedReviewRow, 'signals' | 'listingEditCheck' | 'openHoldCount'>
 ): AgentReviewLaneResult {
   const signals = row.signals;
   if (!signals || signals.agentReview === undefined) return { lane: 'waiting', reasons: [] };
   const result = agentReviewLane(signals.agentReview);
+  if (result.lane === 'agent-clean' && (row.openHoldCount ?? 0) > 0) {
+    return { lane: 'flagged', reasons: ['the app has an open review hold'] };
+  }
   if (result.lane === 'agent-clean' && listingEditCheckBadge(row.listingEditCheck)) {
     return { lane: 'flagged', reasons: ['the listing edit hit the impersonation check'] };
   }

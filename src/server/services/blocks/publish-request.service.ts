@@ -91,6 +91,7 @@ import {
 } from '~/shared/constants/app-developer-terms.constants';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
+import type { ApproveClaim } from '~/server/services/blocks/publish-request-holds.service';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -3001,12 +3002,17 @@ export async function listPendingRequests(
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const [listingFacts, agentSummaries, liveFingerprints] = await Promise.all([
+  const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
+  const [listingFacts, agentSummaries, liveFingerprints, holdCounts] = await Promise.all([
     listingFactsForRequests(items as ListingJoinSubject[]),
     opts.includeAgentReview
       ? agentReviewSummariesForRequests(items.map((r) => r.id))
       : Promise.resolve(null),
     opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
+    getOpenHoldCountsBySlug(
+      dbRead,
+      items.map((r) => r.slug)
+    ),
   ]);
   // The impersonation check is STALE when the listing changed after it ran (a new app's draft
   // or pending listing is edited in place); a stale check never fast-lanes the row.
@@ -3027,6 +3033,7 @@ export async function listPendingRequests(
       ({ deployState, deployDetail, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
         ...r,
         ...listingFacts(r.id),
+        openHoldCount: holdCounts.get(r.slug) ?? 0,
         // The SAME reported state `getReviewStatus` gives the review page (one rule, including
         // #8240's expiry from the build's start), so the queue chip and the page agree.
         previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
@@ -3233,6 +3240,10 @@ export type ApproveRequestParams = {
   approvalNotes?: string;
   /** The moderator's media-split decision for the listing this approve publishes; omitted means `rate-mature`. */
   mediaSplit?: ListingMediaSplitDecision | null;
+  /** Required to approve while the app has open review holds; recorded on each hold. */
+  holdOverrideReason?: string | null;
+  /** The open holds the moderator was shown; an open hold not in this list refuses. */
+  holdOverrideIds?: number[] | null;
 };
 
 export type ApproveRequestResult = {
@@ -3265,6 +3276,28 @@ export type ApproveRequestResult = {
  * adds a compensation transaction.
  */
 export async function approveRequest(params: ApproveRequestParams): Promise<ApproveRequestResult> {
+  const held: { claim?: ApproveClaim } = {};
+  try {
+    return await approveRequestUnderClaim(params, held);
+  } finally {
+    const { claim } = held;
+    if (claim) {
+      const [{ dbWrite }, { releaseApproveClaim }] = await Promise.all([
+        import('~/server/db/client'),
+        import('./publish-request-holds.service'),
+      ]);
+      await releaseApproveClaim(dbWrite, claim).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.error('[approveRequest] approve claim release failed; it expires on its own', err)
+      );
+    }
+  }
+}
+
+async function approveRequestUnderClaim(
+  params: ApproveRequestParams,
+  held: { claim?: ApproveClaim }
+): Promise<ApproveRequestResult> {
   const [{ dbRead, dbWrite }, { newUlid }, { env }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
@@ -3312,6 +3345,13 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   if (request.status !== 'pending') {
     throw new Error(`cannot approve a request in status ${request.status}`);
   }
+  const { checkHoldsBeforeApprove, claimApprove } = await import('./publish-request-holds.service');
+  const holdDecision = {
+    slug: request.slug,
+    overrideReason: params.holdOverrideReason,
+    shownHoldIds: params.holdOverrideIds,
+  };
+  await checkHoldsBeforeApprove(dbWrite, holdDecision);
   // Captured BEFORE markRequestDeployState below flips deploy_state to a
   // production 'building' value — drives the end-of-flow review teardown.
   const hadReviewPreview =
@@ -3548,6 +3588,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         );
     }
   }
+
+  // From here on this approve writes and calls Forgejo, so a hold placed now could not stop it:
+  // the claim makes placing one refuse until the approve ends.
+  held.claim = await dbWrite.$transaction((tx) =>
+    claimApprove(tx, {
+      ...holdDecision,
+      publishRequestId: request.id,
+      actorUserId: params.reviewerUserId,
+    })
+  );
 
   // APP STORAGE SCHEMA MIGRATIONS — the approve gate, LAST among the refusals and still before
   // anything is written (so a refused approve reserves nothing): refused while an earlier run of
@@ -4475,29 +4525,18 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // from the `Publish-Request` trailer above and the pushing account. Any push
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
-  await dbWrite.appBlock.update({
-    where: { id: appBlockId },
-    data: {
-      currentVersionSha: forgejoCommitSha,
-      // F-E E5 — persist the validated, uploaded screenshot records. Replaces
-      // the prior set on a re-approve (the storeScreenshots keys are stable per
-      // appBlockId+index, so the objects are overwritten in place). An empty
-      // gallery is stored as [] so a re-submit that REMOVES all screenshots
-      // clears the old set rather than leaving stale entries.
-      screenshots: storedScreenshots as object,
-    },
-  });
-  await dbWrite.appBlockPublishRequest.update({
-    where: { id: request.id },
-    data: {
-      status: 'approved',
-      reviewedByUserId: params.reviewerUserId,
-      reviewedAt: new Date(),
+  const { finaliseOnsiteApprove } = await import('./publish-request-finalise.service');
+  await dbWrite.$transaction((tx) =>
+    finaliseOnsiteApprove(tx, {
+      holdDecision,
+      reviewerUserId: params.reviewerUserId,
       approvalNotes: params.approvalNotes,
-      forgejoCommitSha,
+      publishRequestId: request.id,
       appBlockId,
-    },
-  });
+      forgejoCommitSha,
+      screenshots: storedScreenshots as object,
+    })
+  );
 
   // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag
   // already names another commit, `approved-<request id>`; see decideVersionTag). Runs after the

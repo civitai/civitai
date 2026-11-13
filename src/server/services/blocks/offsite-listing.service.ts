@@ -3459,6 +3459,10 @@ export async function approveExternalRequest(opts: {
   contentRating?: OffsiteContentRating | null;
   /** The moderator's media-split decision; omitted means `rate-mature`. */
   mediaSplit?: ListingMediaSplitDecision | null;
+  /** Required to approve while the app has open review holds; recorded on each hold. */
+  holdOverrideReason?: string | null;
+  /** The open holds the moderator was shown; an open hold not in this list refuses. */
+  holdOverrideIds?: number[] | null;
 }): Promise<ApproveExternalRequestResult> {
   const { publishRequestId, reviewerUserId } = opts;
   const approvalNotes = opts.approvalNotes ?? null;
@@ -3490,6 +3494,17 @@ export async function approveExternalRequest(opts: {
       `publish request ${publishRequestId} has no draft listing`
     );
   }
+  const { checkHoldsBeforeApprove, resolveHoldsAtApprove } = await import(
+    './publish-request-holds.service'
+  );
+  const holdDecision = {
+    slug: request.slug,
+    overrideReason: opts.holdOverrideReason,
+    shownHoldIds: opts.holdOverrideIds,
+  };
+  await checkHoldsBeforeApprove(dbWrite, holdDecision);
+  const resolveHolds = (tx: Prisma.TransactionClient) =>
+    resolveHoldsAtApprove(tx, { ...holdDecision, actorUserId: reviewerUserId });
   // Narrow once for the tx closures below (findUnique needs a non-null id).
   const appListingId = request.appListingId;
 
@@ -3543,6 +3558,7 @@ export async function approveExternalRequest(opts: {
       approvalNotes,
       contentRating: opts.contentRating,
       mediaSplit: opts.mediaSplit,
+      resolveHolds,
     });
   }
 
@@ -3742,6 +3758,7 @@ export async function approveExternalRequest(opts: {
       }
     }
 
+    await resolveHolds(tx);
     const req = await tx.appListingPublishRequest.updateMany({
       where: { id: publishRequestId, status: 'pending' },
       data: {
@@ -3922,6 +3939,8 @@ async function applyApprovedRevision(opts: {
   /** Optional mod override of the final content rating (floored at the derived value). */
   contentRating?: OffsiteContentRating | null;
   mediaSplit?: ListingMediaSplitDecision | null;
+  /** The review-hold check that must pass in the same transaction as the request flip. */
+  resolveHolds: (tx: Prisma.TransactionClient) => Promise<unknown>;
 }): Promise<ApproveExternalRequestResult> {
   const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
 
@@ -4090,6 +4109,7 @@ async function applyApprovedRevision(opts: {
     }
 
     // (2) Flip the request pending→approved AND re-point it at the PARENT.
+    await opts.resolveHolds(tx);
     const req = await tx.appListingPublishRequest.updateMany({
       where: { id: request.id, status: 'pending' },
       data: {
@@ -4933,8 +4953,19 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
   // changes the name, icon or cover (a missing result then reads `missing`, never "unchecked").
   // FAIL-SOFT on a failed READ, so the queue itself stays up; that one case shows no badge.
   const { listingEditQueueChecks } = await import('./app-listing-edit-impersonation.service');
-  const checks = await listingEditQueueChecks(page).catch(() => null);
-  const items = page.map((r) => ({ ...r, listingEditCheck: checks?.get(r.id) ?? null }));
+  const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
+  const [checks, holdCounts] = await Promise.all([
+    listingEditQueueChecks(page).catch(() => null),
+    getOpenHoldCountsBySlug(
+      dbRead,
+      page.map((r) => r.slug)
+    ),
+  ]);
+  const items = page.map((r) => ({
+    ...r,
+    listingEditCheck: checks?.get(r.id) ?? null,
+    openHoldCount: holdCounts.get(r.slug) ?? 0,
+  }));
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
