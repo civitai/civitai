@@ -554,6 +554,7 @@
     <WatchMeta
       value={strip.value}
       max={strip.max}
+      done={strip.done}
       streak={withVotesSent(data.daily, sentVotes).streak}
       {hearts}
       maxHearts={data.status.maxSmites}

@@ -6,15 +6,20 @@
   let {
     value,
     max,
+    done,
     streak,
     hearts,
     maxHearts,
-  }: { value: number; max: number; streak: number; hearts: number; maxHearts: number } = $props();
+  }: { value: number; max: number; done: boolean; streak: number; hearts: number; maxHearts: number } = $props();
 </script>
 
 <!-- Below 1200px there is no rail: the Watch, the streak and the hearts sit in one quiet row above the question. -->
 <div class="meta">
-  <span class="watch" use:bump={value}>Watch <b>{value}/{max}</b></span>
+  {#if done}
+    <span class="watch done"><Icon name="circle-check" size={14} />Watch complete</span>
+  {:else}
+    <span class="watch" use:bump={value}>Watch <b>{value}/{max}</b></span>
+  {/if}
   <span class="streak"><Icon name="flame" size={14} /><b>{streak}</b> {streak === 1 ? 'day' : 'days'}</span>
   <HeartsRow {hearts} {maxHearts} />
 </div>
@@ -55,6 +60,15 @@
       pointer-events: none;
       animation: mo-float 400ms var(--ease-out-quart) both;
     }
+  }
+  .done {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--io-parchment);
+  }
+  .done :global(svg) {
+    color: var(--io-verdigris);
   }
   .streak {
     display: inline-flex;

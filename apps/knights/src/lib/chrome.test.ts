@@ -33,6 +33,7 @@ describe('watchStrip', () => {
       label: "Today's Watch · 5 of 10",
       value: 5,
       max: 10,
+      done: false,
       note: '+500 gold at the end',
     });
   });
@@ -44,9 +45,9 @@ describe('watchStrip', () => {
     });
   });
 
-  it('treats a done Watch as a goal reached, not the end of the day', () => {
+  it('says a done Watch is complete and its bonus earned', () => {
     expect(watchStrip({ ...daily, votes: 10, watchDone: true }).note).toBe(
-      '+500 gold bonus earned · keep judging'
+      'Watch complete, +500 gold streak bonus'
     );
   });
 
@@ -213,6 +214,21 @@ describe('withVotesSent', () => {
   it('advances the streak with the vote that completes the Watch', () => {
     expect(withVotesSent({ ...daily, streak: 0 }, 5)).toMatchObject({ streak: 1, watchDone: true });
     expect(withVotesSent({ ...daily, votes: 9, streak: 4 }, 1)).toMatchObject({ streak: 5 });
+  });
+
+  it('shows the Watch as completed with the vote that completes it', () => {
+    const lastVote = { ...daily, votes: 9, streak: 4 };
+    expect(watchStrip(withVotesSent(lastVote, 0))).toMatchObject({
+      done: false,
+      note: '+500 gold at the end',
+    });
+    const completed = withVotesSent(lastVote, 1);
+    expect(watchStrip(completed)).toMatchObject({
+      value: 10,
+      done: true,
+      note: 'Watch complete, +500 gold streak bonus',
+    });
+    expect(completed.streak).toBe(5);
   });
 
   it('leaves the streak alone before the Watch is done and once it already is', () => {
