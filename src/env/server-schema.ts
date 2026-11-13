@@ -1276,6 +1276,15 @@ export const serverSchema = z
     // Platform-wide ceiling (USD per UTC day) on agent reviews started AUTOMATICALLY when a review
     // build settles. Past it, automatic starts are refused; a moderator can still start one.
     AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: z.coerce.number().nonnegative().default(40),
+    // Test-fixture accounts (the CI smoke users of a test environment) whose AUTOMATIC review
+    // builds are counted per app slug instead of per account (review-autodeploy.service,
+    // AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY), so the many test runs that share one fixture
+    // account each get their own allowance. Set only in test environments; unset (the default)
+    // leaves every account on the per-account budget. A malformed list reads as unset.
+    APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS: commaDelimitedNumberArray()
+      .default([])
+      .catch([])
+      .transform((ids) => ids.filter((id) => id !== 0)),
     // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
     // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL
     // (e.g. `http://<svc>.<ns>.svc.cluster.local`) so the adversarial report + the
