@@ -35,7 +35,6 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
-import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   throwAuthorizationError,
@@ -106,9 +105,22 @@ const model3dFileSelect = {
   createdAt: true,
 } satisfies Prisma.Model3DFileSelect;
 
-// Every image a 3D model read returns: never its generation data, which no 3D model surface shows
-// and which an image's owner may have hidden.
-const model3dImageSelect = { ...imageSelect, meta: false } satisfies Prisma.ImageSelect;
+// Every image a 3D model read returns: only what its cards and pages draw. Never its generation
+// data, which an image's owner may have hidden, nor its moderation state.
+const model3dImageSelect = {
+  id: true,
+  name: true,
+  url: true,
+  nsfwLevel: true,
+  width: true,
+  height: true,
+  hash: true,
+  type: true,
+  metadata: true,
+  userId: true,
+  createdAt: true,
+  postId: true,
+} satisfies Prisma.ImageSelect;
 
 const model3dDetailSelect = {
   id: true,
