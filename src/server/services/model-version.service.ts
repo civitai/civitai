@@ -3213,7 +3213,9 @@ export function publicModelResponseKey(
   modelId: number,
   browsingLevel: number
 ): RedisKeyTemplateCache {
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
+  // `v2`: bodies whose card images are held to the level. Bump when the body's filtering changes,
+  // so entries built by the previous code are not read.
+  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
 }
 
 // Best-effort, fail-open invalidation of the origin-side public response cache for
