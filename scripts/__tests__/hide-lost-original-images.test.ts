@@ -818,6 +818,11 @@ describe('hide-lost-original-images', () => {
     expect(await ingestion(1)).toBe('Scanned');
   });
 
+  it('parseArgs refuses --limit with --undo or --rebust, which would not honour it', () => {
+    expect(() => parseArgs(['--log', 'l', '--undo', '--limit', '1'])).toThrow(/--limit/);
+    expect(() => parseArgs(['--log', 'l', '--rebust', 'hide', '--limit', '1'])).toThrow(/--limit/);
+  });
+
   it('parseArgs requires a log and, outside undo, an ids file', () => {
     expect(() => parseArgs(['--ids', 'a'])).toThrow(/--log/);
     expect(() => parseArgs(['--log', 'l'])).toThrow(/--ids/);

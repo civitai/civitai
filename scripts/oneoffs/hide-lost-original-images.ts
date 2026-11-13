@@ -16,7 +16,7 @@
  *     open-post-report, article-image, app-listing-asset, crucible-image, external-url, odd-url,
  *     head-error, now-200, and one per DISPLAY_REFS reason: a confirmed-404 image shown as a
  *     display asset or ImageConnection stays visible with broken bytes, on purpose; each is its own
- *     count, so the desk can hand that list to an owner), raced-out,
+ *     count), raced-out,
  *     still-404, no-row, would-hide.
  *   - Then `--apply --limit 1`, read the row back (public hidden, moderator sees it), then the rest.
  *   - Undo: `--undo --apply`. It does not touch the existence cache, which holds "gone" for up to 5
@@ -132,6 +132,9 @@ export function parseArgs(argv: string[]): RunOptions {
     if (rebustArg !== 'hide' && rebustArg !== 'undo') throw new Error('--rebust is hide or undo');
     options.rebust = rebustArg;
   }
+  // Undo and rebust walk the whole log; a --limit there would read as a canary and not be one.
+  if ((options.undo || options.rebust) && argv.includes('--limit'))
+    throw new Error('--limit does not apply to --undo or --rebust');
   if (!options.logFile) throw new Error('--log is required');
   if (options.idsFile && path.resolve(options.logFile) === path.resolve(options.idsFile))
     throw new Error('--log must not be the ids file');
