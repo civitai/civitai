@@ -12,12 +12,11 @@ import { QS } from '~/utils/qs';
 
 // The feed filters the search index cannot apply. While a query is set they are shown greyed and
 // ignored, never sent: the index ranks by meaning and carries no tools, techniques, remix or meta
-// fields, and the viewer-only views (hidden, followed, own drafts) are not in it.
+// fields, and the viewer-only views (hidden, followed, own drafts) are not in it. Made on-site and
+// Metadata only are applied when hydrating instead.
 export const imageFeedSearchUnavailableKeys = [
-  'withMeta',
   'requiringMeta',
   'hidden',
-  'fromPlatform',
   'scheduled',
   'remixesOnly',
   'nonRemixesOnly',
@@ -45,10 +44,8 @@ export const imageFeedFilterLabels: Record<
   string
 > = {
   // As the Filters menu and the Followed button word them, so a greyed control reads the same.
-  withMeta: 'Metadata only',
   requiringMeta: 'Requiring Metadata',
   hidden: 'Hidden',
-  fromPlatform: 'Made On-site',
   scheduled: 'Scheduled',
   remixesOnly: 'Remixes Only',
   nonRemixesOnly: 'Originals Only',
@@ -112,6 +109,35 @@ export function periodStart(period: MetricTimeframe | undefined, now = new Date(
     .toDate();
 }
 
+/**
+ * A search starts over all time rather than the feed's saved period (Week by default), which would
+ * hide most matches. A period picked during the search stays; the feed gets its saved period back
+ * the next time it renders without a search (cleared, or a later visit after leaving mid-search),
+ * unless one was picked meanwhile. `savedPeriod` is persisted, so a reload mid-search neither resets
+ * a picked period nor loses the one to give back. `write` is what the store's period becomes;
+ * null when nothing changes.
+ */
+export function searchPeriodChange({
+  searching,
+  wasSearching,
+  period,
+  savedPeriod,
+}: {
+  searching: boolean;
+  wasSearching: boolean;
+  period: MetricTimeframe | undefined;
+  savedPeriod: MetricTimeframe | undefined;
+}): { write?: MetricTimeframe; savedPeriod: MetricTimeframe | undefined } | null {
+  if (searching) {
+    if (wasSearching || savedPeriod || !period || period === MetricTimeframe.AllTime) return null;
+    return { write: MetricTimeframe.AllTime, savedPeriod: period };
+  }
+  if (!savedPeriod) return null;
+  return (period ?? MetricTimeframe.AllTime) === MetricTimeframe.AllTime
+    ? { write: savedPeriod, savedPeriod: undefined }
+    : { savedPeriod: undefined };
+}
+
 /** The feed's filters as a semantic image search: only what the index can apply. */
 export function toSemanticImageSearchInput({
   query,
@@ -137,6 +163,8 @@ export function toSemanticImageSearchInput({
     userIds: filters.userId ? [filters.userId] : undefined,
     postedAfter: periodStart(filters.period, now),
     sort,
+    fromPlatform: filters.fromPlatform || undefined,
+    withMeta: filters.withMeta || undefined,
     limit: 50,
   };
 }

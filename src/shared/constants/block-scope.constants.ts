@@ -682,9 +682,9 @@ export const BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY = 1000;
  * enforced exactly as given.
  *
  * The number is the LOWEST per-engine post-paid ceiling any registered recipe
- * declares today: `STARTER_BUDGET.maxBuzz` = 90 and `seamless-pano`'s cheapest engine
- * (`zimage-turbo`) = 90. A budget under it cannot fund a single customComfy
- * generation, so an app using one will appear broken. Registry steps can be far
+ * declares (`STARTER_BUDGET.maxBuzz`, `seamless-pano`'s `zimage-turbo`). A budget
+ * under it cannot fund a single customComfy generation, so an app using one will
+ * appear broken. Registry steps can be far
  * cheaper (`convert-image` = 1 Buzz), which is why this warns instead of blocking.
  * If a cheaper recipe engine is ever registered this number is free to drop — it
  * changes copy, never enforcement.
@@ -692,8 +692,8 @@ export const BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY = 1000;
 export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
 
 /**
- * The HIGHEST per-engine post-paid ceiling any registered recipe declares
- * (`seamless-pano`'s `qwen-image` = 180). Pinned to the registry alongside LOW
+ * The HIGHEST per-engine post-paid ceiling any registered recipe declares.
+ * Pinned to the registry alongside LOW
  * by `recipes/__tests__/budget-bounds-parity.test.ts`; read by no enforcement
  * path.
  *
@@ -702,7 +702,7 @@ export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
  * figure at all. This constant exists solely so the parity test notices a
  * widening of the RECIPE range.
  */
-export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
+export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 90;
 
 /**
  * The body of the low-budget warning, shared by the consent modal and the editor
@@ -721,9 +721,9 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  * asserts no figure, and no claim about which actions still run.** Every such
  * claim was falsifiable because the reservation space has no short true
  * description —
- *   · recipe ceilings are 90, 90, 150, 180 (note the TIE — it falsified
- *     "more on the other engines", and the parity test cannot see it because
- *     `LOW === min(...)` holds for any number of ties);
+ *   · recipe ceilings have tied (which falsified "more on the other engines",
+ *     and the parity test cannot see it because `LOW === min(...)` holds for any
+ *     number of ties);
  *   · the INLINE customComfy arm reserves an app-declared ceiling up to
  *     `INLINE_MAX_BUZZ` = 250, verbatim, un-dev-gated;
  *   · `textToImage` reserves its live whatIf quote, which can be far LOWER;
@@ -735,7 +735,7 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  * this docblock asserted: every path gates the reservation against the token's
  * per-call budget, which every mint clamps at `BUZZ_BUDGET_CAP`.
  * It is simply not renderable — it is per-app, far above what most paths reserve
- * (INLINE_MAX_BUZZ = 250; 180 for recipes; a quoted step can reach the cap itself),
+ * (INLINE_MAX_BUZZ = 250; recipes sit far below that; a quoted step can reach the cap itself),
  * and alarming rather than informative. Do not "correct" the copy by naming it.
  *
  * What IS true on every consent-bearing path, and all this sentence claims:

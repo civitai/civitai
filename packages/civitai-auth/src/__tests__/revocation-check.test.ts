@@ -122,7 +122,7 @@ describe('createRevocationCheck deadline and reporting', () => {
     const started = Date.now();
     expect(await check(claims)).toBe(false);
     expect(Date.now() - started).toBeLessThan(1000);
-    expect(onError).toHaveBeenCalledWith(expect.any(Error), 'timeout', claims);
+    expect(onError).toHaveBeenCalledWith(expect.any(Error), 'timeout', claims, 'allow_unknown');
     expect(onOutcome).toHaveBeenCalledWith('timeout', expect.any(Number));
   });
 
@@ -148,7 +148,7 @@ describe('createRevocationCheck deadline and reporting', () => {
       onOutcome,
     });
     expect(await failing(claims)).toBe(false);
-    expect(onError).toHaveBeenCalledWith(expect.any(Error), 'error', claims);
+    expect(onError).toHaveBeenCalledWith(expect.any(Error), 'error', claims, 'allow_unknown');
     expect(onOutcome).toHaveBeenLastCalledWith('error', expect.any(Number));
 
     const healthy = createRevocationCheck({ redis: () => store(), onError, onOutcome });
@@ -165,7 +165,7 @@ describe('createRevocationCheck deadline and reporting', () => {
     const check = createRevocationCheck({ redis: hung, timeoutMs: 1234, bound, onError });
     expect(await check(claims)).toBe(false);
     expect(bound).toHaveBeenCalledWith(expect.any(Promise), 1234);
-    expect(onError).toHaveBeenCalledWith(expect.any(Error), 'timeout', claims);
+    expect(onError).toHaveBeenCalledWith(expect.any(Error), 'timeout', claims, 'allow_unknown');
   });
 
   it('a breaker-open rejection from the bound hook is its own reason; any other tag is an error', async () => {
@@ -180,7 +180,12 @@ describe('createRevocationCheck deadline and reporting', () => {
       onOutcome,
     });
     expect(await open(claims)).toBe(false);
-    expect(onError).toHaveBeenLastCalledWith(expect.any(Error), 'breaker-open', claims);
+    expect(onError).toHaveBeenLastCalledWith(
+      expect.any(Error),
+      'breaker-open',
+      claims,
+      'allow_unknown'
+    );
     expect(onOutcome).toHaveBeenLastCalledWith('breaker-open', expect.any(Number));
 
     const other = createRevocationCheck({
@@ -190,7 +195,7 @@ describe('createRevocationCheck deadline and reporting', () => {
       onOutcome,
     });
     expect(await other(claims)).toBe(false);
-    expect(onError).toHaveBeenLastCalledWith(expect.any(Error), 'error', claims);
+    expect(onError).toHaveBeenLastCalledWith(expect.any(Error), 'error', claims, 'allow_unknown');
     expect(onOutcome).toHaveBeenLastCalledWith('error', expect.any(Number));
   });
 

@@ -1,4 +1,5 @@
 import type { Logger } from '@civitai/next-axiom';
+import { requestVerifiedCrawler } from '~/server/utils/browsing-level';
 import { withAxiom } from '@civitai/next-axiom';
 import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import { TRPCError } from '@trpc/server';
@@ -641,7 +642,9 @@ export function PublicEndpoint(
     // are not flushed until it responds, and last write wins. That is what keeps
     // the `no-store` error arms (`handleEndpointError`, and the 503 sheds in
     // `v1/images`/`v1/users`) authoritative.
-    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    // A verified crawler's answer can differ from a signed-out visitor's at the same URL.
+    if (credentialed || requestVerifiedCrawler(req) !== null)
+      res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res, maxAge);
 
     await handler(req, res);
@@ -714,7 +717,8 @@ export function MixedAuthEndpoint(
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
-    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    if (credentialed || requestVerifiedCrawler(req) !== null)
+      res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res);
 
     // Acts as the signed-in user, so a banned session is refused rather than served as anonymous.

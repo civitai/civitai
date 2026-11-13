@@ -37,9 +37,6 @@ import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const { claimRateLimitAttempt } = bucket;
 const hGet = redisMock.redis.packed.hGet;
-const HUNG = Symbol('hung');
-const within = <T>(p: Promise<T>, ms: number) =>
-  Promise.race([p, new Promise<typeof HUNG>((r) => setTimeout(() => r(HUNG), ms))]);
 
 let ipCounter = 0;
 const freshReq = () =>
@@ -63,6 +60,7 @@ async function claim(keyName: string, scope?: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
   resetEnv();
   vi.mocked(hSetWithTTL).mockResolvedValue(undefined as never);
 });
@@ -77,17 +75,25 @@ describe('claimRateLimitAttempt, money scopes, store unavailable', () => {
     expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
   });
 
-  it('a store that never answers refuses with a 503 after the longer fail-closed deadline, not before', async () => {
+  it('a store that never answers refuses with a 503 at the longer fail-closed deadline (2000ms), not before', async () => {
+    // Fake timers: the guard's deadline is a plain setTimeout race, so the bound is exact here
+    // rather than a wall-clock window that a loaded CI machine can stretch.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     hGet.mockImplementation(() => new Promise(() => undefined));
-    const started = Date.now();
-    const err = await within(
-      claim('buzz:getUserAccount').catch((e: unknown) => e),
-      4000
+    const PENDING = Symbol('pending');
+    let outcome: unknown = PENDING;
+    const done = claim('buzz:getUserAccount').then(
+      () => (outcome = 'admitted'),
+      (e: unknown) => (outcome = e)
     );
-    const took = Date.now() - started;
-    expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
-    expect(took).toBeGreaterThanOrEqual(1900);
-    expect(took).toBeLessThan(2750);
+
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(outcome).toBe(PENDING);
+    await vi.advanceTimersByTimeAsync(1);
+    // Settled by now or never: a real macrotask turn, not a wait on a promise that may not settle.
+    await Promise.race([done, new Promise((r) => setImmediate(r))]);
+    expect(outcome).toBeInstanceOf(TRPCError);
+    expect((outcome as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
   });
 
   it('a slow read (500ms) on a money scope is answered, not refused', async () => {

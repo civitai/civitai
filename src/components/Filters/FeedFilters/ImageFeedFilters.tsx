@@ -20,7 +20,7 @@ import { SortFilter } from '../SortFilter';
 // Newest orders the best matches by date; it never widens them to every new image.
 const searchSortOptions = [
   { label: 'Best match', value: 'best-match' },
-  { label: 'Newest', value: 'newest' },
+  { label: 'Newest matches', value: 'newest' },
 ];
 
 export function ImageFeedFilters({
@@ -47,13 +47,14 @@ export function ImageFeedFilters({
         ))}
       {searchQuery && searchSort.selectable ? (
         <SelectMenuV2
-          label={searchSort.sort === 'newest' ? 'Newest' : 'Best match'}
+          label={searchSort.sort === 'newest' ? 'Newest matches' : 'Best match'}
           value={searchSort.sort ?? 'best-match'}
           options={searchSortOptions}
           onClick={(value) => searchSort.setSort(value === 'newest' ? value : undefined)}
         />
       ) : searchQuery ? (
-        // The search ranks by match only; a feed sort would be a promise it can't keep.
+        // Without the Newest flag the search ranks by match only; a feed sort would be a promise it
+        // can't keep.
         <Tooltip label="Clear the search to sort the feed" withArrow>
           <div>
             <SelectMenuV2

@@ -28,12 +28,12 @@ describe('ImageFeedFilters sort while searching', () => {
     router.replace.mockClear();
   });
 
-  test('picking Newest puts searchSort=newest on the URL', async () => {
+  test('picking Newest matches puts searchSort=newest on the URL', async () => {
     router.query = { query: 'red dragon' };
     renderWithProviders(<ImageFeedFilters />);
 
     await page.getByText('Best match').click();
-    await page.getByText('Newest').click();
+    await page.getByText('Newest matches').click();
 
     expect(lastReplaceQuery()).toEqual({ query: 'red dragon', searchSort: 'newest' });
   });
@@ -42,7 +42,7 @@ describe('ImageFeedFilters sort while searching', () => {
     router.query = { query: 'red dragon', searchSort: 'newest' };
     renderWithProviders(<ImageFeedFilters />);
 
-    await page.getByText('Newest').click();
+    await page.getByText('Newest matches').click();
     await page.getByText('Best match').click();
 
     expect(lastReplaceQuery()).toEqual({ query: 'red dragon' });
@@ -54,6 +54,6 @@ describe('ImageFeedFilters sort while searching', () => {
     renderWithProviders(<ImageFeedFilters />);
 
     await expect.element(page.getByRole('button', { name: 'Best match' })).toBeDisabled();
-    expect(page.getByText('Newest').query()).toBeNull();
+    expect(page.getByText('Newest matches').query()).toBeNull();
   });
 });

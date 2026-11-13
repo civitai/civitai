@@ -175,6 +175,11 @@ describe('PublicEndpoint cache headers by caller', () => {
     }
   );
 
+  it("does NOT mark a verified crawler's response publicly cacheable", async () => {
+    const headers = await runPublicEndpoint({ headers: { 'x-civitai-verified-bot': 'googlebot' } });
+    expect(headers['Cache-Control']).toBe(PRIVATE_DEFAULT);
+  });
+
   it('does NOT mark the response publicly cacheable for an Authorization header', async () => {
     const headers = await runPublicEndpoint({ headers: { authorization: 'Bearer abc' } });
     expect(headers['Cache-Control']).toBe(PRIVATE_DEFAULT);

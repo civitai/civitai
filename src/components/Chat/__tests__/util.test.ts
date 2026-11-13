@@ -12,7 +12,9 @@ import {
   isChatLink,
   MODERATOR_BADGE_COSMETIC_ID,
   showsChatModeratorMark,
+  stripMarkdownForPreview,
 } from '~/components/Chat/util';
+import { groupRenamedNote } from '~/shared/utils/chat';
 
 // Every host our sites answer on, as `getOwnHosts` reads it from the domain config.
 const ownHosts = ['civitai.com', 'civitai.red', 'civitai.green'];
@@ -268,6 +270,15 @@ describe('a link to another of our sites', () => {
     const links = findLinks('https://civitai.green/models/1 https://example.com/x', linkifyOptions);
     expect(links.map((l) => l.href)).toEqual(['https://civitai.green/models/1']);
   });
+});
+
+describe('a group-rename note in the chat list preview', () => {
+  it.each(['Weekend_crew!', 'Art (WIP)', '[Open] <x> \\ #~|', '[a](b)', '**x**', '__x__', '`x`'])(
+    'shows %s as typed',
+    (name) => {
+      expect(stripMarkdownForPreview(groupRenamedNote(name))).toBe(`Group renamed to "${name}"`);
+    }
+  );
 });
 
 describe('chatPreviewText', () => {

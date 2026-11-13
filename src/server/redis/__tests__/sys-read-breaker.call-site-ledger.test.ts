@@ -12,16 +12,16 @@ import { scanSource } from '../../../../test/source-scan';
 
 const DEADLINE = 'src/server/redis/sys-read-deadline.ts';
 const BREAKER = 'src/server/redis/sys-read-breaker.ts';
+const VERIFIER = 'src/server/auth/session-verifier.ts';
 const scan = scanSource(process.cwd(), {
   withSysReadBreaker: DEADLINE,
+  withRevocationReadBreaker: DEADLINE,
   withSysReadDeadline: DEADLINE,
   withBreaker: BREAKER,
   createSysReadGuard: BREAKER,
 });
 
 const OPTED_IN_HOT_READS = [
-  // revocation check, every authenticated request
-  'src/server/auth/session-verifier.ts',
   // owned generation token, every authenticated generation call
   'src/server/orchestrator/get-orchestrator-token.ts',
   // generation client version, every generation tRPC call
@@ -46,11 +46,18 @@ describe('the sys read breaker', () => {
     expect(scan.callersOf('withSysReadBreaker')).toEqual(OPTED_IN_HOT_READS);
   });
 
-  it('has no way in other than withSysReadBreaker', () => {
-    // The process-wide guard is unexported in sys-read-deadline.ts. A caller that called a guard's
-    // withBreaker directly, or built its own guard, would skip the list above; only the deadline module may.
+  it('gives the session revocation read a breaker of its own, used nowhere else', () => {
+    // A failure on another opted-in read must never refuse the revocation read.
+    expect(scan.callersOf('withRevocationReadBreaker')).toEqual([VERIFIER]);
+  });
+
+  it('has no way in other than withSysReadBreaker and withRevocationReadBreaker', () => {
+    // Both guards are unexported in sys-read-deadline.ts. A caller that called a guard's withBreaker
+    // directly, or built its own guard, would skip the lists above; only the deadline module may, and it
+    // builds exactly two.
     expect(scan.callersOf('withBreaker')).toEqual([DEADLINE]);
     expect(scan.callersOf('createSysReadGuard')).toEqual([DEADLINE]);
+    expect(scan.code.get(DEADLINE)!.match(/\bcreateSysReadGuard\s*\(/g)).toHaveLength(2);
   });
 
   it('the scan sees the plain deadline everywhere else (positive control)', () => {

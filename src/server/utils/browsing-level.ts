@@ -113,13 +113,20 @@ export const domainBrowsingLevelCap = ({
 }) => (!isAuthorized ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined);
 
 /**
+ * The verified search crawler making this request, if any: the header the API request policy
+ * sets after checking the user agent and source address. Its answers can differ from a
+ * signed-out visitor's, so the edge cache must not keep them (`createContext`).
+ */
+export const requestVerifiedCrawler = (req: Pick<NextApiRequest, 'headers'> | undefined) =>
+  parseVerifiedBotHeader(req?.headers[VERIFIED_BOT_HEADER]);
+
+/**
  * `domainBrowsingLevelCap` for a request. A verified search crawler counts as signed in
  * where mature content is allowed (the `Gated` paywall bypass) and as signed out elsewhere.
  */
 export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'features' | 'req'>) {
   const canViewNsfw = !!ctx.features.canViewNsfw;
-  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
-  const isAuthorized = !!ctx.user || (verifiedBot !== null && canViewNsfw);
+  const isAuthorized = !!ctx.user || (requestVerifiedCrawler(ctx.req) !== null && canViewNsfw);
   return domainBrowsingLevelCap({ isAuthorized, canViewNsfw });
 }
 

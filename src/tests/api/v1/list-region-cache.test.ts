@@ -4,7 +4,7 @@ const { mockIsRegionRestricted } = vi.hoisted(() => ({ mockIsRegionRestricted: v
 
 vi.mock('~/server/services/article.service', () => ({
   getArticles: async () => ({ items: [], nextCursor: undefined }),
-  getArticleById: async () => ({ id: 7, nsfwLevel: 4, content: '<p>body</p>', contentImages: [] }),
+  getArticleById: async () => ({ id: 7, nsfwLevel: 1, content: '<p>body</p>', contentImages: [] }),
 }));
 vi.mock('~/server/services/collection.service', () => ({
   getAllCollections: async () => [],
