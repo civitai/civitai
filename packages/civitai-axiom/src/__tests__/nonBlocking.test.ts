@@ -92,4 +92,39 @@ describe('logToAxiom does not hold the caller on the Axiom dual-write', () => {
     await logToAxiom({ name: 'sent' });
     expect(h.ingestEvents).toHaveBeenCalledTimes(257);
   });
+
+  it('off-switch (awaitUploads, from AXIOM_AWAIT_UPLOADS=true): the caller waits for the outcome, at most 2 s', async () => {
+    vi.useFakeTimers();
+    h.ingestEvents.mockReturnValue(new Promise(() => {}));
+    const { logToAxiom } = createAxiomLogger({ ...PROD_CONFIGURED, awaitUploads: true });
+
+    let settled = false;
+    const call = logToAxiom({ name: 'x' }).then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    await call;
+    expect(settled).toBe(true);
+    expect(reports()[0]).toMatchObject({ reason: 'timeout' });
+  });
+});
+
+describe('AXIOM_AWAIT_UPLOADS wiring', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it.each([
+    ['true', true],
+    ['false', false],
+    [undefined, false],
+  ])('AXIOM_AWAIT_UPLOADS=%s gives awaitUploads=%s', async (raw, expected) => {
+    vi.resetModules();
+    if (raw !== undefined) vi.stubEnv('AXIOM_AWAIT_UPLOADS', raw);
+    const { loadAxiomEnv } = await import('../env');
+    expect(loadAxiomEnv().awaitUploads).toBe(expected);
+  });
 });
