@@ -55,7 +55,7 @@ async function scanAndRecord() {
   expect(await scanEntity({ entityType: 'Article', entityId: ARTICLE })).toMatchObject({
     status: 'submitted',
   });
-  const { body } = vi.mocked(submitWorkflow).mock.calls.at(-1)![0];
+  const body = vi.mocked(submitWorkflow).mock.calls.at(-1)?.[0]?.body;
   vi.mocked(getWorkflow).mockResolvedValue({
     data: {
       metadata: body!.metadata,
