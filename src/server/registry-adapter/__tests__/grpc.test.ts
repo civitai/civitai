@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createPollingAdapter } from '~/server/registry-adapter/cursor';
 import { abortableSleep } from '~/utils/errorHandling';
 import {
-  LEGACY_SOURCE_SERVICE,
   REGISTRY_SERVICE,
   createGrpcServer,
   decodeEvent,
@@ -226,29 +225,32 @@ describe('the gRPC binding', () => {
   });
 });
 
-describe('🔴 the method answers at the spec path and at the earlier spec path', () => {
-  it('the paths are the ones each spec names', () => {
+describe('🔴 the method answers at the spec path only', () => {
+  it('the service path is the one the spec names', () => {
     expect(REGISTRY_SERVICE.Subscribe.path).toBe('/registry.v1.Registry/Subscribe');
-    expect(LEGACY_SOURCE_SERVICE.Subscribe.path).toBe('/Source/Subscribe');
   });
 
   // Before, only `/Source/Subscribe` was registered: the spec path was UNIMPLEMENTED.
-  it.each([[SPEC_PATH], [LEGACY_PATH]])('%s: a snapshot, then live', async (path) => {
+  it('the spec path: a snapshot, then live', async () => {
     const res = await viaGrpc(
       catalog([[ent('alpha', 'r1')]]),
       {},
       (e) => e.some((x) => x.type === 'live'),
-      path
+      SPEC_PATH
     );
     expect(res.error).toBeUndefined();
     expect(kinds(res.events)).toEqual(['upsert', 'live']);
     expect(res.events[0]).toEqual({ type: 'upsert', entity: ent('alpha', 'r1'), cursor: '' });
   });
 
-  it('negative control: a path no spec names is UNIMPLEMENTED', async () => {
-    const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {}, () => false, '/Nope/Subscribe');
-    expect(res).toEqual({ events: [], error: { code: grpc.status.UNIMPLEMENTED, reason: null } });
-  });
+  // The earlier spec's path is not served; before, it was the only one that was.
+  it.each([[LEGACY_PATH], ['/Nope/Subscribe']])(
+    '%s is UNIMPLEMENTED, with no event',
+    async (path) => {
+      const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {}, () => false, path);
+      expect(res).toEqual({ events: [], error: { code: grpc.status.UNIMPLEMENTED, reason: null } });
+    }
+  );
 });
 
 describe('🔴 a gRPC consumer that stops reading (rule 8)', () => {

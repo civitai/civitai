@@ -5,9 +5,8 @@
  * core (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
  *
  *   - The method is `/registry.v1.Registry/Subscribe` ({@link SUBSCRIBE_PATH}), the path the spec
- *     names and a stub generated from its proto block calls. The same handler also answers
- *     `/Source/Subscribe` ({@link LEGACY_SUBSCRIBE_PATH}), the path under the earlier spec, whose
- *     proto declared `service Source` and no package; the messages are the same on both.
+ *     names and a stub generated from its proto block calls. The earlier spec's
+ *     `/Source/Subscribe` is not served (UNIMPLEMENTED).
  *   - `Entity.body` is the body's JSON text as UTF-8 bytes, the text the HTTP binding sends for
  *     it ({@link jsonBytes}), so a relay can pass it on byte for byte. `Entity.meta` and
  *     `Event.meta` are bytes too (a JSON object; empty is none): this source sets no `meta`, so it
@@ -117,11 +116,6 @@ message ErrorInfo {
 `;
 
 export const SUBSCRIBE_PATH = '/registry.v1.Registry/Subscribe';
-/**
- * DEPRECATED: the method's path under the earlier spec (`service Source`, no package). Served by
- * the same handler for consumers still on it; remove once none calls it.
- */
-export const LEGACY_SUBSCRIBE_PATH = '/Source/Subscribe';
 const ERROR_INFO_TYPE_URL = 'type.googleapis.com/google.rpc.ErrorInfo';
 export const GRPC_KEEPALIVE_MS = 15_000;
 const GRPC_KEEPALIVE_TIMEOUT_MS = 10_000;
@@ -250,30 +244,23 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
 
 export type WireRequest = { schema: string; cursor: string; urns: string[]; filter: string };
 
-function subscribeService(path: string): grpc.ServiceDefinition {
-  return {
-    Subscribe: {
-      path,
-      requestStream: false,
-      responseStream: true,
-      requestSerialize: (r: WireRequest) =>
-        Buffer.from(types.request.encode(types.request.fromObject(r)).finish()),
-      requestDeserialize: (buf: Buffer) =>
-        types.request.toObject(types.request.decode(buf), {
-          defaults: true,
-          arrays: true,
-        }) as WireRequest,
-      responseSerialize: encodeEvent,
-      responseDeserialize: decodeEvent,
-    },
-  };
-}
-
 /** `registry.v1.Registry`, the spec's service. */
-export const REGISTRY_SERVICE = subscribeService(SUBSCRIBE_PATH);
-
-/** DEPRECATED: the earlier spec's `Source` service, the same method at {@link LEGACY_SUBSCRIBE_PATH}. */
-export const LEGACY_SOURCE_SERVICE = subscribeService(LEGACY_SUBSCRIBE_PATH);
+export const REGISTRY_SERVICE: grpc.ServiceDefinition = {
+  Subscribe: {
+    path: SUBSCRIBE_PATH,
+    requestStream: false,
+    responseStream: true,
+    requestSerialize: (r: WireRequest) =>
+      Buffer.from(types.request.encode(types.request.fromObject(r)).finish()),
+    requestDeserialize: (buf: Buffer) =>
+      types.request.toObject(types.request.decode(buf), {
+        defaults: true,
+        arrays: true,
+      }) as WireRequest,
+    responseSerialize: encodeEvent,
+    responseDeserialize: decodeEvent,
+  },
+};
 
 /**
  * The trailers of an error: its status, and `ErrorInfo` naming it. An auth error also carries
@@ -417,7 +404,7 @@ export function createGrpcServer(
     'grpc.keepalive_time_ms': GRPC_KEEPALIVE_MS,
     'grpc.keepalive_timeout_ms': GRPC_KEEPALIVE_TIMEOUT_MS,
   });
-  const handler = {
+  server.addService(REGISTRY_SERVICE, {
     Subscribe: (call: Call) => {
       const sink = openCall(call, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       const run = async () => {
@@ -462,10 +449,7 @@ export function createGrpcServer(
       };
       void run();
     },
-  };
-  // One handler on both paths, so the two cannot drift.
-  server.addService(REGISTRY_SERVICE, handler);
-  server.addService(LEGACY_SOURCE_SERVICE, handler);
+  });
   return server;
 }
 

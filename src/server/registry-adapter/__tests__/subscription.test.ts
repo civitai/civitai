@@ -190,10 +190,51 @@ describe('end first only for a schema this source can never serve (rule 4: end m
       'urn:schema:apps.civitai.com:Orbit Notes/notes@v1',
     ],
     ['a collection URN without a major', 'urn:schema:apps.civitai.com:orbit-notes/notes'],
+    // The earlier spec's schema-stream URN: no longer served, so an unknown schema like any other.
+    ['the earlier spec’s schema-stream URN', LEGACY],
   ])('%s: end, and no cursor state read or written', async (_name, schema) => {
     const { adapter, store } = source({ apps: [app(MINTED, HEAD_MINTED)] });
     const res = await subscribe(adapter, q(schema));
-    expect([res.status, res.text, store.puts(), store.touches()]).toEqual([200, END_ONLY, 0, 0]);
+    expect([res.status, res.text, store.gets(), store.puts(), store.touches()]).toEqual([
+      200,
+      END_ONLY,
+      0,
+      0,
+      0,
+    ]);
+  });
+});
+
+describe('🔴 end comes before a filter refusal: a request never served is end whatever its filter', () => {
+  const APPS = 'urn:schema:apps.civitai.com:app@v1';
+  const REFUSED = filterParam('{"properties":{"slug":{"pattern":"^zzz"}}}');
+
+  // Before, the filter was compiled first, so each of these was 400 bad_request.
+  it.each([
+    ['a schema this source does not serve', q('urn:schema:elsewhere.example:model@v1', REFUSED)],
+    [
+      'urns all of another namespace',
+      q(APPS, urnParam('urn:huggingface:black-forest-labs/FLUX.3-dev@a1b2c3d') + REFUSED),
+    ],
+  ])('%s, with a refused filter: end, not bad_request', async (_name, query) => {
+    const { adapter, store } = source({ apps: [app(MINTED, HEAD_MINTED)] });
+    const res = await subscribe(adapter, query);
+    expect([res.status, res.text, store.gets(), store.puts(), store.touches()]).toEqual([
+      200,
+      END_ONLY,
+      0,
+      0,
+      0,
+    ]);
+  });
+
+  it('positive control: the same filter on a served request is bad_request', async () => {
+    const { adapter } = source({ apps: [app(MINTED, HEAD_MINTED)] });
+    const res = await subscribe(adapter, q(APPS, REFUSED));
+    expect([res.status, (JSON.parse(res.text) as { error: string }).error]).toEqual([
+      400,
+      'bad_request',
+    ]);
   });
 });
 
@@ -221,7 +262,13 @@ describe('🔴 end first for urns outside this namespace (rule 4)', () => {
   ])('%s: end, and no cursor state read or written', async (_name, schema, urns) => {
     const { adapter, store } = source({ apps: [app(MINTED, HEAD_MINTED)] });
     const res = await subscribe(adapter, q(schema, urnParam(...urns)));
-    expect([res.status, res.text, store.puts(), store.touches()]).toEqual([200, END_ONLY, 0, 0]);
+    expect([res.status, res.text, store.gets(), store.puts(), store.touches()]).toEqual([
+      200,
+      END_ONLY,
+      0,
+      0,
+      0,
+    ]);
   });
 
   it('a mix: the urns of this namespace are served, the foreign ones never appear, and no end', async () => {
@@ -244,40 +291,26 @@ describe('🔴 end first for urns outside this namespace (rule 4)', () => {
   });
 });
 
-describe('🔴 the schema stream answers under the root and under the earlier spec URN', () => {
-  // Before, the root was not served (end first), and the earlier URN was the only name.
-  it.each([[ROOT], [LEGACY]])(
-    '%s: every schema, each claiming exactly what was asked',
-    async (stream) => {
-      const { adapter } = source({ apps: [app(MINTED, HEAD_MINTED)] });
-      const res = await subscribe(adapter, q(stream), (t) => t.includes('event: live'));
-      const got = upserts(res.text);
-      expect(got.map((e) => e.urn).sort()).toEqual([
-        'urn:schema:apps.civitai.com:app-release@v1',
-        'urn:schema:apps.civitai.com:app@v1',
-        'urn:schema:apps.civitai.com:orbit-notes/notes@v1',
-        'urn:schema:apps.civitai.com:orbit-notes/notes@v2',
-        'urn:schema:apps.civitai.com:service@v1',
-      ]);
-      expect(new Set(got.map((e) => JSON.stringify(e.schemas)))).toEqual(
-        new Set([JSON.stringify([stream])])
-      );
-      // A schema's body declares the root as its `$schema`, whichever name the stream was asked by.
-      expect(new Set(got.map((e) => (e.body as { $schema?: unknown }).$schema))).toEqual(
-        new Set([ROOT])
-      );
-    }
-  );
-
-  it('both names carry the same bodies', async () => {
+describe('🔴 the schema stream is the root', () => {
+  // Before, the root was not served (end first); the earlier URN, now end, was the stream.
+  it.each([[ROOT]])('%s: every schema, each claiming the root', async (stream) => {
     const { adapter } = source({ apps: [app(MINTED, HEAD_MINTED)] });
-    const bodies = async (stream: string) =>
-      Object.fromEntries(
-        upserts((await subscribe(adapter, q(stream), (t) => t.includes('event: live'))).text).map(
-          (e) => [e.urn, e.body]
-        )
-      );
-    expect(await bodies(LEGACY)).toEqual(await bodies(ROOT));
+    const res = await subscribe(adapter, q(stream), (t) => t.includes('event: live'));
+    const got = upserts(res.text);
+    expect(got.map((e) => e.urn).sort()).toEqual([
+      'urn:schema:apps.civitai.com:app-release@v1',
+      'urn:schema:apps.civitai.com:app@v1',
+      'urn:schema:apps.civitai.com:orbit-notes/notes@v1',
+      'urn:schema:apps.civitai.com:orbit-notes/notes@v2',
+      'urn:schema:apps.civitai.com:service@v1',
+    ]);
+    expect(new Set(got.map((e) => JSON.stringify(e.schemas)))).toEqual(
+      new Set([JSON.stringify([stream])])
+    );
+    // A schema's body declares the root as its `$schema` too.
+    expect(new Set(got.map((e) => (e.body as { $schema?: unknown }).$schema))).toEqual(
+      new Set([ROOT])
+    );
   });
 });
 

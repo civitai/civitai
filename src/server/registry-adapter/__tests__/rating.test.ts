@@ -851,9 +851,8 @@ describe('the re-check is jittered, so streams opened together do not re-check t
   );
 });
 
-const SCHEMAS = 'urn:schema:registry:schema@v1';
-// The schema stream's name under the current spec, the root; SCHEMAS is the earlier spec's.
-const ROOT = 'https://json-schema.org/draft/2020-12/schema';
+// The schema stream: the root, JSON Schema 2020-12's own meta-schema.
+const SCHEMAS = 'https://json-schema.org/draft/2020-12/schema';
 const FIXED_SCHEMA_URNS = [APPS, RELEASES, SERVICES];
 const urnOfApp = (slug: string) => `urn:apps.civitai.com:app/${slug}`;
 const releaseOf = (slug: string) => `urn:apps.civitai.com:app/${slug}@1.0.0`;
@@ -951,28 +950,22 @@ describe('🔴 readableBy fails closed on a release whose app is not in the read
 describe('🔴 the schema stream carries an app’s collection schemas only to a token that may read its rating', () => {
   const both = () => [listedApp('sun-notes', 'pg'), listedApp('moon-notes', 'r')];
 
-  it.each([[ROOT], [SCHEMAS]])(
-    'anonymous on %s: the fixed entity schemas and the pg app’s collection schema, and the r app is never named',
-    async (stream) => {
-      const port = await httpServer(catalogSource(both));
-      const res = await get(port, q(stream));
-      expect(upsertedUrns(res.text)).toEqual(
-        [...FIXED_SCHEMA_URNS, notesSchemaOf('sun-notes')].sort()
-      );
-      expect(res.text).not.toContain('moon-notes');
-    }
-  );
+  it('anonymous: the fixed entity schemas and the pg app’s collection schema, and the r app is never named', async () => {
+    const port = await httpServer(catalogSource(both));
+    const res = await get(port, q(SCHEMAS));
+    expect(upsertedUrns(res.text)).toEqual(
+      [...FIXED_SCHEMA_URNS, notesSchemaOf('sun-notes')].sort()
+    );
+    expect(res.text).not.toContain('moon-notes');
+  });
 
-  it.each([[ROOT], [SCHEMAS]])(
-    'an R token on %s: both apps’ collection schemas and the fixed ones',
-    async (stream) => {
-      const port = await httpServer(catalogSource(both));
-      const res = await get(port, q(stream), bearer('r-token'));
-      expect(upsertedUrns(res.text)).toEqual(
-        [...FIXED_SCHEMA_URNS, notesSchemaOf('moon-notes'), notesSchemaOf('sun-notes')].sort()
-      );
-    }
-  );
+  it('an R token: both apps’ collection schemas and the fixed ones', async () => {
+    const port = await httpServer(catalogSource(both));
+    const res = await get(port, q(SCHEMAS), bearer('r-token'));
+    expect(upsertedUrns(res.text)).toEqual(
+      [...FIXED_SCHEMA_URNS, notesSchemaOf('moon-notes'), notesSchemaOf('sun-notes')].sort()
+    );
+  });
 
   it('🔴 an app re-rated from pg to r: its collection schema reaches the anonymous stream as a delete', async () => {
     const world = { rating: 'pg' };

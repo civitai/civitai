@@ -5,12 +5,8 @@ import type { CatalogApp } from '~/server/registry-adapter/entities';
 import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
 import { newValidator } from '~/server/registry-adapter/json-schema';
 import type { Entity } from '~/server/registry-adapter/protocol';
-import {
-  APP_RELEASE_SCHEMA,
-  APP_SCHEMA,
-  ROOT_SCHEMA,
-  SERVICE_SCHEMA,
-} from '~/server/registry-adapter/urn';
+import { APP_RELEASE_SCHEMA, APP_SCHEMA, SERVICE_SCHEMA } from '~/server/registry-adapter/urn';
+import { JSON_SCHEMA_DIALECT } from '~/server/registry-adapter/collection-schema';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
@@ -110,7 +106,7 @@ const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
 /** The validator of each schema entity the build published, compiled from its body. */
 function compiled(sets: ReturnType<typeof buildEntities>) {
   const docs = new Map(
-    (sets.get(ROOT_SCHEMA) ?? []).map((e) => [e.urn, e.body as Record<string, unknown>])
+    (sets.get(JSON_SCHEMA_DIALECT) ?? []).map((e) => [e.urn, e.body as Record<string, unknown>])
   );
   const cache = new Map<string, ValidateFunction>();
   return (schema: string): ValidateFunction => {
@@ -126,10 +122,9 @@ function compiled(sets: ReturnType<typeof buildEntities>) {
 }
 
 describe('the schemas of our own entities', () => {
-  // The schema stream under both its names: the current spec's root, and the earlier spec's URN,
-  // kept for consumers still on it. Each entity claims the name it was asked for, since a
-  // consumer validates what it asked.
-  it.each([['https://json-schema.org/draft/2020-12/schema'], ['urn:schema:registry:schema@v1']])(
+  // The schema stream is the root, JSON Schema 2020-12's own meta-schema, and each schema entity
+  // claims it. Before, the stream was `urn:schema:registry:schema@v1`.
+  it.each([['https://json-schema.org/draft/2020-12/schema']])(
     '🔴 the live adapter serves them on the schema stream %s, with the registry switch off',
     async (stream) => {
       const adapter = createPollingAdapter({
@@ -151,6 +146,18 @@ describe('the schemas of our own entities', () => {
       );
     }
   );
+
+  // The earlier spec's schema-stream URN is no longer served: a subscription for it is a schema
+  // this source has no source for, answered `end` (`subscription.test.ts` drives that).
+  it('the served schemas are the root and the three entity schemas, and nothing else', () => {
+    expect([...SERVED_SCHEMAS]).toEqual([
+      'https://json-schema.org/draft/2020-12/schema',
+      'urn:schema:apps.civitai.com:app@v1',
+      'urn:schema:apps.civitai.com:app-release@v1',
+      'urn:schema:apps.civitai.com:service@v1',
+    ]);
+    expect(SERVED_SCHEMAS).not.toContain('urn:schema:registry:schema@v1');
+  });
 
   it.each([
     ['on', SWITCH_ON],
@@ -245,7 +252,7 @@ describe('the schemas of our own entities', () => {
 
   it("the app schema tells a consumer that a document's rating is its app's", () => {
     const sets = buildEntities([], { baseUrl: 'https://site.example' });
-    const app = (sets.get(ROOT_SCHEMA) ?? []).find((e) => e.urn === APP_SCHEMA)!;
+    const app = (sets.get(JSON_SCHEMA_DIALECT) ?? []).find((e) => e.urn === APP_SCHEMA)!;
     const rating = (app.body as { properties: { contentRating: Record<string, unknown> } })
       .properties.contentRating;
     // The whole sentence: a consumer reads it, so a rewording is a deliberate change.

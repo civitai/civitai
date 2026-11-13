@@ -4,12 +4,12 @@
  * events and errors out, so the two cannot drift.
  *
  * In order, for one request:
- *   1. the filter is compiled (`bad_request` for one that is not a schema, or one this source
+ *   1. a request this source can never serve anything for is answered `end` first (rule 4),
+ *      before its filter is compiled and before any cursor state is read or written: a schema
+ *      it has no source for (`Adapter.serves`: `end` means never), or `urns` none of which is of
+ *      its namespace ({@link servesAnyUrn});
+ *   2. the filter is compiled (`bad_request` for one that is not a schema, or one this source
  *      will not evaluate: rule 6, a filter is applied in full or refused, never ignored);
- *   2. a request this source can never serve anything for is answered `end` first (rule 4),
- *      before any cursor state is read or written: a schema it has no source for
- *      (`Adapter.serves`: `end` means never), or `urns` none of which is of its namespace
- *      ({@link servesAnyUrn});
  *   3. a resume's cursor is checked against the request and the token's subject (rule 2, the
  *      auth extension; {@link unbindCursor}), then by the adapter, which for a document, app,
  *      release or schema stream also checks the token's audience, all before `live`, so a refused cursor is
@@ -152,11 +152,13 @@ export function createSubscriber(adapter: Adapter) {
     principal: Principal = ANONYMOUS_PRINCIPAL
   ): Promise<void> {
     const { signal } = sink;
+    // Before the filter: a request that can never be served is `end` whatever its filter, and
+    // neither check reads any state.
+    if (!adapter.serves(req.schema)) return sink.send({ type: 'end' });
+    if (!servesAnyUrn(req.urns, adapter.namespace)) return sink.send({ type: 'end' });
     const filter = compileFilter(req.filter);
     const matches = filter ?? (() => true);
     const ctx = { signal, audience: principal.audience };
-    if (!adapter.serves(req.schema)) return sink.send({ type: 'end' });
-    if (!servesAnyUrn(req.urns, adapter.namespace)) return sink.send({ type: 'end' });
 
     const binding = requestBinding(req, principal.subject);
     const bind = (cursor: string) => bindCursor(cursor, binding);

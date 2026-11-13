@@ -7,6 +7,7 @@ import { audienceAdmits, isKnownRating } from '~/server/registry-adapter/audienc
 import type { Entity } from '~/server/registry-adapter/protocol';
 import {
   HEAD_STEP,
+  JSON_SCHEMA_DIALECT,
   collectionSchemaDocuments,
   deriveCollectionMajors,
   exportedCollections,
@@ -17,10 +18,7 @@ import { sortedKeyJson, releaseBody, sha256Hex } from '~/server/registry-adapter
 import {
   APP_RELEASE_SCHEMA,
   APP_SCHEMA,
-  LEGACY_SCHEMA_SCHEMA,
   REGISTRY_NAMESPACE,
-  ROOT_SCHEMA,
-  SCHEMA_STREAMS,
   SERVICE_SCHEMA,
   parseCollectionSchemaUrn,
   registryUrn,
@@ -29,9 +27,14 @@ import type { UrnRef } from '~/server/registry-adapter/urn';
 import type { AppStorageFeature } from '~/shared/constants/block-storage.constants';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
+/**
+ * The schema stream is the root (registry spec, "Schemas"): JSON Schema 2020-12's own meta-schema,
+ * {@link JSON_SCHEMA_DIALECT}, the `$schema` every schema body declares. Every schema entity claims
+ * it. The earlier spec's `urn:schema:registry:schema@v1` is not served: it is an unknown schema
+ * like any other, answered `end`.
+ */
 export const SERVED_SCHEMAS = [
-  ROOT_SCHEMA,
-  LEGACY_SCHEMA_SCHEMA,
+  JSON_SCHEMA_DIALECT,
   APP_SCHEMA,
   APP_RELEASE_SCHEMA,
   SERVICE_SCHEMA,
@@ -86,15 +89,15 @@ export type EntitySets = Map<string, Entity[]>;
 
 /**
  * The entity schemas that carry an app's content, and so its rating, and are narrowed per
- * audience (`audience.ts` describes how). The schema stream is one, under both its names
- * ({@link SCHEMA_STREAMS}): beside the fixed entity schemas it holds every collection schema,
+ * audience (`audience.ts` describes how). The schema stream ({@link JSON_SCHEMA_DIALECT}) is one:
+ * beside the fixed entity schemas it holds every collection schema,
  * whose URN names its app and whose body is that app's declared schema. The one schema left out,
  * `service`, is the runtime record, which belongs to no app.
  */
 export const RATED_SCHEMAS: ReadonlySet<string> = new Set([
   APP_SCHEMA,
   APP_RELEASE_SCHEMA,
-  ...SCHEMA_STREAMS,
+  JSON_SCHEMA_DIALECT,
 ]);
 
 /** The fixed entity schema documents: on the schema stream, and belonging to no app. */
@@ -148,7 +151,7 @@ export function readableBy(sets: EntitySets, schema: string, audience: Audience)
     audienceAdmits(audience, ratings.get(appUrn));
   const readable = all.filter(
     (e) =>
-      (SCHEMA_STREAMS.includes(schema) && ENTITY_SCHEMA_URNS.has(e.urn)) ||
+      (schema === JSON_SCHEMA_DIALECT && ENTITY_SCHEMA_URNS.has(e.urn)) ||
       admitted(appUrnOf(schema, e))
   );
   if (schema !== APP_SCHEMA) return readable;
@@ -209,11 +212,9 @@ export function buildEntities(
   const features = opts.features ?? APP_STORAGE_ENABLED_FEATURES;
   const sets: EntitySets = new Map(SERVED_SCHEMAS.map((s) => [s, [] as Entity[]]));
   const add = (schema: string, e: Entity) => sets.get(schema)!.push(e);
-  // A schema entity, on the schema stream under each of its names, claiming the name it is served
-  // under: a consumer validates an entity against the schema it asked for.
-  const addSchema = (urn: string, body: unknown) => {
-    for (const stream of SCHEMA_STREAMS) add(stream, entity(urn, stream, body));
-  };
+  // A schema entity: on the schema stream, claiming the root.
+  const addSchema = (urn: string, body: unknown) =>
+    add(JSON_SCHEMA_DIALECT, entity(urn, JSON_SCHEMA_DIALECT, body));
   // The schemas the entities below claim, published by this source whatever the catalog holds.
   for (const doc of ENTITY_SCHEMA_DOCUMENTS) addSchema(doc.$id as string, doc);
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
