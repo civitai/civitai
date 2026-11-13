@@ -112,6 +112,16 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
             @{filters.username}
           </Pill>
         )}
+        {isClient && filters.fromPlatform && (
+          <Pill withRemoveButton onRemove={() => update({ fromPlatform: undefined })}>
+            Made On-site
+          </Pill>
+        )}
+        {isClient && filters.withMeta && (
+          <Pill withRemoveButton onRemove={() => update({ withMeta: undefined })}>
+            Metadata only
+          </Pill>
+        )}
         <Anchor component="button" size="sm" onClick={() => update({ query: undefined })}>
           Clear search
         </Anchor>

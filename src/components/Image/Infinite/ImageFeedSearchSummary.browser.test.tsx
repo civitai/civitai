@@ -71,6 +71,24 @@ describe('ImageFeedSearchSummary', () => {
     expect(router.replace).not.toHaveBeenCalled();
   });
 
+  test('shows Made On-site and Metadata only, and removing one takes it off the URL', async () => {
+    router.query = { query: 'red dragon', fromPlatform: 'true', withMeta: 'true' };
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query="red dragon"
+        filters={{ fromPlatform: true, withMeta: true }}
+        failed={false}
+        onRetry={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('Metadata only')).toBeVisible();
+    await removeChip('Made On-site');
+    expect(router.replace.mock.calls.at(-1)?.[0].query).toEqual({
+      query: 'red dragon',
+      withMeta: 'true',
+    });
+  });
+
   test('removing the last base model from the URL clears a saved one rather than uncovering it', async () => {
     saved.images = { baseModels: ['Pony'] };
     renderSummary();
