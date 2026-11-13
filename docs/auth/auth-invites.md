@@ -18,7 +18,8 @@ re-checked when a link is used, so disabling the app also stops invites already 
 
 - `email` must be a plain address.
 - `returnUrl` must be absolute, on one of the app's allowed origins, and on a host the hub's post-login
-  redirect follows.
+  redirect follows. A system app's allowed origins follow its redirect URIs, which hub admin, OAuth Apps,
+  Edit changes.
 - `invitedBy` and `message` are optional plain text with length caps. They are escaped in the email and
   never made into links by the hub, though mail clients may still auto-link text that looks like a domain.
 
