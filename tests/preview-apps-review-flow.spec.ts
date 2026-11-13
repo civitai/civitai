@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import JSZip from 'jszip';
+import { previewAppBlockManifest } from './preview-app-block-manifest';
 import { storageStatePath } from './preview-fixtures';
 import { trpcMutation, trpcQuery } from './preview-trpc';
 
@@ -53,21 +54,9 @@ const SLUG_A = previewSlug('a');
 const SLUG_B = previewSlug('b');
 
 async function bundle(slug: string): Promise<string> {
-  const manifest = {
-    blockId: slug,
-    version: '0.1.0',
-    name: `CI review flow ${slug.slice(-6)}`,
-    contentRating: 'g',
-    scopes: [] as string[],
-    // Must be approvable: submit runs the approve-time manifest validator (#8240), which
-    // requires the full iframe shape — the same fixture `preview-apps-publish.spec.ts` uses.
-    iframe: {
-      minHeight: 300,
-      maxHeight: null,
-      resizable: true,
-      sandbox: 'allow-scripts allow-forms',
-    },
-  };
+  // Must be approvable (submit runs the approve-time manifest validator, #8240) AND pass the build
+  // pipeline's manifest check — the same builder `preview-apps-publish.spec.ts` uses.
+  const manifest = previewAppBlockManifest({ slug, name: `CI review flow ${slug.slice(-6)}` });
   const zip = new JSZip();
   zip.file('block.manifest.json', JSON.stringify(manifest, null, 2));
   // Enough lines that an expanded diff makes the page long.

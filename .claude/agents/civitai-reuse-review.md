@@ -112,7 +112,10 @@ instead of picking the right rung is a reuse finding. `src/server/middleware.trp
 **Hooks** (`src/hooks/`). `useCurrentUser`, `useIsClient`, `useIsMounted`, `useIsMobile`, `useInView`,
 `useResizeObserver`, `useStorage`, `useZodRouteParams`, `useCatchNavigation`, `useIsOverflown`,
 `useDebouncer`-shaped helpers in `src/utils/debouncer.ts`, and the upload trio
-`useS3Upload`/`useCFImageUpload`/`useMediaUpload`. Uploads in particular get rewritten constantly.
+`useS3Upload`/`useCFImageUpload`/`useMediaUpload`. Uploads in particular get rewritten constantly: any
+browser multipart upload through `/api/upload` goes through `startMultipartUpload`
+(`src/utils/multipart-upload.ts`). A hand-written `min(base * 2 ** attempt, max)` is `backoffDelay`
+(`src/utils/backoff.ts`).
 
 **Constants and enums.** `src/shared/constants/` (`browsingLevel.constants.ts`, `buzz.constants.ts`,
 `generation.constants.ts`, `basemodel.constants.ts`, …) and `~/shared/utils/prisma/enums`. A magic
