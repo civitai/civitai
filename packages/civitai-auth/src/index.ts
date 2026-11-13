@@ -54,8 +54,17 @@ export {
   SESSION_REAUTH_HEADER,
 } from './spoke-signin'; // a first-party app's own sign-in routes
 export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from './spoke-signin';
-export { createRevocationCheck } from './revocation-check';
-export type { RevocationCheckConfig } from './revocation-check';
+export {
+  createRevocationCheck,
+  DEFAULT_REVOCATION_READ_TIMEOUT_MS,
+  revocationReadTimeoutMs,
+} from './revocation-check';
+export type {
+  RevocationCheckConfig,
+  RevocationDegradedVerdict,
+  RevocationFailureReason,
+  RevocationOutcome,
+} from './revocation-check';
 export {
   buildAuthorizeRedirect,
   completeFirstPartyCallback,

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -31,6 +32,7 @@ import type { SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import {
   useImageFeedSearchQuery,
+  useSearchPeriod,
   useSemanticImageFeed,
 } from '~/components/Image/Infinite/useImageFeedSearch';
 import type { ImageGetInfinite } from '~/types/router';
@@ -88,13 +90,16 @@ function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const query = useImageFeedSearchQuery();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
   const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
-  return <ImagesFeed {...props} feedSearch={{ query, refusal, profanityMatches }} />;
+  const period = useSearchPeriod(!!query);
+  return <ImagesFeed {...props} feedSearch={{ query, refusal, profanityMatches, period }} />;
 }
 
 type FeedSearch = {
   query?: string;
   refusal?: SearchRefusal;
   profanityMatches: string[];
+  /** The saved feed period while `useSearchPeriod` is still writing it. */
+  period?: MetricTimeframe;
 };
 
 function ImagesFeed({
@@ -115,7 +120,13 @@ function ImagesFeed({
   const features = useFeatureFlags();
   const imageFilters = useImageFilters(filterType);
   const { query: rawSearchQuery, ...computedFilters } = removeEmpty({
-    ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
+    ...(disableStoreFilters
+      ? filterOverrides
+      : {
+          ...imageFilters,
+          ...(feedSearch?.period && { period: feedSearch.period }),
+          ...filterOverrides,
+        }),
     withTags,
   });
   const refusal = rawSearchQuery ? feedSearch?.refusal : undefined;
@@ -148,6 +159,7 @@ function ImagesFeed({
     [searchQuery, filters, browsingLevel]
   );
   const search = useSemanticImageFeed(searchInput);
+  useScrollToTopOnChange(searchInput && JSON.stringify(searchInput));
   // A search that fails falls back to the plain feed with a banner, never an empty page.
   const searchFailed = !!searchInput && search.isError;
   const searching = !!searchInput && !searchFailed;

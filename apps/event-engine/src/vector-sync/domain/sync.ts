@@ -219,7 +219,7 @@ export type Domain<P extends DomainPayload> = {
   refFromEvent: (topic: string, value: unknown) => DomainRef | null;
   /** Tables that must stream before it embeds, or an unpublish could miss the index. */
   cdcTables: string[];
-  /** The payload field listing child ids, for a child delete that carries only its own id. */
+  /** The payload field holding child ids, for a child event that carries only its own id. */
   childField?: keyof P & string;
   /** The OutboxEntity whose search.update rows name this domain's ids. */
   outboxEntity?: string;

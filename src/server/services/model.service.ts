@@ -39,9 +39,13 @@ import {
   FEATURED_MODEL_COLLECTION_ID,
   MODELS_SEARCH_INDEX,
   normalizeMergePermissions,
-  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  DEPRECATED_BASE_MODELS,
+  isMatureRestricted,
+  matureRestrictedBaseModels,
+} from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
@@ -133,12 +137,16 @@ import {
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
+import { readModelsWithVersionsStats } from '~/server/services/hot-reads-11.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
 import { holdRestrictedVerdict } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
-import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
+import {
+  enforceBlockedBrowsingTagsForModels,
+  getShowcaseImageFilter,
+} from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
@@ -1452,17 +1460,13 @@ export const getModelsRaw = async ({
             modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
           }
 
-          // Filter out NSFW versions for license-restricted base models
-          // Models with nsfwLevel > R cannot use base models with restricted licenses
-          if (nsfwRestrictedBaseModels.length > 0) {
-            modelVersions = modelVersions.filter(
-              (mv) =>
-                !(
-                  (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
-                  nsfwRestrictedBaseModels.includes(mv.baseModel)
-                )
-            );
-          }
+          modelVersions = modelVersions.filter(
+            (mv) =>
+              !(
+                (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
+                isMatureRestricted(mv.baseModel, 'models')
+              )
+          );
 
           if (hidePrivateModels || publicVersionsOnly) {
             modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
@@ -4191,14 +4195,14 @@ export const upsertModel = async (
   if (data.nsfw && 'modelVersions' in input && input.modelVersions) {
     const modelVersions = input.modelVersions as Array<{ baseModel: string }>;
     const hasRestrictedBaseModel = modelVersions.some((version) =>
-      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+      isMatureRestricted(version.baseModel, 'models')
     );
 
     if (hasRestrictedBaseModel) {
       throw throwBadRequestError(
-        `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
-          ', '
-        )}`
+        `NSFW models cannot use base models with license restrictions. Restricted base models: ${matureRestrictedBaseModels(
+          'models'
+        ).join(', ')}`
       );
     }
   }
@@ -5115,14 +5119,14 @@ export const publishModelById = async ({
       // Validate NSFW + restricted base model combination
       if (model.nsfw) {
         const hasRestrictedBaseModel = model.modelVersions.some((version) =>
-          nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+          isMatureRestricted(version.baseModel, 'models')
         );
 
         if (hasRestrictedBaseModel) {
           throw throwBadRequestError(
-            `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
-              ', '
-            )}`
+            `NSFW models cannot use base models with license restrictions. Restricted base models: ${matureRestrictedBaseModels(
+              'models'
+            ).join(', ')}`
           );
         }
       }
@@ -6672,6 +6676,13 @@ export async function getModelsWithVersions({
       )
     )
   );
+  // Card images follow the viewer's browsing-settings exclusions at the request's level, also on a
+  // by-id lookup, where `ignoreBrowsingAddons` only stops them deciding which models are found.
+  const showsCardImage = await getShowcaseImageFilter({
+    browsingLevel: input.browsingLevel,
+    viewer: { id: user?.id, username: user?.username, isModerator: user?.isModerator },
+    excludedTagIds: input.excludedTagIds,
+  });
   // const images = await getImagesForModelVersion({
   //   modelVersionIds,
   //   imagesPerVersion: 10,
@@ -6683,17 +6694,10 @@ export async function getModelsWithVersions({
   // });
 
   const next = await nextCoverageEnabled();
+  const modelIds = items.map(({ id }) => id);
+  const { vaeLinkedRows, metrics, versionMetrics, versionMetaRows } =
+    await readModelsWithVersionsStats({ modelIds, modelVersionIds });
   // Get VAE version IDs from linked components
-  const allMvIds = items.flatMap(({ modelVersions }) => modelVersions.map((v) => v.id));
-  const vaeLinkedRows = allMvIds.length
-    ? await dbRead.recommendedResource.findMany({
-        where: {
-          sourceId: { in: allMvIds },
-          settings: { path: ['isLinkedComponent'], equals: true },
-        },
-        select: { sourceId: true, resourceId: true, settings: true },
-      })
-    : [];
   const vaeMap = new Map<number, number>();
   for (const row of vaeLinkedRows) {
     const s = row.settings as Record<string, unknown>;
@@ -6705,15 +6709,6 @@ export async function getModelsWithVersions({
   const vaeFiles = vaeIds.length ? await getVaeFiles({ vaeIds }) : [];
 
   const groupedFiles = await getFilesForModelVersionCache(modelVersionIds);
-
-  const modelIds = items.map(({ id }) => id);
-  const metrics = await dbRead.modelMetric.findMany({
-    where: { modelId: { in: modelIds } },
-  });
-
-  const versionMetrics = await dbRead.modelVersionMetric.findMany({
-    where: { modelVersionId: { in: modelVersionIds } },
-  });
 
   // Creator Controls metric privacy for the v1 public API. Only download + tipped
   // are exposed today (no generation count in v1 stats), so we gate what exists.
@@ -6735,12 +6730,6 @@ export async function getModelsWithVersions({
 
   // Version-level meta isn't carried by dataForModelsCache, so fetch it to honor the
   // version-OR-model-OR-user precedence for v1 version stats (a version-only hide).
-  const versionMetaRows = modelVersionIds.length
-    ? await dbRead.modelVersion.findMany({
-        where: { id: { in: modelVersionIds } },
-        select: { id: true, meta: true },
-      })
-    : [];
   const versionMetaMap = new Map<number, unknown>(versionMetaRows.map((v) => [v.id, v.meta]));
 
   function getStatsForModel(modelId: number, hidden: HiddenModelMetrics) {
@@ -6843,20 +6832,22 @@ export async function getModelsWithVersions({
                 //       ...image,
                 //     })
                 //   ),
-                images: (images[version.id]?.images ?? []).map(
-                  ({
-                    modelVersionId,
-                    name,
-                    userId,
-                    sizeKB,
-                    availability,
-                    metadata,
-                    tags,
-                    ...image
-                  }) => ({
-                    ...image,
-                  })
-                ),
+                images: (images[version.id]?.images ?? [])
+                  .filter(showsCardImage)
+                  .map(
+                    ({
+                      modelVersionId,
+                      name,
+                      userId,
+                      sizeKB,
+                      availability,
+                      metadata,
+                      tags,
+                      ...image
+                    }) => ({
+                      ...image,
+                    })
+                  ),
               };
             }
           ),

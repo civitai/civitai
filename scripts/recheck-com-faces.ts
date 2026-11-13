@@ -13,10 +13,9 @@ import { chunksFrom, parseIdsCsv } from './recompute-mature-model-nsfw-levels';
 /**
  * Queue the civitai.com listing re-check for every model that has a .com face, through the path the
  * `com-face-recheck` job already runs: a due retry row in "KeyValue" (`com-face-recheck:<modelId>`),
- * which the job checks ahead of fresh edits. Each check keeps the face, takes it off civitai.com when
- * the listing is flagged, or retries for 24 hours from the row's insert and then takes it off as
- * unverified (`recheckComFace` / `processComFaceRechecks`). Nothing here messages owners. Postgres
- * only: no Redis.
+ * which the job checks ahead of fresh edits, retrying for 24 hours from the row's insert
+ * (`recheckComFace` / `processComFaceRechecks`). Nothing here messages owners. Postgres only: no
+ * Redis.
  *
  * Every face, not only those saved before the intent check went live: nothing records when a face
  * was saved or last passed the check, and Model.updatedAt moves on unrelated writes (a lock toggle,

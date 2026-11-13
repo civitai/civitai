@@ -1824,6 +1824,8 @@ export const createCrucibleEntryPost = async ({
 };
 
 const CANNOT_ENTER_OWN_CRUCIBLE = "You can't enter a crucible you created";
+const UPLOAD_PROCESSING_FAILED_MESSAGE =
+  'Processing this upload failed. Upload it again, or try again later.';
 
 export type CrucibleEntryIneligibleReason =
   | 'created-before-start'
@@ -2175,6 +2177,9 @@ export const submitEntry = async ({
       return throwBadRequestError('Only published images can be entered');
     }
 
+    if (image.ingestion === ImageIngestionStatus.Error) {
+      return throwBadRequestError(UPLOAD_PROCESSING_FAILED_MESSAGE);
+    }
     // Judging and the grid only show scanned entries, so an unscanned one would be paid for unseen.
     if (image.ingestion !== ImageIngestionStatus.Scanned) {
       return throwBadRequestError('This image is still being checked. Try again once it finishes.');

@@ -1,4 +1,6 @@
+import type { SessionUser } from '~/types/session';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { Flags } from '~/shared/utils/flags';
 import { getSponsoredModel } from '~/server/services/promotion.service';
 import { sponsoredSlotIndex } from '~/shared/utils/promotion';
@@ -157,6 +159,7 @@ import {
   purgeHeldShowcase,
   queueModelEarlyAccessReindex,
   upsertModel,
+  holdShowcaseImages,
 } from '~/server/services/model.service';
 import { getOfficialModelIds } from '~/server/services/resource-select.service';
 import {
@@ -1950,6 +1953,72 @@ export type AssociatedResourceArticleCardData = Extract<
   AssociatedResourceCardData,
   { resourceType: 'article' }
 >;
+/**
+ * Associated-resource card images: a minor or SFW-only model's showcase held at its gallery level
+ * (its owner and moderators see it whole on a session or full key, as in the gallery), then the
+ * viewer's poi and minor settings, which `getModelsRaw` resolved onto the model input.
+ */
+async function associatedCardImages<
+  I extends {
+    modelVersionId: number;
+    nsfwLevel: number;
+    userId: number;
+    poi?: boolean | null;
+    minor?: boolean | null;
+  }
+>(
+  images: I[],
+  models: {
+    id: number;
+    minor?: boolean;
+    sfwOnly?: boolean;
+    user: { id: number };
+    modelVersions: { id: number }[];
+  }[],
+  opts: {
+    viewer?: SessionUser;
+    exempt: boolean;
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+  }
+) {
+  const exemptViewer = opts.exempt ? opts.viewer : undefined;
+  let shown = images;
+  if (!exemptViewer?.isModerator) {
+    const byVersion: Record<number, { images: I[] }> = {};
+    for (const image of images)
+      (byVersion[image.modelVersionId] ??= { images: [] }).images.push(image);
+    const ownedVersions = new Set(
+      models
+        .filter((model) => exemptViewer && model.user.id === exemptViewer.id)
+        .flatMap((model) => model.modelVersions.map((version) => version.id))
+    );
+    const held = await holdShowcaseImages(
+      byVersion,
+      new Map(
+        models.flatMap((model) =>
+          model.modelVersions.map(
+            (version) =>
+              [
+                version.id,
+                { modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly },
+              ] as const
+          )
+        )
+      )
+    );
+    shown = Object.entries(held).flatMap(([versionId, entry]) =>
+      ownedVersions.has(Number(versionId)) ? byVersion[Number(versionId)].images : entry.images
+    );
+  }
+  return filterImagesForViewer(shown, {
+    browsingLevel: allBrowsingLevelsFlag,
+    disablePoi: opts.disablePoi,
+    disableMinor: opts.disableMinor,
+    viewer: exemptViewer,
+  });
+}
+
 export const getAssociatedResourcesCardDataHandler = async ({
   input,
   ctx,
@@ -2040,6 +2109,12 @@ export const getAssociatedResourcesCardDataHandler = async ({
           browsingLevel: modelInput.browsingLevel,
         })
       : [];
+    const shownImages = await associatedCardImages(images, models, {
+      viewer: user,
+      exempt: isSessionOrFullUserKey(ctx),
+      disablePoi: modelInput.disablePoi,
+      disableMinor: modelInput.disableMinor,
+    });
 
     const associatedSfwOnly = !!ctx.features.isGreen;
     // `modelVersionAlias` is omitted here: these versions come from
@@ -2098,7 +2173,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
       .map(({ hashes, modelVersions, rank, tagsOnModels, metricPrivacy, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
-        const versionImages = images.filter((i) => i.modelVersionId === version.id);
+        const versionImages = shownImages.filter((i) => i.modelVersionId === version.id);
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) &&
           (modelInput.user || modelInput.username);

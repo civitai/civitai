@@ -422,8 +422,8 @@ export const blockCustomComfyBodySchema = z
  * false version read as "raising this changes nothing".
  *
  * Its VALUE is a policy choice about what one inline job may cost a viewer, set
- * comfortably above the largest shipped recipe ceiling (180, the `qwen-image`
- * engine of `seamless-pano-360`) so an inline graph is not more constrained than a
+ * comfortably above every registered recipe ceiling (`BUDGET_BY_ENGINE`,
+ * `STARTER_BUDGET`) so an inline graph is not more constrained than a
  * recipe. It must stay at or below `DEV_BUZZ_BUDGET_CAP` in
  * `services/blocks/dev-scoped-mint.service`, so a pre-approval token can afford any
  * inline job and an app can be developed and reviewed at the price it will charge.
