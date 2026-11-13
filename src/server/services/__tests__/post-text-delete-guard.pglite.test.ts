@@ -260,6 +260,58 @@ describe('a CSAM hold on the text', () => {
     expect(await texts()).toEqual([]);
   });
 
+  /** An old sent report whose retention has ended, so only its capture can keep the text. */
+  const oldReport = (details: string) =>
+    pg.query(
+      `INSERT INTO "CsamReport" ("userId", details, "reportSentAt", "archivedAt") VALUES ($1, $2, now() - interval '400 days', now())`,
+      [OTHER, details]
+    );
+
+  it("isn't let go by a capture of another post's text, taken after the hold", async () => {
+    const id = await addText(1, { csamHeld: true });
+    await decide(id, 'Confirmed');
+    await oldReport(capture({ id: 2, postId: 2 }));
+    await expect(del(id)).rejects.toThrow(/held/);
+    // The control: the same capture, of this post.
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [citing]);
+    await del(id);
+    expect(await texts()).toEqual([]);
+  });
+
+  /** An instant written at a UTC offset, e.g. 2026-01-01T05:00:00.000+05:00. */
+  const atOffset = (ms: number, offsetMinutes: number) => {
+    const wall = new Date(ms + offsetMinutes * 60_000).toISOString().slice(0, -1);
+    const sign = offsetMinutes < 0 ? '-' : '+';
+    const abs = Math.abs(offsetMinutes);
+    const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+    const mm = String(abs % 60).padStart(2, '0');
+    return `${wall}${sign}${hh}:${mm}`;
+  };
+  const HOUR = 3_600_000;
+  const holdAt = () => Date.now() - 86_400_000;
+
+  it('reads a capture time by its instant whatever its offset, and keeps the text over one it cannot read', async () => {
+    const id = await addText(1, { csamHeld: true });
+    await decide(id, 'Confirmed');
+    // Taken 2h before the hold; written at +05:00, its digits read 3h after it.
+    await oldReport(capture({ capturedAt: atOffset(holdAt() - 2 * HOUR, 5 * 60) }));
+    await expect(del(id)).rejects.toThrow(/held/);
+    for (const capturedAt of ['yesterday', '', 12345, null]) {
+      await pg.query(`UPDATE "CsamReport" SET details = $1`, [capture({ capturedAt })]);
+      await expect(del(id)).rejects.toThrow(/held/);
+    }
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [
+      JSON.stringify({ contextText: [{ source: 'postDescription', id: 1, postId: 1 }] }),
+    ]);
+    await expect(del(id)).rejects.toThrow(/held/);
+    // The control: taken 2h after the hold; written at -05:00, its digits read 3h before it.
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [
+      capture({ capturedAt: atOffset(holdAt() + 2 * HOUR, -5 * 60) }),
+    ]);
+    await del(id);
+    expect(await texts()).toEqual([]);
+  });
+
   it('holds it while a hold is pending, a report or not', async () => {
     const id = await addText(1, { csamHeld: true });
     await decide(id, 'Confirmed');
