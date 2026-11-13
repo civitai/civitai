@@ -12,13 +12,17 @@ import type * as FliptClient from '~/server/flipt/client';
  * below are written out, not imported, so a changed bound has to change a test too.
  */
 
-const flag = vi.hoisted(() => ({ on: true }));
+const flag = vi.hoisted(() => ({ on: true, widen: null as boolean | null }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
     isFliptSync: (key: string) =>
-      key === 'feed-service-degrade' ? flag.on : actual.isFliptSync(key as never),
+      key === 'feed-service-degrade'
+        ? flag.on
+        : key === 'feed-service-timeout-widen'
+        ? flag.widen
+        : actual.isFliptSync(key as never),
   };
 });
 
@@ -39,6 +43,7 @@ const down = () => vi.fn(async (): Promise<FeedAnswer> => Promise.reject(new Err
 
 beforeEach(() => {
   flag.on = true;
+  flag.widen = null;
   // Fresh breaker, cache and flag gate per test.
   delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -53,6 +58,19 @@ describe('feed-service request timeout', () => {
     const fetchFeed = vi.fn<FeedPrimaryDeps<{ id: number }>['fetchFeed']>(async () => answer([1]));
     await serveFromFeed(anon, { fetchFeed, hydrate });
     expect(fetchFeed.mock.calls[0]?.[1]).toBe(2_500);
+  });
+
+  it('goes back to 5s when feed-service-timeout-widen is on, and stays 2.5s when it is off', async () => {
+    const fetchFeed = vi.fn<FeedPrimaryDeps<{ id: number }>['fetchFeed']>(async () => answer([1]));
+    flag.widen = true;
+    await serveFromFeed(anon, { fetchFeed, hydrate });
+    expect(fetchFeed.mock.calls[0]?.[1]).toBe(5_000);
+
+    flag.widen = false;
+    // The switch is re-read at most every 5s.
+    vi.setSystemTime(Date.now() + 5_001);
+    await serveFromFeed(anon, { fetchFeed, hydrate });
+    expect(fetchFeed.mock.calls[1]?.[1]).toBe(2_500);
   });
 });
 
@@ -238,5 +256,33 @@ describe('last-good page for anonymous first pages', () => {
     vi.setSystemTime(Date.now() + 5_001);
     const r = await serveFromFeed(anon, { fetchFeed: down(), hydrate });
     expect(r).toEqual({ ok: false, reason: 'error' });
+  });
+});
+
+describe('last-good page: the REST route has its own bound', () => {
+  const REST_MAX = 100;
+  const ok = async () => answer([9, 5]);
+  const restPage = (i: number) => ({ ...anon, userId: 1_000 + i });
+
+  it('a burst of distinct REST first pages cannot evict a website page', async () => {
+    await serveFromFeed(anon, { fetchFeed: ok, hydrate, route: 'website' });
+    for (let i = 0; i < 600; i++)
+      await serveFromFeed(restPage(i), { fetchFeed: ok, hydrate, route: 'rest' });
+    const r = await serveFromFeed(anon, { fetchFeed: down(), hydrate, route: 'website' });
+    expect(r.ok && r.page.stale).toBe(true);
+  });
+
+  it(`keeps at most ${REST_MAX} REST pages, dropping the oldest`, async () => {
+    for (let i = 0; i <= REST_MAX; i++)
+      await serveFromFeed(restPage(i), { fetchFeed: ok, hydrate, route: 'rest' });
+    expect(await serveFromFeed(restPage(0), { fetchFeed: down(), hydrate, route: 'rest' })).toEqual(
+      { ok: false, reason: 'error' }
+    );
+    const newest = await serveFromFeed(restPage(REST_MAX), {
+      fetchFeed: down(),
+      hydrate,
+      route: 'rest',
+    });
+    expect(newest.ok && newest.page.stale).toBe(true);
   });
 });
