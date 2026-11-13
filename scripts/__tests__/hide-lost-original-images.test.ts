@@ -799,9 +799,15 @@ describe('hide-lost-original-images', () => {
   });
 
   it('parseArgs refuses an unknown flag, so a typo cannot turn a canary into a full apply', () => {
-    for (const bad of [['--limt', '1'], ['--limit=1']])
+    for (const bad of [
+      ['--limt', '1'],
+      ['--limit=1'],
+      ['-limit', '1'],
+      ['\u2013limit', '1'],
+      ['stray'],
+    ])
       expect(() => parseArgs(['--ids', 'a', '--log', 'l', '--apply', ...bad])).toThrow(
-        /unknown flag/
+        /unknown argument/
       );
   });
 

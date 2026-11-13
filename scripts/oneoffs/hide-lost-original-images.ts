@@ -75,24 +75,30 @@ export type RunOptions = {
   rebust: 'hide' | 'undo' | null;
 };
 
-const KNOWN_FLAGS = new Set([
+const BOOLEAN_FLAGS = new Set([
   '--apply',
   '--undo',
+  '--cross-check-rerun',
+  '--include-unconfirmed',
+]);
+const VALUE_FLAGS = new Set([
   '--ids',
   '--log',
   '--limit',
   '--chunk',
   '--concurrency',
   '--pause-ms',
-  '--cross-check-rerun',
-  '--include-unconfirmed',
   '--rebust',
 ]);
 
 export function parseArgs(argv: string[]): RunOptions {
-  // A typo such as `--limt 1` or `--limit=1` must not turn the one-row canary into a full apply.
-  const unknown = argv.find((a) => a.startsWith('--') && !KNOWN_FLAGS.has(a));
-  if (unknown) throw new Error(`unknown flag ${unknown.split('=')[0]}`);
+  // Every token is a known flag or the value of one. A typo (`--limt 1`, `-limit 1`, an en dash, a
+  // stray positional) must not turn the one-row canary into a full apply.
+  for (let i = 0; i < argv.length; i++) {
+    if (VALUE_FLAGS.has(argv[i])) i++;
+    else if (!BOOLEAN_FLAGS.has(argv[i]))
+      throw new Error(`unknown argument ${argv[i].split('=')[0]}`);
+  }
   const value = (name: string) => {
     const i = argv.indexOf(`--${name}`);
     if (i < 0) return undefined;
