@@ -3,8 +3,7 @@ import { createCache } from '$lib/server/cache';
 
 // Per-model engagement overview (feedback: alexds9) — comments + up/down votes across all of a creator's models
 // so they can spot which ones are drawing downvotes/comments. All-time counts from ModelMetric (the daily rollup
-// only tracks downloads, so there's no per-day votes/comments source). Lists every published model; one with no
-// ModelMetric row yet shows zeros. Models drawing downvotes/comments sort first.
+// only tracks downloads, so there's no per-day votes/comments source).
 export type ModelEngagement = {
   modelId: number;
   name: string | null;
@@ -45,7 +44,7 @@ async function fetchModelEngagement({ userId }: { userId: number }): Promise<Mod
     .sort((a, b) => b.downvotes - a.downvotes || b.comments - a.comments);
 }
 
-// v2: the list grew from "models with votes or comments" to every published model; v1 entries hold the old subset.
+// Bump the cache name when the cached list's filter or shape changes, or old entries are served until the TTL expires.
 export const getModelEngagement = createCache({
   name: 'analytics:engagement:v2',
   fetch: fetchModelEngagement,
