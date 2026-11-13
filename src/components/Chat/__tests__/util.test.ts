@@ -180,9 +180,12 @@ describe('getLinkHref', () => {
 });
 
 describe('a group-rename note in the chat list preview', () => {
-  it.each(['Weekend_crew!', 'Art (WIP)', '[Open] <x> \\ #~|'])('shows %s as typed', (name) => {
-    expect(stripMarkdownForPreview(groupRenamedNote(name))).toBe(`Group renamed to "${name}"`);
-  });
+  it.each(['Weekend_crew!', 'Art (WIP)', '[Open] <x> \\ #~|', '[a](b)', '**x**', '__x__', '`x`'])(
+    'shows %s as typed',
+    (name) => {
+      expect(stripMarkdownForPreview(groupRenamedNote(name))).toBe(`Group renamed to "${name}"`);
+    }
+  );
 });
 
 describe('chatPreviewText', () => {

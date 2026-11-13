@@ -1,15 +1,14 @@
+import { safeReturnPath } from '@civitai/auth/client';
 import type { Options } from 'react-markdown';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { formatChatSystemMessage } from '~/shared/utils/chat';
 
 /**
- * A path on this site. Never "//host" or "/\host", which a browser opens elsewhere, nor an encoded
- * slash, backslash or control character, or whitespace, that could be read as one.
+ * A path on this site, by the shared same-origin rule. Encoded slashes, backslashes and control
+ * characters are refused too: no note the server writes needs one.
  */
 const isSameSitePath = (href: unknown): href is string =>
-  typeof href === 'string' &&
-  /^\/[^/\\]/.test(href) &&
-  !/%2f|%5c|%[01][0-9a-f]|%7f|\\|[\s\x00-\x1f]/i.test(href);
+  safeReturnPath(href) !== null && !/%2f|%5c|%[01][0-9a-f]|%7f/i.test(href as string);
 
 // Server-written notes link to our own pages ("Open the deal"). Any other link, such as one in a
 // group name, renders as its text.

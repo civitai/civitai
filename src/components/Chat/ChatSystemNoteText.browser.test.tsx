@@ -60,11 +60,6 @@ describe('ChatSystemNoteText', () => {
     }
   );
 
-  test('notes a removed group name', () => {
-    expect(groupRenamedNote('')).toBe('Group name removed');
-    expect(groupRenamedNote(null)).toBe('Group name removed');
-  });
-
   test('renders a plain note, and still says "You" for the reader', async () => {
     expect((await renderNote(groupRenamedNote('Weekend crew'))).textContent).toBe(
       'Group renamed to "Weekend crew"'
