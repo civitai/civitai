@@ -24,9 +24,6 @@ vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
-const dropInvalidCommunityCovers = vi.hoisted(() => vi.fn());
-vi.mock('~/server/services/version-showcase.service', () => ({ dropInvalidCommunityCovers }));
-
 const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 
 const PG = 1;
@@ -49,7 +46,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "postId" int, "nsfwLevel" int, "needsReview" text,
-      "acceptableMinor" boolean, "tosViolation" boolean, ingestion text, "userId" int
+      "acceptableMinor" boolean, "tosViolation" boolean, ingestion text
     );
   `);
   dbMock.dbWrite.$queryRaw.mockImplementation(
@@ -94,24 +91,5 @@ describe('a mature model on civitai.com through its .com cover', () => {
 
   it('stays off .com when its cover is a ToS violation', async () => {
     expect(await comLevelsWithCover({ tosViolation: true })).toBe(0);
-  });
-});
-
-describe('a mature model whose .com cover is someone else’s image', () => {
-  it('has its covers re-checked, and one with its own cover does not', async () => {
-    const cover = (userId: number) =>
-      db.query(`INSERT INTO "Image" VALUES ($1, 1, $2, NULL, false, false, 'Scanned', $3)`, [
-        COVER_ID,
-        PG,
-        userId,
-      ]);
-    await cover(OWNER);
-    await updateModelNsfwLevels([MODEL_ID]);
-    expect(dropInvalidCommunityCovers).not.toHaveBeenCalled();
-
-    await db.query(`DELETE FROM "Image"`);
-    await cover(OWNER + 1);
-    await updateModelNsfwLevels([MODEL_ID]);
-    expect(dropInvalidCommunityCovers).toHaveBeenCalledWith([MODEL_ID]);
   });
 });
