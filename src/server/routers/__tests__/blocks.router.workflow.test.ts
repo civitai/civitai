@@ -7167,7 +7167,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(result.snapshot.errorCode).toBe('daily-limit-exceeded');
       expect(mockSysRedis.set).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:consent-limit-refused:\d+:/),
-        '1',
+        '100',
         { EX: 300 }
       );
       // NOTHING was spent…

@@ -106,13 +106,17 @@ function consentLimitRefusedRedisKey(
 }
 
 /**
- * Records that a spend was just refused at the viewer's own limit for this app, so the host may
- * offer the raise dialog when the app asks for it. Best-effort, never throws: a lost write only
+ * Records that a spend was just refused at the viewer's own limit `limit` for this app, so the host
+ * may offer the raise dialog when the app asks for it. Best-effort, never throws: a lost write only
  * means the app's request does not open the dialog.
  */
-export async function markConsentLimitRefused(userId: number, appBlockId: string): Promise<void> {
+export async function markConsentLimitRefused(
+  userId: number,
+  appBlockId: string,
+  limit: number
+): Promise<void> {
   try {
-    await sysRedis.set(consentLimitRefusedRedisKey(userId, appBlockId), '1', {
+    await sysRedis.set(consentLimitRefusedRedisKey(userId, appBlockId), String(limit), {
       EX: CONSENT_LIMIT_REFUSED_TTL_SECONDS,
     });
   } catch {
@@ -120,13 +124,19 @@ export async function markConsentLimitRefused(userId: number, appBlockId: string
   }
 }
 
-/** Fails closed: a Redis error reads as "not refused", which only keeps the dialog shut. */
+/**
+ * Only a refusal at `currentLimit` counts: once the limit changes, the app must be refused again
+ * before its request can reopen the dialog. Fails closed: a Redis error reads as "not refused".
+ */
 export async function wasConsentLimitRefusedRecently(
   userId: number,
-  appBlockId: string
+  appBlockId: string,
+  currentLimit: number
 ): Promise<boolean> {
   try {
-    return (await sysRedis.get(consentLimitRefusedRedisKey(userId, appBlockId))) != null;
+    return (
+      (await sysRedis.get(consentLimitRefusedRedisKey(userId, appBlockId))) === String(currentLimit)
+    );
   } catch {
     return false;
   }

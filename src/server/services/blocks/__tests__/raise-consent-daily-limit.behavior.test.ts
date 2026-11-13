@@ -106,6 +106,7 @@ describe('raiseConsentDailyLimit', () => {
     ['the whole grant is revoked', { budget: 1000, revokedAt: new Date() }],
     ['spend was never granted', { budget: 1000, scopes: ['user:read:self'] }],
     ['no limit is set', { budget: null }],
+    ['the stored limit is 0, which reads as no limit', { budget: 0 }],
   ])('refuses and writes nothing when %s', async (_label, row) => {
     await grant(row);
     const before = await stored();

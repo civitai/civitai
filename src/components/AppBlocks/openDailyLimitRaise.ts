@@ -13,11 +13,11 @@ export const DAILY_LIMIT_DISMISS_SUPPRESS_MS = 10 * 60_000;
 
 const dismissedAt = new Map<string, number>();
 
-export type DailyLimitRaiseOutcome = 'raised' | 'not-raised' | 'unavailable';
+export type DailyLimitRaiseOutcome = 'raised' | 'not-raised' | 'already-open' | 'unavailable';
 
 /**
  * Opens the host's raise dialog for one app when there is a limit to raise, and resolves when it
- * closes. `unavailable` means no dialog opened: one is already open for this app, the viewer
+ * closes. `already-open`: one is open for this app. `unavailable` means no dialog opened: the viewer
  * dismissed one for it recently, the read came back empty (flag off, no limit, spending revoked,
  * rate-limited) or failed, or `requireServerRefusal` is set and the server has no recent refusal
  * at this limit on record.
@@ -27,7 +27,7 @@ export async function openDailyLimitRaise(opts: {
   appBlockId: string;
   appName?: string | null;
   requireServerRefusal?: boolean;
-  /** Called just before the dialog opens; not called when the outcome is `unavailable`. */
+  /** Called just before the dialog opens; not called when none opened. */
   onOpened?: () => void;
   now?: number;
 }): Promise<DailyLimitRaiseOutcome> {
@@ -50,7 +50,7 @@ export async function openDailyLimitRaise(opts: {
   if (opts.requireServerRefusal && !data.refusedRecently) return 'unavailable';
 
   const id = `block-daily-limit-${appBlockId}`;
-  if (useDialogStore.getState().dialogs.some((d) => d.id === id)) return 'unavailable';
+  if (useDialogStore.getState().dialogs.some((d) => d.id === id)) return 'already-open';
   opts.onOpened?.();
   return new Promise((resolve) => {
     let raised = false;

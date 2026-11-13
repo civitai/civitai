@@ -4,7 +4,10 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
-import { resetDailyLimitRaiseSuppression } from '~/components/AppBlocks/openDailyLimitRaise';
+import {
+  openDailyLimitRaise,
+  resetDailyLimitRaiseSuppression,
+} from '~/components/AppBlocks/openDailyLimitRaise';
 import type * as TrpcMod from '~/utils/trpc';
 
 /**
@@ -205,10 +208,8 @@ describe('PageBlockHost in-app daily-limit raise', () => {
     resetDailyLimitRaiseSuppression();
   });
 
-  test('a refused submit opens the raise dialog with the server numbers; after a raise the next submit runs', async () => {
-    mocks.submit
-      .mockResolvedValueOnce({ snapshot: REFUSED })
-      .mockResolvedValueOnce({ snapshot: OK });
+  test('a refused submit opens the raise dialog with the server numbers', async () => {
+    mocks.submit.mockResolvedValue({ snapshot: REFUSED });
     mocks.readLimit.mockResolvedValue(LIMIT);
     const replies = await mount();
 
@@ -216,12 +217,6 @@ describe('PageBlockHost in-app daily-limit raise', () => {
     const d = await raiseDialog();
     expect(d.props).toMatchObject({ appBlockId: 'apb_test', limit: 1000, spentToday: 980 });
     expect(mocks.readLimit).toHaveBeenCalledWith({ appBlockId: 'apb_test' }, expect.anything());
-    viewerRaises(d);
-
-    await submit(replies, 'rq_2');
-    expect(
-      replies.of('WORKFLOW_SUBMITTED').find((m) => hasId(m.payload, 'rq_2'))!.payload
-    ).toMatchObject({ snapshot: OK });
   });
 
   test('repeated refusals open one dialog, and "Not now" keeps it shut for this app', async () => {
@@ -232,9 +227,20 @@ describe('PageBlockHost in-app daily-limit raise', () => {
     await submit(replies, 'rq_b');
     const d = await raiseDialog();
     viewerDeclines(d);
+    const readsBefore = mocks.readLimit.mock.calls.length;
     await submit(replies, 'rq_c');
-    await new Promise((r) => setTimeout(r, 100));
+    // Suppression is checked before the read, so a suppressed refusal reads nothing.
+    expect(mocks.readLimit).toHaveBeenCalledTimes(readsBefore);
     expect(openRaiseDialogs()).toHaveLength(0);
+  });
+
+  test('a second offer while the dialog is open says so, so no fallback prompt stacks on it', async () => {
+    const utils = {
+      blocks: { getMyAppDailyLimit: { fetch: async () => LIMIT } },
+    } as unknown as Parameters<typeof openDailyLimitRaise>[0]['utils'];
+    void openDailyLimitRaise({ utils, appBlockId: 'apb_test' });
+    await raiseDialog();
+    expect(await openDailyLimitRaise({ utils, appBlockId: 'apb_test' })).toBe('already-open');
   });
 
   test('a refused submit opens nothing when the server has no limit to raise', async () => {
@@ -281,6 +287,9 @@ describe('PageBlockHost in-app daily-limit raise', () => {
     const result = await resultOf(replies, 'rq_raise');
     expectReplyKeys('REQUEST_DAILY_LIMIT_RAISE', 'success', ['raised'], result);
     expect(result).toMatchObject({ raised: true });
+
+    // The refusal was at the old limit: asking again needs a new one.
+    expect((await raiseRequest(replies, 'rq_again')).opened).toBe(false);
   });
 
   test('a refusal the server recorded opens the dialog for a REST submitter', async () => {

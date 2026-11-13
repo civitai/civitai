@@ -124,13 +124,22 @@ beforeEach(() => {
 describe('blocks.getMyAppDailyLimit', () => {
   it("returns the viewer's own limit, today's spend and whether a refusal is on record", async () => {
     redisMock.sysRedis.get.mockImplementation((async (key: string) =>
-      key === `system:blocks:consent-limit-refused:${USER}:${APP}` ? '1' : null) as never);
+      key === `system:blocks:consent-limit-refused:${USER}:${APP}` ? '1000' : null) as never);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toEqual({
       limit: 1000,
       spentToday: 980,
       refusedRecently: true,
     });
     expect(m.readLimit).toHaveBeenCalledWith(USER, APP, 0);
+  });
+
+  it('a refusal at an earlier limit no longer counts once the limit changed', async () => {
+    redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+      key === `system:blocks:consent-limit-refused:${USER}:${APP}` ? '500' : null) as never);
+    expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toMatchObject({
+      limit: 1000,
+      refusedRecently: false,
+    });
   });
 
   it('control: with no refusal on record it says so', async () => {

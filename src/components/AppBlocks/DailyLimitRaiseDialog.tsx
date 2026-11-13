@@ -66,8 +66,7 @@ export default function DailyLimitRaiseDialog({
       <Stack gap="sm" data-testid="block-daily-limit-raise">
         <Text size="sm">
           You set a limit of {numberWithCommas(limit)} Buzz a day for {who}, and{' '}
-          {numberWithCommas(spentToday)} has been spent today. Nothing was charged for the job that
-          was stopped.
+          {numberWithCommas(spentToday)} has been spent today.
         </Text>
         {atMax ? (
           <Text size="sm" c="dimmed">

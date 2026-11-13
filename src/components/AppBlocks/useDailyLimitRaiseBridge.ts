@@ -26,25 +26,36 @@ export function useDailyLimitRaiseBridge(opts: {
   const { appBlockId, appName, disabled } = opts;
   const utils = trpc.useUtils();
   const lastRelayedRefusalAt = useRef<number | null>(null);
+  // A refusal at the old limit must not let the app reopen the dialog after the viewer raised it.
+  const offer = useCallback(
+    async (
+      extra?: Pick<Parameters<typeof openDailyLimitRaise>[0], 'requireServerRefusal' | 'onOpened'>
+    ) => {
+      const outcome = await openDailyLimitRaise({ utils, appBlockId, appName, ...extra });
+      if (outcome === 'raised') lastRelayedRefusalAt.current = null;
+      return outcome;
+    },
+    [utils, appBlockId, appName]
+  );
 
   const onRelayedSnapshot = useCallback(
     (snapshot: unknown) => {
       if (disabled || !isDailyLimitRefusal(snapshot)) return;
       lastRelayedRefusalAt.current = Date.now();
-      void openDailyLimitRaise({ utils, appBlockId, appName });
+      void offer();
     },
-    [disabled, utils, appBlockId, appName]
+    [disabled, offer]
   );
 
   const onConfirmedStepRefusal = useCallback(
     (fallback: () => void) => {
       if (disabled) return fallback();
       lastRelayedRefusalAt.current = Date.now();
-      void openDailyLimitRaise({ utils, appBlockId, appName }).then((outcome) => {
+      void offer().then((outcome) => {
         if (outcome === 'unavailable') fallback();
       });
     },
-    [disabled, utils, appBlockId, appName]
+    [disabled, offer]
   );
 
   const onRaiseRequest = useCallback(
@@ -57,10 +68,7 @@ export function useDailyLimitRaiseBridge(opts: {
       const seen = lastRelayedRefusalAt.current;
       const hostSawRefusal = seen !== null && Date.now() - seen < RELAYED_REFUSAL_WINDOW_MS;
       let opened = false;
-      const outcome = await openDailyLimitRaise({
-        utils,
-        appBlockId,
-        appName,
+      const outcome = await offer({
         requireServerRefusal: !hostSawRefusal,
         onOpened: () => {
           opened = true;
@@ -70,7 +78,7 @@ export function useDailyLimitRaiseBridge(opts: {
       if (!opened) reply.ack(false);
       reply.result(outcome === 'raised');
     },
-    [disabled, utils, appBlockId, appName]
+    [disabled, offer]
   );
 
   return useMemo(

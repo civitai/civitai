@@ -1793,7 +1793,7 @@ function consentBudgetRejection(
   cost: number,
   costClause: string
 ): string {
-  void markConsentLimitRefused(consent.userId, consent.appBlockId);
+  void markConsentLimitRefused(consent.userId, consent.appBlockId, consent.cap);
   return (
     `app Buzz limit reached: ${consent.total - Math.ceil(cost)} already spent today by ` +
     `this app on your behalf, ${costClause}, your limit for this app is ${consent.cap}`
@@ -3918,7 +3918,7 @@ export const blocksRouter = router({
    * The viewer's own daily Buzz limit for one app and what they have spent against it today, for
    * the host's raise dialog. `null` when there is nothing to raise: the flag is off, the app is
    * not approved, no limit is set, spending is revoked, or this viewer has read it too often.
-   * `refusedRecently`: a spend was refused at this limit in the last few minutes
+   * `refusedRecently`: a spend was refused at the current limit in the last few minutes
    * (`markConsentLimitRefused`), the only thing that lets an app's own request open the dialog.
    * Session only, so an app holding a block token cannot call it.
    */
@@ -3945,7 +3945,11 @@ export const blocksRouter = router({
       return {
         limit: limit.limit,
         spentToday: limit.spentToday,
-        refusedRecently: await wasConsentLimitRefusedRecently(userId, input.appBlockId),
+        refusedRecently: await wasConsentLimitRefusedRecently(
+          userId,
+          input.appBlockId,
+          limit.limit
+        ),
       };
     }),
 
