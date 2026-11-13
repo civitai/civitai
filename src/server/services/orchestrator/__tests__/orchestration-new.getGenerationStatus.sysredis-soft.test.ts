@@ -79,6 +79,7 @@ vi.mock('~/server/services/image.service', () => ({
 
 import { buildGenerationContext } from '~/server/services/orchestrator/orchestration-new.service';
 import * as generationService from '~/server/services/generation/generation.service';
+import { __resetGenerationConfigLastKnownForTests } from '~/server/services/generation/generation.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -87,13 +88,8 @@ beforeEach(() => {
   mockHGetAll.mockReset();
   mockWithSysReadDeadline.mockReset();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
-  // Each test starts as a fresh process: nothing read before. Looked up by key (a mocked module
-  // throws on reading an export it lacks) so the file also runs against a build without the
-  // last-known state, where there is nothing to reset.
-  const reset = Object.entries(generationService).find(
-    ([name]) => name === '__resetGenerationConfigLastKnownForTests'
-  )?.[1] as (() => void) | undefined;
-  reset?.();
+  // Each test starts as a fresh process: nothing read before.
+  __resetGenerationConfigLastKnownForTests();
 });
 
 const hiddenRule = {

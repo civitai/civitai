@@ -8,6 +8,9 @@ export abstract class HttpCaller {
   // Anti-hang ceiling only — without it a hung vendor (payment/orchestrator/etc.)
   // parks the request for undici's ~300s default. Generous so slow-but-legit
   // captures are never cut off; override per-caller via the constructor option.
+  // A value above 300 s does not extend the wait for response HEADERS: undici's
+  // default headersTimeout (300 s) ends that first, so 300 s is the effective cap
+  // for any call whose server answers only when its work is done.
   private timeout: number;
 
   constructor(baseUrl: string, options?: { headers?: MixedObject; timeout?: number }) {

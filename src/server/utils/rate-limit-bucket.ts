@@ -129,15 +129,22 @@ export function isFailClosedRateLimitScope(scope: string) {
  *
  * Not for FAIL_CLOSED_RATE_LIMIT_SCOPES, which refuse instead (see above).
  *
- * Per bucket: a read the store answers drops only THAT bucket's local count (the store's history
- * is authoritative for it now). Never the whole map — in a partial outage (one shard down, or reads
- * timing out intermittently) another bucket's successful read would otherwise wipe the count of a
- * bucket whose reads keep failing, and that bucket would never reach its limit.
+ * Per bucket, and never discarded on a successful read. A bucket whose reads alternate between
+ * answered and failed (intermittent timeouts) holds attempts the store never saw, so an answered
+ * read MERGES the bucket's local attempts into the stored ones (mergeAttempts) — the write that
+ * follows carries them into the store — and the local entry then mirrors the merged history, so the
+ * bucket's next failed read still sees every attempt this process knows of. Dropping the local
+ * count on an answered read instead would admit about limit / (share of answered reads). Never the
+ * whole map either: in a partial outage (one shard down) another bucket's answered read must not
+ * touch a bucket whose reads keep failing.
  *
- * Bounded memory, two ways: an entry expires once its newest attempt is older than the bucket's
- * longest window (swept at most every LOCAL_SWEEP_INTERVAL_MS; a read needs no expiry check, since
- * the window evaluation ignores attempts outside it), and past LOCAL_BUCKETS_MAX buckets the least
- * recently written is dropped, so an outage under a flood of distinct callers costs bounded memory.
+ * Bounded memory, two ways: an entry expires one longest window after the bucket's last FAILED-read
+ * attempt — an answered read refreshes the mirror but not its expiry, so a bucket whose reads have
+ * been answered for a whole window stops being held. Expired entries are swept at most every
+ * LOCAL_SWEEP_INTERVAL_MS, from both the failed- and the answered-read path (a read needs no expiry
+ * check, since the window evaluation ignores attempts outside it). Past LOCAL_BUCKETS_MAX buckets
+ * the least recently written is dropped, so an outage under a flood of distinct callers costs
+ * bounded memory.
  */
 const LOCAL_BUCKETS_MAX = 50_000;
 const LOCAL_SWEEP_INTERVAL_MS = 60_000;
@@ -151,6 +158,41 @@ function sweepExpiredLocalBuckets(now: number) {
   if (now - lastLocalSweepAt < LOCAL_SWEEP_INTERVAL_MS) return;
   lastLocalSweepAt = now;
   for (const [key, entry] of localAttempts) if (entry.expiresAt <= now) localAttempts.delete(key);
+}
+
+/**
+ * The union of two views of ONE bucket's history (attempt timestamps, epoch ms): each timestamp
+ * appears as often as in whichever view holds it more often, so an attempt present in both — a
+ * local attempt that already reached the store, or a mirrored one — counts once. (Two distinct
+ * attempts in the same millisecond, one only in each view, also count once: a negligible
+ * under-count, against double-counting every mirrored attempt.)
+ */
+export function mergeAttempts(a: readonly number[], b: readonly number[]) {
+  const countIn = (xs: readonly number[]) => {
+    const counts = new Map<number, number>();
+    for (const x of xs) counts.set(x, (counts.get(x) ?? 0) + 1);
+    return counts;
+  };
+  const inA = countIn(a);
+  const merged = [...a];
+  for (const [x, n] of countIn(b)) for (let i = inA.get(x) ?? 0; i < n; i++) merged.push(x);
+  return merged.sort((x, y) => x - y);
+}
+
+/**
+ * After an answered read: the local entry (if the bucket has one that has not expired) now mirrors
+ * the merged history written to the store, keeping its expiry. Merged with the entry as it is NOW,
+ * so a failed-read attempt recorded concurrently since our read is kept.
+ */
+function mirrorLocalAttempts(bucket: RateLimitBucket, attempts: number[], now: number) {
+  const key = localKeyOf(bucket);
+  const entry = localAttempts.get(key);
+  if (!entry) return;
+  if (entry.expiresAt <= now) {
+    localAttempts.delete(key);
+    return;
+  }
+  entry.attempts = mergeAttempts(attempts, entry.attempts);
 }
 
 function recordLocalAttempt(bucket: RateLimitBucket, at: number, longestPeriodSec: number) {
@@ -205,10 +247,14 @@ async function readAttemptsOrLocal(
         ...(failClosed ? { deadlineMs: failClosedReadDeadlineMs() } : {}),
       }
     );
-    // The store answers for this bucket again: its history is authoritative, so drop this
-    // bucket's local count — only this one (see localAttempts).
-    localAttempts.delete(localKeyOf(bucket));
-    return { attempts: stored ?? [], degraded: false };
+    // The store answers for this bucket: merge in the attempts this process counted while its
+    // reads failed, which the store never saw (see localAttempts). The write carries them.
+    sweepExpiredLocalBuckets(Date.now());
+    const local = localAttempts.get(localKeyOf(bucket));
+    return {
+      attempts: local ? mergeAttempts(stored ?? [], local.attempts) : stored ?? [],
+      degraded: false,
+    };
   } catch {
     return {
       attempts: [...(localAttempts.get(localKeyOf(bucket))?.attempts ?? [])],
@@ -329,6 +375,7 @@ export async function claimRateLimitAttempt({
       return;
     }
     const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
+    mirrorLocalAttempts(bucket, updatedAttempts, Date.now());
     // Fail-open: a sysRedis failover would otherwise 500 every rate-limited call; the window
     // under-counts until the next good write. A sustained rate-limit-write-degraded spike means
     // limits are effectively off.
