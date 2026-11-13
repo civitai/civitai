@@ -778,6 +778,14 @@ export const upsertModel3D = async ({
     if (image?.userId !== ownerId) throw throwBadRequestError('Invalid thumbnail image.');
   }
 
+  // nsfwLevel is derived from the thumbnail; the image-scan path only re-derives when the image changes.
+  const queueNsfwRecomputeOnThumbnailChange = async (model3dId: number) => {
+    if (data.thumbnailImageId === undefined) return;
+    await enqueueJobs([
+      { entityId: model3dId, entityType: EntityType.Model3D, type: JobQueueType.UpdateNsfwLevel },
+    ]);
+  };
+
   const writeData: Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput = {
     ...data,
     userId: existing?.userId ?? user.id,
@@ -807,6 +815,7 @@ export const upsertModel3D = async ({
 
         return row;
       });
+      await queueNsfwRecomputeOnThumbnailChange(updated.id);
       return updated;
     }
 
@@ -827,6 +836,7 @@ export const upsertModel3D = async ({
       return row;
     });
 
+    await queueNsfwRecomputeOnThumbnailChange(created.id);
     return created;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

@@ -9,6 +9,12 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   throwOnBlockedUserContent: vi.fn(),
 }));
 
+const { enqueueJobs } = vi.hoisted(() => ({ enqueueJobs: vi.fn() }));
+vi.mock('~/server/services/job-queue.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  enqueueJobs,
+}));
+
 const db = dbMock.dbWrite;
 
 const owner = { id: 42, username: 'maker', isModerator: false } as SessionUser;
@@ -33,7 +39,11 @@ beforeEach(() => {
   db.model3D.update.mockResolvedValue({ id: MODEL_ID });
   db.model3D.create.mockReset();
   db.model3D.create.mockResolvedValue({ id: MODEL_ID });
+  enqueueJobs.mockReset();
 });
+
+const queuedRatingFor = () =>
+  enqueueJobs.mock.calls.flatMap(([jobs]) => jobs).filter((j) => j.type === 'UpdateNsfwLevel');
 
 const written = () =>
   (db.model3D.update.mock.calls[0] ?? db.model3D.create.mock.calls[0])?.[0]?.data;
@@ -113,5 +123,22 @@ describe('upsertModel3D thumbnail ownership', () => {
     await upsertModel3D({ input: create, user: owner });
     expect(written()).not.toHaveProperty('sourceImageId');
     expect(written()).not.toHaveProperty('workflowId');
+  });
+
+  it('queues a rating recompute when the thumbnail is set or cleared, and only then', async () => {
+    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
+    expect(queuedRatingFor()).toEqual([expect.objectContaining({ entityId: MODEL_ID })]);
+
+    enqueueJobs.mockClear();
+    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: null }, user: owner });
+    expect(queuedRatingFor()).toHaveLength(1);
+
+    enqueueJobs.mockClear();
+    await upsertModel3D({ input: { ...base, thumbnailImageId: 11 }, user: owner });
+    expect(queuedRatingFor()).toHaveLength(1);
+
+    enqueueJobs.mockClear();
+    await upsertModel3D({ input: { ...base, id: MODEL_ID }, user: owner });
+    expect(queuedRatingFor()).toHaveLength(0);
   });
 });
