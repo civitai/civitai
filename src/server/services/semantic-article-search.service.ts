@@ -66,13 +66,14 @@ export async function searchSemanticArticles({
   // A named user or tag that does not exist can match nothing.
   if (userIds && !userIds.length) return none;
   if (tagIds && tagIds.length < new Set(input.tagNames).size) return none;
-  const disablePoiAt = (level: number) =>
-    resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator }).disablePoi;
-  let disablePoi = disablePoiAt(browsingLevel);
+  // The feed applies these in the browser; here they are applied server-side.
+  const addonsFor = (level: number) =>
+    resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
+  let addons = addonsFor(browsingLevel);
   const refusalOf = async (text: string, stage: QueryStage) => {
     const refusal = await semanticQueryRefusal(text, {
       browsingLevel,
-      disablePoi,
+      disablePoi: addons.disablePoi,
       isModerator: user?.isModerator,
     });
     recordRefusal(track, refusal, text, 'articles_semantic', stage);
@@ -83,7 +84,7 @@ export async function searchSemanticArticles({
   if (verdictLevel === 'refuse') return none;
   if (verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
-    disablePoi = disablePoiAt(browsingLevel);
+    addons = addonsFor(browsingLevel);
   }
 
   const excludedUserIds = [
@@ -91,7 +92,12 @@ export async function searchSemanticArticles({
       [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
     ),
   ];
-  const excludedTagIds = hidden.hiddenTags.filter((x) => x.hidden).map((x) => x.id);
+  const excludedTagIds = [
+    ...new Set([
+      ...addons.excludedTagIds,
+      ...hidden.hiddenTags.filter((x) => x.hidden).map((x) => x.id),
+    ]),
+  ];
   const filter: CandidateFilter = {
     gate: { kind: 'level', nsfwLevels: Flags.instanceToArray(browsingLevel) },
     tagIds,

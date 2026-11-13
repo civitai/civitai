@@ -6,7 +6,13 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  ensureFliptInitialized,
+  FLIPT_FEATURE_FLAGS,
+  getFliptClientSync,
+  getFliptLocalOverride,
+  isFlipt,
+} from '~/server/flipt/client';
 import { countQueryVerdict } from '~/server/metrics/semantic-search.metrics';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
@@ -26,7 +32,15 @@ export function resolveSemanticBrowsingLevel(
   return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
 }
 
-export const isNonModClampOn = () => isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SEARCH_NONMOD_CLAMP);
+/** The containment switch. Flipt unreachable reads as ON: the clamp holds when the switch can't be read. */
+export async function isNonModClampOn() {
+  const flag = FLIPT_FEATURE_FLAGS.SEMANTIC_SEARCH_NONMOD_CLAMP;
+  if (getFliptLocalOverride(flag) === undefined) {
+    await ensureFliptInitialized();
+    if (!getFliptClientSync()) return true;
+  }
+  return isFlipt(flag);
+}
 
 /**
  * "More like this" never rates above its anchor: the viewer's levels at or below the anchor's.

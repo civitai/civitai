@@ -26,6 +26,7 @@ const h = vi.hoisted(() => {
     includesPoi: vi.fn<(prompt?: string) => string | false>(),
     includesMinor: vi.fn<(prompt?: string) => boolean>(),
     isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
+    fliptClient: {} as object | null,
   };
 });
 
@@ -67,6 +68,8 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   isFlipt: h.isFlipt,
+  ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => h.fliptClient,
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => {
   const actual = await importOriginal<typeof ImageService>();
@@ -147,6 +150,7 @@ beforeEach(() => {
   h.includesPoi.mockReset().mockReturnValue(false);
   h.includesMinor.mockReset().mockReturnValue(false);
   h.isFlipt.mockReset().mockResolvedValue(false);
+  h.fliptClient = {};
 });
 
 describe('a stale index cannot surface a hidden image', () => {
@@ -630,6 +634,12 @@ describe('the query audit and the browsing level', () => {
     const { calls } = await run({ browsingLevel: ALL_LEVELS });
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
+  });
+
+  it('holds the clamp when the switch cannot be read', async () => {
+    h.fliptClient = null;
+    const { calls } = await run({ browsingLevel: ALL_LEVELS });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2]);
   });
 
   it('clamps a non-moderator to the safe levels, in the index filter and in hydration', async () => {
