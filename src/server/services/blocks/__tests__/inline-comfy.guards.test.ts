@@ -173,7 +173,7 @@ describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist',
   // that can reject them. All four were also confirmed refused with this exact
   // message against the live endpoint (from a moderator session) — a check on
   // THESE four tokens, which is all it licenses; see the KNOWN LIMIT below.
-  const REJECTED_SOURCES = ['replicate', 'openai', 's3', 'evilhost'] as const;
+  const REJECTED_SOURCES = ['replicate', 'openai', 's3', 'evilhost', 'huggingface'] as const;
 
   for (const source of REJECTED_SOURCES) {
     it(`🔴 rejects a NON-allowlisted source '${source}' behind an ALLOWLISTED type`, async () => {
@@ -202,28 +202,9 @@ describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist',
     });
   }
 
-  it('POSITIVE CONTROL — the SAME AIR with an allowlisted `huggingface` source is accepted', async () => {
-    // Isolates the source token as the cause. Identical ecosystem (`zeta`),
-    // identical type (`lora`), identical id (`kappa/lambda`) and version (`71`)
-    // as the rejected fixtures above — only the source segment differs, and the
-    // rejection disappears. Without this control, those cases are equally
-    // satisfied by a guard rejecting every `kappa/lambda@71` for some other
-    // reason.
-    await expect(
-      assertViewerEntitledToInlineResources({
-        airs: ['urn:air:zeta:lora:huggingface:kappa/lambda@71'],
-        user: NON_MODERATOR,
-      })
-    ).resolves.toBeUndefined();
-    // A huggingface AIR carries no civitai entitlement, so the belt is not
-    // consulted — exempt by construction, not by an accidental early return.
-    expect(mockGetResourceData).not.toHaveBeenCalled();
-  });
-
   it('POSITIVE CONTROL — an allowlisted `civitai` source proceeds INTO the entitlement belt', async () => {
-    // The other half of the allowlist. `huggingface` passes by returning early;
-    // `civitai` must pass by being GATED. Asserting the belt was called with the
-    // parsed version id is what distinguishes the two.
+    // Isolates the source token as the cause of the rejections above, and shows the
+    // allowed source is gated rather than passed through.
     mockGetResourceData.mockResolvedValue([row({ id: PUBLIC_VERSION_ID })]);
     await expect(
       assertViewerEntitledToInlineResources({ airs: [PUBLIC_AIR], user: NON_MODERATOR })
