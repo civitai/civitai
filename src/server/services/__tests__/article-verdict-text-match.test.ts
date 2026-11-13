@@ -42,7 +42,6 @@ import { articleModerationAdapter } from '~/server/services/article-moderation.a
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import '~/server/services/text-scan/profiles/article.profile';
-import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
@@ -227,14 +226,8 @@ describe('the recompute counts a text verdict only for the text it judged', () =
   });
 });
 
-describe('submitted text hashes to what the recompute compares', () => {
-  // XGuard: article-verdict-writer-hash.test.ts runs the real writer.
-  it('text scan: the subject the article profile builds', async () => {
-    const subject = (await getTextScanProfile('Article')?.load([ARTICLE]))?.get(ARTICLE);
-    expect(subject).toBeDefined();
-    expect(textScanTextHash(subject!)).toBe(scanHash(NEW));
-  });
-});
+// The writers' stored hashes, through the real writers: article-verdict-writer-hash.test.ts
+// (XGuard) and article-verdict-scan-writer-hash.test.ts (text scan).
 
 describe('the reconcile', () => {
   const reconcile = async () => {
