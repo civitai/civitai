@@ -44,10 +44,13 @@ const NEWCOMER_COPY: WhatsNew = {
   items: [
     {
       lead: 'You start as an Acolyte.',
-      body: 'Practise on images with known answers until you reach Knight at level 20.',
+      body: 'Practice on images with known answers. Reach level 20 with 75% of your last 100 answers right to become a Knight.',
     },
-    SHOP,
-    WATCH,
+    {
+      ...SHOP,
+      body: 'Each level you gain pays gold, and as a Knight, judging well pays more. Trade it for Buzz, Knights-only cosmetics or a week of membership perks.',
+    },
+    { ...WATCH, lead: "Once you're a Knight, keep the Watch." },
     { lead: 'Climb the ranks.', body: 'Knight, Templar, then Paladin, each with its own badge.' },
     CODEX,
   ],
