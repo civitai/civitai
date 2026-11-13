@@ -167,7 +167,11 @@ describe('the session revocation read breaker', () => {
       labels: Record<string, string>
     ) =>
       (await counter.get()).values
-        .filter((v) => Object.entries(labels).every(([k, want]) => v.labels[k] === want))
+        .filter((v) =>
+          Object.entries(labels).every(
+            ([k, want]) => (v.labels as Record<string, unknown>)[k] === want
+          )
+        )
         .reduce((sum, v) => sum + v.value, 0);
     const snapshot = async () => ({
       revocationOpened: await count(sysReadBreakerTransitionCounter, {
