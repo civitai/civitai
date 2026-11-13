@@ -5,6 +5,7 @@ import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
 import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
 import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
+import { setSemanticComicSearchEnabled } from '~/components/Search/semanticComicSearchFlag';
 import { OverlayFastPathContext } from '~/components/MantineOverlays/overlayFastPathContext';
 
 const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
@@ -108,6 +109,7 @@ export const FeatureFlagsProvider = ({
   if (typeof window !== 'undefined') {
     setSiteSearchProxyEnabled(!!featureFlags.siteSearchProxy);
     setSemanticArticleSearchEnabled(!!featureFlags.semanticArticleSearch);
+    setSemanticComicSearchEnabled(!!featureFlags.semanticComicSearch);
   }
 
   // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in
