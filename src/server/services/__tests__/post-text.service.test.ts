@@ -203,5 +203,10 @@ describe('what readers are shown', () => {
       maxNsfwLevel: NsfwLevel.R,
     });
     expect(stubs).toEqual([{ id: 1, postId: POST, index: 0, nsfwLevel: NsfwLevel.PG }]);
+    expect(r.postText.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { postId: { in: [POST] }, refused: false, csamHeld: false, nsfwLevel: { not: 0 } },
+      })
+    );
   });
 });
