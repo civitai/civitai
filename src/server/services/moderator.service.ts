@@ -193,7 +193,7 @@ type SiteAlertModActivity = {
 
 type PublishRequestHoldModActivity = {
   entityType: 'publishRequestHold';
-  activity: 'publishRequestHoldOverride';
+  activity: 'publishRequestHoldOverride' | 'publishRequestHoldLateResuspend';
 };
 
 type CsamReportModActivity = {

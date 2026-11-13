@@ -138,7 +138,7 @@ describe('approve', () => {
     await expect(checkHoldsBeforeApprove(raw, { slug: 'app-a' })).resolves.toBeUndefined();
     expect(
       await tx((t) => resolveHoldsAtApprove(t, { slug: 'app-a', actorUserId: HUMAN }))
-    ).toEqual([]);
+    ).toEqual({ overridden: [], late: [] });
     expect((await db.query('SELECT 1 FROM "ModActivity"')).rows).toHaveLength(0);
   });
 
@@ -421,7 +421,7 @@ describe('the final check after an on-site approve has committed', () => {
     return place('pubreq_a');
   }
 
-  it('🔴 does not refuse over a hold placed after the claim expired, and leaves it open', async () => {
+  it('🔴 does not refuse over a hold placed after the claim expired: returns it as late, leaves it open, and records it', async () => {
     const hold = await lateHold();
     await expect(
       tx((t) =>
@@ -432,7 +432,7 @@ describe('the final check after an on-site approve has committed', () => {
           afterSideEffects: true,
         })
       )
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ overridden: [], late: [hold.id] });
     const [row] = (
       await db.query<{ cleared_at: Date | null }>(
         'SELECT cleared_at FROM app_publish_request_holds WHERE id = $1',
@@ -440,7 +440,33 @@ describe('the final check after an on-site approve has committed', () => {
       )
     ).rows;
     expect(row.cleared_at).toBeNull();
-    expect((await db.query('SELECT 1 FROM "ModActivity"')).rows).toHaveLength(0);
+    expect(
+      (await db.query('SELECT "userId", activity, "entityType", "entityId" FROM "ModActivity"'))
+        .rows
+    ).toEqual([
+      {
+        userId: HUMAN,
+        activity: 'publishRequestHoldLateResuspend',
+        entityType: 'publishRequestHold',
+        entityId: hold.id,
+      },
+    ]);
+  });
+
+  it('a shown hold is still overridden alongside a late one', async () => {
+    const shown = await lateHold();
+    const late = await place('pubreq_a');
+    await expect(
+      tx((t) =>
+        resolveHoldsAtApprove(t, {
+          slug: 'app-a',
+          actorUserId: HUMAN,
+          shownHoldIds: [shown.id],
+          overrideReason: OVERRIDE,
+          afterSideEffects: true,
+        })
+      )
+    ).resolves.toEqual({ overridden: [shown.id], late: [late.id] });
   });
 
   it('still refuses that hold before any side effect', async () => {

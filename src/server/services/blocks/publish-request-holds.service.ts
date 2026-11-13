@@ -311,29 +311,33 @@ export async function releaseApproveClaim(db: RawClient, claim: ApproveClaim) {
  *
  * `afterSideEffects`: the approve has already committed code past its {@link claimApprove}, so a
  * refusal could not undo it. A hold the moderator was not shown (placed after the claim expired)
- * is then left open, not overridden, and blocks the app's next request instead.
+ * is then returned in `late`, left open, and recorded as a `publishRequestHoldLateResuspend`
+ * ModActivity row; the caller re-suspends the block in the same transaction.
  */
 export async function resolveHoldsAtApprove(
   tx: RawClient,
   input: ApproveHoldInput & { actorUserId: number; afterSideEffects?: boolean }
-): Promise<number[]> {
+): Promise<{ overridden: number[]; late: number[] }> {
   await lockApp(tx, input.slug);
   let holds = await getOpenHoldsBySlug(tx, [input.slug]);
+  let late: number[] = [];
   if (input.afterSideEffects) {
     const shown = new Set(input.shownHoldIds ?? []);
-    const late = holds.filter((h) => !shown.has(h.id));
-    if (late.length) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[publish-request-holds] approve of ${
-          input.slug
-        } finished past its claim; holds left open: ${late.map((h) => h.id).join(', ')}`
+    late = holds.filter((h) => !shown.has(h.id)).map((h) => h.id);
+    holds = holds.filter((h) => shown.has(h.id));
+    if (late.length)
+      await trackModActivity(
+        input.actorUserId,
+        {
+          entityType: 'publishRequestHold',
+          activity: 'publishRequestHoldLateResuspend',
+          entityId: late,
+        },
+        tx
       );
-      holds = holds.filter((h) => shown.has(h.id));
-    }
   }
   const reason = assertHoldsOverridable(holds, input);
-  if (!reason) return [];
+  if (!reason) return { overridden: [], late };
   const ids = holds.map((h) => h.id);
   await tx.$executeRaw`
     UPDATE app_publish_request_holds
@@ -345,5 +349,5 @@ export async function resolveHoldsAtApprove(
     { entityType: 'publishRequestHold', activity: 'publishRequestHoldOverride', entityId: ids },
     tx
   );
-  return ids;
+  return { overridden: ids, late };
 }
