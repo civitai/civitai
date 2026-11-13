@@ -54,16 +54,26 @@ export type BreakerState = 'closed' | 'open' | 'half-open';
 export type BreakerConfig = { threshold: number; cooldownMs: number };
 
 export type CircuitBreaker = {
-  /** Whether a call may go to the client now. In half-open, true for exactly one probe. */
-  allow(cfg: BreakerConfig, now: number): boolean;
-  onSuccess(): void;
-  onFailure(cfg: BreakerConfig, now: number): void;
+  /**
+   * Admit a call, or refuse it (null). An admitted call gets a TICKET — the breaker's generation at
+   * admission — which it hands back with its outcome. In half-open, exactly one probe is admitted.
+   */
+  allow(cfg: BreakerConfig, now: number): number | null;
+  onSuccess(ticket: number): void;
+  onFailure(cfg: BreakerConfig, now: number, ticket: number): void;
   state(): BreakerState;
   reset(): void;
 };
 
+/**
+ * Every state change starts a new GENERATION, and an outcome is applied only if its ticket is from
+ * the current one. Without that, a call admitted while closed that settles after the breaker
+ * tripped would close the open breaker on a late success, or clear a half-open probe slot with a
+ * late failure — an outcome describing the store as it was before the trip.
+ */
 export function createCircuitBreaker(onTransition?: (to: BreakerState) => void): CircuitBreaker {
   let state: BreakerState = 'closed';
+  let generation = 0;
   let consecutiveFailures = 0;
   let openedAt = 0;
   let probeInFlight = false;
@@ -71,6 +81,7 @@ export function createCircuitBreaker(onTransition?: (to: BreakerState) => void):
   const moveTo = (to: BreakerState) => {
     if (state === to) return;
     state = to;
+    generation += 1;
     try {
       onTransition?.(to);
     } catch {
@@ -80,24 +91,26 @@ export function createCircuitBreaker(onTransition?: (to: BreakerState) => void):
 
   return {
     allow(cfg, now) {
-      if (state === 'closed') return true;
+      if (state === 'closed') return generation;
       if (state === 'open') {
-        if (now - openedAt < cfg.cooldownMs) return false;
+        if (now - openedAt < cfg.cooldownMs) return null;
         moveTo('half-open');
         probeInFlight = true;
-        return true;
+        return generation;
       }
       // half-open: one probe at a time.
-      if (probeInFlight) return false;
+      if (probeInFlight) return null;
       probeInFlight = true;
-      return true;
+      return generation;
     },
-    onSuccess() {
+    onSuccess(ticket) {
+      if (ticket !== generation) return;
       consecutiveFailures = 0;
       probeInFlight = false;
       moveTo('closed');
     },
-    onFailure(cfg, now) {
+    onFailure(cfg, now, ticket) {
+      if (ticket !== generation) return;
       probeInFlight = false;
       if (state === 'half-open') {
         openedAt = now;
@@ -107,12 +120,14 @@ export function createCircuitBreaker(onTransition?: (to: BreakerState) => void):
       consecutiveFailures += 1;
       if (state === 'closed' && consecutiveFailures >= Math.max(1, cfg.threshold)) {
         openedAt = now;
+        consecutiveFailures = 0;
         moveTo('open');
       }
     },
     state: () => state,
     reset() {
       state = 'closed';
+      generation += 1;
       consecutiveFailures = 0;
       openedAt = 0;
       probeInFlight = false;
@@ -182,7 +197,8 @@ export function createClusterCacheGuard(deps: ClusterCacheGuardDeps) {
     const cfg = deps.config();
     const deadlineMs = opts?.deadlineMs ?? cfg.deadlineMs;
     const useBreaker = cfg.breakerEnabled;
-    if (useBreaker && !deps.breaker.allow(cfg.breaker, now())) {
+    const ticket = useBreaker ? deps.breaker.allow(cfg.breaker, now()) : null;
+    if (useBreaker && ticket === null) {
       const err = new ClusterCacheUnavailableError(fn, 'breaker-open');
       report(fn, 'breaker-open', err, kind, opts);
       throw err;
@@ -190,10 +206,10 @@ export function createClusterCacheGuard(deps: ClusterCacheGuardDeps) {
     try {
       // Promise.resolve().then so a synchronous throw from `op` is a rejection like any other.
       const value = await raceDeadline(Promise.resolve().then(op), deadlineMs, fn);
-      if (useBreaker) deps.breaker.onSuccess();
+      if (ticket !== null) deps.breaker.onSuccess(ticket);
       return value;
     } catch (err) {
-      if (useBreaker) deps.breaker.onFailure(cfg.breaker, now());
+      if (ticket !== null) deps.breaker.onFailure(cfg.breaker, now(), ticket);
       const reason: ClusterCacheFailureReason =
         err instanceof ClusterCacheUnavailableError ? err.reason : 'error';
       report(fn, reason, err, kind, opts);

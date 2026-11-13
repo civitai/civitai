@@ -87,4 +87,17 @@ describe('claimRateLimitAttempt with the store unavailable', () => {
     await expect(attempt(a)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     await expect(attempt(b)).resolves.toBeUndefined();
   });
+
+  it('clears the local counts once the store answers again, so a later outage starts fresh', async () => {
+    const req = freshReq();
+    hGet.mockRejectedValue(new Error('cluster down'));
+    for (let i = 0; i < 3; i++) await attempt(req);
+    await expect(attempt(req)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+
+    hGet.mockResolvedValue([]); // the store is back
+    await attempt(freshReq());
+
+    hGet.mockRejectedValue(new Error('cluster down again'));
+    await expect(attempt(req)).resolves.toBeUndefined();
+  });
 });

@@ -115,11 +115,30 @@ describe('createLagTracker — flag store unavailable', () => {
     expect(onReadFailure).toHaveBeenCalledWith('error', expect.any(Error));
   });
 
-  it('a store that never answers reads as fresh within 450ms by default', async () => {
+  it('by default the read is NOT bounded: a store that never answers is still awaited at 300ms', async () => {
+    const tracker = createLagTracker({
+      store: storeWith(() => new Promise(() => undefined)),
+      delaySeconds: 5,
+    });
+
+    await expect(within(tracker.isStale('k'), 300)).resolves.toBe(HUNG);
+  });
+
+  it('by default (no bound, no hook) a store error propagates, as before these options', async () => {
+    const tracker = createLagTracker({
+      store: storeWith(() => Promise.reject(new Error('store down'))),
+      delaySeconds: 5,
+    });
+
+    await expect(tracker.isStale('k')).rejects.toThrow('store down');
+  });
+
+  it('a store that never answers reads as fresh within the bound given, and reports a timeout', async () => {
     const onReadFailure = vi.fn();
     const tracker = createLagTracker({
-      store: storeWith(() => new Promise(() => {})),
+      store: storeWith(() => new Promise(() => undefined)),
       delaySeconds: 5,
+      readTimeoutMs: 200,
       onReadFailure,
     });
 

@@ -165,6 +165,44 @@ describe('breaker (enabled)', () => {
   });
 });
 
+describe('breaker: late outcomes from before a trip are ignored', () => {
+  it('a call admitted while closed that succeeds after the trip does not close the breaker', async () => {
+    const { guard, breaker } = guardWith({ breakerEnabled: true, deadlineMs: 0 });
+    let release!: (v: string) => void;
+    const slow = guard.readOr('t', () => new Promise<string>((r) => (release = r)), 'miss');
+    for (let i = 0; i < 3; i++) await guard.readOr('t', () => Promise.reject(new Error('x')), null);
+    expect(breaker.state()).toBe('open');
+
+    release('late');
+    await expect(slow).resolves.toBe('late');
+    expect(breaker.state()).toBe('open');
+  });
+
+  it('a pre-trip call that fails during half-open does not free the probe slot or re-open', async () => {
+    let t = 0;
+    const { guard, breaker } = guardWith({ breakerEnabled: true, deadlineMs: 0 }, () => t);
+    let failLate!: (e: Error) => void;
+    const stale = guard.readOr('t', () => new Promise<string>((_, j) => (failLate = j)), 'miss');
+    for (let i = 0; i < 3; i++) await guard.readOr('t', () => Promise.reject(new Error('x')), null);
+    t = 1000;
+    let releaseProbe!: (v: string) => void;
+    const probe = guard.readOr('t', () => new Promise<string>((r) => (releaseProbe = r)), 'miss');
+    expect(breaker.state()).toBe('half-open');
+
+    failLate(new Error('late'));
+    await stale;
+    expect(breaker.state()).toBe('half-open');
+    // The probe slot is still taken: another call is refused without reaching the client.
+    const other = vi.fn(async () => 'v');
+    await expect(guard.readOr('t', other, 'miss')).resolves.toBe('miss');
+    expect(other).not.toHaveBeenCalled();
+
+    releaseProbe('ok');
+    await probe;
+    expect(breaker.state()).toBe('closed');
+  });
+});
+
 describe('breaker (disabled — the default)', () => {
   it('keeps calling the client however many calls fail', async () => {
     const { guard, breaker } = guardWith({ breakerEnabled: false });

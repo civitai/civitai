@@ -65,11 +65,15 @@ type RateLimitBucket = ReturnType<typeof rateLimitBucket>;
  * rate-limits a procedure is in exactly one of them, so a new money router cannot silently inherit
  * the fallback. A new procedure in a fail-closed router is fail-closed with no further step.
  */
+// RULE: a router belongs here if ANY of its procedures charges or pays Buzz (or takes payment) —
+// classify a new router by that, not by which of its procedures happen to be rate-limited today.
 export const FAIL_CLOSED_RATE_LIMIT_SCOPES: readonly string[] = [
   'buzz',
   'nowPayments',
   'generation',
   'orchestrator',
+  // run / start / advance / testStart quote and submit Buzz-paid orchestrator workflows.
+  'remixApp',
   'training',
 ];
 
@@ -96,9 +100,9 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'platformFeedback',
   'post',
   'postIntent',
+  // claim pays out, but through an idempotent ledger key: a re-admitted claim cannot pay twice.
   'prize',
   'reaction',
-  'remixApp',
   'report',
   'resourceLoad',
   'semanticArticleSearch',
@@ -123,8 +127,8 @@ export function isFailClosedRateLimitScope(scope: string) {
  *
  * Not for FAIL_CLOSED_RATE_LIMIT_SCOPES, which refuse instead (see above).
  *
- * Only filled while degraded, and discarded in effect once the store answers again (the store's own
- * history is authoritative then). Bounded: past LOCAL_BUCKETS_MAX buckets the oldest is dropped, so
+ * Only filled while degraded, and cleared on the first read the store answers again (the store's
+ * own history is authoritative then). Bounded: past LOCAL_BUCKETS_MAX buckets the oldest is dropped, so
  * an outage under a flood of distinct callers costs bounded memory.
  */
 const LOCAL_BUCKETS_MAX = 50_000;
@@ -154,6 +158,9 @@ async function readAttemptsOrLocal(
       () => redis.packed.hGet<number[]>(bucket.cacheKey, bucket.hashKey),
       { logExtra: { cacheKey: bucket.cacheKey } }
     );
+    // The store answers again: its history is authoritative, so drop the outage's local counts
+    // rather than hold that memory until the next outage.
+    if (localAttempts.size > 0) localAttempts.clear();
     return { attempts: stored ?? [], degraded: false };
   } catch {
     return { attempts: [...(localAttempts.get(localKeyOf(bucket)) ?? [])], degraded: true };

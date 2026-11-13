@@ -55,6 +55,10 @@ async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
  * (error, timeout, open cluster-cache breaker) — never on the normal path, so the cross-pod
  * invalidation above is unaffected while the cache works.
  *
+ * ⚠️ It is NOT invalidated by a write. After a moderator adds an entry, a pod whose cache read then
+ * fails or times out can keep enforcing its pre-addition copy for up to BLOCKLIST_CACHE_TTL
+ * (5 minutes) from when it read that copy — the same ceiling the cache entry itself has.
+ *
  * 🔴 A blocklist is enforcement: an unreadable cache must never read as an empty, allow-everything
  * list. So, with the cache unreadable:
  * 1. a copy younger than BLOCKLIST_CACHE_TTL — the staleness the cache itself already allows — is

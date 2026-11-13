@@ -63,7 +63,7 @@ beforeEach(() => {
   vi.mocked(hSetWithTTL).mockResolvedValue(undefined as never);
 });
 
-const MONEY_SCOPES = ['buzz', 'nowPayments', 'generation', 'orchestrator', 'training'];
+const MONEY_SCOPES = ['buzz', 'nowPayments', 'generation', 'orchestrator', 'remixApp', 'training'];
 
 describe('claimRateLimitAttempt, money scopes, store unavailable', () => {
   it.each(MONEY_SCOPES)('%s: a rejecting store refuses the first attempt with a 503', async (s) => {

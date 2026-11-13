@@ -32,7 +32,8 @@ export type LagStoreInput<K extends string = string> =
   | null
   | (() => LagStore<K> | null);
 
-export const DEFAULT_LAG_READ_TIMEOUT_MS = 200;
+/** Unbounded by default: a caller opts in to a bound (and to failing open) explicitly. */
+export const DEFAULT_LAG_READ_TIMEOUT_MS = 0;
 
 class LagReadTimeoutError extends Error {
   constructor(ms: number) {
@@ -60,12 +61,15 @@ export function createLagTracker<K extends string = string>(opts: {
    * routing entirely — isStale always false, markFresh no-ops — so a disabled tracker never touches the
    * store and never writes an invalid TTL. */
   delaySeconds: number;
-  /** Bound on the flag READ in `isStale`, in ms (default 200). A read that misses it, or rejects,
-   * reads as fresh — the replica — which is what an absent flag already means. `<= 0` disables the
-   * bound. The flag store is usually a shared cache whose client waits far longer than a page read
-   * is worth while it is unreachable; this keeps that wait off every read the tracker fronts. */
+  /** Bound on the flag READ in `isStale`, in ms. Default 0: unbounded, the read is awaited as long as
+   * the store takes. When set (> 0), a read that misses it reads as fresh — the replica — which is
+   * what an absent flag already means. The flag store is usually a shared cache whose client waits
+   * far longer than a page read is worth while it is unreachable; a caller that wants that wait off
+   * its reads sets this (and should pass `onReadFailure` so the degradation is visible). */
   readTimeoutMs?: number;
-  /** Called once per failed flag read, with why (`timeout` or `error`). Observability only. */
+  /** Called once per failed flag read, with why (`timeout` or `error`). Passing it (or a bound) opts
+   * the tracker into failing OPEN — a failed read reads as fresh. With neither, a store error
+   * propagates to the caller exactly as it did before these options existed. */
   onReadFailure?: (reason: 'timeout' | 'error', err: unknown) => void;
 }): LagTracker<K> {
   const { store, delaySeconds, onReadFailure } = opts;
@@ -94,6 +98,8 @@ export function createLagTracker<K extends string = string>(opts: {
           )
         );
       } catch (err) {
+        // Neither a bound nor a failure hook: the caller has not opted in to failing open.
+        if (!onReadFailure && !(readTimeoutMs > 0)) throw err;
         try {
           onReadFailure?.(err instanceof LagReadTimeoutError ? 'timeout' : 'error', err);
         } catch {
