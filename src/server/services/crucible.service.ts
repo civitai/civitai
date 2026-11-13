@@ -17,7 +17,10 @@ import {
   PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import { crucibleScannedSql } from '~/server/services/crucible-visibility.sql';
+import {
+  crucibleCoverListedWhere,
+  crucibleScannedSql,
+} from '~/server/services/crucible-visibility.sql';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
@@ -1619,7 +1622,7 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   const visible: Prisma.CrucibleWhereInput[] = [
     {
       ingestion: CrucibleIngestionStatus.Scanned,
-      image: { ingestion: ImageIngestionStatus.Scanned },
+      image: crucibleCoverListedWhere,
     },
   ];
   if (effectiveLevel > 0) {

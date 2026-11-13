@@ -23,6 +23,7 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
 }));
 
 const {
+  getCrucibles,
   getFeaturedCrucible,
   getJudgingSuggestions,
   isCrucibleHiddenByScan,
@@ -258,13 +259,15 @@ describe('list surfaces — featured and judging suggestions', () => {
     ['featured', () => getFeaturedCrucible({ browsingLevel: 1 })],
     ['judging suggestions', () => getJudgingSuggestions({ userId: 7, browsingLevel: 1, limit: 4 })],
   ])(
-    '%s: only crucibles whose text and cover passed, and no adult text for a SFW viewer',
+    '%s: only crucibles whose text and cover passed, the cover out of review and not a ToS violation, and no adult text for a SFW viewer',
     async (_, run) => {
       await run();
 
       const sql = sqlText(queryRaw.mock.calls[0]);
       expect(sql).toContain('c.ingestion =');
       expect(sql).toContain('i.ingestion =');
+      expect(sql).toContain('i."needsReview" IS NULL');
+      expect(sql).toContain('NOT i."tosViolation"');
       expect(sql).toContain('NOT c."textNsfw"');
     }
   );
@@ -321,5 +324,25 @@ describe('list surfaces — featured and judging suggestions', () => {
       return Array.isArray(nested) ? nested.flatMap(flat) : [value];
     });
     expect(values).not.toContain(31);
+  });
+});
+
+describe('list surfaces — the public feed', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.crucible.findMany.mockResolvedValue([]);
+  });
+
+  it('lists only crucibles whose cover passed its scan, is out of review and is not a ToS violation', async () => {
+    await getCrucibles({ input: { limit: 20 } as never, select: { id: true } });
+
+    const where = JSON.stringify(dbMock.dbRead.crucible.findMany.mock.calls[0][0]?.where);
+    expect(where).toContain(
+      JSON.stringify({
+        ingestion: ImageIngestionStatus.Scanned,
+        needsReview: null,
+        tosViolation: false,
+      })
+    );
   });
 });

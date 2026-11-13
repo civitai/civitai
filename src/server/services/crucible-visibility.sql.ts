@@ -5,9 +5,21 @@ import {
   ImageIngestionStatus,
 } from '~/shared/utils/prisma/enums';
 
-/** Crucible `c` and its cover `i` have both passed their scans: every list surface requires it. */
+/**
+ * Crucible `c` and its cover `i` have both passed their scans, and the cover is neither in review
+ * nor a ToS violation: every list surface requires it. getCrucibles builds the same rule as a
+ * Prisma filter (crucibleCoverListedWhere).
+ */
 export const crucibleScannedSql = Prisma.sql`c.ingestion = ${CrucibleIngestionStatus.Scanned}::"CrucibleIngestionStatus"
-  AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`;
+  AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+  AND i."needsReview" IS NULL AND NOT i."tosViolation"`;
+
+/** The cover half of crucibleScannedSql, as a Prisma filter on the crucible's `image`. */
+export const crucibleCoverListedWhere = {
+  ingestion: ImageIngestionStatus.Scanned,
+  needsReview: null,
+  tosViolation: false,
+} satisfies Prisma.ImageWhereInput;
 
 /**
  * Which crucibles the semantic search index keeps: the scans every list surface requires, not

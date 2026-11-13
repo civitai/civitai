@@ -24,7 +24,12 @@ type Row = {
   textNsfw: boolean;
   ingestion: CrucibleIngestionStatus;
   userId: number;
-  image: { ingestion: ImageIngestionStatus; nsfwLevel: number };
+  image: {
+    ingestion: ImageIngestionStatus;
+    nsfwLevel: number;
+    needsReview?: string | null;
+    tosViolation?: boolean;
+  };
   takenDownAt: Date | null;
 };
 
@@ -41,6 +46,11 @@ const row = (id: number, overrides: Partial<Row> = {}): Row => ({
   image: { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.PG },
   takenDownAt: null,
   ...overrides,
+  image: {
+    needsReview: null,
+    tosViolation: false,
+    ...(overrides.image ?? { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.PG }),
+  },
 });
 
 /**
@@ -162,6 +172,26 @@ describe('Feed home block, crucibles entity', () => {
       { image: { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.PG13 } },
     ],
     ['an R cover', { image: { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.R } }],
+    [
+      'a cover in review',
+      {
+        image: {
+          ingestion: ImageIngestionStatus.Scanned,
+          nsfwLevel: NsfwLevel.PG,
+          needsReview: 'minor',
+        },
+      },
+    ],
+    [
+      'a ToS-violating cover',
+      {
+        image: {
+          ingestion: ImageIngestionStatus.Scanned,
+          nsfwLevel: NsfwLevel.PG,
+          tosViolation: true,
+        },
+      },
+    ],
     ['an R-only crucible', { nsfwLevel: NsfwLevel.R }],
     ['adult text', { textNsfw: true }],
   ] as const)('leaves out %s', async (_, overrides) => {
