@@ -74,6 +74,7 @@ const image = (nsfwLevel: number, over: Row = {}) => ({
   acceptableMinor: false,
   poi: false,
   minor: false,
+  modelRestricted: false,
   tags: [] as Row[],
   ...over,
 });
@@ -111,7 +112,7 @@ const POSTS = [
   post(13, PG | Blocked, [image(PG), image(Blocked)]),
   post(14, PG, [image(PG, { blockedFor: 'tos' })]),
   // A restricted model's mature image is passed over for the next one.
-  post(15, R, [image(R, { id: 9001 }), image(R)]),
+  post(15, R, [image(R, { id: 9001, modelRestricted: true }), image(R)]),
   // Blocked alone is no level a viewer browses at.
   post(16, Blocked, [image(Blocked)]),
   // A post level that has drifted from its images: rated XXX, its one image PG.
@@ -132,7 +133,9 @@ const POSTS = [
     }
   ),
 ];
-const RESTRICTED_MATURE = new Set([9001]);
+/** Every fixture image by id, for the restricted-model query. */
+const imageById = (id: number) =>
+  (rows as typeof POSTS).flatMap((p) => p.images as Row[]).find((i) => i.id === id);
 let rows: Row[] = POSTS;
 
 type Args = {
@@ -153,13 +156,27 @@ beforeEach(() => {
     tosViolation: false,
   } as never);
   // The restricted-model lookup, over the cover candidates it is asked about.
+  // The restricted-model query, run as its own text says: each condition applies only if the
+  // statement has it, so a dropped condition shows in what comes back.
   dbMock.dbRead.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
-  ) =>
-    Prisma.sql(strings, ...(values as never[]))
-      .values.filter((v): v is number => typeof v === 'number' && RESTRICTED_MATURE.has(v))
-      .map((id) => ({ id }))) as never);
+  ) => {
+    const { sql, values: params } = Prisma.sql(strings, ...(values as never[]));
+    const masked = /\(i\."nsfwLevel" & \?\) != 0/.test(sql);
+    const restricted = /AND i\."modelRestricted"/.test(sql);
+    const mask = masked ? (params[params.length - 1] as number) : 0;
+    const ids = (masked ? params.slice(0, -1) : params) as number[];
+    return ids
+      .map(imageById)
+      .filter(
+        (i): i is Row =>
+          !!i &&
+          (!masked || ((i.nsfwLevel as number) & mask) !== 0) &&
+          (!restricted || i.modelRestricted === true)
+      )
+      .map((i) => ({ id: i.id }));
+  }) as never);
   dbMock.dbRead.post.findMany.mockImplementation((async (args: Args) => {
     const ordered = (rows as typeof POSTS)
       .filter((p) => matches(p, args.where))
@@ -455,5 +472,44 @@ describe('relatedPostsBrowsingLevel', () => {
   it("reads a signed-in mature viewer's saved level when none is asked, and what they ask for otherwise", () => {
     expect(relatedPostsBrowsingLevel(mature(PG | R), undefined)).toBe(PG | R);
     expect(relatedPostsBrowsingLevel(mature(PG | R), XXX)).toBe(XXX);
+  });
+});
+
+describe("getModel3DRelatedPosts, a restricted model's images", () => {
+  beforeEach(() => {
+    rows = [
+      // A mature image of a restricted model is passed over for the next.
+      post(
+        50,
+        R,
+        [image(R, { userId: STRANGER, modelRestricted: true }), image(R, { userId: STRANGER })],
+        {
+          userId: STRANGER,
+        }
+      ),
+      // A restricted model's PG image is kept: only its mature images are dropped.
+      post(
+        51,
+        PG,
+        [image(PG, { userId: STRANGER, modelRestricted: true }), image(PG, { userId: STRANGER })],
+        {
+          userId: STRANGER,
+        }
+      ),
+      // A mature image of an unrestricted model is kept.
+      post(52, R, [image(R, { userId: STRANGER }), image(R, { userId: STRANGER })], {
+        userId: STRANGER,
+      }),
+    ];
+  });
+
+  it('drops only the mature images of a restricted model', async () => {
+    const [first50, second50] = (rows[0].images as Row[]).map((i) => i.id);
+    const [first51] = (rows[1].images as Row[]).map((i) => i.id);
+    const [first52] = (rows[2].images as Row[]).map((i) => i.id);
+    const { items } = await page({ id: 77 }, PG | R, { limit: 50 });
+    const covers = Object.fromEntries(items.map((p) => [p.id, p.images[0]?.id]));
+    expect(covers).toEqual({ 50: second50, 51: first51, 52: first52 });
+    expect(covers[50]).not.toBe(first50);
   });
 });
