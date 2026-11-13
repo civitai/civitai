@@ -533,4 +533,39 @@ describe('mini/[id] ?epoch= from the query string', () => {
   ])('400s an epoch that is %s', async (_, epoch) => {
     expect((await ask({ epoch })).status).toBe(400);
   });
+
+  describe.each(['log', 'enforce', 'off'])(
+    '%s: only the owner, a moderator or the service token picks the epoch',
+    (variant) => {
+      beforeEach(() => {
+        h.variant.value = variant === 'off' ? null : variant;
+      });
+
+      const held = (
+        [
+          ['a signed-out caller', anonymous],
+          ['a signed-in caller with no grant', stranger],
+          ['a grantee', grantee],
+        ] as const
+      ).filter(([, caller]) => variant !== 'enforce' || caller === grantee);
+
+      it.each(held)('%s gets the no-param response whatever ?epoch= holds', async (_, caller) => {
+        const unnamed = await request(caller, {}, twoEpochs);
+        for (const epoch of ['5', '10', '99', '', 'latest', '5.5', ['5', '10']])
+          expect(
+            await request(caller, {}, twoEpochs, undefined, { epoch: epoch as string })
+          ).toEqual(unnamed);
+      });
+
+      it.each([
+        ['the owner', owner],
+        ['a moderator', moderator],
+        ['the service token', service],
+      ])('%s still gets the epoch it names', async (_, caller) => {
+        const { status, body } = await request(caller, {}, twoEpochs, undefined, { epoch: '5' });
+        expect(status).toBe(200);
+        expect(body.downloadUrls).toEqual([EARLY]);
+      });
+    }
+  );
 });
