@@ -29,7 +29,7 @@ import {
   updateImageTools,
   refreshImageResources,
 } from '~/server/services/image.service';
-import { setSongCover } from '~/server/services/post.service';
+import { getSongCoversForPlayer, setSongCover } from '~/server/services/post.service';
 import {
   middleware,
   guardedProcedure,
@@ -54,7 +54,7 @@ import {
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
-import { cacheIt, edgeCacheIt } from './../middleware.trpc';
+import { cacheIt, edgeCacheIt, rateLimit } from './../middleware.trpc';
 import {
   addOrRemoveImageTechniquesSchema,
   addOrRemoveImageToolsSchema,
@@ -65,6 +65,7 @@ import {
   imageModerationSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
+  getSongCoversSchema,
   setSongCoverSchema,
   setTosViolationSchema,
   setVideoThumbnailSchema,
@@ -243,6 +244,14 @@ export const imageRouter = router({
     .input(setSongCoverSchema)
     .use(isOwnerOrModerator)
     .mutation(({ input, ctx }) => setSongCover({ ...input, user: ctx.user })),
+  // Per viewer (visibility, domain level and the music flag), so no `edgeCacheIt`.
+  getSongCovers: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getSongCoversSchema)
+    // A page reads once for its song tiles and once per song the player shows; clients keep each
+    // answer for 5 minutes.
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) => getSongCoversForPlayer({ ...input, ctx })),
 
   updateAccetableMinor: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })

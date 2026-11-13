@@ -160,6 +160,14 @@
   --safe-area-inset-bottom-page: 0px;
 }
 
+/* The global music player's bar (src/components/MusicPlayer/MusicPlayerBar.tsx) is the last row of
+   `#__next` while it shows, and the ad bar stands down meanwhile. It pays the inset itself, so it
+   settles both questions, as the ad bar does. */
+#__next:has([data-music-player-bar]) {
+  --safe-area-inset-bottom-unpaid: 0px;
+  --safe-area-inset-bottom-page: 0px;
+}
+
 /* The footer bar answers the page's question only. Deliberately NOT
    `--safe-area-inset-bottom-unpaid` as well: that property is what tells the
    footer whether to pay, and zeroing it here would make the footer's own

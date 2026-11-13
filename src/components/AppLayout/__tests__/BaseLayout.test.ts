@@ -5,6 +5,7 @@ import type * as FullScreen from '~/components/ImageGeneration/useGenerationPane
 import type * as OnboardingUtils from '~/components/Onboarding/onboarding.utils';
 import type * as ResourceResidency from '~/components/ResourceLoad/ResourceResidency';
 import type * as CurrentUser from '~/hooks/useCurrentUser';
+import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import type * as GenerationPanelStore from '~/store/generation-panel.store';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 
@@ -14,6 +15,7 @@ const state = vi.hoisted(() => ({
   fullScreen: true as boolean | undefined,
   user: {} as Record<string, unknown> | undefined,
   onboardingSteps: [] as string[],
+  music: true,
 }));
 
 vi.mock('next/router', () => ({ useRouter: () => ({ pathname: state.pathname }) }));
@@ -40,6 +42,14 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
 vi.mock('~/components/Onboarding/onboarding.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof OnboardingUtils>()),
   useGetRequiredOnboardingSteps: () => state.onboardingSteps,
+}));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsProvider>()),
+  useOptionalFeatureFlags: () => ({ music: state.music }),
+}));
+vi.mock('~/components/MusicPlayer/MusicPlayerSlot', () => ({
+  MusicPlayerSlot: ({ enabled }: { enabled: boolean }) =>
+    createElement('i', { 'data-music-slot': String(enabled) }),
 }));
 vi.mock('~/components/ResourceLoad/ResourceResidency', async (importOriginal) => ({
   ...(await importOriginal<typeof ResourceResidency>()),
@@ -88,5 +98,37 @@ describe('BaseLayout hides the page under a full-screen generator', () => {
   it('shows onboarding, which gets no generator', () => {
     state.onboardingSteps = ['tos'];
     expect(render()).not.toContain(HIDDEN);
+  });
+});
+
+describe('BaseLayout places the music player', () => {
+  beforeEach(() => {
+    Object.assign(state, {
+      pathname: '/models',
+      opened: false,
+      fullScreen: false,
+      user: {},
+      onboardingSteps: [],
+      music: true,
+    });
+  });
+
+  it('switches it on with the music flag, after the page, so it is the last row', () => {
+    const html = render();
+    expect(html).toContain('data-music-slot="true"');
+    expect(html.indexOf('data-music-slot')).toBeGreaterThan(html.indexOf('<p>page</p>'));
+  });
+
+  it('keeps it off without the flag', () => {
+    state.music = false;
+    expect(render()).toContain('data-music-slot="false"');
+  });
+
+  it('keeps it off for a banned user and during onboarding, like the generator', () => {
+    state.user = { bannedAt: new Date() };
+    expect(render()).toContain('data-music-slot="false"');
+    state.user = {};
+    state.onboardingSteps = ['tos'];
+    expect(render()).toContain('data-music-slot="false"');
   });
 });

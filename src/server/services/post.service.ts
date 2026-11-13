@@ -6,6 +6,8 @@ import {
 } from '~/server/events/points/hooks';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
+import type { Context } from '~/server/createContext';
+import { canViewImageMedia } from '~/server/utils/image-media-visibility';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -99,6 +101,7 @@ import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/service
 import { Flags } from '~/shared/utils/flags';
 import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
 import { getModelIdsVisibleToViewer } from '~/server/services/model-visibility.service';
 import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
@@ -127,6 +130,7 @@ import {
   CollectionMode,
   CollectionType,
   EntityType,
+  ImageIngestionStatus,
   JobQueueType,
   MediaType,
   Model3DStatus,
@@ -909,32 +913,100 @@ const songCoverSelect = {
 } satisfies Prisma.ImageSelect;
 export type SongCover = Prisma.ImageGetPayload<{ select: typeof songCoverSelect }>;
 
-/** Each song's cover with its scan state, in one read for all of them. */
-async function getSongCovers(
+/**
+ * Each song's cover, in one read for all of them: the fields `coverSelect` names (by default its
+ * scan state, for the editor).
+ */
+async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSelect>(
   images: { id: number; type: MediaType; metadata: unknown }[],
-  db: typeof dbRead | typeof dbWrite
+  db: typeof dbRead | typeof dbWrite,
+  coverSelect: S = songCoverSelect as unknown as S
 ) {
+  type Cover = Prisma.ImageGetPayload<{ select: S }>;
   const links = images.flatMap((image) => {
     const coverId = (image.metadata as { coverImageId?: unknown } | null)?.coverImageId;
     return image.type === MediaType.audio && typeof coverId === 'number'
       ? [{ songId: image.id, coverId }]
       : [];
   });
-  if (!links.length) return new Map<number, SongCover>();
+  if (!links.length) return new Map<number, Cover>();
   // The songs come back too, for their owner: a cover must be theirs.
-  const rows = await db.image.findMany({
+  const rows = (await db.image.findMany({
     where: { id: { in: links.flatMap(({ songId, coverId }) => [songId, coverId]) } },
-    select: { ...songCoverSelect, userId: true, postId: true, metadata: true },
-  });
+    select: { ...coverSelect, id: true, userId: true, postId: true, metadata: true },
+  })) as unknown as ({
+    id: number;
+    userId: number;
+    postId: number | null;
+    metadata: unknown;
+  } & Record<string, unknown>)[];
   const byId = new Map(rows.map((row) => [row.id, row]));
   return new Map(
     links.flatMap(({ songId, coverId }) => {
       const song = byId.get(songId);
       const cover = byId.get(coverId);
       if (!song || !cover || !isCoverOfSong(cover, song)) return [];
-      const { userId: _userId, postId: _postId, metadata: _metadata, ...shown } = cover;
-      return [[songId, shown] as const];
+      const shown = Object.fromEntries(Object.keys(coverSelect).map((key) => [key, cover[key]]));
+      return [[songId, shown as Cover] as const];
     })
+  );
+}
+
+const playerCoverSelect = {
+  id: true,
+  url: true,
+  hash: true,
+  nsfwLevel: true,
+  ingestion: true,
+  blockedFor: true,
+  needsReview: true,
+  acceptableMinor: true,
+  userId: true,
+} satisfies Prisma.ImageSelect;
+
+export type PlayerSongCover = {
+  songId: number;
+  id: number;
+  url: string;
+  hash: string | null;
+  nsfwLevel: number;
+};
+
+/**
+ * The covers the global player may show for `ids`: only for songs the requester can already open
+ * by id, and only a cover that is the song's own, scanned, not blocked, not held for review, not
+ * flagged as showing a minor, and inside the request's domain browsing level. The owner gets the
+ * same rule except the domain level; the editor is where pending or blocked covers show.
+ */
+export async function getSongCoversForPlayer({
+  ids,
+  ctx,
+}: {
+  ids: number[];
+  ctx: Pick<Context, 'user' | 'features' | 'req'>;
+}): Promise<PlayerSongCover[]> {
+  const { user } = ctx;
+  if (!getFeatureFlagsLazy({ user }).music)
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+  const visible = await getImageIdsVisibleToViewer({
+    ids: [...new Set(ids)],
+    userId: user?.id,
+    isModerator: user?.isModerator,
+  });
+  if (!visible.size) return [];
+  const songs = await dbRead.image.findMany({
+    where: { id: { in: [...visible] } },
+    select: { id: true, type: true, metadata: true },
+  });
+  const covers = await getSongCovers(songs, dbRead, playerCoverSelect);
+  return [...covers].flatMap(([songId, cover]) =>
+    cover.ingestion === ImageIngestionStatus.Scanned &&
+    !hasBlockMarker(cover) &&
+    cover.needsReview == null &&
+    cover.acceptableMinor === false &&
+    canViewImageMedia(ctx, { nsfwLevel: cover.nsfwLevel, user: { id: cover.userId } })
+      ? [{ songId, id: cover.id, url: cover.url, hash: cover.hash, nsfwLevel: cover.nsfwLevel }]
+      : []
   );
 }
 

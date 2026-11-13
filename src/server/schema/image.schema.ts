@@ -683,6 +683,12 @@ export const setSongCoverSchema = z.object({
   cover: imageInputSchema.extend({ type: z.literal(MediaType.image).default(MediaType.image) }),
 });
 
+export type GetSongCoversInput = z.infer<typeof getSongCoversSchema>;
+export const getSongCoversSchema = z.object({
+  /** Song ids. */
+  ids: z.number().int().positive().array().min(1).max(100),
+});
+
 export type UpdateImageAcceptableMinorInput = z.infer<typeof updateImageAcceptableMinorSchema>;
 export const updateImageAcceptableMinorSchema = z.object({
   id: z.number(),

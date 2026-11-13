@@ -10,6 +10,7 @@ import { ImageContextMenuWrapper } from '~/components/Image/ContextMenu/ContextM
 export function ImageContextMenu({
   context,
   additionalMenuItems,
+  leadingMenuItems,
   noDelete = false,
   postImageCount,
   image,
@@ -21,6 +22,7 @@ export function ImageContextMenu({
     image,
     context,
     additionalMenuItems,
+    leadingMenuItems,
     postImageCount,
   };
 

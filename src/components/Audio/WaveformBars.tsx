@@ -1,14 +1,21 @@
 import clsx from 'clsx';
 
-/** A track's peaks as vertical bars; the bars before `progress` (0..1) read as played. */
+/**
+ * A track's peaks as vertical bars; the bars before `progress` (0..1) read as played. Played bars
+ * take `--waveform-played` from an enclosing element, else the Civitai primary.
+ */
 export function WaveformBars({
   peaks,
   progress,
   className,
+  barClassName = 'min-w-px flex-1 rounded-full',
+  unplayedClassName = 'bg-black/20 dark:bg-white/35',
 }: {
   peaks: number[];
   progress: number;
   className?: string;
+  barClassName?: string;
+  unplayedClassName?: string;
 }) {
   const played = Math.round(Math.max(0, Math.min(1, progress)) * peaks.length);
   return (
@@ -19,8 +26,10 @@ export function WaveformBars({
           data-testid="waveform-bar"
           data-played={i < played}
           className={clsx(
-            'min-w-px flex-1 rounded-full',
-            i < played ? 'bg-[var(--mantine-primary-color-filled)]' : 'bg-black/20 dark:bg-white/35'
+            barClassName,
+            i < played
+              ? 'bg-[var(--waveform-played,var(--mantine-primary-color-filled))]'
+              : unplayedClassName
           )}
           style={{ height: `${Math.max(8, peak * 100)}%` }}
         />

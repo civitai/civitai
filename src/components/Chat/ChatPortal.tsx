@@ -6,6 +6,7 @@ import { AdUnitOutstreamWithCloseButton } from '~/components/Ads/AdUnitOutstream
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useIsClient } from '~/providers/IsClientProvider';
+import { useMusicPlayerActive } from '~/store/music-player.store';
 
 const ChatWindow = dynamic(() => import('~/components/Chat/ChatWindow').then((m) => m.ChatWindow));
 
@@ -26,11 +27,13 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   const open = useChatStore((state) => state.open);
   const isMobile = useIsMobile();
   const isClient = useIsClient();
+  // The minimized music player's default spot is this corner, so the ad stands down while it plays.
+  const musicPlayerActive = useMusicPlayerActive();
 
   // if (!state.open) return null;
 
   if (!open)
-    return isClient && !isMobile ? (
+    return isClient && !isMobile && !musicPlayerActive ? (
       // Same idiom, same correction, same reason as `AppFooter`'s floating
       // cluster: `bottom: var(--footer-height)` is an offset chosen to clear
       // the footer BAR, and the bar is now `--footer-height` plus whatever
