@@ -40,6 +40,12 @@ type Config struct {
 	LazyPostImages   bool            // FEED_GO_LAZY_POST_IMAGES: mirrors `gallery-lazy-post-images`
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: event decorations visible to everyone
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+
+	// System redis through its Sentinels (internal/sysredis). Same names and precedence as the
+	// Node app: a non-empty REDIS_SYS_SENTINELS selects Sentinel mode, else REDIS_SYS_URL is used.
+	RedisSysSentinels        string // REDIS_SYS_SENTINELS: comma-separated host[:port]
+	RedisSysSentinelName     string // REDIS_SYS_SENTINEL_NAME: master group, required with SENTINELS
+	RedisSysSentinelPassword string // REDIS_SYS_SENTINEL_PASSWORD: only if Sentinel auth is on
 }
 
 // Load reads the environment.
@@ -62,6 +68,10 @@ func Load() (*Config, error) {
 		LazyPostImages:   boolEnv("FEED_GO_LAZY_POST_IMAGES", true),
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
+
+		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
+		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),
+		RedisSysSentinelPassword: os.Getenv("REDIS_SYS_SENTINEL_PASSWORD"),
 	}
 	if ns := os.Getenv("CACHE_KEY_NAMESPACE"); ns != "" {
 		c.CacheKeyPrefix = ns + ":"

@@ -91,7 +91,20 @@ internal/fallback    the fallback error and its reasons
   as fixext type 0, `notFound` / `debounce` markers honoured, stale entries served. **This service
   never writes those keys** — a Go encoding bug cannot poison a cache the Node app reads. The cost:
   a miss Go sees stays a miss until Node fills it; the fallback rate shows how often that matters.
-- **Redis (system):** the session revocation registry and the browsing-settings addons.
+- **Redis (system):** the session revocation registry and the browsing-settings addons. Reached the
+  way the Node app reaches it (`packages/civitai-redis`, `getBaseClient('system')`), from the same
+  env vars, so one deployment config feeds both (`internal/sysredis`):
+  - `REDIS_SYS_SENTINELS` non-empty → **Sentinel mode** (go-redis `NewFailoverClient`, the library's
+    Sentinel client). The comma-separated `host[:port]` list (port defaults to 26379) is asked for
+    the master of group `REDIS_SYS_SENTINEL_NAME`, and the client follows that master across a
+    failover. The group name is required (startup fails without it, as Node's env schema does). The
+    master password comes from `REDIS_SYS_URL`, whose host is not used; `REDIS_SYS_SENTINEL_PASSWORD`,
+    when set, authenticates to the Sentinels. As on Node's Sentinel branch: no TLS, no username,
+    database 0. A set-but-blank or malformed list fails startup rather than falling back.
+  - otherwise → one connection to `REDIS_SYS_URL` (a `rediss://` URL enables TLS; the path is ignored
+    and database 0 is used, as Node connects to `protocol//host` only).
+  - Known difference: Node passes the URL password as `new URL()` returns it (still
+    percent-encoded); Go decodes it. Identical for passwords with no reserved characters.
 - **The page query cache** is the one place keys cannot be shared: Node keys on a hash of Prisma's SQL
   fragments, which different SQL text never reproduces. Go keeps its own key space
   (`feed-go:getAllImages:v1:<sha256>`), but adds its keys to the **same** `tag:images-model…` sets,
@@ -304,10 +317,12 @@ None of this is in this PR.
   container ports (public 8080, internal 9090), liveness/readiness on `:9090/healthz`.
 - **Services:** an internal Service for 9090 (metrics scrape + shadow posts from the Node pods); a
   public route for 8080 only when serving starts.
-- **Secrets / env:** the replica URL, both Redis URLs, the auth issuer + JWKS URI, the
+- **Secrets / env:** the replica URL, both Redis URLs (plus `REDIS_SYS_SENTINELS` /
+  `REDIS_SYS_SENTINEL_NAME`, the same values the Node pools carry, §3), the auth issuer + JWKS URI, the
   `SERVER_DOMAIN_*` hosts, `REGION_RESTRICTION_CONFIG`, `IMAGE_QUERY_CACHING`, the flag mirrors, and
   `FEED_GO_FALLBACK_URL` (the in-cluster Node service) once serving.
-- **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis, the JWKS endpoint,
+- **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system
+  Redis Sentinels), the JWKS endpoint,
   and (serving) the Node service.
 - **Monitoring:** a scrape of `:9090/metrics`; a dashboard of §10's queries and the shadow results.
 - **Flags:** the Node-side shadow sample percentage, and later the client transport flag. Created OFF.

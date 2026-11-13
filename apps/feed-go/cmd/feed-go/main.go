@@ -25,6 +25,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
+	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
 )
 
 func main() {
@@ -35,6 +36,7 @@ func main() {
 	}
 }
 
+// redisClient builds the cache client. The system client is built by sysredis.New.
 func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 	if cluster {
 		opts, err := redis.ParseClusterURL(rawURL)
@@ -67,8 +69,14 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// The system redis is a primary/replica set, never a cluster.
-	sys, err := redisClient(cfg.RedisSysURL, false)
+	// The system redis is a primary/replica set, never a cluster: through its Sentinels when
+	// REDIS_SYS_SENTINELS is set, else the single REDIS_SYS_URL connection (internal/sysredis).
+	sys, err := sysredis.New(sysredis.Settings{
+		URL:              cfg.RedisSysURL,
+		Sentinels:        cfg.RedisSysSentinels,
+		SentinelName:     cfg.RedisSysSentinelName,
+		SentinelPassword: cfg.RedisSysSentinelPassword,
+	})
 	if err != nil {
 		return err
 	}
