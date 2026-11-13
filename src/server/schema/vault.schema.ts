@@ -61,8 +61,10 @@ export const vaultItemFilesSchema = z.array(
     url: z.string(),
     displayName: z.string(),
     // The file's scan verdict, copied when it is vaulted and again when its row is deleted (a
-    // ModelFile trigger), so the download can still judge it once the row is gone.
+    // ModelFile trigger, which also sets rowDeletedAt), so the download can still judge it once the
+    // row is gone.
     pickleScanResult: z.enum(ScanResultCode).optional(),
     virusScanResult: z.enum(ScanResultCode).optional(),
+    rowDeletedAt: z.string().optional(),
   })
 );

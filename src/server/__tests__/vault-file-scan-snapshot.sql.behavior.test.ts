@@ -42,6 +42,7 @@ afterAll(async () => {
   await db.pg?.close();
 });
 
+const STAMP = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/);
 const entry = (id: number) => ({ id, sizeKB: 1, url: `files/${id}`, displayName: `f${id}` });
 
 beforeEach(async () => {
@@ -75,13 +76,23 @@ describe('ModelFile delete -> VaultItem.files scan snapshot', () => {
     await db.pg.exec(`DELETE FROM "ModelFile" WHERE id = 102`);
     expect(await filesOf(1)).toEqual([
       entry(101),
-      { ...entry(102), pickleScanResult: 'Success', virusScanResult: 'Danger' },
+      {
+        ...entry(102),
+        pickleScanResult: 'Success',
+        virusScanResult: 'Danger',
+        rowDeletedAt: STAMP,
+      },
       entry(103),
     ]);
     expect(await filesOf(2)).toEqual([
       entry(103),
       entry(101),
-      { ...entry(102), pickleScanResult: 'Success', virusScanResult: 'Danger' },
+      {
+        ...entry(102),
+        pickleScanResult: 'Success',
+        virusScanResult: 'Danger',
+        rowDeletedAt: STAMP,
+      },
     ]);
   });
 
@@ -99,7 +110,11 @@ describe('ModelFile delete -> VaultItem.files scan snapshot', () => {
       const files = await filesOf(item);
       expect(files).toHaveLength(3);
       for (const f of files)
-        expect(f).toEqual({ ...entry(f.id as number), ...stamped[f.id as 101 | 102 | 103] });
+        expect(f).toEqual({
+          ...entry(f.id as number),
+          ...stamped[f.id as 101 | 102 | 103],
+          rowDeletedAt: STAMP,
+        });
     }
   });
 

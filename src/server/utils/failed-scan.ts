@@ -33,17 +33,27 @@ export function excludedFromCoverage(file: {
   );
 }
 
-/** A vault entry's own copy of its file's verdict, present once it was vaulted or its row deleted. */
-export function hasScanSnapshot(entry: {
+/**
+ * A vault entry's verdict stamped when its row was deleted, with both scans finished. The copy taken
+ * when the file was vaulted can refuse the file but never clear it: the row may have changed since.
+ */
+export function hasSettledScanSnapshot(entry: {
+  rowDeletedAt?: string | null;
   pickleScanResult?: ScanResultCode | null;
   virusScanResult?: ScanResultCode | null;
 }) {
-  return entry.pickleScanResult != null || entry.virusScanResult != null;
+  return (
+    entry.rowDeletedAt != null &&
+    entry.pickleScanResult != null &&
+    entry.virusScanResult != null &&
+    entry.pickleScanResult !== ScanResultCode.Pending &&
+    entry.virusScanResult !== ScanResultCode.Pending
+  );
 }
 
 /**
- * A vault file with no row by id or url and no snapshot of its verdict: whether a non-moderator is
- * refused it. The one place that policy is set.
+ * A vault file with no row by id or url and no settled snapshot of its verdict: whether a
+ * non-moderator is refused it. The one place that policy is set.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- the policy may come to read the entry
 export function refuseUnjudgedVaultFile(entry: { id: number; url: string }) {

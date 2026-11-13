@@ -26,7 +26,7 @@ import { getVaultState } from '~/utils/vault';
 import {
   FAILED_SCAN_DOWNLOAD_MESSAGE,
   hasFailedScan,
-  hasScanSnapshot,
+  hasSettledScanSnapshot,
   refuseUnjudgedVaultFile,
 } from '~/server/utils/failed-scan';
 
@@ -153,8 +153,7 @@ export default AuthedEndpoint(
             ? [own]
             : await dbRead.modelFile.findMany({ where: { url: file.url }, select });
           // With its own row gone, the snapshot is judged alongside any live row holding the bytes.
-          const snapshot = !own && hasScanSnapshot(file) ? [file] : [];
-          if ([...rows, ...snapshot].some(hasFailedScan))
+          if ([...rows, ...(own ? [] : [file])].some(hasFailedScan))
             return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
           // Training data is never a vault's file; the site's own rules decide who gets it. With no row
           // left, the name it was stored under (`getFileDisplayName`) still says what it was.
@@ -164,8 +163,8 @@ export default AuthedEndpoint(
               : file.displayName === 'Training Data'
           )
             return onError(404, 'File not found');
-          if (!rows.length && !snapshot.length && refuseUnjudgedVaultFile(file))
-            return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
+          if (!rows.length && !hasSettledScanSnapshot(file) && refuseUnjudgedVaultFile(file))
+            return onError(403, 'This file is not available for download');
         }
         const { url } = await resolveDownloadUrl(file.id, file.url, file.displayName, {
           caller: 'vault',

@@ -183,7 +183,11 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
   });
 
   describe('a file whose own row is gone, judged by its vault snapshot', () => {
-    const vaultedWith = (scan: { pickleScanResult?: string; virusScanResult?: string }) =>
+    const vaultedWith = (scan: {
+      pickleScanResult?: string;
+      virusScanResult?: string;
+      rowDeletedAt?: string;
+    }) =>
       mockVaultItemFindUnique.mockResolvedValue({
         id: 31,
         modelVersionId: 9,
@@ -199,13 +203,18 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
     };
     const DANGER = { pickleScanResult: 'Success', virusScanResult: 'Danger' };
     const CLEAN = { pickleScanResult: 'Success', virusScanResult: 'Success' };
+    const DELETED = { rowDeletedAt: '2026-11-13T10:00:00Z' };
 
-    it('refuses a Danger snapshot with 403', async () => {
-      vaultedWith(DANGER);
+    it.each([
+      ['taken when it was vaulted', DANGER],
+      ['stamped when its row was deleted', { ...DANGER, ...DELETED }],
+    ])('refuses a Danger snapshot %s with 403', async (_, scan) => {
+      vaultedWith(scan);
       noRows();
       const { promise, res } = run();
       await promise;
       expect(res.status).toHaveBeenCalledWith(403);
+      expect(mockRefuseUnjudged).not.toHaveBeenCalled();
       expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
     });
 
@@ -218,13 +227,30 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
       expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
     });
 
-    it('serves a clean snapshot without consulting the unjudged-file policy', async () => {
-      vaultedWith(CLEAN);
+    it('serves a clean snapshot stamped at delete without consulting the unjudged-file policy', async () => {
+      vaultedWith({ ...CLEAN, ...DELETED });
       noRows();
       const { promise, res } = run();
       await promise;
       expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
       expect(mockRefuseUnjudged).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a clean one taken when it was vaulted', CLEAN],
+      [
+        'one stamped at delete before its scan finished',
+        { pickleScanResult: 'Pending', virusScanResult: 'Success', ...DELETED },
+      ],
+    ])('leaves %s to the unjudged-file policy', async (_, scan) => {
+      vaultedWith(scan);
+      noRows();
+      mockRefuseUnjudged.mockReturnValue(true);
+      const { promise, res } = run();
+      await promise;
+      expect(mockRefuseUnjudged).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
     });
 
     it('serves a Danger snapshot to a moderator', async () => {

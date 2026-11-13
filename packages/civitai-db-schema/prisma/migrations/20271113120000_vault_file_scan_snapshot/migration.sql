@@ -18,7 +18,8 @@ BEGIN
       CASE WHEN t.e ->> 'id' = OLD.id::text
         THEN t.e || jsonb_build_object(
           'pickleScanResult', OLD."pickleScanResult",
-          'virusScanResult', OLD."virusScanResult"
+          'virusScanResult', OLD."virusScanResult",
+          'rowDeletedAt', to_jsonb(now())
         )
         ELSE t.e
       END
