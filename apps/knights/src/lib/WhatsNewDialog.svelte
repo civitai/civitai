@@ -1,29 +1,15 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
-  import type { SubmitFunction } from '@sveltejs/kit';
   import { modal } from '$lib/modal';
   import { ANNOUNCEMENT_URL, type WhatsNew } from '$lib/whats-new';
   import './overlay.css';
 
-  let {
-    copy,
-    message,
-    submit,
-  }: {
-    copy: WhatsNew;
-    message: string | null;
-    submit: SubmitFunction;
-  } = $props();
-
-  let form = $state<HTMLFormElement>();
-  // Escape and a click outside are the same answer as the button: it has been read.
-  const close = () => form?.requestSubmit();
+  let { copy, onclose }: { copy: WhatsNew; onclose: () => void } = $props();
 </script>
 
 <div
   class="ov-backdrop"
   role="presentation"
-  onclick={(event) => event.target === event.currentTarget && close()}
+  onclick={(event) => event.target === event.currentTarget && onclose()}
 >
   <div
     class="dialog"
@@ -31,7 +17,7 @@
     aria-modal="true"
     aria-labelledby="whats-new-title"
     tabindex="-1"
-    use:modal={{ onescape: close }}
+    use:modal={{ onescape: onclose }}
   >
     <span class="handle" aria-hidden="true"></span>
     <div class="scroll">
@@ -58,14 +44,12 @@
         {/each}
       </ul>
     </div>
-    <form class="footer" method="POST" action="?/dismissWhatsNew" use:enhance={submit} bind:this={form}>
-      {#if message}
-        <p class="failed" role="alert">{message}</p>
-      {:else if ANNOUNCEMENT_URL}
+    <div class="footer">
+      {#if ANNOUNCEMENT_URL}
         <a class="announcement" href={ANNOUNCEMENT_URL} target="_blank" rel="noopener">Read the announcement</a>
       {/if}
-      <button type="submit" class="ov-primary" data-autofocus>Got it</button>
-    </form>
+      <button type="button" class="ov-primary" data-autofocus onclick={onclose}>Got it</button>
+    </div>
   </div>
 </div>
 
@@ -169,11 +153,6 @@
   }
   .announcement {
     font: 600 14px/1.4 var(--io-font-ui);
-  }
-  .failed {
-    margin: 0;
-    color: var(--io-crimson-text);
-    font: 400 14px/1.4 var(--io-font-ui);
   }
   .handle {
     display: none;

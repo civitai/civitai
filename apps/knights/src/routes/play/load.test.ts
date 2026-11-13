@@ -619,7 +619,7 @@ describe("play load: what's new", () => {
     });
   });
 
-  it('fails when the store is down so the dialog stays up', async () => {
+  it('fails when the store is down so the layout sends it again later', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
     seenStore.set.mockRejectedValue(new Error('down'));

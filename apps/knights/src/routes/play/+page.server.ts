@@ -375,7 +375,7 @@ export const actions: Actions = {
   dismissWhatsNew: async ({ locals }) => {
     const status = await requireMember(db, locals.user.id);
     if (!(await dismissWhatsNew(seenStore, locals.user.id, status))) {
-      return fail(500, { message: 'Could not close this. Try again.', whatsNewFailed: true });
+      return fail(500);
     }
   },
 

@@ -7,7 +7,6 @@
   import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
   import type { PlayerStatus } from '$lib/server/player-status';
   import type { WhatsNew } from '$lib/whats-new';
-  import { dismissWhatsNew } from '$lib/whats-new-dismiss';
   import { provideWhatsNew } from '$lib/whats-new-dismiss.svelte';
   import type { LayoutData } from './$types';
 
@@ -30,9 +29,11 @@
   let bare = $derived(page.route.id === '/');
   // /home and /play each load "What's new" and answer its `dismissWhatsNew` action; whichever opens first shows it.
   let whatsNew = $derived(page.data.whatsNew as WhatsNew | null | undefined);
-  const whatsNewDialog = provideWhatsNew(() => !!whatsNew);
-  const whatsNewDismiss = whatsNewDialog.state;
-  const submitWhatsNew = dismissWhatsNew(whatsNewDismiss);
+  const whatsNewDialog = provideWhatsNew({
+    sent: () => !!whatsNew,
+    userId: () => data.userId,
+    path: () => page.url.pathname,
+  });
   let fit = $derived(page.route.id === '/play');
 </script>
 
@@ -59,11 +60,7 @@
     </main>
   </div>
   {#if whatsNew && whatsNewDialog.showing}
-    <WhatsNewDialog
-      copy={whatsNew}
-      message={whatsNewDismiss.message ?? (page.form?.whatsNewFailed ? page.form.message : null)}
-      submit={submitWhatsNew}
-    />
+    <WhatsNewDialog copy={whatsNew} onclose={whatsNewDialog.close} />
   {/if}
 {/if}
 

@@ -458,7 +458,7 @@
   });
   let hearts = $derived(heartsLeft(data.status));
   let formMessage = $derived(
-    form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed && !form.whatsNewFailed
+    form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
       ? form.message
       : null
   );

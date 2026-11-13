@@ -134,14 +134,11 @@ describe("home: what's new", () => {
     });
   });
 
-  it('fails when the store cannot record the dismissal so the dialog stays up', async () => {
+  it('fails when the store cannot record the dismissal so the layout sends it again later', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     seenStore.set.mockRejectedValue(new Error('down'));
     const dismiss = (actions as Record<string, (e: never) => Promise<unknown>>).dismissWhatsNew;
-    expect(await dismiss({ locals: { user: { id: 7 } } } as never)).toMatchObject({
-      status: 500,
-      data: { message: 'Could not close this. Try again.', whatsNewFailed: true },
-    });
+    expect(await dismiss({ locals: { user: { id: 7 } } } as never)).toMatchObject({ status: 500 });
     vi.restoreAllMocks();
   });
 });
