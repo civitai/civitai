@@ -11,8 +11,8 @@ import { getSamplerCatalog } from '~/shared/generation/sampler-options';
  * GET /api/v1/blocks/generation-samplers — the generator's sampler options per model family,
  * derived from the generation graph (`~/shared/generation/sampler-options`).
  *
- * `default` is what the generator PRESELECTS, not what a block gets by omitting
- * `params.sampler` (the submit path then sends 'Euler'); a block wanting it sends it explicitly.
+ * `default` is what the generator PRESELECTS, and also what a block gets by omitting
+ * `params.sampler`: the submit path resolves it from this same catalog (`resolveDefaultSampler`).
  *
  * Intentionally UNCLAMPED: it returns no catalog content, only sampler and base-model names. If
  * catalog data is ever added here, the maturity clamp must be added with it.
