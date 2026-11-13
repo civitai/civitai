@@ -31,7 +31,9 @@ export function parseBlobVerdictHeaders(
 
   const nsfwLevel = headers.get('X-NSFW-Level')?.trim().toLowerCase() || null;
   const location = headers.get('Location') || null;
-  const blockedHeader = headers.get('X-Blocked-Reason')?.trim() || null;
+  const rawBlocked = headers.get('X-Blocked-Reason')?.trim() || null;
+  // The orchestrator writes `none` for "not blocked"; it must not read as a block.
+  const blockedHeader = rawBlocked && rawBlocked.toLowerCase() !== 'none' ? rawBlocked : null;
   const blockedReason =
     blockedHeader ?? (location && BLOCKED_PLACEHOLDER_PATH.test(location) ? 'blocked' : null);
 

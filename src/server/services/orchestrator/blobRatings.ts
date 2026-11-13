@@ -79,6 +79,10 @@ const backoffKey = (blobId: string) =>
  * HEAD open until the scan has a verdict, so a timeout means pending. Only a
  * verdict is cached; a failed or timed-out read backs off for 5 s, so an outage
  * costs at most one HEAD per blob per 5 s. Never throws.
+ *
+ * A cached verdict can be up to ~120 s old, not 60: `fetchThroughCache` keeps
+ * entries for twice the TTL and serves the stale one while another request
+ * holds the refresh.
  */
 export async function readBlobState(blobId: string): Promise<BlobState> {
   if (await redis.exists(backoffKey(blobId)).catch(() => 0)) return { verdict: 'pending' };

@@ -93,6 +93,54 @@ describe('resolveBlockMediaFetch (the media route)', () => {
     });
   });
 
+  describe("🔴 the ticket's owner, privacy, media type and step reach the gate", () => {
+    const OWNER = claims.ownerId;
+    const STRANGER = 99;
+    const ticketFor = (
+      viewerId: number,
+      over: Partial<Parameters<typeof sealBlockMediaTicket>[0]>
+    ) =>
+      sealBlockMediaTicket({
+        ...claims,
+        ...over,
+        viewerId,
+        viewerBrowsingLevel: allBrowsingLevelsFlag,
+      });
+
+    it('a private mature clip is served to its owner and hidden from anyone else', async () => {
+      blobState.mockResolvedValue(rated('r'));
+      expect(await resolveBlockMediaFetch(ticketFor(OWNER, { privateGen: true }))).toEqual({
+        state: 'redirect',
+        location: CONTENT,
+      });
+      expect(await resolveBlockMediaFetch(ticketFor(STRANGER, { privateGen: true }))).toEqual({
+        state: 'hidden',
+        reason: 'private',
+      });
+    });
+
+    it('an audio clip is served to its owner only', async () => {
+      blobState.mockResolvedValue(rated('pg'));
+      expect(await resolveBlockMediaFetch(ticketFor(OWNER, { mediaType: 'audio' }))).toEqual({
+        state: 'redirect',
+        location: CONTENT,
+      });
+      expect(await resolveBlockMediaFetch(ticketFor(STRANGER, { mediaType: 'audio' }))).toEqual({
+        state: 'hidden',
+        reason: 'owner_only',
+      });
+    });
+
+    it('a video from a never-rated step is hidden from owner and stranger alike', async () => {
+      blobState.mockResolvedValue(rated('pg'));
+      for (const viewer of [OWNER, STRANGER]) {
+        expect(
+          await resolveBlockMediaFetch(ticketFor(viewer, { neverRatedVideoStep: true }))
+        ).toEqual({ state: 'hidden', reason: 'unrated' });
+      }
+    });
+  });
+
   it('a blocked blob reading `NA` is hidden as blocked', async () => {
     blobState.mockResolvedValue(rated('na', 'tos'));
     expect(await resolveBlockMediaFetch(allTicket())).toEqual({

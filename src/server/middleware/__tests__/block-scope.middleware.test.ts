@@ -318,6 +318,15 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(await verifyBlockToken(await signRaw({ maxBrowsingLevel: '3' }))).toBeNull();
   });
 
+  it('rejects a negative or fractional maxBrowsingLevel (-1 would read as every level)', async () => {
+    for (const maxBrowsingLevel of [-1, 1.5]) {
+      expect(await verifyBlockToken(await signRaw({ maxBrowsingLevel }))).toBeNull();
+    }
+    expect((await verifyBlockToken(await signRaw({ maxBrowsingLevel: 0 })))?.maxBrowsingLevel).toBe(
+      0
+    );
+  });
+
   it('rejects a token with a non-string domain', async () => {
     expect(await verifyBlockToken(await signRaw({ domain: 123 }))).toBeNull();
   });

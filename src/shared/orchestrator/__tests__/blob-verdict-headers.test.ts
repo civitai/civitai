@@ -45,6 +45,24 @@ describe('parseBlobVerdictHeaders', () => {
     ).toMatchObject({ status: 'rated', blockedReason: 'blocked' });
   });
 
+  it("reads the orchestrator's `none` blocked reason as not blocked, in any case", () => {
+    for (const none of ['none', 'None', ' NONE ']) {
+      expect(parse(204, { 'X-NSFW-Level': 'NA', 'X-Blocked-Reason': none })).toEqual({
+        status: 'rated',
+        nsfwLevel: 'na',
+        blockedReason: null,
+        location: null,
+      });
+    }
+    // `none` must not mask the blocked placeholder either.
+    expect(
+      parse(204, {
+        'X-Blocked-Reason': 'none',
+        Location: 'https://orchestrator/blocked/abc.jpg',
+      })
+    ).toMatchObject({ status: 'rated', blockedReason: 'blocked' });
+  });
+
   it('any other failure is unavailable, not pending and not rated', () => {
     expect(parse(404, { 'X-NSFW-Level': 'PG' })).toEqual({
       status: 'unavailable',

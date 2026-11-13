@@ -507,6 +507,7 @@ describe('signDevScopedPageToken — reviewRunForReal claim (#2831)', () => {
     // Still self-bound, forced-SFW, dev lifetime.
     expect(withFlag._input.userId).toBe(7);
     expect(withFlag._input.maxBrowsingLevel).toBe(FORCED_SFW_CEILING);
+    expect(withFlag._input.viewerBrowsingLevel).toBe(FORCED_SFW_CEILING);
     expect(withFlag._input.dev).toBe(true);
 
     const withoutFlag = (await signDevScopedPageToken({
@@ -619,6 +620,7 @@ describe('signDevScopedPageToken', () => {
     expect(arg.dev).toBe(true); // 4h dev lifetime
     expect(arg.domain).toBeNull(); // never reads a host
     expect(arg.maxBrowsingLevel).toBe(FORCED_SFW_CEILING); // forced SFW
+    expect(arg.viewerBrowsingLevel).toBe(FORCED_SFW_CEILING);
     expect(arg.appId).toBe('ephemeral-my-app'); // synthetic, non-resolving
     expect(arg.appBlockId).toBe('ephemeral-my-app');
     expect(arg.blockInstanceId).toBe('page_ephemeral-my-app');

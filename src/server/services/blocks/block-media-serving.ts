@@ -18,7 +18,10 @@ import {
 } from '~/server/services/blocks/block-output-gate';
 import { readBlobState } from '~/server/services/orchestrator/blobRatings';
 
-/** Off, absent, or Flipt unreachable: every App Block media item is paused (hidden). */
+/**
+ * Off or absent: every App Block media item is paused (hidden). Flipt unreachable
+ * pauses only a pod whose client never started; a running pod keeps its last-known state.
+ */
 export async function isBlockMediaServing() {
   return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE);
 }

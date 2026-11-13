@@ -92,6 +92,10 @@ describe('bm1 media tokens', () => {
     ['a negative viewer level', { viewerBrowsingLevel: -1 }],
     ['a string viewer level', { viewerBrowsingLevel: '31' }],
     ['a missing viewer level', { viewerBrowsingLevel: undefined }],
+    ['a fractional viewer level', { viewerBrowsingLevel: 1.5 }],
+    ['a missing neverRatedVideoStep', { neverRatedVideoStep: undefined }],
+    ['a string viewerId', { viewerId: '99' }],
+    ['a fractional viewerId', { viewerId: 99.5 }],
   ])('🔴 refuses a ticket with %s', (_label, over) => {
     expect(
       openBlockMediaTicket(sealRaw('ticket', { ...claims, ...viewer, exp: now() + 60, ...over }))

@@ -43,7 +43,7 @@ const backedOff = () =>
   expect(redis.setNxKeepTtlWithEx).toHaveBeenCalledWith(
     `${REDIS_KEYS.CACHES.BLOCK_MEDIA_BLOB_STATE_BACKOFF}:b1`,
     '1',
-    expect.any(Number)
+    5
   );
 
 describe('readBlobState', () => {
@@ -60,6 +60,22 @@ describe('readBlobState', () => {
   it('a block header is a rated verdict carrying the block', async () => {
     headBlob.mockResolvedValue(answered(200, { 'X-Blocked-Reason': 'tos' }));
     expect(await readBlobState('b1')).toMatchObject({ verdict: 'rated', blockedReason: 'tos' });
+  });
+
+  it('🔴 an `NA` blob whose blocked reason is `none` reads as unblocked, so it hides as unrated', async () => {
+    headBlob.mockResolvedValue(
+      answered(200, {
+        'X-NSFW-Level': 'NA',
+        'X-Blocked-Reason': 'none',
+        Location: 'https://cdn/b1',
+      })
+    );
+    expect(await readBlobState('b1')).toEqual({
+      verdict: 'rated',
+      nsfwLevel: 'na',
+      blockedReason: null,
+      location: 'https://cdn/b1',
+    });
   });
 
   it('🔴 while backed off it is pending and sends no HEAD', async () => {
