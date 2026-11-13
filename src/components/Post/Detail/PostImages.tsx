@@ -16,6 +16,7 @@ import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostCon
 import { PostStickerOverlay } from '~/components/Post/Detail/PostStickerOverlay';
 import type { SongList } from '~/components/MusicPlayer/PostSong';
 import { PostSongTile, SongMenuItems } from '~/components/MusicPlayer/PostSong';
+import { trpc } from '~/utils/trpc';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -68,13 +69,15 @@ export function PostImages({
   // "Load more" refetches the first twenty alongside the rest. A post is well
   // inside the provider's 100-id chunk, so this is one query either way.
   const imageIds = useMemo(() => images.map((image) => image.id), [images]);
-  // With the music flag a song plays in the global player; a post with several songs is the list.
+  // With the music flag a song plays in the global player, the post's songs as the list.
   const songs = useMemo(
     () => (features.music ? images.filter((image) => image.type === MediaType.audio) : []),
     [features.music, images]
   );
   const songIds = useMemo(() => songs.map((song) => song.id), [songs]);
-  const songList: SongList = songs.length > 1 ? { postId, songs } : null;
+  // Already loaded by the post page; its title names the list in Up next.
+  const { data: post } = trpc.post.get.useQuery({ id: postId }, { enabled: songs.length > 0 });
+  const songList: SongList = { name: post?.title || 'this post', songs };
 
   if (isLoading)
     return (

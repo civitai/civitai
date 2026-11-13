@@ -416,3 +416,60 @@ describe('listen progress', () => {
     expect(get().playback?.playbackId).not.toBe(playbackId);
   });
 });
+
+describe('playing from a list', () => {
+  it('makes the songs after the chosen one Up next, in list order, under the list name', () => {
+    const { get } = setup();
+    get().playFromList({ name: 'Rising this week', tracks: [a, b, c, d, e], index: 1 });
+    expect(get().current?.id).toBe(b.id);
+    expect(get().playing).toBe(true);
+    expect(ids(get().list)).toEqual([c.id, d.id, e.id]);
+    expect(get().listName).toBe('Rising this week');
+  });
+
+  it('the last song of the list leaves the list section empty', () => {
+    const { get } = setup();
+    get().playFromList({ name: 'Playlist', tracks: [a, b, c], index: 2 });
+    expect(get().current?.id).toBe(c.id);
+    expect(get().list).toEqual([]);
+  });
+
+  it('a list of one song leaves Up next empty', () => {
+    const { get } = setup();
+    get().playFromList({ name: 'Post', tracks: [a], index: 0 });
+    expect(get().current?.id).toBe(a.id);
+    expect(get().list).toEqual([]);
+  });
+
+  it('keeps Queued by you ahead of the list and does not repeat a queued song in it', () => {
+    const { get } = setup();
+    get().playTrack(e);
+    get().addToUpNext(d);
+    get().playFromList({ name: 'Feed', tracks: [a, b, c, d], index: 0 });
+    expect(ids(get().queued)).toEqual([d.id]);
+    expect(ids(get().list)).toEqual([b.id, c.id]);
+    get().next();
+    expect(get().current?.id).toBe(d.id);
+    get().next();
+    expect(get().current?.id).toBe(b.id);
+  });
+
+  it('a song listed twice is in Up next once', () => {
+    const { get } = setup();
+    get().playFromList({ name: 'Feed', tracks: [a, b, c, b], index: 0 });
+    expect(ids(get().list)).toEqual([b.id, c.id]);
+  });
+
+  it('picks the clicked position, not the first song with that id', () => {
+    const { get } = setup();
+    get().playFromList({ name: 'Feed', tracks: [a, b, a, c], index: 2 });
+    expect(get().current?.id).toBe(a.id);
+    expect(ids(get().list)).toEqual([c.id]);
+  });
+
+  it('an index outside the list does nothing', () => {
+    const { get } = setup();
+    get().playFromList({ name: 'Feed', tracks: [a, b], index: 5 });
+    expect(get().current).toBeNull();
+  });
+});

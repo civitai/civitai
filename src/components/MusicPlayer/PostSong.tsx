@@ -12,7 +12,6 @@ import { useMusicPlayerCovers } from '~/components/MusicPlayer/useMusicPlayerCov
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
-import { trpc } from '~/utils/trpc';
 
 /** The fields of a song's Image row the player needs. */
 export type SongImage = {
@@ -22,8 +21,8 @@ export type SongImage = {
   user: { id: number; username?: string | null };
 };
 
-/** Where play was pressed: the other songs of the post become Up next when there are any. */
-export type SongList = { postId: number; songs: SongImage[] } | null;
+/** The list play was pressed in and its name: the songs after the played one become Up next. */
+export type SongList = { name: string; songs: SongImage[] };
 
 export function songTrack(image: SongImage): MusicTrack {
   const metadata = (image.metadata ?? {}) as { title?: string; duration?: number };
@@ -38,17 +37,11 @@ export function songTrack(image: SongImage): MusicTrack {
 
 const store = useMusicPlayerStore.getState;
 
-/** Play now, with the post's songs as the list named after the post. */
-function usePlayNow(song: SongImage, list: SongList) {
-  // Already loaded by the post page.
-  const { data: post } = trpc.post.get.useQuery({ id: list?.postId ?? 0 }, { enabled: !!list });
-  return () =>
-    store().playTrack(
-      songTrack(song),
-      list
-        ? { list: { name: post?.title || 'this post', tracks: list.songs.map(songTrack) } }
-        : undefined
-    );
+/** Play now, with the songs after it in `list` as Up next. */
+function playNow(song: SongImage, list: SongList) {
+  const index = list.songs.findIndex((s) => s.id === song.id);
+  if (index < 0) return store().playTrack(songTrack(song));
+  store().playFromList({ name: list.name, tracks: list.songs.map(songTrack), index });
 }
 
 /**
@@ -70,8 +63,6 @@ export function PostSongTile({
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === song.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === song.id && s.playing);
   const cover = useMusicPlayerCovers(coverIds).get(song.id);
-  const playNow = usePlayNow(song, list);
-
   return (
     // Right padding clears the card's ⋯ button; under `sm` the cover shrinks so the title has room.
     <div className="flex items-center gap-3 p-4 pr-11 sm:gap-4 sm:pr-14">
@@ -91,7 +82,7 @@ export function PostSongTile({
         <button
           type="button"
           aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
-          onClick={() => (isCurrent ? store().togglePlay() : playNow())}
+          onClick={() => (isCurrent ? store().togglePlay() : playNow(song, list))}
           className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--mantine-primary-color-filled)] text-[var(--mantine-primary-color-contrast)] transition-transform hover:scale-105"
         >
           {playing ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
@@ -103,10 +94,9 @@ export function PostSongTile({
 
 /** The song items of a card's ⋯ menu (Pencil `rUDmm`). */
 export function SongMenuItems({ song, list }: { song: SongImage; list: SongList }) {
-  const playNow = usePlayNow(song, list);
   return (
     <>
-      <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={playNow}>
+      <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => playNow(song, list)}>
         Play now
       </Menu.Item>
       <Menu.Item

@@ -32,6 +32,12 @@ export type MusicPlayback = {
   listenedSec: number;
 };
 
+/**
+ * A list a song was started from (a feed, a playlist, a profile's songs, a post): every song in it,
+ * in its order, the position of the one that was clicked, and the name Up next shows it under.
+ */
+export type MusicList = { name: string; tracks: MusicTrack[]; index: number };
+
 type HistoryEntry = { track: MusicTrack; from: MusicUpNextSection };
 
 type PlayerData = {
@@ -68,6 +74,11 @@ type PlayerActions = {
     track: MusicTrack,
     options?: { list?: { name: string; tracks: MusicTrack[] } }
   ) => void;
+  /**
+   * Plays the song at `index` of a list; the songs after it, in list order, become "Next from
+   * <name>". The one call any surface that shows songs in a list makes.
+   */
+  playFromList: (list: MusicList) => void;
   resume: () => void;
   pause: () => void;
   togglePlay: () => void;
@@ -212,6 +223,28 @@ export function createMusicPlayerStore({
       restart(false);
     };
 
+    /** Plays `track` now; the songs `after` it in a list, if any, become the list section. */
+    const startFrom = (track: MusicTrack, from: { name: string; after: MusicTrack[] } | null) => {
+      const s = get();
+      const queued = without(s.queued, track.id);
+      const list: MusicTrack[] = [];
+      for (const t of from?.after ?? [])
+        if (t.id !== track.id && !has(queued, t.id) && !has(list, t.id)) list.push(t);
+      const isRestart = s.current?.id === track.id;
+      switchTo(track, 'list', {
+        queued,
+        list: s.shuffle ? shuffled(list) : list,
+        listName: from?.name ?? null,
+        unshuffled: s.shuffle
+          ? { queued: restoreOrder(s.unshuffled?.queued ?? [], queued), list }
+          : null,
+        view: s.view === 'closed' ? 'bar' : s.view,
+      });
+      // Playing the current song again restarts it rather than putting it in its own history.
+      if (isRestart) set({ history: s.history });
+      set({ sequenceStart: get().history.length });
+    };
+
     const loadIfIdle = (track: MusicTrack) => {
       if (get().current) return false;
       set({ current: track, currentFrom: 'list', playing: false, playback: newPlayback(track) });
@@ -227,31 +260,18 @@ export function createMusicPlayerStore({
       repeat: 'off',
 
       playTrack: (track, options) => {
-        const s = get();
-        const queued = without(s.queued, track.id);
-        let list: MusicTrack[] = [];
-        if (options?.list) {
-          const { tracks } = options.list;
-          const index = tracks.findIndex((t) => t.id === track.id);
-          list = (index >= 0 ? tracks.slice(index + 1) : without(tracks, track.id)).filter(
-            (t) => !has(queued, t.id)
-          );
-        }
-        const isRestart = s.current?.id === track.id;
-        switchTo(track, 'list', {
-          queued,
-          list: s.shuffle ? shuffled(list) : list,
-          listName: options?.list?.name ?? null,
-          unshuffled: s.shuffle
-            ? { queued: restoreOrder(s.unshuffled?.queued ?? [], queued), list }
-            : null,
-          view: s.view === 'closed' ? 'bar' : s.view,
+        if (!options?.list) return startFrom(track, null);
+        const { name, tracks } = options.list;
+        const index = tracks.findIndex((t) => t.id === track.id);
+        startFrom(track, {
+          name,
+          after: index >= 0 ? tracks.slice(index + 1) : without(tracks, track.id),
         });
-        // Playing the current song again restarts it rather than putting it in its own history.
-        if (isRestart) set({ history: s.history });
-        set({ sequenceStart: get().history.length });
       },
-
+      playFromList: ({ name, tracks, index }) => {
+        const track = tracks[index];
+        if (track) startFrom(track, { name, after: tracks.slice(index + 1) });
+      },
       resume: () => {
         if (!get().current) return;
         lastSample = null;

@@ -147,13 +147,20 @@ describe('a song on the post page', () => {
     expect(player().playing).toBe(false);
   });
 
-  test('a post with one song passes no list', async () => {
+  test('a song in the middle of the post: Up next is the songs after it', async () => {
+    await renderWithProviders(<PostImages postId={100} images={post as any} />);
+    await page.getByRole('button', { name: 'Play Untitled song' }).click();
+    expect(player().current?.id).toBe(3);
+    expect(player().listName).toBe('Night Drive');
+    expect(ids(player().list)).toEqual([4]);
+  });
+
+  test('a post with one song leaves Up next empty', async () => {
     await renderWithProviders(
       <PostImages postId={100} images={[audio(1, 'Midnight Arcade'), picture(2)] as any} />
     );
     await page.getByRole('button', { name: 'Play Midnight Arcade' }).click();
     expect(player().current?.id).toBe(1);
-    expect(player().listName).toBeNull();
     expect(player().list).toEqual([]);
   });
 
