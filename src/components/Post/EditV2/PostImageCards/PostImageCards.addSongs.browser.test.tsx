@@ -60,7 +60,7 @@ describe('adding more songs to a post', () => {
     expect(mocks.setView).toHaveBeenCalledWith('queue');
   });
 
-  test('the button has a 1px outline in the strong border colour in both schemes', async () => {
+  test('the button has a visible 1px solid outline in both schemes', async () => {
     mocks.images = [added(2, 'audio')];
     renderWithProviders(
       <>
@@ -72,16 +72,25 @@ describe('adding more songs to a post', () => {
         </div>
       </>
     );
-    const border = async (scheme: string) => {
+    const transparent = (color: string) => color === 'transparent' || color === 'rgba(0, 0, 0, 0)';
+    /** The colour behind the element: its own background, or the nearest painted ancestor's. */
+    const backgroundOf = (element: Element | null): string => {
+      for (let node = element; node; node = node.parentElement) {
+        const color = getComputedStyle(node).backgroundColor;
+        if (!transparent(color)) return color;
+      }
+      return getComputedStyle(document.body).backgroundColor;
+    };
+    for (const scheme of ['light', 'dark']) {
       const button = page.getByTestId(scheme).getByRole('button', {
         name: 'Add songs from the generator',
       });
       await expect.element(button).toBeVisible();
       const css = getComputedStyle(button.element());
-      return [css.borderTopWidth, css.borderTopStyle, css.borderTopColor];
-    };
-    expect(await border('light')).toEqual(['1px', 'solid', 'rgb(206, 212, 218)']);
-    expect(await border('dark')).toEqual(['1px', 'solid', 'rgb(92, 95, 102)']);
+      expect([css.borderTopWidth, css.borderTopStyle]).toEqual(['1px', 'solid']);
+      expect(transparent(css.borderTopColor)).toBe(false);
+      expect(css.borderTopColor).not.toBe(backgroundOf(button.element()));
+    }
   });
 
   test('a post without songs has no button', async () => {

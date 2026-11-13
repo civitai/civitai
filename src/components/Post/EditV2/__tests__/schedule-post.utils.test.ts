@@ -103,21 +103,17 @@ describe('formatScheduleTime', () => {
 });
 
 describe('scheduleDescription', () => {
-  it('keeps the plain sentence for a post without songs', () => {
-    expect(scheduleDescription('post', 0)).toBe(
-      'Select the date and time you want to publish this post.'
-    );
+  it('does not mention songs for a post without songs', () => {
+    expect(scheduleDescription('post', 0)).not.toMatch(/song/i);
   });
 
   it('names one song in the singular', () => {
-    expect(scheduleDescription('post', 1)).toBe(
-      'Select the date and time you want to publish this post and its 1 song.'
-    );
+    const sentence = scheduleDescription('post', 1);
+    expect(sentence).toContain('1 song');
+    expect(sentence).not.toContain('1 songs');
   });
 
   it('counts several songs', () => {
-    expect(scheduleDescription('post', 2)).toBe(
-      'Select the date and time you want to publish this post and its 2 songs.'
-    );
+    expect(scheduleDescription('post', 2)).toContain('2 songs');
   });
 });

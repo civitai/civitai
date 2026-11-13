@@ -236,6 +236,7 @@ describe('a song in the post editor', () => {
     await userEvent.type(title, 'Neon Rain');
     await userEvent.tab();
     expect(mocks.updateImage).toHaveBeenLastCalledWith({ id: 7, title: 'Neon Rain' });
+    expect(mocks.updateImage).toHaveBeenCalledTimes(1);
   });
 
   test('clicking the pencil puts the cursor in the title', async () => {
@@ -319,6 +320,7 @@ describe('a song in the post editor', () => {
       );
     await userEvent.click(hide);
     expect(mocks.updateImage).toHaveBeenLastCalledWith({ id: 7, hideMeta: true });
+    expect(mocks.updateImage).toHaveBeenCalledTimes(1);
   });
 
   test('remixes are allowed by default, and turning them off saves allowRemix', async () => {
@@ -331,6 +333,7 @@ describe('a song in the post editor', () => {
     // Mantine hides the switch's input behind its track; the label is what a user clicks.
     await userEvent.click(page.getByText('Allow remixes', { exact: true }));
     expect(mocks.updateImage).toHaveBeenLastCalledWith({ id: 7, allowRemix: false });
+    expect(mocks.updateImage).toHaveBeenCalledTimes(1);
   });
 
   test('removing a song asks to delete the song', async () => {

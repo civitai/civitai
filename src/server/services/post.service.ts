@@ -1800,6 +1800,11 @@ export const addPostImage = async ({
         })
       : undefined;
   const song = allowAudio ? resolveAudioMetadata(props.metadata, songWorkflow ?? null) : undefined;
+  if (song?.metadata.title)
+    await throwOnBlockedUserContent(song.metadata.title, {
+      isModerator: user.isModerator,
+      surface: 'post',
+    });
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
     provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
@@ -1943,7 +1948,6 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
       hideMeta: true,
       ingestion: true,
       blockedFor: true,
-      metadata: true,
       nsfwLevel: true,
       meta: true,
     },
@@ -1958,12 +1962,16 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
       entityType: 'Image',
       entityId: image.id,
     });
-  const metadata: MixedObject = { ...((currentImage.metadata as MixedObject) ?? {}) };
-  if (title !== undefined) {
-    if (title) metadata.title = title;
-    else delete metadata.title;
-  }
-  if (allowRemix !== undefined) metadata.allowRemix = allowRemix;
+  // Merged into the stored object by the UPDATE itself, so keys another save wrote meanwhile (the
+  // remix setting, the title, the cover link) stay. A call without song fields rewrites it as is.
+  const songKeys = {
+    ...(title ? { title } : {}),
+    ...(allowRemix !== undefined ? { allowRemix } : {}),
+  };
+  const storedMetadata =
+    title === ''
+      ? Prisma.sql`(COALESCE(metadata, '{}'::jsonb) - 'title')`
+      : Prisma.sql`COALESCE(metadata, '{}'::jsonb)`;
 
   // `meta` is optional on this input, and the difference matters: absent means "leave the
   // stored metadata alone" (the hide/show-prompt toggle sends only `hideMeta`), while an
@@ -1990,25 +1998,30 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
 
   const shouldIngest = blockedForVerification && updatedIsVerifiable;
 
-  const result = await dbWrite.image.update({
-    where: { id: image.id },
-    data: {
-      ...image,
-      id: undefined, // prevent updating the id!
-      updatedAt: new Date(),
-      // undefined = omit the column from the UPDATE; Prisma.JsonNull = write SQL NULL.
-      meta: metaProvided
-        ? meta != null
-          ? (meta as Prisma.JsonObject)
-          : Prisma.JsonNull
-        : undefined,
-      // If this image was blocked due to missing metadata, we need to set it back to pending
-      ingestion: shouldIngest ? 'Pending' : undefined,
-      blockedFor: shouldIngest ? null : undefined,
-      metadata: metadata as Prisma.JsonObject,
-    },
-    select: { id: true, url: true, userId: true, name: true, type: true },
-  });
+  const [result] = await dbWrite.$transaction([
+    dbWrite.image.update({
+      where: { id: image.id },
+      data: {
+        ...image,
+        id: undefined, // prevent updating the id!
+        updatedAt: new Date(),
+        // undefined = omit the column from the UPDATE; Prisma.JsonNull = write SQL NULL.
+        meta: metaProvided
+          ? meta != null
+            ? (meta as Prisma.JsonObject)
+            : Prisma.JsonNull
+          : undefined,
+        // If this image was blocked due to missing metadata, we need to set it back to pending
+        ingestion: shouldIngest ? 'Pending' : undefined,
+        blockedFor: shouldIngest ? null : undefined,
+      },
+      select: { id: true, url: true, userId: true, name: true, type: true },
+    }),
+    dbWrite.$executeRaw`
+      UPDATE "Image" SET metadata = ${storedMetadata} || ${JSON.stringify(songKeys)}::jsonb
+      WHERE id = ${image.id}
+    `,
+  ]);
   // Parallelize independent cache refreshes — none read what others write.
   // ingestImage stays sequential after: it does not read these caches but
   // does have ordering relative to the dbWrite.image.update above.

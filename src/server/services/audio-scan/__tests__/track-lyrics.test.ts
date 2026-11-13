@@ -76,4 +76,14 @@ describe('saving generated lyrics', () => {
     expect(lines).toHaveLength(100);
     expect(lines.every((l: { text: string }) => l.text === line)).toBe(true);
   });
+
+  it('cuts a single line longer than the cap at the cap', async () => {
+    const text = 'y'.repeat(SONG_LYRICS_MAX_LENGTH + 50);
+
+    await saveGeneratedTrackLyrics({ imageId: 7, text });
+
+    const { text: stored, lines } = saved();
+    expect(stored).toBe('y'.repeat(SONG_LYRICS_MAX_LENGTH));
+    expect(lines).toEqual([{ t: null, text: stored }]);
+  });
 });

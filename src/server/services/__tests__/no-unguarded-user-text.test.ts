@@ -85,7 +85,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/model.service.ts': 3,
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
-  'src/server/services/post.service.ts': 4,
+  'src/server/services/post.service.ts': 5,
   'src/server/services/rating-review.service.ts': 1,
   'src/server/services/resourceReview.service.ts': 3,
   'src/server/services/sticker-placement.service.ts': 1,
@@ -199,6 +199,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   'src/server/services/model3d-review.service.ts': { upsertModel3DReview: 1 },
   'src/server/services/model3d.service.ts': { upsertModel3D: 1 },
   'src/server/services/post.service.ts': {
+    addPostImage: 1,
     addPostTag: 1,
     createPost: 1,
     updatePost: 1,

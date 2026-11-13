@@ -165,6 +165,7 @@ describe("a song's cover in the post editor", () => {
     mocks.setFiles((files) => [{ ...files[0], progress: 100, status: 'success' }]);
 
     await vi.waitFor(() => expect(mocks.updateImage).toHaveBeenCalledTimes(1));
+    expect(mocks.setCover).toHaveBeenCalledTimes(1);
     expect(mocks.setCover).toHaveBeenCalledWith({
       id: 7,
       cover: { url: KEY, width: 600, height: 600, hash: 'h', mimeType: 'image/png', type: 'image' },

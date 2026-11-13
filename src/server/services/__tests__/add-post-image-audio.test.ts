@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   getWorkflow: vi.fn(),
   createImage: vi.fn(),
   submitTrackLyricsScan: vi.fn(async () => undefined),
+  throwOnBlockedUserContent: vi.fn(),
   music: false,
 }));
 
@@ -129,10 +130,12 @@ vi.mock('~/server/services/tool.service', () => ({
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(),
-  throwOnBlockedUserContent: vi.fn(),
+  throwOnBlockedUserContent: mocks.throwOnBlockedUserContent,
 }));
 
 const { addPostImage } = await import('~/server/services/post.service');
+const { thumbnailCache } = await import('~/server/redis/caches');
+const { getVotableImageTags } = await import('~/server/services/tag.service');
 
 const user = { id: 5 } as never;
 const song = { duration: 200, size: 3, title: 'Night Drive' };
@@ -140,6 +143,7 @@ const song = { duration: 200, size: 3, title: 'Night Drive' };
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.music = false;
+  mocks.throwOnBlockedUserContent.mockResolvedValue(undefined);
   mocks.getWorkflow.mockResolvedValue({ steps: [] });
   dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null });
   dbMock.dbRead.image.findFirst.mockResolvedValue(null);
@@ -171,6 +175,26 @@ describe('addPostImage — audio', () => {
     expect(mocks.createImage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'audio', allowAudio: true, metadata: song })
     );
+  });
+
+  it('refuses a song whose title the blocked-content check rejects, creating nothing', async () => {
+    mocks.music = true;
+    mocks.throwOnBlockedUserContent.mockRejectedValue(new Error('blocked'));
+
+    await expect(
+      addSong({ generationWorkflowId: 'wf-1', metadata: { ...song, title: 'bad words' } })
+    ).rejects.toThrow('blocked');
+    expect(mocks.throwOnBlockedUserContent).toHaveBeenCalledWith('bad words', expect.anything());
+    expect(mocks.createImage).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.trackLyrics.upsert).not.toHaveBeenCalled();
+  });
+
+  it('checks a clean title and posts the song', async () => {
+    mocks.music = true;
+
+    await expect(addSong()).rejects.toThrow('stop after create');
+    expect(mocks.throwOnBlockedUserContent).toHaveBeenCalledWith('Night Drive', expect.anything());
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
   });
 
   it('keeps only the audio metadata fields and rejects metadata that is not a song', async () => {
@@ -358,6 +382,29 @@ describe('addPostImage — audio', () => {
       addSong({ metadata: { ...song, lyrics: [{ t: 1.5, text: 'mine' }] } })
     ).rejects.toThrow('stop after create');
     expect(mocks.createImage.mock.calls[0][0].metadata).toEqual(song);
+  });
+
+  it('returns the new song with its lyrics read from the primary, which has the row just saved', async () => {
+    mocks.music = true;
+    const lines = [{ t: null, text: 'sun' }];
+    mocks.createImage.mockResolvedValue({ id: 11 });
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({
+      id: 11,
+      index: 0,
+      type: 'audio',
+      metadata: song,
+      tools: [],
+      techniques: [],
+      resourceHelper: [],
+    } as never);
+    vi.mocked(getVotableImageTags).mockResolvedValue([]);
+    vi.mocked(thumbnailCache.fetch).mockResolvedValue({} as never);
+    dbMock.dbWrite.trackLyrics.findMany.mockResolvedValue([{ imageId: 11, lines }] as never);
+
+    const image = await addSong();
+
+    expect(image.lyrics).toEqual(lines);
+    expect(dbMock.dbRead.trackLyrics.findMany).not.toHaveBeenCalled();
   });
 
   it('reads the workflow once for both the song details and the provenance', async () => {

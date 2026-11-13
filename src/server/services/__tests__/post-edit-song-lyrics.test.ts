@@ -58,6 +58,24 @@ describe("the post editor's songs", () => {
     expect(dbMock.dbRead.trackLyrics.findMany).toHaveBeenCalledTimes(1);
   });
 
+  it('carry no lyrics for a song whose stored lines are not lyric lines', async () => {
+    vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([
+      row(1, 'audio'),
+      row(2, 'audio'),
+    ] as never);
+    vi.mocked(dbMock.dbRead.trackLyrics.findMany).mockResolvedValue([
+      { imageId: 1, lines: [{ t: 'soon', text: 'rain' }] },
+      { imageId: 2, lines },
+    ] as never);
+
+    const images = await getPostEditImages({ id: 1, user: { id: 1 } as SessionUser });
+
+    expect(images.map((x) => [x.id, x.lyrics])).toEqual([
+      [1, null],
+      [2, lines],
+    ]);
+  });
+
   it('skip the lyrics read for a post without songs', async () => {
     vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([row(3, 'image')] as never);
 
