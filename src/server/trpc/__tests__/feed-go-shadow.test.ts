@@ -79,7 +79,18 @@ function harness(
 function serve(
   h: ReturnType<typeof harness>,
   req = request(),
-  { status = 200, data = { items: [] }, written = superjson.serialize(data), devalue = false } = {}
+  {
+    status = 200,
+    data = { items: [] },
+    written = superjson.serialize(data),
+    devalue = false,
+  }: {
+    status?: number;
+    data?: Parameters<typeof superjson.serialize>[0];
+    // What the transformer wrote: a superjson envelope, or a devalue string.
+    written?: unknown;
+    devalue?: boolean;
+  } = {}
 ) {
   const sample = h.shadow.begin(req);
   h.shadow.run(sample, () => h.shadow.capture(data, written, devalue));
