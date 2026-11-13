@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as HibernationRepoModule from '~/server/services/app-hibernation/hibernation.repo';
 import type * as ArchiveS3 from '~/utils/app-archive-s3';
-import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as HibernationDeps from '~/server/services/app-hibernation/hibernation-deps';
 import {
   fakeRepo,
@@ -18,7 +17,7 @@ import {
  */
 
 const h = vi.hoisted(() => ({
-  hibernateOn: true,
+  storeConfigured: true,
   log: [] as string[],
   repo: undefined as unknown as ReturnType<typeof fakeRepo>,
   store: undefined as unknown as ReturnType<typeof fakeStore>,
@@ -37,16 +36,12 @@ vi.mock('~/server/services/app-hibernation/hibernation.repo', async (importOrigi
     return h.repo.repo;
   },
 }));
-vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
-  ...(await importOriginal<typeof AppBlocksFlag>()),
-  isAppHibernateEnabledGlobally: async () => h.hibernateOn,
-}));
 // The job's dependencies: the same in-memory table and store `deleteUser` used.
 vi.mock('~/server/services/app-hibernation/hibernation-deps', async (importOriginal) => ({
   ...(await importOriginal<typeof HibernationDeps>()),
   defaultHibernationDeps: async () => ({
     repo: h.repo.repo,
-    store: h.store.store,
+    store: h.storeConfigured ? h.store.store : null,
     now: () => NOW,
     report: () => undefined,
   }),
@@ -71,7 +66,7 @@ const OTHER_ID = 4_454;
 beforeEach(() => {
   vi.clearAllMocks();
   h.log = [];
-  h.hibernateOn = true;
+  h.storeConfigured = true;
   h.repo = fakeRepo(h.log);
   h.store = fakeStore(h.log);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: USER_ID, meta: {} });
@@ -145,12 +140,43 @@ describe('deleteUser — sleeping apps', () => {
     );
   });
 
-  it('with the flag off the sweep job does nothing', async () => {
+  it('the sweep job is NOT flag-gated: it finishes a deleted account whatever the flag says', async () => {
     sleeping(USER_ID, 'tip-calculator');
     h.repo.accounts.set(USER_ID, 'deleted');
-    h.hibernateOn = false;
+    // No flag is consulted at all; the counts are the job's one log line per run.
     expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
-      disabled: true,
+      scanned: 0,
+      removed: 0,
+      deletedAccountsFinished: 1,
+      deletedAccountRowsFinished: 1,
+      deletedAccountObjectsRemoved: 2,
+      errors: 0,
+    });
+    expect(h.repo.rows.size).toBe(0);
+    expect(h.store.objects.size).toBe(0);
+  });
+
+  it('a deleted account the sweep cannot finish is counted as an error, and its rows stay for the next run', async () => {
+    sleeping(USER_ID, 'tip-calculator');
+    h.repo.accounts.set(USER_ID, 'deleted');
+    h.store.state.failDeletes = true;
+    expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
+      scanned: 2,
+      removed: 0,
+      deletedAccountsFinished: 0,
+      deletedAccountRowsFinished: 0,
+      deletedAccountObjectsRemoved: 0,
+      errors: 1,
+    });
+    expect(h.repo.rows.size).toBe(1);
+  });
+
+  it('with no archive store configured the sweep job is a no-op', async () => {
+    sleeping(USER_ID, 'tip-calculator');
+    h.repo.accounts.set(USER_ID, 'deleted');
+    h.storeConfigured = false;
+    expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
+      skipped: 'no archive store configured',
     });
     expect(h.repo.rows.size).toBe(1);
     expect(h.store.objects.size).toBe(2);

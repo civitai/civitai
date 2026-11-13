@@ -643,6 +643,11 @@ export type SweepResult = {
   /** Deleted accounts whose sleeping apps this run removed (a retry of a failed deletion step). */
   accountsRetried: number[];
   accountsFailed: number[];
+  /** Rows and objects those retries removed. */
+  accountRowsFinished: number;
+  accountObjectsRemoved: number;
+  /** Objects listed under the archives prefix. */
+  scanned: number;
   /** Objects older than {@link ORPHAN_MIN_AGE_MS} that no row references. */
   orphans: string[];
   dryRun: boolean;
@@ -665,7 +670,15 @@ export async function sweepOrphanedArchives(
   opts: { dryRun?: boolean; accountBatch?: number } = {}
 ): Promise<SweepResult> {
   const dryRun = opts.dryRun ?? false;
-  const result: SweepResult = { accountsRetried: [], accountsFailed: [], orphans: [], dryRun };
+  const result: SweepResult = {
+    accountsRetried: [],
+    accountsFailed: [],
+    accountRowsFinished: 0,
+    accountObjectsRemoved: 0,
+    scanned: 0,
+    orphans: [],
+    dryRun,
+  };
   if (!deps.store) return result;
 
   for (const userId of await deps.repo.deletedAccountsWithRows(opts.accountBatch ?? 100)) {
@@ -674,8 +687,10 @@ export async function sweepOrphanedArchives(
       continue;
     }
     try {
-      await deleteSleepingAppsForAccount(userId, deps);
+      const done = await deleteSleepingAppsForAccount(userId, deps);
       result.accountsRetried.push(userId);
+      result.accountRowsFinished += done.rows;
+      result.accountObjectsRemoved += done.objects;
     } catch (err) {
       result.accountsFailed.push(userId);
       deps.report('app-hibernation.account-retry-failed', {
@@ -686,9 +701,9 @@ export async function sweepOrphanedArchives(
   }
 
   const cutoff = deps.now().getTime() - ORPHAN_MIN_AGE_MS;
-  const old = (await deps.store.list(ARCHIVE_PREFIX))
-    .filter((o) => o.lastModified.getTime() <= cutoff)
-    .map((o) => o.key);
+  const listed = await deps.store.list(ARCHIVE_PREFIX);
+  result.scanned = listed.length;
+  const old = listed.filter((o) => o.lastModified.getTime() <= cutoff).map((o) => o.key);
   for (let i = 0; i < old.length; i += 1000) {
     const batch = old.slice(i, i + 1000);
     const referenced = await deps.repo.referencedKeys(batch);

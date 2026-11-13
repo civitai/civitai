@@ -1626,17 +1626,3 @@ export async function isAppHibernateEnabled(opts: { user?: SessionUser | null })
     return false;
   }
 }
-
-/**
- * The `app-hibernate` flag's BASE value (no user): what a machine-side job reads, since it has no
- * viewer to evaluate a segment for. On only once the flag is enabled for everyone; during a
- * segment-only rollout this answers `false`. An absent flag and an unreachable Flipt evaluate
- * `false` too.
- */
-export async function isAppHibernateEnabledGlobally(): Promise<boolean> {
-  try {
-    return (await isFlipt(APP_HIBERNATE_FLAG)) === true;
-  } catch {
-    return false;
-  }
-}
