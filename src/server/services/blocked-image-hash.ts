@@ -2,6 +2,11 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { withRetries } from '~/utils/errorHandling';
 
+/** Whether the live blocklist can be read here; without it every hash reads as not blocked. */
+export function canCheckBlockedImageHash() {
+  return !!env.BLOCKED_IMAGE_HASH_CHECK && !!clickhouse;
+}
+
 /** Whether a perceptual hash is on the live blocklist, near matches included. */
 export async function getIsImageBlocked(hash: bigint) {
   if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;

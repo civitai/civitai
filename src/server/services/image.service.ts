@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ownerHeld } from '~/server/services/legal-hold.service';
-import { getIsImageBlocked } from '~/server/services/blocked-image-hash';
+import { canCheckBlockedImageHash, getIsImageBlocked } from '~/server/services/blocked-image-hash';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
@@ -7158,9 +7158,13 @@ async function getFailedEntryDrafts({
       take: limit,
       orderBy: { id: 'desc' },
     });
-    // Near matches on the live blocklist; any failed lookup lists nothing (the catch below).
+    // Near matches on the live blocklist; any failed lookup lists nothing (the catch below), and a
+    // hashed row is left out when the blocklist cannot be read at all.
+    const canCheck = canCheckBlockedImageHash();
     const blocked = await Promise.all(
-      rows.map((row) => (row.pHash != null ? getIsImageBlocked(row.pHash) : false))
+      rows.map((row) =>
+        row.pHash == null ? false : canCheck ? getIsImageBlocked(row.pHash) : true
+      )
     );
     return rows.filter((_row, i) => !blocked[i]).map(({ pHash: _pHash, ...row }) => row);
   } catch (error) {
