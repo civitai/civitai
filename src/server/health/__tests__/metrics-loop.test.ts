@@ -444,9 +444,13 @@ describe('healthcheck metric contract in the combined scrape', () => {
       new Set(['name', 'result'])
     );
 
-    const duration = await instrumentationRegistry
-      .getSingleMetric('civitai_app_healthcheck_duration_seconds')!
-      .get();
+    // A histogram's values carry `metricName` (`_bucket`/`_sum`/`_count`); the registry's lookup
+    // is typed as a plain Metric, whose values do not.
+    const duration = await (
+      instrumentationRegistry.getSingleMetric(
+        'civitai_app_healthcheck_duration_seconds'
+      ) as client.Histogram<string>
+    ).get();
     expect(new Set(duration.values.flatMap((v) => Object.keys(v.labels)))).toEqual(
       new Set(['name', 'le'])
     );
