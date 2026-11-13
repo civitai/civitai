@@ -6,7 +6,7 @@
   import AppHeader from '$lib/AppHeader.svelte';
   import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
   import type { PlayerStatus } from '$lib/server/player-status';
-  import type { WhatsNewItem } from '$lib/whats-new';
+  import type { WhatsNew } from '$lib/whats-new';
   import { dismissWhatsNew, type DismissState } from '$lib/whats-new-dismiss';
   import type { LayoutData } from './$types';
 
@@ -28,7 +28,7 @@
   // The welcome screen is signed-out and brings its own chrome.
   let bare = $derived(page.route.id === '/');
   // /home and /play each load "What's new" and answer its `dismissWhatsNew` action; whichever opens first shows it.
-  let whatsNew = $derived(page.data.whatsNew as { items: WhatsNewItem[] } | null | undefined);
+  let whatsNew = $derived(page.data.whatsNew as WhatsNew | null | undefined);
   let whatsNewDismiss = $state<DismissState>({ hidden: false, message: null });
   const submitWhatsNew = dismissWhatsNew(whatsNewDismiss);
   let fit = $derived(page.route.id === '/play');
