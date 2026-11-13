@@ -1,5 +1,6 @@
 export const ROTATION_SIZE = 4;
-export const DEALS_PER_DAY = 2;
+// No daily deals at launch (product decision 2026-11-13): every item sells at its catalog price.
+export const DEALS_PER_DAY = 0;
 export const DEAL_PERCENT = 20;
 
 export const SHOP_TIERS = ['bronze', 'silver', 'gold'] as const;

@@ -77,8 +77,14 @@ describe('the daily rotation', () => {
     expect(ids.filter((id) => cosmeticIds.includes(id))).toHaveLength(ROTATION_SIZE);
   });
 
-  it("picks deals from today's stock and takes the deal percent off", () => {
+  it('offers no deals by default', () => {
     const { stock, deals } = stockFor(CATALOG, '2026-12-20');
+    expect(deals).toEqual([]);
+    expect(stock.every((s) => !s.deal && s.price === s.item.price)).toBe(true);
+  });
+
+  it("picks deals from today's stock and takes the deal percent off", () => {
+    const { stock, deals } = stockFor(CATALOG, '2026-12-20', { dealsPerDay: 2 });
 
     expect(deals.length).toBeGreaterThan(0);
     for (const deal of deals) {
