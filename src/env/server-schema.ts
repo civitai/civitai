@@ -194,10 +194,6 @@ export const serverSchema = z
     // that misses it is treated as a cache miss (or the caller's own fallback). On by default: it
     // only bounds a wait. 0 turns the deadline off (the 15s backstop above then applies).
     REDIS_CACHE_READ_DEADLINE_MS: z.coerce.number().default(250),
-    // The rate limiter's bucket read for FAIL-CLOSED (money) scopes, where a failed read is a 503
-    // rather than a fallback: unset = FAIL_CLOSED_RATE_LIMIT_READ_DEADLINE_MS (2000) in
-    // utils/rate-limit-bucket.ts; 0 = the deadline above. Off whenever the deadline above is 0.
-    REDIS_CACHE_FAIL_CLOSED_READ_DEADLINE_MS: z.coerce.number().optional(),
     // Process-wide breaker over the same calls: after THRESHOLD consecutive failures, guarded calls
     // fail without touching the client until COOLDOWN passes and one probe succeeds. Dark by
     // default — while off, every call still goes to the client.

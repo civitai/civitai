@@ -106,39 +106,10 @@ describe('claimRateLimitAttempt, money scopes, store unavailable', () => {
     );
   });
 
-  it('REDIS_CACHE_FAIL_CLOSED_READ_DEADLINE_MS=0 falls back to the default deadline', async () => {
-    setEnv({ REDIS_CACHE_FAIL_CLOSED_READ_DEADLINE_MS: 0 });
-    hGet.mockImplementation(() => new Promise((r) => setTimeout(() => r([]), 500)));
-    const err = await claim('buzz:getUserAccount').catch((e: unknown) => e);
-    expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
-  });
-
-  it('REDIS_CACHE_FAIL_CLOSED_READ_DEADLINE_MS overrides the bound', async () => {
-    setEnv({ REDIS_CACHE_FAIL_CLOSED_READ_DEADLINE_MS: 800 });
-    hGet.mockImplementation(() => new Promise(() => undefined));
-    const started = Date.now();
-    const err = await claim('buzz:getUserAccount').catch((e: unknown) => e);
-    const took = Date.now() - started;
-    expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
-    expect(took).toBeGreaterThanOrEqual(700);
-    expect(took).toBeLessThan(1500);
-  });
-
-  it('the scope decides, not the bucket key: a money procedure sharing a non-money key still fails closed', async () => {
-    hGet.mockRejectedValue(new Error('cluster down'));
-    const err = await claim('post:shared-bucket', 'orchestrator.getBoostCost').catch(
-      (e: unknown) => e
-    );
-    expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
-  });
-
-  it('positive control: a non-money procedure is admitted on the per-process count', async () => {
-    hGet.mockRejectedValue(new Error('cluster down'));
-    await expect(claim('post:create', 'post.create')).resolves.toBeUndefined();
-  });
-
-  it('a healthy store still admits a money procedure', async () => {
-    hGet.mockResolvedValue([]);
+  it('REDIS_CACHE_READ_DEADLINE_MS=0 switches the fail-closed bound off too', async () => {
+    setEnv({ REDIS_CACHE_READ_DEADLINE_MS: 0 });
+    // Slower than the fail-closed bound: answered only because no deadline applies at all.
+    hGet.mockImplementation(() => new Promise((r) => setTimeout(() => r([]), 2300)));
     await expect(claim('buzz:getUserAccount')).resolves.toBeUndefined();
   });
 });

@@ -135,9 +135,9 @@ export function isFailClosedRateLimitScope(scope: string) {
  * bucket whose reads keep failing, and that bucket would never reach its limit.
  *
  * Bounded memory, two ways: an entry expires once its newest attempt is older than the bucket's
- * longest window (swept at most every LOCAL_SWEEP_INTERVAL_MS, and ignored on read once expired),
- * and past LOCAL_BUCKETS_MAX buckets the least recently written is dropped, so an outage under a
- * flood of distinct callers costs bounded memory.
+ * longest window (swept at most every LOCAL_SWEEP_INTERVAL_MS; a read needs no expiry check, since
+ * the window evaluation ignores attempts outside it), and past LOCAL_BUCKETS_MAX buckets the least
+ * recently written is dropped, so an outage under a flood of distinct callers costs bounded memory.
  */
 const LOCAL_BUCKETS_MAX = 50_000;
 const LOCAL_SWEEP_INTERVAL_MS = 60_000;
@@ -169,17 +169,6 @@ function recordLocalAttempt(bucket: RateLimitBucket, at: number, longestPeriodSe
   }
 }
 
-function readLocalAttempts(bucket: RateLimitBucket, now: number): number[] {
-  const key = localKeyOf(bucket);
-  const entry = localAttempts.get(key);
-  if (!entry) return [];
-  if (entry.expiresAt <= now) {
-    localAttempts.delete(key);
-    return [];
-  }
-  return [...entry.attempts];
-}
-
 /** Test seam: the number of buckets held locally, and a reset (optionally with a smaller cap). */
 export function __localRateLimitBucketCountForTests() {
   return localAttempts.size;
@@ -194,18 +183,13 @@ export function __resetLocalRateLimitBucketsForTests(opts: { maxBuckets?: number
  * The bucket read for a FAIL-CLOSED scope waits this long (instead of the guard's default
  * REDIS_CACHE_READ_DEADLINE_MS) before failing, because there a failed read is a 503 rather than a
  * fallback count: a merely slow read or a short event-loop stall must not refuse a payment. Only a
- * store that stays silent this long — an outage — fails closed. Overridden by
- * REDIS_CACHE_FAIL_CLOSED_READ_DEADLINE_MS (`0` = use the guard's default deadline). When the guard's
- * deadline is switched off (REDIS_CACHE_READ_DEADLINE_MS=0) this is off too.
+ * store that stays silent this long — an outage — fails closed. Off, like every guard deadline,
+ * when REDIS_CACHE_READ_DEADLINE_MS=0.
  */
 export const FAIL_CLOSED_RATE_LIMIT_READ_DEADLINE_MS = 2000;
 
-function failClosedReadDeadlineMs(): number | undefined {
-  if (env.REDIS_CACHE_READ_DEADLINE_MS <= 0) return undefined;
-  const configured = env.REDIS_CACHE_FAIL_CLOSED_READ_DEADLINE_MS;
-  if (configured === undefined) return FAIL_CLOSED_RATE_LIMIT_READ_DEADLINE_MS;
-  return configured > 0 ? configured : undefined;
-}
+const failClosedReadDeadlineMs = () =>
+  env.REDIS_CACHE_READ_DEADLINE_MS > 0 ? FAIL_CLOSED_RATE_LIMIT_READ_DEADLINE_MS : 0;
 
 /** The bucket's attempts, from the store when it answers, else this process's local count. */
 async function readAttemptsOrLocal(
@@ -226,7 +210,10 @@ async function readAttemptsOrLocal(
     localAttempts.delete(localKeyOf(bucket));
     return { attempts: stored ?? [], degraded: false };
   } catch {
-    return { attempts: readLocalAttempts(bucket, Date.now()), degraded: true };
+    return {
+      attempts: [...(localAttempts.get(localKeyOf(bucket))?.attempts ?? [])],
+      degraded: true,
+    };
   }
 }
 
