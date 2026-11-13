@@ -129,7 +129,10 @@ import {
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
-import { getCarouselShowcaseIds } from '~/server/services/version-showcase.service';
+import {
+  bustVersionShowcasesForPosts,
+  getCarouselShowcaseIds,
+} from '~/server/services/version-showcase.service';
 import { showcaseSiteForDomain } from '~/shared/constants/version-showcase.constants';
 import { createLruCache } from '~/server/utils/lru-cache';
 import {
@@ -6170,7 +6173,10 @@ export async function raiseOwnImageNsfwLevel({
   if (!raised) return false;
 
   await Promise.all([refreshThumbnailCache(id), refreshProfilePicturesForImages([id])]);
-  if (raised.postId) await updatePostNsfwLevel(raised.postId);
+  if (raised.postId) {
+    await updatePostNsfwLevel(raised.postId);
+    await bustVersionShowcasesForPosts([raised.postId]);
+  }
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
   return true;

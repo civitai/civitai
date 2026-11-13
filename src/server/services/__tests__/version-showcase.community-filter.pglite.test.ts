@@ -269,7 +269,7 @@ describe('version showcase community filter', () => {
 });
 
 describe('when a featured image stops qualifying', () => {
-  it("a ban clears the model's community cover, and leaves a still-valid one", async () => {
+  it("a ban clears the model's community cover", async () => {
     const banned = await featured();
     await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [banned, MODEL]);
     await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [banned]);

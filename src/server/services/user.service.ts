@@ -2938,7 +2938,6 @@ export const toggleBan = async ({
   void (bannedAt ? onStorySparkPostsRestored : onStorySparkPostsHidden)({ authorId: id });
   const { afterAccountBanChanged } = await import('~/server/services/account-standing.service');
   await afterAccountBanChanged(id);
-  // A banned author's featured images leave every model showcase; an unban brings them back.
   const { bustVersionShowcasesForUser } = await import(
     '~/server/services/version-showcase.service'
   );
@@ -4340,14 +4339,6 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
     // so it reports one.
     location: 'user.service:setUserSetting:set',
   });
-  // Opting out of (or back into) version showcases takes the user's images out of (or back into)
-  // every showcase that features them.
-  if (settings.hideFromVersionShowcases !== undefined) {
-    const { bustVersionShowcasesForUser } = await import(
-      '~/server/services/version-showcase.service'
-    );
-    await bustVersionShowcasesForUser(userId);
-  }
   return result;
 }
 
