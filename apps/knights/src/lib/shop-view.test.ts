@@ -10,7 +10,10 @@ import {
   dealPercentOff,
   membershipPerksUrl,
   durationLabel,
+  cardAction,
   frameStyle,
+  plateScale,
+  tileName,
   groupCosmetics,
   nameplateBackground,
   packBonusPercent,
@@ -231,17 +234,73 @@ describe('groupCosmetics', () => {
 });
 
 describe('frameStyle', () => {
-  it('scales pixel offsets authored at a 96px avatar into percentages of any avatar', () => {
-    expect(frameStyle({ top: -10, left: -13, right: -14, bottom: -16 })).toEqual({
+  it('scales per-side pixel offsets authored at a 96px avatar into percentages of any avatar', () => {
+    expect(frameStyle({ kind: 'offsets', top: -10, left: -13, right: -14, bottom: -16 })).toEqual({
       top: '-10.417%',
       left: '-13.542%',
       width: 'calc(100% - -28.125%)',
       height: 'calc(100% - -27.083%)',
+      transform: 'none',
+    });
+  });
+
+  it('grows a legacy uniform offset around the centre of the avatar', () => {
+    expect(frameStyle({ kind: 'offset', value: '12px' })).toEqual({
+      top: '50%',
+      left: '50%',
+      width: 'calc(100% + 12px)',
+      height: 'calc(100% + 12px)',
+      transform: 'translate(-50%, -50%)',
     });
   });
 
   it('matches the avatar box exactly without offsets', () => {
-    expect(frameStyle(null)).toEqual({ top: '0%', left: '0%', width: '100%', height: '100%' });
+    expect(frameStyle(null)).toEqual({ top: '0%', left: '0%', width: '100%', height: '100%', transform: 'none' });
+  });
+});
+
+describe('tileName', () => {
+  it('drops a trailing type word, whatever its case, and keeps names without one', () => {
+    expect(tileName('Seal of the Order Badge')).toBe('Seal of the Order');
+    expect(tileName('Templar Sapphire Nameplate')).toBe('Templar Sapphire');
+    expect(tileName('Knights Steel frame')).toBe('Knights Steel');
+    expect(tileName('Smite! STICKER')).toBe('Smite!');
+    expect(tileName('Order Banner')).toBe('Order Banner');
+  });
+
+  it('keeps a name that is only the type word', () => {
+    expect(tileName('Badge')).toBe('Badge');
+  });
+});
+
+describe('cardAction', () => {
+  const card = (state: string, price = 1000, minRank: string | null = null) => ({ state, price, minRank });
+  const purse = (convertible: number, held = false) => ({ convertible, held });
+
+  it('offers Buy when the purse covers the price, and the shortfall when it does not', () => {
+    expect(cardAction(card('available'), purse(1000))).toEqual({ kind: 'buy' });
+    expect(cardAction(card('available', 1500), purse(1000))).toEqual({ kind: 'need', by: 500 });
+  });
+
+  it('keeps Buy for a held purse, whose click explains the hold', () => {
+    expect(cardAction(card('available', 1500), purse(0, true))).toEqual({ kind: 'buy' });
+  });
+
+  it('names the rank that unlocks a gated item, and says owned, member, gone and closed', () => {
+    expect(cardAction(card('rank', 1000, 'Templar'), purse(5000))).toEqual({ kind: 'locked', label: 'Unlocks at Templar' });
+    expect(cardAction(card('owned'), purse(5000))).toEqual({ kind: 'owned', label: 'Owned' });
+    expect(cardAction(card('member'), purse(5000))).toEqual({ kind: 'member', label: 'You are a member' });
+    expect(cardAction(card('sold-out'), purse(5000))).toEqual({ kind: 'gone', label: 'Gone for today' });
+    expect(cardAction(card('closed'), purse(5000))).toEqual({ kind: 'closed', label: 'Not available now' });
+  });
+});
+
+describe('plateScale', () => {
+  it('shrinks the nameplate preview for longer names instead of cutting them', () => {
+    expect(plateScale('Manuel')).toBe(1);
+    expect(plateScale('Sir_Lancelot_99')).toBeLessThan(1);
+    expect(plateScale('a_very_long_username_indeed')).toBeLessThan(plateScale('Sir_Lancelot_99'));
+    expect(plateScale('x'.repeat(60))).toBeGreaterThan(0.3);
   });
 });
 

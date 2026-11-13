@@ -34,15 +34,31 @@ export function nameplateGradient(data: unknown): NameplateGradient | null {
   return { from, to, deg };
 }
 
-export type FrameOffsets = { top: number; left: number; right: number; bottom: number };
+/** How an avatar frame sits around the avatar: per-side pixel offsets at a 96px avatar, or the legacy uniform offset string. */
+export type FrameFit =
+  | { kind: 'offsets'; top: number; left: number; right: number; bottom: number }
+  | { kind: 'offset'; value: string };
 
-/** An avatar frame's per-side offsets (pixels at a 96px avatar), or null unless all four are numbers. */
-export function frameOffsets(data: unknown): FrameOffsets | null {
-  const offsets = (data as { offsets?: Record<string, unknown> } | null)?.offsets;
-  if (!offsets || typeof offsets !== 'object') return null;
-  const sides = ['top', 'left', 'right', 'bottom'] as const;
-  if (!sides.every((side) => typeof offsets[side] === 'number' && Number.isFinite(offsets[side])))
-    return null;
-  const { top, left, right, bottom } = offsets as FrameOffsets;
-  return { top, left, right, bottom };
+/** Beyond this a frame would sit far outside or inside the avatar: treated as broken data, not a design. */
+const MAX_FRAME_OFFSET = 50;
+// The same shape the main site's `decorationFrameStyle` accepts for the legacy `offset`.
+const LEGACY_OFFSET = /^-?\d+(\.\d+)?(px|%)$/;
+
+/** An avatar frame's fit, or null when its data is incomplete, malformed or out of range. Per-side offsets win, as on the main site. */
+export function frameFit(data: unknown): FrameFit | null {
+  const value = data as { offsets?: unknown; offset?: unknown } | null;
+  const offsets = value?.offsets as Record<string, unknown> | undefined;
+  if (offsets && typeof offsets === 'object') {
+    const sides = ['top', 'left', 'right', 'bottom'] as const;
+    const ok = sides.every((side) => {
+      const n = offsets[side];
+      return typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= MAX_FRAME_OFFSET;
+    });
+    if (!ok) return null;
+    const { top, left, right, bottom } = offsets as Record<(typeof sides)[number], number>;
+    return { kind: 'offsets', top, left, right, bottom };
+  }
+  const offset = value?.offset;
+  if (typeof offset !== 'string' || !LEGACY_OFFSET.test(offset)) return null;
+  return Math.abs(parseFloat(offset)) <= MAX_FRAME_OFFSET ? { kind: 'offset', value: offset } : null;
 }

@@ -5,11 +5,13 @@
   import { modal } from '$lib/modal';
   import {
     buyClick,
+    cardAction,
     cosmeticIcon,
     cosmeticTypeLabel,
     frameStyle,
     nameplateBackground,
     packNote,
+    plateScale,
   } from '$lib/shop-view';
   import '$lib/overlay.css';
   import type { PageData } from './$types';
@@ -35,13 +37,18 @@
     onbuy: (card: Card) => void;
   } = $props();
 
-  let problem = $state<string | null>(null);
+  // Tied to the card and purse it was raised for, so a new card or a changed balance never shows an old message.
+  let raised = $state<{ key: string; text: string } | null>(null);
+  const problemKey = $derived(`${card.id}:${card.state}:${balance.convertible}:${balance.held}`);
+  const problem = $derived(raised && raised.key === problemKey ? raised.text : null);
+  const action = $derived(cardAction(card, balance));
+  const scale = $derived(plateScale(username));
 
   const icon = $derived<ComponentProps<typeof Icon>['name']>(cosmeticIcon(card.kind, card.cosmeticType));
   const isFrame = $derived(card.cosmeticType === 'ProfileDecoration');
   const isBadge = $derived(card.cosmeticType === 'Badge');
   const isSticker = $derived(card.cosmeticType === 'Sticker');
-  const frame = $derived(frameStyle(card.frameOffsets));
+  const frame = $derived(frameStyle(card.frameFit));
   const nameStyle = $derived(card.nameplate ? nameplateBackground(card.nameplate) : null);
   const typeLine = $derived(
     card.cosmeticType === 'NamePlate'
@@ -58,7 +65,8 @@
   function buy() {
     const click = buyClick(balance, card.price);
     if (click.kind === 'confirm') onbuy(card);
-    else problem = click.kind === 'short' ? `You need ${count(click.by)} more gold.` : click.text;
+    // A shortfall is already shown beside the button; only a hold needs saying here.
+    else if (click.kind === 'refused') raised = { key: problemKey, text: click.text };
   }
 </script>
 
@@ -79,6 +87,7 @@
     <p class="ov-eyebrow">Try it on</p>
     <h2 id="try-title">{card.name}</h2>
     <p class="type">{typeLine}</p>
+    {#if card.description}<p class="desc">{card.description}</p>{/if}
 
     <div class="stage">
       <p class="stage-label">How others see you</p>
@@ -99,12 +108,13 @@
                 style:left={frame.left}
                 style:width={frame.width}
                 style:height={frame.height}
+                style:transform={frame.transform}
               />
             {/if}
           </span>
           <span class="identity">
             <span class="name-row">
-              <span class="name" class:painted={!!nameStyle} style:background-image={nameStyle}>{username}</span>
+              <span class="name" class:painted={!!nameStyle} style:background-image={nameStyle} style:--plate-scale={nameStyle ? scale : 1}>{username}</span>
               {#if isBadge && card.image}<img class="badge" src={card.image} alt="" />{/if}
             </span>
             <span class="rank">{rankLine}</span>
@@ -121,20 +131,22 @@
     </div>
 
     <div class="price-row">
-      <p class="price"><Icon name="coins" size={18} /><b>{count(card.price)}</b>{#if packNote(card)}<span class="per">· {packNote(card)}</span>{/if}</p>
+      <p class="price"><Icon name="coins" size={18} /><b>{count(card.price)}</b>{#if packNote(card)}<span class="per">&nbsp;· {packNote(card)}</span>{/if}</p>
       <p class="balance">You have {count(balance.convertible)} gold</p>
     </div>
 
-    {#if card.state === 'available'}
-      <button type="button" class="ov-primary" data-autofocus onclick={buy}>Buy for {count(card.price)} gold</button>
-    {:else if card.state === 'rank'}
-      <p class="unlock"><Icon name="lock" size={14} />Unlocks at {card.minRank}</p>
-    {:else if card.state === 'owned'}
-      <p class="unlock owned"><Icon name="check" size={14} />Owned</p>
+    {#if action.kind === 'buy' || action.kind === 'need'}
+      <button type="button" class="ov-primary" class:quiet={action.kind === 'need'} data-autofocus onclick={buy}>
+        Buy for {count(card.price)} gold
+      </button>
+      {#if action.kind === 'need'}<p class="need">Need {count(action.by)} more</p>{/if}
     {:else}
-      <p class="unlock">{card.state === 'sold-out' ? 'Gone for today' : 'Not available now'}</p>
+      <p class="unlock" class:owned={action.kind === 'owned'}>
+        {#if action.kind === 'locked'}<Icon name="lock" size={14} />{:else if action.kind === 'owned'}<Icon name="check" size={14} />{/if}
+        {action.label}
+      </p>
     {/if}
-    <button type="button" class="ov-secondary" data-autofocus={card.state !== 'available' ? '' : undefined} onclick={onclose}>Close</button>
+    <button type="button" class="ov-secondary" data-autofocus={action.kind === 'buy' || action.kind === 'need' ? undefined : ''} onclick={onclose}>Close</button>
     {#if problem}<p class="problem" role="alert">{problem}</p>{/if}
   </div>
 </div>
@@ -164,10 +176,15 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
-  .type {
+  .type,
+  .desc {
     margin: -0.5rem 0 0;
     color: var(--io-parchment-muted);
     font: 400 0.82rem/1.4 var(--io-font-ui);
+  }
+  .desc {
+    margin-top: -0.25rem;
+    color: var(--io-parchment);
   }
   .stage {
     display: flex;
@@ -207,7 +224,7 @@
     width: 100%;
     height: 100%;
     border-radius: 50%;
-    background: #4a4236;
+    background: var(--io-matte);
     object-fit: cover;
   }
   .initial {
@@ -231,15 +248,14 @@
     gap: 0.5rem;
     min-width: 0;
   }
+  /* Never cut: a long painted name is drawn smaller (`plateScale`) and, at the floor, may wrap. */
   .name {
-    overflow: hidden;
+    min-width: 0;
     color: var(--io-parchment);
-    font: 700 1.375rem/1.2 var(--io-font-display);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font: 700 calc(1.375rem * var(--plate-scale, 1)) / 1.2 var(--io-font-display);
+    overflow-wrap: anywhere;
   }
   .name.small {
-    flex: none;
     font: 700 0.82rem/1.2 var(--io-font-ui);
   }
   .name.painted {
@@ -283,7 +299,7 @@
     height: 1.375rem;
     overflow: hidden;
     border-radius: 50%;
-    background: #4a4236;
+    background: var(--io-matte);
   }
   .mini img {
     width: 100%;
@@ -320,6 +336,7 @@
   .price .per {
     color: var(--io-parchment-muted);
     font: 400 0.8rem/1.2 var(--io-font-ui);
+    text-transform: none;
   }
   .balance {
     margin: 0;
@@ -346,6 +363,16 @@
   .unlock.owned {
     border-color: var(--io-verdigris);
     color: var(--io-verdigris);
+  }
+  .ov-primary.quiet {
+    border: 1px solid var(--io-gold-muted);
+    background: transparent;
+    color: var(--io-gold-muted);
+  }
+  .need {
+    margin: -0.4rem 0 0;
+    color: var(--io-parchment-muted);
+    font: 400 0.82rem/1.3 var(--io-font-ui);
   }
   .problem {
     margin: 0;
@@ -384,7 +411,12 @@
       height: 3.25rem;
     }
     .name {
-      font-size: 1.2rem;
+      font-size: calc(1.2rem * var(--plate-scale, 1));
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .host {
+      animation: none;
     }
   }
 </style>

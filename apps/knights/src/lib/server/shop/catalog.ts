@@ -4,11 +4,11 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { rankIndex } from '../ranks';
 import {
   cosmeticImageKey,
-  frameOffsets,
+  frameFit,
   holdingBlocksPurchase,
   nameplateGradient,
   stickerUses,
-  type FrameOffsets,
+  type FrameFit,
   type NameplateGradient,
 } from './cosmetics';
 import { hasActiveMembership } from './inventory';
@@ -42,8 +42,8 @@ export type ShopCard = {
   imageKey: string | null;
   /** A nameplate's gradient, so the shop can paint the viewer's name in it. */
   nameplate: NameplateGradient | null;
-  /** An avatar frame's offsets, so the try-on preview sits it around the avatar as the main site does. */
-  frameOffsets: FrameOffsets | null;
+  /** How an avatar frame sits around the avatar, so the try-on preview places it as the main site does. */
+  frameFit: FrameFit | null;
   heldUses: number | null;
 };
 
@@ -137,7 +137,7 @@ export async function loadShop(
         uses,
         imageKey: cosmeticImageKey(cosmetic?.data),
         nameplate: cosmetic?.type === 'NamePlate' ? nameplateGradient(cosmetic.data) : null,
-        frameOffsets: cosmetic?.type === 'ProfileDecoration' ? frameOffsets(cosmetic.data) : null,
+        frameFit: cosmetic?.type === 'ProfileDecoration' ? frameFit(cosmetic.data) : null,
         heldUses:
           isSticker && held.length ? held.reduce((n, row) => n + (row.remaining ?? 0), 0) : null,
       },

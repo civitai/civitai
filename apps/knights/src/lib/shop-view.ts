@@ -192,18 +192,78 @@ function stickerNote(cards: { uses: number | null }[]) {
 /** Offsets are authored in pixels at a 96px avatar and scaled to any avatar, as the main site does. */
 const FRAME_BASE_PX = 96;
 
-export function frameStyle(
-  offsets: { top: number; left: number; right: number; bottom: number } | null
-): { top: string; left: string; width: string; height: string } {
-  if (!offsets) return { top: '0%', left: '0%', width: '100%', height: '100%' };
+type FrameFitLike =
+  | { kind: 'offsets'; top: number; left: number; right: number; bottom: number }
+  | { kind: 'offset'; value: string };
+
+export function frameStyle(fit: FrameFitLike | null): {
+  top: string;
+  left: string;
+  width: string;
+  height: string;
+  transform: string;
+} {
+  if (!fit) return { top: '0%', left: '0%', width: '100%', height: '100%', transform: 'none' };
+  if (fit.kind === 'offset')
+    return {
+      top: '50%',
+      left: '50%',
+      width: `calc(100% + ${fit.value})`,
+      height: `calc(100% + ${fit.value})`,
+      transform: 'translate(-50%, -50%)',
+    };
   const pct = (px: number) => `${((px / FRAME_BASE_PX) * 100).toFixed(3)}%`;
   return {
-    top: pct(offsets.top),
-    left: pct(offsets.left),
-    width: `calc(100% - ${pct(offsets.left + offsets.right)})`,
-    height: `calc(100% - ${pct(offsets.top + offsets.bottom)})`,
+    top: pct(fit.top),
+    left: pct(fit.left),
+    width: `calc(100% - ${pct(fit.left + fit.right)})`,
+    height: `calc(100% - ${pct(fit.top + fit.bottom)})`,
+    transform: 'none',
   };
 }
 
 export const nameplateBackground = (gradient: { from: string; to: string; deg: number }) =>
   `linear-gradient(${gradient.deg}deg, ${gradient.from}, ${gradient.to})`;
+
+/** A tile already sits on its type's shelf, so it drops the trailing type word ("Seal of the Order", not "... Badge"). */
+export function tileName(name: string): string {
+  const short = name.replace(/\s+(badge|frame|sticker|nameplate)\s*$/i, '').trim();
+  return short || name;
+}
+
+export type CardAction =
+  | { kind: 'buy' }
+  | { kind: 'need'; by: number }
+  | { kind: 'locked'; label: string }
+  | { kind: 'owned' | 'member' | 'gone' | 'closed'; label: string };
+
+/**
+ * What a card offers the viewer. Only a shortfall is read from the purse: a held purse still shows Buy, and its click
+ * explains the hold. Starting a purchase stays with the page's confirm flow.
+ */
+export function cardAction(
+  card: { state: string; price: number; minRank: string | null },
+  balance: { convertible: number; held: boolean }
+): CardAction {
+  switch (card.state) {
+    case 'rank':
+      return { kind: 'locked', label: card.minRank ? `Unlocks at ${card.minRank}` : 'Locked for your rank' };
+    case 'owned':
+      return { kind: 'owned', label: 'Owned' };
+    case 'member':
+      return { kind: 'member', label: 'You are a member' };
+    case 'sold-out':
+      return { kind: 'gone', label: 'Gone for today' };
+    case 'closed':
+      return { kind: 'closed', label: 'Not available now' };
+  }
+  if (!balance.held && balance.convertible < card.price)
+    return { kind: 'need', by: card.price - balance.convertible };
+  return { kind: 'buy' };
+}
+
+/** A nameplate preview never cuts the name: longer names are drawn smaller, down to a readable floor. */
+export function plateScale(name: string): number {
+  const extra = Math.max(0, name.length - 10);
+  return Math.max(0.4, Math.round((1 - extra * 0.045) * 100) / 100);
+}
