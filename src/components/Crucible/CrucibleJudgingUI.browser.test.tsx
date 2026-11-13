@@ -122,6 +122,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { CrucibleJudgingUI } = await import('~/components/Crucible/CrucibleJudgingUI');
+const { readWatchedMs, rememberWatchedMs } = await import(
+  '~/components/Crucible/judge-watch-memory'
+);
 const { CrucibleJudgingBriefing } = await import('~/components/Crucible/CrucibleJudgingBriefing');
 
 const srcOf = (id: number) => `0000000${id}-0000-4000-8000-000000000000`;
@@ -1526,5 +1529,128 @@ describe('CrucibleJudgingUI — unmuting keeps the saved volume', () => {
     await vi.waitFor(() => expect(video('left').muted).toBe(false));
     expect(video('left').volume).toBeCloseTo(0.3);
     expect(localStorage.getItem('global-volume')).toBe('0.3');
+  });
+});
+
+// A judge who leaves (a reload, a break) and comes back must not re-watch what they already
+// watched. Keep this: the vote gate was once per visit on purpose, and that was reversed.
+describe('CrucibleJudgingUI — watch progress survives leaving the page', () => {
+  const MEMORY = 'crucible-watch:7:1';
+  const OTHER_CRUCIBLE = 'crucible-watch:7:2';
+
+  beforeEach(() => {
+    localStorage.removeItem(MEMORY);
+    localStorage.removeItem(OTHER_CRUCIBLE);
+  });
+
+  const renderArena = (watchMemoryKey: string, onVote = vi.fn()) =>
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={pairOf(1, 2)}
+        minViewSeconds={3}
+        onVote={onVote}
+        onSkip={vi.fn()}
+        watchMemoryKey={watchMemoryKey}
+      />
+    );
+
+  // Unmounting is the page going away; the next render is the judge's return.
+  const leave = async (screen: Awaited<ReturnType<typeof renderArena>>) => {
+    await screen.unmount();
+    playheads.clear();
+  };
+
+  test('a clip watched past its minimum before leaving is still watched on return', async () => {
+    const first = await renderArena(MEMORY);
+    await expectBothCardsRendered();
+    await advance(0, 4);
+    await vi.waitFor(() => expect(label('left')).not.toContain('Watch'));
+    await leave(first);
+
+    const onVote = vi.fn();
+    await renderArena(MEMORY, onVote);
+    await expectBothCardsRendered();
+    await expect.poll(() => label('left')).not.toContain('Watch');
+    // Remembered per clip: the right one was never watched.
+    expect(label('right')).toContain('Watch 3s more');
+
+    await advance(1, 4);
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    voteButton('left')!.click();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    // The server gate checks what is reported: the remembered 3750ms, and this visit's 3750ms.
+    expect(onVote.mock.calls[0][2]).toEqual({ winnerWatchedMs: 3750, loserWatchedMs: 3750 });
+  });
+
+  test('control: another crucible keeps its own progress, so the clip starts unwatched', async () => {
+    const first = await renderArena(MEMORY);
+    await expectBothCardsRendered();
+    await advance(0, 4);
+    await vi.waitFor(() => expect(label('left')).not.toContain('Watch'));
+    await leave(first);
+
+    await renderArena(OTHER_CRUCIBLE);
+    await expectBothCardsRendered();
+    expect(label('left')).toContain('Watch 3s more');
+  });
+
+  // `playedThrough` resets in an effect, so the next pair's first render still carries it. Writing
+  // then would remember a clip nobody watched as done; the write waits for this pair's playback.
+  test('the next pair does not inherit a short clip played through on the last one', async () => {
+    clipDurations.set(srcOf(1), 1.5);
+    const arena = (pair: ReturnType<typeof pairOf>) => (
+      <CrucibleJudgingUI
+        pair={pair}
+        minViewSeconds={3}
+        onVote={vi.fn()}
+        onSkip={vi.fn()}
+        watchMemoryKey={MEMORY}
+      />
+    );
+    const screen = await renderWithProviders(arena(pairOf(1, 2)));
+    await expectBothCardsRendered();
+    await advance(0, 2);
+    await vi.waitFor(() => expect(label('left')).not.toContain('Watch'));
+
+    await screen.rerender(arena(pairOf(3, 4)));
+    await expectBothCardsRendered();
+
+    expect(readWatchedMs(localStorage, MEMORY, 3)).toBe(0);
+    expect(label('left')).toContain('Watch 3s more');
+  });
+
+  // A clip a little past the rule normally plays on to its end before the right one starts. One
+  // the judge already watched part of on an earlier visit does not hold the sequence again.
+  test('a remembered clip a little past the rule hands over once the rule is met', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    clipDurations.set(srcOf(1), 4.04);
+    rememberWatchedMs(localStorage, MEMORY, 1, 2000);
+    await renderArena(MEMORY);
+    await expectBothCardsRendered();
+
+    // 1750ms on top of the remembered 2000ms meets the 3s rule, well before the clip's end.
+    await advance(0, 2);
+    await vi.waitFor(() => expect(label('left')).toMatch(/^Vote/));
+
+    await vi.waitFor(() => expect(sidesCalledOn(play)).toContain('right'));
+  });
+
+  test('a partial watch resumes where it stopped, rather than counting as watched', async () => {
+    const first = await renderArena(MEMORY);
+    await expectBothCardsRendered();
+    // 1750ms: kept as its whole 1s, never rounded up.
+    await advance(0, 2);
+    await vi.waitFor(() => expect(label('left')).toContain('Watch 2s more'));
+    await vi.waitFor(() => expect(readWatchedMs(localStorage, MEMORY, 1)).toBe(1000));
+    await leave(first);
+
+    await renderArena(MEMORY);
+    await expectBothCardsRendered();
+    await expect.poll(() => label('left')).toContain('Watch 2s more');
+
+    // 2750ms more: short of 3s alone, enough on top of the remembered 1s.
+    await advance(0, 3);
+    await expect.poll(() => label('left')).not.toContain('Watch');
   });
 });
