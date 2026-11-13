@@ -61,3 +61,12 @@ export function tipIntent(tip: {
     tip.amount
   }:${tip.fromAccountType ?? ''}`;
 }
+
+/**
+ * The intent of a submission: its kind and everything it sends. Resending the same content is the
+ * same submission and reuses its key; changing anything makes a new submission with a new key, so
+ * a held key never carries one submission's charge onto another's content.
+ */
+export function submissionIntent(kind: string, content: Record<string, unknown>) {
+  return `${kind}:${JSON.stringify(content)}`;
+}

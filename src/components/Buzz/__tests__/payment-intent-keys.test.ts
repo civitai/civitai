@@ -98,4 +98,16 @@ describe('payment intent keys', () => {
     settlePaymentIntentKey('intent', first);
     expect(paymentIntentKey('intent')).toBe(second);
   });
+
+  it('keys a submission by its content: a retry reuses it, any change is a new submission', async () => {
+    const { paymentIntentKey, submissionIntent } = await load();
+    const item = { cosmeticType: 'Badge', name: 'A', price: 500, buzzType: 'yellow' };
+
+    const first = paymentIntentKey(submissionIntent('creator-shop-item', item));
+    expect(paymentIntentKey(submissionIntent('creator-shop-item', { ...item }))).toBe(first);
+    expect(
+      paymentIntentKey(submissionIntent('creator-shop-item', { ...item, name: 'B' }))
+    ).not.toBe(first);
+    expect(paymentIntentKey(submissionIntent('creator-shop-pack', item))).not.toBe(first);
+  });
 });

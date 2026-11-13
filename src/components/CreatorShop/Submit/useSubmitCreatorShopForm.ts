@@ -41,7 +41,7 @@ import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/u
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
+import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 
 // Owns the submit/edit form: local field state, the derived readiness/affordability
 // flags, artwork drop handling, and the create/update mutations. Keeps the modal
@@ -376,30 +376,31 @@ export function useSubmitCreatorShopForm({
           showErrorNotification({ title: 'Not ready', error: new Error(FEE_UNAVAILABLE_MESSAGE) });
           return;
         }
-        // One key per submission, held across a failure that may have charged the fee, so
-        // submitting again is the same submission (charged once). Scoped by type and currency:
-        // those decide the fee, and a held key must never carry one fee onto another.
-        await withPaymentIntentKey(`creator-shop-item:${type}:${buzzType}`, (idempotencyKey) =>
-          submitItem.mutateAsync({
-            idempotencyKey,
-            cosmeticType: type,
-            name: name.trim(),
-            description: description.trim() || null,
-            imageUrl: imageId,
-            animated,
-            price,
-            availableQuantity: quantity ?? null,
-            buzzType,
-            sellableByOthers,
-            sellerShare: sellableByOthers ? sellerShare : 0,
-            acceptsBlueBuzz,
-            offsets: normalizedOffsets,
-            slug: isSticker ? normalizedSlug : undefined,
-            uses: isSticker ? uses : undefined,
-            pricePerUse: isSticker ? pricePerUse : undefined,
-            rightsAffirmed: true,
-            quotedFee: submissionFee,
-          })
+        const submission = {
+          cosmeticType: type,
+          name: name.trim(),
+          description: description.trim() || null,
+          imageUrl: imageId,
+          animated,
+          price,
+          availableQuantity: quantity ?? null,
+          buzzType,
+          sellableByOthers,
+          sellerShare: sellableByOthers ? sellerShare : 0,
+          acceptsBlueBuzz,
+          offsets: normalizedOffsets,
+          slug: isSticker ? normalizedSlug : undefined,
+          uses: isSticker ? uses : undefined,
+          pricePerUse: isSticker ? pricePerUse : undefined,
+          rightsAffirmed: true,
+          quotedFee: submissionFee,
+        };
+        // One key per submission: the same content resent after a failure that may have charged
+        // the fee is the same submission (charged once); any change to it is a new one, with its
+        // own key and its own fee.
+        await withPaymentIntentKey(
+          submissionIntent('creator-shop-item', submission),
+          (idempotencyKey) => submitItem.mutateAsync({ ...submission, idempotencyKey })
         );
       }
       resetFiles();

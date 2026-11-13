@@ -1,4 +1,5 @@
 import { KEY_VALUE_KEYS } from '~/server/common/constants';
+import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import type { CreatorCosmeticType, CreatorShopFees } from '~/server/schema/creator-shop.schema';
@@ -55,8 +56,16 @@ export function submissionFeeTransactionId(
   return `${SUBMISSION_FEE_PREFIX[kind]}-${userId}-${idempotencyKey ?? Date.now()}`;
 }
 
-/** Charges a submission fee once per submission: see chargeByExternalId. */
-export function chargeSubmissionFee({
+export const SUBMISSION_ALREADY_COMPLETED_MESSAGE =
+  'This submission was already completed. Reload to see it, or start a new submission.';
+
+/**
+ * Charges a submission fee once per submission: see chargeByExternalId. With a key, the charge the
+ * ledger answers may be one an earlier request under the same key already turned into a listing
+ * (that request's response was lost, or the client reused the key for other content). That charge
+ * paid for that listing, so this submission is refused rather than listed on it.
+ */
+export async function chargeSubmissionFee({
   kind,
   userId,
   buzzType,
@@ -71,7 +80,7 @@ export function chargeSubmissionFee({
   description: string;
   idempotencyKey: string | undefined;
 }) {
-  return chargeByExternalId(
+  const charge = await chargeByExternalId(
     {
       fromAccountId: userId,
       fromAccountType: buzzType,
@@ -83,6 +92,15 @@ export function chargeSubmissionFee({
     },
     { reusable: idempotencyKey !== undefined }
   );
+  if (idempotencyKey === undefined) return charge;
+
+  // Item, pack and mystery pack listings all record their fee here (CosmeticShopItem.meta).
+  const listed = await dbWrite.cosmeticShopItem.findFirst({
+    where: { meta: { path: ['submissionTxId'], equals: charge.transactionId } },
+    select: { id: true },
+  });
+  if (listed) throw throwBadRequestError(SUBMISSION_ALREADY_COMPLETED_MESSAGE);
+  return charge;
 }
 
 export type CreatorShopFeesInput = {
