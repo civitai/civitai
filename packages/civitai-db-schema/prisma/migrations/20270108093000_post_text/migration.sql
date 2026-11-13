@@ -65,11 +65,14 @@ BEGIN
   ) THEN
     RETURN true;
   END IF;
-  -- An evidence hold on the author, while that view exists: without it, the reports above decide,
-  -- and each database session warns once that the view is gone.
+  -- An evidence hold on the author, while that view exists. Its table without the view is a schema
+  -- mid-change: every text is held, as the app's own fallback does. With neither, the reports above
+  -- decide, and each database session warns once that the view is gone.
   IF to_regclass('public."EvidenceHeldUser"') IS NOT NULL THEN
     EXECUTE 'SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = $1)'
       INTO marked USING author_id;
+  ELSIF to_regclass('public."EvidenceHold"') IS NOT NULL THEN
+    RETURN true;
   ELSIF current_setting('post_text_held.warned', true) IS DISTINCT FROM 't' THEN
     RAISE WARNING 'post_text_held: "EvidenceHeldUser" is missing; evidence holds are not checked';
     PERFORM set_config('post_text_held.warned', 't', false);

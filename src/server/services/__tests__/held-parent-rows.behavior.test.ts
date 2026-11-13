@@ -674,6 +674,8 @@ describe('a member cannot act on a comment hidden for ToS', () => {
     vi.mocked(dbMock.dbWrite.$queryRawUnsafe).mockImplementation(
       (async (sql: string, ...params: unknown[]) => (await db.query(sql, params)).rows) as never
     );
+    // Post 11 is published and rated, so its thread is readable.
+    vi.mocked(dbMock.dbRead.post.findFirst).mockResolvedValue({ id: 11 } as never);
   });
 
   const track = new Proxy({}, { get: () => async () => undefined });

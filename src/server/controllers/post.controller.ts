@@ -710,7 +710,11 @@ export const deletePostHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const result = await deletePost({ ...input, deletedById: ctx.user.id });
+    const result = await deletePost({
+      ...input,
+      deletedById: ctx.user.id,
+      viewerIsModerator: ctx.user.isModerator,
+    });
     if (result) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({

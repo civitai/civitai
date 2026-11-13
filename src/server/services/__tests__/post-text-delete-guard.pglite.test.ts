@@ -155,6 +155,20 @@ describe('PostText delete trigger', () => {
     }
   });
 
+  it('holds every text while the evidence-hold table stands without its view', async () => {
+    const id = await addText(1);
+    await pg.query(`ALTER TABLE "EvidenceHeldUser" RENAME TO "EvidenceHeldUserGone"`);
+    await pg.query(`CREATE TABLE "EvidenceHold" ("userId" INTEGER)`);
+    try {
+      await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(
+        /cannot be deleted while it is held/
+      );
+    } finally {
+      await pg.query(`DROP TABLE "EvidenceHold"`);
+      await pg.query(`ALTER TABLE "EvidenceHeldUserGone" RENAME TO "EvidenceHeldUser"`);
+    }
+  });
+
   it("doesn't hold text over a report on someone else quoting another post", async () => {
     const id = await addText(1);
     await pg.query(`INSERT INTO "CsamReport" ("userId", details) VALUES ($1, $2)`, [

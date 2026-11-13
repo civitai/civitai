@@ -1299,10 +1299,11 @@ export const deletePost = async ({
   id,
   isModerator,
   deletedById,
-}: GetByIdInput & { isModerator?: boolean; deletedById?: number }) => {
+  viewerIsModerator = isModerator,
+}: GetByIdInput & { isModerator?: boolean; deletedById?: number; viewerIsModerator?: boolean }) => {
   // The delete trigger on "PostText" refuses it too; this refuses it with a message.
   if ((await heldPostTextPostIds({ postIds: [id] })).length)
-    throw heldTextError(isModerator, 'Text in this post');
+    throw heldTextError(viewerIsModerator, 'Text in this post');
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
