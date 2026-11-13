@@ -214,7 +214,11 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/scanner-audit', label: 'Scanner Audit' },
       { path: GENERATOR_RESTRICTIONS_PATH, label: 'Generator Restrictions' },
       { path: '/audit/training-models', label: 'Training Models' },
-      { path: '/audit/training-data', label: 'Training Data Review' },
+      {
+        path: '/audit/training-data',
+        label: 'Training Data Review',
+        countKey: 'trainingDataReview',
+      },
       { path: '/audit/relabel', label: 'Removal Label Relabel' },
       { path: '/audit/text-relabel', label: 'Automated Text Relabel' },
     ],
