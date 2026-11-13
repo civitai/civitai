@@ -1,3 +1,4 @@
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
 import {
@@ -52,7 +53,7 @@ import {
 } from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
-import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
@@ -423,15 +424,13 @@ export const getImagesForModelVersionHandler = async ({
           ],
         ])
       );
-  // The viewer's poi and minor settings, resolved as the model feed resolves them.
-  const settings: { browsingLevel?: number; disablePoi?: boolean; disableMinor?: boolean } = {
-    browsingLevel: requestServableLevels(ctx),
-  };
-  await enforceBlockedBrowsingTags(settings, {
-    id: ctx.user?.id,
-    username: ctx.user?.username,
-    isModerator: ctx.user?.isModerator,
-  });
+  // Not resolved at the viewer's own level (the request carries none), so at the strictest level
+  // a viewer here could pick.
+  const settings = resolveStrictestPoiMinor(
+    await getBrowsingSettingAddons(),
+    requestServableLevels(ctx),
+    { isModerator: ctx.user?.isModerator }
+  );
   // Any version id can be asked for, so the cap applies per image.
   keepCrawlerAnswerOutOfEdgeCache(ctx);
   return Object.fromEntries(
