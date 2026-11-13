@@ -2,6 +2,7 @@ import { Air } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
+import { isWeightFile } from '~/server/services/huggingface.service';
 import { capsGenerationOutput } from '~/server/services/orchestrator/form-graph/output-restrictions';
 
 // The resource rule for an orchestrator step an app builds itself: a pass-through `kind:'step'`,
@@ -18,7 +19,6 @@ const HUGGING_FACE_TRAINING_DATA_RE =
 // A URL: a loader can take one in place of an AIR, so one naming a weights file is refused.
 // `https:host/x` is a URL too: the WHATWG parser supplies the missing slashes.
 const URL_RE = /^([a-z][a-z0-9+.-]*:\/\/|https?:)/i;
-const WEIGHTS_FILE_RE = /\.(safetensors|sft|ckpt|pt|pth|bin|gguf|onnx)$/i;
 // Job outputs the orchestrator itself produced (a trained LoRA, a previous step's file), and mail
 // links, which the AIR grammar also matches.
 const ALLOWED_NON_CIVITAI_SOURCES: ReadonlySet<string> = new Set(['orchestrator', 'mailto']);
@@ -29,7 +29,7 @@ function refuse(message: string): never {
 
 function namesWeightsFile(url: string): boolean {
   try {
-    return WEIGHTS_FILE_RE.test(decodeURIComponent(new URL(url).pathname));
+    return isWeightFile(decodeURIComponent(new URL(url).pathname));
   } catch {
     return true;
   }

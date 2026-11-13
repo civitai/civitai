@@ -992,9 +992,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   //
   // Cardinality: one `engine` label per recipe's engine(s) + one `recipe` label per
   // registered recipe — both small server-side enums drawn from the code-owned recipe
-  // registry (never client input), so the series count grows by a handful with each new
-  // recipe/engine — always trivially bounded regardless of the wire (labels are free-form + fail-soft, but the values
-  // are enum-resolved from the registry, so they can't blow up).
+  // registry (never client input), so the series count is bounded by recipes × engines.
   //
   // 🔴 NOT ONLY THE customComfy BRIDGE ANY MORE, AND NOT ONLY REGISTRY-DERIVED
   // LABELS. Every arm that reserves a post-paid CEILING settles through the same

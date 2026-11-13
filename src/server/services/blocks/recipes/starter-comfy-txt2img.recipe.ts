@@ -77,11 +77,9 @@ export const STARTER_ESTIMATE_BUZZ = 15;
 // a new App developer runs, and the one most likely to hit a cold worker — fail on
 // first use, reporting a bare `expired` with no message.
 //
-// 90 matches seamless-pano's ceiling and is ~3× the slowest warm inline run
-// observed (55s). Raising it is
-// free: billing settles to actual GPU-seconds, so the ceiling costs nothing unless
-// it is actually consumed — an over-tight value buys no savings and only converts a
-// slow start into a silent failure.
+// 90 matches seamless-pano's ceiling. Raising it is free: billing settles to actual
+// GPU-seconds, so an over-tight value buys no savings and only converts a slow start
+// into a silent failure.
 //
 // ⚠️ Scope of the evidence: ONE cold-start observation, not a distribution. If cold
 // starts are found to exceed 90s (a larger checkpoint, a colder pool), raise this

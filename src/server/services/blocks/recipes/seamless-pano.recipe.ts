@@ -111,10 +111,8 @@ export const ESTIMATE_BUZZ_BY_ENGINE: Record<SeamlessPanoEngine, number> = {
 // was reserved and under-count spend. The router reserves `maxBuzz` against every
 // cap and settles-to-actual, so a cheaper engine reserves (and settles) less cap.
 //
-// The timeout is the one reviewer judgment call here (a `timeout` is a HARD
-// kill on a slow gen, so headroom over typical runtime matters): 90s is ≈ 4× the
-// 21-Buzz dogfood-measured actual. It holds the app-manifest invariant
-// `page.buzzBudgetPerGen ≥ recipe ceiling`.
+// The timeout is a HARD kill on a slow gen, so keep headroom over typical runtime.
+// Holds the app-manifest invariant `page.buzzBudgetPerGen ≥ recipe ceiling`.
 export const BUDGET_BY_ENGINE: Record<
   SeamlessPanoEngine,
   { stepTimeoutSeconds: number; maxBuzz: number }
