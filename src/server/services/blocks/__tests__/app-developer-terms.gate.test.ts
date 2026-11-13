@@ -28,6 +28,32 @@ const listingOwner = vi.hoisted(() => ({ id: 0 }));
 vi.mock('~/server/services/blocks/app-access.service', () => ({
   resolveListingAccess: vi.fn(async () => ({ ownerUserId: listingOwner.id })),
 }));
+// A recorded push starts its new-submission alert and its diff enrichment without awaiting them.
+// Left running, they log after the file ends, and a log in flight as the worker closes fails the
+// run with EnvironmentTeardownError. Neither is under test: both are stubbed to settle at once, and
+// each test that records a push waits for them (settlePushBackgroundWork).
+const background = vi.hoisted(() => ({ onNewPendingSubmission: vi.fn(async () => undefined) }));
+vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onNewPendingSubmission: background.onNewPendingSubmission,
+}));
+vi.mock('~/server/services/blocks/forgejo.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  listRepoTreeAtRef: vi.fn(async () => {
+    throw new Error('no Forgejo in this test');
+  }),
+}));
+const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+async function settlePushBackgroundWork() {
+  await vi.waitFor(() => {
+    expect(background.onNewPendingSubmission).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('[push-enrich] failed'),
+      expect.stringContaining('no Forgejo in this test')
+    );
+  });
+}
 
 const DEV = 42;
 const OWNER = 7;
@@ -118,6 +144,7 @@ describe('App Developer Terms: publishing is refused server-side until accepted'
     }).catch(() => undefined);
     expect(db.pubReqUpdateMany).toHaveBeenCalledTimes(1);
     expect(db.pubReqCreate).toHaveBeenCalledTimes(1);
+    await settlePushBackgroundWork();
   });
 
   it('a push by a collaborator who has not accepted is refused although the owner has, changing no pending request', async () => {
@@ -149,6 +176,7 @@ describe('App Developer Terms: publishing is refused server-side until accepted'
       pusherUserId: DEV,
     }).catch(() => undefined);
     expect(db.pubReqCreate).toHaveBeenCalledTimes(1);
+    await settlePushBackgroundWork();
   });
 
   it('tRPC publish paths get a FORBIDDEN the client can show, not a masked 500', async () => {
