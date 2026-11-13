@@ -408,3 +408,54 @@ describe('the per-app lock', () => {
     expect(await holdsAppLock(raw, 'app-a')).toBe(false);
   });
 });
+
+describe('the final check after an on-site approve has committed', () => {
+  async function lateHold() {
+    await addRequest('pubreq_a', 'app-a');
+    await tx((t) =>
+      claimApprove(t, { slug: 'app-a', publishRequestId: 'pubreq_a', actorUserId: HUMAN })
+    );
+    await db.query(
+      `UPDATE app_publish_request_approve_claims SET claimed_at = now() - interval '1 hour'`
+    );
+    return place('pubreq_a');
+  }
+
+  it('🔴 does not refuse over a hold placed after the claim expired, and leaves it open', async () => {
+    const hold = await lateHold();
+    await expect(
+      tx((t) =>
+        resolveHoldsAtApprove(t, {
+          slug: 'app-a',
+          actorUserId: HUMAN,
+          shownHoldIds: [],
+          afterSideEffects: true,
+        })
+      )
+    ).resolves.toEqual([]);
+    const [row] = (
+      await db.query<{ cleared_at: Date | null }>(
+        'SELECT cleared_at FROM app_publish_request_holds WHERE id = $1',
+        [hold.id]
+      )
+    ).rows;
+    expect(row.cleared_at).toBeNull();
+    expect((await db.query('SELECT 1 FROM "ModActivity"')).rows).toHaveLength(0);
+  });
+
+  it('still refuses that hold before any side effect', async () => {
+    await lateHold();
+    await expect(
+      tx((t) => resolveHoldsAtApprove(t, { slug: 'app-a', actorUserId: HUMAN, shownHoldIds: [] }))
+    ).rejects.toThrow(PublishRequestHeldError);
+  });
+
+  it('🔴 the lock wait timeout does not cover the writes after the lock', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    const timeout = await tx(async (t) => {
+      await resolveHoldsAtApprove(t, { slug: 'app-a', actorUserId: HUMAN, afterSideEffects: true });
+      return (await t.$queryRaw<{ lock_timeout: string }[]>`SHOW lock_timeout`)[0].lock_timeout;
+    });
+    expect(timeout).toBe('0');
+  });
+});

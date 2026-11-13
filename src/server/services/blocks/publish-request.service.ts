@@ -4528,7 +4528,11 @@ async function approveRequestUnderClaim(
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
   await dbWrite.$transaction(async (tx) => {
-    await resolveHoldsAtApprove(tx, { ...holdDecision, actorUserId: params.reviewerUserId });
+    await resolveHoldsAtApprove(tx, {
+      ...holdDecision,
+      actorUserId: params.reviewerUserId,
+      afterSideEffects: true,
+    });
     await tx.appBlockPublishRequest.update({
       where: { id: request.id },
       data: {
