@@ -46,8 +46,9 @@ async function fetchModelEngagement({ userId }: { userId: number }): Promise<Mod
     .sort((a, b) => b.downvotes - a.downvotes || b.comments - a.comments);
 }
 
+// v2: the list grew from "models with votes or comments" to every published model; v1 entries hold the old subset.
 export const getModelEngagement = createCache({
-  name: 'analytics:engagement',
+  name: 'analytics:engagement:v2',
   fetch: fetchModelEngagement,
   ttlSeconds: 3600,
 }).get;
