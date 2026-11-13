@@ -49,7 +49,12 @@ const { searchSemanticComics, levelsWithin, MAX_HITS_PER_USER } = await import(
 const { PG, PG13, R, X } = NsfwLevel;
 const comic = (
   id: number,
-  { userId = id, level = PG, cover = PG, deleted = false } = {}
+  {
+    userId = id,
+    level = PG,
+    cover = PG,
+    deleted = false,
+  }: { userId?: number; level?: number; cover?: number; deleted?: boolean } = {}
 ): Record<string, unknown> => ({
   id,
   userId,
