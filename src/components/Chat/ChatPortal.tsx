@@ -48,21 +48,25 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   return (
     <div
       className={clsx(
-        // The composer input is the bottom-most control in the window, so the 8px
-        // `mb-2` is what would leave someone typing under the home indicator.
-        'absolute bottom-0 left-0 z-[251] mb-[max(0.5rem,var(--safe-area-inset-bottom))] h-dvh w-full',
-        // Edge to edge on a phone, like the notifications drawer; floating from `@sm` up.
-        '@max-sm:[&>*]:rounded-none',
-        '@sm:ml-2 @sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]'
+        'absolute bottom-0 left-0 z-[251] h-dvh w-full',
+        // A phone gets a sheet, like the notifications drawer: edge to edge, from the header down to
+        // the screen's bottom, with the bottom inset paid inside the window (on its own background)
+        // so the composer clears the home indicator.
+        'max-h-[var(--chat-max-h)] @max-sm:[&>*]:rounded-none @max-sm:[&>*]:pb-[var(--safe-area-inset-bottom)]',
+        // From `@sm` up it floats. The composer is the bottom-most control, so the margin is what
+        // keeps someone from typing under the home indicator.
+        '@sm:mb-[max(0.5rem,var(--safe-area-inset-bottom))] @sm:ml-2 @sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]',
+        '@sm:max-h-[calc(var(--chat-max-h)-var(--safe-area-inset-bottom)-1rem)]'
       )}
-      // `100dvh` grew by (top inset + bottom inset) when the layout viewport
-      // started covering the cutout, so this cap has to subtract them back or the
-      // window is taller than it was and rides up under the header.
-      style={{
-        maxHeight: `calc(100dvh - var(--safe-area-inset-top) - var(--safe-area-inset-bottom) - var(--header-height)${
-          showFooter ? ' - var(--footer-height)' : ''
-        } - 1rem)`,
-      }}
+      // `100dvh` grew by the insets when the layout viewport started covering the cutout, so the cap
+      // subtracts the top one back or the window rides up under the header.
+      style={
+        {
+          '--chat-max-h': `calc(100dvh - var(--safe-area-inset-top) - var(--header-height)${
+            showFooter ? ' - var(--footer-height)' : ''
+          })`,
+        } as React.CSSProperties
+      }
     >
       <ChatWindow />
     </div>

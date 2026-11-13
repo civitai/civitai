@@ -18,17 +18,37 @@ vi.mock('next/router', () => ({
   useRouter: () => ({ isReady: false, query: {}, pathname: '/', replace: () => undefined }),
 }));
 // The real window loads the whole chat app; a stand-in with its root's classes (ChatWindow.tsx)
-// keeps the corners the real one gets.
+// keeps the corners the real one gets, and ends in a composer like the real one.
 vi.mock('~/components/Chat/ChatWindow', async () => {
   const { default: classes } = await import('~/components/Chat/Chat.module.scss');
   return {
-    ChatWindow: () => <div data-chat-window className={`size-full card ${classes.surface}`} />,
+    ChatWindow: () => (
+      <div data-chat-window className={`size-full card ${classes.surface}`}>
+        <div className="flex-1" />
+        <div data-composer style={{ height: 40 }} />
+      </div>
+    ),
   };
 });
 
+// A notched phone's insets, which the harness otherwise reports as 0.
+const INSET_TOP = 20;
+const INSET_BOTTOM = 34;
+const HEADER = 60; // --header-height
+
 // `@sm:` is a container query against BaseLayout's ContainerProvider, as in the app.
 const ui = (
-  <div style={{ width: '100vw', height: '100vh' }}>
+  <div
+    style={
+      {
+        width: '100vw',
+        height: '100vh',
+        '--safe-area-inset-top': `${INSET_TOP}px`,
+        '--safe-area-inset-bottom': `${INSET_BOTTOM}px`,
+        '--header-height': `${HEADER}px`,
+      } as React.CSSProperties
+    }
+  >
     <ContainerProvider containerName="main">
       <ChatPortal showFooter={false} />
     </ContainerProvider>
@@ -46,13 +66,19 @@ async function renderOpen(vp: { width: number; height: number }) {
 }
 
 describe('ChatPortal open window', () => {
-  test('spans the full width of a 390px phone, with square corners', async () => {
+  test('is a sheet on a 390px phone: edge to edge, header to screen bottom', async () => {
     const { win, frame } = await renderOpen(PHONE_VIEWPORT);
     const b = box(frame);
 
     expect(b.left).toBe(0);
     expect(b.width).toBe(PHONE_VIEWPORT.width);
     expect(getComputedStyle(win).borderTopLeftRadius).toBe('0px');
+    expect(b.bottom, 'flush with the screen bottom').toBe(PHONE_VIEWPORT.height);
+    expect(b.top, 'meets the header').toBe(INSET_TOP + HEADER);
+    const composer = box(win.querySelector('[data-composer]')!);
+    expect(composer.bottom, 'composer clears the home indicator').toBeLessThanOrEqual(
+      PHONE_VIEWPORT.height - INSET_BOTTOM
+    );
   });
 
   test('keeps the floating 700px window on desktop', async () => {
@@ -62,5 +88,8 @@ describe('ChatPortal open window', () => {
     expect(b.left).toBe(8);
     expect(b.width).toBe(700);
     expect(getComputedStyle(win).borderTopLeftRadius).not.toBe('0px');
+    // Unchanged: lifted by the bottom inset, capped 1rem short of the header.
+    expect(b.bottom).toBe(900 - INSET_BOTTOM);
+    expect(b.height).toBe(900 - INSET_TOP - INSET_BOTTOM - HEADER - 16);
   });
 });
