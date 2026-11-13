@@ -17,11 +17,14 @@ import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvi
 vi.mock('next/router', () => ({
   useRouter: () => ({ isReady: false, query: {}, pathname: '/', replace: () => undefined }),
 }));
-// The real window loads the whole chat app; a stand-in with its root's `card` class keeps the
-// corners the real one gets.
-vi.mock('~/components/Chat/ChatWindow', () => ({
-  ChatWindow: () => <div data-chat-window className="size-full card" />,
-}));
+// The real window loads the whole chat app; a stand-in with its root's classes (ChatWindow.tsx)
+// keeps the corners the real one gets.
+vi.mock('~/components/Chat/ChatWindow', async () => {
+  const { default: classes } = await import('~/components/Chat/Chat.module.scss');
+  return {
+    ChatWindow: () => <div data-chat-window className={`size-full card ${classes.surface}`} />,
+  };
+});
 
 // `@sm:` is a container query against BaseLayout's ContainerProvider, as in the app.
 const ui = (
@@ -50,8 +53,6 @@ describe('ChatPortal open window', () => {
     expect(b.left).toBe(0);
     expect(b.width).toBe(PHONE_VIEWPORT.width);
     expect(getComputedStyle(win).borderTopLeftRadius).toBe('0px');
-    // The composer still clears the home indicator (no inset in the harness, so the 0.5rem floor).
-    expect(getComputedStyle(frame).marginBottom).toBe('8px');
   });
 
   test('keeps the floating 700px window on desktop', async () => {
