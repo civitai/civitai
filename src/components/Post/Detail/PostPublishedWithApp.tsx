@@ -2,6 +2,7 @@ import { Anchor, Avatar, Badge, Text } from '@mantine/core';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { PostAppChip, PostAppChipItem } from '~/server/services/blocks/post-app-chip.logic';
 import { trpc } from '~/utils/trpc';
@@ -133,10 +134,11 @@ function AppNameRow({ app, slug }: { app: PostAppChip; slug?: string }) {
 }
 
 function ChipItemName({ item }: { item: PostAppChipItem }) {
+  const toCurrentDomain = useCurrentDomainHref();
   if (!item.href) return <>{item.name}</>;
   if (item.external)
     return (
-      <Anchor href={item.href} target="_blank" rel="noopener noreferrer" inherit>
+      <Anchor href={toCurrentDomain(item.href)} target="_blank" rel="noopener noreferrer" inherit>
         {item.name}
       </Anchor>
     );
