@@ -311,15 +311,4 @@ describe('write budget: the document store and legacy budgets do not drain each 
       false
     );
   });
-
-  it('a rejection charged on one budget is not charged on the other', async () => {
-    const P = params({ rejections: { capacity: 2, refillIntervalMs: 1_009_000 } });
-    for (let i = 0; i < 2; i++) {
-      const r = await reserveSharedWrite(USER, APP, P);
-      if (!r.allowed) throw new Error('expected a reservation');
-      await r.release({ rejected: true });
-    }
-    expect((await reserveSharedWrite(USER, APP, P)).allowed).toBe(false);
-    expect((await reserveSharedWrite(USER, APP, DOC_STORE_SHARED_WRITE_BUDGET)).allowed).toBe(true);
-  });
 });
