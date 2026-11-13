@@ -12,8 +12,35 @@
  */
 export const REGISTRY_NAMESPACE = 'apps.civitai.com';
 
-/** The registry's own schema of schemas: every schema entity claims it. Not ours. */
-export const REGISTRY_SCHEMA_SCHEMA = 'urn:schema:registry:schema@v1';
+/**
+ * The root (registry spec, "Schemas"): JSON Schema 2020-12's own meta-schema. Every schema entity
+ * claims it, and a subscription with it as `schema` is this registry's schema stream. Not ours,
+ * and not an entity: no registry serves it.
+ */
+export const ROOT_SCHEMA = 'https://json-schema.org/draft/2020-12/schema';
+
+/**
+ * DEPRECATED: the schema stream's URN under the earlier registry spec, which the current one
+ * deleted for {@link ROOT_SCHEMA}. Kept for consumers still on the earlier spec: a subscription for
+ * it is served the same schema entities as the root, each claiming this URN, since a consumer
+ * validates against what it asked for. Remove once no consumer subscribes with it.
+ */
+export const LEGACY_SCHEMA_SCHEMA = 'urn:schema:registry:schema@v1';
+
+/** Both names of the schema stream, each served the same schema entities claiming it. */
+export const SCHEMA_STREAMS: readonly string[] = [ROOT_SCHEMA, LEGACY_SCHEMA_SCHEMA];
+
+/**
+ * The namespace of a URN as the spec defines it: `{ns}` in `urn:{ns}:…`, or in `urn:schema:{ns}:…`
+ * for a schema, with `{ns}` and what follows it non-empty. Null for a string of neither shape.
+ */
+export function urnNamespace(urn: string): string | null {
+  const m = /^urn:(?:schema:)?([^:]+):.+$/.exec(urn);
+  if (!m) return null;
+  // `urn:schema:` alone names no namespace: `schema` is reserved for schemas.
+  if (m[1] === 'schema') return null;
+  return m[1];
+}
 
 /**
  * The schemas of the app, release and runtime entities. This adapter defines them

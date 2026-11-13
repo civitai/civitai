@@ -8,7 +8,7 @@ import type { Entity } from '~/server/registry-adapter/protocol';
 import {
   APP_RELEASE_SCHEMA,
   APP_SCHEMA,
-  REGISTRY_SCHEMA_SCHEMA,
+  ROOT_SCHEMA,
   SERVICE_SCHEMA,
 } from '~/server/registry-adapter/urn';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
@@ -110,7 +110,7 @@ const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
 /** The validator of each schema entity the build published, compiled from its body. */
 function compiled(sets: ReturnType<typeof buildEntities>) {
   const docs = new Map(
-    (sets.get(REGISTRY_SCHEMA_SCHEMA) ?? []).map((e) => [e.urn, e.body as Record<string, unknown>])
+    (sets.get(ROOT_SCHEMA) ?? []).map((e) => [e.urn, e.body as Record<string, unknown>])
   );
   const cache = new Map<string, ValidateFunction>();
   return (schema: string): ValidateFunction => {
@@ -126,24 +126,31 @@ function compiled(sets: ReturnType<typeof buildEntities>) {
 }
 
 describe('the schemas of our own entities', () => {
-  it('🔴 the live adapter serves them on the schema stream, with the registry switch off', async () => {
-    const adapter = createPollingAdapter({
-      namespace: 'apps.civitai.com',
-      serves: SERVED_SCHEMAS,
-      // As the live entrypoint builds them: the platform's own switch, which ships off.
-      read: async () => buildEntities(CATALOG, { baseUrl: 'https://site.example' }),
-      store: createMemorySnapshotStore(),
-      pollMs: 1,
-      sleep: async () => undefined,
-    });
-    const snap = await adapter.snapshot(REGISTRY_SCHEMA_SCHEMA, {
-      signal: new AbortController().signal,
-    });
-    const served = [...(snap.entities as Entity[])];
-    expect(served.map((e) => [e.urn, e.schemas, (e.body as { $id: unknown }).$id])).toEqual(
-      OWN.map((urn) => [urn, [REGISTRY_SCHEMA_SCHEMA], urn])
-    );
-  });
+  // The schema stream under both its names: the current spec's root, and the earlier spec's URN,
+  // kept for consumers still on it. Each entity claims the name it was asked for, since a
+  // consumer validates what it asked.
+  it.each([['https://json-schema.org/draft/2020-12/schema'], ['urn:schema:registry:schema@v1']])(
+    '🔴 the live adapter serves them on the schema stream %s, with the registry switch off',
+    async (stream) => {
+      const adapter = createPollingAdapter({
+        namespace: 'apps.civitai.com',
+        serves: SERVED_SCHEMAS,
+        // As the live entrypoint builds them: the platform's own switch, which ships off.
+        read: async () => buildEntities(CATALOG, { baseUrl: 'https://site.example' }),
+        store: createMemorySnapshotStore(),
+        pollMs: 1,
+        sleep: async () => undefined,
+      });
+      expect(adapter.serves(stream)).toBe(true);
+      const snap = await adapter.snapshot(stream, {
+        signal: new AbortController().signal,
+      });
+      const served = [...(snap.entities as Entity[])];
+      expect(served.map((e) => [e.urn, e.schemas, (e.body as { $id: unknown }).$id])).toEqual(
+        OWN.map((urn) => [urn, [stream], urn])
+      );
+    }
+  );
 
   it.each([
     ['on', SWITCH_ON],
@@ -238,7 +245,7 @@ describe('the schemas of our own entities', () => {
 
   it("the app schema tells a consumer that a document's rating is its app's", () => {
     const sets = buildEntities([], { baseUrl: 'https://site.example' });
-    const app = (sets.get(REGISTRY_SCHEMA_SCHEMA) ?? []).find((e) => e.urn === APP_SCHEMA)!;
+    const app = (sets.get(ROOT_SCHEMA) ?? []).find((e) => e.urn === APP_SCHEMA)!;
     const rating = (app.body as { properties: { contentRating: Record<string, unknown> } })
       .properties.contentRating;
     // The whole sentence: a consumer reads it, so a rewording is a deliberate change.

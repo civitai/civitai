@@ -358,13 +358,28 @@ describe('a request filter', () => {
   });
 });
 
-describe('🔴 a filter this source will not evaluate is not applied', () => {
-  it('a regular expression is never compiled: the entity it would exclude is still sent', async () => {
+/**
+ * The registry spec's rule 6: a registry that accepts a filter applies it in full, and one it
+ * does not apply is answered `bad_request`, never ignored (the consumer would take what it got for
+ * filtered). Each refused case was, before, streamed unfiltered: an `upsert` first, then `live`.
+ */
+const REFUSED_KEYS_NOTE =
+  '(it refuses pattern, patternProperties, $ref, $dynamicRef, $recursiveRef, $defs, definitions anywhere in a filter)';
+
+describe('🔴 a filter this source will not evaluate is bad_request, never ignored (rule 6)', () => {
+  it('a regular expression is never compiled: bad_request, naming the keyword', async () => {
     const res = await get(
       adapter(),
       sub(APPS, asFilter({ properties: { slug: { pattern: '^zzz' } } }))
     );
-    expect(res.text.startsWith('event: upsert')).toBe(true);
+    expect([res.status, res.type, JSON.parse(res.text)]).toEqual([
+      400,
+      'application/json',
+      {
+        error: 'bad_request',
+        message: `filter uses "pattern", which this registry does not apply ${REFUSED_KEYS_NOTE}`,
+      },
+    ]);
   });
 
   it('positive control: the same filter without the regex is applied', async () => {
@@ -372,15 +387,30 @@ describe('🔴 a filter this source will not evaluate is not applied', () => {
       adapter(),
       sub(APPS, asFilter({ properties: { slug: { const: 'zzz' } } }))
     );
+    expect(res.status).toBe(200);
     expect(res.text.startsWith('event: live')).toBe(true);
   });
 
   it.each([
-    ['dependencies', { dependencies: { slug: { properties: { slug: { pattern: '^zzz' } } } } }],
-    ['a $ref to a member', { $ref: '#/x', x: { properties: { slug: { pattern: '^zzz' } } } }],
-  ])('🔴 a regex reached through %s is never compiled either', async (_name, f) => {
+    [
+      'dependencies',
+      { dependencies: { slug: { properties: { slug: { pattern: '^zzz' } } } } },
+      'pattern',
+    ],
+    [
+      'a $ref to a member',
+      { $ref: '#/x', x: { properties: { slug: { pattern: '^zzz' } } } },
+      '$ref',
+    ],
+  ])('🔴 a regex reached through %s is bad_request too', async (_name, f, key) => {
     const res = await get(adapter(), sub(APPS, asFilter(f)));
-    expect(res.text.startsWith('event: upsert')).toBe(true);
+    expect([res.status, JSON.parse(res.text)]).toEqual([
+      400,
+      {
+        error: 'bad_request',
+        message: `filter uses "${key}", which this registry does not apply ${REFUSED_KEYS_NOTE}`,
+      },
+    ]);
   });
 
   it('a filter whose string value merely contains the word "pattern" is still applied', async () => {
@@ -388,16 +418,32 @@ describe('🔴 a filter this source will not evaluate is not applied', () => {
       adapter(),
       sub(APPS, asFilter({ properties: { slug: { const: 'pattern' } } }))
     );
+    expect(res.status).toBe(200);
     expect(res.text.startsWith('event: live')).toBe(true);
   });
 
-  it('a filter over the size bound is not applied', async () => {
+  it('a filter over the size bound is bad_request', async () => {
     const big = {
       properties: { slug: { const: 'zzz' } },
       description: 'x'.repeat(FILTER_MAX_BYTES),
     };
     const res = await get(adapter(), sub(APPS, asFilter(big)));
-    expect(res.text.startsWith('event: upsert')).toBe(true);
+    expect([res.status, JSON.parse(res.text)]).toEqual([
+      400,
+      {
+        error: 'bad_request',
+        message:
+          'filter is longer than 8192 characters as JSON, which this registry does not apply',
+      },
+    ]);
+  });
+
+  it('positive control: a filter just under the size bound is applied', async () => {
+    const f = { properties: { slug: { const: 'zzz' } }, description: '' };
+    const room = FILTER_MAX_BYTES - JSON.stringify(f).length;
+    const res = await get(adapter(), sub(APPS, asFilter({ ...f, description: 'x'.repeat(room) })));
+    expect(res.status).toBe(200);
+    expect(res.text.startsWith('event: live')).toBe(true);
   });
 });
 

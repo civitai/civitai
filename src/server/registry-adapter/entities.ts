@@ -17,8 +17,10 @@ import { sortedKeyJson, releaseBody, sha256Hex } from '~/server/registry-adapter
 import {
   APP_RELEASE_SCHEMA,
   APP_SCHEMA,
+  LEGACY_SCHEMA_SCHEMA,
   REGISTRY_NAMESPACE,
-  REGISTRY_SCHEMA_SCHEMA,
+  ROOT_SCHEMA,
+  SCHEMA_STREAMS,
   SERVICE_SCHEMA,
   parseCollectionSchemaUrn,
   registryUrn,
@@ -28,7 +30,8 @@ import type { AppStorageFeature } from '~/shared/constants/block-storage.constan
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
 export const SERVED_SCHEMAS = [
-  REGISTRY_SCHEMA_SCHEMA,
+  ROOT_SCHEMA,
+  LEGACY_SCHEMA_SCHEMA,
   APP_SCHEMA,
   APP_RELEASE_SCHEMA,
   SERVICE_SCHEMA,
@@ -83,15 +86,15 @@ export type EntitySets = Map<string, Entity[]>;
 
 /**
  * The entity schemas that carry an app's content, and so its rating, and are narrowed per
- * audience (`audience.ts` describes how). `registry:schema` is one: beside the fixed entity
- * schemas it holds every collection schema, whose URN names its app and whose body is that app's
- * declared schema. The one schema left out, `service`, is the runtime record, which belongs to no
- * app.
+ * audience (`audience.ts` describes how). The schema stream is one, under both its names
+ * ({@link SCHEMA_STREAMS}): beside the fixed entity schemas it holds every collection schema,
+ * whose URN names its app and whose body is that app's declared schema. The one schema left out,
+ * `service`, is the runtime record, which belongs to no app.
  */
 export const RATED_SCHEMAS: ReadonlySet<string> = new Set([
   APP_SCHEMA,
   APP_RELEASE_SCHEMA,
-  REGISTRY_SCHEMA_SCHEMA,
+  ...SCHEMA_STREAMS,
 ]);
 
 /** The fixed entity schema documents: on the schema stream, and belonging to no app. */
@@ -145,7 +148,7 @@ export function readableBy(sets: EntitySets, schema: string, audience: Audience)
     audienceAdmits(audience, ratings.get(appUrn));
   const readable = all.filter(
     (e) =>
-      (schema === REGISTRY_SCHEMA_SCHEMA && ENTITY_SCHEMA_URNS.has(e.urn)) ||
+      (SCHEMA_STREAMS.includes(schema) && ENTITY_SCHEMA_URNS.has(e.urn)) ||
       admitted(appUrnOf(schema, e))
   );
   if (schema !== APP_SCHEMA) return readable;
@@ -206,10 +209,13 @@ export function buildEntities(
   const features = opts.features ?? APP_STORAGE_ENABLED_FEATURES;
   const sets: EntitySets = new Map(SERVED_SCHEMAS.map((s) => [s, [] as Entity[]]));
   const add = (schema: string, e: Entity) => sets.get(schema)!.push(e);
+  // A schema entity, on the schema stream under each of its names, claiming the name it is served
+  // under: a consumer validates an entity against the schema it asked for.
+  const addSchema = (urn: string, body: unknown) => {
+    for (const stream of SCHEMA_STREAMS) add(stream, entity(urn, stream, body));
+  };
   // The schemas the entities below claim, published by this source whatever the catalog holds.
-  for (const doc of ENTITY_SCHEMA_DOCUMENTS) {
-    add(REGISTRY_SCHEMA_SCHEMA, entity(doc.$id as string, REGISTRY_SCHEMA_SCHEMA, doc));
-  }
+  for (const doc of ENTITY_SCHEMA_DOCUMENTS) addSchema(doc.$id as string, doc);
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
 
   for (const app of apps) {
@@ -264,7 +270,7 @@ export function buildEntities(
         );
       }
       for (const doc of collectionSchemaDocuments(slug, derivation, exported)) {
-        add(REGISTRY_SCHEMA_SCHEMA, entity(doc.urn, REGISTRY_SCHEMA_SCHEMA, doc.body));
+        addSchema(doc.urn, doc.body);
       }
     }
     for (const e of releases.values()) add(APP_RELEASE_SCHEMA, e);

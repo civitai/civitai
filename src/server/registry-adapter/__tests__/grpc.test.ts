@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createPollingAdapter } from '~/server/registry-adapter/cursor';
 import { abortableSleep } from '~/utils/errorHandling';
 import {
-  SOURCE_SERVICE,
+  LEGACY_SOURCE_SERVICE,
+  REGISTRY_SERVICE,
   createGrpcServer,
   decodeEvent,
   encodeEvent,
@@ -41,7 +42,18 @@ afterEach(async () => {
   }
 });
 
-const Client = grpc.makeGenericClientConstructor(SOURCE_SERVICE, 'Source');
+/**
+ * A client of the method at `path`, built from a literal path rather than an exported service, so
+ * a server that does not answer at that path fails here as UNIMPLEMENTED.
+ */
+const clientAt = (path: string) =>
+  grpc.makeGenericClientConstructor(
+    { Subscribe: { ...REGISTRY_SERVICE.Subscribe, path } },
+    'Registry'
+  );
+const SPEC_PATH = '/registry.v1.Registry/Subscribe';
+const LEGACY_PATH = '/Source/Subscribe';
+const Client = clientAt(SPEC_PATH);
 
 type Outcome = {
   events: StreamEvent[];
@@ -55,12 +67,14 @@ type Outcome = {
 async function viaGrpc(
   a: Adapter,
   req: Partial<{ schema: string; cursor: string; urns: string[]; filter: string }>,
-  until: (events: StreamEvent[]) => boolean = () => false
+  until: (events: StreamEvent[]) => boolean = () => false,
+  path: string = SPEC_PATH
 ): Promise<Outcome> {
   const server = createGrpcServer(a);
   grpcServers.push(server);
   const port = await listenGrpc(server, 0);
-  const client = new Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
+  const PathClient = clientAt(path);
+  const client = new PathClient(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
   const subscribe = (
     client as unknown as Record<string, (r: unknown) => grpc.ClientReadableStream<StreamEvent>>
   ).Subscribe;
@@ -177,6 +191,29 @@ describe('the gRPC binding', () => {
     expect(res.error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
   });
 
+  // Rule 6: a filter this source will not evaluate is refused, never ignored. Before, both were
+  // streamed unfiltered (the upsert, then live) with no error.
+  it.each([
+    ['a pattern', '{"properties":{"slug":{"pattern":"^zzz"}}}'],
+    ['a $ref', '{"$ref":"#/x","x":{"properties":{"slug":{"const":"zzz"}}}}'],
+    ['a filter over the size bound', JSON.stringify({ not: {}, description: 'x'.repeat(8192) })],
+  ])('🔴 %s is INVALID_ARGUMENT with reason bad_request, and no event', async (_name, filter) => {
+    const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), { filter });
+    expect(res).toEqual({
+      events: [],
+      error: { code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' },
+    });
+  });
+
+  // Rule 4: `urns` outside this registry's namespace are a request it can never serve anything
+  // for. Before, this was an empty snapshot and `live`, with the stream left open.
+  it('🔴 urns all of another namespace are end first, and nothing else', async () => {
+    const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {
+      urns: ['urn:huggingface:black-forest-labs/FLUX.3-dev@a1b2c3d'],
+    });
+    expect(res).toEqual({ events: [{ type: 'end' }] });
+  });
+
   it('🔴 an unexpected error is UNAVAILABLE and its text never reaches the client', async () => {
     const failing: Adapter = {
       ...catalog([[]]),
@@ -186,6 +223,31 @@ describe('the gRPC binding', () => {
     };
     const res = await viaGrpc(failing, {});
     expect(res.error).toEqual({ code: grpc.status.UNAVAILABLE, reason: 'unavailable' });
+  });
+});
+
+describe('🔴 the method answers at the spec path and at the earlier spec path', () => {
+  it('the paths are the ones each spec names', () => {
+    expect(REGISTRY_SERVICE.Subscribe.path).toBe('/registry.v1.Registry/Subscribe');
+    expect(LEGACY_SOURCE_SERVICE.Subscribe.path).toBe('/Source/Subscribe');
+  });
+
+  // Before, only `/Source/Subscribe` was registered: the spec path was UNIMPLEMENTED.
+  it.each([[SPEC_PATH], [LEGACY_PATH]])('%s: a snapshot, then live', async (path) => {
+    const res = await viaGrpc(
+      catalog([[ent('alpha', 'r1')]]),
+      {},
+      (e) => e.some((x) => x.type === 'live'),
+      path
+    );
+    expect(res.error).toBeUndefined();
+    expect(kinds(res.events)).toEqual(['upsert', 'live']);
+    expect(res.events[0]).toEqual({ type: 'upsert', entity: ent('alpha', 'r1'), cursor: '' });
+  });
+
+  it('negative control: a path no spec names is UNIMPLEMENTED', async () => {
+    const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {}, () => false, '/Nope/Subscribe');
+    expect(res).toEqual({ events: [], error: { code: grpc.status.UNIMPLEMENTED, reason: null } });
   });
 });
 
@@ -344,8 +406,8 @@ describe('🔴 the HTTP binding is unchanged: its events carry JSON objects', ()
     expect(typeof (JSON.parse(data) as { entity: { body: unknown } }).entity.body).toBe('object');
 
     const RawClient = grpc.makeGenericClientConstructor(
-      { Subscribe: { ...SOURCE_SERVICE.Subscribe, responseDeserialize: (b: Buffer) => b } },
-      'Source'
+      { Subscribe: { ...REGISTRY_SERVICE.Subscribe, responseDeserialize: (b: Buffer) => b } },
+      'Registry'
     );
     const server = createGrpcServer(one());
     grpcServers.push(server);

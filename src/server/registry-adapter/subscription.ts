@@ -1,12 +1,15 @@
 /**
- * The one implementation of `Subscribe` (spec/registry.md @ 2709083, "Subscribe"), shared by
+ * The one implementation of `Subscribe` (the registry spec, "Subscribe"), shared by
  * both bindings: `serve.ts` (HTTP/SSE) and `grpc.ts` (gRPC) only translate a request in and
  * events and errors out, so the two cannot drift.
  *
  * In order, for one request:
- *   1. the filter is compiled (`bad_request` for one that is not a schema);
- *   2. a schema this source can never serve is answered `end` first (rule 4), before any cursor
- *      state is read or written (`Adapter.serves`: `end` means never);
+ *   1. the filter is compiled (`bad_request` for one that is not a schema, or one this source
+ *      will not evaluate: rule 6, a filter is applied in full or refused, never ignored);
+ *   2. a request this source can never serve anything for is answered `end` first (rule 4),
+ *      before any cursor state is read or written: a schema it has no source for
+ *      (`Adapter.serves`: `end` means never), or `urns` none of which is of its namespace
+ *      ({@link servesAnyUrn});
  *   3. a resume's cursor is checked against the request and the token's subject (rule 2, the
  *      auth extension; {@link unbindCursor}), then by the adapter, which for a document, app,
  *      release or schema stream also checks the token's audience, all before `live`, so a refused cursor is
@@ -25,6 +28,7 @@ import { createFilterCompiler } from '~/server/registry-adapter/json-schema';
 import type { Adapter, StreamEvent, SubscribeRequest } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
+import { urnNamespace } from '~/server/registry-adapter/urn';
 
 /** Where a subscription's events go: one binding's open stream. */
 export type EventSink = {
@@ -127,6 +131,18 @@ export function drained(
   });
 }
 
+/**
+ * Whether a request's `urns` leave this source anything to serve: no `urns` (every entity), or at
+ * least one of the adapter's namespace. Rule 4 answers `end` for `urns` outside the registry's
+ * namespaces, since only its origin ever sends a namespace's entities (rule 3). A request naming
+ * some URNs of this namespace and some of another is served: rule 5 streams "a snapshot of those
+ * that exist", the foreign ones never do here, and rule 4 forbids `end` for a request this source
+ * may serve later, which the in-namespace URNs are.
+ */
+export function servesAnyUrn(urns: readonly string[], namespace: string): boolean {
+  return urns.length === 0 || urns.some((urn) => urnNamespace(urn) === namespace);
+}
+
 export function createSubscriber(adapter: Adapter) {
   const compileFilter = createFilterCompiler();
 
@@ -140,6 +156,7 @@ export function createSubscriber(adapter: Adapter) {
     const matches = filter ?? (() => true);
     const ctx = { signal, audience: principal.audience };
     if (!adapter.serves(req.schema)) return sink.send({ type: 'end' });
+    if (!servesAnyUrn(req.urns, adapter.namespace)) return sink.send({ type: 'end' });
 
     const binding = requestBinding(req, principal.subject);
     const bind = (cursor: string) => bindCursor(cursor, binding);

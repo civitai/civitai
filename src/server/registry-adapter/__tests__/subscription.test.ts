@@ -76,6 +76,8 @@ const cursorOf = (text: string, type: string) =>
 const liveCursor = (text: string) => cursorOf(text, 'live');
 const events = (text: string) => [...text.matchAll(/^event: (\w+)$/gm)].map((m) => m[1]);
 const END_ONLY = 'event: end\ndata: {}\n\n';
+const ROOT = 'https://json-schema.org/draft/2020-12/schema';
+const LEGACY = 'urn:schema:registry:schema@v1';
 
 const notes = (maxLength: number, extra: Record<string, unknown> = {}) => ({
   visibility: 'shared',
@@ -192,6 +194,90 @@ describe('end first only for a schema this source can never serve (rule 4: end m
     const { adapter, store } = source({ apps: [app(MINTED, HEAD_MINTED)] });
     const res = await subscribe(adapter, q(schema));
     expect([res.status, res.text, store.puts(), store.touches()]).toEqual([200, END_ONLY, 0, 0]);
+  });
+});
+
+/** The entities a response's upserts carry, in order. */
+const upserts = (text: string) =>
+  [...text.matchAll(/^event: upsert\n(?:id:.*\n)?data: (.*)$/gm)].map(
+    (m) => (JSON.parse(m[1]) as { entity: Entity }).entity
+  );
+
+describe('🔴 end first for urns outside this namespace (rule 4)', () => {
+  const APPS = 'urn:schema:apps.civitai.com:app@v1';
+  const ORBIT = 'urn:apps.civitai.com:app/orbit-notes';
+  const FOREIGN = 'urn:huggingface:black-forest-labs/FLUX.3-dev@a1b2c3d';
+
+  // Before, each of these was an empty snapshot and `live`, with the stream left open.
+  it.each([
+    ['one urn of another namespace', APPS, [FOREIGN]],
+    ['several, none of this namespace', APPS, [FOREIGN, 'urn:github:civitai/civitai']],
+    [
+      'a schema urn of another namespace, on the schema stream',
+      ROOT,
+      ['urn:schema:elsewhere.example:model@v1'],
+    ],
+    ['a string that is not a urn', APPS, ['orbit-notes']],
+  ])('%s: end, and no cursor state read or written', async (_name, schema, urns) => {
+    const { adapter, store } = source({ apps: [app(MINTED, HEAD_MINTED)] });
+    const res = await subscribe(adapter, q(schema, urnParam(...urns)));
+    expect([res.status, res.text, store.puts(), store.touches()]).toEqual([200, END_ONLY, 0, 0]);
+  });
+
+  it('a mix: the urns of this namespace are served, the foreign ones never appear, and no end', async () => {
+    const { adapter } = source({ apps: [app(MINTED, HEAD_MINTED)] });
+    const res = await subscribe(adapter, q(APPS, urnParam(FOREIGN, ORBIT)), (t) =>
+      t.includes('event: live')
+    );
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+    expect(upserts(res.text).map((e) => e.urn)).toEqual([ORBIT]);
+  });
+
+  it('positive control: a urn of this namespace that does not exist is live, never end', async () => {
+    const { adapter } = source({ apps: [app(MINTED, HEAD_MINTED)] });
+    const res = await subscribe(
+      adapter,
+      q(APPS, urnParam('urn:apps.civitai.com:app/no-such-app')),
+      (t) => t.includes('event: live')
+    );
+    expect(events(res.text)).toEqual(['live']);
+  });
+});
+
+describe('🔴 the schema stream answers under the root and under the earlier spec URN', () => {
+  // Before, the root was not served (end first), and the earlier URN was the only name.
+  it.each([[ROOT], [LEGACY]])(
+    '%s: every schema, each claiming exactly what was asked',
+    async (stream) => {
+      const { adapter } = source({ apps: [app(MINTED, HEAD_MINTED)] });
+      const res = await subscribe(adapter, q(stream), (t) => t.includes('event: live'));
+      const got = upserts(res.text);
+      expect(got.map((e) => e.urn).sort()).toEqual([
+        'urn:schema:apps.civitai.com:app-release@v1',
+        'urn:schema:apps.civitai.com:app@v1',
+        'urn:schema:apps.civitai.com:orbit-notes/notes@v1',
+        'urn:schema:apps.civitai.com:orbit-notes/notes@v2',
+        'urn:schema:apps.civitai.com:service@v1',
+      ]);
+      expect(new Set(got.map((e) => JSON.stringify(e.schemas)))).toEqual(
+        new Set([JSON.stringify([stream])])
+      );
+      // A schema's body declares the root as its `$schema`, whichever name the stream was asked by.
+      expect(new Set(got.map((e) => (e.body as { $schema?: unknown }).$schema))).toEqual(
+        new Set([ROOT])
+      );
+    }
+  );
+
+  it('both names carry the same bodies', async () => {
+    const { adapter } = source({ apps: [app(MINTED, HEAD_MINTED)] });
+    const bodies = async (stream: string) =>
+      Object.fromEntries(
+        upserts((await subscribe(adapter, q(stream), (t) => t.includes('event: live'))).text).map(
+          (e) => [e.urn, e.body]
+        )
+      );
+    expect(await bodies(LEGACY)).toEqual(await bodies(ROOT));
   });
 });
 
