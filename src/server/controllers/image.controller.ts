@@ -405,22 +405,24 @@ export const getImagesForModelVersionHandler = async ({
   // A minor or SFW-only model's showcase is held at its gallery level, as in the gallery.
   const wholeShowcase =
     moderatorView(ctx) || (!!version && galleryOwnerId(ctx) === version.model.userId);
-  const shown =
-    wholeShowcase || !version
-      ? byVersion
-      : await holdShowcaseImages(
-          byVersion,
-          new Map([
-            [
-              input.id,
-              {
-                modelId: version.modelId,
-                minor: version.model.minor,
-                sfwOnly: version.model.sfwOnly,
-              },
-            ],
-          ])
-        );
+  // A version with no row has no model to clear it, so it serves none of its images.
+  const shown = wholeShowcase
+    ? byVersion
+    : !version
+    ? {}
+    : await holdShowcaseImages(
+        byVersion,
+        new Map([
+          [
+            input.id,
+            {
+              modelId: version.modelId,
+              minor: version.model.minor,
+              sfwOnly: version.model.sfwOnly,
+            },
+          ],
+        ])
+      );
   // The viewer's poi and minor settings, resolved as the model feed resolves them.
   const settings: { browsingLevel?: number; disablePoi?: boolean; disableMinor?: boolean } = {
     browsingLevel: requestServableLevels(ctx),

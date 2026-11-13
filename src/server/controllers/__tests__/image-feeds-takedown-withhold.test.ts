@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import type * as ImageService from '~/server/services/image.service';
@@ -142,6 +144,11 @@ const surfaces = [
 beforeEach(() => {
   vi.clearAllMocks();
   installFakeCacheRedis();
+  // The version's model: unflagged, owned by OWNER.
+  dbMock.dbRead.modelVersion.findUnique.mockResolvedValue({
+    modelId: 10,
+    model: { userId: OWNER, minor: false, sfwOnly: false },
+  } as never);
   dbMock.dbRead.modelVersion.findMany.mockImplementation((async ({
     where,
   }: {
@@ -271,6 +278,7 @@ describe('image.getImagesForModelVersion viewer filtering', () => {
           image(2, { poi: true }),
           image(3, { minor: true }),
           image(4, { nsfwLevel: NsfwLevel.X }),
+          image(5, { nsfwLevel: NsfwLevel.PG13 }),
         ],
       },
     } as never);
@@ -292,14 +300,40 @@ describe('image.getImagesForModelVersion viewer filtering', () => {
 
   it('drops poi and minor entries the resolved settings hide', async () => {
     addons.push({ type: 'some', nsfwLevels: [NsfwLevel.PG], disablePoi: true, disableMinor: true });
-    expect(await run(uncapped)).toEqual([1, 4]);
+    expect(await run(uncapped)).toEqual([1, 4, 5]);
+  });
+
+  it('serves no images for a version with no row, except to a moderator', async () => {
+    const noRow = async (context: object) => {
+      versionImages.mockResolvedValueOnce({
+        20: { modelVersionId: 20, images: [image(1)] },
+      } as never);
+      dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(null as never);
+      const result = await getImagesForModelVersionHandler({
+        input: { id: 20 },
+        ctx: { req: { headers: {} }, ip: '127.0.0.1', ...context } as never,
+      });
+      return result[20]?.images.map((i) => i.id) ?? [];
+    };
+    expect(await noRow(uncapped)).toEqual([]);
+    expect(
+      await noRow({ user: { id: 7, isModerator: true }, features: { canViewNsfw: true } })
+    ).toEqual([1]);
+  });
+
+  it('applies the poi and minor settings independently', async () => {
+    addons.push({ type: 'some', nsfwLevels: [NsfwLevel.PG], disablePoi: true });
+    expect(await run(uncapped)).toEqual([1, 3, 4, 5]);
+    addons.length = 0;
+    addons.push({ type: 'some', nsfwLevels: [NsfwLevel.PG], disableMinor: true });
+    expect(await run(uncapped)).toEqual([1, 2, 4, 5]);
   });
 
   it('keeps them when no setting hides them, and for their owner', async () => {
-    expect(await run(uncapped)).toEqual([1, 2, 3, 4]);
+    expect(await run(uncapped)).toEqual([1, 2, 3, 4, 5]);
     addons.push({ type: 'some', nsfwLevels: [NsfwLevel.PG], disablePoi: true, disableMinor: true });
     expect(await run({ user: { id: OWNER }, features: { canViewNsfw: true } })).toEqual([
-      1, 2, 3, 4,
+      1, 2, 3, 4, 5,
     ]);
   });
 
@@ -309,21 +343,41 @@ describe('image.getImagesForModelVersion viewer filtering', () => {
       const get = redisMock.redis.get.getMockImplementation();
       redisMock.redis.get.mockImplementation((async (key: string) =>
         key.startsWith('model:gallery-settings')
-          ? JSON.stringify({ sfwHeld: true, level: NsfwLevel.PG | NsfwLevel.PG13 })
+          ? JSON.stringify({ sfwHeld: true, level: NsfwLevel.PG })
           : get?.(key)) as never);
     });
 
-    it('holds its showcase at the gallery level for an uncapped viewer', async () => {
+    // Stored at PG: the PG-13 entry drops, which the SFW fallback level would keep.
+    it('holds its showcase at the stored gallery level for an uncapped viewer', async () => {
       expect(await run(uncapped, held)).toEqual([1, 2, 3]);
+      expect(await run(uncapped, { minor: true, sfwOnly: false })).toEqual([1, 2, 3]);
+    });
+
+    it('holds it for a moderator or the owner on a scoped key', async () => {
+      const scoped = {
+        apiKeyId: 9,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey', id: 9 },
+        tokenScope: TokenScope.ModelsRead,
+      };
+      expect(
+        await run(
+          { user: { id: 7, isModerator: true }, features: { canViewNsfw: true }, ...scoped },
+          held
+        )
+      ).toEqual([1, 2, 3]);
+      expect(
+        await run({ user: { id: OWNER }, features: { canViewNsfw: true }, ...scoped }, held)
+      ).toEqual([1, 2, 3]);
     });
 
     it('serves it whole to the owner and a moderator on a session', async () => {
       expect(await run({ user: { id: OWNER }, features: { canViewNsfw: true } }, held)).toEqual([
-        1, 2, 3, 4,
+        1, 2, 3, 4, 5,
       ]);
       expect(
         await run({ user: { id: 7, isModerator: true }, features: { canViewNsfw: true } }, held)
-      ).toEqual([1, 2, 3, 4]);
+      ).toEqual([1, 2, 3, 4, 5]);
     });
   });
 });
