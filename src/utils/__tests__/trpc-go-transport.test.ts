@@ -1,3 +1,4 @@
+import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { NEVER_BATCH_PROCEDURES, setTrpcBatchingEnabled, trpcVanilla } from '~/utils/trpc';
@@ -64,6 +65,43 @@ const signIn = () => {
 it('every Go-transport procedure is also never batched (a batched path cannot be routed)', () => {
   expect(GO_TRANSPORT_PROCEDURES.size).toBeGreaterThan(0);
   for (const path of GO_TRANSPORT_PROCEDURES) expect(NEVER_BATCH_PROCEDURES.has(path)).toBe(true);
+});
+
+/**
+ * The `next.config.mjs` rewrite that sends `GO_TRANSPORT_URL` back to `/api/trpc`. Reads the real
+ * config export and runs Next's own path matcher, so the check is on what Next will serve, not on
+ * the file's text. A wildcard source would make `/api/trpc-go/*` an alias of every procedure.
+ */
+describe('the /api/trpc-go rewrite', () => {
+  type Rewrite = { source: string; destination: string };
+  const loadRewrites = async (): Promise<Rewrite[]> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nextConfig = (await import('../../../next.config.mjs')).default as any;
+    return (await nextConfig.rewrites()) as Rewrite[];
+  };
+  const goRewrites = (rewrites: Rewrite[]) =>
+    rewrites.filter((r) => r.source.startsWith(`${GO_TRANSPORT_URL}/`));
+  const rewriteFor = (rewrites: Rewrite[], pathname: string) =>
+    goRewrites(rewrites).find((r) => getPathMatch(r.source)(pathname) !== false);
+
+  it('covers exactly GO_TRANSPORT_PROCEDURES, each back to its own /api/trpc path', async () => {
+    const rewrites = goRewrites(await loadRewrites());
+    expect(rewrites.length).toBeGreaterThan(0);
+    expect(rewrites.map((r) => r.source).sort()).toEqual(
+      [...GO_TRANSPORT_PROCEDURES].map((p) => `${GO_TRANSPORT_URL}/${p}`).sort()
+    );
+    for (const p of GO_TRANSPORT_PROCEDURES) {
+      expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${p}`)?.destination).toBe(`/api/trpc/${p}`);
+    }
+  });
+
+  it('does not alias any other procedure under /api/trpc-go', async () => {
+    const rewrites = await loadRewrites();
+    expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${FEED}`)).toBeDefined(); // positive control
+    expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${ORDINARY}`)).toBeUndefined();
+    expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/user.getSettings`)).toBeUndefined();
+    expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${FEED},${ORDINARY}`)).toBeUndefined();
+  });
 });
 
 describe('feedGoTransport', () => {

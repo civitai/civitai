@@ -102,7 +102,7 @@ const featureFlags = createFeatureFlags({
   // `/api/trpc`, so an exact-path route can serve a per-user cohort from the Go port in
   // `apps/feed-go`. The path is rewritten back to `/api/trpc` when no route is in front of it, so
   // ON without the route changes nothing. `[]` = DARK, fails CLOSED when absent or Flipt is down.
-  // See `GO_TRANSPORT_PROCEDURES` in `src/utils/trpc.ts`.
+  // See `GO_TRANSPORT_PROCEDURES` in `src/utils/trpc-go-transport.ts`.
   feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the

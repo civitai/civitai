@@ -9,16 +9,18 @@
  */
 
 /**
- * Procedures the flag moves. Each must also be in `NEVER_BATCH_PROCEDURES`: a batched request names
- * several procedures in one path and could not be routed by path at all.
+ * Procedures the flag moves. Each must also be in `NEVER_BATCH_PROCEDURES` (a batched request names
+ * several procedures in one path and could not be routed by path at all) and have its own exact
+ * rewrite in `next.config.mjs`. Tests pin both.
  */
 export const GO_TRANSPORT_PROCEDURES: ReadonlySet<string> = new Set([
   'image.getImagesAsPostsInfinite',
 ]);
 
 /**
- * The separate path. `next.config.mjs` rewrites it back to `/api/trpc/:path*`, so with no route in
- * front of it the request still reaches this app: turning the flag on can never strand a request.
+ * The separate path. `next.config.mjs` rewrites `<this>/<procedure>` back to `/api/trpc/<procedure>`
+ * for each procedure above (only those), so with no route in front of it the request still reaches
+ * this app: turning the flag on can never strand a request.
  */
 export const GO_TRANSPORT_URL = '/api/trpc-go';
 
