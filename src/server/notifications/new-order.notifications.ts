@@ -74,6 +74,7 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
     displayName: 'Your verdicts are in',
     category: NotificationCategory.Other,
     section: KNIGHTS_SECTION,
+    feature: 'knightsApp',
     externalProducer: true,
     prepareMessage: () => ({
       message: 'Knights of New Order: Your verdicts are in. See how your judgments turned out.',
@@ -85,6 +86,7 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
     displayName: 'Your streak ends soon',
     category: NotificationCategory.Other,
     section: KNIGHTS_SECTION,
+    feature: 'knightsApp',
     externalProducer: true,
     prepareMessage: () => ({
       message:
@@ -97,6 +99,7 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
     displayName: 'New images to judge',
     category: NotificationCategory.Other,
     section: KNIGHTS_SECTION,
+    feature: 'knightsApp',
     externalProducer: true,
     prepareMessage: () => ({
       message: 'Knights of New Order: New images are waiting for your judgment.',

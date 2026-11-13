@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { NotificationCategory } from '~/server/common/enums';
 
@@ -78,6 +79,8 @@ export type NotificationProcessor = {
   externalProducer?: boolean;
   /** Groups this type under its own heading in notification settings. The notification itself keeps `category`. */
   section?: string;
+  /** Lists this type in notification settings only for viewers who have this feature. */
+  feature?: FeatureFlagKey;
   showCategory?: boolean;
   /** Push on for a user who never chose; see DEFAULT_PUSH_TYPES. */
   defaultPush?: boolean;
