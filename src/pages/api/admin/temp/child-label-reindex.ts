@@ -15,16 +15,21 @@ import { booleanString } from '~/utils/zod-helpers';
  *
  * Params (query):
  *   step      - required. `bust`: refresh each selected image's tagIdsForImagesCache entry from the
- *               database. `reindex`: queue the models and collections whose search documents hold
- *               those images.
+ *               database and read it back (`verified`); stops after the first chunk if no entry
+ *               holds a child tag. `reindex`: queue the models and collections whose search
+ *               documents can show those images.
  *   dryRun    - default true. Count images, chunks, models and collections; write nothing.
- *   chunkSize - default 500. Image ids per selection query and per refresh; ids per queue push.
+ *   chunkSize - default 500. Image ids per WD14 check and per refresh; ids per queue push.
+ *   after     - default 0. Only images above this id; resume a bust from its `lastImageId`.
+ *   maxChunks - optional, bust only. Stop after this many chunks.
  */
 
 const schema = z.object({
   step: z.enum(['bust', 'reindex']),
   dryRun: booleanString().default(true),
-  chunkSize: z.coerce.number().min(1).max(5000).default(500),
+  chunkSize: z.coerce.number().int().min(1).max(5000).default(500),
+  after: z.coerce.number().int().min(0).default(0),
+  maxChunks: z.coerce.number().int().min(1).optional(),
 });
 
 export default WebhookEndpoint(async (req, res) => {
