@@ -29,7 +29,13 @@ const moderator = { id: 1, username: 'mod', isModerator: true } as SessionUser;
 
 const MODEL_ID = 500;
 // image id -> owning user id
-const images: Record<number, number> = { 11: owner.id, 22: stranger.id, 33: moderator.id };
+const images: Record<number, number> = {
+  11: owner.id,
+  22: stranger.id,
+  33: moderator.id,
+  44: owner.id,
+};
+const postIds: Record<number, number> = { 44: 900 };
 
 type Input = Parameters<typeof upsertModel3D>[0]['input'];
 const base = { name: 'Cube', licenseId: 1 } as Input;
@@ -39,7 +45,9 @@ beforeEach(() => {
   db.model3D.findUnique.mockResolvedValue({ id: MODEL_ID, userId: owner.id, lockedProperties: [] });
   db.image.findUnique.mockReset();
   db.image.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
-    where.id in images ? { userId: images[where.id], nsfwLevel: 4 } : null
+    where.id in images
+      ? { userId: images[where.id], nsfwLevel: 4, postId: postIds[where.id] ?? null }
+      : null
   );
   db.model3D.update.mockReset();
   db.model3D.update.mockResolvedValue({ id: MODEL_ID });
@@ -299,5 +307,13 @@ describe('upsertModel3D thumbnail ownership', () => {
       thumbnailImageId: 12,
       user: moderator,
     });
+  });
+
+  // The thumbnail rating fast paths skip posted images, so a posted thumbnail would lag a re-rate.
+  it("refuses the owner's posted image, with the same error as a foreign one", async () => {
+    await expect(
+      upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 44 }, user: owner })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Invalid thumbnail image.' });
+    expect(db.model3D.update).not.toHaveBeenCalled();
   });
 });

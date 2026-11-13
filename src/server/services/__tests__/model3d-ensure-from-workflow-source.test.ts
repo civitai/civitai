@@ -77,4 +77,9 @@ describe('ensureModel3DFromWorkflow source image', () => {
   it('passes no source image when the metadata has none', async () => {
     expect(await sourceImageIdHandedOn({})).toBeUndefined();
   });
+
+  it('ignores a source image id that is not a positive integer', async () => {
+    expect(await sourceImageIdHandedOn({ sourceImageId: 1.5 })).toBeUndefined();
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+  });
 });

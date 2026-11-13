@@ -363,7 +363,9 @@ export const ensureModel3DFromWorkflow = async ({
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
     // Workflow metadata is user-patchable: keep the source image only if it is the caller's own.
     const claimedSourceImageId =
-      typeof meta.sourceImageId === 'number' ? (meta.sourceImageId as number) : undefined;
+      Number.isInteger(meta.sourceImageId) && (meta.sourceImageId as number) > 0
+        ? (meta.sourceImageId as number)
+        : undefined;
     const sourceImage = claimedSourceImageId
       ? await dbRead.image.findUnique({
           where: { id: claimedSourceImageId },
@@ -790,9 +792,12 @@ export const upsertModel3D = async ({
     const ownerId = existing?.userId ?? user.id;
     const image = await dbWrite.image.findUnique({
       where: { id: data.thumbnailImageId },
-      select: { userId: true, nsfwLevel: true },
+      select: { userId: true, nsfwLevel: true, postId: true },
     });
-    if (image?.userId !== ownerId) throw throwBadRequestError('Invalid thumbnail image.');
+    // Unposted only: the thumbnail rating fast paths (updateModel3DNsfwLevelForThumbnailImage,
+    // apps/moderator image-nsfw-level) skip posted images.
+    if (!image || image.userId !== ownerId || image.postId != null)
+      throw throwBadRequestError('Invalid thumbnail image.');
     thumbnailNsfwLevel = image.nsfwLevel;
   } else if (data.thumbnailImageId === null) {
     thumbnailNsfwLevel = 0;
