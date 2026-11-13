@@ -2813,14 +2813,29 @@ describe('a held offering on its deals', () => {
     return { view: view.offering, listed: items[0].offering };
   };
 
-  it("keeps a held offering's title and cover from the buyer's deal view, list, notices and chat", async () => {
+  it('refuses to accept a request whose offering was held after it, and moves no Buzz', async () => {
+    const { id } = await request();
+    await hold();
+    const buzzCalls = Object.values(buzz).map(
+      (fn) => (fn as ReturnType<typeof vi.fn>).mock.calls.length
+    );
+    await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toThrow(
+      'This service is being reviewed, so this request cannot be accepted until that is done.'
+    );
+    expect((await deal(id)).status).toBe('Requested');
+    expect(
+      Object.values(buzz).map((fn) => (fn as ReturnType<typeof vi.fn>).mock.calls.length)
+    ).toEqual(buzzCalls);
+    expect(chat.createMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps a held offering's title and cover from the buyer's deal view, list and notices", async () => {
     const { id } = await request();
     await hold();
     notifications.createNotification.mockClear();
-    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER });
 
     expect(titlesSentTo(BUYER)).toEqual(['Service under review']);
-    expect(JSON.stringify(chat.createMessage.mock.calls)).not.toContain('Cat portraits');
     const buyer = await viewAs(id, 'Blocked', BUYER);
     expect(buyer.view).toEqual({ id: 1, title: 'Service under review', coverImageId: null });
     expect(buyer.listed).toEqual({ id: 1, title: 'Service under review', coverImageId: null });

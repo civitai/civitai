@@ -1,6 +1,7 @@
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
+import { TEXT_MODERATION_PENDING_TIMEOUT_MINUTES } from '~/server/jobs/text-moderation-retry';
 import {
   blockServiceOffering,
   scanServiceOffering,
@@ -16,8 +17,6 @@ import { decreaseDate } from '~/utils/date-helpers';
 
 // Gives the callback time to land before the job steps in.
 const STUCK_THRESHOLD_MINUTES = 10;
-// Matches the retry cron's pending timeout, so the two agree on when a submit was lost.
-const PENDING_MODERATION_TIMEOUT_MINUTES = 30;
 const FETCH_LIMIT = 200;
 const CONCURRENCY = 5;
 
@@ -55,7 +54,7 @@ export const serviceOfferingIngestionReconcile = createJob(
   async () => {
     const now = new Date();
     const stuckBefore = decreaseDate(now, STUCK_THRESHOLD_MINUTES, 'minutes');
-    const pendingBefore = decreaseDate(now, PENDING_MODERATION_TIMEOUT_MINUTES, 'minutes');
+    const pendingBefore = decreaseDate(now, TEXT_MODERATION_PENDING_TIMEOUT_MINUTES, 'minutes');
 
     const candidates = await dbRead.serviceOffering.findMany({
       where: {
@@ -91,7 +90,10 @@ export const serviceOfferingIngestionReconcile = createJob(
           if (action === 'submit') await scanServiceOffering(id, { forceRescan: true });
           else if (action === 'settle') {
             // A verdict not about the current text is checked again rather than applied.
-            if ((await settleOrHoldServiceOffering(id)) === 'unverified')
+            if (
+              (await settleOrHoldServiceOffering(id, { unchangedSince: updatedAt })) ===
+              'unverified'
+            )
               await scanServiceOffering(id, { forceRescan: true });
           } else if (action === 'block') await blockServiceOffering(id);
         } catch (error) {

@@ -38,11 +38,13 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 const checks = vi.hoisted(() => ({
   scanServiceOffering: vi.fn(async () => undefined),
+  requeueBlockedServiceOffering: vi.fn(async () => undefined),
   updateServiceOfferingNsfwLevels: vi.fn(async () => undefined),
   isImageOwner: vi.fn(async () => true),
 }));
 vi.mock('~/server/services/service-offering-moderation.adapter', () => ({
   scanServiceOffering: checks.scanServiceOffering,
+  requeueBlockedServiceOffering: checks.requeueBlockedServiceOffering,
 }));
 vi.mock('~/server/services/nsfwLevels.service', () => ({
   updateServiceOfferingNsfwLevels: checks.updateServiceOfferingNsfwLevels,
@@ -696,10 +698,29 @@ describe("an offering's content checks on save", () => {
     expect(checks.scanServiceOffering).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a held offering held when its seller edits the text, and checks the new text', async () => {
+  it('does not undo a block that landed while new text was being saved', async () => {
+    saved();
+    // The row is Blocked by now; the write only matches the state it was read in.
+    dbMock.dbWrite.serviceOffering.updateMany.mockImplementationOnce((async ({
+      where,
+    }: {
+      where: { ingestion?: string };
+    }) => ({
+      count: where.ingestion === undefined || where.ingestion === 'Blocked' ? 1 : 0,
+    })) as never);
+    await expect(update({ description: 'Two animated badges.' })).rejects.toThrow(
+      'This service changed while you were editing it. Reload and try again.'
+    );
+    expect(checks.scanServiceOffering).not.toHaveBeenCalled();
+  });
+
+  it('hands a held offering with new text to the guarded requeue, then checks the text', async () => {
     saved({ ingestion: ServiceOfferingIngestionStatus.Blocked });
+    await update({ price: 5000 });
+    expect(checks.requeueBlockedServiceOffering).not.toHaveBeenCalled();
     await update({ title: 'Custom badges' });
     expect(lastData()?.ingestion).toBeUndefined();
+    expect(checks.requeueBlockedServiceOffering).toHaveBeenCalledWith(3);
     expect(checks.scanServiceOffering).toHaveBeenCalledWith(3);
   });
 

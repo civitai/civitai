@@ -13,7 +13,7 @@ ALTER TABLE "ServiceOffering"
   ADD COLUMN "scanWorkflowId" TEXT,
   ADD COLUMN "scannedAt" TIMESTAMP(3);
 
--- Nothing has written coverImageId so far; clear any id that names no image so the key can be added.
+-- Clear any coverImageId that names no image, so the key can be added.
 UPDATE "ServiceOffering" o SET "coverImageId" = NULL
 WHERE o."coverImageId" IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = o."coverImageId");

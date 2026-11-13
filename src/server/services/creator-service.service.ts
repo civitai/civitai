@@ -6,7 +6,10 @@ import { profileImageSelect } from '~/server/selectors/image.selector';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { updateServiceOfferingNsfwLevels } from '~/server/services/nsfwLevels.service';
-import { scanServiceOffering } from '~/server/services/service-offering-moderation.adapter';
+import {
+  requeueBlockedServiceOffering,
+  scanServiceOffering,
+} from '~/server/services/service-offering-moderation.adapter';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
@@ -31,6 +34,7 @@ import type {
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { NsfwLevel } from '~/server/common/enums';
@@ -477,12 +481,12 @@ export async function upsertServiceOffering({
 
   // Re-scoped so a remove that lands after the read above can't be undone by this write.
   const { count } = await dbWrite.serviceOffering.updateMany({
-    where: owned,
+    // New text resets the check only from the state read above, so a block landing since is kept.
+    where: textChanged ? { ...owned, ingestion: existing.ingestion } : owned,
     data: {
       ...fields,
       ...(coverImageId !== undefined ? { coverImageId } : {}),
-      // New text is shown once it is checked. A blocked offering stays blocked until a moderator
-      // releases it.
+      // New text is shown once it is checked; a blocked offering's goes back below.
       ...(textChanged && existing.ingestion !== ServiceOfferingIngestionStatus.Blocked
         ? { ingestion: ServiceOfferingIngestionStatus.Pending, scanWorkflowId: null }
         : {}),
@@ -490,7 +494,12 @@ export async function upsertServiceOffering({
       ...(affirmation ? { sellerAffirmation: affirmation } : {}),
     },
   });
-  if (count === 0) throw throwNotFoundError('Service not found');
+  if (count === 0)
+    throw textChanged
+      ? throwConflictError('This service changed while you were editing it. Reload and try again.')
+      : throwNotFoundError('Service not found');
+  if (textChanged && existing.ingestion === ServiceOfferingIngestionStatus.Blocked)
+    await requeueBlockedServiceOffering(id);
   return afterServiceOfferingWrite(id, { textChanged });
 }
 

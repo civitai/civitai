@@ -492,8 +492,9 @@ export const declineServiceDeal = async ({
 
 /**
  * Only a CONFIRMED hold can be accepted (the migration's `ServiceDeal_held_before_work` refuses
- * the rest too), and not across a block made since the request, and not once a moderator has taken
- * the offering down: a pending request then leaves only by decline, withdraw or expiry, each refunded.
+ * the rest too), and not across a block made since the request, nor while the offering is taken
+ * down or not through its content checks: a pending request then leaves only by decline, withdraw
+ * or expiry, each refunded.
  */
 export async function acceptServiceDeal({ dealId, userId }: { dealId: number; userId: number }) {
   await requireTransition({
@@ -504,20 +505,27 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
     event: 'Accepted',
     where: Prisma.sql`"sellerId" = ${userId}::int AND "heldAt" IS NOT NULL
       AND ${notBlockedBetween(Prisma.sql`"buyerId"`, Prisma.sql`"sellerId"`)}
-      AND NOT EXISTS (SELECT 1 FROM "ServiceOffering" o
-        WHERE o."id" = "ServiceDeal"."offeringId" AND o."removedReason" IS NOT NULL)`,
+      AND EXISTS (SELECT 1 FROM "ServiceOffering" o
+        WHERE o."id" = "ServiceDeal"."offeringId" AND o."removedReason" IS NULL
+          AND o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus")`,
     set: Prisma.sql`, "acceptedAt" = now(), "dueAt" = now() + make_interval(days => "deliveryDays")`,
   }).catch(async (error) => {
     // The claim above is what refuses it; this only says why, instead of "moved on", which would
     // send the seller back to the same Accept button. Scoped to the seller's own pending request,
     // so it reveals nothing to anyone else and a deal that has moved on still gets "moved on".
-    const [takenDown] = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT o."id" FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
+    const [offering] = await dbWrite.$queryRaw<{ takenDown: boolean; checked: boolean }[]>`
+      SELECT o."removedReason" IS NOT NULL AS "takenDown",
+        o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus" AS "checked"
+      FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
       WHERE d."id" = ${dealId}::int AND d."sellerId" = ${userId}::int
-        AND d."status" = 'Requested'::"ServiceDealStatus" AND o."removedReason" IS NOT NULL`;
-    if (takenDown)
+        AND d."status" = 'Requested'::"ServiceDealStatus"`;
+    if (offering?.takenDown)
       throw throwBadRequestError(
         'A moderator removed this service, so this request can only be declined.'
+      );
+    if (offering && !offering.checked)
+      throw throwBadRequestError(
+        'This service is being reviewed, so this request cannot be accepted until that is done.'
       );
     throw error;
   });

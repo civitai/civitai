@@ -40,9 +40,8 @@ const { updateServiceOfferingNsfwLevels } = await import('~/server/services/nsfw
 const { serviceOfferingShowableWhere, shopRatingFilter, serviceOfferingReviewState } = await import(
   '~/server/services/creator-service.service'
 );
-const { serviceOfferingModerationAdapter, scanServiceOffering } = await import(
-  '~/server/services/service-offering-moderation.adapter'
-);
+const { serviceOfferingModerationAdapter, scanServiceOffering, requeueBlockedServiceOffering } =
+  await import('~/server/services/service-offering-moderation.adapter');
 const { reconcileAction, serviceOfferingIngestionReconcile } = await import(
   '~/server/jobs/service-offering-ingestion-reconcile'
 );
@@ -73,7 +72,7 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "EntityModeration" ("entityType" text NOT NULL, "entityId" int NOT NULL, blocked boolean,
       "triggeredLabels" text[] NOT NULL DEFAULT '{}', result jsonb, "nsfwLevel" int,
-      PRIMARY KEY ("entityType", "entityId"));
+      status text NOT NULL DEFAULT 'Succeeded', PRIMARY KEY ("entityType", "entityId"));
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
 });
@@ -469,6 +468,14 @@ describe('the moderation adapter', () => {
       });
     const holds = () =>
       q(`SELECT "entityType", "entityId", label, status::text AS status FROM "TextScanHold"`);
+    beforeEach(() => {
+      // The hold reads see the rows the hold writes put in Postgres.
+      dbMock.dbWrite.textScanHold.findMany.mockImplementation((async () =>
+        q(
+          `SELECT status::text AS status, "textHash", meta FROM "TextScanHold" WHERE "entityId" = $1`,
+          [OFFERING]
+        )) as never);
+    });
 
     it('hides the offering', async () => {
       await scan(true);
@@ -478,21 +485,43 @@ describe('the moderation adapter', () => {
       ).toBe('held');
     });
 
-    it('holds it in the csam queue before hiding it', async () => {
+    it('holds it in the csam queue, before hiding it, and files no service report', async () => {
       await scan(true);
       expect(await holds()).toEqual([
         { entityType: 'ServiceOffering', entityId: OFFERING, label: 'csam', status: 'Pending' },
       ]);
       expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-        report.createReport.mock.invocationCallOrder[0]
+        dbMock.dbWrite.serviceOffering.updateMany.mock.invocationCallOrder[0]
       );
+      expect(report.createReport).not.toHaveBeenCalled();
     });
 
-    it('is not released by any later check that passes', async () => {
+    it('is not released by any later check that passes while its hold is pending', async () => {
       await scan(true);
+      // Back to Pending, so only the hold keeps it from settling.
+      row.ingestion = ServiceOfferingIngestionStatus.Pending;
       await scan(false);
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+      row.ingestion = ServiceOfferingIngestionStatus.Pending;
       await apply(false);
       expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+    });
+
+    it('lets a csam verdict on text a moderator dismissed settle', async () => {
+      await scan(true);
+      await q(`UPDATE "TextScanHold" SET status = 'Dismissed', meta = '{"decision":"dismiss"}'`);
+      row.ingestion = ServiceOfferingIngestionStatus.Pending;
+      await scan(true);
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
+    });
+
+    it('holds a csam verdict on text a moderator confirmed, with no service report', async () => {
+      await scan(true);
+      await q(`UPDATE "TextScanHold" SET status = 'Confirmed', meta = '{"decision":"remove"}'`);
+      row.ingestion = ServiceOfferingIngestionStatus.Pending;
+      await scan(true);
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+      expect(report.createReport).not.toHaveBeenCalled();
     });
   });
 
@@ -511,6 +540,7 @@ describe('the moderation adapter', () => {
     ],
   ])('tells the seller only that a moderator is reviewing it, after %s', async (_, block) => {
     await block();
+    expect(notifications.createNotification).toHaveBeenCalledTimes(1);
     expect(notifications.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         details: expect.objectContaining({
@@ -536,10 +566,11 @@ describe('the moderation adapter', () => {
         triggeredLabels,
         result: { version: 1, ...(textHash === null ? {} : { textHash }) },
       } as never);
-    const reconcile = async () => {
+    const reconcile = async (readAt?: Date) => {
       const old = new Date(Date.now() - 60 * 60_000);
+      row.updatedAt = old;
       dbMock.dbRead.serviceOffering.findMany.mockResolvedValueOnce([
-        { id: OFFERING, updatedAt: old },
+        { id: OFFERING, updatedAt: readAt ?? old },
       ] as never);
       dbMock.dbRead.entityModeration.findMany.mockResolvedValueOnce([
         { entityId: OFFERING, status: 'Succeeded', blocked: false, updatedAt: new Date() },
@@ -584,6 +615,24 @@ describe('the moderation adapter', () => {
       expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
     });
 
+    it('takes up only offerings still unchecked, not removed, and quiet past the grace window', async () => {
+      verdict([]);
+      const before = Date.now();
+      await reconcile();
+      const { where } = dbMock.dbRead.serviceOffering.findMany.mock.calls.at(-1)![0] as {
+        where: { ingestion: { in: string[] }; status: unknown; updatedAt: { lt: Date } };
+      };
+      expect(where.ingestion.in.sort()).toEqual(['Error', 'Pending']);
+      expect(where.status).toEqual({ not: 'Removed' });
+      expect(where.updatedAt.lt.getTime()).toBeLessThanOrEqual(before - 10 * 60_000 + 1000);
+    });
+
+    it('leaves an offering edited since the reconcile job read it unshown', async () => {
+      verdict([]);
+      await reconcile(new Date(Date.now() - 2 * 60 * 60_000));
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+    });
+
     it('holds an offering whose verdict landed before its check was recorded', async () => {
       verdict(['csam']);
       row.scanWorkflowId = 'wf-new';
@@ -619,7 +668,7 @@ describe('the moderation adapter', () => {
     });
 
     describe('a scan skipped as already done', () => {
-      const skipped = async (reason: 'unchanged' | 'too-short') => {
+      const skipped = async (reason: 'unchanged' | 'too-short', editedMeanwhile = false) => {
         row.updatedAt = (
           await q<{ updatedAt: Date }>(`SELECT "updatedAt" FROM "ServiceOffering" WHERE id = $1`, [
             OFFERING,
@@ -635,6 +684,7 @@ describe('the moderation adapter', () => {
           await opts.onActiveSkip(reason);
           return null;
         }) as never);
+        if (editedMeanwhile) row.updatedAt = new Date((row.updatedAt as Date).getTime() + 1000);
         await scanServiceOffering(OFFERING);
       };
       const stored = (triggeredLabels: string[]) =>
@@ -661,6 +711,15 @@ describe('the moderation adapter', () => {
         await skipped('unchanged');
         expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
       });
+
+      it.each(['unchanged', 'too-short'] as const)(
+        'leaves an offering edited while its %s skip settled unshown',
+        async (reason) => {
+          stored([]);
+          await skipped(reason, true);
+          expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+        }
+      );
 
       it('settles an offering whose unchanged text has a clean stored verdict', async () => {
         stored([]);
@@ -773,6 +832,12 @@ describe('the moderation adapter', () => {
       row.scanWorkflowId = 'wf-new';
       row.updatedAt = new Date(readAt.getTime() + 1000);
       dbMock.dbWrite.entityModeration.findFirst.mockResolvedValueOnce({ blocked: false } as never);
+      // A clean verdict: only the edit can keep it from settling.
+      dbMock.dbWrite.entityModeration.findUnique.mockResolvedValueOnce({
+        status: 'Succeeded',
+        triggeredLabels: [],
+        result: null,
+      } as never);
       await scanServiceOffering(OFFERING);
       expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
     });
@@ -791,6 +856,58 @@ describe('the moderation adapter', () => {
     row.ingestion = ServiceOfferingIngestionStatus.Pending;
     await fail();
     expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Error);
+  });
+});
+
+describe('a seller edit to a blocked offering', () => {
+  const ID = 9;
+  const ingestion = async () =>
+    (
+      await q<{ ingestion: string }>(
+        `SELECT ingestion::text FROM "ServiceOffering" WHERE id = $1`,
+        [ID]
+      )
+    )[0].ingestion;
+  const csamHold = (status: string, textHash = 'h', decision = 'remove') =>
+    q(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, status, meta, "updatedAt")
+       VALUES ('ServiceOffering', $1, 'csam', $2, 't', 'r', $3::"TextScanHoldStatus", $4::jsonb, now())`,
+      [ID, textHash, status, JSON.stringify({ decision })]
+    );
+  const csamVerdict = () =>
+    q(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", "triggeredLabels", result, status)
+       VALUES ('ServiceOffering', $1, '{csam}', '{"version": 1, "textHash": "h"}', 'Succeeded')`,
+      [ID]
+    );
+  beforeEach(async () => {
+    await q(
+      `INSERT INTO "ServiceOffering" (id, "sellerId", title, description, price, "deliveryDays", ingestion, "updatedAt")
+       VALUES ($1, 1, 'Portraits', 'desc', 500, 3, 'Blocked', now())`,
+      [ID]
+    );
+  });
+
+  it('sends the new text of an offering blocked for another reason back to its check', async () => {
+    await requeueBlockedServiceOffering(ID);
+    expect(await ingestion()).toBe('Pending');
+  });
+
+  it.each([
+    ['removed in the csam queue', () => csamHold('Confirmed')],
+    ['with a csam hold pending', () => csamHold('Pending', 'h', 'pending')],
+    ['with a csam verdict no moderator dismissed', csamVerdict],
+  ])('keeps an offering %s blocked and hidden', async (_, given) => {
+    await given();
+    await requeueBlockedServiceOffering(ID);
+    expect(await ingestion()).toBe('Blocked');
+  });
+
+  it('requeues an offering whose csam verdict a moderator dismissed for that text', async () => {
+    await csamVerdict();
+    await csamHold('Dismissed', 'h', 'dismiss');
+    await requeueBlockedServiceOffering(ID);
+    expect(await ingestion()).toBe('Pending');
   });
 });
 

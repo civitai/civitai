@@ -71,8 +71,27 @@ const readCsamHolds = (offeringId: number) =>
     select: { status: true, textHash: true, meta: true },
   });
 
-const hasPendingCsamHold = async (offeringId: number) =>
-  csamHoldBars(null, await readCsamHolds(offeringId));
+/**
+ * Sends a blocked offering's new text back to its check, unless the csam queue holds it: a hold
+ * pending or confirmed there, or a csam verdict no moderator dismissed for its text. Only that
+ * queue's decisions let such an offering out.
+ */
+export async function requeueBlockedServiceOffering(offeringId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "ServiceOffering" SET "ingestion" = 'Pending', "scanWorkflowId" = NULL
+    WHERE "id" = ${offeringId} AND "ingestion" = 'Blocked'
+      AND NOT EXISTS (SELECT 1 FROM "TextScanHold" h
+        WHERE h."entityType" = ${ENTITY_TYPE} AND h."entityId" = ${offeringId} AND h."label" = 'csam'
+          AND h."status" IN ('Pending', 'Confirmed'))
+      AND NOT EXISTS (SELECT 1 FROM "EntityModeration" em
+        WHERE em."entityType" = ${ENTITY_TYPE} AND em."entityId" = ${offeringId}
+          AND em."status" = 'Succeeded' AND 'csam' = ANY(em."triggeredLabels")
+          AND NOT EXISTS (SELECT 1 FROM "TextScanHold" h
+            WHERE h."entityType" = ${ENTITY_TYPE} AND h."entityId" = ${offeringId}
+              AND h."label" = 'csam' AND h."status" = 'Dismissed'
+              AND h."textHash" = em."result"->>'textHash'
+              AND h."meta"->>'decision' IS DISTINCT FROM 'superseded'))`;
+}
 
 export type ServiceOfferingHoldState = 'held' | 'clear' | 'unverified';
 
@@ -101,14 +120,14 @@ export async function serviceOfferingHoldState(
   return held ? 'held' : 'clear';
 }
 
-/** Settles a check with no stored verdict to read, unless it found csam or a hold is still pending. */
+/** Settles a check, unless it is held: `verdict` is the check's own, when it has one to give. */
 async function settleUnlessHeld(
   offeringId: number,
   current: CurrentText = {},
-  { detected = false } = {}
+  verdict: Parameters<typeof csamHoldBars>[0] = null
 ) {
-  if (detected || (await hasPendingCsamHold(offeringId)))
-    await blockServiceOffering(offeringId, current);
+  if (csamHoldBars(verdict, await readCsamHolds(offeringId)))
+    await blockServiceOffering(offeringId, current, { inHoldQueue: true });
   else await markServiceOfferingScanned(offeringId, current);
 }
 
@@ -118,12 +137,16 @@ async function settleUnlessHeld(
  */
 export async function settleOrHoldServiceOffering(offeringId: number, current: CurrentText = {}) {
   const state = await serviceOfferingHoldState(offeringId);
-  if (state === 'held') await blockServiceOffering(offeringId, current);
+  if (state === 'held') await blockServiceOffering(offeringId, current, { inHoldQueue: true });
   else if (state === 'clear') await markServiceOfferingScanned(offeringId, current);
   return state;
 }
 
-export async function blockServiceOffering(offeringId: number, current: CurrentText = {}) {
+export async function blockServiceOffering(
+  offeringId: number,
+  current: CurrentText = {},
+  { inHoldQueue = false } = {}
+) {
   const where = {
     ...forCurrentText(offeringId, current),
     ingestion: { not: ServiceOfferingIngestionStatus.Blocked },
@@ -137,19 +160,21 @@ export async function blockServiceOffering(offeringId: number, current: CurrentT
   await updateServiceOfferingNsfwLevels([offeringId]);
   // Filed before the offering is held, so a failure here leaves it Pending for the reconcile job to
   // try again rather than held with nothing for a moderator to review. It joins only a report still
-  // waiting for a moderator, so a block after an earlier ruling reaches the queue again.
-  await createReport({
-    type: ReportEntity.ServiceOffering,
-    id: offeringId,
-    userId: constants.system.user.id,
-    isModerator: true,
-    reason: ReportReason.TOSViolation,
-    foldIntoPendingOnly: true,
-    details: {
-      violation: 'Held by the automated content check',
-      comment: 'The title or description did not pass the automated content check.',
-    },
-  });
+  // waiting for a moderator, so a block after an earlier ruling reaches the queue again. An
+  // offering in the hold queue is reviewed there instead.
+  if (!inHoldQueue)
+    await createReport({
+      type: ReportEntity.ServiceOffering,
+      id: offeringId,
+      userId: constants.system.user.id,
+      isModerator: true,
+      reason: ReportReason.TOSViolation,
+      foldIntoPendingOnly: true,
+      details: {
+        violation: 'Held by the automated content check',
+        comment: 'The title or description did not pass the automated content check.',
+      },
+    });
   // The transition decides the notice, so a redelivered callback sends it once.
   const { count } = await dbWrite.serviceOffering.updateMany({
     where,
@@ -204,7 +229,7 @@ async function trackSubmit(
   return workflow;
 }
 
-const settleSkipped = (offeringId: number, reason: SkipReason) =>
+const settleSkipped = (offeringId: number, reason: SkipReason, readAt?: Date) =>
   // A removed offering is never shown, so its skipped scan has nothing to settle.
   reason === 'not-public'
     ? Promise.resolve()
@@ -213,7 +238,9 @@ const settleSkipped = (offeringId: number, reason: SkipReason) =>
         offeringId,
         reason,
         (_level, { stored }) =>
-          stored ? settleOrHoldServiceOffering(offeringId) : settleUnlessHeld(offeringId),
+          stored
+            ? settleOrHoldServiceOffering(offeringId, { unchangedSince: readAt })
+            : settleUnlessHeld(offeringId, { unchangedSince: readAt }),
         {
           offeringId,
         }
@@ -243,7 +270,7 @@ export async function scanServiceOffering(offeringId: number, { forceRescan = fa
         entityType: ENTITY_TYPE,
         entityId: offeringId,
         force: forceRescan,
-        onActiveSkip: (reason) => settleSkipped(offeringId, reason),
+        onActiveSkip: (reason) => settleSkipped(offeringId, reason, offering.updatedAt),
         xguard: xguard(offeringId, buildServiceOfferingModerationText(offering), forceRescan),
       })
     );
@@ -277,7 +304,7 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
         entityType: ENTITY_TYPE,
         entityId,
         fromRetry: true,
-        onActiveSkip: (reason) => settleSkipped(entityId, reason),
+        onActiveSkip: (reason) => settleSkipped(entityId, reason, offering?.updatedAt),
         xguard: xguard(entityId, content),
       });
     return offering ? trackSubmit(entityId, offering.updatedAt, submit) : submit();
@@ -296,8 +323,13 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
     });
   },
 
-  // The outcome is this text's verdict; a hold still pending from earlier text holds it too.
-  applyTextScan: withCsamHold(ENTITY_TYPE, ({ entityId, workflowId, outcome }) =>
-    settleUnlessHeld(entityId, { workflowId }, { detected: outcome.csam?.detected })
+  // Its own verdict, read with the holds: a ruling on the same text stands, and a hold still
+  // pending from earlier text holds it too.
+  applyTextScan: withCsamHold(ENTITY_TYPE, ({ entityId, workflowId, outcome, textHash }) =>
+    settleUnlessHeld(
+      entityId,
+      { workflowId },
+      { triggeredLabels: outcome.csam?.detected ? ['csam'] : [], result: { textHash } }
+    )
   ),
 };

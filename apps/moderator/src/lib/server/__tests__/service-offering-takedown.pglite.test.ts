@@ -81,6 +81,8 @@ beforeEach(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "Report" (id serial PRIMARY KEY);
     CREATE TABLE "Image" (id int PRIMARY KEY);
+    CREATE TABLE "EntityModeration" ("entityType" text NOT NULL, "entityId" int NOT NULL,
+      status text NOT NULL, "triggeredLabels" text[] NOT NULL DEFAULT '{}', result jsonb);
   `);
   await pg.exec(migration('20261025120000_creator_services_foundation'));
   await pg.exec(migration('20261028150000_creator_service_max_nsfw_level'));
@@ -247,6 +249,33 @@ describe('releasing a held service offering from the report queue', () => {
     expect(recordModActivity).not.toHaveBeenCalled();
 
     await pg.query(`UPDATE "TextScanHold" SET status = 'Dismissed'`);
+    expect(await release()).toMatchObject({ ingestion: 'Scanned', changed: true });
+  });
+
+  it('leaves a held offering with a csam verdict whose hold was never written, until a moderator dismisses that text', async () => {
+    await hold();
+    await pg.query(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", status, "triggeredLabels", result)
+       VALUES ('ServiceOffering', $1, 'Succeeded', '{csam}', '{"version": 1, "textHash": "h2"}')`,
+      [OFFERING]
+    );
+    expect(await release()).toMatchObject({ ingestion: 'Blocked', changed: false, csamHeld: true });
+
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, status, meta, "updatedAt")
+       VALUES ('ServiceOffering', $1, 'csam', 'h2', 'text', 'r', 'Dismissed', '{"decision":"dismiss"}', now())`,
+      [OFFERING]
+    );
+    expect(await release()).toMatchObject({ ingestion: 'Scanned', changed: true });
+  });
+
+  it('releases a held offering whose verdict found nothing', async () => {
+    await hold();
+    await pg.query(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", status, "triggeredLabels", result)
+       VALUES ('ServiceOffering', $1, 'Succeeded', '{}', '{"version": 1, "textHash": "h2"}')`,
+      [OFFERING]
+    );
     expect(await release()).toMatchObject({ ingestion: 'Scanned', changed: true });
   });
 
