@@ -10,6 +10,7 @@ import {
   resolveBlockWorkflowGraph,
   SCANNED_VIDEO_GEN_ENGINES,
   SCANNED_VIDEO_GEN_PROVIDERS,
+  VIDEO_GEN_ENGINES_NEEDING_PROVIDER,
   WRITE_TARGET_ERROR,
   WORKFLOW_INPUT_DEPTH_MAX,
   WORKFLOW_MAX_REFS,
@@ -664,7 +665,10 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
       resolved([
         gen,
         video,
-        step({ $type: 'videoGen', input: { engine: 'wan', images: [ref('gen')] } }),
+        step({
+          $type: 'videoGen',
+          input: { engine: 'wan', provider: 'comfy', images: [ref('gen')] },
+        }),
         step({ $type: 'videoUpscaler', input: { video: ref('clip', 'output.video.url') } }),
         step({ name: 'chat', $type: 'chatCompletion', input: { messages: [] } }),
         step({ $type: 'imageGen', input: { prompt: ref('chat', 'output.text') } }),
@@ -739,17 +743,83 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     );
   });
 
-  it('🔴 videoGen takes media only on the engine’s default route: any explicit provider refuses', () => {
-    const wan = (extra: Record<string, unknown>) =>
-      step({ $type: 'videoGen', input: { engine: 'wan', images: [ref('gen')], ...extra } });
-    expect(resolved([gen, wan({})])).toHaveLength(2);
-    for (const provider of ['fal', 'comfy', 'civitai', null, ref('$arguments', 'p')]) {
-      mediaRefused([gen, wan({ provider })], 1);
+  it('🔴 wan takes media only with an explicit scanned provider; other engines may omit it', () => {
+    const video = (input: Record<string, unknown>) =>
+      step({ $type: 'videoGen', input: { images: [ref('gen')], ...input } });
+    for (const provider of ['comfy', 'civitai', 'Comfy']) {
+      expect(resolved([gen, video({ engine: 'wan', provider })])).toHaveLength(2);
+    }
+    expect(resolved([gen, video({ engine: 'ltx2' })])).toHaveLength(2);
+    for (const input of [
+      { engine: 'wan' },
+      { engine: 'wan', provider: 'fal' },
+      { engine: 'wan', provider: null },
+      { engine: 'wan', provider: ref('$arguments', 'p') },
+      { engine: 'ltx2', provider: 'fal' },
+      { engine: 'wan', provider: 'comfy', Provider: 'fal' },
+    ]) {
+      mediaRefused([gen, video(input)], 1);
     }
   });
 
-  it('pins the confirmed (engine, provider) pairs: none yet, so adding one is a reviewed diff', () => {
-    expect(SCANNED_VIDEO_GEN_PROVIDERS).toEqual({});
+  it('pins the scanned providers and the engines that need one: changing either is a reviewed diff', () => {
+    expect([...SCANNED_VIDEO_GEN_PROVIDERS].sort()).toEqual(['civitai', 'comfy']);
+    expect([...VIDEO_GEN_ENGINES_NEEDING_PROVIDER]).toEqual(['wan']);
+  });
+
+  it.each(['output.images[0].URL', 'output.images[0].Url'])(
+    '🔴 a re-cased media leaf (%s) into chat is refused',
+    (path) => {
+      mediaRefused([gen, step({ $type: 'chatCompletion', input: { x: ref('gen', path) } })], 1);
+    }
+  );
+
+  it.each(['output.steps[*].output.url', 'output.images[*]'])(
+    '🔴 a merge wildcard path (%s) into a non-consumer is refused',
+    (path) => {
+      mediaRefused(
+        [
+          gen,
+          step({
+            $type: 'merge',
+            input: { onMissing: 'fail', fields: { x: { $ref: 'gen', path, reduce: 'first' } } },
+          }),
+        ],
+        1
+      );
+    }
+  );
+
+  it('🔴 a whole repeat item, used as a value in a non-consumer, is refused', () => {
+    const r = resolveBlockWorkflowGraph({
+      steps: [
+        step({
+          $type: 'repeat',
+          input: {
+            for: { $ref: '$arguments', path: 'images', as: 'item' },
+            template: { $type: 'chatCompletion', input: { x: { $ref: 'item', path: '' } } },
+          },
+        }),
+      ],
+      arguments: { images: [{ url: 'u' }] },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe(`workflow step 0: ${MEDIA_REF_ERROR}`);
+  });
+
+  it.each([['image'], ['text', 'Image'], 'image', ref('$arguments', 'm')])(
+    '🔴 a chat step asking for image output is refused: %j',
+    (modalities) => {
+      expect(
+        refusal([step({ $type: 'chatCompletion', input: { messages: [], modalities } })]).error
+      ).toBe('workflow step 0: a chat step may not generate images');
+    }
+  );
+
+  it('CONTROL: a chat step asking for text output is fine', () => {
+    expect(
+      resolved([step({ $type: 'chatCompletion', input: { messages: [], modalities: ['text'] } })])
+    ).toHaveLength(1);
   });
 
   it('pins the exact scanned videoGen engine set: adding one is a reviewed diff', () => {
@@ -947,7 +1017,10 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
   );
 
   it.each([
-    ['an `engıne` twin', { engine: 'wan', engıne: 'kling', images: [ref('gen')] }],
+    [
+      'an `engıne` twin',
+      { engine: 'wan', provider: 'comfy', engıne: 'kling', images: [ref('gen')] },
+    ],
     [
       'a `provıder` twin',
       { engine: 'wan', provider: 'civitai', provıder: 'comfy', images: [ref('gen')] },

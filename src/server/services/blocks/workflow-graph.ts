@@ -352,12 +352,30 @@ export const SCANNED_VIDEO_GEN_ENGINES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Explicit `provider` values a scanned engine may take media with. An absent
- * `provider` is the engine's default route, the one confirmed scanned; any value
- * not listed here, or not a literal string, refuses. Empty until a pair is
- * confirmed against the orchestrator's upload path.
+ * `provider` values whose output the platform scans. Any other value, or one that
+ * is not a literal string, refuses.
  */
-export const SCANNED_VIDEO_GEN_PROVIDERS: Readonly<Record<string, ReadonlySet<string>>> = {};
+export const SCANNED_VIDEO_GEN_PROVIDERS: ReadonlySet<string> = new Set(['comfy', 'civitai']);
+
+/**
+ * Engines whose default route differs by version, so `provider` must be given and
+ * scanned. The other scanned engines take media with no `provider`.
+ */
+export const VIDEO_GEN_ENGINES_NEEDING_PROVIDER: ReadonlySet<string> = new Set(['wan']);
+
+const CHAT_IMAGE_MODALITY_ERROR = 'a chat step may not generate images';
+
+/** A chatCompletion input that asks for image output, or whose modalities cannot be read. */
+export function chatImageModalityProblem(stepType: unknown, input: unknown): string | null {
+  if (lowerType(stepType) !== 'chatcompletion' || !isPlainObject(input)) return null;
+  if (hasRecasedTwin(input, 'modalities')) return CHAT_IMAGE_MODALITY_ERROR;
+  if (!('modalities' in input) || input.modalities == null) return null;
+  const { modalities } = input;
+  if (!Array.isArray(modalities)) return CHAT_IMAGE_MODALITY_ERROR;
+  return modalities.every((m) => typeof m === 'string' && fold(m) !== 'image')
+    ? null
+    : CHAT_IMAGE_MODALITY_ERROR;
+}
 
 /**
  * The last path segments a non-media consumer may reference: text and scalar
@@ -415,9 +433,10 @@ export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
     if (typeof input.engine !== 'string' || !SCANNED_VIDEO_GEN_ENGINES.has(input.engine)) {
       return false;
     }
-    if (!('provider' in input)) return true;
-    const providers = SCANNED_VIDEO_GEN_PROVIDERS[input.engine];
-    return typeof input.provider === 'string' && !!providers?.has(input.provider);
+    if (!('provider' in input)) return !VIDEO_GEN_ENGINES_NEEDING_PROVIDER.has(input.engine);
+    return (
+      typeof input.provider === 'string' && SCANNED_VIDEO_GEN_PROVIDERS.has(fold(input.provider))
+    );
   }
   if (type === 'composemedia') {
     if (hasRecasedTwin(input, 'output') || !isPlainObject(input.output)) return false;
@@ -439,7 +458,7 @@ export function isTextRefPath(path: unknown): boolean {
   if (typeof path !== 'string') return false;
   const segments = path.split(/[.[\]]+/).filter(Boolean);
   const last = segments[segments.length - 1];
-  return !!last && TEXT_REF_LEAVES.has(last.toLowerCase());
+  return !!last && TEXT_REF_LEAVES.has(fold(last));
 }
 
 /**
@@ -614,6 +633,8 @@ function checkStepInput(
 ): string | null {
   const writeTarget = writeTargetProblem(input);
   if (writeTarget) return writeTarget;
+  const chatImages = chatImageModalityProblem(stepType, input);
+  if (chatImages) return chatImages;
   if (isPlainObject(input) && findKey(input, isRefKey, 0) !== null) {
     if (isRefObject(input) || hasRecasedRefKey(input)) return WHOLE_INPUT_REF_ERROR;
     if (DESTINATION_STEP_TYPES.has(lowerType(stepType))) return DESTINATION_STEP_REF_ERROR;

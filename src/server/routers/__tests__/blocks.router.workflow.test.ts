@@ -11092,6 +11092,28 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       }
     });
 
+    it('refuses a chat step asking for image output, before any orchestrator call', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      mockSubmitWorkflow.mockClear();
+      const body = ptBody({
+        $type: 'chatCompletion',
+        input: { messages: [], modalities: ['image'] },
+      });
+      const err = await caller()
+        .submitWorkflow({ blockToken: 'tok', body })
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      expect(err).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'a chat step may not generate images',
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
     // 🔴 A RAW comfy GRAPH IS REFUSED, under `$type: 'comfy'` or `'customComfy'`.
     // `workflow.service` delivers a comfy step's `output.blobs` as media and this arm
     // runs no prompt audit. Platform-built comfy steps (`kind: 'textToImage'`,
