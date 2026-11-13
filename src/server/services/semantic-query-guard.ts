@@ -47,10 +47,16 @@ export async function isNonModClampOn(): Promise<boolean> {
     return (
       client.evaluateBoolean({ flagKey: flag, entityId: 'global', context: {} }).enabled !== false
     );
-  } catch {
+  } catch (e) {
+    const now = Date.now();
+    if (now - lastClampEvalErrorLog > 60_000) {
+      lastClampEvalErrorLog = now;
+      console.error(`[flipt] ${flag} could not be evaluated; holding the clamp`, e);
+    }
     return true;
   }
 }
+let lastClampEvalErrorLog = 0;
 
 /**
  * "More like this" never rates above its anchor: the viewer's levels at or below the anchor's.

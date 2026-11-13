@@ -542,6 +542,25 @@ describe('the query audit and the browsing level', () => {
     );
   });
 
+  it('recomputes the add-ons at the narrowed level', async () => {
+    vi.mocked(getBrowsingSettingAddons).mockResolvedValueOnce([
+      { type: 'none', nsfwLevels: [4, 8, 16], excludedTagIds: [9200] },
+    ]);
+    h.includesInappropriate.mockReturnValue('minor');
+    const seen: number[][] = [];
+    h.fakeGetAllImages = async (args) => {
+      seen.push((args as { excludedTagIds?: number[] }).excludedTagIds ?? []);
+      return visibleOnly(new Set([101]))(args);
+    };
+    const { source } = rankedSource([101]);
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: ALL_LEVELS }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(seen[0]).toContain(9200);
+  });
+
   it('audits the query as NSFW when the resolved level includes an NSFW level', async () => {
     await run({ browsingLevel: ALL_LEVELS }, MOD);
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);

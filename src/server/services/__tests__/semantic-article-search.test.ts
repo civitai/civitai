@@ -315,6 +315,13 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(sent[0].excludedTagIds).toContain(9001);
   });
 
+  it('recomputes the add-ons at the narrowed level', async () => {
+    h.addons = [{ type: 'none', nsfwLevels: [4, 8, 16], excludedTagIds: [9200] }];
+    h.includesInappropriate.mockReturnValue('minor');
+    await run({ browsingLevel: 31 });
+    expect(sent[0].excludedTagIds).toContain(9200);
+  });
+
   it('narrows a minor query to the safe levels once the clamp is off', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     await run({ browsingLevel: 31 });
