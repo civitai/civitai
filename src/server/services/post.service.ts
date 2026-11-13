@@ -155,6 +155,7 @@ import type {
   UpdatePostImageInput,
 } from './../schema/post.schema';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -545,6 +546,35 @@ export const getPostsInfinite = async ({
     if (nextItem) nextCursor = encodePostCursor(nextItem, singleColumnCursor);
   }
 
+  // Images follow the viewer's hidden tags and the browsing-settings exclusions at the request's
+  // level, whatever the request sent. Resolved onto a target of its own, which names no owner, so
+  // none of it is skipped; the image's own creator keeps every image, and moderators resolve to none.
+  const imageRules: {
+    browsingLevel?: number;
+    excludedTagIds?: number[];
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+  } = { browsingLevel };
+  await enforceBlockedBrowsingTags(imageRules, {
+    id: user?.id,
+    username: user?.username,
+    isModerator: user?.isModerator,
+  });
+  const excludedImageTagIds = new Set([
+    ...(imageRules.excludedTagIds ?? []),
+    ...(excludedTagIds ?? []),
+  ]);
+  const showsImage = (image: {
+    userId: number;
+    poi?: boolean | null;
+    minor?: boolean | null;
+    tagIds?: number[];
+  }) =>
+    (!!user && image.userId === user.id) ||
+    (!(imageRules.disablePoi && image.poi) &&
+      !(imageRules.disableMinor && image.minor) &&
+      !(image.tagIds ?? []).some((tagId) => excludedImageTagIds.has(tagId)));
+
   // Filter to published model versions:
   const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;
   const modelVersionIds = postsRaw.map((p) => p.modelVersionId).filter(isDefined);
@@ -627,7 +657,7 @@ export const getPostsInfinite = async ({
         // a per-item field — no consumer reads `item.cursorId`. Dropping it
         // removes one field (a superjson-typed Date/number node) PER POST.
         .map(({ userId: creatorId, cursorId: _cursorId, ...post }) => {
-          const _images = images.filter((x) => x.postId === post.id);
+          const _images = images.filter((x) => x.postId === post.id && showsImage(x));
           const { username, image, deletedAt } = userData[creatorId] || {};
 
           return {
