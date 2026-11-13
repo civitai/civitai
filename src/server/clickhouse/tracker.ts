@@ -37,11 +37,11 @@ import type {
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import type { ChatAuditRow } from '~/server/common/chat-audit.constants';
-import { FEED_SHADOW_TABLE, type FeedShadowRow } from '~/server/common/feed-shadow.constants';
 import { CHAT_AUDIT_FLAG } from '~/server/common/chat-audit.constants';
 import type { EntityChangeRow } from '~/server/common/entity-change.constants';
 import { ENTITY_CHANGE_TRACKING_FLAG } from '~/server/common/entity-change.constants';
 import { isFlipt } from '~/server/flipt/client';
+import { backoffDelay } from '~/utils/backoff';
 
 /**
  * Whether the caller waits for the tracker to accept the row.
@@ -568,7 +568,8 @@ export class Tracker {
     let failure: Error | null = null;
 
     for (; attempt <= MAX_ATTEMPTS; attempt++) {
-      if (attempt > 1) await sleep(baseDelayMs * 2 ** (attempt - 2) + Math.random() * baseDelayMs);
+      if (attempt > 1)
+        await sleep(backoffDelay(attempt - 2, { baseMs: baseDelayMs, jitterMs: baseDelayMs }));
 
       try {
         const res = await fetch(url, {
@@ -1158,16 +1159,6 @@ export class Tracker {
     // separately. Same choice `entityChanges` makes, so DDL is the only
     // dependency.
     return this.trackMany('chatAuditEvents', [row], { skipActorMeta: true });
-  }
-
-  // One row per sampled image-feed search compared against the feed service.
-  // trackMany, like entityChanges and chatAudit: a direct insert needs only the
-  // table, where track would need a tracker-service route registered too. The row
-  // carries its own userId, so actor meta would only add ip/userAgent the table
-  // has no column for.
-  public async feedShadow(rows: FeedShadowRow[]) {
-    if (!rows.length) return;
-    return this.trackMany(FEED_SHADOW_TABLE, rows, { skipActorMeta: true });
   }
 
   // One row per sticker PLACEMENT, matching the consumption rule — a comment

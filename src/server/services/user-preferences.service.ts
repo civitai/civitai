@@ -277,6 +277,20 @@ export const getBlockedPairIds = async (userId: number) => {
   );
 };
 
+// User ids a cross-user feed drops for this viewer: the ones they hid, plus a block either way.
+export const getHiddenOrBlockedUserIds = async (userId: number) => {
+  const [hidden, blockedBy, blocked] = await Promise.all([
+    HiddenUsers.getCached({ userId }),
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  return boundExcludedUserIds(
+    hidden.map((u) => u.id),
+    blockedBy.map((u) => u.id),
+    blocked.map((u) => u.id)
+  );
+};
+
 export interface HiddenPreferenceBase {
   id: number;
   /** the presence of hidden: true indicates that this is a user setting*/

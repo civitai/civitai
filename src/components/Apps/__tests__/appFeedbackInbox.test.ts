@@ -6,6 +6,7 @@ import {
   feedbackForkLabel,
   feedbackRowMeta,
   feedbackSourceLabel,
+  INBOX_COMMITS_NOTE,
   INBOX_EMPTY_MESSAGE,
   INBOX_FILTER_EMPTY_MESSAGE,
   INBOX_GENERIC_ERROR_MESSAGE,
@@ -342,5 +343,25 @@ describe('feedbackForkLabel', () => {
       feedbackForkLabel({ upstreamSlug: null, upstreamVersion: null, forkedAtCommit: null })
     ).toBe('Forked from another app');
     expect(feedbackForkLabel(null)).toBeNull();
+  });
+});
+
+describe('INBOX_COMMITS_NOTE — the checkout advice must be a command that runs', () => {
+  // Bug: the note told the owner to run `civitai app pull <slug>`. `app pull` takes the app in
+  // `--app` and the DIRECTORY as its positional, so that command exits 2. And for a fork or an
+  // App Assistant app, `app pull` clones the SOURCE repository, which does not hold the platform
+  // commit.
+  it('every `civitai app pull` it names passes the app in --app', () => {
+    const invocations = [...INBOX_COMMITS_NOTE.matchAll(/civitai app pull([^`]*)/g)].map(
+      (m) => m[1]
+    );
+    expect(invocations.length).toBeGreaterThan(0);
+    for (const rest of invocations) expect(rest).toContain('--app');
+  });
+
+  it('places the platform commit in the build repository, and says how a source clone reaches it', () => {
+    expect(INBOX_COMMITS_NOTE).toBe(
+      "The platform commit is this release's commit in the app's build repository (civitai-apps/<slug>). For an app with no source repository, `civitai app pull <dir> --app <slug>` clones it; a clone of the source repository has to fetch it first: `git fetch` its origin URL with `civitai-apps-src` swapped for `civitai-apps`. Then `git checkout <sha>`. The reported source commit is what the developer's CLI said at submit; nothing verifies it."
+    );
   });
 });

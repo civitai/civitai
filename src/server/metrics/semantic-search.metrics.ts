@@ -1,4 +1,4 @@
-import client, { type Histogram, type Registry } from 'prom-client';
+import client, { type Counter, type Histogram, type Registry } from 'prom-client';
 import { middleware } from '~/server/trpc';
 
 const NAME = 'semantic_search_request_seconds';
@@ -25,3 +25,20 @@ export const timeSemanticSearch = (index: string, reg?: Registry) =>
     end({ status: result.ok ? 'ok' : result.error.code });
     return result;
   });
+
+const VERDICTS = 'semantic_search_query_verdicts_total';
+
+export function ensureRegisterQueryVerdictCounter(reg: Registry = client.register) {
+  const existing = reg.getSingleMetric(VERDICTS) as Counter<string> | undefined;
+  if (existing) return existing;
+  return new client.Counter({
+    name: VERDICTS,
+    help: 'Semantic search queries the query audit flagged or failed to audit (verdict error); stage is the raw query or the spelling correction',
+    labelNames: ['index', 'verdict', 'stage'],
+    registers: [reg],
+  });
+}
+
+export function countQueryVerdict(index: string, verdict: string, stage: string, reg?: Registry) {
+  ensureRegisterQueryVerdictCounter(reg).inc({ index, verdict, stage });
+}
