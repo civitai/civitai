@@ -737,11 +737,11 @@ export type AccessibleAppBlocks = {
  * `backfillAppListings`), and `schema.full.prisma` says in as many words to discriminate
  * on `kind` and never on `appBlockId` nullness. Filtering on nullness alone would let
  * such a row's seat contribute a REAL block id to this set — and this set is the input to
- * `getMyAppsEarnings`, which has no kind gate of its own, so a seat-only holder would be
- * handed real `lifetimeShareCents` on a listing whose kind declares `earnings: false`.
+ * `getMyAppRoles` (the `getMyApps` list), which has no kind gate of its own, so a seat-only
+ * holder would be shown a block on a listing whose kind declares `earnings: false`.
  * The count of such rows is 0 in production today (measured 2026-08-11: offsite 5 rows,
- * 0 with a block), so this gate is PREVENTION — but it guards a money read, which is not
- * where a latent hazard is worth leaving open.
+ * 0 with a block), so this gate is PREVENTION, inherited by any block-scoped read built on
+ * this set.
  *
  * The `earnings: false` cell of {@link CAPABILITIES_BY_KIND} is the declared form of the
  * same rule; this is it expressed as a query predicate.
@@ -872,9 +872,9 @@ export type AccessibleListings = {
  * (`INVALID_REVISION`).
  *
  * 🔴 NO KIND FILTER, and the asymmetry with `resolveAccessibleAppBlockIds` is deliberate.
- * That function filters `kind: 'onsite'` because its result feeds a BLOCK-scoped MONEY
- * read (`getMyAppsEarnings`) where an offsite row's block id would be attributed real
- * cents. This set feeds authoring/navigation surfaces whose capabilities are derived
+ * That function filters `kind: 'onsite'` because its result feeds BLOCK-scoped reads
+ * (`getMyAppRoles`) where an offsite row's block id would surface a block the listing's kind
+ * says it does not have. This set feeds authoring/navigation surfaces whose capabilities are derived
  * per-listing from {@link capabilitiesForKind} at the point of use, so narrowing here
  * would drop exactly the off-site listings the re-key exists to serve.
  */

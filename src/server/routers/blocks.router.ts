@@ -8818,33 +8818,29 @@ export const blocksRouter = router({
    * seat on). Drives the per-app dropdown on /apps/revenue. The per-app lifetime
    * card-purchase share is NOT returned: that share is recorded but never paid out.
    *
-   * 🔴 THE LIFETIME GROUPBY IS THE PORTFOLIO-LEAK SITE, so read this before editing it.
-   * It used to be `where: { appOwnerUserId: user.id }` with NO app filter — a
-   * USER-WIDE query, bucketed by app in JS afterwards. That is safe only while the
-   * caller owns everything they can see. The moment an editor is in scope, the
-   * "obvious" widening (pass the OWNER's id, since the editor has no attribution rows
-   * of their own) returns the OWNER'S ENTIRE PORTFOLIO — every app they ever published,
-   * including ones this editor was never invited to.
+   * 🔴 THE APP SET IS THE PORTFOLIO-LEAK SITE, so read this before editing it. It once came
+   * from `where: { appOwnerUserId: user.id }` — a USER-WIDE filter. The moment an editor is
+   * in scope, the "obvious" widening (pass the OWNER's id) returns the OWNER'S ENTIRE
+   * PORTFOLIO, including apps this editor was never invited to.
    *
-   * It is now served by `getMyAppsEarnings`, which resolves the permitted app-id SET
-   * first and filters `appBlockId IN thatSet`. Never reintroduce an
-   * `appOwnerUserId`-only filter on a collaborator-reachable read.
+   * It is now served by `getMyAppRoles`, which resolves the permitted app-id SET first.
+   * Never reintroduce an `appOwnerUserId`-only filter on a collaborator-reachable read.
    *
    * `role` is surfaced so the client can distinguish an owned app from a seat (only an
    * owner sees the manage-collaborators / transfer controls).
    */
   getMyApps: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     const user = ctx.user as SessionUser;
-    const { getMyAppsEarnings } = await import(
+    const { getMyAppRoles } = await import(
       '~/server/services/blocks/app-collaborator-earnings.service'
     );
-    const earnings = await getMyAppsEarnings({ userId: user.id });
-    if (earnings.length === 0) return [];
-    const roleByApp = new Map(earnings.map((e) => [e.appBlockId, e.role] as const));
+    const myApps = await getMyAppRoles({ userId: user.id });
+    if (myApps.length === 0) return [];
+    const roleByApp = new Map(myApps.map((e) => [e.appBlockId, e.role] as const));
 
     const apps = await dbRead.appBlock.findMany({
       // The permitted set, not `app: { userId }` — that would drop every seated app.
-      where: { id: { in: earnings.map((e) => e.appBlockId) } },
+      where: { id: { in: myApps.map((e) => e.appBlockId) } },
       select: {
         id: true,
         blockId: true,

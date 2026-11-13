@@ -19,7 +19,7 @@ const {
   mockIsAppBlocksEnabled,
   mockGetMyAppAnalytics,
   mockGetAuthorFeeEarningsForOwner,
-  mockGetMyAppsEarnings,
+  mockGetMyAppRoles,
   mockGetGoodsSalesForOwner,
   mockVerifyBlockToken,
   mockParseSubjectUserId,
@@ -29,7 +29,7 @@ const {
   mockIsAppBlocksEnabled: vi.fn(),
   mockGetMyAppAnalytics: vi.fn(),
   mockGetAuthorFeeEarningsForOwner: vi.fn(),
-  mockGetMyAppsEarnings: vi.fn(),
+  mockGetMyAppRoles: vi.fn(),
   mockGetGoodsSalesForOwner: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -76,7 +76,7 @@ vi.mock('~/server/services/blocks/buzz-attribution.service', async (importOrigin
 }));
 vi.mock('~/server/services/blocks/app-collaborator-earnings.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  getMyAppsEarnings: (...a: unknown[]) => mockGetMyAppsEarnings(...a),
+  getMyAppRoles: (...a: unknown[]) => mockGetMyAppRoles(...a),
 }));
 vi.mock('~/server/services/blocks/author-fee-earnings.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -338,7 +338,7 @@ describe('getMyAppAnalytics — input validation & delegation', () => {
 
 describe('getMyApps — the card-purchase share is not returned', () => {
   it('rows carry the app and the caller’s role, but no lifetime share', async () => {
-    mockGetMyAppsEarnings.mockResolvedValue([
+    mockGetMyAppRoles.mockResolvedValue([
       { appBlockId: 'apb_1', role: 'editor', lifetimeShareCents: 4321, lifetimeCount: 9 },
     ]);
     mockDbRead.appBlock.findMany.mockResolvedValue([

@@ -31,10 +31,8 @@ export const HOLD_VELOCITY_CENTS = 100_000;
  * confirmed is the TERMINAL state — nothing DISBURSES it. The write-free stub cron
  * that used to aggregate these rows and the mint it was to call were both removed,
  * so no purchase-rail share is paid out anywhere, and nothing writes `paid_out` any
- * more either. 🔴 It is still READ: `getMyAppsEarnings` in
- * `app-collaborator-earnings.service.ts` aggregates `confirmed` rows. No author surface
- * displays the purchase-rail share any more, but dropping or repurposing this write would
- * still silently zero that aggregate.
+ * more either. Nothing reads the `confirmed` status today: no author surface shows the
+ * purchase-rail share, and app analytics counts purchases whatever their status.
  *
  * `held` rows are the actionable ops signal:
  * a human reviews them and either confirms (re-run picks them up once

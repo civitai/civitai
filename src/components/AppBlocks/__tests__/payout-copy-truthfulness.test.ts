@@ -452,10 +452,11 @@ describe('app earnings copy does not promise a payout pipeline that does not run
       .filter((f) => CARD_SHARE_MARKERS.some((m) => readFileSync(f, 'utf8').includes(m)))
       .map(rel);
     expect(surfaces).toEqual([]);
-    // Marker control: the field still exists server-side, so the marker can match real code.
-    expect(read('src/server/services/blocks/app-collaborator-earnings.service.ts')).toContain(
-      'lifetimeShareCents'
-    );
+    // Read control: the same read-and-match finds a label the panel really renders, so the
+    // empty result above is about the markers, not a scan that matches nothing.
+    expect(
+      readFileSync(join(REPO_ROOT, REVENUE_PANEL), 'utf8').includes('Digital goods sales')
+    ).toBe(true);
   });
 
   it('the rate card shows only the goods split, never a card-purchase or subscription share row', () => {

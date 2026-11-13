@@ -1,4 +1,3 @@
-import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   listingKindSupports,
@@ -174,67 +173,21 @@ export async function getAppEarnings(opts: {
   };
 }
 
-export type MyAppsEarningsRow = {
+export type MyAppRole = {
   appBlockId: string;
   role: 'owner' | 'editor';
-  lifetimeShareCents: number;
-  lifetimeCount: number;
 };
 
 /**
- * Lifetime per-app earnings across every app the caller may see (owned + seated) —
- * the collaborator-aware replacement for `getMyApps`' portfolio-wide groupBy.
+ * Every app the caller may see (owned + seated), with their role on it — what `getMyApps` lists.
  *
- * 🔴 The groupBy is filtered by `appBlockId IN allIds`, NOT by `appOwnerUserId`. For
- * an OWNER those two happen to coincide today, which is exactly why the distinction
- * has to be written down: the moment an editor calls this, `appOwnerUserId` would be
- * the wrong axis and would return either nothing (their own id) or everything (the
- * owner's id). Neither is the answer.
- *
- * Ownership per row is resolved from the CURRENT owner, so a transferred app's
- * pre-transfer rows are excluded for exactly the reason in the module header.
+ * 🔴 The set comes from `resolveAccessibleAppBlockIds`, never from an `appOwnerUserId` filter:
+ * for an editor that axis would return either nothing (their own id) or the owner's whole
+ * portfolio (the owner's id). It reads no money: the lifetime card-purchase share it used to
+ * aggregate is no longer shown anywhere.
  */
-export async function getMyAppsEarnings(opts: { userId: number }): Promise<MyAppsEarningsRow[]> {
+export async function getMyAppRoles(opts: { userId: number }): Promise<MyAppRole[]> {
   const { ownedIds, editorIds, allIds } = await resolveAccessibleAppBlockIds(opts.userId);
-  if (allIds.length === 0) return [];
-
-  // Current owner per accessible app — the second scope axis.
-  const blocks = await dbRead.appBlock.findMany({
-    where: { id: { in: allIds } },
-    select: { id: true, app: { select: { userId: true } } },
-  });
-  const ownerByApp = new Map<string, number>(
-    blocks
-      .filter((b: { app: { userId: number } | null }) => !!b.app)
-      .map((b: { id: string; app: { userId: number } | null }) => [b.id, b.app!.userId])
-  );
-
-  // 🔴 GROUPED BY (appBlockId, appOwnerUserId), not appBlockId alone. The second key is
-  // what lets a transferred app's PRE-transfer rows be dropped below — grouping on the
-  // app alone would silently fold a previous owner's earnings into the current one's.
-  const rows = (await dbRead.blockBuzzAttribution.groupBy({
-    by: ['appBlockId', 'appOwnerUserId'] as const,
-    where: { appBlockId: { in: allIds }, status: { in: ['confirmed', 'paid_out'] } },
-    _sum: { appOwnerShareCents: true },
-    _count: true,
-  } as never)) as unknown as Array<{
-    appBlockId: string;
-    appOwnerUserId: number;
-    _sum: { appOwnerShareCents: number | null };
-    _count: number;
-  }>;
-
-  const totals = new Map<string, { shareCents: number; count: number }>();
-  for (const r of rows) {
-    // Drop rows attributed to a PREVIOUS owner of a transferred app.
-    if (ownerByApp.get(r.appBlockId) !== r.appOwnerUserId) continue;
-    const prev = totals.get(r.appBlockId) ?? { shareCents: 0, count: 0 };
-    totals.set(r.appBlockId, {
-      shareCents: prev.shareCents + (r._sum.appOwnerShareCents ?? 0),
-      count: prev.count + r._count,
-    });
-  }
-
   const ownedSet = new Set(ownedIds);
   const editorSet = new Set(editorIds);
   return allIds.map((id) => ({
@@ -244,7 +197,5 @@ export async function getMyAppsEarnings(opts: { userId: number }): Promise<MyApp
       : editorSet.has(id)
       ? ('editor' as const)
       : ('owner' as const),
-    lifetimeShareCents: totals.get(id)?.shareCents ?? 0,
-    lifetimeCount: totals.get(id)?.count ?? 0,
   }));
 }

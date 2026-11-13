@@ -48,7 +48,7 @@ const { mockDb } = vi.hoisted(() => ({
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 
-const { getAppEarnings, getMyAppsEarnings } = await import(
+const { getAppEarnings, getMyAppRoles } = await import(
   '~/server/services/blocks/app-collaborator-earnings.service'
 );
 
@@ -134,63 +134,6 @@ const LISTINGS: Record<string, Record<string, unknown>> = {
     revisionOf: null,
   },
 };
-
-/** Every attribution row in the fixture DB, per app. */
-const LEDGER = [
-  { appBlockId: APP_A, appOwnerUserId: OWNER, status: 'confirmed', share: 500, gross: 1000 },
-  { appBlockId: APP_A, appOwnerUserId: OWNER, status: 'paid_out', share: 250, gross: 500 },
-  // APP_B is far more lucrative — so a leak is unmissable in the numbers, not just
-  // in the id list.
-  {
-    appBlockId: APP_B,
-    appOwnerUserId: OWNER,
-    status: 'confirmed',
-    share: 999_999,
-    gross: 1_999_999,
-  },
-];
-
-/**
- * A `groupBy` fake that HONOURS the `where` clause it is handed.
- *
- * 🔴 This is the instrument, so validate it before reading its verdict: a fake that
- * ignored `where.appBlockId` would return everything to everybody and make the leak
- * assertions fail even for a correct implementation — or, worse, a fake that returned
- * a hardcoded single row would make them PASS for a leaking one. The positive/negative
- * control test at the bottom of this describe exercises both directions.
- */
-function wireGroupBy() {
-  mockDb.blockBuzzAttribution.groupBy.mockImplementation(async (args: unknown) => {
-    const w = (args as { where: { appBlockId?: { in?: string[] }; status?: { in?: string[] } } })
-      .where;
-    const allowed = w.appBlockId?.in;
-    const statuses = w.status?.in ?? ['confirmed', 'paid_out'];
-    const rows = LEDGER.filter(
-      (r) =>
-        (allowed === undefined || allowed.includes(r.appBlockId)) && statuses.includes(r.status)
-    );
-    const acc = new Map<
-      string,
-      { appBlockId: string; appOwnerUserId: number; share: number; n: number }
-    >();
-    for (const r of rows) {
-      const k = `${r.appBlockId}:${r.appOwnerUserId}`;
-      const prev = acc.get(k) ?? {
-        appBlockId: r.appBlockId,
-        appOwnerUserId: r.appOwnerUserId,
-        share: 0,
-        n: 0,
-      };
-      acc.set(k, { ...prev, share: prev.share + r.share, n: prev.n + 1 });
-    }
-    return [...acc.values()].map((v) => ({
-      appBlockId: v.appBlockId,
-      appOwnerUserId: v.appOwnerUserId,
-      _sum: { appOwnerShareCents: v.share },
-      _count: v.n,
-    }));
-  });
-}
 
 /** A previous owner of APP_A, before it was transferred to OWNER. */
 const PREVIOUS_OWNER = 400;
@@ -348,86 +291,33 @@ function wireAccess() {
 beforeEach(() => {
   vi.clearAllMocks();
   wireAccess();
-  wireGroupBy();
   wireAppScopedReads();
 });
 
-describe('getMyAppsEarnings — 🔴 the editor must never see the owner’s other app', () => {
-  it('INSTRUMENT CONTROLS: the groupBy fake both filters and can return multiple apps', async () => {
-    // POSITIVE — an unrestricted call sees BOTH apps (so a later "only APP_A" result is
-    // a fact about the code, not about a fake that can only ever return one row).
-    const all = (await mockDb.blockBuzzAttribution.groupBy({
-      where: { status: { in: ['confirmed', 'paid_out'] } },
-    })) as Array<{ appBlockId: string; _count: number }>;
-    // Grouped by (appBlockId, appOwnerUserId), so APP_A's two rows collapse to ONE
-    // group of count 2 — asserting the count too proves the fake really aggregates
-    // rather than returning a canned pair.
-    expect(all.map((r) => r.appBlockId).sort()).toEqual([APP_A, APP_B]);
-    expect(all.find((r) => r.appBlockId === APP_A)!._count).toBe(2);
-    // NEGATIVE — the filter genuinely bites: APP_B disappears when excluded.
-    const only = (await mockDb.blockBuzzAttribution.groupBy({
-      where: { appBlockId: { in: [APP_A] }, status: { in: ['confirmed', 'paid_out'] } },
-    })) as Array<{ appBlockId: string }>;
-    expect(only.map((r) => r.appBlockId)).toEqual([APP_A]);
-  });
-
+describe('getMyAppRoles — 🔴 the editor must never see the owner’s other app', () => {
   it('the OWNER sees both of their apps', async () => {
-    const rows = await getMyAppsEarnings({ userId: OWNER });
+    const rows = await getMyAppRoles({ userId: OWNER });
     expect(rows.map((r) => r.appBlockId).sort()).toEqual([APP_A, APP_B].sort());
     expect(rows.every((r) => r.role === 'owner')).toBe(true);
   });
 
   it('🔴 the EDITOR sees ONLY the shared app — APP_B is absent', async () => {
-    const rows = await getMyAppsEarnings({ userId: EDITOR });
-    const ids = rows.map((r) => r.appBlockId);
-    expect(ids).toEqual([APP_A]);
+    const rows = await getMyAppRoles({ userId: EDITOR });
+    expect(rows).toEqual([{ appBlockId: APP_A, role: 'editor' }]);
     // Stated as its own assertion so the failure message names the leak directly.
-    expect(ids).not.toContain(APP_B);
-  });
-
-  it('🔴 the EDITOR’s totals equal APP_A’s alone — not the portfolio total', async () => {
-    // A leak that returned the right id list but the wrong SUM would pass the id
-    // assertion above. Pin the number too.
-    const rows = await getMyAppsEarnings({ userId: EDITOR });
-    expect(rows).toHaveLength(1);
-    expect(rows[0].lifetimeShareCents).toBe(750); // 500 confirmed + 250 paid_out
-    expect(rows[0].lifetimeShareCents).not.toBe(750 + 999_999);
-    expect(rows[0].role).toBe('editor');
+    expect(rows.map((r) => r.appBlockId)).not.toContain(APP_B);
   });
 
   it('a stranger sees nothing', async () => {
-    expect(await getMyAppsEarnings({ userId: STRANGER })).toEqual([]);
+    expect(await getMyAppRoles({ userId: STRANGER })).toEqual([]);
   });
 
-  it('🔴 STRUCTURAL: the groupBy is filtered by `appBlockId IN <permitted set>`', async () => {
-    // A mutation sweep showed the id-list assertions alone SURVIVE removal of this
-    // filter, because the final `allIds.map` is a second, independent barrier that
-    // hides the leak in the OUTPUT while the QUERY still fetched the owner's whole
-    // portfolio. Defence in depth is good; relying on it to be the only guard is not —
-    // the rows are in memory either way, and the next refactor of that map re-opens it.
-    await getMyAppsEarnings({ userId: EDITOR });
-    const args = mockDb.blockBuzzAttribution.groupBy.mock.calls[0][0] as {
-      where: { appBlockId?: { in: string[] }; appOwnerUserId?: number };
-    };
-    expect(args.where.appBlockId, 'the app-scope filter must be present').toBeDefined();
-    expect(args.where.appBlockId!.in).toEqual([APP_A]);
-    expect(args.where.appBlockId!.in).not.toContain(APP_B);
-    // …and NEVER an appOwnerUserId-only filter, which is the user-wide axis.
-    expect(args.where.appOwnerUserId).toBeUndefined();
-  });
-
-  it('🔴 pre-transfer rows attributed to a PREVIOUS owner are excluded', async () => {
-    // The transfer decision leaves `appOwnerUserId` alone, so an app-scoped query on
-    // appBlockId ALONE would show the new owner the old owner's money. The second
-    // scope axis (current owner) is what stops that.
-    mockDb.blockBuzzAttribution.groupBy.mockResolvedValue([
-      { appBlockId: APP_A, appOwnerUserId: OWNER, _sum: { appOwnerShareCents: 750 }, _count: 2 },
-      // An OLD owner's rows on the same app.
-      { appBlockId: APP_A, appOwnerUserId: 999, _sum: { appOwnerShareCents: 424_242 }, _count: 7 },
-    ]);
-    const rows = await getMyAppsEarnings({ userId: EDITOR });
-    expect(rows[0].lifetimeShareCents).toBe(750);
-    expect(rows[0].lifetimeCount).toBe(2);
+  it('runs no attribution aggregate — the lifetime card-purchase share is not read', async () => {
+    const rows = await getMyAppRoles({ userId: EDITOR });
+    expect(rows.length).toBeGreaterThan(0); // control: the call did resolve an app
+    expect(mockDb.blockBuzzAttribution.groupBy).not.toHaveBeenCalled();
+    expect(mockDb.blockBuzzAttribution.aggregate).not.toHaveBeenCalled();
+    expect(Object.keys(rows[0]).sort()).toEqual(['appBlockId', 'role']);
   });
 });
 
@@ -632,12 +522,11 @@ describe('getAppEarnings — per-listing, fail-closed', () => {
     });
   });
 
-  describe('🔴 getMyAppsEarnings drops the off-site seat entirely', () => {
+  describe('🔴 getMyAppRoles drops the off-site seat entirely', () => {
     it('the editor’s rows name only the ON-SITE app, though they hold TWO accepted seats', async () => {
       // The off-site seat is real and accepted; it contributes no block id, so it cannot
-      // widen a block-keyed money query — and it must not appear as a zeroed row either,
-      // which would invite the same "earned nothing" misreading.
-      const rows = await getMyAppsEarnings({ userId: EDITOR });
+      // widen a block-keyed read.
+      const rows = await getMyAppRoles({ userId: EDITOR });
       expect(rows.map((r) => r.appBlockId)).toEqual([APP_A]);
     });
 
@@ -651,30 +540,15 @@ describe('getAppEarnings — per-listing, fail-closed', () => {
     });
 
     /**
-     * 🔴 THE MONEY READ, on the shape where "offsite" and "has no block" disagree.
-     *
-     * `getMyAppsEarnings` has NO kind gate of its own — it trusts the id set
-     * `resolveAccessibleAppBlockIds` hands it. So an off-site listing that carries a
-     * block is the one input that can put a real, earning block id in front of a
-     * seat-only holder on a listing whose kind declares `earnings: false`.
+     * 🔴 The shape where "offsite" and "has no block" disagree: `getMyAppRoles` has NO kind
+     * gate of its own — it trusts the id set `resolveAccessibleAppBlockIds` hands it — so an
+     * off-site listing that carries a block is the one input that could put APP_B in front of
+     * a seat-only holder.
      */
-    it('🔴 an OFF-SITE seat on a listing that HAS a block yields NO row and NO money', async () => {
-      const rows = await getMyAppsEarnings({ userId: EDITOR });
+    it('🔴 an OFF-SITE seat on a listing that HAS a block yields NO row', async () => {
+      const rows = await getMyAppRoles({ userId: EDITOR });
       expect(rows.map((r) => r.appBlockId)).toEqual([APP_A]);
       expect(rows.map((r) => r.appBlockId)).not.toContain(APP_B);
-      // The number, not just the id list: APP_B is the 999,999-cent app, so a leak here
-      // is a money figure and the assertion should say so.
-      expect(rows.reduce((s, r) => s + r.lifetimeShareCents, 0)).toBe(750);
-    });
-
-    it('🔴 STRUCTURAL: the groupBy never even ASKS for the off-site listing’s block', async () => {
-      // The output-only assertion above can be satisfied by the final `allIds.map`
-      // barrier while the QUERY still fetched the row. Pin the WHERE too.
-      await getMyAppsEarnings({ userId: EDITOR });
-      const args = mockDb.blockBuzzAttribution.groupBy.mock.calls[0][0] as {
-        where: { appBlockId?: { in: string[] } };
-      };
-      expect(args.where.appBlockId!.in).toEqual([APP_A]);
     });
   });
 });
