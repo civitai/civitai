@@ -4,8 +4,7 @@ import { createCache } from '$lib/server/cache';
 // Per-model engagement overview (feedback: alexds9) — comments + up/down votes across all of a creator's models
 // so they can spot which ones are drawing downvotes/comments. All-time counts from ModelMetric (the daily rollup
 // only tracks downloads, so there's no per-day votes/comments source). Lists every published model; one with no
-// ModelMetric row yet shows zeros. ModelMetric has one row per model (modelId is its key), so the join adds no duplicates.
-// Default order puts the models drawing downvotes/comments first.
+// ModelMetric row yet shows zeros. Models drawing downvotes/comments sort first.
 export type ModelEngagement = {
   modelId: number;
   name: string | null;
