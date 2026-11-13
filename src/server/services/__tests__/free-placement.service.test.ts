@@ -598,9 +598,9 @@ describe('the advisory locks have exactly one call site', () => {
   // writes in submit, revise, withdraw and the price cut; the only lock in those transactions, except
   // a keyed submit, where it is taken inside buzz-charge-lock's lock (always that one first).
   // buzz-charge-lock takes one per keyed charge (one-arg hashtextextended of the charge's external
-  // id or prefix: creator-shop-submit-…, donation-k-…, tip:… / block-tip:…) around the charge, its
-  // record and any refund. Taken first in its transaction; the only other lock ever taken under it
-  // is the creator lock above, so there is no cycle.
+  // id or prefix: creator-shop-submit-…, donation-k-…) around the record of a charge and any refund
+  // after a failed record; the Buzz charge itself runs outside. Taken first in its transaction; the
+  // only other lock ever taken under it is the creator lock above, so there is no cycle.
   // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
   // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
   // text-scan/csam-hold-decision takes the bare article id on purpose: it is article.service.ts's
