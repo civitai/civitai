@@ -352,3 +352,59 @@ describe('approve claim (on-site approves past their hold check)', () => {
     );
   });
 });
+
+describe('the per-app lock', () => {
+  // pglite is one connection, so no test can race two transactions; instead each entry point is
+  // checked to hold the app's advisory lock before its transaction ends.
+  async function holdsAppLock(t: Raw, slug: string) {
+    const rows = await t.$queryRaw<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pg_locks
+      WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted
+        AND classid = ${0x41525648}::bigint::oid AND objsubid = 2
+        AND objid = (hashtext(${slug})::bigint & 4294967295)::oid`;
+    return rows[0].n > 0;
+  }
+
+  it('🔴 placeHold takes it', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    const locked = await tx(async (t) => {
+      await placeHold(t, {
+        publishRequestId: 'pubreq_a',
+        kind: 'onsite',
+        actorUserId: AGENT,
+        reason: REASON,
+        label: 'code-check',
+      });
+      return holdsAppLock(t, 'app-a');
+    });
+    expect(locked).toBe(true);
+  });
+
+  it('🔴 claimApprove takes it', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    const locked = await tx(async (t) => {
+      await claimApprove(t, { slug: 'app-a', publishRequestId: 'pubreq_a', actorUserId: HUMAN });
+      return holdsAppLock(t, 'app-a');
+    });
+    expect(locked).toBe(true);
+  });
+
+  it('🔴 resolveHoldsAtApprove takes it', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    const locked = await tx(async (t) => {
+      await resolveHoldsAtApprove(t, { slug: 'app-a', actorUserId: HUMAN });
+      return holdsAppLock(t, 'app-a');
+    });
+    expect(locked).toBe(true);
+  });
+
+  it('is the lock of that app only, and is released when the transaction ends', async () => {
+    await addRequest('pubreq_a', 'app-a');
+    const other = await tx(async (t) => {
+      await resolveHoldsAtApprove(t, { slug: 'app-a', actorUserId: HUMAN });
+      return holdsAppLock(t, 'app-b');
+    });
+    expect(other).toBe(false);
+    expect(await holdsAppLock(raw, 'app-a')).toBe(false);
+  });
+});
