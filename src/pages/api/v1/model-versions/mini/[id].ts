@@ -422,7 +422,6 @@ export default MixedAuthEndpoint(async function handler(
   // Only the owner, a moderator, a grantee or the service token gets a freshly signed url; anyone
   // else the gate serves (`log`, or `enforce-anon` with a credential) keeps the stored one.
   let mayResign = false;
-  // Only the owner, a moderator or the service token picks the epoch; anyone else gets the latest.
   let maySelectEpoch = false;
   // Decided before the epoch is read, so a refused caller gets the same answer whatever the
   // version's training results hold.
@@ -460,7 +459,7 @@ export default MixedAuthEndpoint(async function handler(
     if (!parsed.success)
       return res.status(400).json({ error: z.prettifyError(parsed.error) ?? 'Invalid epoch' });
     requestedEpoch = parsed.data;
-    // The body now follows the query string for this caller alone.
+    // The body varies by ?epoch= for this caller; keep it out of shared caches.
     res.setHeader('Cache-Control', 'private, no-store');
   }
 
