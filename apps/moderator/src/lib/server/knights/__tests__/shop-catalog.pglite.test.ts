@@ -368,7 +368,8 @@ describe('stockView', () => {
     expect(view.stock.find((s) => s.item.name === 'gone')?.hidden).toBe('cosmetic missing');
     expect(view.stock.some((s) => s.item.name === 'retired')).toBe(false);
     expect(view.stock.filter((s) => s.item.rotating)).toHaveLength(4);
-    expect(view.stock.filter((s) => s.deal)).toHaveLength(2);
+    // No daily deals at launch (`DEALS_PER_DAY` is 0): the preview prices everything at its catalog price.
+    expect(view.stock.filter((s) => s.deal)).toHaveLength(0);
   });
 });
 
