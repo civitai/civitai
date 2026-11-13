@@ -64,6 +64,11 @@ import {
   ingestionKeptAfterVerdict,
 } from '~/server/common/image-visibility';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
+import {
+  nsfwAxesScanSet,
+  writeWithNsfwAxes,
+  type RatingAxes,
+} from '~/server/services/image-nsfw-axes';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -559,6 +564,7 @@ export async function resolveScanOutcome({
   workflowId,
   prompt,
   negativePrompt,
+  axes,
   log = LEGACY_SCAN_LOG,
 }: {
   image: ScanImage;
@@ -567,21 +573,29 @@ export async function resolveScanOutcome({
   workflowId: string;
   prompt?: string;
   negativePrompt?: string;
+  /** Rating axes, written with the verdict while `image-axis-shadow-write` is on. */
+  axes?: RatingAxes;
   log?: ScanLog;
 }): Promise<ScanOutcome> {
   const updatedAt = new Date();
+  const axesSet = await nsfwAxesScanSet({ imageId: image.id, axes, workflowId });
+  const axesTarget = { imageId: image.id, workflowId };
 
   if (blocked) {
-    await dbWrite.$executeRaw`
+    await writeWithNsfwAxes(
+      (axesTerm) => dbWrite.$executeRaw`
       UPDATE "Image"
       SET
         "updatedAt" = ${updatedAt},
         "pHash" = COALESCE(${pHash ?? null}, "pHash"),
         "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
           workflowId
-        )}::jsonb)
+        )}::jsonb)${axesTerm}
       WHERE id = ${image.id}
-    `;
+    `,
+      axesSet,
+      axesTarget
+    );
     return {
       ingestion: ImageIngestionStatus.Blocked,
       blockedFor: blocked.reason,
@@ -706,7 +720,8 @@ export async function resolveScanOutcome({
   const scanLevel = toUpdate.nsfwLevel as number;
   // The rule's keys, merged over the stored row so no other key is replaced.
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
-  await dbWrite.$executeRaw`
+  await writeWithNsfwAxes(
+    (axesTerm) => dbWrite.$executeRaw`
     UPDATE "Image"
     SET
       "updatedAt" = ${toUpdate.updatedAt},
@@ -723,9 +738,12 @@ export async function resolveScanOutcome({
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END,
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
-      )}::jsonb)
+      )}::jsonb)${axesTerm}
     WHERE id = ${image.id}
-  `;
+  `,
+    axesSet,
+    axesTarget
+  );
 
   // A collection judge's rating is a floor under an unlocked, unblocked level. Read from the row
   // after the write above, so a rating that landed after this scan loaded the image still holds; the

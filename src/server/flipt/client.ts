@@ -409,9 +409,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
   SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',
 
-  // Stores the rating axes an imageScanning result already carries in ImageAxisRating. DEFAULT-OFF:
-  // leave it off until the ImageAxisRating migration is applied. Shadow only: never changes the
-  // verdict. Evaluated with the imageId, so ramp by percentage or boolean.
+  // Stores the rating axes an imageScanning result already carries in Image.nsfwAxes. DEFAULT-OFF:
+  // apply the nsfwAxes migration first. Shadow only: never changes the verdict. Evaluated with the
+  // imageId, so ramp by percentage or boolean.
   IMAGE_AXIS_SHADOW_WRITE = 'image-axis-shadow-write',
 
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
