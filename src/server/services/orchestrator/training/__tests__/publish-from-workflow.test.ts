@@ -549,6 +549,34 @@ describe('createDraftModelFromWorkflow', () => {
     expect(mockUpsertModelVersion.mock.calls[0][0].baseModel).toBe('ACE Audio');
   });
 
+  describe('a run on a hidden base model', () => {
+    const yue2Run = () => {
+      const base = studioWorkflow() as unknown as { steps: { input: Record<string, unknown> }[] };
+      base.steps[0].input = { ...base.steps[0].input, ecosystem: 'yue2' };
+      return base as unknown as Workflow;
+    };
+
+    it('refuses a creator before any write', async () => {
+      const draft = createDraftModelFromWorkflow({
+        user: USER,
+        workflow: yue2Run(),
+        selectedEpochNumber: 1,
+      });
+      await expect(draft).rejects.toThrow(/can't be created/);
+      await expect(draft).rejects.toMatchObject({ cause: { reason: 'unsupported-base' } });
+      expect(mockUpsertModel).not.toHaveBeenCalled();
+    });
+
+    it('lets a moderator create the draft', async () => {
+      await createDraftModelFromWorkflow({
+        user: { ...USER, isModerator: true } as SessionUser,
+        workflow: yue2Run(),
+        selectedEpochNumber: 1,
+      });
+      expect(mockUpsertModelVersion.mock.calls[0][0].baseModel).toBe('YuE2');
+    });
+  });
+
   it('writes a MOSS Image version whose trainingDetails base the schema accepts', async () => {
     const base = studioWorkflow() as unknown as { steps: { input: Record<string, unknown> }[] };
     base.steps[0].input = {

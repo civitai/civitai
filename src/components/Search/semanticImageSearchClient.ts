@@ -25,6 +25,8 @@ export type RequestParams = {
   facetFilters?: string | (string | string[])[];
   numericFilters?: string | (string | string[])[];
   filters?: string;
+  /** Set by `useSimilarImage`: "more like this" for that image, while no query is typed. */
+  similarTo?: number;
 };
 
 const BROWSING_LEVEL_CLAUSE = /\bnsfwLevel=(\d+)/g;
@@ -135,11 +137,15 @@ type PagedResult<I> = {
  * InstantSearch pages by number; the semantic search pages by an offset into its ranking, because
  * hydration drops candidates. The offset each page starts at is remembered per query, and the
  * result is shaped as a Meilisearch page.
+ *
+ * Tied scores can reorder between requests, so a later page can repeat an id an earlier page showed;
+ * InstantSearch appends pages, so those repeats are dropped here.
  */
 export function createOffsetPager() {
   const pageCursors = new Map<string, number | undefined>();
+  const pageIds = new Map<string, number[]>();
 
-  return async function fetchPage<F extends object, I, H>({
+  return async function fetchPage<F extends object, I extends { id: number }, H>({
     query,
     filters,
     hitsPerPage,
@@ -163,10 +169,18 @@ export function createOffsetPager() {
 
     const result = await search({ ...filters, query, limit: hitsPerPage, cursor: offset });
     if (result.nextCursor !== undefined) pageCursors.set(`${key}:${page + 1}`, result.nextCursor);
-    const shown = page * hitsPerPage + result.items.length;
+    const earlier = new Set(
+      Array.from({ length: page }, (_, i) => pageIds.get(`${key}:${i}`) ?? []).flat()
+    );
+    const items = result.items.filter((item) => !earlier.has(item.id));
+    pageIds.set(
+      `${key}:${page}`,
+      items.map((item) => item.id)
+    );
+    const shown = page * hitsPerPage + items.length;
 
     return {
-      hits: result.items.map(toHit),
+      hits: items.map(toHit),
       nbHits: result.nextCursor !== undefined ? shown + hitsPerPage : shown,
       nbPages: result.nextCursor !== undefined ? page + 2 : page + 1,
       processingTimeMS: result.latencyMs,
@@ -183,6 +197,8 @@ export function createSemanticImageSearch({
 
   return async function searchImages(indexName: string, params: RequestParams) {
     const query = params.query?.trim();
+    // A typed query replaces "more like this".
+    const imageId = query ? undefined : params.similarTo || undefined;
     const hitsPerPage = params.hitsPerPage ?? 0;
     // Disjunctive-facet requests ask for facets only.
     const refined = readFacetFilters(params.facetFilters);
@@ -193,10 +209,11 @@ export function createSemanticImageSearch({
     );
     const dates = { createdAtUnix: { min: OLDEST_POST, max: Date.now() } };
     const empty = { ...emptyResult(indexName, params), facets, facets_stats: dates };
-    if (!query || hitsPerPage === 0) return empty;
+    if ((!query && !imageId) || hitsPerPage === 0) return empty;
     if ([...refined.keys()].some((attribute) => UNSUPPORTED_FACETS.has(attribute))) return empty;
 
     const filters = {
+      imageId,
       browsingLevel: readBrowsingLevel(params.filters),
       tagNames: refined.get('tagNames'),
       usernames: refined.get('user.username'),
@@ -205,7 +222,7 @@ export function createSemanticImageSearch({
       ...readPostedRange(params.numericFilters),
     };
     const page = await fetchPage({
-      query,
+      query: query ?? '',
       filters,
       hitsPerPage,
       page: params.page,

@@ -241,7 +241,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // browsingLevel UNCHANGED (mapped above from ?nsfw=/?browsingLevel=); the
     // block endpoint passes a server-clamped value. No other lever differs.
     const { items: found, nextCursor } = await runImageSearch(
-      { limit, skip, cursor, type, withMeta, flatMeta, withTags, feedService: true, data },
+      { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
     // Images picked by id name no model, so each is held by its own post's model.

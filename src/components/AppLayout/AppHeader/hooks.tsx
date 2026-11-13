@@ -9,6 +9,7 @@ import {
   IconBookmarkEdit,
   IconBriefcase,
   IconBrush,
+  IconBuildingStore,
   IconChartHistogram,
   IconCloudLock,
   IconCube,
@@ -153,6 +154,15 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconShoppingBag,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Shop',
+        },
+        {
+          id: 'browse-services',
+          href: '/services',
+          // The page's own SSR gate.
+          visible: features.creatorShop && features.creatorServices,
+          icon: IconBuildingStore,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Browse Services',
         },
         {
           id: 'service-requests',
