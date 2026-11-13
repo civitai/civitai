@@ -121,13 +121,15 @@ const MODEL = {
   },
 };
 
-/** Each image's moderation state, by id, as the image gate reads it. */
+/** Each image's moderation state, by id, as the image gate reads it: only what it selects. */
 const imageStates = (stateOf: (id: number) => object) =>
   dbMock.dbRead.image.findMany.mockImplementation((async ({
     where,
+    select,
   }: {
     where: { id: { in: number[] } };
-  }) => where.id.in.map((id) => ({ id, ...stateOf(id) }))) as never);
+    select: Select;
+  }) => where.id.in.map((id) => applySelect({ id, ...stateOf(id) }, select))) as never);
 
 beforeEach(() => {
   // No image is a restricted model's mature one, unless a test says so.
