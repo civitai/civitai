@@ -206,6 +206,7 @@ const GUARD_CALL_SITE_LEDGER = [
   'estimateWorkflow',
   'estimateWorkflowBatch',
   'getImagesByIds',
+  'getWorkflowMedia',
   'listMyWorkflows',
   'pollWorkflow',
   'publishGenerationOutputs',
@@ -232,6 +233,7 @@ const BRIDGE_INPUT_LEDGER = [
   // `blockEstimateBatchInputSchema`, imported from the workflow schema.
   'estimateWorkflowBatch',
   'getImagesByIds',
+  'getWorkflowMedia',
   'getMyBuzzAccounts',
   'getMyBuzzBalance',
   'getMyBuzzTransactions',

@@ -33,9 +33,7 @@ import {
 import {
   allBrowsingLevelsFlag,
   domainBrowsingCeiling,
-  effectiveBrowsingCeiling,
 } from '~/shared/constants/browsingLevel.constants';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { ratingHiddenByBrowsingLevel } from '~/server/services/blocks/app-listing-store-gate';
 import {
   resolvePerCallBuzzBudget,
@@ -66,6 +64,10 @@ import {
   signPrivateRunPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import type { SessionUser } from '~/types/session';
+import {
+  viewerEffectiveBrowsingLevel,
+  viewerOwnBrowsingLevel,
+} from '~/server/services/blocks/viewer-browsing-level';
 import {
   importScopeCoverage,
   withholdUncoveredImportScope,
@@ -101,20 +103,7 @@ import type { Logger } from '@civitai/next-axiom';
  * shape the route already uses for `appBlocks`, so the domain half of the
  * viewer-level derivation cannot drift from the rest of the request.
  */
-function resolveEffectiveBrowsingLevel(args: {
-  req: NextApiRequest;
-  sessionUser: SessionUser | undefined;
-  maxBrowsingLevel: number;
-}): number {
-  const { req, sessionUser, maxBrowsingLevel } = args;
-  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerOwnBrowsingLevel(req, sessionUser));
-}
-
-/** The viewer's own browsing level for this request (`getServerBrowsingLevel`; PG when absent). */
-function viewerOwnBrowsingLevel(req: NextApiRequest, sessionUser: SessionUser | undefined) {
-  const canViewNsfw = getFeatureFlags({ user: sessionUser, req }).canViewNsfw;
-  return getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
-}
+const resolveEffectiveBrowsingLevel = viewerEffectiveBrowsingLevel;
 
 /** Call only after the host gate: the site rule takes precedence over the level. */
 function hiddenByViewerBrowsingLevel(
@@ -1753,6 +1742,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     if (!manifestScopes.includes('ai:write:budgeted')) buzzBudget = undefined;
   }
 
+  const effectiveBrowsingLevel = resolveEffectiveBrowsingLevel({
+    req,
+    sessionUser: session?.user,
+    maxBrowsingLevel,
+  });
+
   const result =
     oauth?.outcome === 'minted'
       ? oauth
@@ -1767,6 +1762,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
           buzzBudget,
           domain: domainColor ?? null,
           maxBrowsingLevel,
+          viewerBrowsingLevel: effectiveBrowsingLevel,
         });
 
   // An OAuth token is not signed here: its budget is resolved when it is verified,
@@ -1806,10 +1802,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // that ceiling intersected with the viewer's own NSFW browsing level, and
     // it is what a block should render mature affordances against. Always a
     // subset of `maxBrowsingLevel` — see `resolveEffectiveBrowsingLevel`.
-    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
-      req,
-      sessionUser: session?.user,
-      maxBrowsingLevel,
-    }),
+    effectiveBrowsingLevel,
   });
 });

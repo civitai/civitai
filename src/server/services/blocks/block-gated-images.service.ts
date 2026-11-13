@@ -95,14 +95,19 @@ export type BlockGatedImage =
   | { imageId: number; status: 'hidden' };
 
 /**
- * Resolve a viewer's effective browsing-level ceiling from the block token's
- * `maxBrowsingLevel` claim (the platform-computed viewer+domain ceiling). Clamped
- * to selectable levels and FAILED CLOSED to the public (PG) floor for an absent /
- * zero / non-selectable value — so a malformed ceiling can only ever HIDE more,
- * never reveal above-level content.
+ * A viewer's browsing-level ceiling from the block token: the domain ceiling
+ * (`maxBrowsingLevel`) intersected with the viewer's own level
+ * (`viewerBrowsingLevel`), clamped to selectable levels. Fails closed to PG when
+ * either claim is absent, zero or non-selectable, so a malformed or legacy token
+ * can only ever hide more.
  */
-export function resolveViewerBrowsingLevel(maxBrowsingLevel: number | undefined | null): number {
-  const selectable = onlySelectableLevels(maxBrowsingLevel ?? 0);
+export function resolveViewerBrowsingLevel(claims: {
+  maxBrowsingLevel?: number | null;
+  viewerBrowsingLevel?: number | null;
+}): number {
+  const selectable = onlySelectableLevels(
+    (claims.maxBrowsingLevel ?? 0) & (claims.viewerBrowsingLevel ?? 0)
+  );
   return selectable || publicBrowsingLevelsFlag;
 }
 

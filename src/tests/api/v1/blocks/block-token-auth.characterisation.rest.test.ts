@@ -322,6 +322,12 @@ const ROUTES: Record<string, RouteSpec> = {
     query: { ids: '1' },
     scope: null,
   },
+  'src/pages/api/v1/blocks/workflow-media.ts': {
+    load: () => import('~/pages/api/v1/blocks/workflow-media'),
+    method: 'POST',
+    body: { refs: ['bm1.not-a-ref'] },
+    scope: null,
+  },
   'src/pages/api/v1/blocks/generation-resources.ts': {
     load: () => import('~/pages/api/v1/blocks/generation-resources'),
     method: 'GET',
@@ -2406,6 +2412,148 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     'private-run token, row not approved': X(
       200,
       { images: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42'],
+      []
+    ),
+  },
+  'src/pages/api/v1/blocks/workflow-media.ts': {
+    'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
+    'non-JWT bearer (OAuth tokens off)': X(
+      401,
+      { error: 'Block token required' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], [], null),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], [], null),
+    revoked: X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'revoked AND not approved': X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'missing scope': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42'],
+      []
+    ),
+    'token carries an unknown scope': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42'],
+      ['made:up:scope']
+    ),
+    'anonymous subject': X(
+      401,
+      { message: 'workflow media read requires an authenticated viewer' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      [],
+      []
+    ),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      [],
+      []
+    ),
+    'hub OAuth token': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
+      ['hydrate:42'],
+      []
+    ),
+    'missing approval row': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42'],
+      []
+    ),
+    'approval row read throws': X(
+      503,
+      { error: 'app block status unavailable' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'consent revoked for the route scope': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42'],
+      ['buzz:read:self']
+    ),
+    'consent marker unavailable': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42'],
+      ['buzz:read:self']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'dev token, no approval row': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['hydrate:42'],

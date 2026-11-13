@@ -30,7 +30,10 @@ import {
   getBlockGatedImagesByIds,
   resolveViewerBrowsingLevel,
 } from '~/server/services/blocks/block-gated-images.service';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const SFW = NsfwLevel.PG | NsfwLevel.PG13; // 3
@@ -325,9 +328,34 @@ describe('getBlockGatedImagesByIds', () => {
 });
 
 describe('resolveViewerBrowsingLevel', () => {
-  it('fails closed to the public (PG) floor for an absent/zero ceiling', () => {
-    expect(resolveViewerBrowsingLevel(undefined)).toBe(publicBrowsingLevelsFlag);
-    expect(resolveViewerBrowsingLevel(null)).toBe(publicBrowsingLevelsFlag);
-    expect(resolveViewerBrowsingLevel(0)).toBe(publicBrowsingLevelsFlag);
+  it('fails closed to the public (PG) floor when either claim is absent or zero', () => {
+    expect(resolveViewerBrowsingLevel({})).toBe(publicBrowsingLevelsFlag);
+    expect(resolveViewerBrowsingLevel({ maxBrowsingLevel: allBrowsingLevelsFlag })).toBe(
+      publicBrowsingLevelsFlag
+    );
+    expect(resolveViewerBrowsingLevel({ viewerBrowsingLevel: allBrowsingLevelsFlag })).toBe(
+      publicBrowsingLevelsFlag
+    );
+    expect(resolveViewerBrowsingLevel({ maxBrowsingLevel: 0, viewerBrowsingLevel: 0 })).toBe(
+      publicBrowsingLevelsFlag
+    );
+  });
+
+  it('a PG viewer on an all-levels domain gets PG, not the domain ceiling', () => {
+    expect(
+      resolveViewerBrowsingLevel({
+        maxBrowsingLevel: allBrowsingLevelsFlag,
+        viewerBrowsingLevel: NsfwLevel.PG,
+      })
+    ).toBe(NsfwLevel.PG);
+  });
+
+  it('an all-levels viewer on an SFW domain gets the domain ceiling', () => {
+    expect(
+      resolveViewerBrowsingLevel({
+        maxBrowsingLevel: publicBrowsingLevelsFlag,
+        viewerBrowsingLevel: allBrowsingLevelsFlag,
+      })
+    ).toBe(publicBrowsingLevelsFlag);
   });
 });

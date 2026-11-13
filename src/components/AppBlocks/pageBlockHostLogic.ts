@@ -579,6 +579,29 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
   return { requestId: obj.requestId, imageIds };
 }
 
+// ── GET_WORKFLOW_MEDIA ───────────────────────────────────────────────────────
+
+export type GetWorkflowMediaRequest = { requestId: string; refs: string[] };
+
+/** Max refs the host forwards; matches `blocks.getWorkflowMedia`. */
+export const GET_WORKFLOW_MEDIA_MAX_REFS = 32;
+
+/**
+ * Validate a raw GET_WORKFLOW_MEDIA payload from an untrusted iframe: `null` drops it
+ * (no requestId); non-string refs are filtered out and the list is capped.
+ */
+export function resolveGetWorkflowMediaRequest(raw: unknown): GetWorkflowMediaRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+  const refs = Array.isArray(obj.refs)
+    ? obj.refs
+        .filter((r): r is string => typeof r === 'string' && r.length > 0 && r.length <= 2048)
+        .slice(0, GET_WORKFLOW_MEDIA_MAX_REFS)
+    : [];
+  return { requestId: obj.requestId, refs };
+}
+
 // ── ESTIMATE_WORKFLOW_BATCH ──────────────────────────────────────────────────
 // A grid app asks for the price of several generations in one message: a list of
 // workflow bodies, each the body ESTIMATE_WORKFLOW carries. The host forwards the

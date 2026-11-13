@@ -113,6 +113,12 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
       'parseSubjectUserId(claims.sub) on claims stamped by withBlockScope, passed in by the document-store route handler',
     why: 'The document-store resolver behind /api/v1/blocks/storage: the RUN gate on the viewer whose documents a request reads or writes, the same gate the legacy per-viewer storage path applies. The subject is the one the store keys private documents and authorship on.',
   },
+  'src/server/services/blocks/block-media-serving.ts': {
+    calls: 1,
+    selfBinds:
+      'parseSubjectUserId(claims.sub) on claims verified by the caller — authorizeBlockBridgeToken on the bridge, withBlockScope on REST',
+    why: 'The shared body of blocks.getWorkflowMedia and GET /api/v1/blocks/workflow-media, gated in the shared body for the same reason as the gated image read: the two transports cannot disagree about whether the kill switch ran.',
+  },
   'src/pages/api/v1/blocks/me.ts': {
     calls: 1,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims stamped by withBlockScope',
@@ -198,7 +204,8 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     // 2 → 4: `block-gated-images-read.service.ts` (the extracted gated-image read body)
     // and `user-settings.service.ts` (the extracted viewer-settings write body).
     // 4 → 5: `apps/doc-store-access.ts` (the document-store resolver).
-    expect(consumers.length).toBe(5);
+    // 5 → 6: `block-media-serving.ts` (the workflow media read body).
+    expect(consumers.length).toBe(6);
     expect(
       importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);

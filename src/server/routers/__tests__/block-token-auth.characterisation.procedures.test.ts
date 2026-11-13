@@ -282,6 +282,7 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.estimateWorkflow': { body: WORKFLOW_BODY },
   'blocks.estimateWorkflowBatch': { bodies: [WORKFLOW_BODY] },
   'blocks.getImagesByIds': { imageIds: [1] },
+  'blocks.getWorkflowMedia': { refs: ['bm1.not-a-ref'] },
   'blocks.getMyBuzzAccounts': {},
   'blocks.getMyBuzzBalance': {},
   'blocks.getMyBuzzTransactions': {},
@@ -865,6 +866,45 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     'anonymous subject': E(
       'UNAUTHORIZED',
       'gated image read requires an authenticated viewer',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag off)": OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+  },
+  'blocks.getWorkflowMedia': {
+    'valid token': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'workflow media read requires an authenticated viewer',
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok']
     ),

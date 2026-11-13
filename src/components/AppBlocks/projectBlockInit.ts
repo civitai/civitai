@@ -257,3 +257,6 @@ export function projectBlockInitViewer(context: SlotContext): BlockInitPayload['
     username: source.viewerUsername ?? null,
   });
 }
+
+/** Capabilities the page host advertises in `BLOCK_INIT`; see `BlockInitPayload.capabilities`. */
+export const PAGE_HOST_CAPABILITIES = ['workflowMedia:v1'];

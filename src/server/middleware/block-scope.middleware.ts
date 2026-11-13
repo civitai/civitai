@@ -112,6 +112,12 @@ export interface BlockTokenClaims {
    * widen to mature catalog content.
    */
   maxBrowsingLevel?: number;
+  /**
+   * The viewer's own browsing level intersected with `maxBrowsingLevel`, stamped
+   * at mint. Absent on tokens minted before it existed: consumers fail closed to
+   * PG (`resolveViewerBrowsingLevel`).
+   */
+  viewerBrowsingLevel?: number;
   /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
   domain?: string;
   /**
@@ -1043,6 +1049,13 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       ) {
         return null;
       }
+      if (
+        claims.viewerBrowsingLevel !== undefined &&
+        // A non-negative integer: an all-bits value like -1 would pass AND-ing unchanged.
+        !(Number.isInteger(claims.viewerBrowsingLevel) && claims.viewerBrowsingLevel >= 0)
+      ) {
+        return null;
+      }
       if (claims.domain !== undefined && typeof claims.domain !== 'string') {
         return null;
       }
@@ -1519,6 +1532,9 @@ async function resolveHubTokenClaims(
   const scopes = partitionByConsent(declared, granted).signable;
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
+  const { viewerEffectiveBrowsingLevel } = await import(
+    '~/server/services/blocks/viewer-browsing-level'
+  );
   const host = req.headers.host ?? '';
   const domainColor = getRequestDomainColor(req);
   const maxBrowsingLevel =
@@ -1545,6 +1561,11 @@ async function resolveHubTokenClaims(
       : {}),
     ...(typeof domainColor === 'string' ? { domain: domainColor } : {}),
     maxBrowsingLevel,
+    viewerBrowsingLevel: viewerEffectiveBrowsingLevel({
+      req,
+      sessionUser: session.user,
+      maxBrowsingLevel,
+    }),
   };
 }
 
@@ -2358,6 +2379,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'user-checkpoint',
   'vote',
   'withdraw',
+  'workflow-media',
   'workflows',
 ]);
 

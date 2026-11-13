@@ -54,6 +54,7 @@ vi.mock('~/utils/trpc', () => ({
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: publishMutate }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: getImagesMutate }) },
+      getWorkflowMedia: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
       // that resolves the consent payload, and the write. PageBlockHost reads both
       // at render, so a mock missing either makes the WHOLE component throw.

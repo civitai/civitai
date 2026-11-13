@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
+import { parseBlobVerdictHeaders } from '~/shared/orchestrator/blob-verdict-headers';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import type { InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -55,11 +56,12 @@ export function selectUnratedOutputs(workflows: CachedWorkflow[]) {
 /** Resolves once the orchestrator has a verdict for the blob; rejects on a failed scan or error. */
 export async function readBlobVerdict(url: string): Promise<BlobVerdict> {
   const response = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-  const nsfwLevel = response.headers.get('X-NSFW-Level')?.toLowerCase();
-  const blockedReason = response.headers.get('X-Blocked-Reason') ?? undefined;
-  if (!response.ok || (!nsfwLevel && !blockedReason))
-    throw new Error(`blob verdict unavailable (${response.status})`);
-  return { nsfwLevel, blockedReason };
+  const verdict = parseBlobVerdictHeaders(response.headers, response.status);
+  if (verdict.status !== 'rated') throw new Error(`blob verdict unavailable (${response.status})`);
+  return {
+    nsfwLevel: verdict.nsfwLevel ?? undefined,
+    blockedReason: verdict.blockedReason ?? undefined,
+  };
 }
 
 export function createUnratedOutputWatcher({

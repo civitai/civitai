@@ -8,6 +8,10 @@ const { isFliptMock, isRevokedMock, sessionMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
+const { viewerLevelMock } = vi.hoisted(() => ({ viewerLevelMock: vi.fn(() => 3) }));
+vi.mock('~/server/services/blocks/viewer-browsing-level', () => ({
+  viewerEffectiveBrowsingLevel: viewerLevelMock,
+}));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: isRevokedMock },
 }));
@@ -114,6 +118,14 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
       blockId: BLOCK_ID,
       blockInstanceId: `page_${APP_BLOCK_ID}`,
     });
+    // 🔴 The viewer level is the viewer's own, intersected with this request's ceiling.
+    expect(claims?.viewerBrowsingLevel).toBe(3);
+    expect(viewerLevelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionUser: expect.objectContaining({ id: USER_ID }),
+        maxBrowsingLevel: claims?.maxBrowsingLevel,
+      })
+    );
     // consent-exempt scopes ride along; the ungranted buzz scope is withheld
     expect([...(claims?.scopes ?? [])].sort()).toEqual(['apps:storage:read', SCOPE]);
     expect(dbMock.dbRead.appBlock.findFirst.mock.calls[0][0].where).toEqual({

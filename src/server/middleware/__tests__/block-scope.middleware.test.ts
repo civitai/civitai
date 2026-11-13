@@ -292,6 +292,15 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(await verifyBlockToken(await signRaw({ maxBrowsingLevel: Infinity }))).toBeNull();
   });
 
+  it('accepts a non-negative integer viewerBrowsingLevel, and rejects anything else', async () => {
+    expect(
+      (await verifyBlockToken(await signRaw({ viewerBrowsingLevel: 3 })))?.viewerBrowsingLevel
+    ).toBe(3);
+    for (const viewerBrowsingLevel of [-1, 1.5, '3', NaN, null]) {
+      expect(await verifyBlockToken(await signRaw({ viewerBrowsingLevel }))).toBeNull();
+    }
+  });
+
   it('rejects a token with a non-numeric maxBrowsingLevel', async () => {
     expect(await verifyBlockToken(await signRaw({ maxBrowsingLevel: '3' }))).toBeNull();
   });
