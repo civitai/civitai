@@ -2,7 +2,6 @@ import { describe, expect, test, vi } from 'vitest';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as AppProviderModule from '~/providers/AppProvider';
 
-// The real `useCurrentDomainHref` runs against a reader on civitai.red.
 vi.mock('~/providers/AppProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof AppProviderModule>()),
   useMaybeAppContext: () => ({

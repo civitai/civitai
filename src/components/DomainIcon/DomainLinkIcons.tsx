@@ -4,8 +4,8 @@ import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { getDomainLinkLabel, sortDomainLinks } from '~/utils/domain-link';
 
 /**
- * A creator's profile links as icons. A link to one of our own sites opens on the site being
- * read, so a civitai.com profile link keeps a civitai.red reader on civitai.red.
+ * A creator's profile links as icons. A path link to one of our sites opens on the site being
+ * read, so a civitai.com/user/x link keeps a civitai.red reader on civitai.red.
  */
 export function DomainLinkIcons({
   links,
