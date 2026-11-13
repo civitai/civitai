@@ -1365,6 +1365,46 @@ export const serverSchema = z
     APP_FORK_SEED_S3_ACCESS_KEY_ID: z.string().optional(),
     APP_FORK_SEED_S3_SECRET_ACCESS_KEY: z.string().optional(),
 
+    // APP HIBERNATE ("Sleeping" apps) — `src/server/services/app-hibernation/`. All optional:
+    // with any of them unset, every hibernation endpoint answers 503 and nothing is archived.
+    // The feature is also dark behind the `app-hibernate` Flipt flag regardless.
+    //
+    // The archive store: the bucket a sleeping app's workspace zip and its sealed `.env*` blob
+    // are kept in, under `archives/`, with NO lifecycle rule (the objects are the only copy).
+    // APP_ARCHIVE_S3_ENDPOINT is for civitai's own calls (it may be plain http with a port).
+    // APP_ARCHIVE_S3_PUBLIC_ENDPOINT is used ONLY to presign the URLs handed to the sandbox
+    // service: https with no port (anything else counts as unset), and path-style, so a presigned
+    // URL's host is its host. Unset, nothing is presigned and hibernation answers 503; civitai
+    // never presigns on the in-cluster endpoint instead.
+    APP_ARCHIVE_S3_ENDPOINT: z.string().url().optional(),
+    APP_ARCHIVE_S3_PUBLIC_ENDPOINT: z.string().url().optional(),
+    APP_ARCHIVE_S3_BUCKET: z.string().optional(),
+    APP_ARCHIVE_S3_ACCESS_KEY_ID: z.string().optional(),
+    APP_ARCHIVE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+    // The shared secret the sandbox service signs `/api/internal/app-hibernation/*` requests
+    // with (HMAC-SHA256): at least 32 characters. Blank is accepted here so a bare key cannot
+    // stop the app from booting; blank or unset, those endpoints answer 503.
+    APP_HIBERNATION_HMAC_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_HIBERNATION_HMAC_SECRET must be at least 32 characters',
+      })
+      .optional(),
+    // The PREVIOUS signing secret, still accepted while a rotation is under way (set it to the old
+    // value, move the sandbox service to the new one, then clear it). Never used alone: with
+    // APP_HIBERNATION_HMAC_SECRET unset the endpoints answer 503 whatever this holds.
+    APP_HIBERNATION_HMAC_SECRET_PREVIOUS: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_HIBERNATION_HMAC_SECRET_PREVIOUS must be at least 32 characters',
+      })
+      .optional(),
+    // The master keys that wrap each sleeping app's per-archive data key (envelope encryption of
+    // its `.env*` files): comma-separated `<kid>:<base64 of 32 random bytes>`, the CURRENT key
+    // first, then old keys kept only to unwrap. Held by civitai only; never sent to the sandbox
+    // service. Malformed, it counts as unset.
+    APP_ARCHIVE_SECRETS_MASTER_KEYS: z.string().optional(),
+
     // APP DEV TUNNEL (on-site dev via hardened sish tunnel — P1 control plane).
     // ALL optional so envs without the feature still boot; the feature is dark
     // behind the `app-blocks-dev-tunnel` Flipt flag regardless.
