@@ -440,12 +440,23 @@ describe('filters', () => {
 
   it('never proposes NSFW images on a base model that forbids NSFW', async () => {
     const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery(), candidateSource: source });
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
+      user: { id: 501, isModerator: true } as SessionUser,
+      candidateSource: source,
+    });
     const [restricted] = calls[0].filter.mustNot as {
       must: { key: string; match: { any: unknown[] } }[];
     }[];
     expect(restricted.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
     for (const c of restricted.must) expect(c.match.any.length).toBeGreaterThan(0);
+  });
+
+  it('drops the base-model rule when the gate holds no NSFW level', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
+    expect(calls[0].filter.mustNot).toEqual([]);
   });
 
   it("sends the viewer's browsing level, never an empty one", async () => {
@@ -741,8 +752,8 @@ describe('the search service call', () => {
         { key: 'tagIds', match: { value: 42 } },
       ])
     );
-    // The base-model license rule, as a nested must_not.
-    expect(sent[0].body.filter.must_not).toContainEqual(
+    // A PG gate carries no base-model license rule: it could never match.
+    expect(sent[0].body.filter.must_not ?? []).not.toContainEqual(
       expect.objectContaining({ must: expect.any(Array) })
     );
   });
