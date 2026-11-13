@@ -784,11 +784,14 @@ export const upsertModelVersion = async ({
     surface: 'modelVersion',
     ...patternLogIds,
   });
-  // Trigger words are part of the listing the .com face re-check reads (queued after commit).
+  // Version names and trigger words show on .com unchanged: the .com face re-check rates them
+  // (queued after commit).
   const trainedWordsChanged =
     data.trainedWords !== undefined &&
     [...new Set(data.trainedWords)].sort().join('\n') !==
       [...new Set(storedText?.trainedWords ?? [])].sort().join('\n');
+  const comTextChanged =
+    trainedWordsChanged || (data.name !== undefined && data.name !== storedText?.name);
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -1063,7 +1066,7 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) {
+    if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
     }
@@ -1322,7 +1325,7 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) {
+    if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
     }
@@ -3210,7 +3213,9 @@ export function publicModelResponseKey(
   modelId: number,
   browsingLevel: number
 ): RedisKeyTemplateCache {
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
+  // `v2`: bodies whose card images are held to the level. Bump when the body's filtering changes,
+  // so entries built by the previous code are not read.
+  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
 }
 
 // Best-effort, fail-open invalidation of the origin-side public response cache for

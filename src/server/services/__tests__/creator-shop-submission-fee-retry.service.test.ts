@@ -1,0 +1,548 @@
+import { Prisma } from '@prisma/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { createFakeBuzzLedger, insufficientFunds } from './buzz-ledger.fake';
+import { createFakeAdvisoryLocks, settle } from './charge-lock.fake';
+
+/**
+ * A creator shop submission whose fee charge ends with an unknown outcome (the ledger committed,
+ * the response was lost) must charge once across the creator's retry, continue to the listing when
+ * a resend under the same id answers, and never list a second submission on one fee. Item and
+ * pack share one fee path; both are driven here against a fake ledger with the service's
+ * external-id semantics.
+ */
+
+const { mocks, buzz } = vi.hoisted(() => ({
+  mocks: {
+    keyValueFindUnique: vi.fn(),
+    cosmeticCreate: vi.fn(),
+    shopItemCreate: vi.fn(),
+    packMemberCreate: vi.fn(),
+    shopItemFindMany: vi.fn(),
+    sharpMetadata: vi.fn(),
+  },
+  buzz: {
+    createBuzzTransaction: vi.fn(),
+    resendBuzzTransaction: vi.fn(),
+    getTransactionByExternalId: vi.fn(),
+    refundTransaction: vi.fn(),
+  },
+}));
+
+dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.keyValue.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.keyValueFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+// Every transaction goes through the fake advisory locks, so two requests with one key serialise
+// the way they do on the primary.
+let locks = createFakeAdvisoryLocks();
+const txClient = () => ({
+  cosmetic: { create: mocks.cosmeticCreate },
+  cosmeticShopItem: { create: mocks.shopItemCreate },
+  cosmeticShopItemCosmetic: { createMany: mocks.packMemberCreate },
+  // The listed-fee check: a listing of this submitter whose meta records this fee.
+  $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = strings.join('?');
+    if (!sql.includes(`meta->>'submissionTxId'`)) throw new Error(`unexpected query: ${sql}`);
+    return values[0] === USER && listedTxIds.has(String(values[1])) ? [{ id: 1 }] : [];
+  },
+});
+dbMock.dbWrite.$transaction.mockImplementation(((
+  cb: (tx: unknown) => Promise<unknown>,
+  options?: { timeout?: number }
+) => locks.transaction(cb, txClient(), options)) as never);
+
+vi.mock('sharp', () => ({ default: () => ({ metadata: mocks.sharpMetadata }) }));
+vi.mock('~/server/services/buzz.service', () => buzz);
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+
+const { submitCreatorShopItem } = await import('../creator-shop.service');
+const { submitCreatorShopPack } = await import('../creator-shop-pack.service');
+// Literal, not imported: the user-facing contract, and importable where the module is absent.
+const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
+  "We couldn't confirm whether your Buzz payment went through. Trying this same action again from this page is safe. If you reloaded or left the page, check your Buzz balance and transactions first.";
+const ALREADY_COMPLETED =
+  'This submission was already completed. Reload to see it, or start a new submission.';
+const PAYMENT_REFUNDED_MESSAGE = 'The payment for this attempt was refunded. Please try again.';
+const fees = await import('../creator-shop-fees.service');
+const submissionFeeTransactionId = (...a: Parameters<typeof fees.submissionFeeTransactionId>) =>
+  fees.submissionFeeTransactionId(...a);
+
+const USER = 11;
+const KEY = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
+const OTHER_KEY = '0e9d8c7b-6a5f-4e3d-8c2b-1a0f9e8d7c6b';
+const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
+const ITEM_FEE = 10000;
+const PACK_FEE = 1000;
+const members = [1, 2];
+
+const sites = [
+  {
+    kind: 'item',
+    fee: ITEM_FEE,
+    submit: (extra: { idempotencyKey?: string; userId?: number; name?: string } = {}) =>
+      submitCreatorShopItem({
+        userId: USER,
+        cosmeticType: CosmeticType.Badge,
+        name: 'Golden Laurel',
+        description: null,
+        imageUrl: ART_KEY,
+        price: 500,
+        availableQuantity: null,
+        buzzType: 'yellow',
+        sellableByOthers: false,
+        sellerShare: 0,
+        acceptsBlueBuzz: false,
+        rightsAffirmed: true,
+        quotedFee: ITEM_FEE,
+        ...extra,
+      }),
+  },
+  {
+    kind: 'pack',
+    fee: PACK_FEE,
+    submit: (extra: { idempotencyKey?: string; userId?: number; name?: string } = {}) =>
+      submitCreatorShopPack({
+        userId: USER,
+        name: 'Laurels',
+        description: null,
+        price: 1000,
+        availableQuantity: null,
+        buzzType: 'yellow',
+        acceptsBlueBuzz: false,
+        memberCosmeticIds: members,
+        quotedFee: PACK_FEE,
+        ...extra,
+      }),
+  },
+] as const;
+
+let ledger: ReturnType<typeof createFakeBuzzLedger>;
+const listedTxIds = new Set<string>();
+let clock = 1_700_000_000_000;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  redisMock.sysRedis.mGet.mockResolvedValue([String(USER)] as never);
+  mocks.keyValueFindUnique.mockResolvedValue(null);
+  mocks.sharpMetadata.mockResolvedValue({
+    width: 144,
+    height: 144,
+    format: 'png',
+    hasAlpha: true,
+    pages: 1,
+  });
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      arrayBuffer: async () => new ArrayBuffer(8),
+    })
+  );
+  mocks.cosmeticCreate.mockResolvedValue({ id: 99 });
+  // Listings record their fee's transaction; the reused-key check reads them back from there.
+  listedTxIds.clear();
+  mocks.shopItemCreate.mockImplementation(
+    async (args: { data: { meta: { submissionTxId: string } } }) => {
+      listedTxIds.add(args.data.meta.submissionTxId);
+      return { id: listedTxIds.size };
+    }
+  );
+  dbMock.dbWrite.cosmeticShopItem.findFirst.mockImplementation((async (args: {
+    where: { meta: { path: string[]; equals: string } };
+  }) =>
+    args.where.meta.path.join('.') === 'submissionTxId' && listedTxIds.has(args.where.meta.equals)
+      ? { id: 1 }
+      : null) as never);
+  // The artwork duplicate check reads no listings; the pack's member read returns its members.
+  mocks.shopItemFindMany.mockImplementation(async (args: { where?: { cosmeticId?: unknown } }) =>
+    args?.where?.cosmeticId
+      ? members.map((id) => ({
+          cosmeticId: id,
+          unitAmount: 500,
+          meta: { acceptsBlueBuzz: false },
+          cosmetic: {
+            id,
+            name: `member ${id}`,
+            type: CosmeticType.Badge,
+            data: {},
+            createdById: USER,
+            creator: { username: 'me' },
+          },
+        }))
+      : []
+  );
+
+  // Reset, not just cleared: a once-queued answer a test never reached must not leak.
+  for (const fn of Object.values(buzz)) fn.mockReset();
+  ledger = createFakeBuzzLedger();
+  locks = createFakeAdvisoryLocks();
+  buzz.createBuzzTransaction.mockImplementation(ledger.createBuzzTransaction);
+  buzz.resendBuzzTransaction.mockImplementation(ledger.resendBuzzTransaction);
+  buzz.getTransactionByExternalId.mockImplementation(ledger.getTransactionByExternalId);
+  buzz.refundTransaction.mockImplementation(ledger.refundTransaction);
+  // Each attempt is a later moment, as it is for a creator pressing submit again.
+  vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1000));
+});
+
+const submittedTxId = () => mocks.shopItemCreate.mock.calls[0][0].data.meta.submissionTxId;
+
+describe.each(sites)('$kind submission fee across an unknown outcome', (site) => {
+  it('a retry with the same key after an unanswered charge charges once and submits', async () => {
+    // The charge and its resend both go unanswered: the creator is told it may have gone through.
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    // What the creator is told is pinned below; here only that it failed and created nothing.
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toThrow();
+    ledger.clearFaults();
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+
+    await site.submit({ idempotencyKey: KEY });
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(ledger.charges()[0].amount).toBe(site.fee);
+    expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    expect(submittedTxId()).toBe(ledger.charges()[0].transactionId);
+  });
+
+  it('continues to the listing in the same request when the resend answers', async () => {
+    ledger.queueFault('lose-response');
+
+    await site.submit({ idempotencyKey: KEY });
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(buzz.resendBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    // The ledger's own id, answered to the resend for the charge the lost response carried.
+    expect(submittedTxId()).toBe(ledger.charges()[0].transactionId);
+  });
+
+  it('charges once through the resend when the first send moved nothing', async () => {
+    ledger.queueFault('fail-before-commit');
+
+    await site.submit({ idempotencyKey: KEY });
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers "may have gone through" when the resend also fails, and creates nothing', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('fail-before-commit');
+
+    const error = await site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect((error as Error).message).toBe(PAYMENT_OUTCOME_UNKNOWN_MESSAGE);
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+    expect(buzz.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('passes a decline through unchanged, without a resend', async () => {
+    buzz.createBuzzTransaction.mockRejectedValueOnce(insufficientFunds());
+
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toThrow(/enough funds/);
+    expect(buzz.resendBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses to reuse a charge that was refunded, so the client starts over', async () => {
+    mocks.shopItemCreate.mockRejectedValueOnce(new Error('write failed'));
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toThrow('write failed');
+    expect(ledger.refunds()).toHaveLength(1);
+
+    const error = await site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: PAYMENT_REFUNDED_MESSAGE });
+    expect(ledger.charges()).toHaveLength(1);
+    expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+  });
+
+  // A listed submission whose response was lost, then the key sent again: for the same content (a
+  // retry) or other content (a client that held the key too long). That fee paid for the first
+  // listing; nothing is listed on it again.
+  it.each([
+    ['the same submission', {}],
+    ['a different submission', { name: 'Another listing' }],
+  ])('refuses a reused key whose charge is already listed: %s', async (_, other) => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await site.submit({ idempotencyKey: KEY }).catch(() => undefined);
+    ledger.clearFaults();
+    await site.submit({ idempotencyKey: KEY });
+    expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+
+    const error = await site.submit({ idempotencyKey: KEY, ...other }).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: ALREADY_COMPLETED });
+    expect(ledger.charges()).toHaveLength(1);
+    expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a different submission after a lost response, under its own key, pays its own fee', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await site.submit({ idempotencyKey: KEY }).catch(() => undefined);
+    ledger.clearFaults();
+
+    await site.submit({ idempotencyKey: OTHER_KEY, name: 'Another listing' });
+
+    expect(ledger.charges()).toHaveLength(2);
+    expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    expect(submittedTxId()).toBe(ledger.charges()[1].transactionId);
+  });
+
+  // The first charge landed and spent the balance; the retry is answered from it, not refused
+  // as "insufficient funds" (a 400 the client reads as "nothing charged, start over").
+  it('a retry whose balance the first charge spent continues from that charge', async () => {
+    ledger.setBalance(USER, site.fee);
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toThrow();
+    ledger.clearFaults();
+    expect(ledger.balanceOf(USER)).toBe(0);
+
+    await site.submit({ idempotencyKey: KEY });
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    expect(submittedTxId()).toBe(ledger.charges()[0].transactionId);
+  });
+
+  it('a clean "insufficient funds" answer to the first send is the old 400', async () => {
+    buzz.createBuzzTransaction.mockResolvedValueOnce({ transactionId: null });
+
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Unable to charge the submission fee',
+    });
+    expect(buzz.resendBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // Without the lookup there is no telling a retry whose charge landed from a fresh submission;
+  // charging anyway could be a second charge.
+  it('a lookup that fails before charging is "may have gone through", and charges nothing', async () => {
+    ledger.failLookups();
+
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+    });
+    expect(ledger.charges()).toHaveLength(0);
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+  });
+
+  // Another request with the key failed its write and refunded the charge after this one charged
+  // but before it got the lock: only the check under the lock can see that.
+  it('refuses to list on a charge refunded while it waited for the lock', async () => {
+    locks.onNextLock(async () => {
+      await ledger.refundTransaction(ledger.charges()[0].transactionId);
+    });
+
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: PAYMENT_REFUNDED_MESSAGE,
+    });
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+  });
+
+  it('takes the lock on the fee charge id', async () => {
+    await site.submit({ idempotencyKey: KEY });
+    expect(locks.taken()).toEqual([submissionFeeTransactionId(site.kind, USER, KEY)]);
+  });
+
+  // A slow Buzz service must not hold the app's write pool: the charge runs before the record's
+  // transaction opens.
+  it('holds no transaction while the Buzz charge is pending', async () => {
+    ledger.queueFault('hang');
+    const submitted = site.submit({ idempotencyKey: KEY });
+    while (!ledger.isHung()) await settle();
+    expect(locks.open()).toBe(0);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    ledger.releaseHung();
+    await submitted;
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  // A hung charge: the client times out and retries while the first request is still running.
+  it('two requests with one key in flight: one charge, one listing', async () => {
+    ledger.queueFault('hang');
+    const first = site.submit({ idempotencyKey: KEY });
+    await settle();
+    const second = site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+    await settle();
+    ledger.releaseHung();
+    const results = await Promise.all([first.catch((e: unknown) => e), second]);
+
+    // The ledger gave both the one charge; whichever recorded second is refused, not listed.
+    expect(ledger.charges()).toHaveLength(1);
+    expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    expect(
+      results.filter((r) => (r as { message?: string })?.message === ALREADY_COMPLETED)
+    ).toHaveLength(1);
+  });
+
+  it('the first request refund after a failed write never reverses a charge the second listed', async () => {
+    let failWrite!: (error: Error) => void;
+    mocks.shopItemCreate.mockImplementationOnce(
+      () => new Promise((_, reject) => (failWrite = reject))
+    );
+    const first = site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+    while (!failWrite) await settle();
+    const second = site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+    await settle();
+    failWrite(new Error('write failed'));
+
+    expect(await first).toMatchObject({ message: 'write failed' });
+    await second;
+    // Exactly one of: the second request listed it and the charge was kept, or it was refunded and
+    // nothing was listed. Never a listing on refunded money.
+    expect(ledger.charges()).toHaveLength(1);
+    expect(listedTxIds.size + ledger.refunds().length).toBe(1);
+  });
+
+  // The refund after a failed write is the one Buzz call made under the lock. The transaction's
+  // deadline releases the lock; if that could pass while the refund was still being attempted, a
+  // same-key retry could record on money the refund then takes back. The refund's attempts must
+  // all end inside the deadline, whatever the Buzz service does.
+  describe('a refund the Buzz service never answers', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('ends before the record transaction does, so the lock is never released under it', async () => {
+      vi.useFakeTimers();
+      ledger.hangRefunds();
+      mocks.shopItemCreate.mockRejectedValueOnce(new Error('write failed'));
+
+      const submitted = site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+      expect(await submitted).toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+      });
+      expect(buzz.refundTransaction).toHaveBeenCalledTimes(1);
+      expect(locks.expiredWhileRunning()).toBe(0);
+      // One attempt, inside the budget the lock's transaction is sized for (buzz-charge-lock.ts).
+      expect(buzz.refundTransaction.mock.calls[0][3]).toEqual({ timeoutMs: 10_000, retries: 0 });
+    });
+  });
+
+  // After the charge, every failure of the record step that is not a refusal says nothing about
+  // whether the record was written: "may have gone through", no refund, and the charge left for a
+  // retry to continue from.
+  describe('a record step that fails after the charge', () => {
+    const prismaError = (code: string, meta?: Record<string, unknown>) =>
+      new Prisma.PrismaClientKnownRequestError('boom', { code, clientVersion: 'test', meta });
+    const failures: [string, () => void][] = [
+      [
+        'no pooled connection (P2024)',
+        () =>
+          dbMock.dbWrite.$transaction.mockImplementationOnce((() =>
+            Promise.reject(prismaError('P2024'))) as never),
+      ],
+      [
+        'the transaction failing to start (P2028)',
+        () =>
+          dbMock.dbWrite.$transaction.mockImplementationOnce((() =>
+            Promise.reject(prismaError('P2028'))) as never),
+      ],
+      [
+        'a statement timeout in the listed check',
+        () =>
+          dbMock.dbWrite.$transaction.mockImplementationOnce(((
+            cb: (tx: unknown) => Promise<unknown>
+          ) =>
+            locks.transaction(cb, {
+              $queryRaw: () => Promise.reject(prismaError('P2010', { code: '57014' })),
+            })) as never),
+      ],
+      [
+        'a SET under the lock failing',
+        () =>
+          dbMock.dbWrite.$transaction.mockImplementationOnce(((
+            cb: (tx: unknown) => Promise<unknown>
+          ) =>
+            cb({
+              $executeRaw: () => Promise.reject(prismaError('P2010', { code: '25P02' })),
+            })) as never),
+      ],
+    ];
+
+    it.each(failures)('%s is "may have gone through", with no refund', async (_, arrange) => {
+      arrange();
+
+      const error = await site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+
+      expect(error).toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+      });
+      expect(ledger.charges()).toHaveLength(1);
+      expect(ledger.refunds()).toHaveLength(0);
+      expect(buzz.refundTransaction).not.toHaveBeenCalled();
+
+      // The key is kept, and its retry continues from the charge.
+      await site.submit({ idempotencyKey: KEY });
+      expect(ledger.charges()).toHaveLength(1);
+      expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    });
+
+    // The work ran, then COMMIT failed: whether the listing exists is unknown. The retry reads it
+    // (here it was kept) and is told the submission is complete; no second listing either way.
+    it('the commit failing is "may have gone through", with no refund', async () => {
+      dbMock.dbWrite.$transaction.mockImplementationOnce((async (
+        cb: (tx: unknown) => Promise<unknown>
+      ) => {
+        await locks.transaction(cb, txClient());
+        throw prismaError('P2028');
+      }) as never);
+
+      const error = await site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+
+      expect(error).toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+      });
+      expect(buzz.refundTransaction).not.toHaveBeenCalled();
+      await expect(site.submit({ idempotencyKey: KEY })).rejects.toMatchObject({
+        message: ALREADY_COMPLETED,
+      });
+      expect(ledger.charges()).toHaveLength(1);
+      expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('charges a new submission (a new key) again', async () => {
+    await site.submit({ idempotencyKey: KEY });
+    await site.submit({ idempotencyKey: OTHER_KEY, name: 'Another listing' });
+
+    expect(ledger.charges()).toHaveLength(2);
+  });
+});
+
+describe('submission fee charge ids', () => {
+  it('are the same for one user and key, and differ by user, key and kind', () => {
+    const id = submissionFeeTransactionId('item', USER, KEY);
+    expect(id).toBe(`creator-shop-submit-${USER}-${KEY}`);
+    expect(submissionFeeTransactionId('item', USER, KEY)).toBe(id);
+    expect(submissionFeeTransactionId('item', USER + 1, KEY)).not.toBe(id);
+    expect(submissionFeeTransactionId('item', USER, OTHER_KEY)).not.toBe(id);
+    expect(submissionFeeTransactionId('pack', USER, KEY)).toBe(
+      `creator-shop-pack-submit-${USER}-${KEY}`
+    );
+    expect(submissionFeeTransactionId('mysteryPack', USER, KEY)).toBe(
+      `creator-shop-mystery-pack-submit-${USER}-${KEY}`
+    );
+  });
+
+  it('is new per call without a key, as before keys', () => {
+    expect(submissionFeeTransactionId('item', USER, undefined)).not.toBe(
+      submissionFeeTransactionId('item', USER, undefined)
+    );
+  });
+});
