@@ -4,6 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { TextScanEachVerdict } from '~/server/services/text-scan/preview';
 import { previewTextScanEach } from '~/server/services/text-scan/preview';
+import { getActiveTextScanPrompts, getTextScanConfig } from '~/server/services/text-scan/prompt';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import type { TextScanField, TextScanLabel } from '~/server/services/text-scan/types';
 import { nsfwLevelFromName } from '~/server/services/text-scan/types';
@@ -22,8 +23,9 @@ export const comVersionTextQueueKey = (modelId: number) => `${QUEUE_PREFIX}${mod
 
 /**
  * The .com verdicts on one version's name and trigger words, each rated on its own. `name` and
- * `words` are the text that was rated. A string in none of the lists has no verdict yet. `held`
- * strings got a minor, poi or csam detection.
+ * `words` are the text that was rated; `policy` the prompts and model that rated it. Only `shown`
+ * strings may show on .com: `held` strings got a minor, poi or csam detection, and a string in no
+ * list has no verdict yet.
  */
 export type ComVersionTextVerdicts = {
   name: string;
@@ -32,6 +34,7 @@ export type ComVersionTextVerdicts = {
   hidden: string[];
   held: string[];
   pending: boolean;
+  policy: string;
   at: string;
 };
 
@@ -45,13 +48,26 @@ type QueueEntry = {
 export const COM_VERSION_TEXT_LABELS: TextScanLabel[] = ['nsfw', 'minor', 'poi', 'csam'];
 export const COM_VERSION_TEXT_STEPS_PER_WORKFLOW = 20;
 export const COM_VERSION_TEXT_WORKFLOWS_PER_RUN = 20;
+/** So one model with many strings cannot take a whole run from the others. */
+export const COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN = 5;
 /** One rating per burst of edits: a model is rated once its owner has stopped editing this long. */
 export const COM_VERSION_TEXT_QUIET_MS = 2 * 60_000;
 export const COM_VERSION_TEXT_RUN_BUDGET_MS = 4 * 60_000;
 export const COM_VERSION_TEXT_SWEEP_LIMIT = 500;
 const RETRY_FIRST_DELAY_MS = 60_000;
 const RETRY_MAX_DELAY_MS = 60 * 60_000;
+/** Past this a model leaves the queue; the hourly sweep queues it again behind owner edits. */
+export const COM_VERSION_TEXT_MAX_ATTEMPTS = 8;
 const WAIT_SECONDS = 10;
+
+/** Changes when the prompts or model that rate version text change, which makes old verdicts stale. */
+export async function getComVersionTextPolicy() {
+  const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
+  const ids = ['base', ...COM_VERSION_TEXT_LABELS.map((label) => `label:${label}`)].map(
+    (key) => `${key}=${prompts[key]?.id ?? 'missing'}`
+  );
+  return [config.model, `thinking=${config.thinking}`, ...ids].join('|');
+}
 
 function log(type: 'info' | 'error', message: string, extra: Record<string, unknown> = {}) {
   logToAxiom({ type, name: 'com-face-version-text', message, ...extra }).catch(() => undefined);
@@ -113,7 +129,7 @@ const versionStrings = (version: { name: string; trainedWords: string[] }) =>
 type Verdict = 'shown' | 'hidden' | 'held';
 
 function verdictOf(result: TextScanEachVerdict): Verdict | null {
-  if (result.status === 'refused') return 'hidden';
+  if (result.status === 'refused' || result.status === 'too-long') return 'hidden';
   if (result.status !== 'ok') return null;
   const { nsfw, minor, poi, csam } = result.output;
   if (!nsfw || !minor || !poi || !csam) return null;
@@ -151,10 +167,14 @@ export async function rateComFaceVersionText(
 ): Promise<RateResult> {
   const versions = await readComVersions(modelId);
   if (!versions.length) return { status: 'complete', workflows: 0 };
-  const stored = await readComVersionTextVerdicts(versions.map((version) => version.id));
+  const [stored, policy] = await Promise.all([
+    readComVersionTextVerdicts(versions.map((version) => version.id)),
+    getComVersionTextPolicy(),
+  ]);
 
   const known = new Map<string, Verdict>();
   for (const row of stored.values()) {
+    if (row.policy !== policy) continue;
     for (const text of row.shown ?? []) known.set(text, 'shown');
     for (const text of row.hidden ?? []) known.set(text, 'hidden');
     for (const text of row.held ?? []) known.set(text, 'held');
@@ -171,6 +191,7 @@ export async function rateComFaceVersionText(
 
   const pending = [...unrated.values()];
   let workflows = 0;
+  let rated = 0;
   let csamHit = false;
   while (pending.length && workflows < maxWorkflows) {
     const chunk = pending.splice(0, COM_VERSION_TEXT_STEPS_PER_WORKFLOW);
@@ -191,7 +212,10 @@ export async function rateComFaceVersionText(
           if (result.output[label]?.detected)
             log('info', 'version text detection', { modelId, label });
       }
-      if (verdict) known.set(chunk[i].text as string, verdict);
+      if (verdict) {
+        known.set(chunk[i].text as string, verdict);
+        rated++;
+      }
     });
   }
 
@@ -211,6 +235,7 @@ export async function rateComFaceVersionText(
       hidden: pick('hidden'),
       held: pick('held'),
       pending: strings.some((text) => !known.has(text)),
+      policy,
       at: new Date().toISOString(),
     };
     if (next.pending) anyUnrated = true;
@@ -218,7 +243,8 @@ export async function rateComFaceVersionText(
     await dbWrite.$executeRaw(comVersionTextVerdictSql(version.id, next));
   }
 
-  if (pending.length) return { status: 'partial', workflows };
+  // A run that rated nothing backs off rather than coming straight back.
+  if (pending.length && rated) return { status: 'partial', workflows };
   return { status: anyUnrated ? 'unrated' : 'complete', workflows };
 }
 
@@ -229,6 +255,7 @@ function sameVerdicts(a: ComVersionTextVerdicts | undefined, b: ComVersionTextVe
   return (
     a.name === b.name &&
     a.pending === b.pending &&
+    a.policy === b.policy &&
     same(a.words, b.words) &&
     same(a.shown, b.shown) &&
     same(a.hidden, b.hidden) &&
@@ -275,7 +302,10 @@ export async function processComFaceVersionText(
   for (const { row, modelId, entry } of due) {
     const left = COM_VERSION_TEXT_WORKFLOWS_PER_RUN - counts.workflows;
     if (left <= 0 || Date.now() - startedAt > budgetMs) break;
-    const result = await rateComFaceVersionText(modelId, left).catch((error) => {
+    const result = await rateComFaceVersionText(
+      modelId,
+      Math.min(left, COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN)
+    ).catch((error) => {
       log('error', 'rating threw', { modelId, error: errorMessage(error) });
       return { status: 'failed' as const, workflows: 0 };
     });
@@ -294,6 +324,15 @@ export async function processComFaceVersionText(
     }
     if (result.status === 'partial') continue;
     const attempt = (entry.attempt ?? 0) + 1;
+    if (attempt > COM_VERSION_TEXT_MAX_ATTEMPTS) {
+      log('error', 'left the queue without verdicts', { modelId, attempts: attempt - 1 });
+      await dbWrite
+        .$executeRaw(Prisma.sql`DELETE FROM "KeyValue" WHERE ${unchanged}`)
+        .catch((error) =>
+          log('error', 'queue delete failed', { modelId, error: errorMessage(error) })
+        );
+      continue;
+    }
     const next: QueueEntry = {
       editAt: entry.editAt ?? new Date(0).toISOString(),
       source: entry.source ?? 'sweep',
@@ -315,9 +354,9 @@ export async function processComFaceVersionText(
 
 /**
  * Faced models with a .com-visible version whose verdicts are missing, still pending, or were
- * rated on text the version no longer has, and that are not already queued.
+ * rated on text the version no longer has or under another policy, and that are not already queued.
  */
-export const comVersionTextSweepSql = (limit: number) => Prisma.sql`
+export const comVersionTextSweepSql = (limit: number, policy: string) => Prisma.sql`
   SELECT DISTINCT mv."modelId" AS "modelId"
   FROM "ModelVersion" mv
   JOIN "Model" m ON m.id = mv."modelId"
@@ -329,6 +368,7 @@ export const comVersionTextSweepSql = (limit: number) => Prisma.sql`
     AND (
       kv.key IS NULL
       OR kv.value->>'pending' = 'true'
+      OR kv.value->>'policy' IS DISTINCT FROM ${policy}
       OR kv.value->>'name' IS DISTINCT FROM mv.name
       OR kv.value->'words' IS DISTINCT FROM to_jsonb(COALESCE(mv."trainedWords", '{}'::text[]))
     )
@@ -341,7 +381,9 @@ export const comVersionTextSweepSql = (limit: number) => Prisma.sql`
 
 /** Queues every model {@link comVersionTextSweepSql} finds, up to `limit`. Returns the ids queued. */
 export async function sweepComFaceVersionText(limit = COM_VERSION_TEXT_SWEEP_LIMIT) {
-  const found = await dbWrite.$queryRaw<{ modelId: number }[]>(comVersionTextSweepSql(limit));
+  const found = await dbWrite.$queryRaw<{ modelId: number }[]>(
+    comVersionTextSweepSql(limit, await getComVersionTextPolicy())
+  );
   const modelIds = found.map((row) => row.modelId);
   const entry = JSON.stringify({ editAt: new Date(0).toISOString(), source: 'sweep' });
   for (const modelId of modelIds)

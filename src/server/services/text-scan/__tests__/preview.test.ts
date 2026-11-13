@@ -185,4 +185,30 @@ describe('previewTextScanEach', () => {
       { status: 'unavailable' },
     ]);
   });
+
+  it('marks a string too long for one step as too-long and still rates the others', async () => {
+    mockSubmitWorkflow.mockResolvedValue({
+      data: { status: 'succeeded', steps: [step(0, answer('none'))] },
+    });
+    const results = await previewTextScanEach({
+      labels: ['nsfw'],
+      fields: [{ heading: 'Word', text: 'x'.repeat(200_001) }, strings[0]],
+      waitSeconds: 10,
+    });
+    expect(results).toEqual([
+      { status: 'too-long' },
+      { status: 'ok', output: { nsfw: { level: 'none', reason: '' } } },
+    ]);
+    expect(mockSubmitWorkflow.mock.calls[0][0].body.steps).toHaveLength(1);
+  });
+
+  it('gives no verdict to any string when a requested label has no prompt', async () => {
+    const results = await previewTextScanEach({
+      labels: ['nsfw', 'csam'],
+      fields: strings.slice(0, 2),
+      waitSeconds: 10,
+    });
+    expect(results).toEqual([{ status: 'unavailable' }, { status: 'unavailable' }]);
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
 });

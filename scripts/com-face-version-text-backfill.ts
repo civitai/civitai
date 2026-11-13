@@ -3,6 +3,7 @@ import { parseArgs } from 'util';
 import { dbRead } from '~/server/db/client';
 import {
   comVersionTextSweepSql,
+  getComVersionTextPolicy,
   sweepComFaceVersionText,
 } from '~/server/services/model-com-face-version-text.service';
 import { runScriptAndExit } from './lib/run-as-script';
@@ -26,7 +27,9 @@ async function main() {
   if (!Number.isInteger(limit) || limit < 1) throw new Error('--limit must be a positive integer');
 
   if (!values.apply) {
-    const rows = await dbRead.$queryRaw<{ modelId: number }[]>(comVersionTextSweepSql(limit));
+    const rows = await dbRead.$queryRaw<{ modelId: number }[]>(
+      comVersionTextSweepSql(limit, await getComVersionTextPolicy())
+    );
     console.log(`dry run: ${rows.length} models would be queued; nothing written`);
     return;
   }

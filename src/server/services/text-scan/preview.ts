@@ -105,6 +105,8 @@ export async function previewComFaceIntent(args: { fields: TextScanField[]; wait
 export type TextScanEachVerdict =
   | { status: 'ok'; output: TextScanOutput }
   | { status: 'refused' }
+  /** Too long for one step, so it cannot be rated on its own. */
+  | { status: 'too-long' }
   | { status: 'unavailable' };
 
 /**
@@ -136,7 +138,6 @@ export async function previewTextScanEach({
         maxInputChars: config.maxInputChars,
         maxSegments: config.maxSegments,
       });
-      // A field too long for one step gets no verdict rather than a verdict on part of it.
       if (composed.segments.length !== 1) return;
       segmentOf.set(index, steps.length);
       steps.push(
@@ -160,19 +161,24 @@ export async function previewTextScanEach({
     });
     return unavailable();
   }
-  if (!steps.length) return unavailable();
+  const tooLong = (): TextScanEachVerdict[] =>
+    fields.map((_, index) =>
+      segmentOf.has(index) ? { status: 'unavailable' } : { status: 'too-long' }
+    );
+  if (!steps.length) return tooLong();
 
   const { data } = await submitWorkflow({
     client: internalOrchestratorClient,
     query: { wait: waitSeconds },
     body: { metadata: { purpose: 'text-scan-preview' }, currencies: [], steps },
   });
-  if (!data) return unavailable();
+  if (!data) return tooLong();
 
   const bySegment = textScanStepsBySegment(data.steps);
   return fields.map((_, index): TextScanEachVerdict => {
     const segment = segmentOf.get(index);
-    const step = segment === undefined ? undefined : bySegment.get(segment);
+    if (segment === undefined) return { status: 'too-long' };
+    const step = bySegment.get(segment);
     if (!step || (step.status && step.status !== 'succeeded')) return { status: 'unavailable' };
     const parsed = parseTextScanStep(step, labels);
     if (parsed.ok) return { status: 'ok', output: parsed.output };

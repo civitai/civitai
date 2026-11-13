@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Preview from '~/server/services/text-scan/preview';
+import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 import type * as Submit from '~/server/services/text-scan/submit';
 import type { TextScanEachVerdict } from '~/server/services/text-scan/preview';
 import type { TextScanField, TextScanOutput } from '~/server/services/text-scan/types';
@@ -15,6 +16,23 @@ vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
   previewTextScanEach: (...args: Parameters<typeof Preview.previewTextScanEach>) =>
     previewTextScanEach(...args),
 }));
+const promptIds = vi.hoisted(() => ({ nsfw: 2 }));
+vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanPrompt>()),
+  getActiveTextScanPrompts: async () => ({
+    base: { id: 1, key: 'base', content: 'base' },
+    'label:nsfw': { id: promptIds.nsfw, key: 'label:nsfw', content: 'nsfw' },
+    'label:minor': { id: 3, key: 'label:minor', content: 'minor' },
+    'label:poi': { id: 4, key: 'label:poi', content: 'poi' },
+    'label:csam': { id: 5, key: 'label:csam', content: 'csam' },
+  }),
+  getTextScanConfig: async () => ({
+    model: 'test-model',
+    maxInputChars: 1000,
+    maxSegments: 1,
+    thinking: false,
+  }),
+}));
 const scanEntityInBackground = vi.fn();
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof Submit>()),
@@ -24,8 +42,10 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
 const {
   comVersionTextQueueKey,
   comVersionTextVerdictKey,
+  COM_VERSION_TEXT_MAX_ATTEMPTS,
   COM_VERSION_TEXT_QUIET_MS,
   COM_VERSION_TEXT_STEPS_PER_WORKFLOW,
+  COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN,
   COM_VERSION_TEXT_WORKFLOWS_PER_RUN,
   processComFaceVersionText,
   queueComFaceVersionText,
@@ -75,6 +95,7 @@ afterAll(() => db.close());
 
 beforeEach(async () => {
   previewTextScanEach.mockReset();
+  promptIds.nsfw = 2;
   scanEntityInBackground.mockReset();
   rateWith({});
   await db.exec(`DELETE FROM "Model"; DELETE FROM "ModelVersion"; DELETE FROM "KeyValue";`);
@@ -88,16 +109,28 @@ beforeEach(async () => {
     (async ({ where }: { where: { id: number } }) =>
       (await rows(`SELECT * FROM "Model" WHERE id = $1`, [where.id]))[0] ?? null) as never
   );
+  // Translates the production `where`, so its own filter values drive the query.
   dbMock.dbWrite.modelVersion.findMany.mockImplementation((async ({
     where,
   }: {
-    where: { modelId: number };
-  }) =>
-    rows(
+    where: { modelId: number; status?: string; availability?: { not?: string } };
+  }) => {
+    const conditions = ['"modelId" = $1'];
+    const values: unknown[] = [where.modelId];
+    if (where.status !== undefined) {
+      values.push(where.status);
+      conditions.push(`status = $${values.length}`);
+    }
+    if (where.availability?.not !== undefined) {
+      values.push(where.availability.not);
+      conditions.push(`availability <> $${values.length}`);
+    }
+    return rows(
       `SELECT id, name, "trainedWords" FROM "ModelVersion"
-       WHERE "modelId" = $1 AND status = 'Published' AND availability <> 'Private' ORDER BY id`,
-      [where.modelId]
-    )) as never);
+       WHERE ${conditions.join(' AND ')} ORDER BY id`,
+      values
+    );
+  }) as never);
   dbMock.dbWrite.keyValue.findMany.mockImplementation((async ({
     where,
   }: {
@@ -263,6 +296,54 @@ describe('rateComFaceVersionText', () => {
     expect(previewTextScanEach).not.toHaveBeenCalled();
   });
 
+  it('rates nothing for a deleted model', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    await db.query(`UPDATE "Model" SET "deletedAt" = now()`);
+    await rateComFaceVersionText(MODEL_ID);
+    expect(previewTextScanEach).not.toHaveBeenCalled();
+    expect(await verdicts(1)).toBeUndefined();
+  });
+
+  it('a string too long to rate on its own is hidden', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: { status: 'too-long' } });
+    await expect(rateComFaceVersionText(MODEL_ID)).resolves.toMatchObject({ status: 'complete' });
+    expect(await verdicts(1)).toMatchObject({ shown: ['v1'], hidden: ['alpha'], pending: false });
+  });
+
+  it('a budget-limited run that rated nothing reports unrated, so it backs off', async () => {
+    const words = Array.from({ length: 45 }, (_, i) => `w${i}`);
+    await seed({ versions: [{ id: 1, name: 'v1', words }] });
+    previewTextScanEach.mockImplementation(async ({ fields }) =>
+      fields.map((): TextScanEachVerdict => ({ status: 'unavailable' }))
+    );
+    await expect(rateComFaceVersionText(MODEL_ID, 2)).resolves.toEqual({
+      status: 'unrated',
+      workflows: 2,
+    });
+  });
+
+  it('a rating call that throws leaves its strings unrated', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    previewTextScanEach.mockRejectedValue(new Error('orchestrator down'));
+    await expect(rateComFaceVersionText(MODEL_ID)).resolves.toMatchObject({ status: 'unrated' });
+    expect(await verdicts(1)).toMatchObject({ shown: [], hidden: [], held: [], pending: true });
+  });
+
+  it('re-rates every string once the rating prompts change, and the sweep finds those versions', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    await rateComFaceVersionText(MODEL_ID);
+    await expect(sweepComFaceVersionText()).resolves.toEqual([]);
+
+    promptIds.nsfw = 20;
+    await expect(sweepComFaceVersionText()).resolves.toEqual([MODEL_ID]);
+    previewTextScanEach.mockClear();
+    rateWith({ alpha: mature });
+    await rateComFaceVersionText(MODEL_ID);
+    expect(ratedTexts().sort()).toEqual(['alpha', 'v1']);
+    expect(await verdicts(1)).toMatchObject({ shown: ['v1'], hidden: ['alpha'] });
+  });
+
   it(`splits a model's strings into workflows of ${COM_VERSION_TEXT_STEPS_PER_WORKFLOW} and stops at the budget`, async () => {
     const words = Array.from({ length: 45 }, (_, i) => `w${i}`);
     await seed({ versions: [{ id: 1, name: 'v1', words }] });
@@ -304,38 +385,84 @@ describe('processComFaceVersionText', () => {
     expect(await queued()).toBeUndefined();
   });
 
-  it('keeps a model with unrated strings queued for a later retry', async () => {
+  it('retries a model with unrated strings only after a growing backoff', async () => {
     await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
     rateWith({ alpha: { status: 'unavailable' } });
     await queueComFaceVersionText(MODEL_ID);
-    const later = new Date(Date.now() + COM_VERSION_TEXT_QUIET_MS);
+    const base = Date.now() + COM_VERSION_TEXT_QUIET_MS;
+    const at = (ms: number) => new Date(base + ms);
 
-    await processComFaceVersionText(later);
+    await processComFaceVersionText(at(0));
     expect(await queued()).toMatchObject({ attempt: 1 });
     previewTextScanEach.mockClear();
-    await processComFaceVersionText(later);
+    await processComFaceVersionText(at(55_000));
+    expect(previewTextScanEach).not.toHaveBeenCalled();
+
+    await processComFaceVersionText(at(65_000));
+    expect(previewTextScanEach).toHaveBeenCalledTimes(1);
+    expect(await queued()).toMatchObject({ attempt: 2 });
+    previewTextScanEach.mockClear();
+    await processComFaceVersionText(at(65_000 + 115_000));
     expect(previewTextScanEach).not.toHaveBeenCalled();
   });
 
-  it(`rates owner edits before sweep rows and spends at most ${COM_VERSION_TEXT_WORKFLOWS_PER_RUN} workflows a run`, async () => {
-    const words = Array.from(
-      { length: COM_VERSION_TEXT_WORKFLOWS_PER_RUN * 20 },
-      (_, i) => `w${i}`
-    );
-    await seed({ versions: [{ id: 1, name: 'v1', words }] });
-    await db.query(`INSERT INTO "Model" VALUES (8, 'Other', NULL)`);
-    await db.query(
-      `INSERT INTO "ModelVersion" VALUES (2, 8, 'edited', '{}', 'Published', 'Public', '{}')`
-    );
+  it(`drops a model from the queue after ${COM_VERSION_TEXT_MAX_ATTEMPTS} attempts, for the sweep to queue again`, async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: { status: 'unavailable' } });
+    const entry = {
+      editAt: new Date(0).toISOString(),
+      source: 'edit',
+      attempt: COM_VERSION_TEXT_MAX_ATTEMPTS,
+      nextAt: '',
+    };
+    await db.query(`INSERT INTO "KeyValue" VALUES ($1, $2)`, [
+      comVersionTextQueueKey(MODEL_ID),
+      JSON.stringify(entry),
+    ]);
+    await processComFaceVersionText(new Date());
+    expect(await queued()).toBeUndefined();
+    await expect(sweepComFaceVersionText()).resolves.toEqual([MODEL_ID]);
+    expect(await queued()).toMatchObject({ source: 'sweep' });
+  });
+
+  it('keeps the queue row of an edit made while the model was being rated', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    await queueComFaceVersionText(MODEL_ID);
+    previewTextScanEach.mockImplementation(async ({ fields }) => {
+      await queueComFaceVersionText(MODEL_ID);
+      return fields.map(() => ok());
+    });
+    await processComFaceVersionText(new Date(Date.now() + COM_VERSION_TEXT_QUIET_MS));
+    expect(await queued()).toMatchObject({ source: 'edit' });
+  });
+
+  it(`rates owner edits before sweep rows and spends at most ${COM_VERSION_TEXT_WORKFLOWS_PER_RUN} workflows a run, ${COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN} per model`, async () => {
+    const words = (model: number) => `{${Array.from({ length: 200 }, (_, i) => `m${model}w${i}`)}}`;
+    await seed({ versions: [{ id: 1, name: 'v1', words: [] }] });
+    await db.query(`UPDATE "ModelVersion" SET "trainedWords" = $1 WHERE id = 1`, [words(7)]);
+    for (const id of [8, 9, 10, 11]) {
+      await db.query(`INSERT INTO "Model" VALUES ($1, 'Other', NULL)`, [id]);
+      await db.query(
+        `INSERT INTO "ModelVersion" VALUES ($1, $1, $2, $3, 'Published', 'Public', '{}')`,
+        [id, `edited${id}`, words(id)]
+      );
+    }
     await sweepComFaceVersionText();
-    await db.exec(`DELETE FROM "KeyValue" WHERE key = '${comVersionTextQueueKey(8)}'`);
-    await queueComFaceVersionText(8);
+    await db.exec(`DELETE FROM "KeyValue" WHERE key = '${comVersionTextQueueKey(11)}'`);
+    await queueComFaceVersionText(11);
 
     const counts = await processComFaceVersionText(
       new Date(Date.now() + COM_VERSION_TEXT_QUIET_MS)
     );
-    expect(ratedTexts()[0]).toBe('edited');
+    expect(ratedTexts()[0]).toBe('edited11');
     expect(counts.workflows).toBe(COM_VERSION_TEXT_WORKFLOWS_PER_RUN);
+    const perModel = new Map<string, number>();
+    for (const [{ fields }] of previewTextScanEach.mock.calls) {
+      const model = String(fields[0].text).match(/\d+/)![0];
+      perModel.set(model, (perModel.get(model) ?? 0) + 1);
+    }
+    expect(Math.max(...perModel.values())).toBe(COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN);
+    expect(perModel.get('11')).toBe(COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN);
     expect(await queued()).toBeDefined();
   });
 });
