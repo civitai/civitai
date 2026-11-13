@@ -94,21 +94,26 @@ const NO_TAG_ROWS_PG = {
 
 let showcase: ReturnType<typeof image>[] = [];
 
-/** As the SQL does: the requested levels, no excluded tag, the limit, and tags only when asked for. */
+/** As the SQL does: the requested levels, no excluded tag, poi or minor, the limit, and tags only when asked for. */
 function fakeGetImages({
   browsingLevel,
   excludedTagIds = [],
+  excludePoi = false,
+  excludeMinor = false,
   imagesPerVersion = 1,
   include = [],
 }: {
   browsingLevel?: number;
   excludedTagIds?: number[];
+  excludePoi?: boolean;
+  excludeMinor?: boolean;
   imagesPerVersion?: number;
   include?: string[];
 }) {
   return showcase
     .filter((i) => !browsingLevel || (i.nsfwLevel & browsingLevel) !== 0)
     .filter((i) => !(i.tags ?? []).some((t) => excludedTagIds.includes(t)))
+    .filter((i) => !(excludePoi && i.poi) && !(excludeMinor && i.minor))
     .slice(0, imagesPerVersion)
     .map(({ tags, ...i }) => (include.includes('tags') ? { ...i, tags } : i));
 }
@@ -242,6 +247,15 @@ describe.each(ROUTES)('%s, anonymous', (route) => {
       expect(servedIds(version)).toEqual([UNTAGGED_PG.id, CHILD_PG.id]);
     });
 
+    it('does not let poi images use up the ten-image showcase', async () => {
+      const poi = Array.from({ length: 10 }, (_, i) =>
+        image({ id: 200 + i, nsfwLevel: NsfwLevel.PG, poi: true })
+      );
+      serve(NsfwLevel.PG, [...poi, UNTAGGED_PG]);
+      const { version } = await call(route, host);
+      expect(servedIds(version)).toEqual([UNTAGGED_PG.id]);
+    });
+
     it('does not let excluded images use up the ten-image showcase', async () => {
       const people = Array.from({ length: 10 }, (_, i) =>
         image({ id: 100 + i, nsfwLevel: NsfwLevel.PG, tags: [PEOPLE_TAG] })
@@ -281,16 +295,24 @@ describe.each(ROUTES)('%s, anonymous', (route) => {
     );
 
     it.each([false, true])(
-      'keeps an SFW version whose exclusions agree at both levels (restricted: %s)',
+      'keeps an SFW version whose exclusions agree at both levels only for a region served every level (restricted: %s)',
       async (restricted) => {
         region.restricted = restricted;
         // The people-tagged image is excluded at every level, so it changes nothing by region.
         serve(NsfwLevel.PG | NsfwLevel.PG13, [UNTAGGED_PG, UNTAGGED_PG13, PEOPLE_PG]);
         const { res, version } = await call(route, 'civitai.com');
-        expect(noStore(res)).toBe(false);
+        expect(noStore(res)).toBe(restricted);
         expect(servedIds(version)).toEqual([UNTAGGED_PG.id, UNTAGGED_PG13.id]);
       }
     );
+
+    it('keeps out a region held to SFW even when its version is stored as SFW', async () => {
+      region.restricted = true;
+      serve(NsfwLevel.PG, [UNTAGGED_PG, UNTAGGED_R]);
+      const { res, version } = await call(route, 'civitai.com');
+      expect(servedIds(version)).toEqual([UNTAGGED_PG.id]);
+      expect(noStore(res)).toBe(true);
+    });
   });
 });
 

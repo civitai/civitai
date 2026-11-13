@@ -8,6 +8,7 @@ import {
   showcaseVariesByRegion,
 } from '~/pages/api/v1/model-versions/[id]';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { dbRead } from '~/server/db/client';
@@ -90,6 +91,7 @@ export default PublicEndpoint(
 
     // Only its owner or a moderator is still holding a Private version here.
     if (
+      browsingLevel !== allBrowsingLevelsFlag ||
       files.some(
         (file) =>
           isPrivateModelVersion(file.modelVersion) || file.modelVersion.model.sfwName != null

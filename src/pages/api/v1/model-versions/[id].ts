@@ -193,9 +193,9 @@ export default MixedAuthEndpoint(async function handler(
 });
 
 /**
- * A version's showcase at `browsingLevel`, with the tags `getShowcaseImageFilter` reads. Tags excluded
- * at every region's level are also left out in SQL, so they don't use up the per-version limit; one
- * excluded only above SFW stays in, for `showcaseVariesByRegion` to see.
+ * A version's showcase at `browsingLevel`, with the tags `getShowcaseImageFilter` reads. What is
+ * excluded at every region's level is also left out in SQL, so it doesn't use up the per-version
+ * limit; what is excluded only above SFW stays in, for `showcaseVariesByRegion` to see.
  */
 export async function getVersionShowcaseImages(modelVersionIds: number[], browsingLevel: number) {
   const [withinSfw, withinAll] = await Promise.all([
@@ -211,6 +211,8 @@ export async function getVersionShowcaseImages(modelVersionIds: number[], browsi
     imagesPerVersion: 10,
     browsingLevel,
     excludedTagIds,
+    excludePoi: withinSfw.disablePoi && withinAll.disablePoi,
+    excludeMinor: withinSfw.disableMinor && withinAll.disableMinor,
   });
   // The tag read answered for every image (it throws otherwise); one it has no entry for has no tags.
   return images.map((image) => ({ ...image, tags: image.tags ?? [] }));
@@ -422,9 +424,11 @@ export async function resModelVersionDetails(
   );
   if (!body) return res.status(404).json({ error: 'Missing model file' });
   // Only its owner or a moderator gets here with a Private version: never let a cache keep it.
-  // Nor a response that varies by region, which the shared cache doesn't key on.
+  // Nor a response that varies by region, which the shared cache doesn't key on. A region held to
+  // SFW can't tell what it was not sent, so none of its responses are kept.
   if (
     isPrivateModelVersion(modelVersion) ||
+    browsingLevel !== allBrowsingLevelsFlag ||
     modelVersion.model.sfwName != null ||
     (await showcaseVariesByRegion(modelVersion.nsfwLevel, images))
   )
