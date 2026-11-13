@@ -834,6 +834,7 @@ export type Article = {
   lockedProperties: Generated<string[]>;
   isOfficial: Generated<boolean>;
   status: Generated<ArticleStatus>;
+  systemCategoryId: number | null;
 };
 export type ArticleContentLinkHold = {
   articleId: number;
