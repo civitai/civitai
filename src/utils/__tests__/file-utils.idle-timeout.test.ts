@@ -16,6 +16,7 @@ type Plan = {
   chunk: number;
   everyMs: number;
   stallAfter?: number;
+  destroyAfter?: number;
   noHeaders?: boolean;
   headersAfterMs?: number;
   status?: number;
@@ -33,6 +34,11 @@ function stream(plan: Plan, res: http.ServerResponse) {
   let sent = 0;
   const timer = setInterval(() => {
     if (plan.stallAfter !== undefined && sent >= plan.stallAfter) return; // stop, keep open
+    if (plan.destroyAfter !== undefined && sent >= plan.destroyAfter) {
+      clearInterval(timer);
+      res.destroy(); // drop the connection mid-body
+      return;
+    }
     if (sent >= plan.bytes) {
       clearInterval(timer);
       res.end();
@@ -97,6 +103,19 @@ describe('fetchBlob idle timeout', () => {
     expect(outcome).toBeInstanceOf(Error);
     expect((outcome as Error).name).toBe('IdleTimeoutError');
     expect(Date.now() - started).toBeLessThan(IDLE * 4);
+  });
+
+  it('rejects with the read error, not an idle timeout, when the connection drops mid-body', async () => {
+    const started = Date.now();
+    const outcome = await fetchBlob(
+      url({ bytes: 1_500_000, chunk: 50_000, everyMs: 20, destroyAfter: 50_000 }),
+      DEADLINE,
+      idle
+    ).catch((e: Error) => e);
+
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).name).not.toBe('IdleTimeoutError');
+    expect(Date.now() - started).toBeLessThan(IDLE);
   });
 
   it('waits for headers up to the deadline, not the idle window', async () => {
