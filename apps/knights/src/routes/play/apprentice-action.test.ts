@@ -167,7 +167,7 @@ describe('the milestone card lasts for the item it appeared with', () => {
   };
 
   beforeEach(async () => {
-    await seen.store!.set(7, { rank: 'Acolyte', level: 4, guide: true });
+    await seen.store!.set(7, { rank: 'Acolyte', level: 4, guide: true, whatsNew: true });
   });
 
   it('an answer given with the milestone card on screen records that standing as seen', async () => {
@@ -178,23 +178,43 @@ describe('the milestone card lasts for the item it appeared with', () => {
     });
 
     expect(await post({ ...valid, noticeShown: '1' })).toMatchObject({ success: true });
-    expect(await seen.store!.get(7)).toEqual({ rank: 'Acolyte', level: 5, guide: true });
+    expect(await seen.store!.get(7)).toEqual({
+      rank: 'Acolyte',
+      level: 5,
+      guide: true,
+      whatsNew: true,
+    });
   });
 
   it('an answer with no card showing records nothing', async () => {
     answerApprentice.mockResolvedValue(recorded);
 
     await post(valid);
-    expect(await seen.store!.get(7)).toEqual({ rank: 'Acolyte', level: 4, guide: true });
+    expect(await seen.store!.get(7)).toEqual({
+      rank: 'Acolyte',
+      level: 4,
+      guide: true,
+      whatsNew: true,
+    });
   });
 
   it('continuing past the recap with the card on screen records it', async () => {
     expect(await continuePast({ noticeShown: '1' })).toEqual({ success: true });
-    expect(await seen.store!.get(7)).toEqual({ rank: 'Acolyte', level: 5, guide: true });
+    expect(await seen.store!.get(7)).toEqual({
+      rank: 'Acolyte',
+      level: 5,
+      guide: true,
+      whatsNew: true,
+    });
 
-    await seen.store!.set(7, { rank: 'Acolyte', level: 4, guide: true });
+    await seen.store!.set(7, { rank: 'Acolyte', level: 4, guide: true, whatsNew: true });
     await continuePast({});
-    expect(await seen.store!.get(7)).toEqual({ rank: 'Acolyte', level: 4, guide: true });
+    expect(await seen.store!.get(7)).toEqual({
+      rank: 'Acolyte',
+      level: 4,
+      guide: true,
+      whatsNew: true,
+    });
   });
 
   it('a seen store that is down still records the answer', async () => {

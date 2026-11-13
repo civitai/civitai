@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerForKey, answerForKeyPress, keyHints, optionsOnScreen } from './keys';
+import { answerForKey, answerForKeyPress, keyHints, optionsOnScreen, spaceSkips } from './keys';
 
 const options = [
   { value: '1', label: 'PG' },
@@ -98,5 +98,12 @@ describe('optionsOnScreen', () => {
     expect(optionsOnScreen({ apprentice: { kind: 'checkpoint' } })).toBeNull();
     expect(optionsOnScreen({ apprentice: { kind: 'exhausted' } })).toBeNull();
     expect(optionsOnScreen({ question: null })).toBeNull();
+  });
+});
+
+describe('spaceSkips', () => {
+  it('leaves Space to the browser in the apprenticeship', () => {
+    expect(spaceSkips({ apprentice: { kind: 'question', options } })).toBe(false);
+    expect(spaceSkips({ question: { options } })).toBe(true);
   });
 });

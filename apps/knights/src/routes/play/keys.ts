@@ -25,3 +25,6 @@ export function optionsOnScreen({ question, apprentice }: Screen): Option[] | nu
   if (question) return question.options;
   return apprentice?.kind === 'question' ? apprentice.options ?? null : null;
 }
+
+/** Space skips a queue item; in the apprenticeship (no skip) it stays the browser's, pressing a focused button. */
+export const spaceSkips = ({ question }: Screen): boolean => !!question;

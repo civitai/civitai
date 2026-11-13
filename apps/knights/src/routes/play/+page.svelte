@@ -20,7 +20,7 @@
   import { heartsLeft, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
-  import { answerForKey, answerForKeyPress, optionsOnScreen } from './keys';
+  import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import {
     MAX_EXCLUDED,
@@ -79,8 +79,8 @@
     );
 
   // The number keys answer in option order (a yes/no question also takes Y and N), in the queue and the apprenticeship alike,
-  // and Space skips a queue item, even while an answer button has focus (the browser would otherwise press it). Typing in a
-  // field or holding a modifier is left alone.
+  // and Space skips a queue item, even while an answer button has focus (the browser would otherwise press it); in the
+  // apprenticeship Space is left to the browser. Typing in a field or holding a modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
     if (headerDialogOpen()) return;
     if (choosingReason) {
@@ -88,17 +88,19 @@
       if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason as BlockReason);
       return;
     }
-    const options = optionsOnScreen({
+    const screen = {
       question: view?.question,
       apprentice: data.mode === 'apprentice' ? data.apprentice : null,
-    });
+    };
+    const options = optionsOnScreen(screen);
     if (event.repeat || dialogOpen || !options || submitting) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable], header')) return;
     if (event.key === ' ') {
+      if (!spaceSkips(screen)) return;
       event.preventDefault();
-      if (view) skipForm?.requestSubmit();
+      skipForm?.requestSubmit();
       return;
     }
     if (imageFailed) return;
