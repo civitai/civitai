@@ -8,7 +8,6 @@ import { requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
 import { storedSourceImageIds } from '~/server/utils/source-image-ids';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { Flags } from '~/shared/utils/flags';
-import type { BearerCredential } from '~/server/auth/full-user-credential';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 
 type MediaFields = {
@@ -18,8 +17,11 @@ type MediaFields = {
   user: { id: number };
 };
 
-/** The request's credential, read by `isSessionOrFullUserKey`; a browser session carries none. */
-type Credential = BearerCredential & { apiKeyId?: number | null };
+/**
+ * The request's credential, read by `isSessionOrFullUserKey`; a browser session carries none. Every
+ * key is required, so a viewer built without it is a type error rather than read as a session.
+ */
+type Credential = Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'>;
 
 /**
  * Whether a single-image response may carry the media: the request's domain cap on the image's own
@@ -27,6 +29,8 @@ type Credential = BearerCredential & { apiKeyId?: number | null };
  * (`viewerCanSeeImageMedia` adds collection managers). Not identical to `Gated`: it ignores a
  * contest's forced level and withholds mixed ratings.
  */
+export type MediaCredentialViewer = Pick<Context, 'user' | 'features' | 'req'> & Credential;
+
 export function canViewImageMedia(
   ctx: Pick<Context, 'user' | 'features' | 'req'> & Credential,
   image: Pick<MediaFields, 'nsfwLevel' | 'user'>
@@ -105,6 +109,7 @@ export async function viewerCanSeeImageMedia(
   const canSee =
     canViewImageMedia(ctx, media) ||
     (!!ctx.user &&
+      isSessionOrFullUserKey(ctx) &&
       !!image.postId &&
       (await managesPostCollection({
         postId: image.postId,
@@ -128,7 +133,8 @@ export async function viewerCanSeeSourceMedia(
   image: { id: number; userId: number },
   meta: unknown
 ) {
-  if (ctx.user && (ctx.user.isModerator || ctx.user.id === image.userId)) return true;
+  const fullViewer = isSessionOrFullUserKey(ctx) ? ctx.user : undefined;
+  if (fullViewer && (fullViewer.isModerator || fullViewer.id === image.userId)) return true;
   const sourceIds = [...new Set(storedSourceImageIds(meta) ?? [])].filter((id) => id !== image.id);
   if (!sourceIds.length) return true;
   const sources = await dbRead.$queryRaw<{ nsfwLevel: number; userId: number }[]>(Prisma.sql`
@@ -155,7 +161,7 @@ export async function viewerCanSeeSourceMedia(
   }
   return sources.every(
     ({ nsfwLevel, userId }) =>
-      ctx.user?.id === userId ||
+      fullViewer?.id === userId ||
       (nsfwLevel !== NsfwLevel.Blocked &&
         canViewImageMedia(ctx, { nsfwLevel, user: { id: userId } }))
   );

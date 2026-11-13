@@ -1,3 +1,4 @@
+import { getRequestCredential } from '~/server/auth/request-credential';
 import { getGenerationDataSchema } from '~/server/schema/generation.schema';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -42,7 +43,13 @@ export default PublicEndpoint(
         browsingLevel: getRequestBrowsingLevel({ features, user: session?.user }),
         // No request headers: the verified-crawler header is only stripped on proxied paths, and
         // this route's signed-out answers are edge-cached for everyone.
-        mediaViewer: { user: session?.user, features, req: { headers: {} } as typeof req },
+        // The credential too: a token is not a session, whatever owner or moderator presents it.
+        mediaViewer: {
+          ...getRequestCredential(req),
+          user: session?.user,
+          features,
+          req: { headers: {} } as typeof req,
+        },
       });
       return res.status(200).json(queryResult);
     } catch (e) {

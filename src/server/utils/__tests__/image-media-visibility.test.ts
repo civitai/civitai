@@ -228,6 +228,18 @@ describe('canViewImageMedia owner and moderator exemption from the domain cap', 
     expect(canSee({ user: { id: KEY_OWNER }, ...key(TokenScope.ModelsRead) })).toBe(false);
   });
 
+  // A full-scope token an OAuth app holds is still not the user's own credential.
+  it('holds a moderator or the owner to the cap on a full-scope OAuth token', () => {
+    const oauth = {
+      apiKeyId: undefined,
+      apiKeyType: undefined,
+      subject: { type: 'oauth', id: 'app' },
+      tokenScope: TokenScope.Full,
+    };
+    expect(canSee({ user: { id: 5, isModerator: true }, ...oauth })).toBe(false);
+    expect(canSee({ user: { id: KEY_OWNER }, ...oauth })).toBe(false);
+  });
+
   it('holds anyone else to the cap', () => {
     expect(canSee({ user: { id: 6 } })).toBe(false);
     expect(canSee({})).toBe(false);

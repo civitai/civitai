@@ -24,7 +24,10 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import type { Context } from '~/server/createContext';
-import { canViewImageMedia } from '~/server/utils/image-media-visibility';
+import {
+  canViewImageMedia,
+  type MediaCredentialViewer,
+} from '~/server/utils/image-media-visibility';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -290,7 +293,7 @@ export function capBidImages<B extends BidWithImage>(bids: B[], keep: BidImageFi
 
 /** A bid's image is held to the request's cap like a single image; its owner and moderators keep it. */
 export const bidImagesFor =
-  (ctx: Pick<Context, 'user' | 'features' | 'req'>): BidImageFilter =>
+  (ctx: MediaCredentialViewer): BidImageFilter =>
   (image) =>
     canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } });
 
