@@ -196,6 +196,8 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) => mockResolveCanGenerateForVersions(...args),
   getResourceData: (...args: unknown[]) => mockGetResourceData(...args),
+  // The global generation kill switch, read on every generation submit: on, so it admits.
+  getGenerationStatus: async () => ({ mode: 'enabled', message: null }),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
