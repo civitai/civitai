@@ -79,6 +79,13 @@ describe('creator-only pack reads', () => {
     }
   );
 
+  it('reads the candidates for the signed-in viewer, not a caller-supplied id', async () => {
+    await shop(ALL_ON, { id: 41 }).getMysteryPackCandidates();
+    expect(read.getMysteryPackCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({ creatorId: 41 })
+    );
+  });
+
   it("names the viewer to the service, so it can refuse another creator's packs", async () => {
     await shop(ALL_ON).getMyMysteryPacks({ userId: 9 });
     expect(read.getMyMysteryPacks).toHaveBeenCalledWith({
@@ -111,6 +118,13 @@ describe('public pack reads', () => {
       );
     }
   );
+
+  it("getForSeller forwards the viewer's id, not the seller's, so held boxes are the viewer's own", async () => {
+    await box(ALL_ON, { id: 41 }).getForSeller({ sellerId: 7 });
+    expect(read.getMysteryPackViewsForSeller).toHaveBeenCalledWith(
+      expect.objectContaining({ sellerId: 7, userId: 41 })
+    );
+  });
 
   it.each(Object.keys(reads))('%s is enabled with all four flags', async (name) => {
     await reads[name as keyof typeof reads](ALL_ON);
