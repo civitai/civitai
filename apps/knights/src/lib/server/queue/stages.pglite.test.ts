@@ -375,22 +375,26 @@ describe('feed serving rules', () => {
       expect(await feedIds(1, { limit: 1 })).toEqual([x]);
     });
 
-    it('mixes only by buckets judged within the recent window', async () => {
+    it('avoids only buckets judged within the recent window', async () => {
       await player(1, 'Knight');
       await image(10, 4);
-      await image(11, 4);
-      await image(12, 8);
-      await item(10, { at: hoursAfter(-3) });
-      await item(11, { at: hoursAfter(-2) });
-      const x = await item(12, { at: hoursAfter(-1) });
-      const unmixed = await feedIds(1, { limit: 1 });
-      expect(unmixed).not.toEqual([x]);
+      await image(11, 8);
+      const r = await item(10, { at: hoursAfter(-3) });
+      const x = await item(11, { at: hoursAfter(-1) });
+      // 0.2 draws the first open bucket (R) when nothing is avoided, and is above the starvation share.
+      const drawR = { limit: 1, random: () => 0.2 };
 
       for (const imageId of [90, 91, 92]) {
         await image(imageId, 4);
         await judged(1, imageId, (FEED.recentJudgedHours + 1) * 60);
       }
-      expect(await feedIds(1, { limit: 1 })).toEqual(unmixed);
+      expect(await feedIds(1, drawR)).toEqual([r]);
+
+      for (const imageId of [93, 94, 95]) {
+        await image(imageId, 4);
+        await judged(1, imageId);
+      }
+      expect(await feedIds(1, drawR)).toEqual([x]);
     });
 
     it('buckets an item by its prediction before the image level', async () => {
@@ -418,15 +422,18 @@ describe('feed serving rules', () => {
       expect(await feedIds(1, { limit: 1 })).toHaveLength(1);
     });
 
-    it('takes the oldest item when the starvation draw lands', async () => {
+    it('takes the oldest item of the chosen bucket when the starvation draw lands', async () => {
       await player(1, 'Knight');
       await threeRecentRs(1);
       await image(10, 4);
       await image(11, 8);
-      const oldest = await item(10, { at: hoursAfter(-3) });
-      await item(11, { at: hoursAfter(-2) });
+      await image(12, 8);
+      await item(10, { at: hoursAfter(-5) });
+      const oldestX = await item(11, { priority: 2, at: hoursAfter(-4) });
+      const leadX = await item(12, { priority: 1, at: hoursAfter(-1) });
 
-      expect(await feedIds(1, { limit: 1, random: () => 0 })).toEqual([oldest]);
+      expect(await feedIds(1, { limit: 1, random: () => 0.5 })).toEqual([leadX]);
+      expect(await feedIds(1, { limit: 1, random: () => 0 })).toEqual([oldestX]);
     });
   });
 

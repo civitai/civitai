@@ -11,6 +11,12 @@ Players see these as "skill checks"; the code, tables and config keep the name "
 Known-answer images (`KnightsReferenceImage`, pool `hiddenCheck`) served in a Knight's feed beside queue items. A check is an
 ordinary vote in every way a player can see.
 
+- The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,
+  XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever
+  its size, so a mostly-PG pool does not mean mostly-PG checks. Inside the bucket it takes the first eligible check from a
+  per-player point in the pool's id range. Whether a slot holds a check at all is the same rate roll as before
+  (`KNIGHTS_HIDDEN_CHECK_RATE`). The bucket order, start point and roll all come from one per-player digest (no random
+  numbers), so the same player and slot always get the same offer.
 - Every feed item, check or queue item, is addressed by a sealed token (`feed-token.ts`, key `FEED_TOKEN_SECRET`). The vote action
   opens the token and routes to `castVote` or `answerHiddenCheck`.
 - Both write the same `KnightsVote` row through `insertVote` and `creditVote` (`queue/vote-record.ts`), so XP, pending gold, the

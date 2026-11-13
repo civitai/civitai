@@ -15,7 +15,10 @@ import {
   getFeed as serveFeed,
   MAX_APPLY_ATTEMPTS,
   type QueueDeps,
+  bucketLevelSql,
+  servableItems,
 } from './queue.service';
+import { itemBucket, levelBucket } from './feed';
 
 const Q = KNIGHTS_NSFW_LEVEL_QUESTION;
 /** The starvation draw is random in production; these tests pin the ordinary path. */
@@ -254,6 +257,67 @@ describe('getFeed', () => {
     const feed = await getFeed(db, 1);
     expect(feed?.question.key).toBe('knights.test.bool');
     expect(feed?.items.map((i) => i.id)).not.toContain(rating);
+  });
+
+  it('serves NSFW scan items (priority 2) while 40 or more priority-1 items are open', async () => {
+    await player(1, 'Knight');
+    for (let i = 0; i < 45; i++) {
+      await image(100 + i, 1);
+      await item(100 + i, { priority: 1 });
+    }
+    const nsfw: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      await image(200 + i, 8);
+      nsfw.push(await item(200 + i, { priority: 2 }));
+    }
+
+    const served = (await getFeed(db, 1))?.items.map((i) => i.id) ?? [];
+    expect(served.filter((id) => nsfw.includes(id)).length).toBeGreaterThan(0);
+  });
+
+  it('reads each level bucket by the same rule as itemBucket', async () => {
+    // Raw JSON text, so jsonb keeps what a producer could write (a 4.0 keeps its scale).
+    const predictions = [
+      'null',
+      '{"value":8}',
+      '{"value":"16"}',
+      '{"value":4.0}',
+      '{"value":32}',
+      '{"value":"4.0"}',
+      '{"value":true}',
+      '{"value":"X"}',
+      '[8]',
+      '"loose"',
+      '{"other":2}',
+    ];
+    for (const [n, prediction] of predictions.entries()) {
+      await image(300 + n, n % 2 ? 1 : 2);
+      const id = await item(300 + n);
+      await pg.query(`UPDATE "KnightsQueueItem" SET prediction = $1::jsonb WHERE id = $2`, [
+        prediction,
+        id,
+      ]);
+    }
+    await image(399, 3);
+    await item(399);
+
+    const rows = await servableItems(db)
+      .select([bucketLevelSql.as('level'), 'i.prediction', 'img.nsfwLevel'])
+      .execute();
+    expect(rows).toHaveLength(predictions.length + 1);
+    for (const row of rows) {
+      expect(levelBucket(Number(row.level))).toBe(itemBucket(row.prediction, row.nsfwLevel));
+    }
+  });
+
+  it('still serves an item whose level has no bucket', async () => {
+    await player(1, 'Knight');
+    await image(10, 3);
+    await image(11, 8);
+    const odd = await item(10);
+    const x = await item(11);
+
+    expect(new Set((await getFeed(db, 1))?.items.map((i) => i.id))).toEqual(new Set([odd, x]));
   });
 });
 

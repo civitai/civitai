@@ -17,6 +17,14 @@ const candidate = (id: number, o: Partial<FeedCandidate> = {}): FeedCandidate =>
   ...o,
 });
 const never = () => 0.99;
+/** A small LCG, so a spread can be asserted deterministically. */
+const seeded = (seed: number) => {
+  let state = seed;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 2 ** 32;
+  };
+};
 const always = () => 0;
 const order = (
   candidates: FeedCandidate[],
@@ -74,9 +82,9 @@ describe('orderFeed', () => {
     expect(served).toHaveLength(4);
   });
 
-  it('keeps priority classes in order: the mix never reaches past the first class', () => {
-    const window = [candidate(1, { priority: 1 }), candidate(2, { priority: 3, bucket: 'X' })];
-    expect(order(window, { recent: ['R'], limit: 1 })).toEqual([1]);
+  it('keeps priority classes in order within a bucket', () => {
+    const window = [candidate(1, { priority: 1 }), candidate(2, { priority: 3 })];
+    expect(order(window, { limit: 2 })).toEqual([1, 2]);
   });
 
   it('serves the escalated tier ahead of normal priority', () => {
@@ -93,13 +101,56 @@ describe('orderFeed', () => {
     expect([1, 2, 3, 4, 5, 6].map(firstFor)).toEqual(firsts);
   });
 
-  it('takes the oldest first when the starvation draw lands, even against rotation and priority', () => {
+  it('takes the oldest of the chosen bucket when the starvation draw lands, even against priority', () => {
     const window = [
-      candidate(1, { createdAt: 50 }),
-      candidate(2, { createdAt: 10, priority: 3, bucket: 'X' }),
+      candidate(1, { createdAt: 50, priority: 1 }),
+      candidate(2, { createdAt: 10, priority: 3 }),
+      candidate(3, { createdAt: 1, bucket: 'X' }),
     ];
     expect(order(window, { recent: ['X'], random: always, limit: 1 })).toEqual([2]);
     expect(order(window, { recent: ['X'], random: never, limit: 1 })).toEqual([1]);
+  });
+
+  it('picks buckets with equal probability, whatever their priority', () => {
+    const buckets = ['PG', 'PG-13', 'R', 'X', 'XXX'] as const;
+    // PG and PG-13 hold the urgent class, as owner ratings do; the mix must still reach the rest.
+    const window = buckets.flatMap((bucket, b) =>
+      [...Array(20).keys()].map((i) =>
+        candidate(b * 100 + i + 1, { bucket, priority: b < 2 ? 1 : 2, createdAt: i })
+      )
+    );
+    const served = order(window, { random: seeded(7), limit: 50 });
+    const counts = buckets.map(
+      (bucket) => served.filter((id) => window.find((c) => c.id === id)?.bucket === bucket).length
+    );
+    for (const count of counts) {
+      expect(count).toBeGreaterThanOrEqual(5);
+      expect(count).toBeLessThanOrEqual(15);
+    }
+    expect(order(window, { random: seeded(7), limit: 50 })).toEqual(served);
+  });
+
+  it('drops a bucket once it is empty and keeps serving the others', () => {
+    const window = [
+      candidate(1, { bucket: 'PG' }),
+      ...[2, 3, 4, 5, 6].map((id) => candidate(id, { bucket: 'X' })),
+    ];
+    const served = order(window, { random: seeded(3), limit: 10 });
+    expect([...served].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it("serves a bucket's escalated items before its other items", () => {
+    const buckets = ['PG', 'R', 'XXX'] as const;
+    const window = buckets.flatMap((bucket, b) => [
+      candidate(b * 10 + 1, { bucket, tier: 0, priority: 3 }),
+      candidate(b * 10 + 2, { bucket, priority: 1 }),
+      candidate(b * 10 + 3, { bucket, priority: 1 }),
+    ]);
+    const served = order(window, { random: seeded(11), limit: 9 });
+    for (let b = 0; b < buckets.length; b++) {
+      const mine = served.filter((id) => Math.floor(id / 10) === b);
+      expect(mine[0]).toBe(b * 10 + 1);
+    }
   });
 
   it('draws the starvation path about once in ten serves', () => {

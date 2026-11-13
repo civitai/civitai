@@ -20,6 +20,7 @@ import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
 import { FEED_STRETCH_SIZE, isStageRank, nextStaffedRank, stagesWorkedBy } from './ranks';
 import { SMITES } from '../smites/config';
 import {
+  BUCKET_LEVELS,
   FEED,
   itemBucket,
   lowestTierPerItem,
@@ -129,10 +130,31 @@ async function recentBuckets(db: Executor, userId: number, now: Date) {
   return rows.map((r) => itemBucket(r.prediction, r.nsfwLevel));
 }
 
+/** No bucket: Blocked, unrated and unknown levels, read as a group of their own so they are still served. */
+const NO_BUCKET_LEVEL = 0;
+const levelList = sql.join(BUCKET_LEVELS.map((level) => sql.lit(level)));
+const textLevelList = sql.join(BUCKET_LEVELS.map((level) => sql.lit(String(level))));
+
 /**
- * One stage's candidates, read in index order: the items escalated within the priority window, then the
- * stage's normal order (priority, age). Both reads stop at the window size, and neither includes an image the
- * player has already judged for the question, at any stage or in any earlier item.
+ * `itemBucket` as SQL, as the bucket's level flag (0 for none): `prediction.value` when it is a level flag (a number,
+ * or a plain integer string), else the image's level. Expects `KnightsQueueItem as i` and `Image as img`.
+ */
+export const bucketLevelSql = sql<number>`CASE
+  WHEN jsonb_typeof(i.prediction -> 'value') = 'number'
+    AND (i.prediction ->> 'value')::numeric IN (${levelList})
+    THEN (i.prediction ->> 'value')::numeric::int
+  WHEN jsonb_typeof(i.prediction -> 'value') = 'string'
+    AND (i.prediction ->> 'value') IN (${textLevelList})
+    THEN (i.prediction ->> 'value')::int
+  WHEN img."nsfwLevel" IN (${levelList}) THEN img."nsfwLevel"
+  ELSE ${sql.lit(NO_BUCKET_LEVEL)}
+END`;
+
+/**
+ * One stage's candidates, read per level bucket in index order: per bucket, the items escalated within the priority
+ * window, then the stage's normal order (priority, age). Each read stops at `FEED.bucketWindowSize`, so a crowded
+ * bucket cannot push the others out of the window, and none includes an image the player has already judged for the
+ * question, at any stage or in any earlier item.
  */
 function stageWindow(
   db: Executor,
@@ -141,9 +163,10 @@ function stageWindow(
   exclude: number[],
   escalatedSince: Date
 ) {
-  const candidates = () =>
+  const candidates = (level: number) =>
     servableItems(db)
       .where('i.minRank', '=', stage)
+      .where((eb) => eb(bucketLevelSql, '=', level))
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(
@@ -171,27 +194,23 @@ function stageWindow(
         'img.height',
         'img.nsfwLevel as imageLevel',
       ])
-      .limit(FEED.windowSize);
+      .limit(FEED.bucketWindowSize);
 
-  return db
-    .with('escalated', () =>
-      candidates()
-        .select(sql<number>`${TIER_ESCALATED}`.as('tier'))
-        .where('i.escalatedAt', '>', utc(escalatedSince))
-        .orderBy('i.escalatedAt', 'asc')
-        .orderBy('i.id', 'asc')
-    )
-    .with('normal', () =>
-      candidates()
-        .select(sql<number>`${TIER_NORMAL}`.as('tier'))
-        .orderBy('i.priority', 'asc')
-        .orderBy('i.createdAt', 'asc')
-        .orderBy('i.id', 'asc')
-    )
-    .selectFrom('escalated')
-    .selectAll()
-    .unionAll((qb) => qb.selectFrom('normal').selectAll())
-    .execute();
+  const reads = [...BUCKET_LEVELS, NO_BUCKET_LEVEL].flatMap((level) => [
+    candidates(level)
+      .select(sql<number>`${sql.lit(TIER_ESCALATED)}`.as('tier'))
+      .where('i.escalatedAt', '>', utc(escalatedSince))
+      .orderBy('i.escalatedAt', 'asc')
+      .orderBy('i.id', 'asc'),
+    candidates(level)
+      .select(sql<number>`${sql.lit(TIER_NORMAL)}`.as('tier'))
+      .orderBy('i.priority', 'asc')
+      .orderBy('i.createdAt', 'asc')
+      .orderBy('i.id', 'asc'),
+  ]);
+  // Each read is wrapped so its ORDER BY and LIMIT stay its own inside the UNION ALL.
+  const [first, ...rest] = reads.map((read) => db.selectFrom(read.as('w')).selectAll());
+  return rest.reduce((query, read) => query.unionAll(read), first).execute();
 }
 
 /**

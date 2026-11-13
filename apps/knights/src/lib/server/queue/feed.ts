@@ -2,15 +2,15 @@ import { NsfwLevel } from '@civitai/shared';
 
 /** How the feed picks what to serve. Product rules, kept in one place. */
 export const FEED = {
-  /** Candidates read per stage; the pick is made among these. */
-  windowSize: 40,
+  /** Candidates read per level bucket, per tier, per stage; the pick is made among these. */
+  bucketWindowSize: 10,
   /** After moving up a stage an item is served ahead of normal priority for this long, then ordered normally. */
   escalationPriorityHours: 24,
   /** How many of the player's latest judged items the next pick tries to differ from. */
   recentJudged: 3,
   /** Only judgments this recent count toward `recentJudged`; the bound also keeps the read on the newest ledger partitions. */
   recentJudgedHours: 24,
-  /** Share of picks that take the oldest candidate instead of the mixed pick, so no item waits behind the mix forever. */
+  /** Share of picks that take the oldest candidate of the chosen bucket instead of its lead, so no item waits forever. */
   starvationShare: 0.1,
 } as const;
 
@@ -28,18 +28,28 @@ const BUCKETS: [number, LevelBucket][] = [
   [NsfwLevel.XXX, 'XXX'],
 ];
 
+/** The level flags that have a bucket, in bucket order. */
+export const BUCKET_LEVELS: readonly number[] = BUCKETS.map(([flag]) => flag);
+
 /** The bucket of a level flag; Blocked, unrated and unknown values have none. */
 export const levelBucket = (level: number): LevelBucket | null =>
   BUCKETS.find(([flag]) => flag === level)?.[1] ?? null;
 
 /**
- * The bucket an item is mixed by: the level the producing model expects (`prediction.value`) when it names one,
- * else the image's current level.
+ * The bucket an item is mixed by: the level the producing model expects (`prediction.value`, a number or a plain
+ * integer string) when it names one, else the image's current level. `bucketLevelSql` in `queue.service.ts` is the
+ * same rule for the window read; a test pins the two agreeing.
  */
 export function itemBucket(prediction: unknown, imageLevel: number): LevelBucket | null {
-  const predicted =
+  const value =
     prediction && typeof prediction === 'object' && 'value' in prediction
-      ? levelBucket(Number((prediction as { value: unknown }).value))
+      ? (prediction as { value: unknown }).value
+      : undefined;
+  const predicted =
+    typeof value === 'number'
+      ? levelBucket(value)
+      : typeof value === 'string' && String(Number(value)) === value
+      ? levelBucket(Number(value))
       : null;
   return predicted ?? levelBucket(imageLevel);
 }
@@ -74,10 +84,14 @@ export type FeedCandidate = {
 
 const byAge = (a: FeedCandidate, b: FeedCandidate) => a.createdAt - b.createdAt || a.id - b.id;
 
+/** Buckets in a fixed order (null last), so the draw does not depend on row order. */
+const BUCKET_ORDER: (LevelBucket | null)[] = [...BUCKETS.map(([, bucket]) => bucket), null];
+
 /**
- * Orders a stage's window for one player. Candidates must already be in serving order (tier, priority, age). Each pick is
- * normally the first candidate of the leading tier and priority, in the player's own order, whose bucket is not among
- * the player's recent ones, else the first; about one pick in ten takes the oldest candidate of the whole window.
+ * Orders a stage's window for one player. Candidates must already be in serving order (tier, priority, age). Each pick
+ * draws a bucket with equal probability among the buckets that still have candidates, leaving out the player's recent
+ * buckets unless that leaves none (the null bucket is never left out). Within the bucket it takes the first candidate
+ * of the leading tier and priority in the player's own order; about one pick in ten takes the bucket's oldest instead.
  */
 export function orderFeed<T extends FeedCandidate>(
   candidates: T[],
@@ -88,22 +102,33 @@ export function orderFeed<T extends FeedCandidate>(
     limit: number;
   }
 ): T[] {
-  const pool = [...candidates];
+  const pools = new Map<LevelBucket | null, T[]>();
+  for (const bucket of BUCKET_ORDER) {
+    const pool = candidates.filter((c) => c.bucket === bucket);
+    if (pool.length > 0) pools.set(bucket, pool);
+  }
   const recent = [...input.recent];
   const served: T[] = [];
 
-  while (served.length < input.limit && pool.length > 0) {
+  while (served.length < input.limit && pools.size > 0) {
+    const open = [...pools.keys()];
+    const fresh = open.filter((b) => b === null || !recent.includes(b));
+    const choices = fresh.length > 0 ? fresh : open;
+    const bucket =
+      choices[Math.min(choices.length - 1, Math.floor(input.random() * choices.length))];
+    const pool = pools.get(bucket) as T[];
+
     let pick: T;
     if (input.random() < FEED.starvationShare) {
       pick = [...pool].sort(byAge)[0];
     } else {
       const lead = pool[0];
-      const leading = pool
+      pick = pool
         .filter((c) => c.tier === lead.tier && c.priority === lead.priority)
-        .sort((a, b) => tieBreak(input.playerId, a.id) - tieBreak(input.playerId, b.id));
-      pick = leading.find((c) => c.bucket === null || !recent.includes(c.bucket)) ?? leading[0];
+        .sort((a, b) => tieBreak(input.playerId, a.id) - tieBreak(input.playerId, b.id))[0];
     }
     pool.splice(pool.indexOf(pick), 1);
+    if (pool.length === 0) pools.delete(bucket);
     served.push(pick);
     recent.unshift(pick.bucket);
     recent.length = Math.min(recent.length, FEED.recentJudged);
