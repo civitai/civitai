@@ -4129,6 +4129,7 @@ export async function getCompletedChallengesWithWinners(
     Prisma.sql`c."visibleAt" <= now()`,
     Prisma.sql`c.status = 'Completed'::"ChallengeStatus"`,
     Prisma.sql`EXISTS (SELECT 1 FROM "ChallengeWinner" cw WHERE cw."challengeId" = c.id)`,
+    ...challengeScanGates(currentUserId),
   ];
 
   if (eventId) {
