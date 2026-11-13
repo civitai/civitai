@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
+import { postHoldsHeldTextSql, unheldPostTextUpdateSql } from '~/server/services/post-text-hold';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -191,5 +191,27 @@ describe('postHoldsHeldTextSql', () => {
     );
     expect(await posts()).toEqual([1]);
     expect(await texts()).toEqual([held]);
+  });
+});
+
+describe('unheldPostTextUpdateSql', () => {
+  const write = async (id: number) => {
+    const sql = unheldPostTextUpdateSql(id, '<p>new</p>', true);
+    return (await pg.query(sql.text, sql.values)).affectedRows;
+  };
+  const content = async (id: number) =>
+    (await pg.query<{ content: string }>(`SELECT content FROM "PostText" WHERE id = $1`, [id]))
+      .rows[0].content;
+
+  it('writes over unheld text, and not over text a hold reached after the check', async () => {
+    const free = await addText(1);
+    expect(await write(free)).toBe(1);
+    expect(await content(free)).toBe('<p>new</p>');
+
+    const held = await addText(2);
+    // The caller checked; then the hold landed.
+    await pg.query(`UPDATE "PostText" SET "csamHeld" = true WHERE id = $1`, [held]);
+    expect(await write(held)).toBe(0);
+    expect(await content(held)).toBe('<p>x</p>');
   });
 });

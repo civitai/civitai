@@ -36,6 +36,17 @@ export async function heldPostTextPostIds({
   return rows.map((row) => row.postId);
 }
 
+/**
+ * Writes a text item's content unless it is held at the moment of the write, so a hold landing
+ * after the caller's check still refuses the edit. Reset `nsfwLevel` to 0 with a change of words.
+ */
+export const unheldPostTextUpdateSql = (id: number, content: string, resetLevel: boolean) =>
+  Prisma.sql`UPDATE "PostText" t
+    SET content = ${content}, ${Prisma.raw(
+    resetLevel ? '"nsfwLevel" = 0, ' : ''
+  )}"updatedAt" = now()
+    WHERE t.id = ${id} AND NOT post_text_held(t."csamHeld", t."postId", t."userId")`;
+
 /** The refusal of a change to held text: an owner is never told why (`OWNER_CONTENT_KEPT`). */
 export const heldTextError = (isModerator: boolean | undefined, what: string) =>
   new TRPCError({

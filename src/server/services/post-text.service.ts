@@ -1,5 +1,9 @@
 import { dbRead, dbWrite } from '~/server/db/client';
-import { heldPostTextPostIds, heldTextError } from '~/server/services/post-text-hold';
+import {
+  heldPostTextPostIds,
+  heldTextError,
+  unheldPostTextUpdateSql,
+} from '~/server/services/post-text-hold';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { updatePostNsfwLevels } from '~/server/services/nsfwLevels.service';
 import {
@@ -96,12 +100,12 @@ export async function setPostText({
   if (html) await throwOnBlockedUserContent(html, { isModerator, surface: 'storyline-text' });
   // The scan reads the plain text, so a markup-only edit keeps its rating: a rescan would be
   // skipped as unchanged and the reset level would never be lifted.
-  if (removeTags(text.content).trim() === plain) {
-    await dbWrite.postText.update({ where: { id }, data: { content: html } });
-    return { id, content: html };
-  }
+  const markupOnly = removeTags(text.content).trim() === plain;
+  // The check above gives the refusal; this write keeps a hold placed since from being edited over.
+  if (!(await dbWrite.$executeRaw(unheldPostTextUpdateSql(id, html, !markupOnly))))
+    throw heldTextError(isModerator, 'This text');
+  if (markupOnly) return { id, content: html };
 
-  await dbWrite.postText.update({ where: { id }, data: { content: html, nsfwLevel: 0 } });
   if (plain) scanEntityInBackground({ entityType: 'PostText', entityId: id });
   // The cleared level no longer rates the post.
   await updatePostNsfwLevels([text.postId]);

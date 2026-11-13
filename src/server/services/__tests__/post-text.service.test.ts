@@ -33,6 +33,14 @@ const AUTHOR = 7;
 const POST = 5;
 const TEXT = 31;
 
+/** The one content write, as the hold-checked UPDATE it is. */
+const written = () => {
+  expect(w.$executeRaw).toHaveBeenCalledTimes(1);
+  const [sql] = w.$executeRaw.mock.calls[0] as unknown as [Prisma.Sql];
+  expect(sql.sql).toContain('NOT post_text_held(');
+  return { resetLevel: sql.sql.includes('"nsfwLevel" = 0'), values: sql.values };
+};
+
 const stored = (content = '<p>old</p>', csamHeld = false) =>
   w.postText.findUnique.mockResolvedValue({
     id: TEXT,
@@ -45,6 +53,7 @@ const stored = (content = '<p>old</p>', csamHeld = false) =>
 beforeEach(() => {
   vi.clearAllMocks();
   w.$queryRaw.mockResolvedValue([] as never);
+  w.$executeRaw.mockResolvedValue(1 as never);
   w.post.findUnique.mockResolvedValue({ userId: AUTHOR } as never);
   w.storylineChapter.findFirst.mockResolvedValue({ id: 9 } as never);
   w.storylinePendingChapter.findUnique.mockResolvedValue(null as never);
@@ -84,7 +93,16 @@ describe('setPostText', () => {
       code: 'FORBIDDEN',
       message: OWNER_CONTENT_KEPT,
     });
-    expect(w.postText.update).not.toHaveBeenCalled();
+    expect(w.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('refuses the edit when a hold lands after the check, writing nothing over it', async () => {
+    w.$executeRaw.mockResolvedValue(0 as never);
+    await expect(
+      setPostText({ id: TEXT, content: '<p>new</p>', userId: AUTHOR })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: OWNER_CONTENT_KEPT });
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
+    expect(updatePostNsfwLevels).not.toHaveBeenCalled();
   });
 
   it('keeps text only: media and embeds are stripped on the way in', () => {
@@ -98,17 +116,14 @@ describe('setPostText', () => {
 
   it('resets the rating to 0 in the same write, scans the new text and recomputes the post', async () => {
     await setPostText({ id: TEXT, content: '<p>new</p>', userId: AUTHOR });
-    expect(w.postText.update).toHaveBeenCalledWith({
-      where: { id: TEXT },
-      data: { content: '<p>new</p>', nsfwLevel: 0 },
-    });
+    expect(written()).toEqual({ resetLevel: true, values: ['<p>new</p>', TEXT] });
     expect(scanEntityInBackground).toHaveBeenCalledWith({ entityType: 'PostText', entityId: TEXT });
     expect(updatePostNsfwLevels).toHaveBeenCalledWith([POST]);
   });
 
   it('writes and bills nothing for unchanged text', async () => {
     await setPostText({ id: TEXT, content: '<p>old</p>', userId: AUTHOR });
-    expect(w.postText.update).not.toHaveBeenCalled();
+    expect(w.$executeRaw).not.toHaveBeenCalled();
     expect(scanEntityInBackground).not.toHaveBeenCalled();
   });
 
@@ -119,21 +134,18 @@ describe('setPostText', () => {
     });
     // The control: the same length counted with its tags is within the cap.
     await setPostText({ id: TEXT, content: `<p>${'a'.repeat(4990)}</p>`, userId: AUTHOR });
-    expect(w.postText.update).toHaveBeenCalledTimes(1);
+    expect(w.$executeRaw).toHaveBeenCalledTimes(1);
 
     vi.mocked(throwOnBlockedUserContent).mockRejectedValueOnce(new Error('blocked'));
     await expect(setPostText({ id: TEXT, content: '<p>bad</p>', userId: AUTHOR })).rejects.toThrow(
       'blocked'
     );
-    expect(w.postText.update).toHaveBeenCalledTimes(1);
+    expect(w.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the rating of a markup-only edit, which the scan would skip as unchanged', async () => {
     await setPostText({ id: TEXT, content: '<p><strong>old</strong></p>', userId: AUTHOR });
-    expect(w.postText.update).toHaveBeenCalledWith({
-      where: { id: TEXT },
-      data: { content: '<p><strong>old</strong></p>' },
-    });
+    expect(written()).toEqual({ resetLevel: false, values: ['<p><strong>old</strong></p>', TEXT] });
     expect(scanEntityInBackground).not.toHaveBeenCalled();
   });
 
@@ -142,7 +154,7 @@ describe('setPostText', () => {
     await expect(
       setPostText({ id: TEXT, content: '<p><a href="https://x.test">old</a></p>', userId: AUTHOR })
     ).rejects.toThrow('blocked');
-    expect(w.postText.update).not.toHaveBeenCalled();
+    expect(w.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("refuses someone else's text, a moderator's included", async () => {
@@ -152,7 +164,7 @@ describe('setPostText', () => {
     await expect(
       setPostText({ id: TEXT, content: '<p>x</p>', userId: 99, isModerator: true })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(w.postText.update).not.toHaveBeenCalled();
+    expect(w.$executeRaw).not.toHaveBeenCalled();
   });
 });
 
