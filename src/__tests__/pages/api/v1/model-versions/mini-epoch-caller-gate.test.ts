@@ -550,6 +550,8 @@ describe('mini/[id] ?epoch= from the query string', () => {
 
       it.each(held)('%s gets the no-param response whatever ?epoch= holds', async (_, caller) => {
         const unnamed = await request(caller, {}, twoEpochs);
+        expect(unnamed.status).toBe(200);
+        expect(unnamed.body.downloadUrls).toEqual([EPOCH_URL]);
         for (const epoch of ['5', '10', '99', '', 'latest', '5.5', ['5', '10']])
           expect(
             await request(caller, {}, twoEpochs, undefined, { epoch: epoch as string }),

@@ -441,6 +441,7 @@ describe('mini/[id] ?epoch=, a credential the scope gate refuses', () => {
     h.variants = { 'mini-epoch-caller-gate': epochMode, 'download-scope-gate': 'enforce' };
     const refused: Caller = { user: { id: OWNER_ID }, context: bearer(TokenScope.UserRead) };
     const unnamed = await request(refused, [twoEpochs]);
+    expect(unnamed.body.downloadUrls).toEqual([STORED]);
     expect(await request(refused, [twoEpochs], { epoch: '5' })).toEqual(unnamed);
     // Control: a key with a download scope picks it.
     const { body } = await request(
