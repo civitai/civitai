@@ -1350,8 +1350,7 @@ export const deleteUser = async ({
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
-  // Sleeping (hibernated) apps: their records and stored archives go with the account. A ban
-  // never reaches here, so a banned user's sleeping apps are kept.
+  // A ban never reaches here, so a banned user's sleeping apps are kept.
   await runStep('delete-sleeping-apps', () => deleteSleepingAppsOfDeletedAccount(user.id));
   await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>

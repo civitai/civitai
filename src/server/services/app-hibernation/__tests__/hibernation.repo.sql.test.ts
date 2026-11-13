@@ -4,6 +4,9 @@ import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  createHibernationRepo,
+  type SqlQuery,
+  type SqlRunner,
   fromDb,
   fromOldestDb,
   toAccountState,
@@ -172,8 +175,20 @@ describe('app_sandbox_hibernations SQL', () => {
     ).rejects.toThrow(/secrets_check/);
   });
 
-  it('the per-user lock statement runs', async () => {
-    await expect(run(hibernationSql.lock(9101))).resolves.toBeDefined();
+  it('lock(user) holds a transaction-scoped advisory lock keyed by that user, released at commit', async () => {
+    const held = await db.transaction(async (tx) => {
+      const sql = hibernationSql.lock(9101);
+      await tx.query(sql.text, sql.values as unknown[]);
+      const other = hibernationSql.lock(9202);
+      await tx.query(other.text, other.values as unknown[]);
+      return (await tx.query<{ classid: number; objid: number; granted: boolean }>(ADVISORY)).rows;
+    });
+    // Two different users: two different locks, both under the hibernation namespace.
+    expect(held).toEqual([
+      { classid: LOCK_NS, objid: 9101, granted: true },
+      { classid: LOCK_NS, objid: 9202, granted: true },
+    ]);
+    expect((await db.query(ADVISORY)).rows).toEqual([]);
   });
 
   // Each row sets exactly some of the four secrets columns. Every partial combination must fail:
@@ -255,5 +270,99 @@ describe('app_sandbox_hibernations SQL', () => {
       (r) => r.userId
     );
     expect(ids).toEqual([9202]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The REAL `commit` transaction (`createHibernationRepo(...).commit`) on the same database.
+//
+// 🔴 What this can and cannot show. PGlite is ONE session, so two transactions never truly run
+// at once (it queues them) and an advisory lock is re-entrant within a session: a second
+// lock(9101) cannot be seen to BLOCK here. So the lock is shown by its effect inside the
+// transaction (`pg_locks`, read in the same transaction while commit reads), and "limits hold
+// across two commits" is shown for the serial order the lock guarantees, not by a race.
+// ---------------------------------------------------------------------------------------------
+
+const LOCK_NS = 0x48424e54;
+/** A constant statement as a `Prisma.Sql` (no parameters). */
+const rawSql = (text: string) => ({ text, values: [] } as unknown as Prisma.Sql);
+const ADVISORY = `SELECT classid::int AS classid, objid::int AS objid, granted
+  FROM pg_locks WHERE locktype = 'advisory' ORDER BY objid`;
+
+/** PGlite as a SqlRunner; `onRead` sees every in-transaction statement, inside the transaction. */
+function pgliteRunner(onRead?: (text: string, tx: SqlQuery) => Promise<void>): SqlRunner {
+  return {
+    query: async <R>(sql: Prisma.Sql) =>
+      (await db.query<R>(sql.text, sql.values as unknown[])).rows,
+    transaction: (fn) =>
+      db.transaction(async (t) => {
+        const tx: SqlQuery = async <R>(sql: Prisma.Sql) => {
+          const rows = (await t.query<R>(sql.text, sql.values as unknown[])).rows;
+          await onRead?.(
+            sql.text,
+            async <X>(q: Prisma.Sql) => (await t.query<X>(q.text, q.values as unknown[])).rows
+          );
+          return rows;
+        };
+        return fn(tx);
+      }),
+  };
+}
+
+describe('hibernationRepo.commit (the real transaction)', () => {
+  it('reads the account in the transaction: a deleted account is decided as deleted and gets no row', async () => {
+    const repo = createHibernationRepo(pgliteRunner());
+    const seen: string[] = [];
+    const commit = (userId: number) =>
+      repo.commit(userId, 'tip-calculator', (_existing, _usage, account) => {
+        seen.push(account);
+        return account === 'active'
+          ? {
+              write: row({ userId, objectKey: `archives/${userId}/tip-calculator/a.kept.zip` }),
+              result: 'written',
+            }
+          : { result: `refused ${account}` };
+      });
+
+    expect(await commit(9202)).toBe('refused deleted');
+    expect(await commit(9303)).toBe('refused banned');
+    expect(await commit(9101)).toBe('written');
+    expect(seen).toEqual(['deleted', 'banned', 'active']);
+    expect((await run<{ user_id: number }>(hibernationSql.removeAll(9202))).length).toBe(0);
+    expect(await get(9101, 'tip-calculator')).not.toBeNull();
+  });
+
+  it('while it reads the row, the usage and the account, it holds the user’s advisory lock', async () => {
+    const lockedDuringReads: { objid: number }[][] = [];
+    const repo = createHibernationRepo(
+      pgliteRunner(async (text, tx) => {
+        if (/FROM "User"/.test(text) || /count\(\*\)/.test(text))
+          lockedDuringReads.push(await tx<{ objid: number }>(rawSql(ADVISORY)));
+      })
+    );
+    await repo.commit(9101, 'tip-calculator', () => ({ result: null }));
+    expect(lockedDuringReads).toHaveLength(2);
+    for (const held of lockedDuringReads)
+      expect(held).toEqual([{ classid: LOCK_NS, objid: 9101, granted: true }]);
+  });
+
+  it('two commits for one user, run back to back as the lock orders them, share one limit', async () => {
+    const repo = createHibernationRepo(pgliteRunner());
+    // A plan of ONE sleeping app: whichever commit runs second must see the first's row.
+    const commitApp = (appKey: string) =>
+      repo.commit(9101, appKey, (existing, usage) =>
+        !existing && usage.apps >= 1
+          ? { result: 'limit' }
+          : {
+              write: row({ appKey, objectKey: `archives/9101/${appKey}/a.kept.zip` }),
+              result: 'written',
+            }
+      );
+    const results = await Promise.all([commitApp('first-app'), commitApp('second-app')]);
+    expect(results.sort()).toEqual(['limit', 'written']);
+    expect(toUsage(await run<UsageDbRow>(hibernationSql.usage(9101, 'none-such')))).toEqual({
+      apps: 1,
+      bytes: 4_321,
+    });
   });
 });

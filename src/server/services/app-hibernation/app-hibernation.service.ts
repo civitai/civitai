@@ -46,8 +46,6 @@ import {
  *           one-time WAKE TICKET that civitai minted for a wake the user started
  *           ({@link mintWakeTicket}).
  *
- * Listing, waking and deleting sleeping apps from the UI come with the UI.
- *
  * Nothing here ever deletes a sleeping app to make room: at the plan limit `begin` (and `commit`,
  * for bytes) refuses, naming the user's oldest sleeping app so the user can be asked whether to
  * delete it, and the sandbox service keeps the app as it is until they answer.
@@ -526,9 +524,8 @@ export type MintWakeTicketResult =
  * within {@link WAKE_TICKET_TTL_SECONDS}, by `/api/internal/app-hibernation/secrets`.
  *
  * Refused unless the account is active, read from its `User` row (`deletedAt` / `bannedAt`), as
- * begin and commit do. "Only when the user themselves starts a wake" is NOT enforced here: this
- * function cannot tell who called it. It is enforced by its only caller, the wake procedure that
- * arrives with the UI, which must call it from the signed-in user's own request and nowhere else.
+ * begin and commit do. Does not check who called it: call it only from the signed-in user's own
+ * wake request.
  */
 export async function mintWakeTicket(
   userId: number,
@@ -652,7 +649,7 @@ export type SweepResult = {
 };
 
 /**
- * ORPHAN SWEEP (exported for the job that will run it): uploads of attempts that never committed,
+ * ORPHAN SWEEP, run hourly by the `sweep-hibernation-objects` job (`src/server/jobs/sweep-hibernation-objects.ts`): uploads of attempts that never committed,
  * kept copies whose superseding delete failed, and the leftovers of a failed account-deletion
  * step. Two passes:
  *   1. every deleted account that still has rows gets {@link deleteSleepingAppsForAccount} again;

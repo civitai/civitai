@@ -208,60 +208,80 @@ export const toUsage = (rows: UsageDbRow[]): HibernationUsage => ({
   bytes: Number(rows[0]?.bytes ?? 0),
 });
 
-export const hibernationRepo: HibernationRepo = {
-  async oldest(userId, excludeAppKey) {
-    const rows = await dbWrite.$queryRaw<OldestDbRow[]>(
-      hibernationSql.oldest(userId, excludeAppKey)
-    );
-    return rows[0] ? fromOldestDb(rows[0]) : null;
-  },
+/** Runs one statement and answers its rows. */
+export type SqlQuery = <R>(sql: Prisma.Sql) => Promise<R[]>;
 
-  async get(userId, appKey) {
-    // The primary: a wake must see the commit that just landed.
-    const rows = await dbWrite.$queryRaw<DbRow[]>(hibernationSql.get(userId, appKey));
-    return rows[0] ? fromDb(rows[0]) : null;
-  },
-
-  async usage(userId, excludeAppKey) {
-    return toUsage(
-      await dbWrite.$queryRaw<UsageDbRow[]>(hibernationSql.usage(userId, excludeAppKey))
-    );
-  },
-
-  async commit(userId, appKey, decide) {
-    return dbWrite.$transaction(async (tx) => {
-      await tx.$queryRaw(hibernationSql.lock(userId));
-      const existing = await tx.$queryRaw<DbRow[]>(hibernationSql.get(userId, appKey));
-      const usage = toUsage(await tx.$queryRaw<UsageDbRow[]>(hibernationSql.usage(userId, appKey)));
-      const account = toAccountState(
-        await tx.$queryRaw<AccountDbRow[]>(hibernationSql.accountState(userId, true))
-      );
-      const decision = decide(existing[0] ? fromDb(existing[0]) : null, usage, account);
-      if (decision.write) await tx.$executeRaw(hibernationSql.upsert(decision.write));
-      return decision.result;
-    });
-  },
-
-  async accountState(userId) {
-    return toAccountState(
-      await dbWrite.$queryRaw<AccountDbRow[]>(hibernationSql.accountState(userId, false))
-    );
-  },
-
-  async referencedKeys(keys) {
-    if (keys.length === 0) return new Set();
-    const rows = await dbWrite.$queryRaw<{ key: string }[]>(hibernationSql.referencedKeys(keys));
-    return new Set(rows.map((r) => r.key));
-  },
-
-  async deletedAccountsWithRows(limit) {
-    const rows = await dbWrite.$queryRaw<{ userId: number }[]>(
-      hibernationSql.deletedAccountsWithRows(limit)
-    );
-    return rows.map((r) => r.userId);
-  },
-
-  async removeAll(userId) {
-    return (await dbWrite.$queryRaw<DbRow[]>(hibernationSql.removeAll(userId))).map(fromDb);
-  },
+/**
+ * What the repo needs from a database: run a statement, and run several in ONE transaction. The
+ * production one is Prisma's primary; tests pass an in-process Postgres
+ * (`__tests__/hibernation.repo.sql.test.ts`), so the transaction below is the code they run.
+ */
+export type SqlRunner = {
+  query: SqlQuery;
+  transaction: <T>(fn: (query: SqlQuery) => Promise<T>) => Promise<T>;
 };
+
+export function createHibernationRepo(db: SqlRunner): HibernationRepo {
+  return {
+    async oldest(userId, excludeAppKey) {
+      const rows = await db.query<OldestDbRow>(hibernationSql.oldest(userId, excludeAppKey));
+      return rows[0] ? fromOldestDb(rows[0]) : null;
+    },
+
+    async get(userId, appKey) {
+      // The primary: a wake must see the commit that just landed.
+      const rows = await db.query<DbRow>(hibernationSql.get(userId, appKey));
+      return rows[0] ? fromDb(rows[0]) : null;
+    },
+
+    async usage(userId, excludeAppKey) {
+      return toUsage(await db.query<UsageDbRow>(hibernationSql.usage(userId, excludeAppKey)));
+    },
+
+    async commit(userId, appKey, decide) {
+      return db.transaction(async (tx) => {
+        await tx(hibernationSql.lock(userId));
+        const existing = await tx<DbRow>(hibernationSql.get(userId, appKey));
+        const usage = toUsage(await tx<UsageDbRow>(hibernationSql.usage(userId, appKey)));
+        const account = toAccountState(
+          await tx<AccountDbRow>(hibernationSql.accountState(userId, true))
+        );
+        const decision = decide(existing[0] ? fromDb(existing[0]) : null, usage, account);
+        if (decision.write) await tx(hibernationSql.upsert(decision.write));
+        return decision.result;
+      });
+    },
+
+    async accountState(userId) {
+      return toAccountState(
+        await db.query<AccountDbRow>(hibernationSql.accountState(userId, false))
+      );
+    },
+
+    async referencedKeys(keys) {
+      if (keys.length === 0) return new Set();
+      const rows = await db.query<{ key: string }>(hibernationSql.referencedKeys(keys));
+      return new Set(rows.map((r) => r.key));
+    },
+
+    async deletedAccountsWithRows(limit) {
+      const rows = await db.query<{ userId: number }>(
+        hibernationSql.deletedAccountsWithRows(limit)
+      );
+      return rows.map((r) => r.userId);
+    },
+
+    async removeAll(userId) {
+      return (await db.query<DbRow>(hibernationSql.removeAll(userId))).map(fromDb);
+    },
+  };
+}
+
+/** Prisma's primary as a {@link SqlRunner}. */
+const primary: SqlRunner = {
+  query: <R>(sql: Prisma.Sql) => dbWrite.$queryRaw<R[]>(sql),
+  transaction: (fn) =>
+    dbWrite.$transaction((tx) => fn(<R>(sql: Prisma.Sql) => tx.$queryRaw<R[]>(sql))),
+};
+
+export const hibernationRepo: HibernationRepo = createHibernationRepo(primary);

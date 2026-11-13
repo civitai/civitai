@@ -14,8 +14,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
  * rotation); a signature made with any of them verifies.
  *
  * A request is accepted only when the signature matches and the timestamp is within
- * {@link SIGNATURE_WINDOW_SECONDS} of now, as the repo's other signed internal callbacks do. A
- * request replayed inside the window repeats a call that is idempotent anyway: a retried `begin`
+ * {@link SIGNATURE_WINDOW_SECONDS} of now. A request replayed inside the window repeats a call that is idempotent anyway: a retried `begin`
  * answers the same keys, and a retried `commit` the same receipt.
  */
 

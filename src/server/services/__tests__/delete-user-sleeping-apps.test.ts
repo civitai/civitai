@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as HibernationRepoModule from '~/server/services/app-hibernation/hibernation.repo';
 import type * as ArchiveS3 from '~/utils/app-archive-s3';
-import { fakeRepo, fakeStore } from '~/server/services/app-hibernation/__tests__/hibernation.fakes';
+import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import type * as HibernationDeps from '~/server/services/app-hibernation/hibernation-deps';
+import {
+  fakeRepo,
+  fakeStore,
+  NOW,
+} from '~/server/services/app-hibernation/__tests__/hibernation.fakes';
 
 /**
  * Account deletion takes the user's sleeping apps with it: `deleteUser` (the one path both the
@@ -12,6 +18,7 @@ import { fakeRepo, fakeStore } from '~/server/services/app-hibernation/__tests__
  */
 
 const h = vi.hoisted(() => ({
+  hibernateOn: true,
   log: [] as string[],
   repo: undefined as unknown as ReturnType<typeof fakeRepo>,
   store: undefined as unknown as ReturnType<typeof fakeStore>,
@@ -30,6 +37,20 @@ vi.mock('~/server/services/app-hibernation/hibernation.repo', async (importOrigi
     return h.repo.repo;
   },
 }));
+vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppBlocksFlag>()),
+  isAppHibernateEnabledGlobally: async () => h.hibernateOn,
+}));
+// The job's dependencies: the same in-memory table and store `deleteUser` used.
+vi.mock('~/server/services/app-hibernation/hibernation-deps', async (importOriginal) => ({
+  ...(await importOriginal<typeof HibernationDeps>()),
+  defaultHibernationDeps: async () => ({
+    repo: h.repo.repo,
+    store: h.store.store,
+    now: () => NOW,
+    report: () => undefined,
+  }),
+}));
 vi.mock('~/utils/app-archive-s3', async (importOriginal) => ({
   ...(await importOriginal<typeof ArchiveS3>()),
   archiveStoreConfig: () => ({
@@ -42,6 +63,7 @@ vi.mock('~/utils/app-archive-s3', async (importOriginal) => ({
 }));
 
 import * as UserService from '~/server/services/user.service';
+import { sweepHibernationObjectsJob } from '~/server/jobs/sweep-hibernation-objects';
 
 const USER_ID = 4_343;
 const OTHER_ID = 4_454;
@@ -49,6 +71,7 @@ const OTHER_ID = 4_454;
 beforeEach(() => {
   vi.clearAllMocks();
   h.log = [];
+  h.hibernateOn = true;
   h.repo = fakeRepo(h.log);
   h.store = fakeStore(h.log);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: USER_ID, meta: {} });
@@ -97,5 +120,39 @@ describe('deleteUser — sleeping apps', () => {
       `archives/${OTHER_ID}/tip-calculator/a.secrets`,
       `archives/${OTHER_ID}/tip-calculator/a.zip`,
     ]);
+  });
+
+  it('a failed sleeping-apps step keeps the rows; the hourly sweep job then leaves nothing for that user', async () => {
+    sleeping(USER_ID, 'tip-calculator');
+    sleeping(OTHER_ID, 'tip-calculator');
+    h.store.state.failDeletes = true;
+
+    await UserService.deleteUser({ id: USER_ID }); // the step fails; deleteUser does not throw
+    expect([...h.repo.rows.keys()].sort()).toEqual(
+      [`${OTHER_ID}/tip-calculator`, `${USER_ID}/tip-calculator`].sort()
+    );
+
+    // The deletion committed `deletedAt` on the User row; the store recovers.
+    h.repo.accounts.set(USER_ID, 'deleted');
+    h.store.state.failDeletes = false;
+    await (
+      await sweepHibernationObjectsJob.run({} as never)
+    ).result;
+
+    expect([...h.repo.rows.keys()]).toEqual([`${OTHER_ID}/tip-calculator`]);
+    expect([...h.store.objects.keys()].filter((k) => k.startsWith(`archives/${USER_ID}/`))).toEqual(
+      []
+    );
+  });
+
+  it('with the flag off the sweep job does nothing', async () => {
+    sleeping(USER_ID, 'tip-calculator');
+    h.repo.accounts.set(USER_ID, 'deleted');
+    h.hibernateOn = false;
+    expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
+      disabled: true,
+    });
+    expect(h.repo.rows.size).toBe(1);
+    expect(h.store.objects.size).toBe(2);
   });
 });
