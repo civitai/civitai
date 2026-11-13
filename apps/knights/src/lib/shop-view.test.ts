@@ -10,6 +10,9 @@ import {
   dealPercentOff,
   membershipPerksUrl,
   durationLabel,
+  frameStyle,
+  groupCosmetics,
+  nameplateBackground,
   packBonusPercent,
   packNote,
   refusalText,
@@ -188,5 +191,64 @@ describe('buyClick', () => {
 
   it('lets a purchase through otherwise', () => {
     expect(buyClick({ held: false, convertible: 5_000 }, 5_000)).toEqual({ kind: 'confirm' });
+  });
+});
+
+describe('groupCosmetics', () => {
+  const card = (id: number, cosmeticType: string | null, uses: number | null = null) => ({ id, cosmeticType, uses });
+
+  it('groups cosmetics by type in shop order, keeps each group in catalog order, and drops empty groups', () => {
+    const groups = groupCosmetics([
+      card(1, 'NamePlate'),
+      card(2, 'Badge'),
+      card(3, 'Sticker', 100),
+      card(4, 'Badge'),
+      card(5, 'ProfileDecoration'),
+    ]);
+    expect(groups.map((g) => [g.key, g.label, g.cards.map((c) => c.id)])).toEqual([
+      ['Badge', 'Badges', [2, 4]],
+      ['ProfileDecoration', 'Avatar frames', [5]],
+      ['Sticker', 'Stickers', [3]],
+      ['NamePlate', 'Nameplates', [1]],
+    ]);
+  });
+
+  it('puts any other type in an Other group at the end', () => {
+    const groups = groupCosmetics([card(1, 'CardDecoration'), card(2, null), card(3, 'Badge')]);
+    expect(groups.map((g) => [g.key, g.cards.map((c) => c.id)])).toEqual([
+      ['Badge', [3]],
+      ['other', [1, 2]],
+    ]);
+    expect(groups[1].label).toBe('Other');
+  });
+
+  it("notes the stickers' uses when every sticker sells the same number, and stays general otherwise", () => {
+    expect(groupCosmetics([card(1, 'Sticker', 100), card(2, 'Sticker', 100)])[0].note).toBe('100 uses each');
+    expect(groupCosmetics([card(1, 'Sticker', 100), card(2, 'Sticker', 5)])[0].note).toBe('Buy again for more uses');
+    expect(groupCosmetics([card(1, 'Badge')])[0].note).toBe('Yours forever');
+    expect(groupCosmetics([card(1, 'NamePlate')])[0].note).toBe('Colors your name across Civitai');
+  });
+});
+
+describe('frameStyle', () => {
+  it('scales pixel offsets authored at a 96px avatar into percentages of any avatar', () => {
+    expect(frameStyle({ top: -10, left: -13, right: -14, bottom: -16 })).toEqual({
+      top: '-10.417%',
+      left: '-13.542%',
+      width: 'calc(100% - -28.125%)',
+      height: 'calc(100% - -27.083%)',
+    });
+  });
+
+  it('matches the avatar box exactly without offsets', () => {
+    expect(frameStyle(null)).toEqual({ top: '0%', left: '0%', width: '100%', height: '100%' });
+  });
+});
+
+describe('nameplateBackground', () => {
+  it('draws the gradient at its angle', () => {
+    expect(nameplateBackground({ from: '#b8860b', to: '#fff3c4', deg: 90 })).toBe(
+      'linear-gradient(90deg, #b8860b, #fff3c4)'
+    );
   });
 });

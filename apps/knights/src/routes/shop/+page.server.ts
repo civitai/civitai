@@ -49,7 +49,8 @@ export const load: PageServerLoad = async ({ locals }) => {
       ...shop,
       cards: shop.cards.map(({ imageKey, ...card }) => ({
         ...card,
-        image: imageKey ? imageUrl(imageKey, 192) : null,
+        // Sized for the cosmetic tiles and the try-on preview, both larger than the old row icon.
+        image: imageKey ? imageUrl(imageKey, 384) : null,
       })),
     },
     now: now.toISOString(),

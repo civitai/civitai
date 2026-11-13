@@ -89,3 +89,34 @@ describe('the shop view of a creator cosmetic', () => {
     expect(ids.filter((id) => id >= 20).sort()).toEqual([20, 21, 22, 23]);
   });
 });
+
+describe("the shop view of a cosmetic's preview data", () => {
+  beforeEach(async () => {
+    await pg.exec(`
+      TRUNCATE "Cosmetic","CosmeticShopItem","User" RESTART IDENTITY CASCADE;
+      INSERT INTO "Cosmetic" ("id","name","type","source","data") VALUES
+        (201,'Radiance','NamePlate','Purchase','{"variant":"gradient","gradient":{"from":"#b8860b","to":"#fff3c4","deg":90}}'),
+        (202,'Broken plate','NamePlate','Purchase','{"variant":"gradient","gradient":{"from":"red","to":"#fff","deg":"90"}}'),
+        (203,'Steel frame','ProfileDecoration','Purchase','{"url":"frame-key","offsets":{"top":-10,"left":-13,"right":-14,"bottom":-16}}'),
+        (204,'Seal','Badge','Purchase','{"url":"seal-key","offsets":{"top":"x"}}');
+      INSERT INTO "KnightsShopItem" ("id","kind","name","price","cosmeticId") VALUES
+        (11,'cosmetic','Radiance',30000,201),
+        (12,'cosmetic','Broken plate',30000,202),
+        (13,'cosmetic','Steel frame',25000,203),
+        (14,'cosmetic','Seal',15000,204);`);
+  });
+
+  it("passes a nameplate's gradient, and none when the gradient is malformed", async () => {
+    const byId = new Map((await cards()).map((card) => [card.id, card]));
+    expect(byId.get(11)?.nameplate).toEqual({ from: '#b8860b', to: '#fff3c4', deg: 90 });
+    expect(byId.get(12)?.nameplate).toBeNull();
+    expect(byId.get(13)?.nameplate).toBeNull();
+  });
+
+  it("passes a frame's offsets, and none when they are incomplete", async () => {
+    const byId = new Map((await cards()).map((card) => [card.id, card]));
+    expect(byId.get(13)?.frameOffsets).toEqual({ top: -10, left: -13, right: -14, bottom: -16 });
+    expect(byId.get(14)?.frameOffsets).toBeNull();
+    expect(byId.get(11)?.frameOffsets).toBeNull();
+  });
+});
