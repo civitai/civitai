@@ -8,11 +8,19 @@ import {
   TIPALTI_RESYNC_MAX_USERS,
 } from '~/server/services/tipalti-payee-resync.service';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
+import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as NotificationService from '~/server/services/notification.service';
 
-const { getPayeeByRefCode, bust } = vi.hoisted(() => ({
+const { getPayeeByRefCode, bust, createNotification, trackModActivity } = vi.hoisted(() => ({
   getPayeeByRefCode: vi.fn(),
-  bust: vi.fn().mockResolvedValue(undefined),
+  bust: vi.fn(),
+  createNotification: vi.fn(),
+  trackModActivity: vi.fn(),
+}));
+
+vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeratorService>()),
+  trackModActivity,
 }));
 
 vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
@@ -26,29 +34,36 @@ vi.mock('~/server/services/creator-program.service', async (importOriginal) => (
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
-  createNotification: vi.fn().mockResolvedValue(undefined),
+  createNotification,
 }));
 
 const USER_ID = 1269;
 const PAYEE_ID = 'payee-abc';
 
-const stored = (paymentsEnabled: boolean, status = 'Active') => ({
-  userId: USER_ID,
-  tipaltiAccountId: PAYEE_ID,
+type Stored = {
+  userId: number;
+  tipaltiAccountId: string;
+  tipaltiAccountStatus: string;
+  tipaltiPaymentsEnabled: boolean;
+};
+
+const stored = (paymentsEnabled: boolean, status = 'Active', userId = USER_ID): Stored => ({
+  userId,
+  tipaltiAccountId: `${PAYEE_ID}-${userId}`,
   tipaltiAccountStatus: status,
   tipaltiPaymentsEnabled: paymentsEnabled,
 });
 
-const payee = (overrides: Record<string, unknown> = {}) => ({
-  id: PAYEE_ID,
-  refCode: String(USER_ID),
+const payee = (overrides: Record<string, unknown> = {}, userId = USER_ID) => ({
+  id: `${PAYEE_ID}-${userId}`,
+  refCode: String(userId),
   status: 'Active',
   isPayable: true,
   lastChangeDateTimeUTC: '2026-07-04T23:18:00Z',
   ...overrides,
 });
 
-function arrange(storedRow: ReturnType<typeof stored>, tipaltiPayee: unknown) {
+function arrange(storedRow: Stored, tipaltiPayee: unknown) {
   dbMock.dbWrite.userPaymentConfiguration.findUnique.mockResolvedValue(storedRow);
   dbMock.dbWrite.userPaymentConfiguration.update.mockImplementation(async ({ data }) => ({
     ...storedRow,
@@ -57,14 +72,21 @@ function arrange(storedRow: ReturnType<typeof stored>, tipaltiPayee: unknown) {
   getPayeeByRefCode.mockResolvedValue(tipaltiPayee);
 }
 
-const run = (dryRun: boolean) => resyncTipaltiPayees({ userIds: [USER_ID], dryRun, actorId: 1 });
+const run = (dryRun: boolean, userIds = [USER_ID]) =>
+  resyncTipaltiPayees({ userIds, dryRun, actorId: 1 });
+
+const update = dbMock.dbWrite.userPaymentConfiguration.update;
+const writtenData = () => update.mock.calls[0][0].data;
 
 describe('resyncTipaltiPayees', () => {
   beforeEach(() => {
     getPayeeByRefCode.mockReset();
-    bust.mockClear();
+    bust.mockReset().mockResolvedValue(undefined);
+    createNotification.mockReset().mockResolvedValue(undefined);
+    trackModActivity.mockReset().mockResolvedValue(undefined);
     dbMock.dbWrite.userPaymentConfiguration.findUnique.mockReset();
-    dbMock.dbWrite.userPaymentConfiguration.update.mockReset();
+    update.mockReset();
+    dbMock.dbRead.user.findUnique.mockReset();
   });
 
   it('dry run reports a payable payee as an enable and writes nothing', async () => {
@@ -74,38 +96,55 @@ describe('resyncTipaltiPayees', () => {
 
     expect(row).toMatchObject({ wouldChange: true, direction: 'enable', applied: false });
     expect(row.refused).toBeNull();
-    expect(dbMock.dbWrite.userPaymentConfiguration.update).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
     expect(bust).not.toHaveBeenCalled();
   });
 
-  it('dryRun=false writes the flag from Tipalti and busts the cash cache', async () => {
+  it('dryRun=false writes the flag from Tipalti, busts the cash cache and tells the user', async () => {
     arrange(stored(false), payee());
 
     const [row] = await run(false);
 
     expect(row).toMatchObject({ applied: true, direction: 'enable' });
-    expect(dbMock.dbWrite.userPaymentConfiguration.update).toHaveBeenCalledWith(
+    expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ userId: USER_ID }),
-        data: expect.objectContaining({ tipaltiPaymentsEnabled: true }),
+        where: { userId: USER_ID, tipaltiAccountId: `${PAYEE_ID}-${USER_ID}` },
       })
     );
+    expect(trackModActivity).toHaveBeenCalledWith(1, {
+      entityType: 'user',
+      entityId: USER_ID,
+      activity: 'tipaltiResync:enable',
+    });
+    expect(writtenData()).toMatchObject({
+      tipaltiPaymentsEnabled: true,
+      tipaltiAccountStatus: 'Active',
+    });
     expect(bust).toHaveBeenCalledWith(USER_ID);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, type: 'creators-program-payments-enabled' })
+    );
   });
 
-  it('applies true -> false too, and labels it a disable', async () => {
-    arrange(
-      stored(true),
-      payee({ isPayable: false, unpayableReasons: ['Certificate has expired.'] })
-    );
+  it('applies true -> false, labels it a disable, and reports but never forwards the reasons', async () => {
+    // 'Tax' is the reason updateByTipaltiAccount emails on; it must not reach it from here.
+    arrange(stored(true), payee({ isPayable: false, unpayableReasons: ['Tax'] }));
 
     const [row] = await run(false);
 
     expect(row).toMatchObject({ applied: true, direction: 'disable' });
-    expect(row.tipalti?.unpayableReasons).toEqual(['Certificate has expired.']);
-    expect(dbMock.dbWrite.userPaymentConfiguration.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ tipaltiPaymentsEnabled: false }) })
-    );
+    expect(row.tipalti?.unpayableReasons).toEqual(['Tax']);
+    expect(writtenData()).toMatchObject({ tipaltiPaymentsEnabled: false });
+    expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('syncs a status-only change and writes the status Tipalti reports', async () => {
+    arrange(stored(false, 'Active'), payee({ status: 'Suspended', isPayable: false }));
+
+    const [row] = await run(false);
+
+    expect(row).toMatchObject({ wouldChange: true, direction: null, applied: true });
+    expect(writtenData()).toMatchObject({ tipaltiAccountStatus: 'Suspended' });
   });
 
   it('does not write when Tipalti already agrees', async () => {
@@ -114,24 +153,38 @@ describe('resyncTipaltiPayees', () => {
     const [row] = await run(false);
 
     expect(row).toMatchObject({ wouldChange: false, applied: false, direction: null });
-    expect(dbMock.dbWrite.userPaymentConfiguration.update).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 
+  // Stored false, and every payee below would otherwise enable: only the refusal stops a write.
   it.each([
-    ['a payee id that is not the stored one', payee({ id: 'someone-else' })],
-    ['a refCode that is not this user', payee({ refCode: '999' })],
-    ['a payee with no isPayable', payee({ isPayable: undefined })],
-    ['a status we do not recognise', payee({ status: 'SomethingNew' })],
-    ['no payee at all', null],
-  ])('refuses to write for %s', async (_label, tipaltiPayee) => {
-    arrange(stored(true), tipaltiPayee);
+    ['a payee id that is not the stored one', payee({ id: 'someone-else' }), /payee id/],
+    ['a refCode that is not this user', payee({ refCode: '999' }), /refCode/],
+    ['a payee with no isPayable', payee({ isPayable: undefined }), /isPayable/],
+    ['a status we do not recognise', payee({ status: 'SomethingNew' }), /recognise/],
+    ['no payee at all', null, /no payee/],
+  ])('refuses to write for %s', async (_label, tipaltiPayee, reason) => {
+    arrange(stored(false), tipaltiPayee);
 
     const [row] = await run(false);
 
-    expect(row.refused).toEqual(expect.any(String));
+    expect(row.refused).toMatch(reason);
     expect(row.applied).toBe(false);
-    expect(dbMock.dbWrite.userPaymentConfiguration.update).not.toHaveBeenCalled();
+    if (/refCode|payee id/.test(String(reason))) expect(row.tipalti).toBeNull();
+    expect(update).not.toHaveBeenCalled();
     expect(bust).not.toHaveBeenCalled();
+  });
+
+  it('refuses when a webhook changed the row during the Tipalti read', async () => {
+    arrange(stored(false), payee());
+    dbMock.dbWrite.userPaymentConfiguration.findUnique
+      .mockResolvedValueOnce(stored(false))
+      .mockResolvedValueOnce(stored(true));
+
+    const [row] = await run(false);
+
+    expect(row.refused).toMatch(/changed/);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('refuses a user with no Tipalti account without calling Tipalti', async () => {
@@ -139,27 +192,73 @@ describe('resyncTipaltiPayees', () => {
 
     const [row] = await run(false);
 
-    expect(row.refused).toEqual(expect.any(String));
+    expect(row.refused).toMatch(/No Tipalti account/);
     expect(getPayeeByRefCode).not.toHaveBeenCalled();
+  });
+
+  it('a failed Tipalti read refuses that user and still processes the next', async () => {
+    const other = USER_ID + 1;
+    dbMock.dbWrite.userPaymentConfiguration.findUnique.mockImplementation(async ({ where }) =>
+      stored(false, 'Active', where.userId)
+    );
+    update.mockImplementation(async ({ data }) => ({ ...stored(false, 'Active', other), ...data }));
+    getPayeeByRefCode
+      .mockRejectedValueOnce(new Error('timeout'))
+      .mockResolvedValueOnce(payee({}, other));
+
+    const rows = await run(false, [USER_ID, other]);
+
+    expect(rows[0]).toMatchObject({ refused: 'Tipalti read failed', applied: false });
+    expect(rows[1]).toMatchObject({ userId: other, applied: true });
+    expect(bust).toHaveBeenCalledTimes(1);
+    expect(bust).toHaveBeenCalledWith(other);
+  });
+
+  it('a failed write reports not applied and does not bust', async () => {
+    arrange(stored(false), payee());
+    update.mockRejectedValueOnce(new Error('db down'));
+
+    const [row] = await run(false);
+
+    expect(row).toMatchObject({ applied: false, error: 'Write failed' });
+    expect(bust).not.toHaveBeenCalled();
+  });
+
+  it('a failed cache bust still reports the write as applied', async () => {
+    arrange(stored(false), payee());
+    bust.mockRejectedValueOnce(new Error('redis down'));
+
+    const [row] = await run(false);
+
+    expect(row).toMatchObject({ applied: true, error: expect.stringMatching(/cache bust/) });
   });
 });
 
 describe('parseResyncUserIds', () => {
-  it('parses a comma list', () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1).join(',');
+
+  it('parses a comma list, up to the cap', () => {
     expect(parseResyncUserIds('1, 22,333')).toEqual({ userIds: [1, 22, 333] });
+    expect(parseResyncUserIds(ids(TIPALTI_RESYNC_MAX_USERS))).toMatchObject({
+      userIds: expect.any(Array),
+    });
   });
 
   it.each([
-    ['a non-numeric id', '1,abc'],
-    ['a duplicate id', '5,5'],
-    ['an empty entry', '1,,2'],
-    ['zero', '0'],
-    ['a missing value', undefined],
-    [
-      'more than the cap',
-      Array.from({ length: TIPALTI_RESYNC_MAX_USERS + 1 }, (_, i) => i + 1).join(','),
-    ],
-  ])('refuses %s', (_label, raw) => {
-    expect(parseResyncUserIds(raw)).toEqual({ error: expect.any(String) });
+    ['a non-numeric id', '1,abc', /Invalid/],
+    ['a trailing letter', '1x', /Invalid/],
+    ['a leading zero', '01', /Invalid/],
+    ['a negative id', '-1', /Invalid/],
+    ['an unsafe integer', '9007199254740993', /Invalid/],
+    ['a duplicate id', '5,5', /Duplicate/],
+    ['an empty entry', '1,,2', /Invalid/],
+    ['zero', '0', /Invalid/],
+    ['whitespace only', '  ', /required/],
+    ['a repeated query param', ['1', '2'], /required/],
+    ['a missing value', undefined, /required/],
+    ['more than the cap', ids(TIPALTI_RESYNC_MAX_USERS + 1), /At most/],
+  ])('refuses %s', (_label, raw, message) => {
+    const result = parseResyncUserIds(raw);
+    expect('error' in result && result.error).toMatch(message);
   });
 });

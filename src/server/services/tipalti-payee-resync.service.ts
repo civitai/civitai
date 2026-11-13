@@ -1,12 +1,16 @@
+import * as z from 'zod';
 import { TipaltiStatus } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { userCashCache } from '~/server/services/creator-program.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 
 export const TIPALTI_RESYNC_MAX_USERS = 50;
+
+const unpayableReasonsSchema = z.array(z.string().max(200)).max(20);
 
 // Error text stays in Axiom; the response carries only our own wording.
 function logResyncError(actorId: number, userId: number, step: string, error: unknown) {
@@ -26,7 +30,7 @@ export type TipaltiResyncRow = {
   tipalti: {
     status: string;
     isPayable: boolean | null;
-    unpayableReasons: unknown;
+    unpayableReasons: string[] | null;
     lastChangeDateTimeUTC: string | null;
     paymentMethodType: string | null;
   } | null;
@@ -111,7 +115,8 @@ export async function resyncTipaltiPayees({
       continue;
     }
     if (!raw) {
-      row.refused = 'Tipalti returned no payee for this refCode';
+      // getPayeeByRefCode also answers null for a failed request (401, 429, 5xx).
+      row.refused = 'Tipalti returned no payee, or the read failed';
       continue;
     }
 
@@ -121,23 +126,26 @@ export async function resyncTipaltiPayees({
       continue;
     }
     const payee = parsed.data;
+
+    // Checked before anything about the payee is reported: a mismatch is someone else's record.
+    if (payee.refCode !== String(userId)) {
+      row.refused = 'Tipalti payee refCode does not match this user';
+      continue;
+    }
+    if (payee.id !== config.tipaltiAccountId) {
+      row.refused = 'Tipalti payee id does not match the stored account';
+      continue;
+    }
+
+    const reasons = unpayableReasonsSchema.safeParse(raw.unpayableReasons);
     row.tipalti = {
       status: payee.status,
       isPayable: typeof payee.isPayable === 'boolean' ? payee.isPayable : null,
       // Reported only, never written: it is why a payee is unpayable.
-      unpayableReasons: raw.unpayableReasons ?? null,
+      unpayableReasons: reasons.success ? reasons.data : null,
       lastChangeDateTimeUTC: payee.lastChangeDateTimeUTC ?? null,
       paymentMethodType: payee.paymentMethod?.paymentMethodType ?? null,
     };
-
-    if (payee.refCode !== String(userId)) {
-      row.refused = `Tipalti refCode ${payee.refCode ?? '(none)'} does not match user ${userId}`;
-      continue;
-    }
-    if (payee.id !== config.tipaltiAccountId) {
-      row.refused = `Tipalti payee id ${payee.id} does not match stored ${config.tipaltiAccountId}`;
-      continue;
-    }
     // Absence never becomes false.
     if (typeof payee.isPayable !== 'boolean') {
       row.refused = 'Tipalti payee has no isPayable';
@@ -154,39 +162,54 @@ export async function resyncTipaltiPayees({
     if (payableChanges) row.direction = payee.isPayable ? 'enable' : 'disable';
     if (!row.wouldChange || dryRun) continue;
 
-    let updated;
+    // The Tipalti read can take seconds; a webhook landing meanwhile wins over this older snapshot.
+    const current = await dbWrite.userPaymentConfiguration.findUnique({ where: { userId } });
+    if (
+      current?.tipaltiAccountStatus !== config.tipaltiAccountStatus ||
+      current?.tipaltiPaymentsEnabled !== config.tipaltiPaymentsEnabled
+    ) {
+      row.refused = 'Stored state changed during the Tipalti read; re-run';
+      continue;
+    }
+
     try {
-      updated = await updateByTipaltiAccount({
+      await updateByTipaltiAccount({
         userId,
+        // Both are unique: if the user re-onboarded since the read, this matches nothing.
+        tipaltiAccountId: config.tipaltiAccountId,
         tipaltiAccountStatus: payee.status,
         tipaltiPaymentsEnabled: payee.isPayable,
       });
       row.applied = true;
+      await trackModActivity(actorId, {
+        entityType: 'user',
+        entityId: userId,
+        activity: `tipaltiResync:${row.direction ?? 'status'}` as const,
+      }).catch((error) => logResyncError(actorId, userId, 'mod-activity', error));
       // withdrawCash reads its ready/pending status from this cache (TTL one day).
       await userCashCache.bust(userId);
     } catch (error) {
       row.error = row.applied ? 'Written, but the cash cache bust failed' : 'Write failed';
       logResyncError(actorId, userId, row.applied ? 'cache-bust' : 'write', error);
-      continue;
     }
 
-    logToAxiom(
-      {
-        type: 'info',
-        name: 'tipalti-payee-resync',
-        details: {
-          actorId,
-          userId,
-          before: row.before,
-          after: {
-            status: updated.tipaltiAccountStatus,
-            paymentsEnabled: updated.tipaltiPaymentsEnabled,
+    if (row.applied) {
+      logToAxiom(
+        {
+          type: 'info',
+          name: 'tipalti-payee-resync',
+          details: {
+            actorId,
+            userId,
+            before: row.before,
+            after: { status: payee.status, paymentsEnabled: payee.isPayable },
+            tipalti: row.tipalti,
+            error: row.error,
           },
-          tipalti: row.tipalti,
         },
-      },
-      'webhooks'
-    ).catch(() => null);
+        'webhooks'
+      ).catch(() => null);
+    }
   }
 
   logToAxiom(

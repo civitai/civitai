@@ -1,27 +1,49 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+import * as z from 'zod';
 import {
   parseResyncUserIds,
   resyncTipaltiPayees,
+  TIPALTI_RESYNC_MAX_USERS,
 } from '~/server/services/tipalti-payee-resync.service';
-import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
 
-/**
- * Re-reads each user's Tipalti payee and sets tipaltiPaymentsEnabled/status from it.
- * Dry run unless `dryRun=false` is passed on a POST.
- *   GET|POST /api/mod/tipalti-resync-payee?userIds=1,2            -> report only
- *   POST     /api/mod/tipalti-resync-payee?userIds=1&dryRun=false -> write
- */
-export default ModEndpoint(
-  async (req: NextApiRequest, res: NextApiResponse, user) => {
-    const parsed = parseResyncUserIds(req.query.userIds);
-    if ('error' in parsed) return res.status(400).json({ error: parsed.error });
-
-    const dryRun = req.query.dryRun !== 'false';
-    if (!dryRun && req.method !== 'POST')
-      return res.status(405).json({ error: 'dryRun=false requires POST' });
-
-    const rows = await resyncTipaltiPayees({ userIds: parsed.userIds, dryRun, actorId: user.id });
-    return res.status(200).json({ dryRun, rows });
+export default defineModeratorEndpoint('tipalti.resyncPayee', {
+  summary:
+    "Re-read users' Tipalti payees and set their payable flag (which gates cash withdrawals) and account status from Tipalti's own record.",
+  returns:
+    "{ execute, rows: [{ userId, before: { status, paymentsEnabled } | null, tipalti: { status, isPayable, unpayableReasons, lastChangeDateTimeUTC, paymentMethodType } | null, refused, wouldChange, direction: 'enable' | 'disable' | null, applied, error? }] }",
+  notes: [
+    'Dry run unless `execute=true`. The dry run reads Tipalti and reports what execute would change.',
+    'Tipalti is only read (GET /payees). Both directions are applied: a payee Tipalti says is unpayable is disabled.',
+    'Per user it refuses to write when: no Tipalti account is on file, Tipalti returns no payee or the read fails, the payee refCode or id does not match ours, isPayable is absent, the status is unrecognised, or the stored row changed during the read.',
+    `At most ${TIPALTI_RESYNC_MAX_USERS} ids per call; a malformed or repeated id rejects the call. 5 calls a minute per moderator.`,
+    "unpayableReasons is reported, never written, and is not passed on: a disable here sends no tax-form email. Enabling sends the user the usual 'payments enabled' notification.",
+  ],
+  rateLimit: { max: 5, windowSeconds: 60 },
+  input: z.object({
+    userIds: z.string().transform((raw, ctx) => {
+      const parsed = parseResyncUserIds(raw);
+      if ('error' in parsed) {
+        ctx.addIssue({ code: 'custom', message: parsed.error });
+        return z.NEVER;
+      }
+      return parsed.userIds;
+    }),
+    execute: moderatorBoolean.default(false),
+  }),
+  async handler(input, ctx) {
+    const rows = await resyncTipaltiPayees({
+      userIds: input.userIds,
+      dryRun: !input.execute,
+      actorId: ctx.actor.id,
+    });
+    return {
+      execute: input.execute,
+      rows,
+      affected: {
+        applied: rows
+          .filter((r) => r.applied)
+          .map((r) => ({ userId: r.userId, before: r.before, direction: r.direction })),
+      },
+    };
   },
-  ['GET', 'POST']
-);
+});
