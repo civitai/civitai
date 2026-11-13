@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { TextScanEachVerdict } from '~/server/services/text-scan/preview';
 import { previewTextScanEach } from '~/server/services/text-scan/preview';
@@ -95,14 +95,16 @@ export async function queueComFaceVersionText(modelId: number) {
   }
 }
 
+type Reader = Pick<typeof dbWrite, 'model' | 'modelVersion' | 'keyValue'>;
+
 /** Versions .com can show: published and not private. */
-async function readComVersions(modelId: number) {
-  const model = await dbWrite.model.findUnique({
+async function readComVersions(modelId: number, db: Reader) {
+  const model = await db.model.findUnique({
     where: { id: modelId },
     select: { sfwName: true, deletedAt: true },
   });
   if (!model || model.deletedAt || model.sfwName == null) return [];
-  const versions = await dbWrite.modelVersion.findMany({
+  const versions = await db.modelVersion.findMany({
     where: {
       modelId,
       status: ModelStatus.Published,
@@ -113,9 +115,9 @@ async function readComVersions(modelId: number) {
   return versions.map((version) => ({ ...version, trainedWords: version.trainedWords ?? [] }));
 }
 
-export async function readComVersionTextVerdicts(versionIds: number[]) {
+export async function readComVersionTextVerdicts(versionIds: number[], db: Reader = dbWrite) {
   if (!versionIds.length) return new Map<number, ComVersionTextVerdicts>();
-  const rows = await dbWrite.keyValue.findMany({
+  const rows = await db.keyValue.findMany({
     where: { key: { in: versionIds.map(comVersionTextVerdictKey) } },
   });
   return new Map(
@@ -225,10 +227,15 @@ export async function rateComFaceVersionText(
   maxWorkflows = COM_VERSION_TEXT_WORKFLOWS_PER_RUN,
   { dryRun = false }: { dryRun?: boolean } = {}
 ): Promise<RateResult> {
-  const versions = await readComVersions(modelId);
+  // A dry run writes nothing, so it reads the replica; a real run reads the edit just committed.
+  const db = dryRun ? dbRead : dbWrite;
+  const versions = await readComVersions(modelId, db);
   if (!versions.length) return { status: 'complete', workflows: 0, csamHits: 0 };
   const [stored, policy] = await Promise.all([
-    readComVersionTextVerdicts(versions.map((version) => version.id)),
+    readComVersionTextVerdicts(
+      versions.map((version) => version.id),
+      db
+    ),
     getComVersionTextPolicy(),
   ]);
 

@@ -35,9 +35,12 @@ const modelSubject: TextScanSubject = {
   declared: {},
   userId: 101,
 };
+const loadModelScanSubjects = vi.fn(
+  async (ids: number[], _options?: unknown) => new Map(ids.map((id) => [id, modelSubject]))
+);
 vi.mock('~/server/services/text-scan/profiles/model.profile', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelProfile>()),
-  loadModelScanSubjects: async (ids: number[]) => new Map(ids.map((id) => [id, modelSubject])),
+  loadModelScanSubjects: (ids: number[], options?: unknown) => loadModelScanSubjects(ids, options),
 }));
 // The Model scan's own gates, closed or open per test; the hold must not depend on them.
 const gates = vi.hoisted(() => ({ mode: 'active', csamMode: 'review' }));
@@ -128,6 +131,7 @@ afterAll(() => db.close());
 beforeEach(async () => {
   previewTextScanEach.mockReset();
   applyCsamHold.mockReset();
+  loadModelScanSubjects.mockClear();
   applyCsamHold.mockResolvedValue(undefined);
   gates.mode = 'active';
   gates.csamMode = 'review';
@@ -137,46 +141,48 @@ beforeEach(async () => {
   await db.exec(`DELETE FROM "Model"; DELETE FROM "ModelVersion"; DELETE FROM "KeyValue";`);
 
   const raw = async (sql: Prisma.Sql) => (await db.query(sql.text, sql.values)).rows;
-  dbMock.dbWrite.$queryRaw.mockImplementation(raw as never);
-  dbMock.dbWrite.$executeRaw.mockImplementation(
-    (async (sql: Prisma.Sql) => (await db.query(sql.text, sql.values)).affectedRows ?? 0) as never
-  );
-  dbMock.dbWrite.model.findUnique.mockImplementation(
-    (async ({ where }: { where: { id: number } }) =>
-      (await rows(`SELECT * FROM "Model" WHERE id = $1`, [where.id]))[0] ?? null) as never
-  );
-  // Translates the production `where`, so its own filter values drive the query.
-  dbMock.dbWrite.modelVersion.findMany.mockImplementation((async ({
-    where,
-  }: {
-    where: { modelId: number; status?: string; availability?: { not?: string } };
-  }) => {
-    const conditions = ['"modelId" = $1'];
-    const values: unknown[] = [where.modelId];
-    if (where.status !== undefined) {
-      values.push(where.status);
-      conditions.push(`status = $${values.length}`);
-    }
-    if (where.availability?.not !== undefined) {
-      values.push(where.availability.not);
-      conditions.push(`availability <> $${values.length}`);
-    }
-    return rows(
-      `SELECT id, name, "trainedWords" FROM "ModelVersion"
-       WHERE ${conditions.join(' AND ')} ORDER BY id`,
-      values
+  for (const client of [dbMock.dbWrite, dbMock.dbRead]) {
+    client.$queryRaw.mockImplementation(raw as never);
+    client.$executeRaw.mockImplementation(
+      (async (sql: Prisma.Sql) => (await db.query(sql.text, sql.values)).affectedRows ?? 0) as never
     );
-  }) as never);
-  dbMock.dbWrite.keyValue.findMany.mockImplementation((async ({
-    where,
-  }: {
-    where: { key: { in?: string[]; startsWith?: string } };
-  }) =>
-    where.key.in
-      ? rows(`SELECT * FROM "KeyValue" WHERE key = ANY($1)`, [where.key.in])
-      : rows(`SELECT * FROM "KeyValue" WHERE key LIKE $1 || '%'`, [
-          where.key.startsWith,
-        ])) as never);
+    client.model.findUnique.mockImplementation(
+      (async ({ where }: { where: { id: number } }) =>
+        (await rows(`SELECT * FROM "Model" WHERE id = $1`, [where.id]))[0] ?? null) as never
+    );
+    // Translates the production `where`, so its own filter values drive the query.
+    client.modelVersion.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { modelId: number; status?: string; availability?: { not?: string } };
+    }) => {
+      const conditions = ['"modelId" = $1'];
+      const values: unknown[] = [where.modelId];
+      if (where.status !== undefined) {
+        values.push(where.status);
+        conditions.push(`status = $${values.length}`);
+      }
+      if (where.availability?.not !== undefined) {
+        values.push(where.availability.not);
+        conditions.push(`availability <> $${values.length}`);
+      }
+      return rows(
+        `SELECT id, name, "trainedWords" FROM "ModelVersion"
+       WHERE ${conditions.join(' AND ')} ORDER BY id`,
+        values
+      );
+    }) as never);
+    client.keyValue.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { key: { in?: string[]; startsWith?: string } };
+    }) =>
+      where.key.in
+        ? rows(`SELECT * FROM "KeyValue" WHERE key = ANY($1)`, [where.key.in])
+        : rows(`SELECT * FROM "KeyValue" WHERE key LIKE $1 || '%'`, [
+            where.key.startsWith,
+          ])) as never);
+  }
 });
 
 async function seed({
@@ -280,8 +286,7 @@ describe('rateComFaceVersionText', () => {
   });
 
   it.each([
-    ['Model text scan off or outside its rollout', 'off', 'review'],
-    ['Model text scan in shadow', 'shadow', 'review'],
+    ['Model text scan off', 'off', 'review'],
     ['csam mode not review', 'active', 'off'],
   ])('a csam detection writes the Model csam hold with the %s', async (_, mode, csamMode) => {
     gates.mode = mode;
@@ -301,6 +306,7 @@ describe('rateComFaceVersionText', () => {
       promptIds: { csam: 5 },
     });
     expect(hold.subject.fields).toEqual(modelSubject.fields);
+    expect(loadModelScanSubjects).toHaveBeenCalledWith([MODEL_ID], { publicVersionsOnly: true });
     expect(hold.subject.meta).toEqual({
       comVersionTextHits: [{ versionId: 1, field: 'trainedWords', index: 1 }],
     });
@@ -311,6 +317,49 @@ describe('rateComFaceVersionText', () => {
       force: true,
     });
     expect(await verdicts(1)).toMatchObject({ shown: ['v1', 'alpha'], held: ['beta'] });
+  });
+
+  it('names every place a held string sits, version names included, without its text', async () => {
+    await seed({
+      versions: [
+        { id: 1, name: 'gamma', words: ['alpha'] },
+        { id: 2, name: 'v2', words: ['beta', 'gamma'] },
+      ],
+    });
+    rateWith({ gamma: ok({ csam: { detected: true, reason: '' } }) });
+    await rateComFaceVersionText(MODEL_ID);
+    const [hold] = applyCsamHold.mock.calls[0];
+    expect(hold.subject.meta).toEqual({
+      comVersionTextHits: [
+        { versionId: 1, field: 'name' },
+        { versionId: 2, field: 'trainedWords', index: 1 },
+      ],
+    });
+  });
+
+  it('a csam hit with no Model scan subject fails the run and writes no verdicts', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: ok({ csam: { detected: true, reason: '' } }) });
+    loadModelScanSubjects.mockResolvedValueOnce(new Map());
+    await expect(rateComFaceVersionText(MODEL_ID)).rejects.toThrow();
+    expect(applyCsamHold).not.toHaveBeenCalled();
+    expect(await verdicts(1)).toBeUndefined();
+  });
+
+  it('a step that only partly parsed holds a minor or poi detection and leaves the rest unrated', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha', 'beta', 'gamma'] }] });
+    rateWith({
+      alpha: { status: 'partial', output: { minor: { detected: true, reason: '' } } },
+      beta: { status: 'partial', output: { poi: { detected: true, names: [], reason: '' } } },
+      gamma: { status: 'partial', output: { nsfw: { level: 'none', reason: '' } } },
+    });
+    await rateComFaceVersionText(MODEL_ID);
+    expect(await verdicts(1)).toMatchObject({
+      held: ['alpha', 'beta'],
+      shown: ['v1'],
+      pending: true,
+    });
+    expect(applyCsamHold).not.toHaveBeenCalled();
   });
 
   it('no csam detection writes no hold', async () => {
@@ -352,6 +401,19 @@ describe('rateComFaceVersionText', () => {
     expect(applyCsamHold).not.toHaveBeenCalled();
     expect(scanEntityInBackground).not.toHaveBeenCalled();
     expect(await verdicts(1)).toBeUndefined();
+  });
+
+  it('a dry run reads from the replica, never the primary', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    dbMock.dbWrite.model.findUnique.mockClear();
+    dbMock.dbWrite.modelVersion.findMany.mockClear();
+    dbMock.dbWrite.keyValue.findMany.mockClear();
+    await rateComFaceVersionText(MODEL_ID, 20, { dryRun: true });
+    expect(ratedTexts().sort()).toEqual(['alpha', 'v1']);
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelVersion.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.keyValue.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.modelVersion.findMany).toHaveBeenCalled();
   });
 
   it('re-rates only text without a verdict: an owner swapping a hidden word gets the new word rated', async () => {
