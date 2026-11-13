@@ -93,6 +93,14 @@ off, or edits the listing so that it passes both checks. That edit gets one chec
 stopped editing for two minutes; no verdict keeps the marker. The old cover is not put back.
 Creator Studio's Make Safe can draft a removed face again.
 
+## Version text verdicts
+
+A second job (`model-com-face-version-text.service.ts`) rates each name and trigger word of a
+faced model's published, non-private versions on its own, after the same owner edits (two minutes
+quiet) and from an hourly sweep for text with no current verdict. Verdicts are kept server-side in
+`KeyValue` rows (`com-face-version-text:v:<versionId>`), never in version `meta`, which clients
+receive. Nothing reads them for display yet.
+
 ## Draft action
 
 "Draft a civitai.com version" (`model.draftSfwFace`) asks the orchestrator's chat completion to

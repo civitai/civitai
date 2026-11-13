@@ -24,7 +24,11 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   })),
 }));
 
-import { previewComFaceIntent, previewTextScanNsfw } from '~/server/services/text-scan/preview';
+import {
+  previewComFaceIntent,
+  previewTextScanEach,
+  previewTextScanNsfw,
+} from '~/server/services/text-scan/preview';
 import { getActiveTextScanPrompts } from '~/server/services/text-scan/prompt';
 
 const reply = (content: unknown, status = 'succeeded') => ({
@@ -107,5 +111,78 @@ describe('previewComFaceIntent', () => {
       status: 'ok',
       output: { detected: true, reason: 'stub reason' },
     });
+  });
+});
+
+describe('previewTextScanEach', () => {
+  beforeEach(() => {
+    mockSubmitWorkflow.mockReset();
+  });
+
+  const strings = ['alpha', 'beta', 'gamma', 'delta'].map((text) => ({ heading: 'Word', text }));
+  const step = (segment: number, choice: Record<string, unknown>, status = 'succeeded') => ({
+    $type: 'chatCompletion',
+    name: segment ? `textScan${segment}` : 'textScan',
+    metadata: { segment },
+    status,
+    output: { choices: [choice] },
+  });
+  const answer = (level: string) => ({
+    message: { content: JSON.stringify({ nsfw: { level, reason: '' } }) },
+  });
+
+  it('submits one step per string, each holding only its own string', async () => {
+    mockSubmitWorkflow.mockResolvedValue({ data: { status: 'succeeded', steps: [] } });
+    await previewTextScanEach({ labels: ['nsfw'], fields: strings, waitSeconds: 10 });
+
+    const { steps } = mockSubmitWorkflow.mock.calls[0][0].body;
+    expect(
+      steps.map((s: { input: { messages: { content: string }[] } }) => s.input.messages[1].content)
+    ).toEqual([
+      expect.stringContaining('alpha'),
+      expect.stringContaining('beta'),
+      expect.stringContaining('gamma'),
+      expect.stringContaining('delta'),
+    ]);
+    expect(steps[0].input.messages[1].content).not.toContain('beta');
+  });
+
+  it('reads each step on its own: a refusal, a bad answer or a missing step affects only its string', async () => {
+    mockSubmitWorkflow.mockResolvedValue({
+      data: {
+        status: 'failed',
+        steps: [
+          step(3, answer('x')),
+          step(1, { message: { content: '' }, finishReason: 'content_filter' }),
+          step(0, answer('none')),
+          step(2, { message: { content: 'not json' } }),
+        ],
+      },
+    });
+    const results = await previewTextScanEach({
+      labels: ['nsfw'],
+      fields: strings,
+      waitSeconds: 10,
+    });
+    expect(results).toEqual([
+      { status: 'ok', output: { nsfw: { level: 'none', reason: '' } } },
+      { status: 'refused' },
+      { status: 'unavailable' },
+      { status: 'ok', output: { nsfw: { level: 'x', reason: '' } } },
+    ]);
+
+    mockSubmitWorkflow.mockResolvedValue({
+      data: {
+        status: 'processing',
+        steps: [step(0, answer('none')), step(1, answer('none'), 'processing')],
+      },
+    });
+    expect(
+      await previewTextScanEach({ labels: ['nsfw'], fields: strings.slice(0, 3), waitSeconds: 10 })
+    ).toEqual([
+      { status: 'ok', output: { nsfw: { level: 'none', reason: '' } } },
+      { status: 'unavailable' },
+      { status: 'unavailable' },
+    ]);
   });
 });

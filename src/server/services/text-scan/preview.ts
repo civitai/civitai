@@ -1,7 +1,11 @@
 import { submitWorkflow } from '@civitai/orchestration-client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { mergeTextScanOutputs } from '~/server/services/text-scan/merge';
-import { parseTextScanSteps } from '~/server/services/text-scan/parse';
+import {
+  parseTextScanStep,
+  parseTextScanSteps,
+  textScanStepsBySegment,
+} from '~/server/services/text-scan/parse';
 import { logToAxiom } from '~/server/logging/client';
 import {
   composeTextScanMessages,
@@ -9,7 +13,7 @@ import {
   getTextScanConfig,
   MissingTextScanPromptError,
 } from '~/server/services/text-scan/prompt';
-import { buildTextScanSteps } from '~/server/services/text-scan/submit';
+import { buildTextScanStep, buildTextScanSteps } from '~/server/services/text-scan/submit';
 import type { NsfwLevel } from '~/server/common/enums';
 import type {
   TextScanField,
@@ -96,4 +100,82 @@ export async function previewTextScanNsfw(args: {
 /** Whether a model's listing is something a civitai.com face may be built for. */
 export async function previewComFaceIntent(args: { fields: TextScanField[]; waitSeconds: number }) {
   return previewTextScanLabel({ label: 'model-com-face-intent', ...args });
+}
+
+export type TextScanEachVerdict =
+  | { status: 'ok'; output: TextScanOutput }
+  | { status: 'refused' }
+  | { status: 'unavailable' };
+
+/**
+ * {@link previewTextScanLabel} for each field on its own: one step per field in one workflow, each
+ * read by itself, so one unusable step leaves only its own field without a verdict. Writes nothing.
+ */
+export async function previewTextScanEach({
+  labels,
+  fields,
+  waitSeconds,
+}: {
+  labels: TextScanLabel[];
+  fields: TextScanField[];
+  waitSeconds: number;
+}): Promise<TextScanEachVerdict[]> {
+  const unavailable = (): TextScanEachVerdict[] =>
+    fields.map(() => ({ status: 'unavailable' as const }));
+  if (!fields.length) return [];
+  const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
+
+  const segmentOf = new Map<number, number>();
+  const steps: ReturnType<typeof buildTextScanStep>[] = [];
+  try {
+    fields.forEach((field, index) => {
+      const composed = composeTextScanMessages({
+        prompts,
+        labels,
+        subject: { fields: [field], declared: {} },
+        maxInputChars: config.maxInputChars,
+        maxSegments: config.maxSegments,
+      });
+      // A field too long for one step gets no verdict rather than a verdict on part of it.
+      if (composed.segments.length !== 1) return;
+      segmentOf.set(index, steps.length);
+      steps.push(
+        buildTextScanStep({
+          system: composed.system,
+          user: composed.segments[0],
+          model: config.model,
+          labels,
+          thinking: config.thinking,
+          segment: steps.length,
+        })
+      );
+    });
+  } catch (error) {
+    if (!(error instanceof MissingTextScanPromptError)) throw error;
+    logToAxiom({
+      type: 'error',
+      name: 'text-scan-prompt-missing',
+      message: `${labels.join(',')} prompt missing`,
+      keys: error.keys,
+    });
+    return unavailable();
+  }
+  if (!steps.length) return unavailable();
+
+  const { data } = await submitWorkflow({
+    client: internalOrchestratorClient,
+    query: { wait: waitSeconds },
+    body: { metadata: { purpose: 'text-scan-preview' }, currencies: [], steps },
+  });
+  if (!data) return unavailable();
+
+  const bySegment = textScanStepsBySegment(data.steps);
+  return fields.map((_, index): TextScanEachVerdict => {
+    const segment = segmentOf.get(index);
+    const step = segment === undefined ? undefined : bySegment.get(segment);
+    if (!step || (step.status && step.status !== 'succeeded')) return { status: 'unavailable' };
+    const parsed = parseTextScanStep(step, labels);
+    if (parsed.ok) return { status: 'ok', output: parsed.output };
+    return parsed.reason === 'refused' ? { status: 'refused' } : { status: 'unavailable' };
+  });
 }
