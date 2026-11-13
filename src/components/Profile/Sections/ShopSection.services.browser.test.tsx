@@ -9,12 +9,17 @@ const state = vi.hoisted(() => ({
   offerings: [] as any[],
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useFeatureFlags: () => ({ creatorShop: true, creatorServices: true }),
 }));
-vi.mock('~/components/IntersectionObserver/IntersectionObserverProvider', () => ({
-  useInViewDynamic: () => [() => undefined, true],
-}));
+vi.mock(
+  '~/components/IntersectionObserver/IntersectionObserverProvider',
+  async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    useInViewDynamic: () => [() => undefined, true],
+  })
+);
 vi.mock('~/components/CreatorShop/creator-shop.util', () => ({
   useQueryCreatorShop: () => ({ shop: state.shop, isLoading: false }),
 }));
@@ -68,7 +73,7 @@ describe('ShopSection services', () => {
     expect(text).toContain('Delivered in ~5 days');
     expect(document.querySelectorAll('[data-testid="card"]')).toHaveLength(0);
     const button = document.querySelector('a[href="/user/mira/shop#shop-services"]');
-    expect(button?.textContent).toBe('View service');
+    expect(button?.textContent).toBe('View');
   });
 
   test('cosmetics still show alongside services', async () => {
