@@ -55,6 +55,8 @@ async function addText(postId: number, { csamHeld = false } = {}) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
+  // Not UTC, so a timestamp compared without its zone would read by this session's offset.
+  await pg.exec(`SET TimeZone = 'America/New_York'`);
   await pg.exec(SCHEMA);
   await pg.exec(readFileSync(MIGRATION, 'utf8'));
 });
@@ -189,7 +191,7 @@ describe('a CSAM hold on the text', () => {
   const decide = (id: number, status: 'Pending' | 'Confirmed' | 'Dismissed') =>
     pg.query(
       `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status, "createdAt")
-       VALUES ('PostText', $1, 'csam', $2, now() - interval '1 day')`,
+       VALUES ('PostText', $1, 'csam', $2, (now() - interval '1 day') AT TIME ZONE 'UTC')`,
       [id, status]
     );
   const del = (id: number) => pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id]);
@@ -296,7 +298,8 @@ describe('a CSAM hold on the text', () => {
     // Taken 2h before the hold; written at +05:00, its digits read 3h after it.
     await oldReport(capture({ capturedAt: atOffset(holdAt() - 2 * HOUR, 5 * 60) }));
     await expect(del(id)).rejects.toThrow(/held/);
-    for (const capturedAt of ['yesterday', '', 12345, null]) {
+    // 'tomorrow' parses as a time, after the hold: only the ISO shape check refuses it.
+    for (const capturedAt of ['tomorrow', '', 12345, null]) {
       await pg.query(`UPDATE "CsamReport" SET details = $1`, [capture({ capturedAt })]);
       await expect(del(id)).rejects.toThrow(/held/);
     }
@@ -309,6 +312,31 @@ describe('a CSAM hold on the text', () => {
       capture({ capturedAt: atOffset(holdAt() + 2 * HOUR, -5 * 60) }),
     ]);
     await del(id);
+    expect(await texts()).toEqual([]);
+  });
+
+  it('lets it go for a capture taken at the instant of the hold, written in any zone', async () => {
+    const heldAt = async () => {
+      const id = await addText(1, { csamHeld: true });
+      await pg.query(
+        `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status, "createdAt")
+         VALUES ('PostText', $1, 'csam', 'Confirmed', '2026-01-01 00:00:00')`,
+        [id]
+      );
+      return id;
+    };
+    const id = await heldAt();
+    await oldReport(capture({ capturedAt: '2025-12-31T23:59:59.999Z' }));
+    await expect(del(id)).rejects.toThrow(/held/);
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [
+      capture({ capturedAt: '2026-01-01T05:00:00.000+05:00' }),
+    ]);
+    await del(id);
+    const again = await heldAt();
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [
+      capture({ capturedAt: '2026-01-01T00:00:00.000Z' }),
+    ]);
+    await del(again);
     expect(await texts()).toEqual([]);
   });
 
