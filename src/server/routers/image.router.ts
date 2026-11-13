@@ -29,7 +29,7 @@ import {
   updateImageTools,
   refreshImageResources,
 } from '~/server/services/image.service';
-import { setSongCover } from '~/server/services/post.service';
+import { getSongCoversForPlayer, setSongCover } from '~/server/services/post.service';
 import {
   middleware,
   guardedProcedure,
@@ -65,6 +65,7 @@ import {
   imageModerationSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
+  getSongCoversSchema,
   setSongCoverSchema,
   setTosViolationSchema,
   setVideoThumbnailSchema,
@@ -243,6 +244,11 @@ export const imageRouter = router({
     .input(setSongCoverSchema)
     .use(isOwnerOrModerator)
     .mutation(({ input, ctx }) => setSongCover({ ...input, user: ctx.user })),
+  // Per viewer (visibility and the music flag), so no `edgeCacheIt`.
+  getSongCovers: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getSongCoversSchema)
+    .query(({ input, ctx }) => getSongCoversForPlayer({ ...input, user: ctx.user })),
 
   updateAccetableMinor: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
