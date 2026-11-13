@@ -55,6 +55,32 @@ describe('isRevoked', () => {
   });
 });
 
+// The shared check keeps the markers it has read, so a sign-out this app has seen still holds while the store is
+// down. Ends with an answered read that no longer returns the marker, so the record is empty for what follows.
+describe('isRevoked when the store fails after a sign-out was read', () => {
+  it('keeps refusing the signed-out session, and logs the verdict', async () => {
+    hashes.set(SESSION_REGISTRY_KEYS.familyState, new Map([['root', 'invalid']]));
+    expect(await isRevoked(claims as never)).toBe(true);
+
+    logged.mockClear();
+    store.down = true;
+    try {
+      expect(await isRevoked(claims as never)).toBe(true);
+      // A session from another sign-in is still allowed (the fail-open policy).
+      expect(await isRevoked({ ...claims, jti: 'x', sid: 'other' } as never)).toBe(false);
+    } finally {
+      store.down = false;
+    }
+    expect(logged.mock.calls.map(([event]) => event.verdict)).toEqual([
+      'deny_cached',
+      'allow_unknown',
+    ]);
+
+    hashes.clear();
+    expect(await isRevoked(claims as never)).toBe(false);
+  });
+});
+
 // The shared check's deadline: REDIS_SYS_READ_TIMEOUT_MS, default 1000ms (this app's own 2000ms default is gone).
 describe('isRevoked over a hung session store', () => {
   it('fails open at REDIS_SYS_READ_TIMEOUT_MS', async () => {

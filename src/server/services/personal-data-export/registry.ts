@@ -35,6 +35,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   CryptoDeposit: { subject: ['userId'] },
   CryptoTransaction: { subject: ['userId'] },
   CustomerSubscription: { subject: ['userId'] },
+  CustomerSubscriptionHistory: { subject: ['userId'] },
   MembershipGift: { subject: ['gifterId', 'recipientId', 'holderId'] },
   Purchase: { subject: ['userId'] },
   UserEngagement: { subject: ['userId'], others: ['targetUserId'] },

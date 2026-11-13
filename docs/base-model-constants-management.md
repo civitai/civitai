@@ -79,7 +79,6 @@ model License {
   url                   String?
   notice                String?              // Required attribution text
   poweredBy             String?              // "Powered by X" text
-  disableMature         Boolean     @default(false)  // Restrict NSFW content
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -189,7 +188,6 @@ type LicenseRecord = {
   url?: string;
   notice?: string;
   poweredBy?: string;
-  disableMature?: boolean;
 };
 
 type BaseModelFamilyRecord = {
@@ -223,6 +221,7 @@ type BaseModelRecord = {
   engine?: string;
   groupId: number;
   licenseId?: number;
+  matureRestricted?: ('generation' | 'models' | 'images')[];
 };
 
 type BaseModelGenerationSupportRecord = {

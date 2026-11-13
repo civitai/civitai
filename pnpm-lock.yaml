@@ -124,8 +124,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0(patch_hash=1cafa5d3be23d421780ce432e5d3f370d48d39c3cb9c2a71df53c03be2037b02)(next@16.4.5(patch_hash=6abf32f82fe626ed53eff00f56087bb3ce0b569686df1a59e53430d9d6ade0e7)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(sass@1.90.0))
       '@civitai/orchestration-client':
-        specifier: 0.2.3
-        version: 0.2.3
+        specifier: 0.2.4
+        version: 0.2.4
       '@civitai/sdk':
         specifier: ^0.24.0
         version: 0.24.0
@@ -1336,8 +1336,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-notifications
       '@civitai/orchestration-client':
-        specifier: 0.2.3
-        version: 0.2.3
+        specifier: 0.2.4
+        version: 0.2.4
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1494,8 +1494,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
       '@civitai/orchestration-client':
-        specifier: 0.2.3
-        version: 0.2.3
+        specifier: 0.2.4
+        version: 0.2.4
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1620,8 +1620,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-flipt
       '@civitai/orchestration-client':
-        specifier: 0.2.3
-        version: 0.2.3
+        specifier: 0.2.4
+        version: 0.2.4
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -2517,8 +2517,8 @@ packages:
     peerDependencies:
       next: ^12.1.4 || ^13 || ^14
 
-  '@civitai/orchestration-client@0.2.3':
-    resolution: {integrity: sha512-2HVu6YRsb83nOcVpP75tpcMfGI8Aifg1vFK5Hr1SaXZEHUCXXUX3d1AesY/HCgszSIDs5J4ipoPT0C4J96lALg==}
+  '@civitai/orchestration-client@0.2.4':
+    resolution: {integrity: sha512-lzn8T8Z797lxaIP3TAC8M710dYa+++jlBamLKv8PmkHhyGH18x0uGXptasreXP9GdT4C/7wF2Hp3NRu/z6Qu/Q==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/sdk@0.24.0':
@@ -13576,7 +13576,7 @@ snapshots:
       next: 16.4.5(patch_hash=6abf32f82fe626ed53eff00f56087bb3ce0b569686df1a59e53430d9d6ade0e7)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(sass@1.90.0)
       whatwg-fetch: 3.6.20
 
-  '@civitai/orchestration-client@0.2.3':
+  '@civitai/orchestration-client@0.2.4':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
@@ -13584,7 +13584,7 @@ snapshots:
 
   '@civitai/sdk@0.24.0':
     dependencies:
-      '@civitai/orchestration-client': 0.2.3
+      '@civitai/orchestration-client': 0.2.4
 
   '@civitai/theme@0.5.2': {}
 
@@ -17681,9 +17681,9 @@ snapshots:
       obug: 2.1.1
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.4(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.4(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
     optionalDependencies:
-      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.4(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
+      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(utf-8-validate@5.0.10)(vite@6.4.4(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
 
   '@vitest/expect@4.1.11':
     dependencies:

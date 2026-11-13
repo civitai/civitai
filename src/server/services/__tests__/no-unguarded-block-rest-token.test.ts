@@ -178,6 +178,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_PUBLIC',
     why: 'Public, maturity-clamped resource data. Thinnest gate of the set: no requiredScope, so no scope check and no context binding either.',
   },
+  'src/pages/api/v1/blocks/generation-samplers.ts': {
+    exposure: 'READ_PUBLIC',
+    why: 'The generator’s per-family sampler options, derived from the generation graph: static configuration that is identical for every caller. No requiredScope, no catalog content (so no maturity clamp to apply), nothing viewer-scoped, nothing written.',
+  },
   'src/pages/api/v1/blocks/images.ts': {
     exposure: 'READ_PUBLIC',
     why: 'The public, maturity-clamped image catalog. No requiredScope.',
@@ -349,6 +353,8 @@ function mustFailClosedRoutes(): string[] {
 const LOOKUP_FAILURE_SERVE_RATIONALE: Record<string, string> = {
   'src/pages/api/v1/blocks/generation-resources.ts':
     'Public, maturity-clamped resource data; no requiredScope, nothing viewer-scoped, nothing written. The clamp rides the token’s own signed claim, not the approval row.',
+  'src/pages/api/v1/blocks/generation-samplers.ts':
+    'Static generator configuration, identical for every caller; no requiredScope, nothing viewer-scoped, nothing written. A suspended app reaching it learns the sampler names the public generator page already shows.',
   'src/pages/api/v1/blocks/images.ts':
     'Public, maturity-clamped image catalog; no requiredScope, nothing viewer-scoped, nothing written.',
   'src/pages/api/v1/blocks/models.ts':
@@ -1982,6 +1988,7 @@ describe('the approval predicate is not open-coded a second time', () => {
   const ANY_TOKEN_ROUTES = [
     'src/pages/api/v1/blocks/gated-images.ts',
     'src/pages/api/v1/blocks/generation-resources.ts',
+    'src/pages/api/v1/blocks/generation-samplers.ts',
     'src/pages/api/v1/blocks/images.ts',
     'src/pages/api/v1/blocks/models.ts',
     'src/pages/api/v1/blocks/resource-intent.ts',
