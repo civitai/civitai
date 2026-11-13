@@ -118,6 +118,10 @@ export type CreatePoolOptions = {
  * wiring. `getClient` (env/instance-driven, monolith-facing) and `createClients` (connection-string,
  * app-facing) both delegate here so there is exactly one pool implementation.
  */
+// The connection string a client was opened with, so `cancel()` targets the server that actually runs
+// the query (a replica fallback can hand a read pool a client from the primary).
+const CLIENT_CONNECTION_STRING = Symbol.for('civitai.db.clientConnectionString');
+
 export function createPool(options: CreatePoolOptions): AugmentedPool {
   const {
     connectionString: rawUrl,
@@ -155,6 +159,9 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
   // Before anything else, so every client the pool creates gets the per-client listener. Logs to the
   // console, not `log`: `log` defaults to a no-op.
   guardPool(pool, label);
+  pool.on('connect', (client) => {
+    (client as unknown as Record<symbol, string>)[CLIENT_CONNECTION_STRING] = connectionString;
+  });
 
   // Per-connection statement_timeout for PgBouncer-fronted pools (which ignore the startup param).
   if (perConnectionStatementTimeout) {
@@ -272,7 +279,9 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
       // Don't touch `done` — the query's own .finally() owns that flag and the connection release, so a
       // cancel that never connects can't leak the slot or double-release.
       const cancelClient = new Client({
-        connectionString,
+        connectionString:
+          (connection as unknown as Record<symbol, string | undefined>)[CLIENT_CONNECTION_STRING] ??
+          connectionString,
         // Bound the connect: a best-effort cancel must never hang. The pool default of 0 (unlimited)
         // would let an unreachable DB wedge this promise forever.
         connectionTimeoutMillis: connectionTimeoutMillis || 5000,
