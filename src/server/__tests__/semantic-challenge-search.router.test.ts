@@ -55,7 +55,7 @@ describe('semanticChallengeSearch.search', () => {
   it('is closed while its flag is off', async () => {
     await expect(
       callerWith({ semanticChallengeSearch: false }).search({ query: 'neon' })
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(h.search).not.toHaveBeenCalled();
   });
 });

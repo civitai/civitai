@@ -139,11 +139,12 @@ describe('searchSemanticChallenges', () => {
   it("re-checks every candidate through the feed's own query, in rank order", async () => {
     h.hidden = new Set([2]);
     const user = { id: 5 } as SessionUser;
-    const { result } = run([3, 2, 1], { user });
+    // Not id order: the feed returns newest first, the page keeps the search's ranking.
+    const { result } = run([1, 3, 2], { user });
     const { items } = await result;
-    expect(items.map((c) => c.id)).toEqual([3, 1]);
+    expect(items.map((c) => c.id)).toEqual([1, 3]);
     expect(h.feedCalls[0]).toMatchObject({
-      ids: [3, 2, 1],
+      ids: [1, 3, 2],
       currentUserId: 5,
       canAccessUserChallenges: true,
       status: ['Active', 'Scheduled'],

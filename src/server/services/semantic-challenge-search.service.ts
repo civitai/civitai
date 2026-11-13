@@ -122,9 +122,8 @@ export async function searchSemanticChallenges({
   let returned = 0;
   let hydrated = 0;
   const hydrate: Hydrate<HydratedChallenge> = async (ids) => {
-    // The feed's own query: Qdrant only proposes candidates, and a point can outlive the
-    // challenge's visibility (a cover's rating or scan changes no challenge row). It re-applies
-    // every gate, blocks included, to the current rows.
+    // A point can outlive the challenge's visibility (a cover's rating or scan changes no
+    // challenge row), so the feed's own query re-applies every gate to the current rows.
     const { items } = await getInfiniteChallenges({
       ids,
       limit: ids.length,

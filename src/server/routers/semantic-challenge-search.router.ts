@@ -12,7 +12,7 @@ export const semanticChallengeSearchRouter = router({
     .use(timeSemanticSearch('challenges'))
     .use(isFlagProtected('challengePlatform'))
     .use(isFlagProtected('semanticChallengeSearch'))
-    // Signed-out visitors share an IP bucket, so theirs is lower.
+    // Signed-out visitors share an IP bucket, hence the lower limit.
     .use(
       rateLimit([
         { limit: 20, period: 60 },
