@@ -112,15 +112,6 @@ export function resolveBrowsingSettingsAddons(
   }, emptyResolvedAddons());
 }
 
-// Seed for the hard navigation blocklist (W2) — blocks the tag page and nav, not the
-// content carrying the tag. The redis key `system:blocked-browsing-tags` overrides this
-// when present; ops manage the live list there without a deploy.
-//
-// Deliberately NOT a mirror of the addon `excludedTagIds` below: loli/shota/teenager are
-// listed here but excluded from no addon, so their tag pages 404 while their content
-// stays subject to the normal browsing-level rules. Hiding the content was WD14's call to
-// make and it isn't good enough at it — 459,896 `loli` tags at ~59% average confidence,
-// unreviewed. Don't "re-sync" the two lists.
 /**
  * The poi/minor exclusions for a response that is not resolved at one viewer's own level: on for
  * each one if it is on at ANY level a viewer within `levels` could browse at, so the answer is never
@@ -142,6 +133,15 @@ export function resolveStrictestPoiMinor(
   return result;
 }
 
+// Seed for the hard navigation blocklist (W2) — blocks the tag page and nav, not the
+// content carrying the tag. The redis key `system:blocked-browsing-tags` overrides this
+// when present; ops manage the live list there without a deploy.
+//
+// Deliberately NOT a mirror of the addon `excludedTagIds` below: loli/shota/teenager are
+// listed here but excluded from no addon, so their tag pages 404 while their content
+// stays subject to the normal browsing-level rules. Hiding the content was WD14's call to
+// make and it isn't good enough at it — 459,896 `loli` tags at ~59% average confidence,
+// unreviewed. Don't "re-sync" the two lists.
 export const BLOCKED_BROWSING_TAG_IDS: number[] = [
   5161, //actor
   5162, //actress
