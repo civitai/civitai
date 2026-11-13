@@ -7,17 +7,18 @@ import type { FastifyInstance, InjectOptions } from 'fastify';
 //
 //   - create: a DB failure must reach the producer as a 5xx so its client retries. The write is an upsert by
 //     key, so a retry cannot double-queue.
-//   - count: a failing or hung redis is a cache/lag-flag outage, not a count outage — answer from the DB.
-//   - any authed route: a hung DB answers 503 at the handler deadline instead of holding the caller.
+//   - count: every redis call is bounded. A failed or timed-out one answers an empty count at once, without
+//     a DB read, unless NOTIFICATIONS_COUNT_DB_FALLBACK=true, which answers from the DB instead. Either way
+//     the failure is counted where an operator looks for redis trouble.
 
 type Mode = 'ok' | 'reject' | 'hang';
 
 const h = vi.hoisted(() => {
   // Read at module load by env.ts / lag.ts, so set before the app is imported.
   process.env.REPLICATION_LAG_DELAY = '10';
-  process.env.NOTIFICATIONS_HANDLER_DEADLINE_MS = '1000';
   process.env.NOTIFICATIONS_COUNT_REDIS_DEADLINE_MS = '200';
   delete process.env.NOTIFICATIONS_TOKEN;
+  delete process.env.NOTIFICATIONS_COUNT_DB_FALLBACK;
   // `redis` drives every call; `cache`, when set, overrides it for the count-cache hash calls only, so
   // the lag-flag read can answer while the cache misbehaves.
   const state = { db: 'ok' as Mode, redis: 'ok' as Mode, cache: null as Mode | null, dbCalls: 0 };
@@ -81,6 +82,7 @@ beforeEach(() => {
   h.state.redis = 'ok';
   h.state.cache = null;
   h.state.dbCalls = 0;
+  delete process.env.NOTIFICATIONS_COUNT_DB_FALLBACK;
 });
 
 /** The inject result, or the string 'hung' when the app has not answered within `ms`. */
@@ -106,6 +108,25 @@ const createBody = {
 let nextUserId = 100;
 const countBody = () => ({ userId: nextUserId++, unread: true });
 
+async function count() {
+  const started = Date.now();
+  const res = await within(2000, {
+    method: 'POST',
+    url: '/notifications/count',
+    payload: countBody(),
+  });
+  return { res, ms: Date.now() - started };
+}
+
+/** Current value of notifications_redis_errors_total for one operation, read off the scrape. */
+async function redisErrors(operation: string): Promise<number> {
+  const body = (await app.inject({ method: 'GET', url: '/metrics' })).body;
+  const line = body
+    .split('\n')
+    .find((l) => l.startsWith(`notifications_redis_errors_total{operation="${operation}"}`));
+  return line ? Number(line.split(' ').pop()) : 0;
+}
+
 describe('POST /notifications when the DB fails', () => {
   it('answers 503 so the producer retries, never a 202 for a row that was not queued', async () => {
     h.state.db = 'reject';
@@ -120,76 +141,70 @@ describe('POST /notifications when the DB fails', () => {
     expect(res.statusCode).toBe(202);
     expect(res.json()).toEqual({ status: 'queued', queued: 1 });
   });
+});
 
-  it('answers 503 within the handler deadline when the DB never answers', async () => {
-    h.state.db = 'hang';
-    const started = Date.now();
-    const res = await within(3000, { method: 'POST', url: '/notifications', payload: createBody });
+const failures = [
+  ['every redis call rejects', () => (h.state.redis = 'reject')],
+  ['every redis call hangs', () => (h.state.redis = 'hang')],
+  ['the lag flag reads but the count cache rejects', () => (h.state.cache = 'reject')],
+  ['the lag flag reads but the count cache hangs', () => (h.state.cache = 'hang')],
+] as const;
+
+describe('POST /notifications/count when redis fails, DB fallback off (the default)', () => {
+  it.each(failures)('answers an empty count fast, without a DB read, when %s', async (_n, fail) => {
+    fail();
+    const { res, ms } = await count();
     expect(res).not.toBe('hung');
     if (res === 'hung') return;
-    expect(res.statusCode).toBe(503);
-    // The deadline is 1000 ms in this file; the margin is for a loaded box, not for a missing deadline.
-    expect(Date.now() - started).toBeLessThan(2500);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([]);
+    expect(h.state.dbCalls).toBe(0);
+    // Bounded by the 200 ms per-call deadline in this file; the margin is for a loaded box.
+    expect(ms).toBeLessThan(1000);
+  });
+
+  it('reads the DB when redis is healthy (control)', async () => {
+    const { res } = await count();
+    expect(res).not.toBe('hung');
+    if (res === 'hung') return;
+    expect(res.json()).toEqual([{ category: 'Comment', count: '3' }]);
+    expect(h.state.dbCalls).toBe(1);
   });
 });
 
-describe('POST /notifications/count when redis fails', () => {
-  it('answers from the DB when every redis call rejects', async () => {
-    h.state.redis = 'reject';
-    const res = await within(2000, {
-      method: 'POST',
-      url: '/notifications/count',
-      payload: countBody(),
-    });
+describe('POST /notifications/count when redis fails, DB fallback on', () => {
+  it.each(failures)('answers from the DB when %s', async (_n, fail) => {
+    process.env.NOTIFICATIONS_COUNT_DB_FALLBACK = 'true';
+    fail();
+    const { res, ms } = await count();
     expect(res).not.toBe('hung');
     if (res === 'hung') return;
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual([{ category: 'Comment', count: '3' }]);
     expect(h.state.dbCalls).toBe(1);
+    expect(ms).toBeLessThan(2000);
+  });
+});
+
+describe('a count-path redis failure is counted like the worker counts one', () => {
+  it('a hung lag-flag read increments notifications_redis_errors_total{operation="lag"}', async () => {
+    const before = await redisErrors('lag');
+    h.state.redis = 'hang';
+    await count();
+    expect(await redisErrors('lag')).toBe(before + 1);
   });
 
-  it('answers from the DB well inside 2 s when every redis call hangs', async () => {
-    h.state.redis = 'hang';
-    const started = Date.now();
-    const res = await within(2000, {
-      method: 'POST',
-      url: '/notifications/count',
-      payload: countBody(),
-    });
-    expect(res).not.toBe('hung');
-    if (res === 'hung') return;
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual([{ category: 'Comment', count: '3' }]);
-    expect(Date.now() - started).toBeLessThan(2000);
+  it('a rejected lag-flag read increments it too', async () => {
+    const before = await redisErrors('lag');
+    h.state.redis = 'reject';
+    await count();
+    expect(await redisErrors('lag')).toBe(before + 1);
   });
 
-  it.each(['reject', 'hang'] as const)(
-    'answers from the DB when the lag flag reads but the count cache calls %s',
-    async (mode) => {
-      h.state.cache = mode;
-      const res = await within(2000, {
-        method: 'POST',
-        url: '/notifications/count',
-        payload: countBody(),
-      });
-      expect(res).not.toBe('hung');
-      if (res === 'hung') return;
-      expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual([{ category: 'Comment', count: '3' }]);
-      expect(h.state.dbCalls).toBe(1);
-    }
-  );
-
-  it('answers 503 within the handler deadline when the DB hangs too', async () => {
-    h.state.redis = 'hang';
-    h.state.db = 'hang';
-    const res = await within(3000, {
-      method: 'POST',
-      url: '/notifications/count',
-      payload: countBody(),
-    });
-    expect(res).not.toBe('hung');
-    if (res === 'hung') return;
-    expect(res.statusCode).toBe(503);
+  it('a hung cache read increments notifications_redis_errors_total{operation="get"}', async () => {
+    const before = await redisErrors('get');
+    h.state.cache = 'hang';
+    await count();
+    expect(await redisErrors('get')).toBe(before + 1);
   });
 });

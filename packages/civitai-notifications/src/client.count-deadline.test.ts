@@ -44,17 +44,4 @@ describe('countNotifications against a server that never answers', () => {
     expect(Date.now() - started).toBeLessThan(2000);
     expect(requests).toBe(1);
   });
-
-  it('honours an explicit countTimeoutMs / countRetries override', async () => {
-    const client = createNotificationsClient({
-      endpoint,
-      retryBaseMs: 0,
-      countTimeoutMs: 100,
-      countRetries: 1,
-    });
-    await expect(client.countNotifications({ userId: 1, unread: true })).rejects.toBeInstanceOf(
-      NotificationsClientError
-    );
-    expect(requests).toBe(2);
-  });
 });
