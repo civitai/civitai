@@ -1,4 +1,5 @@
 import type { Logger } from '@civitai/next-axiom';
+import { requestVerifiedCrawler } from '~/server/utils/browsing-level';
 import { withAxiom } from '@civitai/next-axiom';
 import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import { TRPCError } from '@trpc/server';
@@ -121,8 +122,8 @@ function logRestServerFault(e: unknown, res: NextApiResponse) {
  * RELOCATES the driver text rather than destroying it. But it must not land on
  * the error board, and one status makes that concrete rather than theoretical.
  *
- * 🔴 The only Prisma codes that reach **408** are `P1008` / `P2024` — connection
- * pool exhaustion. That is wave-shaped: during an incident every affected public
+ * 🔴 The only Prisma code that reaches **408** is `P1008` — an engine operation
+ * timeout (`P2024`, pool exhaustion, is a 503 with a generic message). That is wave-shaped: during an incident every affected public
  * request would add an error-severity line, on routes that previously logged
  * nothing at all. It is the same "fires in high-volume waves" property for which
  * `isRestServerFault` excludes 503 from the error stream.
@@ -171,7 +172,7 @@ function logRestGenericizedClientFault(e: unknown, res: NextApiResponse) {
  *
  *     🔴 That used to be stated without the "usually", and as written it was
  *     FALSE — civitai#3845 investigation 3. `throwDbError` maps a large slice of
- *     Prisma codes to 4xx (P2000→400, P2025→404, P2003→409, P2024→408) while
+ *     Prisma codes to 4xx (P2000→400, P2025→404, P2003→409, P1008→408) while
  *     copying the driver's own `message` verbatim, so a 4xx body could be a raw
  *     `Invalid \`prisma.<model>.<method>()\` invocation` dump disclosing the table,
  *     the column or the constraint name. Those are now caught by a SECOND
@@ -641,7 +642,9 @@ export function PublicEndpoint(
     // are not flushed until it responds, and last write wins. That is what keeps
     // the `no-store` error arms (`handleEndpointError`, and the 503 sheds in
     // `v1/images`/`v1/users`) authoritative.
-    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    // A verified crawler's answer can differ from a signed-out visitor's at the same URL.
+    if (credentialed || requestVerifiedCrawler(req) !== null)
+      res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res, maxAge);
 
     await handler(req, res);
@@ -714,7 +717,8 @@ export function MixedAuthEndpoint(
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
-    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    if (credentialed || requestVerifiedCrawler(req) !== null)
+      res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res);
 
     // Acts as the signed-in user, so a banned session is refused rather than served as anonymous.

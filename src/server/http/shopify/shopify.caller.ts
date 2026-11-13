@@ -1,5 +1,6 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const API_VERSION = '2025-01';
 
@@ -18,15 +19,23 @@ async function mintAdminToken(): Promise<string | null> {
   const clientSecret = env.SHOPIFY_CLIENT_SECRET;
   if (!domain || !clientId || !clientSecret) return null;
 
-  const res = await fetch(`https://${domain}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: clientId,
-      client_secret: clientSecret,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await outboundFetch(`https://${domain}/admin/oauth/access_token`, {
+      timeoutMs: 15_000,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+    });
+  } catch (error) {
+    // Unreachable or timed out. Callers treat a null token as "skip the Shopify write".
+    log({ message: 'Shopify admin token request threw', error: (error as Error)?.message });
+    return null;
+  }
   if (!res.ok) {
     log({ message: 'Failed to mint Shopify admin token', status: res.status });
     return null;
@@ -65,7 +74,8 @@ export async function setCustomerCivitaiUserId(shopifyCustomerId: string, userId
   if (!token) return;
 
   try {
-    const res = await fetch(`https://${domain}/admin/api/${API_VERSION}/graphql.json`, {
+    const res = await outboundFetch(`https://${domain}/admin/api/${API_VERSION}/graphql.json`, {
+      timeoutMs: 15_000,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
       body: JSON.stringify({

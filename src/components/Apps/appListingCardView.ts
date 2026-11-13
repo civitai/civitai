@@ -77,15 +77,25 @@ export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): L
 }
 
 /**
- * Recommend rollup → display label. `recommendPct` is `null` when there are no
- * reviews yet (metric row absent OR zero counts) — render "No reviews yet"
- * rather than a misleading "0% recommend". Otherwise a Steam-style
- * "N% recommend (M)" with the review count.
+ * Recommend rollup → display label, in three cases:
+ *   - zero reviews → "No reviews yet" (never a misleading "0% recommend");
+ *   - reviews but `recommendPct == null` → the counts, "3 reviews · 2 recommend". The
+ *     server withholds the percentage below a minimum review count (`recommendRollup`
+ *     owns that number; nothing here compares against it);
+ *   - otherwise a Steam-style "N% recommend (M)" with the review count.
  */
 export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount: number): string {
-  if (recommend.recommendPct == null) return 'No reviews yet';
+  if (reviewCount === 0) return 'No reviews yet';
+  if (recommend.recommendPct == null) return getRecommendCountsLabel(recommend, reviewCount);
   const pct = Math.round(recommend.recommendPct * 100);
   return `${pct}% recommend (${reviewCount.toLocaleString()})`;
+}
+
+/** "1 review · 1 recommends", "3 reviews · 2 recommend" — the below-threshold label. */
+function getRecommendCountsLabel(recommend: ListingRecommendRollup, reviewCount: number): string {
+  const up = recommend.recommendedCount;
+  const reviews = `${reviewCount.toLocaleString()} ${reviewCount === 1 ? 'review' : 'reviews'}`;
+  return `${reviews} · ${up.toLocaleString()} ${up === 1 ? 'recommends' : 'recommend'}`;
 }
 
 /**

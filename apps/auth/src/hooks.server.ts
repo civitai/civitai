@@ -48,6 +48,7 @@ const ORIGIN_CHECKS: Record<string, (request: Request, url: URL) => boolean> = {
   '/api/auth/oauth/device-deny': isHubPageRequest,
   '/login/oauth/device': isHubPageRequest,
   '/login/oauth/authorize': isHubPageRequest,
+  '/invite': isHubPageRequest,
   '/api/auth/switch': isTrustedSessionCaller,
   '/api/auth/impersonate': isTrustedSessionCaller,
   '/api/auth/impersonate/exit': isTrustedSessionCaller,
@@ -109,8 +110,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     return forbidden();
 
   // Populate locals.user from the session cookie. The cookie is THIN (identity only), so resolve the rich user
-  // by userId from the shared cache (produce on miss) rather than trusting an embedded user. The verifier handles
-  // both ES256 and legacy NextAuth JWE; verification / resolve failures are non-fatal.
+  // by userId from the shared cache (produce on miss) rather than trusting an embedded user. Verification /
+  // resolve failures are non-fatal.
   const routeId = event.route?.id ?? '';
   const cookieRead = readHubSession(event.cookies);
   const cookieToken = cookieRead?.value;

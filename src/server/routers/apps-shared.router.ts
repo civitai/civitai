@@ -806,8 +806,9 @@ type SharedWriteContext = SharedContext & { uid: number };
  * 🔴 A failure that did not land is refunded FREE only if it is marked as our server fault
  * (`escalateToServerFault`); every other failure, 4xx or not, is also charged to the rejection
  * bucket. The marked set is:
- *   - the `data` scan failing (`enforceScan`) and the title/body belt's blocklist read failing
- *     (`assertSharedTextSafe`) — both refused as a 400 but escalated;
+ *   - the `data` scan failing (`enforceScan`), and the title/body belt's blocklist read or its
+ *     prompt audit failing to run (`assertSharedTextSafe`; the audit's 503 only while
+ *     PROMPT_CHECK_FAIL_CLOSED is on) — all refused as a 400 but escalated;
  *   - transaction plumbing (`asTransactionFault`): acquiring the connection, BEGIN, the
  *     `SET LOCAL` of the server-derived app id, and COMMIT.
  * It is an allow-list because a refund is only safe for a failure the caller cannot cause.
@@ -1912,8 +1913,9 @@ async function assertSharedValueSafeAndSerialize(params: {
       const refusal = new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
       // `unchecked`, not escalation, picks the outcome: a scan that threw is unchecked but charged.
       const outcome = e.unchecked ? 'moderation_unavailable' : 'moderation_blocked';
-      // An outage the belt refused on (its blocklist read failing) stays our fault on the
-      // refusal too, so the write budget refunds it instead of charging the caller.
+      // An outage the belt refused on (its blocklist read failing, or its prompt audit unable to
+      // run) stays our fault on the refusal too, so the write budget refunds it instead of
+      // charging the caller.
       if (isEscalatedServerFault(e)) {
         throw tagSharedStorageOutcome(escalateToServerFault(refusal), outcome);
       }

@@ -143,8 +143,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: {
     appListings: {
       listAvailable: {
-        useQuery: (input: { category?: string } | undefined, opts?: { enabled?: boolean }) => {
+        useQuery: (
+          input: { category?: string; userId?: number } | undefined,
+          opts?: { enabled?: boolean }
+        ) => {
           const pending = opts?.enabled === false || mocks.relatedPending;
+          // The rail's "More by this developer" query: no other apps by the developer here, so
+          // the rail's category / popular groups below are what these tests read.
+          if (input?.userId !== undefined)
+            return {
+              data: pending ? undefined : { items: [] },
+              isLoading: false,
+              isPending: pending,
+            };
           const items =
             mocks.relatedPopularItems && input?.category === undefined
               ? mocks.relatedPopularItems
@@ -155,6 +166,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       // Consumed by the REAL `ReviewListingModal` / `ReportListingModal`, which the
       // `⋮` menu opens. They are NOT mocked away — the menu → modal wiring is the
       // seam this change introduces, so it is exercised end to end.
+      // The track-record line under the creator card (`DeveloperTrackRecord`): no record yet.
+      getDeveloperTrackRecord: {
+        useQuery: () => ({ data: undefined, isLoading: false, isPending: true }),
+      },
       getMyReview: { useQuery: () => ({ data: null, isLoading: false }) },
       upsertReview: {
         useMutation: () => ({ mutate: mocks.upsertMutate, isPending: false }),
@@ -364,6 +379,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     openCount: 2718,
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     betaMessage: null,
     forkable: false,
     forkOf: null,

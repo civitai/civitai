@@ -96,13 +96,11 @@ const reviewSubmissionSql = ({ collectionId, userId }: ReviewViewer) => Prisma.s
 )`;
 
 /**
- * The images a collection's reviewer may see before they are rated: those that are REVIEW or
- * REJECTED submissions of that collection by their uploader, when the viewer owns it or has
- * MANAGE on it. Used as an arm of `getAllImages`' pending filter over `Image` aliased `i`; every
- * other filter of that read still applies.
+ * Reviewed (`imageReviewedSql`) images that are REVIEW or REJECTED submissions of the collection by
+ * their uploader, visible to its owner or a MANAGE contributor before they are rated.
  */
 export const reviewCollectionImageSql = (viewer: ReviewViewer) =>
-  Prisma.sql`(i."nsfwLevel" = 0 AND ${reviewSubmissionSql(viewer)})`;
+  Prisma.sql`(i."nsfwLevel" = 0 AND ${imageReviewedSql()} AND ${reviewSubmissionSql(viewer)})`;
 
 /**
  * `getAllImages`' `pending` filter for a signed-in non-moderator, over `Image` aliased `i` joined to
@@ -115,8 +113,8 @@ export const reviewCollectionImageSql = (viewer: ReviewViewer) =>
  * - a post in a collection they MANAGE shows its rated, reviewed images above `browsingLevel`
  *   (never unrated or Blocked ones);
  * - with the server-set `reviewCollectionId`, that collection's REVIEW and REJECTED submissions by
- *   their uploader show unrated, and `acceptableMinor` ones show too, so a judge can reject them.
- *   That exception does not reach above `browsingLevel`.
+ *   their uploader show unrated once reviewed (`imageReviewedSql`), and `acceptableMinor` ones
+ *   show too, so a judge can reject them. That exception does not reach above `browsingLevel`.
  */
 export const pendingViewerImageSql = ({
   userId,

@@ -339,6 +339,8 @@ export const constants = {
     minCreateAmount: 500,
     maxCreateAmount: 100000000,
     supportedBountyToModels: [BountyType.ModelCreation, BountyType.LoraCreation],
+    // The edit form saves back only the images its read returned, so writes are capped at the same number.
+    maxEntryImagesForEdit: 100,
   },
   defaultCurrency: Currency.BUZZ,
   referrals: {
@@ -541,14 +543,11 @@ export const constants = {
     // Hosts a chat link may point at, matched exactly against the parsed hostname
     // (see `src/components/Chat/util.tsx`). Links to these hosts are rendered in-app.
     civHosts: chatCivHosts(),
-    // Off-site hosts chat will link (and preview server-side). Exact hostnames only.
-    externalHosts: [
-      'github.com',
-      'twitter.com',
-      'x.com',
-      'civitai.red',
-      'education.civitai.com',
-    ].flatMap((host) => [host, `www.${host}`]),
+    // Off-site hosts chat will link (and preview server-side). Exact hostnames only. Our other
+    // sites (civitai.red, civitai.green) come from the domain config: see `isExternalChatLink`.
+    externalHosts: ['github.com', 'twitter.com', 'x.com', 'education.civitai.com'].flatMap(
+      (host) => [host, `www.${host}`]
+    ),
   },
   entityCollaborators: {
     maxCollaborators: 15,
@@ -909,6 +908,14 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy: 'MiniMax-H3-Image',
     requiresSameLicense: true,
   },
+  'bria fibo': {
+    // Same as licence 56 in basemodel.constants.
+    url: 'https://civitai.com/content/licenses/fibo-2-platform-license',
+    name: 'FIBO 2.0 Platform License',
+    poweredBy: 'Powered by Bria AI',
+    disableMature: true,
+    requiresSameLicense: true,
+  },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
     // the published text.
@@ -1050,6 +1057,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.3 Klein': baseLicenses['flux kommunity'],
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'MOSS Image': baseLicenses['apache 2.0'],
+  'Fibo 2.0': baseLicenses['bria fibo'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux2 dev nc'],
   'Flux.2 Klein 9B': baseLicenses['flux nc'],
@@ -1071,6 +1079,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Nano Banana': baseLicenses['imagen4'],
   Imagen4: baseLicenses['imagen4'],
   'Veo 3': baseLicenses['veo3'],
+  'Gemini Omni': baseLicenses['veo3'],
   'Wan Video': baseLicenses['apache 2.0'],
   'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
   'Wan Video 14B t2v': baseLicenses['apache 2.0'],

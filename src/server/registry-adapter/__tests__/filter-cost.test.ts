@@ -6,8 +6,9 @@ import { createRegistryServer } from '~/server/registry-adapter/serve';
 
 /**
  * A request's `filter` is evaluated synchronously, per entity and per poll, on the one event loop
- * that serves every stream. One whose cost is not bounded by its size is not applied (the registry
- * applies it anyway, spec rule 6), so an anonymous consumer cannot stall the source.
+ * that serves every stream. One whose cost is not bounded by its size is refused with
+ * `bad_request` (the registry spec's rule 6: applied in full or refused, never ignored), so an
+ * anonymous consumer cannot stall the source. Before, each refused case was streamed unfiltered.
  */
 
 const APPS = 'urn:schema:apps.civitai.com:app@v1';
@@ -35,6 +36,12 @@ let server: Server | undefined;
 afterEach(
   () => new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()))
 );
+
+/** The refusal, as the HTTP binding sends it before the stream: status and `error`. */
+const refused = (res: { status: number; text: string }) => [
+  res.status,
+  (JSON.parse(res.text) as { error?: unknown }).error,
+];
 
 async function get(filter: unknown) {
   server = createRegistryServer(adapter);
@@ -65,13 +72,12 @@ function refDag(depth: number, key: '$defs' | 'definitions' = '$defs') {
   return { $ref: `#/${key}/d0`, [key]: defs };
 }
 
-describe('🔴 a filter whose evaluation cost is unbounded by its size is not applied', () => {
+describe('🔴 a filter whose evaluation cost is unbounded by its size is bad_request', () => {
   it.each([['$defs' as const], ['definitions' as const]])(
-    'an exponential $ref DAG through %s: not applied, so the entity it would exclude is still sent, promptly',
+    'an exponential $ref DAG through %s: refused with bad_request, promptly',
     async (key) => {
       const res = await get(refDag(20, key));
-      expect(res.status).toBe(200);
-      expect(res.text.startsWith('event: upsert')).toBe(true);
+      expect(refused(res)).toEqual([400, 'bad_request']);
       expect(res.ms).toBeLessThan(2_000);
     }
   );
@@ -80,16 +86,22 @@ describe('🔴 a filter whose evaluation cost is unbounded by its size is not ap
     ['$dynamicRef', { $dynamicRef: '#meta', not: {} }],
     ['$recursiveRef', { $recursiveRef: '#', not: {} }],
     ['a $ref with no definitions', { not: { $ref: '#' } }],
-  ])('a filter using %s is not applied either', async (_name, filter) => {
+  ])('a filter using %s is bad_request too', async (_name, filter) => {
     const res = await get(filter);
-    expect(res.text.startsWith('event: upsert')).toBe(true);
+    expect(refused(res)).toEqual([400, 'bad_request']);
   });
 
-  it('a filter nested deeper than the bound is not applied', async () => {
+  it('a filter nested deeper than the bound is bad_request, naming the bound', async () => {
     let deep: Record<string, unknown> = { not: {} };
     for (let i = 0; i < 40; i++) deep = { allOf: [deep] };
     const res = await get(deep);
-    expect(res.text.startsWith('event: upsert')).toBe(true);
+    expect([res.status, JSON.parse(res.text)]).toEqual([
+      400,
+      {
+        error: 'bad_request',
+        message: 'filter nests deeper than 32 levels, which this registry does not apply',
+      },
+    ]);
   });
 
   it.each([

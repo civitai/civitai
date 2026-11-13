@@ -965,7 +965,7 @@ function requireModeratorId(id: number | undefined) {
   return id;
 }
 
-/** `actor.moderatorId` (an authenticated session) wins over any id asserted in the body; `putLabelModes` accepts only the session id. */
+/** Writes are attributed to `actor.moderatorId` (an authenticated session) only; an id in the body is ignored. */
 export async function runTextScanHarnessAction(
   input: TextScanHarnessInput,
   actor: { moderatorId?: number }
@@ -1005,7 +1005,7 @@ export async function runTextScanHarnessAction(
 
     case 'putPrompt': {
       const { key, content, note, baseId } = input;
-      const createdById = requireModeratorId(actor.moderatorId ?? input.createdById);
+      const createdById = requireModeratorId(actor.moderatorId);
       return {
         kind: 'json',
         body: await insertTextScanPrompt({ key, content, note, createdById, baseId }),
@@ -1013,12 +1013,12 @@ export async function runTextScanHarnessAction(
     }
 
     case 'putConfig': {
-      const id = requireModeratorId(actor.moderatorId ?? input.moderatorId);
+      const id = requireModeratorId(actor.moderatorId);
       return { kind: 'json', body: await setTextScanConfig(input.config, { moderatorId: id }) };
     }
 
     case 'putModes': {
-      const id = requireModeratorId(actor.moderatorId ?? input.moderatorId);
+      const id = requireModeratorId(actor.moderatorId);
       const modes = await setTextScanRollout(input.entityType, input.rollout, {
         moderatorId: id,
         allowActive: input.allowActive,
@@ -1027,7 +1027,7 @@ export async function runTextScanHarnessAction(
     }
 
     case 'putWebSearchModes': {
-      const id = requireModeratorId(actor.moderatorId ?? input.moderatorId);
+      const id = requireModeratorId(actor.moderatorId);
       const webSearchModes = await setTextScanWebSearchRollout(input.entityType, input.rollout, {
         moderatorId: id,
         allowActive: input.allowActive,

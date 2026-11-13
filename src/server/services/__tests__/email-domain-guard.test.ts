@@ -17,8 +17,13 @@ import { TRPCError } from '@trpc/server';
 const resolveMx = vi.hoisted(() => vi.fn());
 vi.mock('dns/promises', () => ({ default: { resolveMx }, resolveMx }));
 
-import { assertEmailAllowed, matchesBlockedSuffix } from '../blocklist.service';
+import {
+  assertEmailAllowed,
+  matchesBlockedSuffix,
+  resetBlocklistLastKnownForTests,
+} from '../blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -71,9 +76,24 @@ async function reject(email: string) {
   return caught;
 }
 
+/**
+ * A list read FAILS only when the cache and the database both fail: an unreadable cache alone is
+ * answered from the database (getBlocklistDTO). So a "read fails" case fails both for that type.
+ */
+function failDatabaseReadFor(type: BlocklistType) {
+  dbMock.dbWrite.blocklist.findMany.mockImplementation((async (args: {
+    where?: { type?: string };
+  }) => {
+    if (args?.where?.type === type) throw new Error('database unreachable');
+    return [];
+  }) as never);
+}
+
 describe('assertEmailAllowed', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetBlocklistLastKnownForTests();
+    dbMock.dbWrite.blocklist.findMany.mockResolvedValue([] as never);
     setBlockedDomains([]);
     setBlockedSuffixes([]);
     resolveMx.mockResolvedValue([{ exchange: 'mx.example.com', priority: 10 }]);
@@ -321,6 +341,7 @@ describe('assertEmailAllowed', () => {
       // zeroed the ~8,800-entry exact list. Revert to `Promise.all` and this test reports an
       // address that should have been refused resolving instead.
       setBlockedDomains(['still-enforced.test']);
+      failDatabaseReadFor(BlocklistType.EmailDomainSuffix);
       redisGet.mockImplementation(async (key: string) => {
         if (key.endsWith(`:${BlocklistType.EmailDomainSuffix}`))
           throw new Error('redis unreachable');
@@ -339,6 +360,7 @@ describe('assertEmailAllowed', () => {
 
     it('still enforces the SUFFIX list when only the exact read fails', async () => {
       // The other direction, so the pair cannot both pass by degrading everything open.
+      failDatabaseReadFor(BlocklistType.EmailDomain);
       redisGet.mockImplementation(async (key: string) => {
         if (key.endsWith(`:${BlocklistType.EmailDomainSuffix}`))
           return JSON.stringify({

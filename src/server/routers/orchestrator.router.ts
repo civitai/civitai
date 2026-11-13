@@ -27,7 +27,7 @@ import {
 } from '~/server/logging/client';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
-import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
 import {
   imageTrainingRouterInputSchema,
   imageTrainingRouterWhatIfSchema,
@@ -69,13 +69,16 @@ import {
   protectedProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
+import { rewriteProxyUrlToOrchestrator } from '~/server/orchestrator/region-proxy';
+import { isCivitaiMediaUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import {
   getPresetModelConfig,
   pickAspectRatioSize,
+  assertPresetGenerationAllowed,
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
@@ -84,7 +87,7 @@ import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
@@ -167,7 +170,7 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   try {
     // Wall-clock deadline so a silent sysRedis half-open can't park every gen
     // tRPC call ~11min (a fast DOWN already rejects into the catch below).
-    genClient = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
+    genClient = await withSysReadBreaker(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'enforceGenerationVersion', err);
     return result;
@@ -207,7 +210,16 @@ export const orchestratorRouter = router({
   getVideoMetadata: orchestratorProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ videoUrl: z.string() }))
-    .query(({ ctx, input }) => getVideoMetadata(input)),
+    .query(({ input }) => {
+      // The step runs on the system token, so like the other system-run steps it only takes
+      // media on Civitai's orchestrator. A region-proxy url is read from the orchestrator host.
+      const videoUrl = rewriteProxyUrlToOrchestrator(input.videoUrl);
+      if (!isCivitaiMediaUrl(videoUrl))
+        throw throwBadRequestError(
+          'Video metadata is only available for videos uploaded to Civitai. Upload the file, then try again.'
+        );
+      return getVideoMetadata({ videoUrl });
+    }),
 
   // #region [prompt enhancement]
   enhancePrompt: orchestratorGuardedProcedure
@@ -470,18 +482,7 @@ export const orchestratorRouter = router({
       }
 
       // Check generation status early
-      if (status.mode === 'disabled' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
-      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
+      assertGenerationStatusAllows(status, { isModerator: ctx.user.isModerator, tier: userTier });
 
       const result = await generateFromGraph({
         input: formInput,
@@ -586,18 +587,7 @@ export const orchestratorRouter = router({
         });
       }
 
-      if (status.mode === 'disabled' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
-      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
+      assertGenerationStatusAllows(status, { isModerator: ctx.user.isModerator, tier: userTier });
 
       // Rides alongside the graph input rather than inside it — it is not a graph node.
       const { downloadPriority, acceptBoostRequired, ...graphInput } = (input ?? {}) as Record<
@@ -861,6 +851,8 @@ export const orchestratorRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Before the paid prompt enhancement below, so a refused caller is charged nothing.
+      await assertPresetGenerationAllowed(ctx.user as SessionUser);
       await assertGenerationInputsUsable({
         urls: [input.sourceImageUrl, ...(input.referenceImages ?? []).map((ref) => ref.url)],
         userId: ctx.user.id,

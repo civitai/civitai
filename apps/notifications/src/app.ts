@@ -140,9 +140,11 @@ export async function buildServer(): Promise<FastifyInstance> {
       producerRequestsTotal.inc({ outcome: 'created' });
       return reply.code(202).send({ status: 'queued', queued: result.queued });
     } catch (err) {
+      // 503, not 500: the write failed on a dependency, and the client retries 5xx. Safe because the
+      // create is an upsert by key.
       producerRequestsTotal.inc({ outcome: 'error' });
       req.log.error({ err }, 'producer create failed');
-      return reply.code(500).send({ error: 'Internal error' });
+      return reply.code(503).send({ error: 'Unavailable' });
     }
   });
 

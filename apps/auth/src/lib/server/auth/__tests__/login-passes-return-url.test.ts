@@ -13,6 +13,7 @@ import { resolve } from 'path';
 
 const ROOT = resolve(__dirname, '../../../../..'); // apps/auth
 const LOGIN_ROUTES = [
+  'src/routes/invite/+page.server.ts',
   'src/routes/login/[provider]/callback/+server.ts',
   'src/routes/login/email/verify/+server.ts',
 ];

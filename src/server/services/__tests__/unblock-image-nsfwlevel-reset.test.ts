@@ -1,4 +1,6 @@
+import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Regression guard for the "unblock leaves nsfwLevel stuck at Blocked" bug
@@ -156,7 +158,6 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
@@ -489,5 +490,62 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
         buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
       })
     );
+  });
+});
+
+// PERMIT site of the minor content rule: a moderator's plain Accept in the minor review queue
+// clears the minor flag on mature images and keeps it on safe ones. It is not a gate that hides,
+// so it stays off the shared rule; swapping the rule in here keeps mature images flagged.
+describe('handleUnblockImages — minor queue Accept truth table', () => {
+  it('clears the minor flag on mature images and keeps it on safe ones', async () => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL,
+      minor boolean NOT NULL, "needsReview" text, "blockedFor" text, metadata jsonb,
+      "scannedAt" timestamp, ingestion text)`);
+    const levels: [number, boolean][] = [
+      [0, true],
+      [1, true],
+      [2, true],
+      [4, false],
+      [8, false],
+      [16, false],
+    ];
+    for (const [i, [nsfwLevel]] of levels.entries())
+      await pg.query(
+        `INSERT INTO "Image" VALUES ($1, $2, true, 'minor', NULL, '{}'::jsonb, NULL, 'Pending')`,
+        [i + 1, nsfwLevel]
+      );
+    const raw = pgliteRaw(pg);
+    const capture = dbWrite.$queryRaw.getMockImplementation();
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      strings.join('').includes('UPDATE "Image"')
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    mockFindMany.mockResolvedValue(
+      levels.map(([nsfwLevel], i) => ({
+        id: i + 1,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel,
+        blockedFor: null,
+        needsReview: 'minor',
+      })) as never
+    );
+
+    try {
+      await handleUnblockImages({
+        ids: levels.map((_, i) => i + 1),
+        moderatorId: undefined,
+        removeMinorFlag: false,
+      } as any);
+      const { rows } = await pg.query<{ nsfwLevel: number; minor: boolean }>(
+        `SELECT "nsfwLevel", minor FROM "Image" ORDER BY id`
+      );
+      expect(rows.map((row) => [row.nsfwLevel, row.minor])).toEqual(levels);
+    } finally {
+      if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      await pg.close();
+    }
   });
 });

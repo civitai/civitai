@@ -1,12 +1,16 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import type { NextApiResponse } from 'next';
 import { clickhouse } from '~/server/clickhouse/client';
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
 import { dbWrite } from '~/server/db/client';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { backoffDelay } from '~/utils/backoff';
+import { sleep } from '~/utils/errorHandling';
 
 /** Shown when a client-supplied image url cannot be used. Keep it actionable. */
 export const COVER_IMAGE_UNAVAILABLE_MESSAGE =
@@ -292,30 +296,74 @@ export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-11-18T16:00:00Z');
 
 const uploadKeyOwnerCounter = registerCounterWithLabels({
   name: 'upload_key_owner_total',
-  help: 'Image upload key issue records: failed writes, and unrecorded keys accepted or refused on save.',
+  help: 'Image upload key issue records: writes that needed a retry or failed, keys handed out or withheld without one, and unrecorded keys accepted or refused on save.',
   labelNames: ['outcome'] as const,
 });
 
 const ownerKey = (key: string) =>
   `${REDIS_SYS_KEYS.SYSTEM.UPLOAD_KEY_OWNER}:${key}` as RedisKeyTemplateSys;
 
-/** Records that upload key `key` was issued to `userId`. Never throws. */
-export async function recordUploadKeyOwner(key: string, userId: number) {
-  try {
-    await withSysReadDeadline(
-      sysRedis.set(ownerKey(key.toLowerCase()), String(userId), {
-        EX: UPLOAD_KEY_OWNER_TTL_SECONDS,
-      })
-    );
-  } catch (e) {
-    uploadKeyOwnerCounter.inc({ outcome: 'record_failed' });
-    logToAxiom({
-      type: 'error',
-      name: 'upload-key-owner',
-      message: 'Failed to record upload key owner',
-      error: (e as Error).message,
-    }).catch(() => undefined);
+/** Writes an issue record gets before it is given up on: the write is idempotent, so a retry is safe. */
+const RECORD_ATTEMPTS = 3;
+const RECORD_RETRY_BASE_MS = 100;
+
+/** Answered, with a 503, instead of an upload key whose issue record could not be written (when refusing is on). */
+export const UPLOAD_KEY_UNRECORDED_MESSAGE =
+  "We couldn't start this upload. Please try again in a moment.";
+
+/**
+ * Records that upload key `key` was issued to `userId`. A failed write is retried, up to
+ * `RECORD_ATTEMPTS` writes with a jittered backoff between them, each one bounded by the sys
+ * deadline so a write that never settles cannot hold the request. Never throws: resolves whether
+ * the record was written; a route handing the key to a client passes that to
+ * `withholdUnrecordedUploadKey`.
+ */
+export async function recordUploadKeyOwner(key: string, userId: number): Promise<boolean> {
+  let error: unknown;
+  for (let attempt = 0; attempt < RECORD_ATTEMPTS; attempt++) {
+    if (attempt)
+      await sleep(
+        backoffDelay(attempt - 1, { baseMs: RECORD_RETRY_BASE_MS, jitterMs: RECORD_RETRY_BASE_MS })
+      );
+    try {
+      await withSysReadDeadline(
+        sysRedis.set(ownerKey(key.toLowerCase()), String(userId), {
+          EX: UPLOAD_KEY_OWNER_TTL_SECONDS,
+        })
+      );
+      if (attempt) uploadKeyOwnerCounter.inc({ outcome: 'record_retried' });
+      return true;
+    } catch (e) {
+      error = e;
+    }
   }
+  uploadKeyOwnerCounter.inc({ outcome: 'record_failed' });
+  logToAxiom({
+    type: 'error',
+    name: 'upload-key-owner',
+    message: 'Failed to record upload key owner',
+    error: (error as Error).message,
+    attempts: RECORD_ATTEMPTS,
+  }).catch(() => undefined);
+  return false;
+}
+
+/**
+ * Whether an upload route withholds a key whose issue record `recordUploadKeyOwner` could not
+ * write. With `UPLOAD_KEY_REFUSE_UNRECORDED` off (the default) it returns false and the key is
+ * handed out. With it on, it answers a 503 the client can retry and returns true: the route must
+ * hand out nothing more.
+ */
+export function withholdUnrecordedUploadKey(res: NextApiResponse, recorded: boolean) {
+  if (recorded) return false;
+  if (!env.UPLOAD_KEY_REFUSE_UNRECORDED) {
+    uploadKeyOwnerCounter.inc({ outcome: 'issued_unrecorded' });
+    return false;
+  }
+  uploadKeyOwnerCounter.inc({ outcome: 'issue_refused' });
+  res.setHeader('Retry-After', '2');
+  res.status(503).json({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
+  return true;
 }
 
 async function ownersFromRedis(keys: string[]) {

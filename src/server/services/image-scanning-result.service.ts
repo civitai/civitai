@@ -6,6 +6,11 @@ import type {
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  combineFrameAxes,
+  readRatingAxes,
+  type RatingAxes,
+} from '~/server/services/image-nsfw-axes';
+import {
   applyIngestionSideEffects,
   buildAndInsertScanTags,
   extractFailedSteps,
@@ -56,6 +61,8 @@ export type ImageScanningResult = {
   aiRecognition?: Recognition;
   animeRecognition?: Recognition;
   perceptualHash?: string;
+  /** Rating axes, when the rater that produces them ran. */
+  axes?: RatingAxes;
 };
 
 type RawStep = { $type?: string; name?: string; status?: string; output?: unknown };
@@ -63,8 +70,8 @@ type RawStep = { $type?: string; name?: string; status?: string; output?: unknow
 // wdTagging only ever returned general tags; the other categories would write tags no image had before.
 const INGESTED_TAG_CATEGORIES = new Set(['general']);
 
-// The client package predates this field.
-type ScanningOutput = ImageScanningOutput & { blockedReason?: string | null };
+// The client package predates these fields.
+type ScanningOutput = ImageScanningOutput & { blockedReason?: string | null; ratingV2?: unknown };
 
 function readScan(output: ScanningOutput, workflowId: string): ImageScanningResult {
   const { tagging, jointAgeClassification } = output;
@@ -89,6 +96,7 @@ function readScan(output: ScanningOutput, workflowId: string): ImageScanningResu
     blockedReason: output.blockedReason || null,
     aiRecognition: output.aiRecognition,
     animeRecognition: output.animeRecognition,
+    axes: readRatingAxes(output.ratingV2),
   };
 }
 
@@ -96,7 +104,8 @@ const higher = (a?: Recognition, b?: Recognition) => (!a || (b && b.score > a.sc
 
 // Every result is kept (a max or an OR per field), so a frame can only raise what the video reports.
 function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
-  return frames.reduce((acc, frame) => {
+  const axes = combineFrameAxes(frames.map((frame) => frame.axes));
+  const combined = frames.reduce((acc, frame) => {
     const tags = { ...acc.tags };
     for (const [tag, score] of Object.entries(frame.tags))
       tags[tag] = Math.max(score, tags[tag] ?? 0);
@@ -114,6 +123,7 @@ function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
       animeRecognition: higher(acc.animeRecognition, frame.animeRecognition),
     };
   });
+  return { ...combined, axes };
 }
 
 /**
@@ -284,6 +294,7 @@ export async function processImageScanningWorkflow({
       workflowId,
       prompt,
       negativePrompt,
+      axes: scan.axes,
       log: IMAGE_SCANNING_LOG,
     });
   } catch (error) {

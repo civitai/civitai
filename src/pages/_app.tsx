@@ -395,7 +395,7 @@ function MyApp(props: CustomAppProps) {
                                       {...cookies.referrals}
                                       pending={referralsPending}
                                     >
-                                      <FiltersProvider>
+                                      <FiltersProvider isRed={domain === 'red'}>
                                         <AdsProvider gated={adsGated}>
                                           <HiddenPreferencesProvider>
                                             <CivitaiLinkProvider>
@@ -529,8 +529,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const sessionCookie = sessionCookieKind(cookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =
-    await import('~/server/utils/server-domain');
+  const { serverDomainMap, getRequestDomainColor, getAllServerHosts } = await import(
+    '~/server/utils/server-domain'
+  );
   const serverDomains: ServerDomains = {
     green: serverDomainMap.green,
     blue: serverDomainMap.blue,
@@ -538,7 +539,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   };
   const canIndex = getAllServerHosts().includes((request.headers.host ?? '').toLowerCase());
   // Provider list comes from the hub (single source of provider config/secrets), cached + fail-open.
-  const availableOAuthProviders = await getAvailableOAuthProviders();
+  // `typeof window` block: the module reads the flag client, which must stay out of the client bundle.
+  let availableOAuthProviders: string[] = [];
+  if (typeof window === 'undefined') {
+    const { getAvailableOAuthProviders } = await import('~/server/auth/oauth-providers');
+    availableOAuthProviders = await getAvailableOAuthProviders();
+  }
 
   const region = getRegion(request);
 
@@ -794,8 +800,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // user. Scope: the delete this replaces named the LEGACY `civitai-token` family only,
     // so only legacy holders were ever affected either way. Cost of keeping it is near
     // zero: a civ-token's Max-Age comes from its own `exp` (civ-cookie.ts:163), so an
-    // expired one is never in the jar to linger; a stale legacy cookie costs one failed
-    // jose decode per request. Deleting safely needs the endpoint to signal a degraded
+    // expired one is never in the jar to linger; a stale legacy cookie is not decoded
+    // outside a preview. Deleting safely needs the endpoint to signal a degraded
     // lookup distinctly from "no session".
     hasAuthCookie = false;
   }

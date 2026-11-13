@@ -42,6 +42,13 @@
       "maxLength": 200,
       "pattern": "^https://(github\\.com|gitlab\\.com|codeberg\\.org)/[^/]+/[^/]+/?$"
     },
+    "bugs": {
+      "type": "string",
+      "description": "Optional PUBLIC ISSUE-TRACKER / SUPPORT link: a URL string, like `repository`. The npm-style object form (`{ \"url\": ..., \"email\": ... }`) is NOT supported and is refused. Rendered as a `Support` row on the app's `/apps` store DETAIL page. Manifest-governed like `repository`: it flows to the store listing on moderator-approve and is re-synced on every approved version; remove the key and the link is cleared. Must be an `https://` URL, carry no embedded credentials and no port, and be at most 200 characters (MAX_ISSUE_TRACKER_URL_LENGTH in src/server/schema/blocks/external-app.schema.ts). Any host is accepted. Treat passing local validation as necessary, not sufficient — `validateIssueTrackerUrl` in that file is authoritative.",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^https://"
+    },
     "type": {
       "type": "string",
       "description": "Free-form descriptor used by some examples (e.g. \"block\"). Not validated by the platform.",
@@ -194,7 +201,7 @@
     },
     "page": {
       "type": "object",
-      "description": "Full-page surface descriptor (W10). Page apps mount at /apps/run/<slug>.",
+      "description": "Full-page surface descriptor (W10). Page apps mount at /apps/run/<slug>. A manifest without non-empty `targets` must declare `page`.",
       "additionalProperties": false,
       "required": ["path", "title"],
       "properties": {
@@ -607,7 +614,7 @@
     },
     "targets": {
       "type": "array",
-      "description": "Model-page slot targets. Each target's slotId must be a known registered model slot (not the page slot). Optional for page-only apps.",
+      "description": "Model-page slot targets. Each target's slotId must be a known registered model slot (not the page slot). Optional for a page app; a manifest without `page` must declare at least one target.",
       "maxItems": 16,
       "items": {
         "type": "object",
@@ -774,6 +781,20 @@
       "then": {
         "required": ["outputDir"]
       }
+    },
+    {
+      "$comment": "A manifest must declare at least one surface: a non-empty `targets` array (model-page slots) or a `page` object (a full-page app). The platform refuses a submission with neither, and the build would fail it.",
+      "anyOf": [
+        {
+          "required": ["targets"],
+          "properties": {
+            "targets": { "minItems": 1 }
+          }
+        },
+        {
+          "required": ["page"]
+        }
+      ]
     }
   ]
 }

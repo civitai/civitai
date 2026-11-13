@@ -25,6 +25,9 @@ import {
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { servableProfilePicture } from '~/server/services/profile-picture.servable';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
@@ -146,9 +149,7 @@ export const getUserWithProfile = async ({
 
     const shapeCoverImage = (coverImage: NonNullable<typeof profile>['coverImage']) => {
       if (!coverImage) return null;
-      const needsReview =
-        coverImage.needsReview || coverImage.ingestion === ImageIngestionStatus.Blocked;
-      if (needsReview && !canEdit) return null;
+      if (!canEdit && !servableArticleImage(coverImage)) return null;
 
       return {
         ...coverImage,
@@ -178,6 +179,11 @@ export const getUserWithProfile = async ({
 
     return {
       ...user,
+      profilePicture: canEdit
+        ? user.profilePicture ??
+          (viaKysely ? null : await getProfilePictureOfUser(dbWrite, user.id))
+        : // csam is already dropped upstream for every viewer; only the Scanned check remains.
+          servableProfilePicture(user.profilePicture, null),
       // Claim keys are owner-only; withheld from every other viewer, moderators included.
       cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
         ...c,
@@ -312,7 +318,7 @@ export const setShowcaseSections = async ({
 }: SetShowcaseSectionsSchema & { userId: number }) => {
   await throwOnBlockedUserContent(
     sections.flatMap(({ title, button }) => [title, button?.label, button?.url]),
-    { surface: 'userProfile' }
+    { surface: 'userProfile', entityType: 'UserProfile', entityId: userId, userId }
   );
 
   const current = await dbWrite.userProfile.upsert({
@@ -387,7 +393,7 @@ export const updateUserProfile = async ({
       ...(socialLinks?.map((link) => link.url) ?? []),
       ...(sponsorshipLinks?.map((link) => link.url) ?? []),
     ],
-    { isModerator, surface: 'userProfile' }
+    { isModerator, surface: 'userProfile', entityType: 'UserProfile', entityId: userId, userId }
   );
 
   // `sessionUserId` is what populates the `default*`/`sfw*` fields compared below — they are

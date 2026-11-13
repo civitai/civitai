@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { dbWrite } from '~/server/db/client';
 import { sysRedis } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -15,6 +16,7 @@ import {
   revokeAccessToken,
 } from '~/server/services/access-token.service';
 import {
+  articleContentImageSelect,
   articleHasText,
   submitSharedArticleText,
   updateArticleImageScanStatus,
@@ -29,7 +31,7 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import type { NsfwLevel } from '~/server/common/enums';
+import { ImageConnectionType, type NsfwLevel } from '~/server/common/enums';
 import {
   ArticleIngestionStatus,
   ArticleStatus,
@@ -241,7 +243,17 @@ export async function getArticleByShareToken({
     }
   }
 
-  return { status: 'ok', article: toSharedArticle(article) };
+  const connections = await dbWrite.imageConnection.findMany({
+    where: { entityId: article.id, entityType: ImageConnectionType.Article },
+    select: { image: { select: articleContentImageSelect } },
+  });
+  return {
+    status: 'ok',
+    article: toSharedArticle(
+      article,
+      connections.map((c) => c.image)
+    ),
+  };
 }
 
 /** Everything the read decides on, from one snapshot. */
@@ -313,12 +325,15 @@ function readSharedArticleRow(id: number) {
 }
 
 /** Only what the read-only view renders. */
-function toSharedArticle(article: NonNullable<Awaited<ReturnType<typeof readSharedArticleRow>>>) {
+function toSharedArticle(
+  article: NonNullable<Awaited<ReturnType<typeof readSharedArticleRow>>>,
+  contentImages: Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }>[]
+) {
   const { id, title, content, nsfwLevel, updatedAt } = article;
   // The banner stands in for a missing cover.
   const coverImage = article.coverImage ?? article.bannerImage;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
-  const showCover = coverImage?.ingestion === 'Scanned' && !coverImage.needsReview;
+  const showCover = servableArticleImage(coverImage) !== null;
   return {
     id,
     title,
@@ -327,6 +342,7 @@ function toSharedArticle(article: NonNullable<Awaited<ReturnType<typeof readShar
     user,
     nsfwLevel: nsfwLevel as NsfwLevel,
     contentJson: content ? articleContentJson(content) : undefined,
+    contentImages: contentImages.map(({ ingestion: _ingestion, ...image }) => image),
     coverImage:
       showCover && coverImage
         ? {

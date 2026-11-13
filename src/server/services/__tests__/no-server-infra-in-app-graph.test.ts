@@ -154,6 +154,12 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
   },
   {
     file: 'src/pages/_app.tsx',
+    spec: '~/server/auth/oauth-providers',
+    reason:
+      'the hub OAuth provider list, fetched per server render; server-only because it reads the flag client (serve-stale flag, outbound-fetch off-switch).',
+  },
+  {
+    file: 'src/pages/_app.tsx',
     spec: '~/server/utils/static-asset-cache',
     reason:
       'makes a page render on a static-asset Cache-Control rule path private; server-only because it writes a response header.',

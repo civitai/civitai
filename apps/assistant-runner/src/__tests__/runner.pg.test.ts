@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app';
 import { AppAssistantTools } from '../app-assistant/provider';
 import { RunCredentials } from '../credentials';
+import { createPool } from '../core/pg-pool';
 import { RunGrants } from '../grants';
 import type { ModelProvider, ToolContext } from '../core/interfaces';
 import { TokenMinter } from '../minter';
@@ -316,7 +317,9 @@ describePg('assistant-runner on DBOS + Postgres', () => {
 
   beforeAll(async () => {
     db = await freshDatabase('runner');
-    grantsPool = new pg.Pool({ connectionString: db.url, max: 4 });
+    // Guarded: pool.end() resolves before its sockets close, so the forced drop below can still
+    // reach a closing idle client with FATAL 57P01; unguarded, that is an uncaught exception.
+    grantsPool = createPool({ connectionString: db.url, max: 4 }, 'runner-grants-test');
     grants = new RunGrants(grantsPool);
     await grants.init();
     deps.grants = grants;
@@ -564,7 +567,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
   it('runs a tool call only once the head save recording its start has landed', async () => {
     const user = 'u-gated';
     const recordsBefore = calls.record;
-    let release: () => void = () => {};
+    let release: () => void = () => undefined;
     const held = new Promise<void>((resolve) => (release = resolve));
     const real = deps.store;
     deps.store = {

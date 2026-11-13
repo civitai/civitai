@@ -138,9 +138,24 @@ describe('/api/v1/models refactor — public maturity contract preserved', () =>
     const res = await invoke({ nsfw: 'true' });
     const [, ctx] = mockRunModelSearch.mock.calls[0];
     expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
-    // nsfwImagePassthrough still mirrors the client nsfw flag — unchanged from
-    // pre-refactor behavior (the region override only narrows browsingLevel).
-    expect(ctx.nsfwImagePassthrough).toBe(true);
+    // Images are held to that level too: the nsfw widening does not apply there.
+    expect(ctx.nsfwImagePassthrough).toBe(false);
+  });
+
+  it('keeps an nsfw=true answer out of the shared cache, in every region', async () => {
+    for (const restricted of [true, false]) {
+      mockIsRegionRestricted.mockReturnValue(restricted);
+      const res = await invoke({ nsfw: 'true' });
+      expect(res.headers['Cache-Control']).toBe('private, no-store');
+    }
+  });
+
+  it('leaves the default answer to the shared cache (control)', async () => {
+    for (const restricted of [true, false]) {
+      mockIsRegionRestricted.mockReturnValue(restricted);
+      const res = await invoke({});
+      expect(res.headers['Cache-Control']).toBeUndefined();
+    }
   });
 
   it('query path uses the same browsingLevel for the Meili pre-step', async () => {
@@ -164,5 +179,27 @@ describe('/api/v1/models refactor — public maturity contract preserved', () =>
     const res = await invoke({ favorites: 'true' });
     expect(res.statusCode).toBe(401);
     expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/v1/models — an explicit sort reaches the Meili pre-step, the schema default does not', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockGetRegion.mockReturnValue('US');
+    mockIsRegionRestricted.mockReturnValue(false);
+  });
+
+  it('?query=&sort= forwards the named sort', async () => {
+    await invoke({ query: 'anime', sort: 'Most Downloaded' });
+    expect(mockResolveModelSearchIds.mock.calls[0][0].sort).toBe('Most Downloaded');
+  });
+
+  it('?query= alone forwards no sort, even though the parsed input carries the default', async () => {
+    await invoke({ query: 'anime' });
+    expect(mockResolveModelSearchIds.mock.calls[0][0].sort).toBeUndefined();
+    const [input] = mockRunModelSearch.mock.calls[0];
+    expect(input.sort).toBe('Highest Rated');
   });
 });

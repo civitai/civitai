@@ -23,7 +23,7 @@
  * 🔴 IT COMPARES ASSETS, AND SAYS SO. `applyApprovedRevision` is KIND-AWARE: the
  * onsite branch copies icon/cover (+ the screenshot reparent) and nothing else, so an
  * asset comparison covers its whole apply set. The OFFSITE branch ALSO copies
- * `name`/`tagline`/`description`/`category`/`externalUrl`/`sourceRepoUrl`/
+ * `name`/`tagline`/`description`/`category`/`externalUrl`/`sourceRepoUrl`/`issueTrackerUrl`/
  * `connectClientId`/`connectRequestedScopes`/`connectScopeJustifications`.
  * Reporting "identical —
  * approving changes nothing" off an asset comparison alone therefore told a moderator
@@ -47,7 +47,7 @@ export type AssetSlotDrift = 'same' | 'changed' | 'added' | 'removed';
  *     reparent). Every manifest-governed scalar is deliberately left alone, so the
  *     asset comparison below covers the WHOLE apply set.
  *   - `'assets-and-scalars'` — OFFSITE. ALSO copies `name`, `tagline`, `description`,
- *     `category`, `externalUrl`, **`sourceRepoUrl`**, `connectClientId`,
+ *     `category`, `externalUrl`, **`sourceRepoUrl`**, **`issueTrackerUrl`**, `connectClientId`,
  *     **`connectRequestedScopes`** and `connectScopeJustifications`. The asset
  *     comparison covers only PART of the apply set.
  */
@@ -83,6 +83,9 @@ export const OFFSITE_UNCOMPARED_APPLY_FIELDS = [
   // rewrites something they never saw. Adding a field to the apply set WITHOUT adding
   // it here is the mistake to look for.
   'source repository',
+  // Same reason as the source repository: the off-site apply copies the issue-tracker / support
+  // link onto the live parent in both directions.
+  'issue tracker',
   'requested OAuth scopes',
   'scope justifications',
 ] as const;

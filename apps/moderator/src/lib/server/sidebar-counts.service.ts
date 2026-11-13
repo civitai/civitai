@@ -31,6 +31,7 @@ import { countPendingCsamHolds } from './csam-holds.queries';
 import { countEvidenceHoldsEnding } from '@civitai/db-queries/evidence-hold';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import { countOpenUnpaidAwards } from './bounty-unpaid-award.service';
+import { countTrainingDataReview } from './training-moderation.service';
 import {
   getFlaggedCount,
   getHeldDetectionModelCount,
@@ -140,6 +141,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     evidenceHoldsEnding,
     ticketCounts,
     bountyUnpaidAwards,
+    trainingDataReview,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -207,6 +209,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(() => peekTicketCounts(() => ticketSnapshot.peek())),
     // Bounded: the legacy half filters ModActivity on `activity`, which no index covers.
     bounded(countOpenUnpaidAwards),
+    // A build reads every Paused version's workflow and the gate ledger, well past a sidebar wait.
+    withLastGood('training-data-review', countTrainingDataReview, 3_000),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -222,6 +226,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     stuckIngestion,
     ingestionErrors,
     bountyUnpaidAwards,
+    trainingDataReview,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);
   const known = Object.entries(maybe).filter((e): e is [string, number] => e[1] != null);

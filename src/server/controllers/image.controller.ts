@@ -92,6 +92,8 @@ import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-sc
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
+  CollectionItemStatus,
+  CollectionMode,
   EntityType,
   ReportReason,
   ReportStatus,
@@ -487,12 +489,11 @@ export const getInfiniteImagesHandler = async ({
 
   const requiresDbPath = requiresImageDbPath(scopedInput);
 
-  // Use getAllImagesIndex when the index can serve the query; otherwise
+  // Use getAllImagesIndex (the feed service) when it can serve the query; otherwise
   // getAllImages (DB).
-  // A hub is only expressible on the index — its collection sources are served by
-  // the indexed `collectionIds` field, which the raw-SQL path has no equivalent
-  // for. Routing one to the DB would drop the filter rather than fail, so hubs
-  // pin the index path regardless of the feature flag.
+  // A hub is only expressible on the feed service: the raw-SQL path has no
+  // equivalent for its any-of sources. Routing one to the DB would drop the
+  // filter rather than fail, so hubs pin the feed path regardless of the feature flag.
   const useIndex = !!input.hubId || (features.imageIndexFeed && !requiresDbPath);
 
   if (!useIndex) {
@@ -1318,6 +1319,21 @@ export async function updateImageAcceptableMinorHandler({
       isModerator,
     });
     if (!permissions.manage) throw throwAuthorizationError();
+
+    if (!isModerator) {
+      // A contest entry its own image's owner submitted, judged by someone else.
+      const item = await dbRead.collectionItem.findFirst({
+        where: {
+          collectionId,
+          imageId: input.id,
+          status: { not: CollectionItemStatus.REJECTED },
+          collection: { mode: CollectionMode.Contest },
+        },
+        select: { addedById: true, image: { select: { userId: true } } },
+      });
+      if (!item?.addedById || item.addedById !== item.image?.userId || item.addedById === userId)
+        throw throwAuthorizationError();
+    }
 
     const image = await updateImageAcceptableMinor(input);
     return image;

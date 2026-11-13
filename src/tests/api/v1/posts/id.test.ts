@@ -132,6 +132,7 @@ describe('GET /api/v1/posts/[id]', () => {
       user: { id: 3, username: 'alice' },
       tags: [{ id: 9, name: 'landscape' }],
       images: [],
+      hasMoreImages: false,
     });
   });
 
@@ -141,9 +142,48 @@ describe('GET /api/v1/posts/[id]', () => {
 
     const { body } = await call({ id: '55288' });
 
-    expect(mockRunImageSearch.mock.calls[0][0]).toMatchObject({ postOrder: true, limit: 100 });
+    expect(mockRunImageSearch.mock.calls[0][0]).toMatchObject({
+      postOrder: true,
+      limit: 100,
+      throwOnStatementTimeout: true,
+    });
     expect(body?.images).toEqual([{ id: 2 }, { id: 3 }, { id: 1 }]);
   });
+
+  it.each([0, 99, 100])(
+    'marks a complete %i-image gallery without guessing from its length',
+    async (count) => {
+      mockGetPostDetail.mockResolvedValue(post());
+      const images = Array.from({ length: count }, (_, index) => ({ id: index + 1 }));
+      mockRunImageSearch.mockResolvedValue({ items: images, nextCursor: undefined });
+
+      const { statusCode, body, header } = await call({ id: '55288' });
+
+      expect(statusCode).toBe(200);
+      expect(body?.images).toEqual(images);
+      expect(body?.hasMoreImages).toBe(false);
+      expect(header('Cache-Control')).toBe(PUBLIC_CACHE);
+      expect(header('Retry-After')).toBeUndefined();
+      expect(mockRunImageSearch).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['100', 100, 0, null])(
+    'marks a truncated gallery with continuation %j',
+    async (cursor) => {
+      mockGetPostDetail.mockResolvedValue(post());
+      const images = Array.from({ length: 100 }, (_, index) => ({ id: index + 1 }));
+      mockRunImageSearch.mockResolvedValue({ items: images, nextCursor: cursor });
+
+      const { statusCode, body } = await call({ id: '55288' });
+
+      expect(statusCode).toBe(200);
+      expect(body?.images).toEqual(images);
+      expect(body?.hasMoreImages).toBe(true);
+      expect(body).not.toHaveProperty('nextCursor');
+      expect(mockRunImageSearch).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('searches this post’s images as anonymous, at every browsable level', async () => {
     mockGetPostDetail.mockResolvedValue(post());
@@ -254,6 +294,52 @@ describe('GET /api/v1/posts/[id]', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it('returns an uncached, retryable failure when the image query times out', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockRunImageSearch.mockRejectedValue(
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    );
+
+    const { statusCode, body, header } = await call({ id: '55288' });
+
+    expect(statusCode).toBe(503);
+    expect(body).toEqual({ error: 'Server busy, please retry shortly.' });
+    expect(header('Cache-Control')).toBe('no-store');
+    expect(header('Retry-After')).toBe('2');
+    expect(body).not.toHaveProperty('images');
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a retryable failure if the post lookup times out before acquiring a slot', async () => {
+    mockGetPostDetail.mockRejectedValue(
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    );
+
+    const { statusCode, body, header } = await call({ id: '55288' });
+
+    expect(statusCode).toBe(503);
+    expect(body).toEqual({ error: 'Server busy, please retry shortly.' });
+    expect(header('Cache-Control')).toBe('no-store');
+    expect(header('Retry-After')).toBe('2');
+    expect(mockAcquire).not.toHaveBeenCalled();
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('does not classify a user cancellation as a statement timeout', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockRunImageSearch.mockRejectedValue(
+      Object.assign(new Error('canceling statement due to user request'), { code: '57014' })
+    );
+
+    const { statusCode, header } = await call({ id: '55288' });
+
+    expect(statusCode).toBe(500);
+    expect(header('Cache-Control')).toBe('no-store, max-age=0');
+    expect(header('Retry-After')).toBeUndefined();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it('looks the post up as anonymous even for a signed-in owner or moderator', async () => {
     mockGetPostDetail.mockResolvedValue(post());
 
@@ -355,6 +441,51 @@ describe('GET /api/v1/posts/[id]', () => {
       expect(statusCode).toBe(404);
       expect(header('Cache-Control')).toBe(PUBLIC_CACHE);
     }
+  });
+
+  describe('shared cache by region, the same URL from both sides of the region line', () => {
+    const NO_STORE = 'private, no-store';
+    async function bothRegions() {
+      mockIsRegionRestricted.mockReturnValue(false);
+      const elsewhere = await call({ id: '55288' });
+      mockIsRegionRestricted.mockReturnValue(true);
+      const restricted = await call({ id: '55288' });
+      return { elsewhere, restricted };
+    }
+
+    it.each([
+      ['a mature post', NsfwLevel.R],
+      ['a post mixing safe and mature images', NsfwLevel.PG | NsfwLevel.X],
+      ['a safe post with some Blocked images', NsfwLevel.PG | NsfwLevel.Blocked],
+    ])('stores neither the 200 nor the restricted 404 for %s', async (_, nsfwLevel) => {
+      mockGetPostDetail.mockResolvedValue(post({ nsfwLevel }));
+
+      const { elsewhere, restricted } = await bothRegions();
+
+      expect(elsewhere.statusCode).toBe(200);
+      expect(restricted.statusCode).toBe(404);
+      expect(elsewhere.header('Cache-Control')).toBe(NO_STORE);
+      expect(restricted.header('Cache-Control')).toBe(NO_STORE);
+    });
+
+    it('keeps the public cache for a safe post, served the same in both regions', async () => {
+      mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: NsfwLevel.PG | NsfwLevel.PG13 }));
+
+      for (const { statusCode, header } of Object.values(await bothRegions())) {
+        expect(statusCode).toBe(200);
+        expect(header('Cache-Control')).toBe(PUBLIC_CACHE);
+      }
+    });
+
+    it('does not store a safe post whose image search returns an image above SFW', async () => {
+      mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: NsfwLevel.PG }));
+      mockRunImageSearch.mockResolvedValue({ items: [{ id: 1, browsingLevel: NsfwLevel.R }] });
+
+      const { statusCode, header } = await call({ id: '55288' });
+
+      expect(statusCode).toBe(200);
+      expect(header('Cache-Control')).toBe(NO_STORE);
+    });
   });
 
   it('400s an id that is not a positive int4', async () => {

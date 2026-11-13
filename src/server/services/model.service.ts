@@ -1,4 +1,5 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
@@ -123,7 +124,6 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
-  imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
@@ -133,12 +133,16 @@ import {
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
+import { readModelsWithVersionsStats } from '~/server/services/hot-reads-11.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
 import { holdRestrictedVerdict } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
-import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
+import {
+  enforceBlockedBrowsingTagsForModels,
+  getShowcaseImageFilter,
+} from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
@@ -202,6 +206,7 @@ import {
   bustPublicModelResponseCache,
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
+  purgePublicModelShowcaseEdgeCache,
 } from '~/server/services/model-version.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -261,6 +266,7 @@ import {
 } from '~/server/utils/minor-flag-meta';
 import {
   buildGetAllModelImages,
+  filterImagesForViewer,
   GET_ALL_IMAGES_PER_MODEL,
 } from '~/server/utils/model-getall-images';
 import {
@@ -271,6 +277,7 @@ import {
 } from '~/server/utils/pagination-helpers';
 import {
   allBrowsingLevelsFlag,
+  modelBrowsingLevelLimit,
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -317,7 +324,10 @@ import {
   showsSfwFace,
 } from '~/shared/utils/model-sfw-face';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
-import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
+import {
+  updateModelNsfwLevels,
+  updateModelVersionNsfwLevels,
+} from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import {
@@ -1316,11 +1326,7 @@ export const getModelsRaw = async ({
 
   const modelQuery =
     splittable && cursorStrict && cursorEquality
-      ? // Split-cursor path: UNION ALL of (equality tie-handler branch) +
-        // (strict tuple-compare branch). The strict branch carries 99%+ of the
-        // rows and benefits from an index seek. The equality branch is a
-        // bounded "ties at the cursor boundary" lookup that almost always
-        // returns 0 rows ("never executed" in most plans).
+      ? // Split-cursor path (see getCursorClauses).
         //
         // Branch order matters: for DESC head fields, equality rows
         // (head = cursor values) sort BEFORE strict rows (head < cursor values).
@@ -1415,8 +1421,10 @@ export const getModelsRaw = async ({
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
-    nextCursor = models[models.length - 1]?.cursorId || undefined; // Use final item as cursor to grab next page
-    models.pop(); //Remove excess model
+    // The popped lookahead row is the cursor on purpose: the predicate is inclusive on the
+    // last sort field, so handing out the last RETURNED row instead would emit it twice.
+    nextCursor = models[models.length - 1]?.cursorId || undefined;
+    models.pop();
   }
 
   const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
@@ -1869,8 +1877,10 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
+  // getModelsRaw resolves the viewer's poi/minor exclusions onto this copy; the images use them too.
+  const rawInput = { ...input, take: input.limit };
   const { items, isPrivate, nextCursor } = await getModelsRaw({
-    input: { ...input, take: input.limit },
+    input: rawInput,
     user,
     domain,
     include: ['cosmetics'],
@@ -1976,11 +1986,21 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!version) {
           return null;
         }
-        const versionImages = imagesForFace(
+        const faceImages = imagesForFace(
           hoistCoverImage(modelVersionImages[version.id]?.images ?? [], coverImages.get(model.id)),
           model,
           showSfwFace
         );
+        // The image cache holds every level; send only what this viewer's settings show.
+        const versionImages = input.browsingLevel
+          ? filterImagesForViewer(faceImages, {
+              browsingLevel: input.browsingLevel,
+              modelNsfw: model.nsfw,
+              disablePoi: rawInput.disablePoi,
+              disableMinor: rawInput.disableMinor,
+              viewer: user,
+            })
+          : faceImages;
         const filteredImages = excludedTagIds
           ? versionImages.filter(
               (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
@@ -2084,6 +2104,7 @@ export const getModelVersionsMicro = async ({
       index: true,
       createdAt: true,
       publishedAt: true,
+      metrics: { select: { thumbsUpCount: true, thumbsDownCount: true } },
     },
   });
 
@@ -2091,9 +2112,16 @@ export const getModelVersionsMicro = async ({
     'ModelVersion',
     versions.map((v) => v.id)
   );
-  return versions.map((v) => {
+  return versions.map(({ metrics, ...v }) => {
     const row = paidAccess[v.id];
-    return { ...v, isEarlyAccess: !!row && isPaidAccessActive(row) };
+    return {
+      ...v,
+      isEarlyAccess: !!row && isPaidAccessActive(row),
+      rank: {
+        thumbsUpCountAllTime: metrics[0]?.thumbsUpCount ?? 0,
+        thumbsDownCountAllTime: metrics[0]?.thumbsDownCount ?? 0,
+      },
+    };
   });
 };
 
@@ -2725,13 +2753,12 @@ export async function applyModelFlagSideEffects({
   // The served level is held by the flags too (see heldGalleryLevel), not only by the stored one.
   if (galleryBrowsingLevelChanged || minorChanged) await bustModelGallerySettings([id]);
 
-  if (minorChanged || poiChanged) {
-    const modelVersions = await dbWrite.modelVersion.findMany({
-      where: { modelId: id },
-      select: { id: true },
-    });
+  let modelVersionIds: number[] | undefined;
 
-    const modelVersionIds = modelVersions.map(({ id }) => id);
+  if (minorChanged || poiChanged) {
+    modelVersionIds = (
+      await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })
+    ).map(({ id }) => id);
 
     if (modelVersionIds.length !== 0) {
       // Set-based on purpose: a gallery can hold hundreds of thousands of images, and
@@ -2758,6 +2785,33 @@ export async function applyModelFlagSideEffects({
 
       await bustMvCache(modelVersionIds, id);
     }
+  }
+
+  const heldLevelChanged = galleryBrowsingLevelChanged && (after.minor || after.sfwOnly);
+  if (minorChanged || heldLevelChanged) await purgeHeldShowcase(id, modelVersionIds);
+}
+
+/**
+ * After a write that changes what the public API serves of a minor or SFW-only model's showcase
+ * (a flag, or its gallery level), drop the cached public bodies. Best-effort: a failure is logged
+ * and the write stands.
+ */
+export async function purgeHeldShowcase(modelId: number, modelVersionIds?: number[]) {
+  try {
+    const versionIds =
+      modelVersionIds ??
+      (await dbWrite.modelVersion.findMany({ where: { modelId }, select: { id: true } })).map(
+        ({ id }) => id
+      );
+    await purgePublicModelShowcaseEdgeCache(modelId, versionIds);
+  } catch (error) {
+    logToAxiom({
+      type: 'warning',
+      name: 'showcase-hold-edge-purge',
+      message: 'model showcase level changed; public API edge cache not purged',
+      modelId,
+      error: safeError(error),
+    }).catch(() => undefined);
   }
 }
 
@@ -2959,7 +3013,7 @@ export async function setModelMinor({
           minor: true,
           nsfw: false,
           sfwOnly: true,
-          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+          gallerySettings: { ...prevGallerySettings, level: minorContentBrowsingLevelsFlag },
           lockedProperties,
         }
       : {
@@ -4093,7 +4147,10 @@ export const upsertModel = async (
     assertAllowedContentFlags(NO_CONTENT_FLAGS, data);
     const createGallerySettings =
       data.minor || data.sfwOnly
-        ? { ...gallerySettings, level: sfwBrowsingLevelsFlag }
+        ? {
+            ...gallerySettings,
+            level: modelBrowsingLevelLimit({ minor: !!data.minor, sfwOnly: !!data.sfwOnly }),
+          }
         : gallerySettings;
 
     const result = await dbWrite.$transaction(
@@ -4386,7 +4443,10 @@ export const upsertModel = async (
               ...lockedGallerySettings,
               level:
                 (flags ?? input).minor || (flags ?? input).sfwOnly
-                  ? sfwBrowsingLevelsFlag
+                  ? modelBrowsingLevelLimit({
+                      minor: !!(flags ?? input).minor,
+                      sfwOnly: !!(flags ?? input).sfwOnly,
+                    })
                   : lockedGallerySettings?.level,
             },
             tagsOnModels: tagsOnModels
@@ -5159,9 +5219,6 @@ export const publishModelById = async ({
   // Update search index for model
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   // Update search index for all affected images
-  await imagesSearchIndex.queueUpdate(
-    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
@@ -6103,7 +6160,7 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
     const stored = (model.gallerySettings ?? {}) as ModelGallerySettingsSchema;
     const [preferences, creatorHiddenUserIds] = await Promise.all([
       getGalleryHiddenPreferences({
-        settings: sfwHeld ? { ...stored, level: heldGalleryLevel(stored.level) } : stored,
+        settings: sfwHeld ? { ...stored, level: heldGalleryLevel(stored.level, model) } : stored,
       }),
       getCreatorGalleryHiddenUserIds(model.userId, { fresh: true }),
     ]);
@@ -6336,11 +6393,71 @@ export async function getHeldLevelsByPost(postIds: number[]) {
 }
 
 /**
- * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
- * SFW. A setting that allows no SFW level, or none at all, serves SFW: the gallery reads 0 as no cap.
+ * Showcase images by model version, leaving out those above the gallery level of each version's
+ * minor or SFW-only model. For reads no viewer sees whole, such as the public API. `models` maps
+ * each version to its model, with the model's flags where the caller read the row: a flagged row is
+ * held even when its cached gallery settings say otherwise. A model whose settings cannot be read
+ * is served at SFW for this request. Never mutates `byVersion`: its entries can be the shared cache's.
  */
-export function heldGalleryLevel(stored: number | undefined) {
-  return Flags.intersection(stored ?? 0, sfwBrowsingLevelsFlag) || sfwBrowsingLevelsFlag;
+export async function holdShowcaseImages<E extends { images: { nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  models: Map<number, { modelId: number; minor?: boolean; sfwOnly?: boolean }>
+): Promise<Record<number, E>> {
+  const flagsOf = new Map<number, { minor: boolean; sfwOnly: boolean }>();
+  for (const { modelId, minor, sfwOnly } of models.values())
+    if (minor !== undefined && sfwOnly !== undefined) flagsOf.set(modelId, { minor, sfwOnly });
+
+  const levels = new Map<number, number>();
+  await limitConcurrency(
+    uniq([...models.values()].map((m) => m.modelId)).map((id) => async () => {
+      const flags = flagsOf.get(id);
+      if (flags && !flags.minor && !flags.sfwOnly) return;
+      try {
+        const gallery = await getGallerySettingsByModelId({ id });
+        if (gallery?.sfwHeld) levels.set(id, gallery.level);
+        else if (flags) levels.set(id, heldGalleryLevel(undefined, flags));
+      } catch (error) {
+        levels.set(id, sfwBrowsingLevelsFlag);
+        logToAxiom({
+          type: 'warning',
+          name: 'showcase-hold-settings-read',
+          message: 'gallery settings unreadable; showcase served at SFW for this request',
+          modelId: id,
+          error: safeError(error),
+        }).catch(() => undefined);
+      }
+    }),
+    5
+  );
+
+  const result: Record<number, E> = {};
+  for (const [key, entry] of Object.entries(byVersion)) {
+    const versionId = Number(key);
+    const modelId = models.get(versionId)?.modelId;
+    // A version with no model to clear it serves none of its images.
+    const level = modelId === undefined ? 0 : levels.get(modelId);
+    result[versionId] =
+      level === undefined
+        ? entry
+        : {
+            ...entry,
+            images: entry.images.filter((image) => Flags.intersects(level, image.nsfwLevel)),
+          };
+  }
+  return result;
+}
+
+/**
+ * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
+ * the model's limit. A setting that allows none of them, or none at all, serves the whole limit: the
+ * gallery reads 0 as no cap.
+ */
+export function heldGalleryLevel(
+  stored: number | undefined,
+  model: { minor: boolean; sfwOnly: boolean }
+) {
+  const limit = modelBrowsingLevelLimit(model);
+  return Flags.intersection(stored ?? 0, limit) || limit;
 }
 
 export const getGalleryHiddenPreferences = async ({
@@ -6481,7 +6598,24 @@ export async function getModelsWithVersions({
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
   const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
-  const images = await getImagesForModelVersionCache(modelVersionIds);
+  const images = await holdShowcaseImages(
+    await getImagesForModelVersionCache(modelVersionIds),
+    new Map(
+      items.flatMap((model) =>
+        model.modelVersions.map(
+          (version) =>
+            [version.id, { modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly }] as const
+        )
+      )
+    )
+  );
+  // Card images follow the viewer's browsing-settings exclusions at the request's level, also on a
+  // by-id lookup, where `ignoreBrowsingAddons` only stops them deciding which models are found.
+  const showsCardImage = await getShowcaseImageFilter({
+    browsingLevel: input.browsingLevel,
+    viewer: { id: user?.id, username: user?.username, isModerator: user?.isModerator },
+    excludedTagIds: input.excludedTagIds,
+  });
   // const images = await getImagesForModelVersion({
   //   modelVersionIds,
   //   imagesPerVersion: 10,
@@ -6493,17 +6627,10 @@ export async function getModelsWithVersions({
   // });
 
   const next = await nextCoverageEnabled();
+  const modelIds = items.map(({ id }) => id);
+  const { vaeLinkedRows, metrics, versionMetrics, versionMetaRows } =
+    await readModelsWithVersionsStats({ modelIds, modelVersionIds });
   // Get VAE version IDs from linked components
-  const allMvIds = items.flatMap(({ modelVersions }) => modelVersions.map((v) => v.id));
-  const vaeLinkedRows = allMvIds.length
-    ? await dbRead.recommendedResource.findMany({
-        where: {
-          sourceId: { in: allMvIds },
-          settings: { path: ['isLinkedComponent'], equals: true },
-        },
-        select: { sourceId: true, resourceId: true, settings: true },
-      })
-    : [];
   const vaeMap = new Map<number, number>();
   for (const row of vaeLinkedRows) {
     const s = row.settings as Record<string, unknown>;
@@ -6515,15 +6642,6 @@ export async function getModelsWithVersions({
   const vaeFiles = vaeIds.length ? await getVaeFiles({ vaeIds }) : [];
 
   const groupedFiles = await getFilesForModelVersionCache(modelVersionIds);
-
-  const modelIds = items.map(({ id }) => id);
-  const metrics = await dbRead.modelMetric.findMany({
-    where: { modelId: { in: modelIds } },
-  });
-
-  const versionMetrics = await dbRead.modelVersionMetric.findMany({
-    where: { modelVersionId: { in: modelVersionIds } },
-  });
 
   // Creator Controls metric privacy for the v1 public API. Only download + tipped
   // are exposed today (no generation count in v1 stats), so we gate what exists.
@@ -6545,12 +6663,6 @@ export async function getModelsWithVersions({
 
   // Version-level meta isn't carried by dataForModelsCache, so fetch it to honor the
   // version-OR-model-OR-user precedence for v1 version stats (a version-only hide).
-  const versionMetaRows = modelVersionIds.length
-    ? await dbRead.modelVersion.findMany({
-        where: { id: { in: modelVersionIds } },
-        select: { id: true, meta: true },
-      })
-    : [];
   const versionMetaMap = new Map<number, unknown>(versionMetaRows.map((v) => [v.id, v.meta]));
 
   function getStatsForModel(modelId: number, hidden: HiddenModelMetrics) {
@@ -6653,20 +6765,22 @@ export async function getModelsWithVersions({
                 //       ...image,
                 //     })
                 //   ),
-                images: (images[version.id]?.images ?? []).map(
-                  ({
-                    modelVersionId,
-                    name,
-                    userId,
-                    sizeKB,
-                    availability,
-                    metadata,
-                    tags,
-                    ...image
-                  }) => ({
-                    ...image,
-                  })
-                ),
+                images: (images[version.id]?.images ?? [])
+                  .filter(showsCardImage)
+                  .map(
+                    ({
+                      modelVersionId,
+                      name,
+                      userId,
+                      sizeKB,
+                      availability,
+                      metadata,
+                      tags,
+                      ...image
+                    }) => ({
+                      ...image,
+                    })
+                  ),
               };
             }
           ),
@@ -6703,9 +6817,8 @@ export async function copyGallerySettingsToAllModelsByUser({
     await tx.$executeRaw`
       UPDATE "Model"
       SET "gallerySettings" = ${asJsonbObjectSql('"gallerySettings"')} || jsonb_build_object(
-        'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${
-      settings.level
-    } END,
+        'level', CASE WHEN minor THEN ${minorContentBrowsingLevelsFlag}
+          WHEN "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${settings.level} END,
         'users', ${JSON.stringify(settings.users || [])}::jsonb,
         'tags', ${JSON.stringify(settings.tags || [])}::jsonb
                                                    )
@@ -6777,6 +6890,20 @@ export async function migrateResourceToCollection({
   if (filteredVersions.length <= 1)
     throw throwBadRequestError('Only models with more than one published version can be migrated');
 
+  // The civitai.com face goes with the version its cover is posted on: the rollup only counts a
+  // cover posted on the model's own versions.
+  const coverVersionId = model.sfwCoverImageId
+    ? (
+        await dbRead.image.findUnique({
+          where: { id: model.sfwCoverImageId },
+          select: { post: { select: { modelVersionId: true } } },
+        })
+      )?.post?.modelVersionId ?? null
+    : null;
+  const remainingVersions = filteredVersions.slice(1);
+  const faceMoves = remainingVersions.some((v) => v.id === coverVersionId);
+  const noFace = { sfwName: null, sfwDescription: null, sfwCoverImageId: null };
+
   const { collection, modelIds } = await dbWrite.$transaction(
     async (tx) => {
       // Create the collection
@@ -6794,14 +6921,13 @@ export async function migrateResourceToCollection({
         },
       });
 
-      const remainingVersions = filteredVersions.slice(1);
-
       // create a model for each remaining version
       const modelIds = [];
       for (const version of remainingVersions) {
         const newModel = await tx.model.create({
           data: {
             ...modelData,
+            ...(version.id === coverVersionId ? {} : noFace),
             name: truncateModelName(`${modelData.name} - ${version.name}`),
             meta: { ...((modelData.meta as ModelMeta) ?? {}), showcaseCollectionId: collection.id },
             gallerySettings:
@@ -6858,13 +6984,21 @@ export async function migrateResourceToCollection({
       // update the original model name to include the version
       await tx.model.update({
         where: { id: model.id },
-        data: { name: truncateModelName(`${model.name} - ${filteredVersions[0].name}`) },
+        data: {
+          name: truncateModelName(`${model.name} - ${filteredVersions[0].name}`),
+          ...(faceMoves ? noFace : {}),
+        },
       });
 
       return { collection, modelIds };
     },
     { timeout: 60000, maxWait: 10000 }
   );
+
+  // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
+  // each was given its version's stored level. Versions first: the model level reads them.
+  await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
+  await updateModelNsfwLevels(modelIds);
 
   // Set the showcase collection for the original model
   await setModelShowcaseCollection({

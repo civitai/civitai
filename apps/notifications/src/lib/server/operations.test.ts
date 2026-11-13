@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type * as CacheModule from './cache';
 
 // Inject a fake pool that records the SQL + params instead of hitting a DB, so we can assert the dynamic
 // WHERE-clause construction and `$n` param indexing (the real off-by-one risk) with zero infra.
@@ -20,7 +21,9 @@ vi.mock('./lag', () => ({
 }));
 vi.mock('./clients/db', () => ({ notifDbWrite: () => fakePool, notifDbRead: () => fakePool }));
 // count() consults the cache first; force a miss so it always runs the DB query under test.
-vi.mock('./cache', () => ({
+vi.mock('./cache', async (importOriginal) => ({
+  // The real redisWithin: the code under test bounds its redis calls through it.
+  ...(await importOriginal<typeof CacheModule>()),
   notificationCache: {
     getUser: async () => undefined,
     setUser: async () => {},

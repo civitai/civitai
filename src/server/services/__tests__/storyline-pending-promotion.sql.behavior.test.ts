@@ -287,6 +287,23 @@ describe("the readiness pass's selection", () => {
       expect(await selected()).toEqual([at]);
     });
 
+    // RESTRICT site of the minor content rule. Expected values are the rule as it stood before
+    // the gates shared it; a post's level is a mask of its images' ratings.
+    it('takes a chapter 1 into a minor-flagged storyline only while every rating is safe', async () => {
+      const levels = [PG, PG13, PG13 | PG, R, R | PG, X, 16];
+      const taken: number[] = [];
+      for (const nsfwLevel of levels) {
+        const minor = await post({ nsfwLevel });
+        await pending(minor, await storyline({ minorByScan: true }));
+        if (nsfwLevel === PG || nsfwLevel === PG13 || nsfwLevel === (PG13 | PG)) taken.push(minor);
+        const open = await post({ nsfwLevel });
+        await pending(open, await storyline({ maxNsfwLevel: PG }));
+        taken.push(open);
+      }
+
+      expect(await selected()).toEqual(taken);
+    });
+
     it('leaves a chapter 1 rated Blocked', async () => {
       await pending(await post({ nsfwLevel: 32 }), await storyline());
 

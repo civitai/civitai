@@ -8,13 +8,16 @@ import {
   findPresetModelConfigByVersionId,
   submitPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
-import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { sessionClient } from '~/server/auth/session-client';
 import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import type { SessionUser } from '~/types/session';
 import type { UserTier } from '~/server/schema/user.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { isPromptCheckUnavailable } from '~/server/services/orchestrator/prompt-check-unavailable';
+import { GenerationConfigUnavailableError } from '~/server/services/generation/generation-kill-switch';
+import { env } from '~/env/server';
 import { TRPCError } from '@trpc/server';
 import {
   assertGenerationInputsUsable,
@@ -22,6 +25,18 @@ import {
 } from '~/server/services/generation-input-urls';
 
 const log = createLogger('process-enqueued-comic-panels', 'cyan');
+
+/**
+ * Whether a submit failed in a check that runs before anything reaches the orchestrator: the
+ * prompt check (PROMPT_CHECK_FAIL_CLOSED) or the generation settings read
+ * (PRESET_ENFORCE_GENERATION_STATUS). Each switch off restores failing the panel.
+ */
+function isSubmitCheckUnavailable(error: unknown): boolean {
+  return (
+    isPromptCheckUnavailable(error) ||
+    (env.PRESET_ENFORCE_GENERATION_STATUS && error instanceof GenerationConfigUnavailableError)
+  );
+}
 
 // Process at most this many panels per job run to avoid long-running jobs
 const MAX_PANELS_PER_RUN = 20;
@@ -90,12 +105,14 @@ export const processEnqueuedComicPanelsJob = createJob(
 
     let totalProcessed = 0;
     let totalFailed = 0;
+    // Set when the prompt check cannot run: the rest of this run is skipped (see the audit below).
+    let promptCheckUnavailable = false;
 
     // Process each user's panels
     for (const [userId, userPanels] of panelsByUser) {
       jobContext.checkIfCanceled();
 
-      if (totalProcessed >= MAX_PANELS_PER_RUN) break;
+      if (totalProcessed >= MAX_PANELS_PER_RUN || promptCheckUnavailable) break;
 
       const firstPanel = userPanels[0];
       const user = firstPanel.chapter.project.user;
@@ -125,9 +142,15 @@ export const processEnqueuedComicPanelsJob = createJob(
       }
 
       try {
-        // Get user's tier from their active subscriptions
-        const highestSub = await getHighestTierSubscription(userId);
-        const userTier = (highestSub?.tier ?? 'free') as UserTier;
+        // The owner's tier as their session sees it (active / trialing subscriptions and a
+        // membership override), so the queue limits and the kill switch's members-only rule
+        // match what they get onsite. Unresolvable (the auth hub unreachable): left Enqueued.
+        const session = await sessionClient.getSessionUserById(userId);
+        if (!session) {
+          log(`User ${userId}: session unavailable, ${userPanels.length} panels left Enqueued`);
+          continue;
+        }
+        const userTier = (session.tier ?? 'free') as UserTier;
         // Merge tier into user object for submitPresetImageGen which expects SessionUser
         const sessionUser = { ...user, tier: userTier } as SessionUser;
 
@@ -229,23 +252,28 @@ export const processEnqueuedComicPanelsJob = createJob(
             // runs outside the tRPC request path, so we keep an explicit pre-submit
             // gate here. `generateFromGraph` will also audit, but auditing twice in
             // a background job is an acceptable cost for the early gate.
-            await auditPromptServer({
-              prompt: generationParams.prompt,
-              negativePrompt: generationParams.negativePrompt || '',
-              userId,
-              isGreen,
-              isModerator: sessionUser.isModerator,
-              // Observability only — see `~/server/prom/external-moderation.metrics`. There are two
-              // places this job can reach the external classifier per panel: this explicit
-              // pre-submit gate, and a second one inside `submitPresetImageGen` →
-              // `generateFromGraph`, which labels itself `preset` via the surface mapping. A panel
-              // contributes 0, 1 or 2 observations, NOT a fixed 2 — `auditPromptServer` never
-              // reaches the classifier on an empty prompt, and a hard regex block throws
-              // ahead of it, which also skips the submit below and with it the second call.
-              // Leaving this one undeclared would default it to `other`, moving this job's gate off
-              // `preset` and onto a mixture the metric documents as unreadable as any single path.
-              moderationSource: 'preset',
-            });
+            //
+            // When the check cannot run (its retry-able 503, see isPromptCheckUnavailable) the
+            // panel is left Enqueued, not Failed: nothing judged the prompt, so the next run
+            // retries it. The rest of this run stops too — the classifier is shared, so every
+            // later panel would wait out the same timeout, and this job's lock is bounded.
+            // PROMPT_CHECK_FAIL_CLOSED=off restores marking the panel Failed.
+            try {
+              await auditPromptServer({
+                prompt: generationParams.prompt,
+                negativePrompt: generationParams.negativePrompt || '',
+                userId,
+                isGreen,
+                isModerator: sessionUser.isModerator,
+                // Declared so the metric attributes this gate to `preset`; omitted, it defaults to `other`.
+                moderationSource: 'preset',
+              });
+            } catch (error) {
+              if (!isPromptCheckUnavailable(error)) throw error;
+              log(`Panel ${panel.id}: prompt check unavailable, left Enqueued for the next run`);
+              promptCheckUnavailable = true;
+              break;
+            }
 
             // Submit to orchestrator via the generation graph. `versionIdOverride`
             // preserves the exact persisted version (incl. img2img variants).
@@ -290,6 +318,14 @@ export const processEnqueuedComicPanelsJob = createJob(
               })
               .catch(() => null); // Don't fail the job if signal fails
           } catch (error: any) {
+            // A check inside the submit could not run, so nothing was submitted: handled like the
+            // pre-submit gate above. Only these two; any other 503 (the orchestrator's own, which
+            // may already be queued and charged) fails the panel so it is never resubmitted.
+            if (isSubmitCheckUnavailable(error)) {
+              log(`Panel ${panel.id}: submit check unavailable, left Enqueued for the next run`);
+              promptCheckUnavailable = true;
+              break;
+            }
             const errorMessage = error instanceof Error ? error.message : String(error);
             log(`Panel ${panel.id}: Failed to submit - ${errorMessage}`);
 

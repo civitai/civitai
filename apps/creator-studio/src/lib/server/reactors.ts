@@ -138,14 +138,7 @@ export async function getReactors(
   const { cursor } = query;
   const { bound, order } = keysetClause('userId', cursor);
 
-  const { rows } = await sql<{
-    userId: number;
-    createdAt: Date;
-    username: string | null;
-    deletedAt: Date | null;
-    bannedAt: Date | null;
-    image: string | null;
-  }>`
+  const { rows } = await sql<ReactorRow>`
     SELECT r."userId", r."createdAt", u.username, u."deletedAt", u."bannedAt",
       ${safeProfilePictureUrl()} AS image
     FROM (
@@ -161,6 +154,24 @@ export async function getReactors(
     ORDER BY r."userId" ${order}
   `.execute(db);
 
+  return { reaction, counts, ...(await toReactorPage(db, ownerId, rows, cursor)) };
+}
+
+type ReactorRow = {
+  userId: number;
+  createdAt: Date;
+  username: string | null;
+  deletedAt: Date | null;
+  bannedAt: Date | null;
+  image: string | null;
+};
+
+async function toReactorPage(
+  db: typeof dbRead,
+  ownerId: number,
+  rows: ReactorRow[],
+  cursor: ReactorCursor
+): Promise<Pick<ReactorPage, 'reactors' | 'next' | 'prev'>> {
   const page = assembleReactorPage(rows, cursor);
   const followers = await followersAmong(
     db,
@@ -168,8 +179,6 @@ export async function getReactors(
     page.rows.filter((r) => !r.deletedAt && r.userId !== ownerId).map((r) => r.userId)
   );
   return {
-    reaction,
-    counts,
     reactors: page.rows.map((r) => ({
       userId: r.userId,
       username: r.deletedAt ? null : r.username,
@@ -182,6 +191,77 @@ export async function getReactors(
     next: page.next,
     prev: page.prev,
   };
+}
+
+/** A thumbs-up review as the site's thumbs-up metric counts it. Reads alias `rr` (ResourceReview). */
+const countedThumbsUp = sql`
+  rr.recommended AND NOT rr.exclude AND NOT rr."tosViolation"
+  AND (rr."postId" IS NULL OR EXISTS (
+    SELECT 1 FROM "Post" rvp WHERE rvp.id = rr."postId" AND rvp."publishedAt" <= now()
+  ))`;
+
+const notMetricExcluded = (ids: number[]) =>
+  ids.length ? sql`AND NOT (rr."userId" = ANY(${ids}::int[]))` : sql``;
+
+/**
+ * Who left a thumbs-up on any version of the caller's model, one row per user. Null when the model is not theirs or a
+ * moderator took it down, as for a blocked image; one the owner deleted or unpublished still lists.
+ *
+ * Paged on `userId` per version because `ResourceReview` has no index on `modelId`, nor on `createdAt` for
+ * thumbs-only rows: like-time order would sort every review of the model.
+ */
+export async function getModelLikers(
+  db: typeof dbRead,
+  ownerId: number,
+  modelId: number,
+  cursor: ReactorCursor
+): Promise<ReactorPage | null> {
+  const owned = await sql<{ id: number }>`
+    SELECT id FROM "Model" WHERE id = ${modelId} AND "userId" = ${ownerId}
+      AND status IS DISTINCT FROM 'UnpublishedViolation' AND mode IS DISTINCT FROM 'TakenDown'
+  `.execute(db);
+  if (!owned.rows.length) return null;
+
+  // The site's own thumbs-up total: an exact count would read every review of the model, which a large one cannot
+  // afford per page view.
+  const [metric, notCounted] = await Promise.all([
+    sql<{ thumbsUpCount: number }>`
+      SELECT "thumbsUpCount" FROM "ModelMetric" WHERE "modelId" = ${modelId}
+    `.execute(db),
+    getMetricExcludedUserIds(),
+  ]);
+  const { bound, order } = keysetClause('rr.userId', cursor);
+  const { rows } = await sql<ReactorRow>`
+    SELECT r."userId", r."createdAt", u.username, u."deletedAt", u."bannedAt",
+      ${safeProfilePictureUrl()} AS image
+    FROM (
+      SELECT x."userId", max(x."createdAt") AS "createdAt"
+      FROM "ModelVersion" mv
+      CROSS JOIN LATERAL (
+        SELECT rr."userId", rr."createdAt" FROM "ResourceReview" rr
+        WHERE rr."modelVersionId" = mv.id AND ${countedThumbsUp}
+          AND ${listedToViewer('rr.userId', ownerId)} ${notMetricExcluded(notCounted)} ${bound}
+        ORDER BY rr."userId" ${order}
+        LIMIT ${REACTORS_PAGE_SIZE + 1}
+      ) x
+      WHERE mv."modelId" = ${modelId}
+      GROUP BY x."userId"
+      ORDER BY x."userId" ${order}
+      LIMIT ${REACTORS_PAGE_SIZE + 1}
+    ) r
+    LEFT JOIN "User" u ON u.id = r."userId"
+    LEFT JOIN "Image" p ON p.id = u."profilePictureId"
+    ORDER BY r."userId" ${order}
+  `.execute(db);
+
+  const page = await toReactorPage(db, ownerId, rows, cursor);
+  // The metric trails new likes by a job run: never show fewer than are listed, and an empty first page means none.
+  const counts = emptyCounts();
+  counts.Like =
+    !cursor && !page.reactors.length
+      ? 0
+      : Math.max(Number(metric.rows[0]?.thumbsUpCount ?? 0), page.reactors.length);
+  return { reaction: 'Like', counts, ...page };
 }
 
 /** GET handler for `…/<entity>/[id]/reactors`. Owner-only by construction: `getReactors` scopes to `locals.user`. */
@@ -200,3 +280,17 @@ export function reactorsHandler(
     return json(page, { headers: { 'cache-control': 'private, no-store' } });
   };
 }
+
+/** GET handler for `/analytics/models/[modelId]/likers`. Owner-only: `getModelLikers` scopes to `locals.user`. */
+export const modelLikersHandler: RequestHandler = async ({ locals, params, url }) => {
+  const modelId = parseInt4Id(params.modelId ?? '');
+  if (modelId === null) throw error(400, 'Invalid id');
+  const parsed = parseReactorQuery(url.searchParams);
+  if (!parsed.ok) throw error(400, parsed.message);
+  if (parsed.value.reaction !== null && parsed.value.reaction !== 'Like')
+    throw error(400, 'Unknown reaction type');
+
+  const page = await getModelLikers(dbRead, locals.user.id, modelId, parsed.value.cursor);
+  if (!page) throw error(404, 'Not found, or not yours');
+  return json(page, { headers: { 'cache-control': 'private, no-store' } });
+};
