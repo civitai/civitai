@@ -1318,6 +1318,32 @@ export const serverSchema = z
     APP_FORK_SEED_S3_ACCESS_KEY_ID: z.string().optional(),
     APP_FORK_SEED_S3_SECRET_ACCESS_KEY: z.string().optional(),
 
+    // APP HIBERNATE ("Sleeping" apps) — `src/server/services/app-hibernation/`. All optional:
+    // with any of them unset, every hibernation endpoint answers 503 and nothing is archived.
+    // The feature is also dark behind the `app-hibernate` Flipt flag regardless.
+    //
+    // The archive store: the bucket a sleeping app's workspace zip and its encrypted `.env*` blob
+    // are kept in, under `archives/`, with NO lifecycle rule (the objects are the only copy).
+    // The sandbox service uploads and downloads through presigned URLs, so the endpoint must be
+    // one it can reach; path-style addressing keeps the presigned URL's host equal to it.
+    APP_ARCHIVE_S3_ENDPOINT: z.string().url().optional(),
+    APP_ARCHIVE_S3_BUCKET: z.string().optional(),
+    APP_ARCHIVE_S3_ACCESS_KEY_ID: z.string().optional(),
+    APP_ARCHIVE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+    // The shared secret the sandbox service signs `/api/internal/app-hibernation/*` requests
+    // with (HMAC-SHA256): at least 32 characters. Blank is accepted here so a bare key cannot
+    // stop the app from booting; blank or unset, those endpoints answer 503.
+    APP_HIBERNATION_HMAC_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_HIBERNATION_HMAC_SECRET must be at least 32 characters',
+      })
+      .optional(),
+    // The master key that wraps each sleeping app's per-archive data key (envelope encryption of
+    // its `.env*` files): base64 of exactly 32 random bytes. Held by civitai only; never sent to
+    // the sandbox service. Anything else counts as unset.
+    APP_ARCHIVE_SECRETS_MASTER_KEY: z.string().optional(),
+
     // APP DEV TUNNEL (on-site dev via hardened sish tunnel — P1 control plane).
     // ALL optional so envs without the feature still boot; the feature is dark
     // behind the `app-blocks-dev-tunnel` Flipt flag regardless.

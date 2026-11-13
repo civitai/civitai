@@ -1,0 +1,247 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as z from 'zod';
+import { env } from '~/env/server';
+import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import {
+  beginHibernation,
+  beginInput,
+  commitHibernation,
+  commitInput,
+  restoreSecretsInput,
+  restoreSleepingAppSecrets,
+  type BeginResult,
+  type CommitResult,
+  type HibernationDeps,
+  type RestoreSecretsResult,
+} from '~/server/services/app-hibernation/app-hibernation.service';
+import { verifyHibernationRequest } from '~/server/services/app-hibernation/internal-auth';
+
+/**
+ * The three routes the sandbox service calls, each answering in this order:
+ *   503 the shared secret is not configured
+ *   405 not a POST
+ *   413 the body is over {@link MAX_BODY_BYTES}
+ *   401 the signature, timestamp or nonce is refused (`internal-auth.ts`); 503 if the nonce
+ *       store is down
+ *   400 the body does not parse
+ *   then the route's own answers (403 `disabled` when the `app-hibernate` flag is off for the
+ *   user, 503 `not_configured` without the archive store or the master key, ...)
+ * `Cache-Control: no-store` on every answer. The HMAC covers the RAW bytes, so the pages turn
+ * Next's body parser off.
+ */
+
+export const HIBERNATION_PATHS = {
+  begin: '/api/internal/app-hibernation/begin',
+  commit: '/api/internal/app-hibernation/commit',
+  secrets: '/api/internal/app-hibernation/secrets',
+} as const;
+
+const MAX_BODY_BYTES = 256 * 1024;
+
+export type HibernationRouteDeps = {
+  hibernation: () => Promise<HibernationDeps>;
+  claimNonce: (nonce: string, ttlSeconds: number) => Promise<boolean>;
+  nowSeconds: () => number;
+  /** Reports an unexpected failure (answered 503). */
+  report: (event: string, details: Record<string, unknown>) => void;
+};
+
+async function defaultRouteDeps(): Promise<HibernationRouteDeps> {
+  const { defaultHibernationDeps, claimHibernationNonce } = await import(
+    '~/server/services/app-hibernation/hibernation-deps'
+  );
+  return {
+    hibernation: defaultHibernationDeps,
+    claimNonce: claimHibernationNonce,
+    nowSeconds: () => Math.floor(Date.now() / 1000),
+    report: (event, details) => {
+      void import('~/server/logging/client')
+        .then(({ logToAxiom }) => logToAxiom({ type: event, ...details }))
+        .catch(() => undefined);
+    },
+  };
+}
+
+class BodyTooLarge extends Error {}
+
+async function readRawBody(req: NextApiRequest): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req as unknown as AsyncIterable<Buffer | string>) {
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+    total += buf.length;
+    if (total > MAX_BODY_BYTES) throw new BodyTooLarge();
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks.map((c) => new Uint8Array(c)));
+}
+
+type Answer = { status: number; json: Record<string, unknown> };
+
+const disabled: Answer = {
+  status: 403,
+  json: { error: 'App hibernation is not enabled', code: 'disabled' },
+};
+const notConfigured: Answer = {
+  status: 503,
+  json: { error: 'App hibernation is not configured', code: 'not_configured' },
+};
+
+export function beginAnswer(r: BeginResult): Answer {
+  switch (r.kind) {
+    case 'disabled':
+      return disabled;
+    case 'not-configured':
+      return notConfigured;
+    case 'limit':
+      return {
+        status: 409,
+        json: { error: 'Sleeping app limit reached', code: 'SLEEPING_LIMIT', limit: r.limit },
+      };
+    case 'attempt-conflict':
+      return {
+        status: 409,
+        json: { error: 'Attempt id belongs to another app', code: 'attempt_conflict' },
+      };
+    case 'ok':
+      return {
+        status: 200,
+        json: {
+          expiresAt: r.expiresAt,
+          maxBytes: r.maxBytes,
+          archive: r.archive,
+          secrets: r.secrets,
+        },
+      };
+  }
+}
+
+export function commitAnswer(r: CommitResult): Answer {
+  switch (r.kind) {
+    case 'disabled':
+      return disabled;
+    case 'not-configured':
+      return notConfigured;
+    case 'unknown-attempt':
+      return { status: 404, json: { error: 'Unknown attempt', code: 'unknown_attempt' } };
+    case 'mismatch':
+      return {
+        status: 409,
+        json: { error: 'Stored object does not match', code: 'mismatch', reason: r.reason },
+      };
+    case 'lineage':
+      return {
+        status: 409,
+        json: {
+          error: 'The sandbox was not woken from the stored record',
+          code: 'lineage',
+        },
+      };
+    case 'limit':
+      return {
+        status: 409,
+        json: { error: 'Sleeping app limit reached', code: 'SLEEPING_LIMIT', limit: r.limit },
+      };
+    case 'committed':
+      return { status: 200, json: { committed: true, sha256: r.sha256 } };
+  }
+}
+
+export function restoreSecretsAnswer(r: RestoreSecretsResult): Answer {
+  switch (r.kind) {
+    case 'disabled':
+      return disabled;
+    case 'not-configured':
+      return notConfigured;
+    case 'not-found':
+      return { status: 404, json: { error: 'No sleeping app under that key', code: 'not_found' } };
+    case 'stale':
+      return {
+        status: 409,
+        json: { error: 'The record changed since that seed', code: 'stale' },
+      };
+    case 'ok':
+      return { status: 200, json: { secrets: r.secrets } };
+  }
+}
+
+function createRoute<S extends z.ZodType>(
+  path: string,
+  schema: S,
+  handle: (body: z.infer<S>, deps: HibernationDeps) => Promise<Answer>,
+  getDeps: () => Promise<HibernationRouteDeps>
+) {
+  return async function route(req: NextApiRequest, res: NextApiResponse) {
+    res.setHeader('Cache-Control', 'no-store');
+    const secret = env.APP_HIBERNATION_HMAC_SECRET;
+    if (!isConfiguredSecret(secret))
+      return res.status(503).json({ error: 'Endpoint not configured', code: 'not_configured' });
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    let raw: Buffer;
+    try {
+      raw = await readRawBody(req);
+    } catch (err) {
+      if (err instanceof BodyTooLarge)
+        return res.status(413).json({ error: 'Payload too large', code: 'too_large' });
+      throw err;
+    }
+
+    const deps = await getDeps();
+    const auth = await verifyHibernationRequest({
+      secret,
+      method: req.method,
+      path,
+      headers: req.headers,
+      body: raw,
+      nowSeconds: deps.nowSeconds(),
+      claimNonce: deps.claimNonce,
+    });
+    if (!auth.ok) return res.status(auth.status).json({ error: 'Unauthorized', code: auth.code });
+
+    let json: unknown;
+    try {
+      json = JSON.parse(raw.toString('utf8'));
+    } catch {
+      return res.status(400).json({ error: 'Body is not JSON', code: 'bad_request' });
+    }
+    const parsed = schema.safeParse(json);
+    if (!parsed.success)
+      return res
+        .status(400)
+        .json({ error: 'Body does not match the contract', code: 'bad_request' });
+
+    try {
+      const answer = await handle(parsed.data, await deps.hibernation());
+      return res.status(answer.status).json(answer.json);
+    } catch (err) {
+      deps.report('app-hibernation.route-failed', { path, error: (err as Error)?.message });
+      return res.status(503).json({ error: 'Try again later', code: 'unavailable' });
+    }
+  };
+}
+
+export function createHibernationRoutes(
+  getDeps: () => Promise<HibernationRouteDeps> = defaultRouteDeps
+) {
+  return {
+    begin: createRoute(
+      HIBERNATION_PATHS.begin,
+      beginInput,
+      async (body, deps) => beginAnswer(await beginHibernation(body, deps)),
+      getDeps
+    ),
+    commit: createRoute(
+      HIBERNATION_PATHS.commit,
+      commitInput,
+      async (body, deps) => commitAnswer(await commitHibernation(body, deps)),
+      getDeps
+    ),
+    secrets: createRoute(
+      HIBERNATION_PATHS.secrets,
+      restoreSecretsInput,
+      async (body, deps) => restoreSecretsAnswer(await restoreSleepingAppSecrets(body, deps)),
+      getDeps
+    ),
+  };
+}

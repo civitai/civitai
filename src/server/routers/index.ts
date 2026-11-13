@@ -16,6 +16,8 @@ const routers = {
   appCollaborators: () =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter),
   appStorage: () => import('~/server/routers/app-storage.router').then((m) => m.appStorageRouter),
+  appHibernation: () =>
+    import('~/server/routers/app-hibernation.router').then((m) => m.appHibernationRouter),
   blockImageUpload: () =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter),
   blockImagePicker: () =>

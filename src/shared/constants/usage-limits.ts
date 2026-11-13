@@ -332,6 +332,37 @@ export const usageLimitDefs = [
       gold: { limit: 10_000 },
     },
   },
+  {
+    // Sleeping (hibernated) apps one user may keep. At the limit a new hibernation is refused and
+    // the app stays as it is: nothing is ever deleted to make room.
+    id: 'apps.sleeping-count',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Sleeping apps',
+    window: { type: 'standing' },
+    base: 10,
+    byTier: {
+      founder: { limit: 25 },
+      bronze: { limit: 25 },
+      silver: { limit: 50 },
+      gold: { limit: 100 },
+    },
+  },
+  {
+    // Bytes of sleeping-app archives one user may keep, across all their sleeping apps.
+    id: 'apps.sleeping-bytes',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Sleeping app storage',
+    window: { type: 'standing' },
+    base: 250 * 1024 * 1024,
+    byTier: {
+      founder: { limit: 500 * 1024 * 1024 },
+      bronze: { limit: 500 * 1024 * 1024 },
+      silver: { limit: 1024 * 1024 * 1024 },
+      gold: { limit: 2 * 1024 * 1024 * 1024 },
+    },
+  },
 ] as const satisfies readonly UsageLimitDef[];
 
 export type UsageLimitId = (typeof usageLimitDefs)[number]['id'];

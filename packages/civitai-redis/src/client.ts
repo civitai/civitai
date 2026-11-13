@@ -2456,6 +2456,21 @@ export const REDIS_SYS_KEYS = {
      */
     SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
     /**
+     * APP HIBERNATE — one record per hibernation attempt, keyed
+     * `system:blocks:hibernation-attempt:${attemptId}`. JSON: the user, the app, the object keys
+     * civitai built and the wrapped secrets data key. Written `SET NX` by `begin` (TTL 24 h) and
+     * read by `commit`, so a commit can only land the objects its own `begin` named
+     * (`app-hibernation.service.ts`).
+     */
+    HIBERNATION_ATTEMPT: 'system:blocks:hibernation-attempt',
+    /**
+     * APP HIBERNATE — replay protection for the signed sandbox-service requests, keyed
+     * `system:blocks:hibernation-nonce:${nonce}`. `SET NX EX` (twice the signature window); a
+     * second use of a nonce is refused, and a redis error refuses the request
+     * (`app-hibernation/internal-auth.ts`).
+     */
+    HIBERNATION_NONCE: 'system:blocks:hibernation-nonce',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
