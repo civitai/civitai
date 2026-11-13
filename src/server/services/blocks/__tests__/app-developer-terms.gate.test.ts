@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { APP_DEVELOPER_TERMS_VERSION } from '~/shared/constants/app-developer-terms.constants';
 
@@ -44,6 +44,11 @@ vi.mock('~/server/services/blocks/forgejo.service', async (importOriginal) => ({
   }),
 }));
 const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+// Loaded up front, so the wait below covers only the stubs settling, not a cold module import.
+beforeAll(async () => {
+  await import('~/server/services/blocks/review-autodeploy.service');
+  await import('~/server/services/blocks/forgejo.service');
+});
 
 async function settlePushBackgroundWork() {
   await vi.waitFor(() => {
