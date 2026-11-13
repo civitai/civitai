@@ -213,8 +213,9 @@ const answerAfter =
 describe('submitWorkflow — a caller that asks the orchestrator to wait (query.wait)', () => {
   // `wait` is in seconds. Callers hold the request open for a chat completion or a scan; the
   // per-attempt cap and the deadline must not cut that off, or the user is charged for a
-  // workflow they are told failed.
-  it.each([[45_000], [80_000]])(
+  // workflow they are told failed. 95s is the reply that arrives just after the wait expires (the
+  // orchestrator answers at the end of the wait): it is what the margin above the wait is for.
+  it.each([[45_000], [80_000], [95_000]])(
     'a wait=90 submit answered at %ims succeeds instead of being cut off',
     async (answerMs) => {
       mockSubmitWorkflow.mockImplementation(answerAfter(answerMs));
