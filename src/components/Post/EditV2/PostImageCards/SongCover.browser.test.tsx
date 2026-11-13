@@ -134,7 +134,10 @@ describe("a song's cover in the post editor", () => {
     expect(coverMedia()?.getAttribute('data-src')).toBe('cover-key');
     const change = page.getByRole('button', { name: 'Change cover' });
     const label = change.element().querySelector('span')!;
-    expect(getComputedStyle(label).opacity).toBe('0');
+    // Always shown on a device without hover; an earlier file's touch emulation can leave the
+    // shared browser in that state.
+    const noHover = matchMedia('(hover: none)').matches;
+    expect(getComputedStyle(label).opacity).toBe(noHover ? '1' : '0');
 
     await userEvent.tab();
 
