@@ -116,12 +116,11 @@ const woke = (app = 'garden-log') => ({
 const fail = (error: unknown) => () => {
   throw error;
 };
-const noPause = { pause: async () => undefined };
 
 describe('wakeSleepingApp', () => {
   it('sends ONLY the seed’s own four fields, the ticket among them', async () => {
     const { client, opened } = fakeClient([woke]);
-    const result = await wakeSleepingApp(client, 'garden-log', async () => seedN(1), noPause);
+    const result = await wakeSleepingApp(client, 'garden-log', async () => seedN(1));
     const { url, sha256, bytes, ticket } = seedN(1);
     expect(opened).toEqual([{ app: 'garden-log', seed: { url, sha256, bytes, ticket } }]);
     expect(result).toMatchObject({
@@ -137,7 +136,7 @@ describe('wakeSleepingApp', () => {
       const { client, opened } = fakeClient([fail(refusal(409, 'changed', code)), woke]);
       let n = 0;
       const getSeed = vi.fn(async () => seedN(++n));
-      await wakeSleepingApp(client, 'garden-log', getSeed, noPause);
+      await wakeSleepingApp(client, 'garden-log', getSeed);
       expect(getSeed).toHaveBeenCalledTimes(2);
       expect(opened.map((o) => (o.seed as WakeSeed).ticket)).toEqual([
         seedN(1).ticket,
@@ -146,20 +145,13 @@ describe('wakeSleepingApp', () => {
     }
   );
 
-  it('secrets_unavailable: the SAME seed again after a pause', async () => {
-    const { client, opened } = fakeClient([
-      fail(refusal(503, 'later', 'secrets_unavailable')),
-      woke,
-    ]);
-    const pause = vi.fn(async () => undefined);
+  it('secrets_unavailable is thrown once, with no retry: the user tries again', async () => {
+    const unavailable = refusal(503, 'later', 'secrets_unavailable');
+    const { client } = fakeClient([fail(unavailable), woke]);
     const getSeed = vi.fn(async () => seedN(7));
-    await wakeSleepingApp(client, 'garden-log', getSeed, { pause });
+    await expect(wakeSleepingApp(client, 'garden-log', getSeed)).rejects.toBe(unavailable);
     expect(getSeed).toHaveBeenCalledTimes(1);
-    expect(pause).toHaveBeenCalledTimes(1);
-    expect(opened.map((o) => (o.seed as WakeSeed).ticket)).toEqual([
-      seedN(7).ticket,
-      seedN(7).ticket,
-    ]);
+    expect(client.open).toHaveBeenCalledTimes(1);
   });
 
   it('already_exists: woken elsewhere, so it is opened as it is, without a seed', async () => {
@@ -167,7 +159,7 @@ describe('wakeSleepingApp', () => {
       fail(refusal(409, 'a sandbox for this app already exists', 'already_exists')),
       () => ({ sandbox: sandbox('garden-log', 'suspended'), created: false }),
     ]);
-    const result = await wakeSleepingApp(client, 'garden-log', async () => seedN(1), noPause);
+    const result = await wakeSleepingApp(client, 'garden-log', async () => seedN(1));
     expect(opened[1]).toEqual({ app: 'garden-log', seed: undefined });
     expect(result).toMatchObject({ alreadyAwake: true, created: false });
   });
@@ -179,7 +171,7 @@ describe('wakeSleepingApp', () => {
     });
     const { client } = fakeClient([fail(limit), woke]);
     const getSeed = vi.fn(async () => seedN(1));
-    await expect(wakeSleepingApp(client, 'garden-log', getSeed, noPause)).rejects.toBe(limit);
+    await expect(wakeSleepingApp(client, 'garden-log', getSeed)).rejects.toBe(limit);
     expect(getSeed).toHaveBeenCalledTimes(1);
     expect(client.open).toHaveBeenCalledTimes(1);
   });
@@ -187,9 +179,7 @@ describe('wakeSleepingApp', () => {
   it(`gives up after ${WAKE_ATTEMPTS} creates with the last refusal`, async () => {
     const stale = refusal(409, 'changed', 'stale_record');
     const { client } = fakeClient([fail(stale), fail(stale), fail(stale), woke]);
-    await expect(wakeSleepingApp(client, 'garden-log', async () => seedN(1), noPause)).rejects.toBe(
-      stale
-    );
+    await expect(wakeSleepingApp(client, 'garden-log', async () => seedN(1))).rejects.toBe(stale);
     expect(client.open).toHaveBeenCalledTimes(WAKE_ATTEMPTS);
   });
 
@@ -200,7 +190,7 @@ describe('wakeSleepingApp', () => {
       ''
     );
     const { client, opened } = fakeClient([fail(running), woke]);
-    await wakeSleepingApp(client, 'garden-log', async () => seedN(3), noPause);
+    await wakeSleepingApp(client, 'garden-log', async () => seedN(3));
     expect(client.suspend).toHaveBeenCalledWith('sbx-other-app');
     expect(opened.map((o) => (o.seed as WakeSeed).ticket)).toEqual([
       seedN(3).ticket,
@@ -257,23 +247,83 @@ describe('what the user reads when a wake fails', () => {
     );
   });
 
-  it('the page’s card is read back from the tool’s error text, for create_app and wake_app', () => {
+  it('the page’s card is read from the result’s structured limitCard, never from its wording', async () => {
+    const atLimit = refusal(409, 'sandbox limit (3) reached; delete one first', 'sleeping_limit', {
+      oldest: { app: 'old-quiz', hibernatedAt: '2026-09-01T00:00:00.000Z' },
+    });
+    const kept = refusal(409, 'sandbox limit (3) reached; delete one first', 'kept_apps', {
+      kept: [{ name: 'sbx-a', app: 'big-app', reason: 'archive_too_large' }],
+    });
+    // create_app and wake_app at either refusal RETURN { error, limitCard } (a failed result).
+    const createAt = async (error: unknown) =>
+      tools({
+        wake: async () => {
+          throw error;
+        },
+        open: async () => {
+          throw error;
+        },
+      }).tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx);
+    const wakeAt = async (error: unknown) =>
+      tools({
+        sleeping: [asleep('garden-log')],
+        wake: async () => {
+          throw error;
+        },
+      }).tools[WAKE_APP].execute({ app: 'garden-log' }, ctx);
+    for (const [name, run] of [
+      [CREATE_APP, createAt],
+      [WAKE_APP, wakeAt],
+    ] as const) {
+      const output = (await run(atLimit)) as { error: string; limitCard: unknown };
+      expect(output).toEqual({
+        error: sleepingLimitMessage('old-quiz'),
+        limitCard: { kind: 'sleeping', oldest: 'old-quiz' },
+      });
+      expect(limitCardOf({ name, output, isError: true })).toEqual({
+        kind: 'sleeping',
+        oldest: 'old-quiz',
+      });
+      // Reworded text changes nothing: the card comes from the field.
+      expect(
+        limitCardOf({ name, output: { ...output, error: 'Anything at all.' }, isError: true })
+      ).toEqual({ kind: 'sleeping', oldest: 'old-quiz' });
+      const keptOut = (await run(kept)) as { error: string };
+      expect(keptOut.error).toBe(
+        keptAppsMessage([{ app: 'big-app', reason: 'archive_too_large' }])
+      );
+      expect(limitCardOf({ name, output: keptOut, isError: true })).toEqual({ kind: 'keep' });
+    }
+    // The text alone (no field) is not a sleeping-limit card.
+    expect(
+      limitCardOf({
+        name: CREATE_APP,
+        output: { error: sleepingLimitMessage('old-quiz') },
+        isError: true,
+      })
+    ).toBeNull();
     const err = (name: string, error: string) => ({ name, output: { error }, isError: true });
-    expect(limitCardOf(err(CREATE_APP, sleepingLimitMessage('old-quiz')))).toEqual({
-      kind: 'sleeping',
-      oldest: 'old-quiz',
-    });
-    expect(limitCardOf(err(WAKE_APP, sleepingLimitMessage('old-quiz')))).toEqual({
-      kind: 'sleeping',
-      oldest: 'old-quiz',
-    });
-    const keptText = keptAppsMessage([{ app: 'big-app', reason: 'archive_too_large' }]);
-    expect(limitCardOf(err(CREATE_APP, keptText))).toEqual({ kind: 'keep' });
     expect(limitCardOf(err(WAKE_APP, KEEP_LIMIT))).toEqual({ kind: 'keep' });
     expect(limitCardOf(err(CREATE_APP, KEEP_LIMIT))).toEqual({ kind: 'keep' });
-    expect(limitCardOf(err(USE_OPEN_APP, sleepingLimitMessage('old-quiz')))).toBeNull();
+    expect(
+      limitCardOf({
+        name: USE_OPEN_APP,
+        output: { error: 'x', limitCard: { kind: 'sleeping', oldest: 'old-quiz' } },
+        isError: true,
+      })
+    ).toBeNull();
     expect(limitCardOf({ name: WAKE_APP, output: { app: 'x' }, isError: false })).toBeNull();
-    expect(limitCardOf(err(CREATE_APP, 'Something else went wrong entirely.'))).toBeNull();
+  });
+
+  it('flag off: a plain kept-app cap still THROWS KEEP_LIMIT from create_app, as before', async () => {
+    const t = tools({
+      open: async () => {
+        throw refusal(409, 'sandbox limit (3) reached; delete one first', '');
+      },
+    });
+    await expect(
+      Promise.resolve(t.tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx))
+    ).rejects.toThrow(KEEP_LIMIT);
   });
 });
 
@@ -423,9 +473,9 @@ describe('the assistant’s tools with the feature ON', () => {
         });
       },
     });
-    await expect(
-      Promise.resolve(t.tools[WAKE_APP].execute({ app: 'garden-log' }, ctx))
-    ).rejects.toThrow(sleepingLimitMessage('old-quiz'));
+    expect(await t.tools[WAKE_APP].execute({ app: 'garden-log' }, ctx)).toMatchObject({
+      error: sleepingLimitMessage('old-quiz'),
+    });
     expect(t.refusal(WAKE_APP)).toBe(sleepingLimitMessage('old-quiz'));
     expect(t.refusal(CREATE_APP)).toBe(sleepingLimitMessage('old-quiz'));
     expect(t.refusal(USE_OPEN_APP)).not.toBeNull();

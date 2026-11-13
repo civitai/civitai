@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { rateLimit } from '~/server/middleware.trpc';
-import { sleepingAppSchema } from '~/server/schema/app-hibernation.schema';
+import { deleteSleepingAppSchema, sleepingAppSchema } from '~/server/schema/app-hibernation.schema';
 import { isAppHibernateEnabled } from '~/server/services/app-blocks-flag';
 import { protectedProcedure, router } from '~/server/trpc';
 
@@ -62,32 +62,18 @@ export const appHibernationRouter = router({
       }
     }),
 
-  /** Delete one sleeping app for good: its record and its stored files. */
+  /**
+   * Delete one sleeping app for good: its record and its stored files. Only ever called on the
+   * user's own confirmation (a row's Delete app, or the offer to delete the oldest sleeping app at
+   * the limit, `why: 'limit'`, which is only recorded).
+   */
   deleteMine: sleepingAppsProcedure
     .meta({ blockApiKeys: true })
-    .input(sleepingAppSchema)
+    .input(deleteSleepingAppSchema)
     .use(rateLimit({ limit: 60, period: 60 * 60 }))
     .mutation(async ({ ctx, input }) => {
       const { svc, deps } = await service();
-      const result = await svc.deleteSleepingApp(ctx.user.id, input.app, deps);
-      if (result.kind === 'not-found')
-        throw new TRPCError({ code: 'NOT_FOUND', message: NO_SUCH_APP });
-      return { deleted: result.app };
-    }),
-
-  /**
-   * At the sleeping-app limit: the user confirmed deleting the sleeping app the refusal named (its
-   * oldest), so the request that hit the limit can continue. The same delete as `deleteMine`,
-   * recorded as made at the limit; it is only ever called after the user's click on that offer
-   * (nothing is deleted to make room without one).
-   */
-  deleteOldestAndContinue: sleepingAppsProcedure
-    .meta({ blockApiKeys: true })
-    .input(sleepingAppSchema)
-    .use(rateLimit({ limit: 60, period: 60 * 60 }))
-    .mutation(async ({ ctx, input }) => {
-      const { svc, deps } = await service();
-      const result = await svc.deleteSleepingApp(ctx.user.id, input.app, deps, 'limit');
+      const result = await svc.deleteSleepingApp(ctx.user.id, input.app, deps, input.why ?? 'user');
       if (result.kind === 'not-found')
         throw new TRPCError({ code: 'NOT_FOUND', message: NO_SUCH_APP });
       return { deleted: result.app };

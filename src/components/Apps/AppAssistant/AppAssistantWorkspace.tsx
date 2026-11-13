@@ -434,7 +434,14 @@ export function AppAssistantWorkspace({
   const startRef = useRef(startDevTunnel.mutateAsync);
   startRef.current = startDevTunnel.mutateAsync;
   const openRef = useRef(sandboxes.open.mutateAsync);
-  openRef.current = sandboxes.open.mutateAsync;
+  // App hibernate: the apps a start made NEW and empty on this page (a start whose app was gone).
+  // Deleting one of those never touches a sleeping record of the same key: it was never that app.
+  const createdEmpty = useRef(new Set<string>());
+  openRef.current = async (app: string) => {
+    const opened = await sandboxes.open.mutateAsync(app);
+    if (opened.created) createdEmpty.current.add(opened.sandbox.name);
+    return opened;
+  };
   // Wakes a sleeping app (set below): shared by the list's Wake and the assistant's wake_app.
   const wakeRef = useRef<(app: string) => Promise<WakeResult>>(() =>
     Promise.reject(new WakeSeedError('Not ready', 'unavailable'))
@@ -1278,9 +1285,6 @@ export function AppAssistantWorkspace({
     // A new app deleted while its reply waits for its tools: they will not come.
     const app = live.current.apps?.find((s) => s.name === name)?.app;
     if (app) toolsWaiters.current.get(app)?.(false);
-    // App hibernate: a woken app's sleeping record is kept (hidden while it is awake); deleting the
-    // app deletes that too, or it would come back in the list as Sleeping.
-    if (app && live.current.sleeping?.some((s) => s.app === app)) void forgetSleeping(app);
     appTools.forget(name);
     if (name === activeName) setActiveName(null);
   };
@@ -1315,6 +1319,7 @@ export function AppAssistantWorkspace({
         return;
       }
       onRemoved(target.name);
+      forgetSleepingOf(target);
       // Unless the card went meanwhile (the user sent something else).
       const message = slotRef.current?.message ?? null;
       const chat = chatRef.current;
@@ -1339,20 +1344,27 @@ export function AppAssistantWorkspace({
   const deleteSleepingApp = async (app: string, why: 'user' | 'limit') => {
     setDeletingSleeping(app);
     try {
-      const procedure =
-        why === 'limit'
-          ? trpcVanilla.appHibernation.deleteOldestAndContinue
-          : trpcVanilla.appHibernation.deleteMine;
-      await procedure.mutate({ app });
+      await trpcVanilla.appHibernation.deleteMine.mutate({ app, why });
     } finally {
       setDeletingSleeping(null);
       void utils.appHibernation.listMine.invalidate();
     }
   };
-  /** A deleted kept app's sleeping record, if any; one already gone is not an error. */
-  async function forgetSleeping(app: string) {
-    await trpcVanilla.appHibernation.deleteMine.mutate({ app }).catch(() => undefined);
-    void trpcUtils.current.appHibernation.listMine.invalidate();
+  /**
+   * 🔴 ONLY after the user confirmed deleting `deleted` (its menu's Delete app, or the free-a-slot
+   * card): a woken app's sleeping record is kept while it is awake, so deleting the app deletes
+   * the record too, or it would come back as Sleeping. NEVER from `onRemoved`, which internal
+   * cleanup also calls (an export or submit discarding the empty app a start made in place of one
+   * put to sleep meanwhile): that record is then the app's only copy. Nor for an app a start made
+   * empty on this page (`createdEmpty`): it was never the sleeping app.
+   */
+  function forgetSleepingOf(deleted: Sandbox) {
+    if (!hibernate || createdEmpty.current.has(deleted.name)) return;
+    if (!live.current.sleeping?.some((s) => s.app === deleted.app)) return;
+    void trpcVanilla.appHibernation.deleteMine
+      .mutate({ app: deleted.app })
+      .catch(() => undefined)
+      .finally(() => void trpcUtils.current.appHibernation.listMine.invalidate());
   }
   const wakeByHand = async (app: string) => {
     setAppIssue(null);
@@ -1581,6 +1593,7 @@ export function AppAssistantWorkspace({
               {...(hibernate
                 ? {
                     onSleep: sleepByHand,
+                    onDeleted: forgetSleepingOf,
                     goingToSleep,
                     sleepingRows: (
                       <>

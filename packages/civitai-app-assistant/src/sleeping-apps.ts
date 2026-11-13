@@ -1,6 +1,7 @@
 import {
   SandboxApiError,
   SandboxSeedNotAppliedError,
+  isRunningLimit,
   openApp,
   type Sandbox,
   type SandboxClient,
@@ -53,11 +54,8 @@ export class WakeSeedError extends Error {
 
 /** The sandbox service's answers that mean "fetch a new seed and ticket, then try again". */
 const NEW_SEED_CODES = new Set(['stale_record', 'ticket_invalid']);
-/** …and "the same seed again, in a moment": civitai could not return the secrets just now. */
-const SAME_SEED_CODES = new Set(['secrets_unavailable']);
 /** How many creates one wake tries before it gives up. */
 export const WAKE_ATTEMPTS = 3;
-const SECRETS_RETRY_MS = 1_500;
 
 export interface WakeResult {
   sandbox: Sandbox;
@@ -70,17 +68,15 @@ export interface WakeResult {
 /**
  * Wakes `app`: a seed (with its one-time ticket) from `getSeed`, then the seeded create.
  *   - `stale_record` / `ticket_invalid`: the record changed or the ticket went; a NEW seed, again.
- *   - `secrets_unavailable`: civitai could not answer the secrets; the same seed, after a pause.
  *   - `already_exists`: the app was woken elsewhere meanwhile; it is opened as it is.
- * Every other refusal (a cap, `civitai_auth`, a seed the service refused) is thrown as it came,
- * for {@link wakeFailure} to word. At the kept-app cap the service puts the least recently used
+ * Every other refusal (a cap, `secrets_unavailable`, `civitai_auth`, a seed the service refused)
+ * is thrown as it came, for {@link wakeOnlyFailure} to word: the user tries again themselves. At the kept-app cap the service puts the least recently used
  * app to sleep by itself; nothing here decides that.
  */
 export async function wakeSleepingApp(
   client: SandboxClient,
   app: string,
-  getSeed: (app: string) => Promise<WakeSeed>,
-  { pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)) } = {}
+  getSeed: (app: string) => Promise<WakeSeed>
 ): Promise<WakeResult> {
   let seed: WakeSeed | null = null;
   let last: unknown = null;
@@ -98,7 +94,6 @@ export async function wakeSleepingApp(
       const code = error instanceof SandboxApiError ? error.code : null;
       if (code === 'already_exists') return { ...(await openApp(client, app)), alreadyAwake: true };
       if (code && NEW_SEED_CODES.has(code)) seed = null;
-      else if (code && SAME_SEED_CODES.has(code)) await pause(SECRETS_RETRY_MS * (attempt + 1));
       else throw error;
     }
   }
@@ -142,8 +137,8 @@ export function sleepingLimitOldestOf(error: unknown): string | null {
   return typeof app === 'string' && app ? app : null;
 }
 
-// The chat shows the user these too (a tool's thrown error), so they are written for them:
-// no tool names, ids or service wording.
+// The chat shows the user these too (a tool's error), so they are written for them: no tool
+// names, ids or service wording. Never parsed back: the card is carried as `limitCard`.
 const CONTINUES = 'in the card under the chat; your request then continues automatically.';
 export const sleepingLimitMessage = (oldest: string) =>
   `You have as many sleeping apps as you can keep. Delete ${oldest}, your oldest sleeping app, ${CONTINUES}`;
@@ -151,25 +146,20 @@ export const keptAppsMessage = (kept: readonly KeptApp[]) =>
   `You already have as many apps as you can keep, and ${kept
     .map((k) => `${k.app} (${keptReason(k.reason)})`)
     .join(', ')} cannot be put to sleep to make room. Choose one to delete ${CONTINUES}`;
-const SLEEPING_LIMIT_MESSAGE = new RegExp(
-  `^You have as many sleeping apps as you can keep\\. Delete ([a-z][a-z0-9-]*[a-z0-9]), your oldest sleeping app, ${escapeRegExp(
-    CONTINUES
-  )}$`
-);
-const KEPT_APPS_MESSAGE = new RegExp(
-  `^You already have as many apps as you can keep, and .+ cannot be put to sleep to make room\\. Choose one to delete ${escapeRegExp(
-    CONTINUES
-  )}$`
-);
-function escapeRegExp(text: string) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+/**
+ * The card a cap refusal asks the page for: `keep` (pick a kept app to delete) or `sleeping` (the
+ * sleeping apps are at their limit: offer to delete the `oldest`, once the user confirms).
+ */
+export type LimitCard = { kind: 'keep' } | { kind: 'sleeping'; oldest: string };
 
-/** The oldest app named by a {@link sleepingLimitMessage}, or `null`. */
-export const sleepingLimitMessageOldest = (message: string) =>
-  SLEEPING_LIMIT_MESSAGE.exec(message)?.[1] ?? null;
-/** Whether `message` is a {@link keptAppsMessage}. */
-export const isKeptAppsMessage = (message: string) => KEPT_APPS_MESSAGE.test(message);
+/** The card for an open's or a wake's refusal at a cap, or `null` for any other failure. */
+export function limitCardOfError(error: unknown): LimitCard | null {
+  const oldest = sleepingLimitOldestOf(error);
+  if (oldest) return { kind: 'sleeping', oldest };
+  if (error instanceof SandboxApiError && error.kind === 'limit' && !isRunningLimit(error))
+    return { kind: 'keep' };
+  return null;
+}
 
 export const WAKE_CHANGING =
   'The app was changing at the same moment, so it was not woken. Try again.';
@@ -195,7 +185,7 @@ export function wakeOnlyFailure(error: unknown): string | null {
   if (error instanceof SandboxSeedNotAppliedError) return WAKE_RESTORE_FAILED;
   if (!(error instanceof SandboxApiError) || !error.code) return null;
   if (NEW_SEED_CODES.has(error.code)) return WAKE_CHANGING;
-  if (SAME_SEED_CODES.has(error.code)) return WAKE_SECRETS_UNAVAILABLE;
+  if (error.code === 'secrets_unavailable') return WAKE_SECRETS_UNAVAILABLE;
   // civitai_auth, ticket_required, secrets_refused, secrets_invalid: nothing the user can fix.
   if (/^(civitai_|ticket_|secrets_)/.test(error.code)) return WAKE_UNAVAILABLE;
   if (error.code.startsWith('seed_')) return WAKE_RESTORE_FAILED;

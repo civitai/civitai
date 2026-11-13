@@ -81,9 +81,6 @@ describe('appHibernation router', () => {
     await expect(c.listMine()).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(c.getWakeSeed({ app: APP })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(c.deleteMine({ app: APP })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(c.deleteOldestAndContinue({ app: APP })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
     expect(h.depsBuilt).toBe(0);
     expect(h.world.ticketsMap.size).toBe(0);
     expect(h.world.rows.size).toBe(1);
@@ -119,11 +116,11 @@ describe('appHibernation router', () => {
     });
   });
 
-  it('deleteOldestAndContinue deletes only the app the user confirmed, recorded as at the limit', async () => {
-    await expect(caller(STRANGER).deleteOldestAndContinue({ app: APP })).rejects.toMatchObject({
+  it('deleteMine at the limit deletes only the app the user confirmed, recorded as at the limit', async () => {
+    await expect(caller(STRANGER).deleteMine({ app: APP, why: 'limit' })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
-    expect(await caller(OWNER).deleteOldestAndContinue({ app: APP })).toEqual({ deleted: APP });
+    expect(await caller(OWNER).deleteMine({ app: APP, why: 'limit' })).toEqual({ deleted: APP });
     expect(h.world.rows.size).toBe(0);
     expect(h.world.reports.at(-1)).toMatchObject({
       event: 'app-hibernation.deleted',

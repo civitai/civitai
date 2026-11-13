@@ -3,17 +3,34 @@ import { appKeyBase, newAppKey } from './app-key';
 import type { Sandbox } from './sandbox-client';
 import { SandboxApiError, isRunningLimit } from './sandbox-client';
 import {
-  isKeptAppsMessage,
   keptAppsMessage,
   keptAppsOf,
+  limitCardOfError,
   sleepingLimitMessage,
-  sleepingLimitMessageOldest,
   sleepingLimitOldestOf,
   sleepingNotLive,
   wakeOnlyFailure,
+  type LimitCard,
   type SleepingApp,
   type WakeResult,
 } from './sleeping-apps';
+
+/**
+ * App hibernate's cap refusals (`sleeping_limit`, `kept_apps`), which a service without
+ * hibernation never sends: the tool RETURNS `{ error, limitCard }` (the chat reports any output
+ * with an `error` as failed) so the page's card reads a structured field, never the wording.
+ */
+class LimitRefusal extends Error {
+  constructor(message: string, readonly card: LimitCard) {
+    super(message);
+  }
+}
+const isHibernateCapRefusal = (error: unknown) =>
+  !!sleepingLimitOldestOf(error) || !!keptAppsOf(error);
+const limitRefusalOutput = (error: LimitRefusal) => ({
+  error: error.message,
+  limitCard: error.card,
+});
 
 export const CREATE_APP = 'create_app';
 export const USE_OPEN_APP = 'use_open_app';
@@ -91,20 +108,21 @@ export function isKeepLimitResult(result: {
  * The card a finished `create_app` or `wake_app` call that hit the cap on apps kept asks the page
  * for: `keep` (pick a kept app to delete: `FreeUpSlotCard`), or `sleeping` (the user's sleeping
  * apps are at their limit: offer to delete the `oldest`, once they confirm). `null` for anything
- * else. Read from the thrown error's text, which is all the page hears of a runner's call.
+ * else. Read from the result's structured `limitCard` (what the page hears of a runner's call
+ * too), or, for the plain kept-app cap, `isKeepLimitResult`'s released wordings.
  */
 export function limitCardOf(result: {
   name: string;
   output: unknown;
   isError: boolean;
-}): { kind: 'keep' } | { kind: 'sleeping'; oldest: string } | null {
+}): LimitCard | null {
   if (isKeepLimitResult(result)) return { kind: 'keep' };
   if ((result.name !== CREATE_APP && result.name !== WAKE_APP) || !result.isError) return null;
-  const error = (result.output as { error?: unknown } | null)?.error;
-  if (typeof error !== 'string') return null;
-  const oldest = sleepingLimitMessageOldest(error);
-  if (oldest) return { kind: 'sleeping', oldest };
-  if (error === KEEP_LIMIT || isKeptAppsMessage(error)) return { kind: 'keep' };
+  const output = result.output as { error?: unknown; limitCard?: unknown } | null;
+  const card = output?.limitCard as { kind?: unknown; oldest?: unknown } | null | undefined;
+  if (card?.kind === 'sleeping' && typeof card.oldest === 'string' && card.oldest)
+    return { kind: 'sleeping', oldest: card.oldest };
+  if (card?.kind === 'keep' || output?.error === KEEP_LIMIT) return { kind: 'keep' };
   return null;
 }
 
@@ -218,7 +236,8 @@ export function createAppTools({
     } catch (error) {
       const message = appOpenFailure(error);
       if (error instanceof SandboxApiError && error.kind === 'limit') limited = message;
-      throw new Error(message);
+      const card = isHibernateCapRefusal(error) ? limitCardOfError(error) : null;
+      throw card ? new LimitRefusal(message, card) : new Error(message);
     }
   };
 
@@ -312,6 +331,7 @@ export function createAppTools({
       entry.result = create(name, release)
         .catch((error: unknown) => {
           createFailed = true;
+          if (error instanceof LimitRefusal) return limitRefusalOutput(error) as never;
           throw error;
         })
         .finally(release);
@@ -386,6 +406,8 @@ export function createAppTools({
           createFailed = true;
           const message = wakeOnlyFailure(error) ?? appOpenFailure(error);
           if (error instanceof SandboxApiError && error.kind === 'limit') limited = message;
+          const card = limitCardOfError(error);
+          if (card) return limitRefusalOutput(new LimitRefusal(message, card));
           throw new Error(message);
         }
         const state = woken.sandbox.state;

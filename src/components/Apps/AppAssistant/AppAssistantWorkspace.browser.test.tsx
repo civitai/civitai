@@ -364,7 +364,6 @@ const hib = vi.hoisted(() => ({
     expiresAt: '2026-11-13T12:10:00.000Z',
   })),
   deleteMine: vi.fn(async (input: { app: string }) => ({ deleted: input.app })),
-  deleteOldest: vi.fn(async (input: { app: string }) => ({ deleted: input.app })),
   /** Each wake the page asked for, with the seed it fetched for it. */
   wakes: [] as { app: string; seed: unknown }[],
   /** The next wakes throw these, in turn. */
@@ -600,7 +599,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const appHibernation = {
     getWakeSeed: { mutate: hib.getWakeSeed },
     deleteMine: { mutate: hib.deleteMine },
-    deleteOldestAndContinue: { mutate: hib.deleteOldest },
   };
   return {
     ...real,
@@ -3898,7 +3896,6 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     hib.listReads = [];
     hib.getWakeSeed.mockClear();
     hib.deleteMine.mockClear();
-    hib.deleteOldest.mockClear();
     hib.wakes = [];
     hib.wakeRejects = [];
     hib.sleeps = [];
@@ -3992,15 +3989,17 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
     const offer = dialog().getByRole('button', { name: 'Delete old-quiz to continue' });
     await expect.element(offer).toBeVisible();
-    expect(hib.deleteOldest).not.toHaveBeenCalled();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
     await offer.click();
     // The confirmation: Keep it deletes nothing.
     await page.getByRole('button', { name: 'Keep it' }).click();
-    expect(hib.deleteOldest).not.toHaveBeenCalled();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
     await offer.click();
     await page.getByRole('button', { name: 'Delete old-quiz', exact: true }).click();
-    await vi.waitFor(() => expect(hib.deleteOldest).toHaveBeenCalledWith({ app: 'old-quiz' }));
-    expect(hib.deleteMine).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'old-quiz', why: 'limit' })
+    );
+    expect(hib.deleteMine).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(hib.wakes).toHaveLength(2));
     await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
   });
@@ -4022,7 +4021,7 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     await switcher().click();
     await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
     await expect.element(dialog().getByText(/app-aaaa too large to put to sleep/)).toBeVisible();
-    expect(hib.deleteOldest).not.toHaveBeenCalled();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
   });
 
   test('a wake whose secrets could not be fetched says so in plain words', async () => {
@@ -4052,7 +4051,9 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
     expect(hib.deleteMine).not.toHaveBeenCalled();
     await page.getByRole('button', { name: 'Delete app' }).click();
-    await vi.waitFor(() => expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'garden-log' }));
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'garden-log', why: 'user' })
+    );
     expect(hib.deleteMine).toHaveBeenCalledTimes(1);
   });
 
@@ -4099,13 +4100,114 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     await expect.element(card).toBeVisible();
     expect(page.getByRole('region', { name: 'Free up a slot' }).elements()).toHaveLength(0);
     await card.getByRole('button', { name: 'Delete old-quiz to continue' }).click();
-    expect(hib.deleteOldest).not.toHaveBeenCalled();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
     await page.getByRole('button', { name: 'Delete old-quiz', exact: true }).click();
-    await vi.waitFor(() => expect(hib.deleteOldest).toHaveBeenCalledWith({ app: 'old-quiz' }));
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'old-quiz', why: 'limit' })
+    );
     // Delete → askAgain is several async hops: the 1s default fails on a loaded runner.
     await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']), {
       timeout: 5_000,
     });
     await expect.element(card).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * 🔴 D4 — A STALE LIST MUST NEVER DELETE A SLEEPING APP. The page still lists app-bbbb as paused,
+ * but it was put to sleep meanwhile (retention, or the cap from another device). Export or Submit
+ * starts it; the service makes a NEW, EMPTY app-bbbb, which the page discards. That discard is
+ * internal cleanup: the sleeping record and its archive (the ONLY copy) must survive it.
+ */
+describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the sleeping record', () => {
+  const sleepingBbbb = () => [
+    { app: 'app-bbbb', bytes: 2_048, lastActivityAt: ago(9), hibernatedAt: ago(1) },
+  ];
+  beforeEach(() => {
+    hib.sleeping = sleepingBbbb();
+    hib.deleteMine.mockClear();
+  });
+  /** The service has no app-bbbb any more: its start makes a new, empty one. */
+  const goneFromService = (app: string) =>
+    m.open.mockImplementation((asked: string) => {
+      if (asked === app) m.list = m.list.filter((s) => s.name !== 'sbx-bbbbbbbbbbbb');
+    });
+
+  test('Export of an app put to sleep meanwhile: the empty app is discarded, the sleeping record is not deleted', async () => {
+    const restore = stubExport();
+    onTestFinished(restore);
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    goneFromService('app-bbbb');
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await vi.waitFor(() => expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]));
+    await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
+    await settle(200);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('Submit of an app put to sleep meanwhile: the empty app is discarded, the sleeping record is not deleted', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await switcher().click();
+    await page
+      .getByRole('dialog', { name: 'Apps' })
+      .getByRole('button', { name: /^app-bbbb/ })
+      .click();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    m.remove.mockClear();
+    goneFromService('app-bbbb');
+    const offer = { awaitsUser: true, submit: 'runner-submit-d4', note: 'x' };
+    m.chat!.onToolResult!({ name: 'submit_for_review', input: {}, output: offer, isError: false });
+    const shown = m.chat!.tools.submit_for_review.render!({
+      name: 'submit_for_review',
+      input: {},
+      state: 'done',
+      output: offer,
+    }) as HTMLElement;
+    document.body.append(shown);
+    onTestFinished(() => shown.remove());
+    await vi.waitFor(() => expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]));
+    await settle(200);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('a confirmed Delete of an app a start made EMPTY on this page leaves the sleeping record alone', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    goneFromService('app-bbbb');
+    // Start (the stale list's paused app): the service makes a new, empty app-bbbb.
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: /^Start/ }).click();
+    await vi.waitFor(() => expect(m.list.some((s) => s.name === 'sbx-new-app-bbbb')).toBe(true));
+    await switcher().click();
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-new-app-bbbb');
+    await settle(200);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
   });
 });

@@ -102,6 +102,8 @@ interface AppActions {
   onSleep?: (sandbox: Sandbox) => void;
   /** The sandboxes going to sleep now (their names). */
   goingToSleep?: readonly string[];
+  /** App hibernate: told after a delete the user confirmed in the app's menu, and only then. */
+  onDeleted?: (sandbox: Sandbox) => void;
 }
 
 /** Start, Pause, Export and Delete for one app. */
@@ -115,11 +117,17 @@ export function AppMenu({
   exporting,
   onSleep,
   goingToSleep,
+  onDeleted,
 }: AppActions & { sandbox: Sandbox }) {
   const { suspend, remove } = sandboxes;
   const confirmDelete = () =>
     confirmDeleteApp(sandbox.app, () =>
-      remove.mutate(sandbox.name, { onSuccess: () => onRemoved(sandbox.name) })
+      remove.mutate(sandbox.name, {
+        onSuccess: () => {
+          onRemoved(sandbox.name);
+          onDeleted?.(sandbox);
+        },
+      })
     );
   const pauses = runningOtherApp(sandboxes.list.data ?? [], sandbox);
 
