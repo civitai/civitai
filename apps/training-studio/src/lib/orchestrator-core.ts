@@ -156,11 +156,16 @@ export async function listTrainingWorkflows(client: OrchestratorClient): Promise
 }
 
 /** The caller's workflows carrying every one of `tags`, newest first, within the retention window. */
-export async function queryRecentWorkflows(client: OrchestratorClient, tags: string[]) {
+export async function queryRecentWorkflows(
+  client: OrchestratorClient,
+  tags: string[],
+  opts: { signal?: AbortSignal } = {}
+) {
   const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await queryWorkflows({
     client,
     query: { tags, take: 100, fromDate, hideMatureContent: false },
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
   return data.items ?? [];

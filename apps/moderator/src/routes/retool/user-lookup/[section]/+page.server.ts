@@ -535,6 +535,8 @@ export const actions: Actions = {
           .transform(() => undefined)
           .or(z.coerce.number().int().positive().max(2_147_483_647))
           .optional(),
+        // One per form (the panel mints it); the ledger key that makes a resubmit recognisable.
+        submissionId: z.string().regex(/^[0-9a-f]{16,64}$/),
       }),
       await request.formData()
     );
@@ -553,6 +555,7 @@ export const actions: Actions = {
       entityType: input.entityType || undefined,
       entityId: input.entityId,
       moderatorId: locals.user.id,
+      submissionId: input.submissionId,
     });
     if (!result.ok) return buzzFail(result.error);
     // The parsed input, not the raw form: the confirmation the panel shows has to name what was

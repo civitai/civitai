@@ -1,9 +1,6 @@
-import {
-  DeleteObjectsCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
+import { newS3Client } from '~/utils/s3-client-factory';
+import type { S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectsCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
@@ -398,7 +395,7 @@ export async function appealTrainingStoreFromEnv(): Promise<AppealTrainingStore 
     source: s3,
     sourceBucket,
     target: instrumentB2Client(
-      new S3Client({
+      newS3Client({
         credentials: { accessKeyId, secretAccessKey },
         region: env.S3_IMAGE_B2_REGION ?? 'us-west-004',
         endpoint,

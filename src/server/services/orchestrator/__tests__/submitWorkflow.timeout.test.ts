@@ -112,7 +112,7 @@ describe('submitWorkflowWithRetry — per-attempt timeout', () => {
   });
 });
 
-describe('submitWorkflow — whatIf per-attempt timeout → 503, generate untouched', () => {
+describe('submitWorkflow — per-attempt timeout → 503', () => {
   // Backoff uses real setTimeout; skip it deterministically with fake timers so the
   // ~2s of real backoff doesn't slow the suite.
   const runWithFakeTimers = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -170,19 +170,19 @@ describe('submitWorkflow — whatIf per-attempt timeout → 503, generate untouc
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(3);
   });
 
-  it('passes a per-attempt signal ONLY for whatIf, never for generate', async () => {
+  // Generate used to be deliberately unbounded; it is now bounded too (30s per attempt, 60s
+  // overall — see submitWorkflow.submit-deadline.test.ts), so both paths pass a signal.
+  it('passes a per-attempt signal for whatIf and for generate', async () => {
     mockSubmitWorkflow.mockResolvedValue(okResult());
 
-    // whatIf → bounded
     await submitWorkflow({ token: 'tok', body: {} as any, query: { whatif: true } as any });
     expect(mockSubmitWorkflow.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
 
     mockSubmitWorkflow.mockClear();
 
-    // generate (no whatif) → NO signal, behavior unchanged
     await submitWorkflow({ token: 'tok', body: {} as any, query: {} as any });
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
-    expect(mockSubmitWorkflow.mock.calls[0][0].signal).toBeUndefined();
+    expect(mockSubmitWorkflow.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
   });
 
   it('generate path: a final network throw propagates raw (→500), NOT remapped to 503 by the timeout branch', async () => {

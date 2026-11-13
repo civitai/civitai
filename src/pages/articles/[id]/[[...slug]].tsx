@@ -546,6 +546,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           <RenderRichText
             content={article.contentJson}
             fallbackHtml={article.content}
+            imageGuard={{ images: article.contentImages, nsfwLevel: article.nsfwLevel }}
             className={features.articleTypography ? articleBodyClasses.articleBody : undefined}
           />
         </article>

@@ -2576,6 +2576,7 @@ model Tag {
   tagsOnImageVotes     TagsOnImageVote[]
   tagsOnPosts          TagsOnPost[]
   tagsOnArticles       TagsOnArticle[]
+  systemCategoryArticles Article[]        @relation("ArticleSystemCategory")
   tagsOnCollection     TagsOnCollection[]
   tagsOnImageComposite ImageTag[]
   tagsOnModelComposite ModelTag[]
@@ -2984,6 +2985,7 @@ model OauthClient {
   connectListings          AppListing[]
   workerClient             WorkerClient?
   workerDevices            WorkerDevice[]
+  invites                  OauthInvite[]
 
   @@index([userId])
 }
@@ -5089,6 +5091,20 @@ model OauthConsent {
   @@unique([userId, clientId])
 }
 
+/// An emailed sign-in invite from a system app (auth hub POST /api/auth/invite). Only the token's hash is
+/// stored; the row is deleted when the link is used, so a link signs in once.
+model OauthInvite {
+  tokenHash String      @id
+  clientId  String
+  client    OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  email     String
+  returnUrl String
+  expiresAt DateTime
+  createdAt DateTime    @default(now())
+
+  @@index([clientId, email])
+}
+
 // First-party spoke domain registry for the OAuth cross-domain login flow (replaces AUTH_SPOKE_ORIGINS).
 // The hub authorizes a login host against these rows (exact `domain`, or any subdomain when
 // `includeSubdomains` — for ephemeral PR-preview hosts). Matched on the request hostname (no scheme/port),
@@ -6293,6 +6309,9 @@ model Article {
   // a column with a moderator-only setter, not a tag anyone can type.
   isOfficial       Boolean       @default(false)
   status           ArticleStatus @default(Draft)
+  // Assigned by the text scan's category call; the author's pick stays in TagsOnArticle.
+  systemCategoryId Int?
+  systemCategory   Tag?          @relation("ArticleSystemCategory", fields: [systemCategoryId], references: [id], onDelete: SetNull)
 
   reactions          ArticleReaction[]
   tags               TagsOnArticle[]
@@ -6308,6 +6327,7 @@ model Article {
   contentLinkHold    ArticleContentLinkHold?
 
   @@index([status, ingestion, nsfwLevel])
+  @@index([systemCategoryId])
 }
 
 /// Content urls of an article that linking created no Image row for yet: deferred until the

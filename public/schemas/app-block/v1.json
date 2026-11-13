@@ -201,7 +201,7 @@
     },
     "page": {
       "type": "object",
-      "description": "Full-page surface descriptor (W10). Page apps mount at /apps/run/<slug>.",
+      "description": "Full-page surface descriptor (W10). Page apps mount at /apps/run/<slug>. A manifest without non-empty `targets` must declare `page`.",
       "additionalProperties": false,
       "required": ["path", "title"],
       "properties": {
@@ -614,7 +614,7 @@
     },
     "targets": {
       "type": "array",
-      "description": "Model-page slot targets. Each target's slotId must be a known registered model slot (not the page slot). Optional for page-only apps.",
+      "description": "Model-page slot targets. Each target's slotId must be a known registered model slot (not the page slot). Optional for a page app; a manifest without `page` must declare at least one target.",
       "maxItems": 16,
       "items": {
         "type": "object",
@@ -781,6 +781,20 @@
       "then": {
         "required": ["outputDir"]
       }
+    },
+    {
+      "$comment": "A manifest must declare at least one surface: a non-empty `targets` array (model-page slots) or a `page` object (a full-page app). The platform refuses a submission with neither, and the build would fail it.",
+      "anyOf": [
+        {
+          "required": ["targets"],
+          "properties": {
+            "targets": { "minItems": 1 }
+          }
+        },
+        {
+          "required": ["page"]
+        }
+      ]
     }
   ]
 }
