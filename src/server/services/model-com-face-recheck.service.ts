@@ -9,6 +9,7 @@ import {
   getOwnTriggerWords,
 } from '~/server/services/model-sfw-face.service';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { backoffDelay } from '~/utils/backoff';
 
 const QUEUE = 'com-face-recheck';
 /** A model whose check got no verdict waits in a KeyValue row under this prefix until its next try. */
@@ -323,7 +324,10 @@ export async function processComFaceRestores(now = new Date(), budgetMs = COM_FA
 
 const retryKey = (modelId: number) => `${RETRY_KEY_PREFIX}${modelId}`;
 const retryDelay = (attempt: number) =>
-  Math.min(COM_FACE_RECHECK_FIRST_DELAY_MS * 2 ** (attempt - 1), COM_FACE_RECHECK_MAX_DELAY_MS);
+  backoffDelay(attempt - 1, {
+    baseMs: COM_FACE_RECHECK_FIRST_DELAY_MS,
+    maxMs: COM_FACE_RECHECK_MAX_DELAY_MS,
+  });
 /** A run stops taking new models after this, inside the job lock; the rest wait for the next run.
  *  The re-checks and the restore checks share it. */
 export const COM_FACE_RUN_BUDGET_MS = 4 * 60_000;

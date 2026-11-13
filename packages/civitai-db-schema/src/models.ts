@@ -1095,6 +1095,17 @@ export interface ModelEngagement {
   createdAt: Date;
 }
 
+export interface ModelVersionShowcaseItem {
+  modelVersionId: number;
+  site: string;
+  imageId: number;
+  source: string;
+  position: number | null;
+  excluded: boolean;
+  addedById: number;
+  createdAt: Date;
+}
+
 export interface ModelVersionSponsorshipSettings {
   id: number;
   modelVersionMonetizationId: number;

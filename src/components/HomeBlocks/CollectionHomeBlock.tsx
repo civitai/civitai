@@ -74,15 +74,14 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     { trpc: { context: { skipBatch: true } } }
   );
 
-  const rows = metadata.collection?.rows ?? 2;
-
   const currentUser = useCurrentUser();
 
   const { collection } = homeBlock ?? {};
 
-  // A Flag Race row keeps its flags in rank order instead of shuffling.
   const features = useFeatureFlags();
   const flagEvent = features.flagRace ? metadata.collection?.flagRace : undefined;
+  // A Flag Race row is one row: the flags that don't fit wait for another visit (they're shuffled).
+  const rows = flagEvent ? 1 : metadata.collection?.rows ?? 2;
   const { data: flagSummary } = trpc.hatTurf.getFlags.useQuery(
     { event: flagEvent ?? '' },
     {
@@ -99,12 +98,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   );
   const shuffled = useMemo(() => {
     if (!collection?.items) return [];
-    if (!flagEvent) return shuffle([...collection.items]);
-    const rank = new Map(flagSummary?.flags.map((f, i) => [f.imageId, i]) ?? []);
-    return [...collection.items].sort(
-      (a, b) => (rank.get(a.data.id) ?? Infinity) - (rank.get(b.data.id) ?? Infinity)
-    );
-  }, [collection?.items, flagEvent, flagSummary]);
+    return shuffle([...collection.items]);
+  }, [collection?.items]);
 
   const shuffledData = useMemo(() => shuffled.map((x) => x.data), [shuffled]);
 
@@ -273,7 +268,12 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
         {MetaDataTop}
       </Box>
       {isLoading || loadingPreferences ? (
-        <div className={classes.grid}>
+        <div
+          className={clsx(classes.grid, {
+            [classes.gridRow]: !!flagEvent,
+            [classes.gridFlag]: !!flagEvent,
+          })}
+        >
           {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
           {Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
             <AspectRatio ratio={7 / 9} key={index} className="m-2">
@@ -282,7 +282,12 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           ))}
         </div>
       ) : (
-        <div className={classes.grid}>
+        <div
+          className={clsx(classes.grid, {
+            [classes.gridRow]: !!flagEvent,
+            [classes.gridFlag]: !!flagEvent,
+          })}
+        >
           <FlagRowProviders row={flagRow}>
             <RemixFlyoutLayoutProvider layout="side">
               <ImagesProvider

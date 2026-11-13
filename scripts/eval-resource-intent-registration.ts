@@ -596,7 +596,7 @@ export function preregistrationOverrides(params: RetrievalRunParams): string[] {
  * ARRAY.
  *
  * Which images may enter the study at all — and so have their prompt sent to the
- * vendor: the conditions of `imageWhere` in `src/server/search-index/images.search-index.ts`
+ * vendor: the conditions the retired images search index used (`imageWhere`)
  * (the publicly searchable image: not in a review queue, not ToS-violating, minor or POI,
  * in a post that is published, not scheduled, and neither Private nor Unsearchable),
  * plus public meta, a non-empty prompt, no `blockedFor`, the window, and NO attached model
