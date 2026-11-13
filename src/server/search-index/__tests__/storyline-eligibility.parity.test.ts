@@ -19,7 +19,19 @@ import {
 const SCHEMA = `
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
-  INSERT INTO "User" VALUES (1, NULL, NULL), (2, now(), NULL), (3, NULL, now());
+  INSERT INTO "User" VALUES (1, NULL, NULL), (2, now(), NULL), (3, NULL, now()), (4, NULL, NULL),
+    (5, NULL, NULL), (6, NULL, NULL);
+  -- 4 is a CsamReport's subject, 5 its secondary user, 6 under an evidence hold.
+  CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+    images jsonb NOT NULL DEFAULT '[]');
+  INSERT INTO "CsamReport" ("userId", details, images) VALUES
+    (4, '{}', '[]'), (NULL, '{"secondaryUserId": "5"}', '[{"id": 2100}]');
+  CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
+  INSERT INTO "EvidenceHold" VALUES (6, NULL);
+  CREATE VIEW "EvidenceHeldUser" AS
+    SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
+  CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "postId" int,
+    "needsReview" text, "blockedFor" text);
   CREATE TABLE "Storyline" (
     id int PRIMARY KEY, "userId" int NOT NULL, "tosViolation" boolean NOT NULL,
     "maxNsfwLevel" int NOT NULL, "nsfwLevel" int NOT NULL, "moderatorNsfwLevel" int
@@ -48,6 +60,8 @@ const eligible = {
   postLevel: '1',
   publishedAt: 'now()',
   availability: `'Public'`,
+  /** Chapter 1's image (userId, needsReview, blockedFor), or false for none. */
+  image: `1, NULL, NULL` as string | false,
 };
 
 const storyline = (id: number, name: string, over: Partial<typeof eligible> = {}): ParityRow => {
@@ -62,6 +76,13 @@ const storyline = (id: number, name: string, over: Partial<typeof eligible> = {}
       ...(c.post
         ? [
             `INSERT INTO "Post" VALUES (${postId}, ${c.postAuthor}, ${c.postTos}, ${c.postLevel}, ${c.publishedAt}, ${c.availability})`,
+            ...(c.image === false
+              ? []
+              : [
+                  `INSERT INTO "Image" VALUES (${id * 100}, ${
+                    c.image.split(',')[0]
+                  }, ${postId},${c.image.slice(c.image.indexOf(',') + 1)})`,
+                ]),
           ]
         : []),
       ...(c.chapter
@@ -105,6 +126,16 @@ const spec: ParitySpec = {
     // A scheduled chapter 1 is indexed; the query's rootPublishedAt filter holds it back.
     storyline(15, 'eligible:scheduled', { publishedAt: `now() + interval '1 day'` }),
     storyline(16, 'eligible:mixedLevel', { postLevel: '5' }),
+    storyline(17, 'ownerReported', { owner: '4', postAuthor: '1' }),
+    storyline(18, 'ownerSecondaryReported', { owner: '5', postAuthor: '1' }),
+    storyline(19, 'ownerEvidenceHold', { owner: '6', postAuthor: '1' }),
+    // Chapter 1 by a held author, with an image whose owner is clean.
+    storyline(20, 'postAuthorHeld', { postAuthor: '6' }),
+    storyline(21, 'imageListed', {}),
+    storyline(22, 'imageCsamReview', { image: `1, 'csam', NULL` }),
+    storyline(23, 'imageBlockedCsam', { image: `1, NULL, 'CSAM'` }),
+    storyline(24, 'imageOwnerHeld', { image: `4, NULL, NULL` }),
+    storyline(25, 'eligible:noImage', { image: false }),
   ],
   clauses: [
     'tosViolation',
@@ -120,6 +151,14 @@ const spec: ParitySpec = {
     'postBlocked',
     'postUnpublished',
     'postPublic',
+    'ownerReported',
+    'ownerSecondaryReported',
+    'ownerEvidenceHold',
+    'postAuthorHeld',
+    'imageListed',
+    'imageCsamReview',
+    'imageBlockedCsam',
+    'imageOwnerHeld',
   ],
   site: async (prisma) =>
     (await prisma.$queryRawUnsafe<{ id: number }[]>(SITE)).map((r) => Number(r.id)),

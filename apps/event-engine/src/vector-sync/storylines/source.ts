@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { normalizeTitle, nsfwLevels } from '../models/document';
+import { heldImageSql, heldUserSql } from '../held';
 import { storylineDocument } from './document';
 
 /** NsfwLevel.Blocked: a chapter 1 post at it, or unrated, hides the storyline. */
@@ -18,13 +19,17 @@ export const STORYLINE_FROM = `"Storyline" st
 /**
  * Which storylines get a point: the site's `storylineSemanticEligibleText`
  * (storyline-visibility.sql.ts) as SQL, held to it by the site's storyline-eligibility parity test.
+ * Nothing held is indexed: not the owner, chapter 1's author, or any of chapter 1's images. A
+ * storyline that stops matching loses its point at its next sync (an event, or the refresh walk).
  * Publication time is not part of it: the payload's rootPublishedAt is filtered at query time.
  */
 export const STORYLINE_ELIGIBLE_SQL = `(st."tosViolation" = false AND u."bannedAt" IS NULL
   AND u."deletedAt" IS NULL AND rp.id IS NOT NULL AND rc."removedAt" IS NULL
   AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
   AND rp."nsfwLevel" NOT IN (0, ${BLOCKED}) AND rp."publishedAt" IS NOT NULL
-  AND rp.availability = 'Public')`;
+  AND rp.availability = 'Public'
+  AND NOT ${heldUserSql('st."userId"')} AND NOT ${heldUserSql('rp."userId"')}
+  AND NOT EXISTS (SELECT 1 FROM "Image" ri WHERE ri."postId" = rp.id AND ${heldImageSql('ri')}))`;
 
 /**
  * The story level the feed filters on, the site's `storyLevelText`: chapter 1's post level (the

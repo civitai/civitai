@@ -226,8 +226,9 @@ export type Domain<P extends DomainPayload> = {
   /** VECTOR_<NAME>_EMBED_ENABLED unset: whether it embeds. True only for models, which predate it. */
   embedByDefault?: boolean;
   /**
-   * A walk over every row, `batch` ids every `everyMs`, for a domain whose documents read tables
-   * that no signal covers (storylines: chapter 1's post). Each id goes through the normal sync.
+   * A walk over every row, `batch` ids every `everyMs`, for a domain whose eligibility or document
+   * reads state no signal covers (an owner ban, an image's review state, a storyline's chapter 1
+   * post). Each id goes through the normal sync, which deletes a point that no longer qualifies.
    */
   refresh?: { everyMs: number; batch: number };
   store: () => VectorStore<P>;
