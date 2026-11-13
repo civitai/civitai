@@ -199,7 +199,6 @@ export async function searchSemanticImages({
       gte: input.postedAfter?.toISOString(),
       lte: input.postedBefore?.toISOString(),
     },
-    // The base-model licence rule is left to hydration (getAllImages, Image.modelRestricted).
   };
 
   const query: SearchQuery = input.imageId
