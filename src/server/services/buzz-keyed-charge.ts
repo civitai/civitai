@@ -1,4 +1,4 @@
-import { isSafeToRetry } from '@civitai/buzz';
+import { writeMayHaveLanded } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -50,16 +50,15 @@ export function paymentOutcomeUnknown(
 
 /**
  * A failed charge that provably moved nothing: refused in the app before anything was sent (a
- * balance or validation refusal, a BAD_REQUEST with no ledger status behind it), a connection that
- * never opened, or a ledger 4xx other than 408 (may have landed) and 409 (the id is taken).
- * Everything else, a timeout, a reset, a 5xx, is an unknown outcome.
+ * balance or validation refusal: a BAD_REQUEST with no ledger status behind it), or a failure the
+ * buzz client's `writeMayHaveLanded` clears. Everything else is an unknown outcome.
  */
 export function chargeWasDeclined(error: unknown): boolean {
-  if (isSafeToRetry(error)) return true;
-  const status = getBuzzApiStatus(error);
-  if (status !== undefined)
-    return status >= 400 && status < 500 && status !== 408 && status !== 409;
-  return error instanceof TRPCError && error.code === 'BAD_REQUEST';
+  const refusedBeforeSending =
+    error instanceof TRPCError &&
+    error.code === 'BAD_REQUEST' &&
+    getBuzzApiStatus(error) === undefined;
+  return refusedBeforeSending || !writeMayHaveLanded(error);
 }
 
 type KeyedChargeInput = Parameters<typeof createBuzzTransaction>[0] & {

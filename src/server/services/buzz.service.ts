@@ -1205,9 +1205,10 @@ export async function completeStripeBuzzTransaction({
 export async function refundTransaction(
   transactionId: string,
   description?: string,
-  details?: MixedObject
+  details?: MixedObject,
+  opts?: BuzzWriteOptions
 ) {
-  return buzzService.refundTransaction(transactionId, { description, details });
+  return buzzService.refundTransaction(transactionId, { description, details }, opts);
 }
 
 /**
