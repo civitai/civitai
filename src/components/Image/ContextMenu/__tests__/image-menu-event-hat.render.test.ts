@@ -22,6 +22,9 @@ const nothing = () => null;
 vi.mock('next/router', () => ({ default: { query: {} } }));
 vi.mock('~/components/Decorations/AddArtFrameMenuItem', () => ({ AddArtFrameMenuItem: nothing }));
 vi.mock('~/components/Profile/AddToShowcaseMenuItem', () => ({ AddToShowcaseMenuItem: nothing }));
+vi.mock('~/components/Model/VersionShowcase/RemoveFromVersionShowcasesMenuItem', () => ({
+  RemoveFromVersionShowcasesMenuItem: nothing,
+}));
 vi.mock('~/components/MenuItems/ToggleSearchableMenuItem', () => ({
   ToggleSearchableMenuItem: nothing,
 }));

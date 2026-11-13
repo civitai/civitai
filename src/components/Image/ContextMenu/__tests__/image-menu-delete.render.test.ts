@@ -23,6 +23,9 @@ vi.mock('~/components/Decorations/AddEventDecorationMenuItem', () => ({
   AddEventDecorationMenuItem: nothing,
 }));
 vi.mock('~/components/Profile/AddToShowcaseMenuItem', () => ({ AddToShowcaseMenuItem: nothing }));
+vi.mock('~/components/Model/VersionShowcase/RemoveFromVersionShowcasesMenuItem', () => ({
+  RemoveFromVersionShowcasesMenuItem: nothing,
+}));
 vi.mock('~/components/MenuItems/ToggleSearchableMenuItem', () => ({
   ToggleSearchableMenuItem: nothing,
 }));

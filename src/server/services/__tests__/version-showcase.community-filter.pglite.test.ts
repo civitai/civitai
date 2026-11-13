@@ -109,17 +109,15 @@ beforeAll(async () => {
   `);
   // Integers typed as Prisma sends them.
   const INT4_OID = 23;
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (
-    strings: TemplateStringsArray | Prisma.Sql,
-    ...values: unknown[]
-  ) => {
+  const queryRaw = (async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
     const sql = Array.isArray(strings)
       ? Prisma.sql(strings as TemplateStringsArray, ...values)
       : (strings as Prisma.Sql);
     const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
     return (await db.query(sql.text, sql.values, { paramTypes })).rows;
-  }) as never);
-  dbMock.dbRead.$queryRaw.mockImplementation(dbMock.dbWrite.$queryRaw.getMockImplementation());
+  }) as never;
+  dbMock.dbWrite.$queryRaw.mockImplementation(queryRaw);
+  dbMock.dbRead.$queryRaw.mockImplementation(queryRaw);
   // A batch runs its statements in order on the one PGlite connection.
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
     strings: TemplateStringsArray,

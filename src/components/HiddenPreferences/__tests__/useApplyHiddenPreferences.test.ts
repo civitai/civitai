@@ -63,6 +63,7 @@ const BROWSING_LEVEL = 1;
 
 const emptyPrefs = (): HiddenPreferencesState => ({
   hiddenUsers: new Map(),
+  blockRelations: new Map(),
   hiddenTags: new Map(),
   hiddenModels: new Map(),
   hiddenModel3Ds: new Map(),
@@ -465,11 +466,15 @@ describe('filterPreferences: a cover featured from someone else', () => {
 
   it("drops the image of an author the viewer hid, keeping the creator's", () => {
     const { items } = run(featuredCover(77), 77);
-    expect(items[0].images?.map((image) => image.id)).toEqual([11]);
+    expect((items[0] as ReturnType<typeof featuredCover>).images.map((image) => image.id)).toEqual([
+      11,
+    ]);
   });
 
   it('keeps it when the viewer hid someone else', () => {
     const { items } = run(featuredCover(77), 78);
-    expect(items[0].images?.map((image) => image.id)).toEqual([10, 11]);
+    expect((items[0] as ReturnType<typeof featuredCover>).images.map((image) => image.id)).toEqual([
+      10, 11,
+    ]);
   });
 });
