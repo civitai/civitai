@@ -4,7 +4,10 @@
   import { afterNavigate, invalidate } from '$app/navigation';
   import { page } from '$app/state';
   import AppHeader from '$lib/AppHeader.svelte';
+  import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
   import type { PlayerStatus } from '$lib/server/player-status';
+  import type { WhatsNew } from '$lib/whats-new';
+  import { provideWhatsNew } from '$lib/whats-new-dismiss.svelte';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -24,6 +27,13 @@
   // /play fills the viewport exactly: the image stage takes whatever the header and the answer row leave.
   // The welcome screen is signed-out and brings its own chrome.
   let bare = $derived(page.route.id === '/');
+  // /home and /play each load "What's new" and answer its `dismissWhatsNew` action; whichever opens first shows it.
+  let whatsNew = $derived(page.data.whatsNew as WhatsNew | null | undefined);
+  const whatsNewDialog = provideWhatsNew({
+    sent: () => !!whatsNew,
+    userId: () => data.userId,
+    path: () => page.url.pathname,
+  });
   let fit = $derived(page.route.id === '/play');
 </script>
 
@@ -49,6 +59,9 @@
       {@render children()}
     </main>
   </div>
+  {#if whatsNew && whatsNewDialog.showing}
+    <WhatsNewDialog copy={whatsNew} onclose={whatsNewDialog.close} />
+  {/if}
 {/if}
 
 <style>

@@ -53,7 +53,9 @@
         </svg>
         <span class="label"><b>{strip.value}</b><i>of {strip.max}</i></span>
       </span>
-      <p class="note">{strip.note}</p>
+      <p class="note">
+        {#if strip.done}<span class="ok"><Icon name="circle-check" size={14} /></span>{/if}{strip.note}
+      </p>
     </div>
     <div class="pair">
       <div>
@@ -258,6 +260,10 @@
   .note {
     color: var(--io-parchment-muted);
     font: 400 13px/1.4 var(--io-font-ui);
+  }
+  .note .ok {
+    margin-right: 4px;
+    vertical-align: -2px;
   }
   .pair {
     display: grid;

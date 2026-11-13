@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerForKey, answerForKeyPress, keyHints } from './keys';
+import { answerForKey, answerForKeyPress, keyHints, optionsOnScreen, spaceSkips } from './keys';
 
 const options = [
   { value: '1', label: 'PG' },
@@ -68,5 +68,42 @@ describe('block reasons', () => {
       'Other',
     ]);
     expect(answerForKey(reasons, '6')).toBeNull();
+  });
+});
+
+describe('optionsOnScreen', () => {
+  it('answers a queue question as before', () => {
+    const shown = optionsOnScreen({ question: { options } });
+    expect(shown).toBe(options);
+    expect(answerForKeyPress(shown ?? [], '3', false)).toBe('4');
+  });
+
+  it('answers an apprenticeship question with its number keys', () => {
+    const shown = optionsOnScreen({ apprentice: { kind: 'question', options } });
+    expect(answerForKeyPress(shown ?? [], '2', false)).toBe('2');
+    const yesNo = [
+      { value: 'yes', label: 'Yes' },
+      { value: 'no', label: 'No' },
+    ];
+    expect(
+      answerForKeyPress(
+        optionsOnScreen({ apprentice: { kind: 'question', options: yesNo } }) ?? [],
+        'y',
+        true
+      )
+    ).toBe('yes');
+  });
+
+  it('has no options on a checkpoint recap or with nothing to practise', () => {
+    expect(optionsOnScreen({ apprentice: { kind: 'checkpoint' } })).toBeNull();
+    expect(optionsOnScreen({ apprentice: { kind: 'exhausted' } })).toBeNull();
+    expect(optionsOnScreen({ question: null })).toBeNull();
+  });
+});
+
+describe('spaceSkips', () => {
+  it('leaves Space to the browser in the apprenticeship', () => {
+    expect(spaceSkips({ apprentice: { kind: 'question', options } })).toBe(false);
+    expect(spaceSkips({ question: { options } })).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Refusal } from './server/shop/purchase';
 import {
   REFUSAL_STATUS,
+  buyClick,
   cardBlurb,
   cardTitle,
   cosmeticIcon,
@@ -167,5 +168,25 @@ describe('cosmeticIcon', () => {
 describe('membershipPerksUrl', () => {
   it('points at the main site pricing page, built from the configured main-site URL', () => {
     expect(membershipPerksUrl('https://main.example')).toBe('https://main.example/pricing');
+  });
+});
+
+describe('buyClick', () => {
+  it("refuses a held player's click with the server's own words", () => {
+    expect(buyClick({ held: true, convertible: 100_000 }, 50_000)).toEqual({
+      kind: 'refused',
+      text: refusalText('held'),
+    });
+  });
+
+  it('still says how much gold is missing', () => {
+    expect(buyClick({ held: false, convertible: 1_000 }, 5_000)).toEqual({
+      kind: 'short',
+      by: 4_000,
+    });
+  });
+
+  it('lets a purchase through otherwise', () => {
+    expect(buyClick({ held: false, convertible: 5_000 }, 5_000)).toEqual({ kind: 'confirm' });
   });
 });

@@ -84,7 +84,7 @@ beforeEach(() => {
   skipList.list.mockReset();
   skipList.list.mockResolvedValue([]);
   seenStore.get.mockReset();
-  seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: true });
+  seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: true, whatsNew: true });
   seenStore.set.mockReset();
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ votes: 3 });
@@ -179,7 +179,7 @@ describe('play load', () => {
   it('celebrates levels 5, 10 and 15 for an Acolyte and quietly records every other level', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 10 });
     getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
-    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 9, guide: true });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 9, guide: true, whatsNew: true });
     acolyteLevelGoldSince.mockResolvedValue(100);
 
     const page = await run();
@@ -193,16 +193,21 @@ describe('play load', () => {
     expect(seenStore.set).not.toHaveBeenCalled();
 
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
-    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 10, guide: true });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 10, guide: true, whatsNew: true });
     const quiet = await run();
     expect(quiet.progress).toBeNull();
-    expect(seenStore.set).toHaveBeenCalledWith(7, { rank: 'Acolyte', level: 11, guide: true });
+    expect(seenStore.set).toHaveBeenCalledWith(7, {
+      rank: 'Acolyte',
+      level: 11,
+      guide: true,
+      whatsNew: true,
+    });
   });
 
   it('still celebrates a milestone the player jumped past between loads', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
     getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
-    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 9, guide: true });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 9, guide: true, whatsNew: true });
 
     const page = await run();
     expect(page.progress).toMatchObject({
@@ -218,14 +223,14 @@ describe('play load', () => {
   it('prices a milestone card for the levels since the previous milestone, however long ago the player last looked', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 15 });
     getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
-    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 2, guide: true });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 2, guide: true, whatsNew: true });
     await run();
     expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 10, 15);
   });
 
   it('tells a newly knighted player about the rank, not a summary', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 20 });
-    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 20, guide: true });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 20, guide: true, whatsNew: true });
     const page = await run();
     expect(page.mode).toBe('queue');
     expect(page.progress).toMatchObject({ kind: 'rank', rank: 'Knight' });
@@ -233,7 +238,7 @@ describe('play load', () => {
 
   it("gives a rank-up what changed: the new perks and the rank below's, including the daily gold cap", async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 50 });
-    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true, whatsNew: true });
     const page = await run();
     expect(page.progress).toMatchObject({
       kind: 'rank',
@@ -248,7 +253,7 @@ describe('play load', () => {
 
   it("takes a skipped rank's 'what changed' from the rank the player was last told about", async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Paladin', level: 90 });
-    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true, whatsNew: true });
     const page = await run();
     expect(page.progress).toMatchObject({
       kind: 'rank',
@@ -547,7 +552,7 @@ describe('play load notices', () => {
   });
 
   it('carries what a new rank brings, so the notice can say it', async () => {
-    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true, whatsNew: true });
     getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 50 });
     const page = await run();
     expect(page.progress).toMatchObject({
@@ -560,12 +565,66 @@ describe('play load notices', () => {
   });
 
   it('offers the rating guide to a player who has not dismissed it, with every level described', async () => {
-    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: false });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: false, whatsNew: true });
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
     const page = await run();
     expect(page.showGuide).toBe(true);
     expect(page.progress).toBeNull();
     expect(page.ratingGuide.map((g: { level: number }) => g.level)).toEqual([1, 2, 4, 8, 16, 32]);
+  });
+});
+
+describe("play load: what's new", () => {
+  it("offers what's new before the rating guide to a player who has not seen it, as a returning player", async () => {
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: false });
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
+    const page = await run();
+    expect(page.whatsNew.items[0].lead).toBe('Your rank and XP came with you.');
+    expect(page.whatsNew.title).toBe('Welcome to the new Knights of New Order');
+    expect(page.showGuide).toBe(false);
+  });
+
+  it('tells a player with no v1 progress that they start as an Acolyte', async () => {
+    seenStore.get.mockResolvedValue(null);
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress: {} });
+    const page = await run();
+    expect(page.whatsNew.items[0].lead).toBe('You start as an Acolyte.');
+    expect(page.whatsNew.title).toBe('Welcome to the Knights of New Order');
+    expect(page.showGuide).toBe(false);
+  });
+
+  it('counts an Acolyte with any XP as returning', async () => {
+    seenStore.get.mockResolvedValue(null);
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 40 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress: {} });
+    expect((await run()).whatsNew.items[0].lead).toBe('Your rank and XP came with you.');
+  });
+
+  it('does not offer it once it has been seen', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
+    expect((await run()).whatsNew).toBeNull();
+  });
+
+  it('records it as seen, keeping the guide and standing that were stored', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 4, guide: false });
+    const dismiss = (actions as Record<string, (e: never) => Promise<unknown>>).dismissWhatsNew;
+    expect(await dismiss({ locals: { user: { id: 7 } } } as never)).toBeUndefined();
+    expect(seenStore.set).toHaveBeenCalledWith(7, {
+      rank: 'Knight',
+      level: 4,
+      guide: false,
+      whatsNew: true,
+    });
+  });
+
+  it('fails when the store is down so the layout sends it again later', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
+    seenStore.set.mockRejectedValue(new Error('down'));
+    const dismiss = (actions as Record<string, (e: never) => Promise<unknown>>).dismissWhatsNew;
+    expect(await dismiss({ locals: { user: { id: 7 } } } as never)).toMatchObject({ status: 500 });
   });
 });
 
@@ -578,14 +637,24 @@ describe('play progress actions', () => {
   it('records the current standing as seen', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 12 });
     await call('dismissProgress');
-    expect(seenStore.set).toHaveBeenCalledWith(7, { rank: 'Templar', level: 12, guide: true });
+    expect(seenStore.set).toHaveBeenCalledWith(7, {
+      rank: 'Templar',
+      level: 12,
+      guide: true,
+      whatsNew: true,
+    });
   });
 
   it('records the guide as read without touching what was seen', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
-    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 4, guide: false });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 4, guide: false, whatsNew: true });
     await call('dismissGuide');
-    expect(seenStore.set).toHaveBeenCalledWith(7, { rank: 'Knight', level: 4, guide: true });
+    expect(seenStore.set).toHaveBeenCalledWith(7, {
+      rank: 'Knight',
+      level: 4,
+      guide: true,
+      whatsNew: true,
+    });
   });
 
   it('fails when the store is down so the notice is not lost silently', async () => {

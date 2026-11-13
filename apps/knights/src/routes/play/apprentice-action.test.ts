@@ -30,6 +30,22 @@ vi.mock('$lib/server/apprenticeship/apprenticeship.service', () => ({
   getApprentice: vi.fn(),
 }));
 
+const getPlayerStatus = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/player-status', async (original) => ({
+  ...(await original<typeof import('$lib/server/player-status')>()),
+  getPlayerStatus,
+}));
+const seen = vi.hoisted(() => ({
+  store: null as null | import('$lib/server/seen').SeenStore,
+}));
+vi.mock('$lib/server/seen-runtime', () => ({
+  seenStore: {
+    get: (userId: number) => seen.store!.get(userId),
+    set: (userId: number, value: import('$lib/server/seen').Seen) => seen.store!.set(userId, value),
+  },
+}));
+
+const { memorySeenStore } = await import('$lib/server/seen');
 const { actions } = await import('./+page.server');
 
 const post = (fields: Record<string, string>) => {
@@ -43,6 +59,9 @@ const post = (fields: Record<string, string>) => {
 const valid = { kind: 'rating', referenceId: '5', answer: '4' };
 
 beforeEach(() => {
+  seen.store = memorySeenStore();
+  getPlayerStatus.mockReset();
+  getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 5 });
   getStanding.mockReset();
   getStanding.mockResolvedValue({ banned: false, muted: false });
   answerApprentice.mockReset();
@@ -96,7 +115,10 @@ describe('apprentice action', () => {
   });
 
   it('moves past a checkpoint for the signed-in player', async () => {
-    const result = await actions.continueCheckpoint({ locals: { user: { id: 7 } } } as never);
+    const result = await actions.continueCheckpoint({
+      request: new Request('http://x', { method: 'POST', body: new FormData() }),
+      locals: { user: { id: 7 } },
+    } as never);
     expect(result).toEqual({ success: true });
     expect(acknowledgeCheckpoint).toHaveBeenCalledWith({}, 7, expect.any(Date));
   });
@@ -104,7 +126,10 @@ describe('apprentice action', () => {
   it('keeps the player on the recap with a 500 when the checkpoint cannot be stamped', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     acknowledgeCheckpoint.mockRejectedValueOnce(new Error('down'));
-    const result = await actions.continueCheckpoint({ locals: { user: { id: 7 } } } as never);
+    const result = await actions.continueCheckpoint({
+      request: new Request('http://x', { method: 'POST', body: new FormData() }),
+      locals: { user: { id: 7 } },
+    } as never);
     expect(result).toMatchObject({ status: 500 });
   });
 });
@@ -127,5 +152,84 @@ describe('apprentice action for a muted player', () => {
       promoted: false,
     });
     expect(await post(valid)).toMatchObject({ success: true });
+  });
+});
+
+describe('the milestone card lasts for the item it appeared with', () => {
+  const recorded = { status: 'recorded', correct: true, xp: 100, promoted: false };
+  const continuePast = (fields: Record<string, string>) => {
+    const body = new FormData();
+    for (const [key, value] of Object.entries(fields)) body.set(key, value);
+    return actions.continueCheckpoint({
+      request: new Request('http://x', { method: 'POST', body }),
+      locals: { user: { id: 7 } },
+    } as never);
+  };
+
+  beforeEach(async () => {
+    await seen.store!.set(7, { rank: 'Acolyte', level: 4, guide: true, whatsNew: true });
+  });
+
+  it('an answer given with the milestone card on screen records that standing as seen', async () => {
+    // The answer itself takes the player to level 6; the card showed level 5.
+    answerApprentice.mockImplementation(async () => {
+      getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 6 });
+      return recorded;
+    });
+
+    expect(await post({ ...valid, noticeShown: '1' })).toMatchObject({ success: true });
+    expect(await seen.store!.get(7)).toEqual({
+      rank: 'Acolyte',
+      level: 5,
+      guide: true,
+      whatsNew: true,
+    });
+  });
+
+  it('an answer with no card showing records nothing', async () => {
+    answerApprentice.mockResolvedValue(recorded);
+
+    await post(valid);
+    expect(await seen.store!.get(7)).toEqual({
+      rank: 'Acolyte',
+      level: 4,
+      guide: true,
+      whatsNew: true,
+    });
+  });
+
+  it('continuing past the recap with the card on screen records it', async () => {
+    expect(await continuePast({ noticeShown: '1' })).toEqual({ success: true });
+    expect(await seen.store!.get(7)).toEqual({
+      rank: 'Acolyte',
+      level: 5,
+      guide: true,
+      whatsNew: true,
+    });
+
+    await seen.store!.set(7, { rank: 'Acolyte', level: 4, guide: true, whatsNew: true });
+    await continuePast({});
+    expect(await seen.store!.get(7)).toEqual({
+      rank: 'Acolyte',
+      level: 4,
+      guide: true,
+      whatsNew: true,
+    });
+  });
+
+  it('a seen store that is down still records the answer', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    seen.store = {
+      get: () => Promise.reject(new Error('down')),
+      set: () => Promise.reject(new Error('down')),
+    };
+    answerApprentice.mockResolvedValue(recorded);
+
+    expect(await post({ ...valid, noticeShown: '1' })).toEqual({
+      success: true,
+      correct: true,
+      promoted: false,
+    });
+    expect(answerApprentice).toHaveBeenCalledOnce();
   });
 });

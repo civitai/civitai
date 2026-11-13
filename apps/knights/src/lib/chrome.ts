@@ -12,6 +12,7 @@ type Watch = {
   watchDone: boolean;
   bonusGold: number;
   capReached: boolean;
+  streak?: number;
 };
 
 /** What the Watch strip says; the cap note wins because it explains why gold stopped. */
@@ -21,24 +22,28 @@ export function watchStrip(daily: Watch) {
   const note = daily.capReached
     ? 'Gold cap reached · XP still counts'
     : daily.watchDone
-    ? `+${gold} gold bonus earned · keep judging`
+    ? `Watch complete, +${gold} gold streak bonus`
     : `+${gold} gold at the end`;
   return {
     label: `Today's Watch · ${value} of ${daily.watchSize}`,
     value,
     max: daily.watchSize,
+    done: daily.watchDone,
     note,
   };
 }
 
 /**
  * The Watch as it will read once `sent` votes still on their way to the server land, so the strip and rail move the
- * moment a vote is cast rather than when the page's data is next read.
+ * moment a vote is cast rather than when the page's data is next read. The vote that completes the Watch moves the streak
+ * by one, which is what the server stores in every case (a first Watch, yesterday's kept, a shielded gap, a lapse).
  */
 export function withVotesSent<T extends Watch>(daily: T, sent: number): T {
   if (sent <= 0) return daily;
   const votes = daily.votes + sent;
-  return { ...daily, votes, watchDone: daily.watchDone || votes >= daily.watchSize };
+  const completes = !daily.watchDone && votes >= daily.watchSize;
+  const streak = completes && daily.streak !== undefined ? { streak: daily.streak + 1 } : {};
+  return { ...daily, votes, watchDone: daily.watchDone || completes, ...streak };
 }
 
 type Standing = {

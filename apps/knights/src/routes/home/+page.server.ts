@@ -5,6 +5,10 @@ import { joinOrder } from '$lib/server/join.service';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { railFor } from '$lib/server/rail-runtime';
+import { requireMember } from '$lib/server/membership';
+import { dismissWhatsNew, readNotices } from '$lib/server/seen';
+import { seenStore } from '$lib/server/seen-runtime';
+import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import type { Actions, PageServerLoad } from './$types';
 
 // The recap card and the fervor position are extras: a failed read leaves them out instead of failing the home page.
@@ -29,13 +33,15 @@ export const load: PageServerLoad = async ({ locals }) => {
   const playerId = locals.user.id;
   // The recap card replaces the daily popup: yesterday's verdicts, read whether or not they were already seen. The page marks
   // today's recap seen once it shows (a load that only prefetched must not).
-  const [daily, recap, rail] = status
+  // Only "What's new" is read here; /play shows the guide and progress notices, which stay unrecorded until it does.
+  const [daily, recap, rail, seen] = status
     ? await Promise.all([
         getDailyStatus(db, { playerId, rank: status.rank, now }),
         optional('recap', () => findRecap(db, { playerId, now })),
         optional('rail', () => railFor(playerId, now, status.fervor)),
+        readNotices(seenStore, playerId, status),
       ])
-    : [null, null, null];
+    : [null, null, null, null];
 
   return {
     username: locals.user.username ?? null,
@@ -44,6 +50,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     daily,
     recap,
     fervorPosition: rail?.standing?.position ?? null,
+    whatsNew: status && seen?.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
   };
 };
 
@@ -61,5 +68,12 @@ export const actions = {
       return fail(500, { message: 'You could not be sworn in. Try again in a moment.' });
     }
     redirect(303, '/play');
+  },
+
+  dismissWhatsNew: async ({ locals }) => {
+    const status = await requireMember(db, locals.user.id);
+    if (!(await dismissWhatsNew(seenStore, locals.user.id, status))) {
+      return fail(500);
+    }
   },
 } satisfies Actions;
