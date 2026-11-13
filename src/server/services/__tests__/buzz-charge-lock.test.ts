@@ -40,7 +40,9 @@ describe('withChargeKeyLock', () => {
     ]);
     expect(run).toHaveBeenCalledTimes(1);
     // A short transaction: database work, a bounded ledger read, and at most a bounded refund.
-    expect(dbMock.dbWrite.$transaction.mock.calls[0][1]).toEqual({ timeout: 20_000 });
+    expect((dbMock.dbWrite.$transaction.mock.calls[0] as unknown[])[1]).toEqual({
+      timeout: 20_000,
+    });
   });
 
   it('a lock wait past its bound is "may have gone through", not a hang or a refusal', async () => {
@@ -93,7 +95,7 @@ describe('refundUnlessRecorded', () => {
         'the-key',
         { userId: 1 },
         {
-          isRecorded: async (t) => t === tx,
+          isRecorded: async (t) => (t as unknown) === tx,
           isRefunded: async () => false,
           refund,
         }
