@@ -246,8 +246,10 @@ describe('BlockImageUploadModal — a pick the photo picker made unreadable', ()
     expect.soft((button.element() as HTMLButtonElement).disabled).toBe(false);
 
     // A real click: a disabled button would not reach the input. The OS chooser is not opened.
+    // The soft checks above already catch a disabled button; this timeout only has to outlast
+    // a busy CI runner, where the click itself has taken over 2 s.
     const opened = vi.spyOn(filesFallbackInput(), 'click').mockImplementation(() => undefined);
-    await button.click({ timeout: 2000 });
+    await button.click({ timeout: 15_000 });
     expect(opened).toHaveBeenCalledTimes(1);
 
     await chooseFiles(filesFallbackInput(), [await pngFile('photo-0.png')]);
