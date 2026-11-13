@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { createHash } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -76,6 +77,7 @@ const {
   comVersionTextQueueKey,
   comVersionTextVerdictKey,
   COM_VERSION_TEXT_MAX_ATTEMPTS,
+  comVersionTextHitHash,
   COM_VERSION_TEXT_QUIET_MS,
   COM_VERSION_TEXT_STEPS_PER_WORKFLOW,
   COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN,
@@ -309,7 +311,10 @@ describe('rateComFaceVersionText', () => {
     expect(hold.subject.fields).toEqual(modelSubject.fields);
     expect(loadModelScanSubjects).toHaveBeenCalledWith([MODEL_ID], { publicVersionsOnly: true });
     expect(hold.subject.meta).toEqual({
-      comVersionTextHits: [{ versionId: 1, field: 'trainedWords', index: 1 }],
+      comVersionTextHits: [
+        { versionId: 1, field: 'trainedWords', index: 1, hash: comVersionTextHitHash('beta') },
+      ],
+      comVersionTextHoldHash: textScanTextHash(modelSubject),
     });
     expect(JSON.stringify(hold.subject.meta)).not.toContain('beta');
     expect(scanEntityInBackground).toHaveBeenCalledWith({
@@ -330,12 +335,24 @@ describe('rateComFaceVersionText', () => {
     rateWith({ gamma: ok({ csam: { detected: true, reason: '' } }) });
     await rateComFaceVersionText(MODEL_ID);
     const [hold] = applyCsamHold.mock.calls[0];
+    const hash = comVersionTextHitHash('gamma');
     expect(hold.subject.meta).toEqual({
       comVersionTextHits: [
-        { versionId: 1, field: 'name' },
-        { versionId: 2, field: 'trainedWords', index: 1 },
+        { versionId: 1, field: 'name', hash },
+        { versionId: 2, field: 'trainedWords', index: 1, hash },
       ],
+      comVersionTextHoldHash: textScanTextHash(modelSubject),
     });
+    expect(hash).toBe(createHash('sha256').update('gamma').digest('hex'));
+
+    // Only the hold carries the hashes: nothing a viewer's read can reach does.
+    const readable = JSON.stringify([
+      await rows(`SELECT meta FROM "ModelVersion"`),
+      await rows(`SELECT value FROM "KeyValue"`),
+      await rows(`SELECT * FROM "Model"`),
+    ]);
+    expect(readable).not.toContain(hash);
+    expect(readable).not.toContain(textScanTextHash(modelSubject));
   });
 
   it('logs a failed hold without its error message, which can carry the held text', async () => {

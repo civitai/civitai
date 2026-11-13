@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -142,17 +143,23 @@ function verdictOf(result: TextScanEachVerdict): Verdict | null {
   return nsfwLevelFromName[nsfw.level] <= NsfwLevel.PG13 ? 'shown' : 'hidden';
 }
 
+/** SHA-256 hex of a flagged string, so a reader can tell whether a position still holds it. */
+export const comVersionTextHitHash = (text: string) =>
+  createHash('sha256').update(text).digest('hex');
+
 /** Where a string sits in the model's versions, so a hold can name it without its text. */
 const positionsOf = (
   versions: { id: number; name: string; trainedWords: string[] }[],
   text: string
-) =>
-  versions.flatMap((version) => [
-    ...(version.name === text ? [{ versionId: version.id, field: 'name' }] : []),
+) => {
+  const hash = comVersionTextHitHash(text);
+  return versions.flatMap((version) => [
+    ...(version.name === text ? [{ versionId: version.id, field: 'name', hash }] : []),
     ...version.trainedWords.flatMap((word, index) =>
-      word === text ? [{ versionId: version.id, field: 'trainedWords', index }] : []
+      word === text ? [{ versionId: version.id, field: 'trainedWords', index, hash }] : []
     ),
   ]);
+};
 
 type CsamHit = { text: string; reason: string; workflowId: string };
 
@@ -171,6 +178,7 @@ async function holdCsamHits(
   if (!subject) throw new Error('csam hit on a model with no scan subject');
   const prompts = await getActiveTextScanPrompts();
   const csamPromptId = prompts['label:csam']?.id;
+  const textHash = textScanTextHash(subject);
   await applyCsamHold({
     entityType: 'Model',
     entityId: modelId,
@@ -185,9 +193,11 @@ async function holdCsamHits(
       meta: {
         ...subject.meta,
         comVersionTextHits: hits.flatMap((hit) => positionsOf(versions, hit.text)),
+        // The positions describe this text only; a later scan that replaces the held text keeps them.
+        comVersionTextHoldHash: textHash,
       },
     },
-    textHash: textScanTextHash(subject),
+    textHash,
     ...(csamPromptId !== undefined && { promptIds: { csam: csamPromptId } }),
   });
 }
