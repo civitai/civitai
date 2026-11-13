@@ -4,6 +4,7 @@ const { mockIsRegionRestricted } = vi.hoisted(() => ({ mockIsRegionRestricted: v
 
 vi.mock('~/server/services/article.service', () => ({
   getArticles: async () => ({ items: [], nextCursor: undefined }),
+  getArticleById: async () => ({ id: 7, nsfwLevel: 4, content: '<p>body</p>', contentImages: [] }),
 }));
 vi.mock('~/server/services/collection.service', () => ({
   getAllCollections: async () => [],
@@ -39,6 +40,7 @@ import '~/__tests__/mocks/db.mock';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 import articles from '~/pages/api/v1/articles/index';
 import collections from '~/pages/api/v1/collections/index';
+import article from '~/pages/api/v1/articles/[id]';
 
 const PUBLIC_CACHE = 'public, s-maxage=300, stale-while-revalidate=150';
 const NO_STORE = 'private, no-store';
@@ -80,6 +82,23 @@ describe.each(routes)('%s shared cache by region, same URL from both regions', (
       const { statusCode, cacheControl } = await call(path, handler, query, restricted);
       expect(statusCode).toBe(200);
       expect(cacheControl).toBe(PUBLIC_CACHE);
+    }
+  });
+});
+
+describe('/api/v1/articles/[id] shared cache by region', () => {
+  beforeEach(() => mockIsRegionRestricted.mockReset());
+
+  it('never shares an article, from either region', async () => {
+    for (const restricted of [false, true]) {
+      const { statusCode, cacheControl } = await call(
+        '/api/v1/articles/7',
+        article,
+        { id: '7' },
+        restricted
+      );
+      expect(statusCode).toBe(200);
+      expect(cacheControl).toBe(NO_STORE);
     }
   });
 });
