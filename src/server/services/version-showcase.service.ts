@@ -48,10 +48,8 @@ type CachedVersionShowcase = {
 };
 
 /**
- * The conditions an image must meet to be served from a version showcase, the same ones the owner
- * showcase applies to its shared cache (getImagesForModelVersion with no viewer): published post,
- * not blocked, not a TOS violation, not waiting on review, rated, reviewed, and no mature image on
- * a restricted base model.
+ * Must stay in step with the owner showcase's shared-cache filter (getImagesForModelVersion with no
+ * viewer).
  */
 export function showcaseImageConditions(): Prisma.Sql[] {
   return [
@@ -446,7 +444,7 @@ export async function bustVersionShowcasesForPosts(postIds: number[]) {
     await refreshVersionShowcases(affected.map((row) => row.modelVersionId));
     await dropInvalidCommunityCovers(affected.map((row) => row.modelId));
   } catch (error) {
-    // Runs after the write it follows has committed.
+    // Best effort: the triggering write already committed.
     logShowcaseError('version-showcase-bust-failed', error);
   }
 }
@@ -472,7 +470,7 @@ export async function bustVersionShowcasesForUser(userId: number, ownerId?: numb
     await refreshVersionShowcases(affected.map((row) => row.modelVersionId));
     await dropInvalidCommunityCovers(affected.map((row) => row.modelId));
   } catch (error) {
-    // Runs after the write it follows has committed.
+    // Best effort: the triggering write already committed.
     logShowcaseError('version-showcase-bust-failed', error);
   }
 }
@@ -491,7 +489,7 @@ export async function bustVersionShowcasesForModels(modelIds: number[]) {
     await refreshVersionShowcases(affected.map((row) => row.modelVersionId));
     await dropInvalidCommunityCovers(modelIds);
   } catch (error) {
-    // Runs after the write it follows has committed.
+    // Best effort: the triggering write already committed.
     logShowcaseError('version-showcase-bust-failed', error);
   }
 }
