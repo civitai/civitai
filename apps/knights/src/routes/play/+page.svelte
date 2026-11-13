@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { applyAction, deserialize, enhance } from '$app/forms';
   import { beforeNavigate, invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
@@ -21,6 +21,7 @@
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
+  import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import {
     DISMISS_FAILED,
@@ -414,7 +415,7 @@
         }
       },
       onFailure: (outcome) => {
-        if (counted) sentVotes = Math.max(0, sentVotes - 1);
+        if (counted) inFlight.count = Math.max(0, inFlight.count - 1);
         counted = false;
         tell(outcome.message);
         dropBuffered(key);
@@ -428,7 +429,7 @@
       onSettled: async () => {
         await invalidate('app:play').catch(() => {});
         // The page's data now holds the vote, so it stops being counted on top.
-        if (counted) sentVotes = Math.max(0, sentVotes - 1);
+        if (counted) inFlight.count = Math.max(0, inFlight.count - 1);
       },
     });
   }
@@ -476,13 +477,14 @@
     cooling = true;
     setTimeout(() => (cooling = false), SETTLE_MS);
     const isVote = input.action.search.startsWith('?/vote');
-    if (isVote) sentVotes += 1;
+    if (isVote) inFlight.count += 1;
     void post(input.action, input.formData, key, isVote);
   };
 
-  // Votes posted in the background that the page's data does not hold yet; the Watch counts them at once.
-  let sentVotes = $state(0);
-  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, sentVotes)) : null);
+  // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
+  const inFlight = votesSent();
+  onDestroy(() => (inFlight.count = 0));
+  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, inFlight.count)) : null);
   let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
@@ -588,7 +590,7 @@
       value={strip.value}
       max={strip.max}
       done={strip.done}
-      streak={withVotesSent(data.daily, sentVotes).streak}
+      streak={withVotesSent(data.daily, inFlight.count).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
     />
@@ -764,7 +766,7 @@
   {/if}
   </div>
   {#if data.mode === 'queue' && !data.apprenticeMeter}
-    <PlayRail status={data.status} daily={withVotesSent(data.daily, sentVotes)} rail={data.rail} ladder={data.ladder} />
+    <PlayRail status={data.status} daily={withVotesSent(data.daily, inFlight.count)} rail={data.rail} ladder={data.ladder} />
   {/if}
   </div>
   {/if}

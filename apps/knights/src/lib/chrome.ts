@@ -6,7 +6,7 @@ export const rankPill = ({ rank, level }: { rank: string; level: number }) =>
 export const heartsLeft = ({ smites, maxSmites }: { smites: number; maxSmites: number }) =>
   Math.max(0, maxSmites - smites);
 
-type Watch = {
+export type Watch = {
   votes: number;
   watchSize: number;
   watchDone: boolean;
@@ -50,6 +50,18 @@ export function withVotesSent<T extends Watch>(daily: T, sent: number): T {
   const completes = !daily.watchDone && votes >= daily.watchSize;
   const streak = completes && daily.streak !== undefined ? { streak: daily.streak + 1 } : {};
   return { ...daily, votes, watchDone: daily.watchDone || completes, ...streak };
+}
+
+/**
+ * The daily the header draws: a page's own daily (play, home) with the votes still in flight on top, the same reading the
+ * rail gets, or else the layout's copy as it came.
+ */
+export function headerDaily<T extends Watch, L>(
+  pageDaily: T | null | undefined,
+  layoutDaily: L,
+  sent: number
+): T | L {
+  return pageDaily ? withVotesSent(pageDaily, sent) : layoutDaily;
 }
 
 type Standing = {
