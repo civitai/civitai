@@ -18,7 +18,7 @@ const searchIndexes = {
   bounty: bountiesSearchIndex,
   collection: collectionsSearchIndex,
   comic: comicsSearchIndex,
-  // Images have only the metrics index now that images_v6 is gone; the moderator app still syncs them.
+  // The moderator app syncs moderated images here.
   image: imagesMetricsSearchIndex,
   model: modelsSearchIndex,
   tool: toolsSearchIndex,

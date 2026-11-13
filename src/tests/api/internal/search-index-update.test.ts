@@ -2,11 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as SearchIndex from '~/server/search-index';
 
-/**
- * POST /api/internal/search-index-update: the moderator app syncs every image it moderates through
- * it (apps/moderator/src/lib/server/search-index.ts). When images_v6 was deleted, `image` left the
- * map with it and every one of those calls answered 400, leaving the metrics index unsynced.
- */
+// The moderator app syncs every image it moderates through this endpoint
+// (apps/moderator/src/lib/server/search-index.ts).
 
 const { metricsQueue } = vi.hoisted(() => ({ metricsQueue: vi.fn() }));
 
