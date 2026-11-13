@@ -89,6 +89,8 @@ import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
 import { searchHitName } from '~/shared/utils/model-sfw-face';
+import { imageIdFromDrop } from '~/components/AutocompleteSearch/image-drop';
+import { moreLikeThisHref } from '~/components/Image/MoreLikeThisButton';
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
@@ -559,6 +561,19 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // emptied the carrier immediately before every selector-driven index switch — the one path the
   // carry exists for. `onClear?.()` still fires, unchanged: on mobile it is what closes the search
   // overlay (`AppHeader` passes `onSearchDone`), and that is not ours to change here.
+  // Search → Images: dropping an image card from the site opens "More like this" for it.
+  const dropsImages = !!features.imageSearch && isImageSearchIndex(searchIndexMap[indexNameProp]);
+  const handleDragOver = (event: React.DragEvent) => {
+    if (dropsImages && event.dataTransfer.types.includes('text/uri-list')) event.preventDefault();
+  };
+  const handleDrop = (event: React.DragEvent) => {
+    if (!dropsImages) return;
+    const imageId = imageIdFromDrop(event.dataTransfer, [window.location.host]);
+    if (!imageId) return;
+    event.preventDefault();
+    void router.push(moreLikeThisHref(imageId));
+  };
+
   const handleBlur = () => {
     if (filtersFeedInPlace) feedSearch.commit(search);
     else clearDisplayedText();
@@ -687,6 +702,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         }}
         onBlur={handleBlur}
         onClear={handleClear}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
         onKeyDown={getHotkeyHandler([
           ['esc', blurAndDiscardCarriedText],
           ['Enter', handleSubmit],
