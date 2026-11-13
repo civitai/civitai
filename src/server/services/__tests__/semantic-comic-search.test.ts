@@ -155,6 +155,14 @@ describe('semantic comic search', () => {
     expect(covers(await search([10, 11, 12]))).toEqual(['cover-10', 'cover-11', 'cover-12']);
   });
 
+  it('holds a signed-in non-moderator to the safe levels whatever they ask for', async () => {
+    h.rows.set(10, comic(10));
+    h.rows.set(11, comic(11, { level: R }));
+    const viewer = { id: 500, isModerator: false } as SessionUser;
+    expect(ids(await search([11, 10], { browsingLevel: PG | R, user: viewer }))).toEqual([10]);
+    expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+  });
+
   it('logs how many candidates came back and how many survived hydration', async () => {
     h.rows.set(10, comic(10));
     await search([11, 10]);

@@ -4,6 +4,8 @@ import {
   withSemanticComicSearch,
 } from '~/components/Search/semanticComicSearchClient';
 import { setSemanticComicSearchEnabled } from '~/components/Search/semanticComicSearchFlag';
+import { buildBrowsingLevelFilters, joinFilterClauses } from '~/components/Search/search-filters';
+import { NsfwLevel } from '~/server/common/enums';
 import { ARTICLES_SEARCH_INDEX, COMICS_SEARCH_INDEX } from '~/server/common/constants';
 
 type SearchClient = Parameters<typeof withSemanticComicSearch>[0];
@@ -58,6 +60,28 @@ describe('comic search routing', () => {
   });
 });
 
+// The filter /search/comics sends: BrowsingLevelFilter with the comics index's 'subset' match.
+const comicsFilter = (browsingLevel: number) =>
+  joinFilterClauses(
+    buildBrowsingLevelFilters({ attribute: 'nsfwLevel', browsingLevel, match: 'subset' })
+  );
+
+describe('comic search browsing level', () => {
+  const { PG, PG13, R, X, XXX, Blocked } = NsfwLevel;
+  it.each([PG, PG | PG13, PG | PG13 | R | X | XXX, PG | PG13 | R | X | XXX | Blocked])(
+    'reads level %i back out of the filter the comics page sends',
+    async (level) => {
+      const search = vi.fn(async () => ({ items: [], nextCursor: undefined, latencyMs: 1 }));
+      await createSemanticComicSearch({ search: search as never })(COMICS_SEARCH_INDEX, {
+        query: 'pirates',
+        hitsPerPage: 20,
+        filters: joinFilterClauses([`genre = "Action"`, comicsFilter(level)]),
+      });
+      expect(search).toHaveBeenCalledWith(expect.objectContaining({ browsingLevel: level }));
+    }
+  );
+});
+
 describe('comic search request and hits', () => {
   it('reads the browsing level and the genre refinement, and keys hits by objectID', async () => {
     const search = vi.fn(async () => ({
@@ -70,7 +94,7 @@ describe('comic search request and hits', () => {
     const result = (await searchComics(COMICS_SEARCH_INDEX, {
       query: ' pirates ',
       hitsPerPage: 20,
-      filters: 'nsfwLevel=1 OR nsfwLevel=2',
+      filters: comicsFilter(NsfwLevel.PG | NsfwLevel.PG13),
       facetFilters: [['genre:Action', 'genre:Comedy']],
     })) as { hits: Record<string, unknown>[] };
 

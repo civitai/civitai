@@ -8,6 +8,7 @@ import {
   type RequestParams,
 } from '~/components/Search/semanticImageSearchClient';
 import { isSemanticComicSearchEnabled } from '~/components/Search/semanticComicSearchFlag';
+import { readSubsetBrowsingLevel } from '~/components/Search/search-filters';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
 import { routeToSemanticSearch } from '~/components/Search/semanticSearchRouting';
 import { trpcVanilla } from '~/utils/trpc';
@@ -50,7 +51,8 @@ export function createSemanticComicSearch({
     if (!query || hitsPerPage === 0) return empty;
 
     const filters = {
-      browsingLevel: readBrowsingLevel(params.filters),
+      // /search/comics sends the 'subset' form of the level clause (search-index-filters.ts).
+      browsingLevel: readSubsetBrowsingLevel(params.filters) ?? readBrowsingLevel(params.filters),
       genres: refined.get('genre'),
     };
     const page = await fetchPage({
