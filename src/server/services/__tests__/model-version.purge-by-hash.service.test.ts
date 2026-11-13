@@ -209,7 +209,7 @@ describe('unpublishModelVersionById — by-hash edge-cache purge', () => {
     await unpublishModelVersionById({ id: VERSION_ID, user: { id: USER_ID } as never });
 
     expect(dbMock.dbRead.modelFileHash.findMany).toHaveBeenCalledWith({
-      where: { file: { modelVersionId: VERSION_ID } },
+      where: { file: { modelVersionId: { in: [VERSION_ID] } } },
       select: { hash: true },
     });
     expect(mockPurgeCache).toHaveBeenCalledTimes(1);
@@ -281,7 +281,7 @@ describe('publishModelVersionById — by-hash edge-cache purge', () => {
     await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false });
 
     expect(dbMock.dbRead.modelFileHash.findMany).toHaveBeenCalledWith({
-      where: { file: { modelVersionId: VERSION_ID } },
+      where: { file: { modelVersionId: { in: [VERSION_ID] } } },
       select: { hash: true },
     });
     expect(mockPurgeCache).toHaveBeenCalledTimes(1);

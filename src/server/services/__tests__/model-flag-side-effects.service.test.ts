@@ -358,6 +358,26 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
   });
 
+  it.each([
+    ['minor', { minor: true }],
+    ['SFW-only', { sfwOnly: true }],
+  ])('purges when the gallery level of a %s model changes', async (_name, flags) => {
+    await applyModelFlagSideEffects({
+      before: { ...baseBefore, ...flags },
+      after: { ...baseAfter, ...flags, gallerySettings: { level: 4 } },
+    });
+    expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('does not purge when the gallery level of an unheld model changes', async () => {
+    await applyModelFlagSideEffects({
+      before: baseBefore,
+      after: { ...baseAfter, gallerySettings: { level: 4 } },
+    });
+    expect(mockPurgeShowcaseEdge).not.toHaveBeenCalled();
+  });
+
   it('does not purge when only poi changes', async () => {
     await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, poi: true } });
     expect(mockPurgeShowcaseEdge).not.toHaveBeenCalled();

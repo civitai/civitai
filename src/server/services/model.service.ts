@@ -2736,13 +2736,14 @@ export async function applyModelFlagSideEffects({
   // The served level is held by the flags too (see heldGalleryLevel), not only by the stored one.
   if (galleryBrowsingLevelChanged || minorChanged) await bustModelGallerySettings([id]);
 
-  if (minorChanged || poiChanged) {
-    const modelVersions = await dbWrite.modelVersion.findMany({
-      where: { modelId: id },
-      select: { id: true },
-    });
+  const getModelVersionIds = async () =>
+    (await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })).map(
+      ({ id }) => id
+    );
+  let modelVersionIds: number[] | undefined;
 
-    const modelVersionIds = modelVersions.map(({ id }) => id);
+  if (minorChanged || poiChanged) {
+    modelVersionIds = await getModelVersionIds();
 
     if (modelVersionIds.length !== 0) {
       // Set-based on purpose: a gallery can hold hundreds of thousands of images, and
@@ -2769,19 +2770,21 @@ export async function applyModelFlagSideEffects({
 
       await bustMvCache(modelVersionIds, id);
     }
-    // The public API serves a held model's showcase at its gallery level; its edge copies predate the flag.
-    if (minorChanged) {
-      try {
-        await purgePublicModelShowcaseEdgeCache(id, modelVersionIds);
-      } catch (error) {
-        logToAxiom({
-          type: 'warning',
-          name: 'showcase-hold-edge-purge',
-          message: 'model flags changed; public API edge cache not purged',
-          modelId: id,
-          error: safeError(error),
-        }).catch(() => undefined);
-      }
+  }
+
+  // The public API serves a held model's showcase at its gallery level; its edge copies predate the change.
+  const heldLevelChanged = galleryBrowsingLevelChanged && (after.minor || after.sfwOnly);
+  if (minorChanged || heldLevelChanged) {
+    try {
+      await purgePublicModelShowcaseEdgeCache(id, modelVersionIds ?? (await getModelVersionIds()));
+    } catch (error) {
+      logToAxiom({
+        type: 'warning',
+        name: 'showcase-hold-edge-purge',
+        message: 'model showcase level changed; public API edge cache not purged',
+        modelId: id,
+        error: safeError(error),
+      }).catch(() => undefined);
     }
   }
 }
@@ -6382,7 +6385,6 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
   await limitConcurrency(
     uniq([...models.values()].map((m) => m.modelId)).map((id) => async () => {
       const flags = flagsOf.get(id);
-      // An unflagged row the caller just read cannot be held.
       if (flags && !flags.minor && !flags.sfwOnly) return;
       try {
         const gallery = await getGallerySettingsByModelId({ id });
