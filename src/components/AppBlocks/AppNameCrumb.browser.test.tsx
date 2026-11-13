@@ -69,6 +69,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 // eslint-disable-next-line import/first
 import { AppNameCrumb } from '~/components/AppBlocks/AppNameCrumb';
 // eslint-disable-next-line import/first
+import { resolveChromeGeometry } from '~/components/AppBlocks/chromeGeometry';
+// eslint-disable-next-line import/first
 import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
@@ -89,8 +91,16 @@ function detailFixture(over: Record<string, unknown> = {}) {
   };
 }
 
-function renderChrome(props: Record<string, unknown> = {}) {
-  return renderWithProviders(
+/**
+ * Mounts the chrome and returns once it has MEASURED itself.
+ *
+ * 🔴 The chrome renders at width 0 (non-compact) and switches to the compact layout
+ * when its ResizeObserver reports the narrow test frame. That branch mounts a NEW
+ * crumb, so a button found, focused or clicked before the switch is replaced and its
+ * open popover is lost. On a loaded CI runner the measurement can land mid-test.
+ */
+async function renderChrome(props: Record<string, unknown> = {}) {
+  renderWithProviders(
     <AppBlockChrome
       blockInstanceId="inst-crumb"
       appName={APP_NAME}
@@ -99,6 +109,12 @@ function renderChrome(props: Record<string, unknown> = {}) {
       {...props}
     />
   );
+  const chrome = page.getByTestId('app-block-chrome');
+  await expect.element(chrome).toBeInTheDocument();
+  const width = chrome.element().getBoundingClientRect().width;
+  await expect
+    .element(chrome)
+    .toHaveAttribute('data-chrome-compact', String(resolveChromeGeometry(width).compact));
 }
 
 /**
@@ -126,7 +142,7 @@ beforeEach(() => {
 
 describe('the app-name crumb is a real control', () => {
   test('it is a native button with popover semantics and a visible focus ring — not a div with an onClick', async () => {
-    renderChrome();
+    await renderChrome();
     await expect.element(page.getByTestId('app-block-breadcrumb-name')).toBeInTheDocument();
     const btn = await trigger();
 
@@ -151,7 +167,7 @@ describe('the app-name crumb is a real control', () => {
   });
 
   test('clicking it opens a popover with the full name, the recommend rollup and the store action', async () => {
-    renderChrome();
+    await renderChrome();
     await page.getByTestId('app-block-breadcrumb-name').click();
 
     await expect.element(page.getByTestId('app-block-name-popover')).toBeInTheDocument();
@@ -172,7 +188,7 @@ describe('the app-name crumb is a real control', () => {
   test.each(['{Enter}', ' '])(
     'it is keyboard-operable — focus + %s opens the popover',
     async (key) => {
-      renderChrome();
+      await renderChrome();
       const btn = await trigger();
 
       // Natively focusable: no `tabIndex` shim required, so it sits in the tab order
@@ -199,7 +215,7 @@ describe('the app-name crumb is a real control', () => {
   // fire. Without `useIframeAwareMenu` this popover would hang open exactly like the
   // ⋮ menu once did.
   test('a window blur (a click landing inside the app iframe) closes the popover', async () => {
-    renderChrome();
+    await renderChrome();
     await page.getByTestId('app-block-breadcrumb-name').click();
     await expect.element(page.getByTestId('app-block-name-popover')).toBeInTheDocument();
 
@@ -214,7 +230,7 @@ describe('the app-name crumb is a real control', () => {
 
 describe('the store link', () => {
   test('points at the /apps/store-preview/<slug> detail route, not the retired /apps/<appBlockId>', async () => {
-    renderChrome({ appBlockId: 'ab-internal-row-id' });
+    await renderChrome({ appBlockId: 'ab-internal-row-id' });
     await page.getByTestId('app-block-breadcrumb-name').click();
 
     const link = page.getByTestId('app-block-name-popover-store-link').element();
@@ -226,7 +242,7 @@ describe('the store link', () => {
   });
 
   test('the listing lookup is keyed by SLUG and is lazy — it does not fire until the popover opens', async () => {
-    renderChrome();
+    await renderChrome();
     await trigger(); // the mount has to have COMMITTED before "never called" means anything
 
     // 🔴 NOT CALLED AT ALL while closed — a stronger claim than "called with
@@ -248,7 +264,7 @@ describe('the store link', () => {
     // `encodeURIComponent`s it. Asserting that here keeps the crumb from being the
     // one caller that hand-builds a path.
     mocks.detail = detailFixture({ slug: 'a b/c' });
-    renderChrome({ slug: 'a b/c' });
+    await renderChrome({ slug: 'a b/c' });
     await page.getByTestId('app-block-breadcrumb-name').click();
     const link = page.getByTestId('app-block-name-popover-store-link').element();
     expect(link.getAttribute('href')).toBe('/apps/store-preview/a%20b%2Fc');
@@ -259,7 +275,7 @@ describe('the popover never shows a broken or empty rating', () => {
   test('while the query is in flight it shows a loader, and NO rating and NO action', async () => {
     mocks.isLoading = true;
     mocks.detail = undefined;
-    renderChrome();
+    await renderChrome();
     await page.getByTestId('app-block-breadcrumb-name').click();
 
     await expect.element(page.getByTestId('app-block-name-popover-loading')).toBeInTheDocument();
@@ -279,7 +295,7 @@ describe('the popover never shows a broken or empty rating', () => {
   test('on a query error it says so and WITHHOLDS the store action', async () => {
     mocks.error = new Error('NOT_FOUND');
     mocks.detail = undefined;
-    renderChrome();
+    await renderChrome();
     await page.getByTestId('app-block-breadcrumb-name').click();
 
     await expect
@@ -302,7 +318,7 @@ describe('the popover never shows a broken or empty rating', () => {
       recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
       reviewCount: 0,
     });
-    renderChrome();
+    await renderChrome();
     await page.getByTestId('app-block-breadcrumb-name').click();
     const rec = page.getByTestId('app-block-name-popover-recommend').element();
     expect((rec.textContent ?? '').trim()).toBe('No reviews yet');
@@ -317,7 +333,7 @@ describe('the whole cluster is gated on store access', () => {
     // `/apps/store-preview/<slug>` returns `notFound` and `getAppDetail` throws
     // NOT_FOUND, so an interactive crumb here would be a pure dead end.
     mocks.features = {};
-    renderChrome();
+    await renderChrome();
 
     await expect.element(page.getByTestId('app-block-breadcrumb-name')).toBeInTheDocument();
     const crumb = await trigger();
@@ -344,7 +360,7 @@ describe('the whole cluster is gated on store access', () => {
     // three arms stops a future "simplification" to one flag from silently removing
     // the affordance for the external-only cohort.
     mocks.features = flags as Record<string, boolean>;
-    renderChrome();
+    await renderChrome();
     expect((await trigger()).tagName.toLowerCase()).toBe('button');
   });
 
@@ -352,7 +368,7 @@ describe('the whole cluster is gated on store access', () => {
     // The model surface renders no breadcrumb at all, but a future caller that
     // renders the page chrome without a slug must degrade to text rather than offer
     // a link it cannot build.
-    renderChrome({ slug: undefined });
+    await renderChrome({ slug: undefined });
     const crumb = await trigger();
     expect(crumb.tagName.toLowerCase()).not.toBe('button');
     expect(mocks.lastQueryInput).toBeUndefined();
