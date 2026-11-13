@@ -27,7 +27,6 @@ export function storylineRefFromEvent(topic: string, value: unknown): DomainRef 
   return typeof row.id === 'number' && row.id > 0 ? { child: row.id } : null;
 }
 
-/** Chapter 1 post edits, re-ratings and bans have no CDC event of their own. */
 export const STORYLINE_REFRESH = { everyMs: 15 * 60_000, batch: 500 };
 
 export const storylineDomain: Domain<StorylinePayload> = {

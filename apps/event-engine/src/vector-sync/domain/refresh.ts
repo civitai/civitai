@@ -26,10 +26,11 @@ type RefreshQueue = {
 };
 
 /**
- * Starts each refreshing domain's walk: every `everyMs`, its next `batch` ids go into its lane for
- * the queue's normal flush. A tick is skipped while the previous read runs or the queue is full;
- * a failed read keeps the cursor. The position is kept in memory, so a restart begins again from
- * the first id. Returns the timers, for shutdown.
+ * Starts each refreshing domain's walk: every `everyMs`, one full pass over its table, `batch` ids a
+ * read, each into its lane for the queue's normal flush. So whatever the table size or restarts, a
+ * row is revisited within one tick. A pass stops early when the queue fills or a read fails, and the
+ * next tick resumes it from there; a tick is skipped while the previous pass runs or the queue is
+ * full. Returns the timers, for shutdown.
  */
 export function startRefreshers(
   domains: Domain<any>[],
@@ -42,15 +43,18 @@ export function startRefreshers(
     if (!refresh || !lane) return [];
     let cursor = 0;
     let running = false;
+    const pass = async () => {
+      do {
+        const { ids, next } = await nextRefreshIds(pg, domain, cursor, refresh.batch);
+        for (const id of ids) lane.add({ id });
+        cursor = next;
+      } while (cursor !== 0 && !queue.isFull);
+    };
     return [
       setInterval(() => {
         if (running || queue.isFull) return;
         running = true;
-        nextRefreshIds(pg, domain, cursor, refresh.batch)
-          .then(({ ids, next }) => {
-            for (const id of ids) lane.add({ id });
-            cursor = next;
-          })
+        pass()
           .catch((err) => logger.error({ err }, `${domain.name}-sync: refresh read failed`))
           .finally(() => {
             running = false;
