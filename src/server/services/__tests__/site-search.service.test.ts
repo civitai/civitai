@@ -21,6 +21,7 @@ import {
   siteMultiSearch,
   viewerSearchClauses,
 } from '~/server/services/site-search.service';
+import type { SiteSearchViewer } from '~/server/services/site-search.service';
 import { NsfwLevel } from '~/server/common/enums';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -378,8 +379,10 @@ describe('collection images', () => {
 });
 
 describe('passthrough (site-search-passthrough)', () => {
-  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
-  const uncapped = { showSfwFace: false };
+  // Typed as the viewer: `hitsNeedShaping` takes only `browsingLevelCap`, and a literal without
+  // it has no property in common with that type.
+  const capped: SiteSearchViewer = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const uncapped: SiteSearchViewer = { showSfwFace: false };
   const on = { passthrough: true };
   // Spacing and a \u escape that a parse and re-serialize would both rewrite, so only the
   // upstream bytes themselves can equal this.
