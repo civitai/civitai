@@ -308,3 +308,63 @@ describe('blocks.submitWorkflow — global generation kill switch', () => {
     expect(killSwitchReads()).toBe(0);
   });
 });
+
+// The kill switch UNKNOWN: its sysRedis read fails and this process has never read it. That is
+// refused for every subject and every generation kind, moderators included, as onsite
+// (`buildGenerationContext`). The service module is re-imported per test, so a value read by an
+// earlier test is never "last known" here.
+describe('blocks.submitWorkflow — generation kill switch unknown', () => {
+  const UNAVAILABLE = 'Generation is temporarily unavailable. Please try again in a few minutes.';
+  const NEXT_REFUSAL = 'model version not found';
+  const sysRedisDown = () =>
+    redisMock.sysRedis.hGet.mockImplementation((async () => {
+      throw new Error('sysRedis connection is down');
+    }) as never);
+
+  beforeEach(() => {
+    vi.resetModules();
+    sysRedisDown();
+  });
+
+  it.each(Object.entries(BODIES))(
+    'refuses the %s kind with a 503, before any spend',
+    async (_kind, body) => {
+      await expect(submit(body)).resolves.toMatchObject({
+        code: 'SERVICE_UNAVAILABLE',
+        message: UNAVAILABLE,
+      });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(Object.entries(BODIES))(
+    'refuses a moderator on the %s kind too (no bypass of an unknown state)',
+    async (_kind, body) => {
+      mockGetUserById.mockResolvedValue({ id: VIEWER, isModerator: true });
+      mockGetSessionUser.mockResolvedValue({ id: VIEWER, isModerator: true, tier: 'free' });
+      await expect(submit(body)).resolves.toMatchObject({
+        code: 'SERVICE_UNAVAILABLE',
+        message: UNAVAILABLE,
+      });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it('CONTROL: a last-known "enabled" read keeps admitting through the outage', async () => {
+    storedStatus = { mode: 'enabled', message: OPERATOR_MESSAGE };
+    redisMock.sysRedis.hGet.mockImplementation((async (_key: string, field: string) =>
+      field === REDIS_SYS_KEYS.GENERATION.STATUS ? JSON.stringify(storedStatus) : null) as never);
+    await expect(submit(BODIES.textToImage)).resolves.toMatchObject({ message: NEXT_REFUSAL });
+    sysRedisDown();
+    await expect(submit(BODIES.textToImage)).resolves.toMatchObject({ message: NEXT_REFUSAL });
+  });
+
+  it('BLOCKS_ENFORCE_GENERATION_STATUS off: the step kind is not refused by the gate', async () => {
+    setEnv({ ORCHESTRATOR_MODE: 'prod', BLOCKS_ENFORCE_GENERATION_STATUS: false });
+    const error = await submit(BODIES.step);
+    expect(error).not.toMatchObject({ message: UNAVAILABLE });
+    expect(killSwitchReads()).toBe(0);
+  });
+});

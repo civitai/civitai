@@ -9670,10 +9670,14 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
  * generator reached through an app. The subject is looked up only when the switch is not
  * `enabled`, so the normal path costs the one sysRedis read and no database read. An anonymous
  * subject is refused while the switch is on (it is no moderator and holds no tier).
+ * A switch that cannot be read (sysRedis down, never read in this process) is refused for every
+ * subject, moderators included, as `buildGenerationContext` refuses it onsite: the moderator bypass
+ * applies to an operator's decision, not to a state nobody knows.
  */
 async function assertBlockGenerationAllowed(subjectId: number | null): Promise<void> {
-  const { getGenerationStatus } = await import('~/server/services/generation/generation.service');
-  const status = await getGenerationStatus();
+  const generation = await import('~/server/services/generation/generation.service');
+  const { status, known } = await generation.getGenerationStatusState();
+  if (!known) throw generation.generationConfigUnavailableError();
   if (status.mode === 'enabled') return;
   const user = subjectId == null ? null : await getBlockSessionUser(subjectId);
   assertGenerationStatusAllows(status, { isModerator: !!user?.isModerator, tier: user?.tier });
