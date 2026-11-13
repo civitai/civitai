@@ -28,6 +28,11 @@ import { getSamplerCatalog } from '~/shared/generation/sampler-options';
  * A block resolves its checkpoint's family with `baseModels[checkpoint.baseModel]` — the same
  * `getEcosystem(baseModel)` the submit path keys the graph by.
  *
+ * `default` is what the on-site generator PRESELECTS. It is not what a block gets by omitting
+ * `params.sampler`: the block submit path then sends 'Euler' (`buildImageWorkflowInput`), which
+ * on the SD families is a valid, different sampler. A block that wants the generator's default
+ * sends `default` explicitly.
+ *
  * Auth: any valid block token, no requiredScope — the same posture as `blocks/models.ts` and
  * `blocks/generation-resources.ts`, and a weaker need than theirs: those need the token for its
  * signed `maxBrowsingLevel`, this needs it for nothing but the gate. The data is static

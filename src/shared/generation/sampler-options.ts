@@ -49,7 +49,10 @@ export const SAMPLER_PROBE_WORKFLOW = 'txt2img';
 
 export type SamplerOption = { value: string; label: string };
 
-/** One sampler control: the options in the generator's order, and the preselected value. */
+/**
+ * One sampler control: the options in the generator's order, and the value the generator
+ * preselects. Not the value a block gets by omitting `params.sampler` — see the route header.
+ */
 export type SamplerChoice = { options: SamplerOption[]; default: string };
 
 export type FamilySamplers = {
