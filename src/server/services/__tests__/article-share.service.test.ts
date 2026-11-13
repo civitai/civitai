@@ -393,7 +393,22 @@ describe('getArticleByShareToken: body images', () => {
 
     expect(result.status === 'ok' && result.article.contentImages).toEqual([linked]);
     expect(dbMock.dbWrite.imageConnection.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { entityId: ARTICLE, entityType: 'Article' } })
+      expect.objectContaining({
+        where: { entityId: ARTICLE, entityType: 'Article' },
+        select: {
+          image: {
+            select: expect.objectContaining({
+              id: true,
+              url: true,
+              nsfwLevel: true,
+              userId: true,
+              hash: true,
+              width: true,
+              height: true,
+            }),
+          },
+        },
+      })
     );
   });
 });

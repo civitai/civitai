@@ -66,14 +66,14 @@ const image = (id: number, url: string, nsfwLevel: number) => ({
   height: 1000,
 });
 
-function renderDraft(html: string, contentImages: ReturnType<typeof image>[]) {
+function renderDraft(html: string, contentImages: ReturnType<typeof image>[], nsfwLevel = PG) {
   const article = {
     id: 1,
     title: 'Shared draft',
     content: html,
     updatedAt: new Date(),
     user: { id: 10, username: 'author' },
-    nsfwLevel: PG,
+    nsfwLevel,
     contentJson: generateJSON(html, tiptapExtensions),
     contentImages,
     coverImage: undefined,
@@ -89,7 +89,7 @@ const imgWithSrc = (container: HTMLElement, fragment: string) =>
   [...container.querySelectorAll('img')].filter((img) => img.src.includes(fragment));
 
 describe('SharedArticleView body images', () => {
-  test('🔴 an R body image is covered for a PG reader, and its src is not in the page', async () => {
+  test('🔴 an R body image is covered for a PG reader and not rendered until Show', async () => {
     const { container } = await renderDraft(`${media(R_UUID)}${media(PG_UUID)}`, [
       image(501, R_UUID, R),
       image(502, PG_UUID, PG),
@@ -99,5 +99,12 @@ describe('SharedArticleView body images', () => {
     expect(imgWithSrc(container, R_UUID)).toHaveLength(0);
     // Control: the PG image beside it renders, so an absent src is the guard, not a broken render.
     await expect.poll(() => imgWithSrc(container, PG_UUID)).toHaveLength(1);
+  });
+
+  test('🔴 a body image with no linked row is rated at the draft’s level', async () => {
+    const { container } = await renderDraft(media(R_UUID), [], R);
+
+    await expect.element(page.getByText('This image is rated')).toBeVisible();
+    expect(imgWithSrc(container, R_UUID)).toHaveLength(0);
   });
 });
