@@ -232,7 +232,6 @@ describe('getModelsWithImagesAndModelVersions card images', () => {
       expect(await cardImages(31, { user: { id: 99, isModerator: true } })).toEqual([1]);
     });
 
-    // The cover can come from outside the held images (another version, read unheld).
     it('holds it for any other viewer on a full credential', async () => {
       modelRow.minor = true;
       holdAt(1 | 2);

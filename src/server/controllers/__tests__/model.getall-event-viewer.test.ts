@@ -55,8 +55,6 @@ describe('model.getAll event decoration viewer', () => {
   });
 });
 
-// A held model's showcase is whole only for its owner or a moderator on a session or a full key,
-// so an app they authorised with a scoped token gets it held.
 describe('model.getAll held-showcase viewer', () => {
   it.each([
     ['a session', {}, true],
