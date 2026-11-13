@@ -259,12 +259,16 @@ export async function createBuzzTipTransactionHandler({
     // `fromUserId` and `toAccountId` are numeric, so `block-tip:${fromUserId}:${key}`
     // is delimiter-injective — no two distinct (user, key, target) triples collide.
     // Absent key → the original per-call `crypto.randomUUID()` (no dedup), byte-identical to today.
-    // The on-site key is a uuid (schema-checked) under its own `tip:` namespace, injective the same way.
+    // The on-site key is a uuid (schema-checked) under its own `tip:` namespace, after the numeric
+    // user id, so no user's id can name another's. The amount and entity that follow only separate
+    // one user's tips under one key.
     const keyed = !!(idempotencyKey ?? inputKey);
     const sharedId = idempotencyKey
       ? `block-tip:${ctx.user.id}:${idempotencyKey}`
       : inputKey
-      ? `tip:${ctx.user.id}:${inputKey}`
+      ? // The tip's content is part of the id, so a key reused for a different tip (another
+        // amount or entity) is that tip, charged on its own, never an earlier one recovered.
+        `tip:${ctx.user.id}:${inputKey}:${input.amount}:${entityType ?? ''}:${entityId ?? ''}`
       : `tip-${crypto.randomUUID()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
     const transactions = targetUserIds.map((toAccountId) => ({
       ...tipInput,
@@ -396,13 +400,15 @@ export async function createBuzzTipTransactionHandler({
 }
 
 /**
- * A keyed tip batch that failed. A failure that provably moved nothing is rethrown. Otherwise
- * every leg this call sent is looked up: all found, the batch landed and is reported as this
- * call's (its side effects then run once, here); any leg missing, or a lookup failing, is
- * PAYMENT_OUTCOME_UNKNOWN_MESSAGE, and a retry under the same key moves only the missing legs.
+ * A keyed tip batch that failed. A failure that provably moved nothing is rethrown. Otherwise the
+ * same batch is resent once: the ledger answers every leg it already holds as a conflict and moves
+ * only the rest. Every leg accounted for (moved or conflicting), the batch landed and is reported
+ * as this call's (its side effects then run once, here). A resend that fails, or that leaves a leg
+ * unaccounted for (the ledger drops an insufficient-funds leg from both lists, and the first send
+ * may still be committing it), is PAYMENT_OUTCOME_UNKNOWN_MESSAGE.
  */
 export async function resolveFailedTipBatch(
-  transactions: { externalTransactionId: string; amount: number }[],
+  transactions: Parameters<typeof createBuzzTransactionMany>[0],
   alreadyMoved: Set<string>,
   error: unknown,
   userId: number
@@ -410,17 +416,20 @@ export async function resolveFailedTipBatch(
   if (chargeWasDeclined(error)) throw error;
   const sent = transactions.filter((t) => !alreadyMoved.has(t.externalTransactionId));
   const context = { externalTransactionId: sent[0]?.externalTransactionId ?? '', userId };
-  let found: unknown[];
+  let resent: { transactions: string[]; conflicts: string[] };
   try {
-    found = await Promise.all(sent.map((t) => getTransactionByExternalId(t.externalTransactionId)));
-  } catch (lookupError) {
-    throw paymentOutcomeUnknown(context, 'tip lookup failed after unknown outcome', {
+    resent = await createBuzzTransactionMany(transactions);
+  } catch (resendError) {
+    throw paymentOutcomeUnknown(context, 'tip resend failed after unknown outcome', {
       error,
-      lookupError,
+      resendError,
     });
   }
-  if (sent.length === 0 || found.some((leg) => !leg))
-    throw paymentOutcomeUnknown(context, 'tip legs missing after unknown outcome', { error });
+  if (
+    sent.length === 0 ||
+    resent.transactions.length + resent.conflicts.length < transactions.length
+  )
+    throw paymentOutcomeUnknown(context, 'tip legs unaccounted for after resend', { error });
   return { transactions: sent.map((t) => t.externalTransactionId), conflicts: [] };
 }
 

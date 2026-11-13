@@ -9,6 +9,7 @@ import { TRPCError } from '@trpc/server';
  *
  * Faults model a write whose outcome the caller cannot see: `lose-response` commits and then
  * fails like a client-side timeout, `fail-before-commit` fails the same way having moved nothing.
+ * Each queued fault applies to the next write of any kind, a resend included.
  */
 type Fault = 'lose-response' | 'fail-before-commit';
 type Write = {
@@ -63,11 +64,14 @@ export function createFakeBuzzLedger() {
         externalTransactionId: input.externalTransactionId,
       };
     },
-    recoverBuzzTransactionId: async (input: Write) => ({
-      transactionId: write(input),
-      remainingBalance: null,
-      externalTransactionId: input.externalTransactionId,
-    }),
+    resendBuzzTransaction: async (input: Write) => {
+      const transactionId = faulted(() => write(input));
+      return {
+        transactionId,
+        remainingBalance: null,
+        externalTransactionId: input.externalTransactionId,
+      };
+    },
     createBuzzTransactionMany: async (inputs: Write[]) =>
       faulted(() => {
         const transactions: string[] = [];
@@ -78,6 +82,42 @@ export function createFakeBuzzLedger() {
         }
         return { transactions, conflicts };
       }),
+    // One leg per call (one source account), filed under `<prefix>-0`; an occupied id is answered
+    // 200 with the leg marked `duplicate`, as POST /multi-transactions does.
+    createMultiAccountBuzzTransaction: async (input: {
+      externalTransactionIdPrefix: string;
+      amount: number;
+      fromAccountId: number;
+      toAccountId: number;
+    }) =>
+      faulted(() => {
+        const externalTransactionId = `${input.externalTransactionIdPrefix}-0`;
+        const duplicate = held.has(externalTransactionId);
+        const transactionId = write({ ...input, externalTransactionId });
+        return {
+          transactionIds: [
+            { transactionId, accountType: 'yellow', amount: input.amount, duplicate },
+          ],
+          transactionCount: 1,
+          totalAmount: input.amount,
+        };
+      }),
+    refundMultiAccountTransaction: async ({
+      externalTransactionIdPrefix,
+    }: {
+      externalTransactionIdPrefix: string;
+    }) => {
+      for (const t of [...held.values()])
+        if (t.externalTransactionId.startsWith(externalTransactionIdPrefix))
+          write({ ...t, externalTransactionId: `refund-${t.transactionId}` });
+      return {};
+    },
+    getPrefixRefundState: async (prefix: string) => {
+      if (lookupError) throw lookupError;
+      const legs = [...held.values()].filter((t) => t.externalTransactionId.startsWith(prefix));
+      const reversed = legs.filter((t) => held.has(`refund-${t.transactionId}`));
+      return { reversed, missing: legs.filter((t) => !reversed.includes(t)) };
+    },
     getTransactionByExternalId: async (externalId: string) => {
       if (lookupError) throw lookupError;
       const t = held.get(externalId);

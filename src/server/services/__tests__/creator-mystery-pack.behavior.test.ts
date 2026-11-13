@@ -26,7 +26,7 @@ const buzz = vi.hoisted(() => ({
   createBuzzTransaction: vi.fn(),
   refundTransaction: vi.fn(),
   getTransactionByExternalId: vi.fn(),
-  recoverBuzzTransactionId: vi.fn(),
+  resendBuzzTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -1069,14 +1069,14 @@ describe('submitMysteryPack box image key', () => {
 describe('the mystery pack submission fee across an unknown outcome', () => {
   const KEY = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
   const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
-    "We couldn't confirm whether your Buzz payment went through. Check your Buzz transactions before trying again. Retrying this same action will not charge you twice.";
+    "We couldn't confirm whether your Buzz payment went through. Trying this same action again from this page is safe. If you reloaded or left the page, check your Buzz balance and transactions first.";
   let ledger: ReturnType<typeof createFakeBuzzLedger>;
   let clock = 1_700_000_000_000;
 
   beforeEach(() => {
     ledger = createFakeBuzzLedger();
     buzz.createBuzzTransaction.mockImplementation(ledger.createBuzzTransaction);
-    buzz.recoverBuzzTransactionId.mockImplementation(ledger.recoverBuzzTransactionId);
+    buzz.resendBuzzTransaction.mockImplementation(ledger.resendBuzzTransaction);
     buzz.getTransactionByExternalId.mockImplementation(ledger.getTransactionByExternalId);
     buzz.refundTransaction.mockImplementation(ledger.refundTransaction);
     // Each attempt is a later moment, as it is for a creator pressing submit again.
@@ -1088,12 +1088,11 @@ describe('the mystery pack submission fee across an unknown outcome', () => {
 
   it('a retry with the same key after an unanswered charge charges once and submits once', async () => {
     ledger.queueFault('lose-response');
-    ledger.failLookups();
+    ledger.queueFault('lose-response');
     // What the creator is told is pinned below; here only that it failed and wrote nothing.
     await expect(submit({ idempotencyKey: KEY } as never)).rejects.toThrow();
     expect(await packCount()).toBe(0);
 
-    ledger.failLookups(null);
     const { shopItemId } = await submit({ idempotencyKey: KEY } as never);
 
     expect(ledger.charges()).toHaveLength(1);
@@ -1107,7 +1106,7 @@ describe('the mystery pack submission fee across an unknown outcome', () => {
     expect(meta.submissionTxId).toBe(ledger.charges()[0].transactionId);
   });
 
-  it('continues to the pack in the same request when the lookup finds the charge', async () => {
+  it('continues to the pack in the same request when the resend answers', async () => {
     ledger.queueFault('lose-response');
 
     await submit({ idempotencyKey: KEY } as never);
@@ -1116,9 +1115,9 @@ describe('the mystery pack submission fee across an unknown outcome', () => {
     expect(await packCount()).toBe(1);
   });
 
-  it('answers "may have gone through" when the lookup fails, and writes nothing', async () => {
+  it('answers "may have gone through" when the resend also fails, and writes nothing', async () => {
     ledger.queueFault('lose-response');
-    ledger.failLookups();
+    ledger.queueFault('fail-before-commit');
 
     const error = await submit({ idempotencyKey: KEY } as never).catch((e: unknown) => e);
 

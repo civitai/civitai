@@ -877,17 +877,16 @@ async function postBuzzTransaction(
 }
 
 /**
- * The ledger id of a transaction the ledger ALREADY holds under `externalTransactionId`.
- * `getTransactionByExternalId` proves it exists but does not return its id, which a caller needs
- * to refund it or record it. This resends the same write: the ledger keeps external ids unique and
- * answers a resend of one it holds with 200 and the EXISTING transaction's id, moving nothing (on
- * a short balance too: it checks for a committed id before answering "insufficient funds").
+ * Resends a write under the same `externalTransactionId` after its first send ended with an
+ * unknown outcome. The ledger keeps external ids unique: one it already holds is answered with
+ * 200 and the EXISTING transaction's id, moving nothing (on a short balance too, since it checks
+ * for a committed id before answering "insufficient funds"); one it does not hold is charged now,
+ * once, and a first send still in flight then loses on the unique index. Either way one charge.
  *
- * 🔴 On an id the ledger does NOT hold this is an ordinary charge. Call it only after the lookup
- * found the transaction. No balance pre-check here: the balance it would read is the one after
- * the charge being recovered.
+ * No balance pre-check: the balance it would read may already reflect the first send's charge.
+ * A 200 with a null id is the ledger's "insufficient funds" for an id it does not hold.
  */
-export async function recoverBuzzTransactionId(input: PostBuzzTransactionInput) {
+export async function resendBuzzTransaction(input: PostBuzzTransactionInput) {
   return postBuzzTransaction(input);
 }
 
@@ -1205,10 +1204,9 @@ export async function completeStripeBuzzTransaction({
 export async function refundTransaction(
   transactionId: string,
   description?: string,
-  details?: MixedObject,
-  opts?: BuzzWriteOptions
+  details?: MixedObject
 ) {
-  return buzzService.refundTransaction(transactionId, { description, details }, opts);
+  return buzzService.refundTransaction(transactionId, { description, details });
 }
 
 /**

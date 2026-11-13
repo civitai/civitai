@@ -611,15 +611,9 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
   // buzz-prefix-refund.ts) expect a repeat refund to be answered 200 or 409 rather than paid twice,
   // and treat a 409 as done only when `refund-<transactionId>` is on the ledger. That expectation is
   // theirs; this client does not check it.
-  // `opts` overrides per call, like every other write (a deadline, or a narrower retry rule).
-  const refundTransaction = (
-    transactionId: string,
-    body: BuzzRefundTransactionInput = {},
-    opts?: BuzzWriteOptions
-  ) =>
+  const refundTransaction = (transactionId: string, body: BuzzRefundTransactionInput = {}) =>
     post(`/transactions/${transactionId}/refund`, body, {
       shouldRetry: () => true,
-      ...opts,
     }) as Promise<RefundTransactionResponse>;
 
   return {
