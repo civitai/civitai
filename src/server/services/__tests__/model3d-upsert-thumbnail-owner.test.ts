@@ -1,0 +1,96 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { upsertModel3D } from '~/server/services/model3d.service';
+import type { SessionUser } from '~/types/session';
+
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  throwOnBlockedUserContent: vi.fn(),
+}));
+
+const db = dbMock.dbWrite;
+
+const owner = { id: 42, username: 'maker', isModerator: false } as SessionUser;
+const stranger = { id: 7, username: 'someone', isModerator: false } as SessionUser;
+const moderator = { id: 1, username: 'mod', isModerator: true } as SessionUser;
+
+const MODEL_ID = 500;
+// image id -> owning user id
+const images: Record<number, number> = { 11: owner.id, 22: stranger.id, 33: moderator.id };
+
+type Input = Parameters<typeof upsertModel3D>[0]['input'];
+const base = { name: 'Cube', licenseId: 1 } as Input;
+
+beforeEach(() => {
+  db.model3D.findUnique.mockReset();
+  db.model3D.findUnique.mockResolvedValue({ id: MODEL_ID, userId: owner.id, lockedProperties: [] });
+  db.image.findUnique.mockReset();
+  db.image.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
+    where.id in images ? { userId: images[where.id] } : null
+  );
+  db.model3D.update.mockReset();
+  db.model3D.update.mockResolvedValue({ id: MODEL_ID });
+  db.model3D.create.mockReset();
+  db.model3D.create.mockResolvedValue({ id: MODEL_ID });
+});
+
+const written = () =>
+  (db.model3D.update.mock.calls[0] ?? db.model3D.create.mock.calls[0])?.[0]?.data;
+
+describe('upsertModel3D thumbnail ownership', () => {
+  it("accepts the owner's own image on create and update", async () => {
+    await upsertModel3D({ input: { ...base, thumbnailImageId: 11 }, user: owner });
+    expect(written().thumbnailImageId).toBe(11);
+
+    db.model3D.create.mockClear();
+    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
+    expect(written().thumbnailImageId).toBe(11);
+  });
+
+  it("refuses another user's image on create and update, writing nothing", async () => {
+    await expect(
+      upsertModel3D({ input: { ...base, thumbnailImageId: 22 }, user: owner })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 22 }, user: owner })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(db.model3D.create).not.toHaveBeenCalled();
+    expect(db.model3D.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a missing image with the same error as a foreign one', async () => {
+    const missing = upsertModel3D({ input: { ...base, thumbnailImageId: 999 }, user: owner });
+    const foreign = upsertModel3D({ input: { ...base, thumbnailImageId: 22 }, user: owner });
+    const [a, b] = await Promise.allSettled([missing, foreign]);
+    expect(a.status).toBe('rejected');
+    expect(b.status).toBe('rejected');
+    const ra = (a as PromiseRejectedResult).reason;
+    const rb = (b as PromiseRejectedResult).reason;
+    expect([ra.code, ra.message]).toEqual([rb.code, rb.message]);
+  });
+
+  it("lets a moderator set the model owner's image on someone else's model, and nothing else", async () => {
+    await upsertModel3D({
+      input: { ...base, id: MODEL_ID, thumbnailImageId: 11 },
+      user: moderator,
+    });
+    expect(written().thumbnailImageId).toBe(11);
+
+    await expect(
+      upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 33 }, user: moderator })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 22 }, user: moderator })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('saves without a thumbnail, and can clear one', async () => {
+    await upsertModel3D({ input: { ...base, id: MODEL_ID }, user: owner });
+    expect(written().thumbnailImageId).toBeUndefined();
+
+    db.model3D.update.mockClear();
+    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: null }, user: owner });
+    expect(written().thumbnailImageId).toBeNull();
+    expect(db.image.findUnique).not.toHaveBeenCalled();
+  });
+});

@@ -768,6 +768,16 @@ export const upsertModel3D = async ({
     }
   }
 
+  // Moderators included: the thumbnail must be one of the model owner's images.
+  if (typeof data.thumbnailImageId === 'number') {
+    const ownerId = existing?.userId ?? user.id;
+    const image = await dbWrite.image.findUnique({
+      where: { id: data.thumbnailImageId },
+      select: { userId: true },
+    });
+    if (image?.userId !== ownerId) throw throwBadRequestError('Invalid thumbnail image.');
+  }
+
   const writeData: Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput = {
     ...data,
     userId: existing?.userId ?? user.id,
