@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * GET /api/v1/model-versions/[id], by-hash/[hash] and the POST by-hash batch all shape their body
@@ -84,6 +85,7 @@ const image = (id: number, nsfwLevel: number) => ({
   height: 1,
   hash: null,
   meta: null,
+  tags: [],
 });
 const SHOWCASE = [image(1, NsfwLevel.X), image(2, NsfwLevel.PG)];
 
@@ -131,7 +133,10 @@ async function prepare(images?: unknown[]) {
     modelVersion(),
     new URL('https://civitai.com'),
     images as any,
-    null
+    null,
+    false,
+    false,
+    allBrowsingLevelsFlag
   );
 }
 

@@ -1,6 +1,5 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from '@/config';
-import { SITE_REPLICATION, VectorStore, type CollectionSpec } from '../qdrant';
+import { SITE_REPLICATION, VectorStore, qdrantClient, type CollectionSpec } from '../qdrant';
 import type { CruciblePayload } from './source';
 
 /**
@@ -36,10 +35,9 @@ export const CRUCIBLE_COLLECTION: CollectionSpec<CruciblePayload> = {
 };
 
 export function crucibleVectorStore() {
-  const { qdrantUrl, qdrantApiKey, crucibleCollection } = config.vectorSync;
   return new VectorStore<CruciblePayload>(
-    new QdrantClient({ url: qdrantUrl, apiKey: qdrantApiKey }),
-    crucibleCollection,
+    qdrantClient(),
+    config.vectorSync.crucibleCollection,
     CRUCIBLE_COLLECTION
   );
 }

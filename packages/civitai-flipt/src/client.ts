@@ -54,6 +54,10 @@ export type FliptOptions = Partial<FliptConfig> & {
    * Last-known flag state, shared between processes. With it, a process that cannot reach Flipt
    * at startup evaluates from the newest stored snapshot (no older than `snapshotMaxAgeMs`) instead
    * of answering `false` for every flag, and a process with live state keeps the stored copy current.
+   * While Flipt stays unreachable, each failed retry reloads the store and switches to a newer
+   * snapshot when one was saved. `snapshotMaxAgeMs` is the admission limit for the FIRST seed only:
+   * a seeded snapshot is never dropped for age, so a fleet-wide Flipt outage longer than the limit
+   * does not turn every seeded process's flags off at once.
    */
   snapshotStore?: FliptSnapshotStore;
 };
@@ -115,6 +119,24 @@ export type FliptFeatureFlags = {
    */
   getCacheStats(): { boolean: TtlCacheStats; variant: TtlCacheStats };
   /**
+   * A number that changes whenever the flag state this process evaluates against may have changed:
+   * the live client received a snapshot body that differs from the one before it, or the client
+   * that answers evaluations (`getClientSync()`) is a different object than at the previous read —
+   * the first live init, a snapshot seed, the switch from a seeded client to a live one, or no
+   * client at all. Never changes otherwise, so a caller can memoize anything derived from flag
+   * evaluations until it moves.
+   *
+   * It moves TWICE per changed snapshot: once when the body is read, and once on a later macrotask,
+   * after the SDK has applied the body to its engine (the SDK reads the body, then applies it on its
+   * next microtask). Something derived between those two reads may hold the OLD state under the
+   * first new number; the second move retires it.
+   *
+   * 🔴 It does not cover the eval cache: evaluations cached before the change keep answering for up
+   * to `evalCacheTtlMs` after it. A caller memoizing evaluations must not keep anything computed
+   * within `evalCacheTtlMs` of observing a move for longer than it would have without this.
+   */
+  getStateVersion(): number;
+  /**
    * Set (or replace) the last-known snapshot store after construction — for an app whose storage
    * client must not be imported by the module that builds this instance. Read when it is needed
    * (a failed init, a live fetch), so registering it before the first init FAILS is enough.
@@ -154,9 +176,11 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   );
 
   // `instance` is the live client: it polls Flipt. `seeded` evaluates a stored snapshot and never
-  // polls; it serves only until a live client exists.
+  // polls; it serves until a live client exists. `seededSavedAt` is its snapshot's `savedAt`: each
+  // failed retry reloads the store and swaps in a snapshot saved after it.
   let instance: FliptNodeClient | null = null;
   let seeded: FliptNodeClient | null = null;
+  let seededSavedAt = 0;
   let initializing: Promise<FliptNodeClient | null> | null = null;
   let lastFailureTime = 0;
   // Whether any init attempt has finished. Only the FIRST attempt is waited on by callers (a cold
@@ -164,7 +188,47 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   // background, and callers keep the seeded state or the fail-closed default meanwhile.
   let attempted = false;
 
+  function dropSeeded() {
+    const old = seeded;
+    seeded = null;
+    seededSavedAt = 0;
+    try {
+      old?.close();
+    } catch (e) {
+      log('[flipt] could not close the snapshot-seeded client:', e);
+    }
+  }
+
   const current = () => instance ?? seeded;
+
+  // See `getStateVersion`. `stateVersionClient` is the client seen at the last read, so a swap of
+  // `instance`/`seeded` moves the version wherever the swap happens, without each assignment site
+  // having to remember to.
+  let stateVersion = 0;
+  let stateVersionClient: FliptNodeClient | null = null;
+  // What the last snapshot body was, to tell a changed body from a re-sent one: its ETag when Flipt
+  // sends one, else the body itself, serialized (once per poll, only when Flipt omits the ETag).
+  // A body field that changed on every poll would move the version on every poll, so a
+  // version-keyed cache would keep entries for at most one poll interval: a smaller saving, never
+  // a staler answer.
+  let lastSnapshotSignature: string | null = null;
+
+  function noteSnapshotBody(data: unknown, etag: string | null) {
+    let signature: string;
+    try {
+      signature = etag ? `etag:${etag}` : `body:${JSON.stringify(data)}`;
+    } catch {
+      signature = `unserializable:${Date.now()}:${Math.random()}`;
+    }
+    if (signature === lastSnapshotSignature) return;
+    lastSnapshotSignature = signature;
+    stateVersion++;
+    // The SDK applies the body after this callback returns (on a later microtask); move again once
+    // that has surely happened. See `getStateVersion`.
+    setTimeout(() => {
+      stateVersion++;
+    }, 0);
+  }
 
   // The newest snapshot this process holds from live fetches, and when it last saved one.
   let liveData: unknown;
@@ -182,9 +246,15 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     store.save(snapshot, changed).catch((e) => log('[flipt] snapshot save failed:', e));
   }
 
+  // Runs after every failed init attempt, not just the first, so a process that alone cannot reach
+  // Flipt follows the snapshots its healthy siblings keep saving instead of evaluating its boot-time
+  // one forever. A stored snapshot no newer than the seeded one changes nothing. The age limit
+  // admits the first seed only: once seeded, a newer snapshot is always an improvement, and the
+  // seeded one is never dropped for age (a fleet-wide outage past the limit must not flip every
+  // seeded process's flags off together while live processes keep theirs).
   async function seedFromSnapshot(): Promise<void> {
     const store = snapshotStore;
-    if (seeded || !store || config.snapshotMaxAgeMs <= 0) return;
+    if (!store || config.snapshotMaxAgeMs <= 0) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const snapshot = await Promise.race([
@@ -197,24 +267,33 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
         }),
       ]);
       if (!snapshot) {
-        log('[flipt] Flipt unreachable and no stored snapshot; flags evaluate to their defaults');
+        if (!seeded) {
+          log('[flipt] Flipt unreachable and no stored snapshot; flags evaluate to their defaults');
+        }
         return;
       }
+      if (seeded && snapshot.savedAt <= seededSavedAt) return;
       const ageMs = Date.now() - snapshot.savedAt;
-      if (ageMs > config.snapshotMaxAgeMs) {
+      if (!seeded && ageMs > config.snapshotMaxAgeMs) {
         log(
           `[flipt] Flipt unreachable; stored snapshot is ${Math.round(ageMs / 1000)}s old, over ` +
             `the ${Math.round(config.snapshotMaxAgeMs / 1000)}s limit — not used`
         );
         return;
       }
-      seeded = await initClient({
+      const next = await initClient({
         environment: config.environment,
         fetcher: createSnapshotFetcher(snapshot.data),
         errorStrategy: FALLBACK,
       });
+      const replacing = seeded !== null;
+      if (replacing) dropSeeded();
+      seeded = next;
+      seededSavedAt = snapshot.savedAt;
       log(
-        `[flipt] Flipt unreachable; evaluating from the snapshot saved ` +
+        `[flipt] Flipt unreachable; evaluating from ${
+          replacing ? 'a newer' : 'the'
+        } snapshot saved ` +
           `${new Date(snapshot.savedAt).toISOString()} (${Math.round(ageMs / 1000)}s old)`
       );
     } catch (e) {
@@ -245,6 +324,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
           onSnapshot: (data, etag) => {
             liveData = data;
             liveEtag = etag;
+            noteSnapshotBody(data, etag);
             saveSnapshot(true);
           },
           onConfirmed: () => saveSnapshot(false),
@@ -290,8 +370,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
         instance = await Promise.race([initPromise, timeoutPromise]);
         if (seeded) {
           log('[flipt] live flag state loaded; no longer evaluating from the snapshot');
-          seeded.close();
-          seeded = null;
+          dropSeeded();
         }
         return instance;
       } catch (e) {
@@ -461,6 +540,14 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     },
     getCacheStats() {
       return { boolean: boolCache.stats(), variant: variantCache.stats() };
+    },
+    getStateVersion() {
+      const client = current();
+      if (client !== stateVersionClient) {
+        stateVersionClient = client;
+        stateVersion++;
+      }
+      return stateVersion;
     },
     setSnapshotStore(store) {
       snapshotStore = store;

@@ -11,7 +11,7 @@ import {
   decodeOwnedToken,
   encodeOwnedToken,
 } from '~/server/orchestrator/orchestrator-token-identity';
-import { REDIS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -87,7 +87,7 @@ export async function getOrchestratorToken(
     // ~11min on every authenticated generation call. A fast DOWN already
     // rejects into the catch below; the SLOW half-open needs the race.
     const raw = decodeRedisString(
-      await withSysReadDeadline(
+      await withSysReadBreaker(
         sysRedis.hGet<string | Buffer>(REDIS_KEYS.GENERATION.TOKENS_OWNED, redisKey)
       )
     );

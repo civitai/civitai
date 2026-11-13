@@ -25,7 +25,7 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
-import { deriveMuteColumns, scopeMemberPrivacy } from '~/shared/utils/chat';
+import { deriveMuteColumns, groupRenamedNote, scopeMemberPrivacy } from '~/shared/utils/chat';
 import { markAllReadSql, unreadCountSql } from '~/server/utils/chat';
 import {
   throwOnBlockedLinkDomain,
@@ -345,7 +345,7 @@ export const updateChatHandler = async ({
     await createMessage({
       chatId: existing.id,
       contentType: ChatMessageType.Markdown,
-      content: name ? `Group renamed to "${name}"` : 'Group name removed',
+      content: groupRenamedNote(name),
       userId: -1,
     });
 

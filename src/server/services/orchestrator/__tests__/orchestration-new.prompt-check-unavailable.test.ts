@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 import { TRPCError } from '@trpc/server';
 
 /**
@@ -147,7 +148,7 @@ describe.each([{ isGreen: false }, { isGreen: true }])(
         (e: unknown) => e
       );
 
-      expect(err).toBeInstanceOf(TRPCError);
+      expect(err).toBeInstanceOf(PromptCheckUnavailableError);
       expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
       expect((err as TRPCError).message).toMatch(/prompt check is temporarily unavailable/i);
       // Not reported as a moderation verdict.

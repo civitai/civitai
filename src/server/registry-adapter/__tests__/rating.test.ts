@@ -22,7 +22,7 @@ import {
   readableBy,
 } from '~/server/registry-adapter/entities';
 import {
-  SOURCE_SERVICE,
+  REGISTRY_SERVICE,
   createGrpcServer,
   errorInfoOf,
   listenGrpc,
@@ -685,7 +685,7 @@ describe('🔴 tokens: invalid_token for a bad or expired one, over HTTP', () =>
   });
 });
 
-const Client = grpc.makeGenericClientConstructor(SOURCE_SERVICE, 'Source');
+const Client = grpc.makeGenericClientConstructor(REGISTRY_SERVICE, 'Registry');
 interface SourceClient {
   Subscribe(request: unknown, metadata: grpc.Metadata): grpc.ClientReadableStream<StreamEvent>;
 }
@@ -851,7 +851,8 @@ describe('the re-check is jittered, so streams opened together do not re-check t
   );
 });
 
-const SCHEMAS = 'urn:schema:registry:schema@v1';
+// The schema stream: the root, JSON Schema 2020-12's own meta-schema.
+const SCHEMAS = 'https://json-schema.org/draft/2020-12/schema';
 const FIXED_SCHEMA_URNS = [APPS, RELEASES, SERVICES];
 const urnOfApp = (slug: string) => `urn:apps.civitai.com:app/${slug}`;
 const releaseOf = (slug: string) => `urn:apps.civitai.com:app/${slug}@1.0.0`;

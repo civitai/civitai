@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { requestVerifiedCrawler } from '~/server/utils/browsing-level';
 import superjson from 'superjson';
 import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
@@ -354,7 +355,9 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
       return await next();
     }
     if (!isProd) return await next();
-    let reqTTL = ctx.cache.skip ? 0 : (ttl as number);
+    // A verified crawler's answer can differ from a signed-out visitor's at the same URL.
+    const crawler = requestVerifiedCrawler(ctx.req) !== null;
+    let reqTTL = ctx.cache.skip || crawler ? 0 : (ttl as number);
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
@@ -375,7 +378,7 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     // so, so it was accidental rather than chosen.) Reintroducing an `expireAt` guard
     // here — `if (ctx.cache?.skip && !expireAt)` — is caught by
     // `middleware.trpc.edge-cache-precedence.test.ts`.
-    if (ctx.cache?.skip) reqTTL = 0;
+    if (ctx.cache?.skip || crawler) reqTTL = 0;
     if (result.ok && ctx.cache?.canCache) {
       const cacheTags = tags?.(input).map((x) => slugit(x));
       if (cacheTags && ctx.req?.url && reqTTL > 0) {

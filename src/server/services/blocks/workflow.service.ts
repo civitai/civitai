@@ -32,6 +32,7 @@ import {
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/shared/generation/model-substitution';
 import { getImagesLimit } from '~/shared/generation/images-limit';
+import { resolveDefaultSampler } from '~/shared/generation/sampler-options';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { isSingletonSlotResource } from '~/shared/utils/resource.utils';
 import {
@@ -1229,9 +1230,8 @@ export function assertSourceImageCount(opts: {
  * Translate the block's narrow body into the platform's generation-graph
  * `input` (the flat `Record<string, unknown>` shape `generateFromGraph` /
  * `createWorkflowStepsFromGraphInput` consume), for the IMAGE workflow class
- * (txt2img / img2img). Defaults are intentionally conservative — matches the
- * comics-router preset (sampler=Euler, steps=25, priority=low) so block
- * submissions and platform submissions share the same orchestrator cost profile.
+ * (txt2img / img2img). Defaults are intentionally conservative (steps=25,
+ * priority=low). An omitted sampler is the family's own default — see SAMPLER below.
  *
  * Migrated off the deleted legacy `createTextToImageStep` path (which consumed
  * the old `{ params, resources }` `GenerateImageSchema`). The new graph
@@ -1450,6 +1450,9 @@ export function buildImageWorkflowInput(
     }
   }
 
+  const sampler =
+    body.params.sampler ?? resolveDefaultSampler(ecosystem, resolved.checkpointVersionId);
+
   const input: Record<string, unknown> = {
     workflow: workflowType,
     ecosystem,
@@ -1458,7 +1461,14 @@ export function buildImageWorkflowInput(
     prompt: body.params.prompt,
     ...(body.params.negativePrompt != null ? { negativePrompt: body.params.negativePrompt } : {}),
     ...(body.params.cfgScale != null ? { cfgScale: body.params.cfgScale } : {}),
-    sampler: body.params.sampler ?? 'Euler',
+    // SAMPLER: an omitted sampler is the family default the generator preselects and
+    // `GET /api/v1/blocks/generation-samplers` reports — one source (`resolveDefaultSampler`),
+    // never a literal. A literal 'Euler' was silently swapped by the graph's `selectDef` in
+    // families that do not offer it, and overrode the generator's default in the SD family,
+    // which offers 'Euler' but preselects 'Euler a'.
+    // No key at all when the family has no sampler control, or the catalog cannot say: the
+    // graph then applies its own default (the same source the catalog reads).
+    ...(sampler != null ? { sampler } : {}),
     steps: body.params.steps ?? 25,
     ...(body.params.seed != null ? { seed: body.params.seed } : {}),
     // Per-resource clipSkip carried from the showcase image's meta. Flux

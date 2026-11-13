@@ -2,9 +2,44 @@ import type { AssistantTool } from './tool';
 import { appKeyBase, newAppKey } from './app-key';
 import type { Sandbox } from './sandbox-client';
 import { SandboxApiError, isRunningLimit } from './sandbox-client';
+import {
+  keptAppsMessage,
+  keptAppsOf,
+  limitCardOfError,
+  sleepingLimitMessage,
+  sleepingLimitOldestOf,
+  sleepingNotLive,
+  wakeOnlyFailure,
+  safeOldest,
+  type LimitCard,
+  type OfferContext,
+  type SleepingApp,
+  type WakeResult,
+} from './sleeping-apps';
+
+/**
+ * App hibernate's cap refusals (`sleeping_limit`, `kept_apps`), which a service without
+ * hibernation never sends: the tool RETURNS `{ error, limitCard }` (the chat reports any output
+ * with an `error` as failed) so the page's card reads a structured field, never the wording.
+ */
+class LimitRefusal extends Error {
+  constructor(message: string, readonly card: LimitCard) {
+    super(message);
+  }
+}
+const isHibernateCapRefusal = (error: unknown) =>
+  (error instanceof SandboxApiError && error.code === 'sleeping_limit') || !!keptAppsOf(error);
+const limitRefusalOutput = (error: LimitRefusal) => ({
+  error: error.message,
+  limitCard: error.card,
+});
 
 export const CREATE_APP = 'create_app';
 export const USE_OPEN_APP = 'use_open_app';
+/** App hibernate: the user's apps, kept and sleeping (read-only). */
+export const LIST_APPS = 'list_apps';
+/** App hibernate: wakes one sleeping app and opens it. */
+export const WAKE_APP = 'wake_app';
 
 // The chat shows the user every refusal and thrown error, so these are written for them to read too:
 // no tool names, ids or service wording.
@@ -41,8 +76,13 @@ export const NEW_APP_FAILED_KEEP_OPEN =
   'A new app could not be made just now, so your open app was left as it is. Do what the message above says, then ask again.';
 
 /** What the user may read about a failed open; never the service's own message. */
-export function appOpenFailure(error: unknown): string {
+export function appOpenFailure(error: unknown, ctx: OfferContext = {}): string {
   if (isRunningLimit(error)) return RUNNING_LIMIT;
+  // App hibernate's two kept-cap refusals; a service without hibernation never sends either.
+  if (error instanceof SandboxApiError && error.code === 'sleeping_limit')
+    return sleepingLimitMessage(safeOldest(sleepingLimitOldestOf(error), ctx));
+  const kept = keptAppsOf(error);
+  if (kept) return keptAppsMessage(kept);
   if (error instanceof SandboxApiError && error.kind === 'limit') return KEEP_LIMIT;
   if (error instanceof SandboxApiError && error.kind === 'conflict') return APPS_CHANGING;
   return APPS_UNREACHABLE;
@@ -66,6 +106,31 @@ export function isKeepLimitResult(result: {
   return typeof error === 'string' && KEEP_LIMIT_WORDINGS.has(error);
 }
 
+/**
+ * The card a finished `create_app` or `wake_app` call that hit the cap on apps kept asks the page
+ * for: `keep` (pick a kept app to delete: `FreeUpSlotCard`), or `sleeping` (the user's sleeping
+ * apps are at their limit: offer to delete the `oldest`, once they confirm). `null` for anything
+ * else. Read from the result's structured `limitCard` (what the page hears of a runner's call
+ * too), or, for the plain kept-app cap, `isKeepLimitResult`'s released wordings.
+ */
+export function limitCardOf(result: {
+  name: string;
+  output: unknown;
+  isError: boolean;
+}): LimitCard | null {
+  if (isKeepLimitResult(result)) return { kind: 'keep' };
+  if ((result.name !== CREATE_APP && result.name !== WAKE_APP) || !result.isError) return null;
+  const output = result.output as { error?: unknown; limitCard?: unknown } | null;
+  const card = output?.limitCard as { kind?: unknown; oldest?: unknown } | null | undefined;
+  if (card?.kind === 'sleeping')
+    return {
+      kind: 'sleeping',
+      oldest: typeof card.oldest === 'string' && card.oldest ? card.oldest : null,
+    };
+  if (card?.kind === 'keep' || output?.error === KEEP_LIMIT) return { kind: 'keep' };
+  return null;
+}
+
 export interface AppToolsOptions {
   /** The user's apps as last listed; undefined until the list has loaded. */
   apps: () => Sandbox[] | undefined;
@@ -80,6 +145,14 @@ export interface AppToolsOptions {
    * arrive with the next reply.
    */
   toolsReady?: (app: string) => Promise<boolean>;
+  /**
+   * App hibernate (the `app-hibernate` flag on): the user's sleeping apps as last listed, undefined
+   * until listed. Set together with `wake`, the tools add `list_apps` and `wake_app`, and
+   * `create_app` keeps clear of sleeping apps' names. Unset, the tools are exactly as before.
+   */
+  sleeping?: () => SleepingApp[] | undefined;
+  /** Wakes a sleeping app (`wakeSleepingApp`) and makes it the open app. */
+  wake?: (app: string) => Promise<WakeResult>;
 }
 
 /** A new app whose tools the reply gets now (`reopenTools`): it goes straight on to plan and build. */
@@ -95,7 +168,7 @@ const CHOOSE_FIRST =
 
 type CreateResult = {
   app: string;
-  state: Sandbox['state'];
+  state: Sandbox['state'] | 'sleeping';
   existed?: true;
   note: string;
   /** The reply carries on with its tools built again, the new app's included (components-chat). */
@@ -117,7 +190,15 @@ export interface AppTools {
   forget(name: string): void;
 }
 
-export function createAppTools({ apps, current, open, toolsReady }: AppToolsOptions): AppTools {
+export function createAppTools({
+  apps,
+  current,
+  open,
+  toolsReady,
+  sleeping,
+  wake,
+}: AppToolsOptions): AppTools {
+  const hibernate = sleeping && wake ? { sleeping, wake } : null;
   // The chat runs a step's calls together; a second create of the same name must not race the first
   // to the service, which would make two apps under one name. Only that one joins it, and only until
   // its app exists (`release`): never a create of another name, nor one after a Stop or in another
@@ -154,13 +235,29 @@ export function createAppTools({ apps, current, open, toolsReady }: AppToolsOpti
       : { app, state, note: newAppNotReady(app, intro), awaitsUser: true };
   };
 
+  /**
+   * What a limit offer for `app` must leave out (`safeOldest`): the app being opened or woken, and
+   * every app awake now. With the apps or the sleeping apps unread (the runner's list refused past
+   * its rate limit reads as `null`, so no `sleeping` here), nothing is offered: fail closed.
+   */
+  const offerContext = (app: string): OfferContext => {
+    const list = apps();
+    return {
+      app,
+      live: (list ?? []).map((s) => s.app),
+      ...(!list || !hibernate?.sleeping() ? { unknown: true } : {}),
+    };
+  };
+
   const openOrExplain = async (app: string) => {
     try {
       return await open(app);
     } catch (error) {
-      const message = appOpenFailure(error);
+      const ctx = offerContext(app);
+      const message = appOpenFailure(error, ctx);
       if (error instanceof SandboxApiError && error.kind === 'limit') limited = message;
-      throw new Error(message);
+      const card = isHibernateCapRefusal(error) ? limitCardOfError(error, ctx) : null;
+      throw card ? new LimitRefusal(message, card) : new Error(message);
     }
   };
 
@@ -200,10 +297,17 @@ export function createAppTools({ apps, current, open, toolsReady }: AppToolsOpti
         note: `The app ${openNow.app} was paused and is starting again; its tools arrive with your next reply. Keep working on it. ${CHOOSE_FIRST}`,
       };
     }
-    const app = newAppKey(
-      name,
-      list.map((s) => s.app)
-    );
+    // App hibernate: a sleeping app's name is taken too (a new app under it would block that app's
+    // next sleep), and a request naming one is answered with the offer to wake it.
+    const asleep = hibernate ? sleepingNotLive(list, hibernate.sleeping() ?? []) : [];
+    if (asleep.some((s) => s.app === base))
+      return {
+        app: base,
+        state: 'sleeping',
+        existed: true,
+        note: `The user has a sleeping app called ${base}: its files are kept, and wake_app wakes it with them. No app was made or changed. Ask the user whether to wake ${base} or make a new app; for a new one, call create_app again with a name that differs from ${base}.`,
+      };
+    const app = newAppKey(name, [...list.map((s) => s.app), ...asleep.map((s) => s.app)]);
     const opened = await openOrExplain(app);
     const { sandbox, created } = opened;
     // Only what this page made: an app the service found is the user's own, made elsewhere.
@@ -247,6 +351,7 @@ export function createAppTools({ apps, current, open, toolsReady }: AppToolsOpti
       entry.result = create(name, release)
         .catch((error: unknown) => {
           createFailed = true;
+          if (error instanceof LimitRefusal) return limitRefusalOutput(error) as never;
           throw error;
         })
         .finally(release);
@@ -254,6 +359,109 @@ export function createAppTools({ apps, current, open, toolsReady }: AppToolsOpti
       return entry.result;
     },
   };
+  /** `list_apps` and `wake_app` (app hibernate). */
+  const sleepingAppTools = ({
+    sleeping: listSleeping,
+    wake: wakeApp,
+  }: {
+    sleeping: () => SleepingApp[] | undefined;
+    wake: (app: string) => Promise<WakeResult>;
+  }): Record<string, AssistantTool> => ({
+    [LIST_APPS]: {
+      description:
+        'List the user’s apps: the kept ones (running, starting or paused) and the sleeping ones, with when each was last used. A sleeping app keeps its files and can be woken with wake_app. Read-only.',
+      activity: 'Looking at your apps…',
+      inputSchema: { properties: {} },
+      execute() {
+        const list = apps();
+        if (!list) throw new Error(APPS_LOADING);
+        const asleep = sleepingNotLive(list, listSleeping() ?? []);
+        return {
+          apps: [
+            ...list.map((s) => ({
+              app: s.app,
+              state: s.state === 'suspended' ? 'paused' : s.state,
+              lastUsed: s.lastActivityAt,
+            })),
+            ...asleep.map((s) => ({
+              app: s.app,
+              state: 'sleeping',
+              lastUsed: s.lastActivityAt,
+              asleepSince: s.hibernatedAt,
+            })),
+          ],
+        };
+      },
+    },
+    [WAKE_APP]: {
+      description:
+        'Wake one of the user’s sleeping apps (list_apps shows them) and open it with its files, to keep working on it. Call it only when the user asks to work on that app. Its dependencies are not kept while it sleeps, so after waking it, run npm install in it first.',
+      activity: 'Waking your app…',
+      inputSchema: {
+        properties: {
+          app: { type: 'string', description: 'The sleeping app’s key, as list_apps names it.' },
+        },
+        required: ['app'],
+      },
+      async execute(input) {
+        const app = typeof input.app === 'string' ? input.app : '';
+        const list = apps();
+        if (!list) throw new Error(APPS_LOADING);
+        const awake = list.find((s) => s.app === app);
+        if (awake)
+          return {
+            app,
+            state: awake.state,
+            existed: true,
+            note: `${app} is not asleep: it is one of the user’s kept apps. ${CHOOSE_FIRST}`,
+          };
+        if (!sleepingNotLive(list, listSleeping() ?? []).some((s) => s.app === app))
+          throw new Error(
+            `There is no sleeping app called ${app}. Call list_apps to see the user’s apps.`
+          );
+        let woken: WakeResult;
+        try {
+          woken = await wakeApp(app);
+        } catch (error) {
+          createFailed = true;
+          const ctx = offerContext(app);
+          const message = wakeOnlyFailure(error) ?? appOpenFailure(error, ctx);
+          if (error instanceof SandboxApiError && error.kind === 'limit') limited = message;
+          const card = limitCardOfError(error, ctx);
+          if (card) return limitRefusalOutput(new LimitRefusal(message, card));
+          throw new Error(message);
+        }
+        const state = woken.sandbox.state;
+        const ready = (await toolsReady?.(app).catch(() => false)) === true;
+        const intro = woken.alreadyAwake
+          ? `${app} had already been woken elsewhere and is now open, with its files.`
+          : `${app} was woken from sleep and is now open, with its files (its .env files included).`;
+        // The archive it was woken from (absent when it was already awake): a page following a
+        // runner's wake records it as the sandbox's lineage, so deleting the app there takes the
+        // record with it (`sleepLineage.ts`).
+        const lineage = woken.sha256 ? { sha256: woken.sha256 } : {};
+        const reinstall = `Its dependencies (node_modules), build output and caches were not kept while it slept, so before anything else run cd ${app} && npm install (if ${app} is not the project folder, find it with sandbox__list_dir first).`;
+        return ready
+          ? {
+              app,
+              state,
+              woke: true,
+              ...lineage,
+              note: `${intro} ${reinstall} Its tools are ready for this reply: then carry on with what the user asked.`,
+              reopenTools: true,
+            }
+          : {
+              app,
+              state,
+              woke: true,
+              ...lineage,
+              note: `${intro} It is still starting, so its tools arrive with your next reply, and this reply ends here: tell the user it is waking up. ${reinstall}`,
+              awaitsUser: true,
+            };
+      },
+    },
+  });
+
   // The gate (`createGateCore`'s `openApp`) refuses every change to the open app in a chat that did
   // not create it or choose it with this: a new chat with an app open must not build over that app.
   const use_open_app: AssistantTool = {
@@ -280,9 +488,13 @@ export function createAppTools({ apps, current, open, toolsReady }: AppToolsOpti
     },
   };
   return {
-    tools: { [CREATE_APP]: create_app, [USE_OPEN_APP]: use_open_app },
+    tools: {
+      [CREATE_APP]: create_app,
+      [USE_OPEN_APP]: use_open_app,
+      ...(hibernate ? sleepingAppTools(hibernate) : {}),
+    },
     refusal: (name) =>
-      name === CREATE_APP
+      name === CREATE_APP || name === WAKE_APP
         ? limited
         : name === USE_OPEN_APP && createFailed
         ? NEW_APP_FAILED_KEEP_OPEN
