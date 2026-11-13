@@ -150,11 +150,9 @@ beforeEach(() => {
       images: (p.images as Row[])
         .filter((i) => matches(i, args.select.images.where))
         .slice(0, args.select.images.take)
-        // A field the query leaves out is not in the row it returns.
+        // Only the fields the query selects are in the row it returns.
         .map((i) =>
-          Object.fromEntries(
-            Object.entries(i).filter(([k]) => args.select.images.select[k] !== false)
-          )
+          Object.fromEntries(Object.entries(i).filter(([k]) => args.select.images.select[k]))
         ),
     }));
   }) as never);
