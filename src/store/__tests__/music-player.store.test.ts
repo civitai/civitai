@@ -1,0 +1,418 @@
+import { describe, expect, it } from 'vitest';
+import type { MusicTrack } from '~/store/music-player.store';
+import { createMusicPlayerStore } from '~/store/music-player.store';
+
+const track = (id: number, durationSec = 200): MusicTrack => ({
+  id,
+  url: `song-${id}.mp3`,
+  title: `Song ${id}`,
+  durationSec,
+  creator: { id: 100 + id, username: `artist${id}` },
+});
+
+const [a, b, c, d, e] = [1, 2, 3, 4, 5].map((id) => track(id));
+
+/** A store with a hand-driven clock and a fixed random source. */
+function setup({ random = () => 0 }: { random?: () => number } = {}) {
+  let clock = 1_000_000;
+  const store = createMusicPlayerStore({ random, now: () => clock });
+  return {
+    get: store.getState,
+    advance: (seconds: number) => {
+      clock += seconds * 1000;
+    },
+  };
+}
+
+const ids = (tracks: MusicTrack[]) => tracks.map((t) => t.id);
+
+describe('playing a song', () => {
+  it('plays it in the bar and leaves Up next empty', () => {
+    const { get } = setup();
+    get().playTrack(a);
+    expect(get().current?.id).toBe(a.id);
+    expect(get().playing).toBe(true);
+    expect(get().view).toBe('bar');
+    expect(get().queued).toEqual([]);
+    expect(get().list).toEqual([]);
+    expect(get().listName).toBeNull();
+  });
+
+  it('from a list, makes the rest of the list Up next in order', () => {
+    const { get } = setup();
+    get().playTrack(b, { list: { name: 'Night drive', tracks: [a, b, c, d] } });
+    expect(get().current?.id).toBe(b.id);
+    expect(ids(get().list)).toEqual([c.id, d.id]);
+    expect(get().listName).toBe('Night drive');
+  });
+
+  it('keeps the player minimized when it already is', () => {
+    const { get } = setup();
+    get().playTrack(a);
+    get().minimize();
+    get().playTrack(b);
+    expect(get().view).toBe('minimized');
+  });
+
+  it('pauses and resumes', () => {
+    const { get } = setup();
+    get().playTrack(a);
+    get().pause();
+    expect(get().playing).toBe(false);
+    get().togglePlay();
+    expect(get().playing).toBe(true);
+  });
+});
+
+describe('next and previous', () => {
+  it('next plays the songs you queued before the rest of the list', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c] } });
+    get().addToUpNext(e);
+    get().next();
+    expect(get().current?.id).toBe(e.id);
+    get().next();
+    expect(get().current?.id).toBe(b.id);
+    get().next();
+    expect(get().current?.id).toBe(c.id);
+  });
+
+  it('when the last song ends, playback stops on it at the start', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b] } });
+    get().ended();
+    const { playbackId } = get().playback!;
+    get().ended();
+    expect(get().current?.id).toBe(b.id);
+    expect(get().playing).toBe(false);
+    expect(get().view).toBe('bar');
+    // A new playback: the song will start again from 0:00.
+    expect(get().playback?.playbackId).not.toBe(playbackId);
+  });
+
+  it('previous within the first 3 seconds goes back to the song played before', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c] } });
+    get().next();
+    get().reportTime(2);
+    get().previous();
+    expect(get().current?.id).toBe(a.id);
+    // The song you left is next again.
+    expect(ids(get().list)).toEqual([b.id, c.id]);
+  });
+
+  it('previous after 3 seconds restarts the song', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b] } });
+    get().next();
+    const { playbackId } = get().playback!;
+    get().reportTime(12);
+    get().previous();
+    expect(get().current?.id).toBe(b.id);
+    expect(get().playback?.playbackId).not.toBe(playbackId);
+  });
+
+  it('previous on the first song restarts it', () => {
+    const { get } = setup();
+    get().playTrack(a);
+    const { playbackId } = get().playback!;
+    get().previous();
+    expect(get().current?.id).toBe(a.id);
+    expect(get().playback?.playbackId).not.toBe(playbackId);
+  });
+});
+
+describe('a song that fails to load', () => {
+  it('stays in the bar, not playing, and can be skipped or closed', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b] } });
+    get().markError();
+    expect(get().current?.id).toBe(a.id);
+    expect(get().playing).toBe(false);
+    expect(get().error).toBe(true);
+    expect(get().view).toBe('bar');
+
+    get().next();
+    expect(get().current?.id).toBe(b.id);
+    expect(get().error).toBe(false);
+    expect(get().playing).toBe(true);
+
+    get().markError();
+    get().close();
+    expect(get().current).toBeNull();
+    expect(get().error).toBe(false);
+  });
+});
+
+describe('Up next', () => {
+  it('Add to up next appends, Play next puts the song on top, and neither adds a song twice', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b] } });
+    get().addToUpNext(c);
+    get().addToUpNext(d);
+    get().playNext(e);
+    expect(ids(get().queued)).toEqual([e.id, c.id, d.id]);
+
+    get().addToUpNext(c);
+    get().playNext(d);
+    get().addToUpNext(b);
+    expect(ids(get().queued)).toEqual([e.id, c.id, d.id]);
+    expect(ids(get().list)).toEqual([b.id]);
+  });
+
+  it('with nothing loaded, adding a song loads it paused in the bar', () => {
+    const { get } = setup();
+    get().addToUpNext(a);
+    expect(get().current?.id).toBe(a.id);
+    expect(get().playing).toBe(false);
+    expect(get().view).toBe('bar');
+    expect(get().queued).toEqual([]);
+  });
+
+  it('Clear empties both sections and leaves the playing song playing', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c] } });
+    get().addToUpNext(d);
+    get().clearUpNext();
+    expect(get().queued).toEqual([]);
+    expect(get().list).toEqual([]);
+    expect(get().current?.id).toBe(a.id);
+    expect(get().playing).toBe(true);
+  });
+
+  it('remove takes one song out of Up next', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c] } });
+    get().addToUpNext(d);
+    get().removeFromUpNext(b.id);
+    get().removeFromUpNext(d.id);
+    expect(get().queued).toEqual([]);
+    expect(ids(get().list)).toEqual([c.id]);
+  });
+
+  it('clicking a row plays that song now and takes it out of Up next', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c, d] } });
+    get().playFromUpNext(c.id);
+    expect(get().current?.id).toBe(c.id);
+    expect(ids(get().list)).toEqual([b.id, d.id]);
+  });
+
+  it('reorders within a section and moves a list song into Queued by you, not back', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c, d] } });
+    get().addToUpNext(e);
+
+    get().moveInUpNext(d.id, 'list', 0);
+    expect(ids(get().list)).toEqual([d.id, b.id, c.id]);
+
+    get().moveInUpNext(c.id, 'queued', 0);
+    expect(ids(get().queued)).toEqual([c.id, e.id]);
+    expect(ids(get().list)).toEqual([d.id, b.id]);
+
+    get().moveInUpNext(e.id, 'list', 0);
+    expect(ids(get().queued)).toEqual([c.id, e.id]);
+    expect(ids(get().list)).toEqual([d.id, b.id]);
+
+    get().next();
+    expect(get().current?.id).toBe(c.id);
+  });
+});
+
+describe('shuffle and repeat', () => {
+  // Fisher-Yates with random() = 0 swaps every position with the first: [b, c, d] -> [c, d, b].
+  it('shuffle plays Up next in a new order, the order the panel shows', () => {
+    const { get } = setup({ random: () => 0 });
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c, d] } });
+    get().toggleShuffle();
+    expect(get().shuffle).toBe(true);
+    const shuffled = ids(get().list);
+    expect([...shuffled].sort()).toEqual([b.id, c.id, d.id]);
+    expect(shuffled).not.toEqual([b.id, c.id, d.id]);
+
+    get().next();
+    expect(get().current?.id).toBe(shuffled[0]);
+  });
+
+  it('turning shuffle off puts the songs not yet played back in their order', () => {
+    const { get } = setup({ random: () => 0 });
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c, d, e] } });
+    get().toggleShuffle();
+    get().next();
+    const played = get().current!.id;
+    get().toggleShuffle();
+    expect(get().shuffle).toBe(false);
+    expect(ids(get().list)).toEqual([b.id, c.id, d.id, e.id].filter((id) => id !== played));
+  });
+
+  it('shuffles the rest of a list started while shuffle is on', () => {
+    const { get } = setup({ random: () => 0 });
+    get().toggleShuffle();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c, d] } });
+    expect(ids(get().list)).not.toEqual([b.id, c.id, d.id]);
+    get().toggleShuffle();
+    expect(ids(get().list)).toEqual([b.id, c.id, d.id]);
+  });
+
+  it('repeat cycles off, all, one', () => {
+    const { get } = setup();
+    expect(get().repeat).toBe('off');
+    get().cycleRepeat();
+    expect(get().repeat).toBe('all');
+    get().cycleRepeat();
+    expect(get().repeat).toBe('one');
+    get().cycleRepeat();
+    expect(get().repeat).toBe('off');
+  });
+
+  it('repeat all starts the played songs again after the last one', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b, c] } });
+    get().cycleRepeat();
+    get().ended();
+    get().ended();
+    expect(get().current?.id).toBe(c.id);
+    get().ended();
+    expect(get().current?.id).toBe(a.id);
+    expect(get().playing).toBe(true);
+    expect(ids(get().list)).toEqual([b.id, c.id]);
+  });
+
+  it('repeat one replays the song when it ends, as a new playback', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b] } });
+    get().cycleRepeat();
+    get().cycleRepeat();
+    const { playbackId } = get().playback!;
+    get().ended();
+    expect(get().current?.id).toBe(a.id);
+    expect(get().playing).toBe(true);
+    expect(get().playback?.playbackId).not.toBe(playbackId);
+
+    // Next still moves on.
+    get().next();
+    expect(get().current?.id).toBe(b.id);
+  });
+});
+
+describe('volume and the minimized player', () => {
+  it('keeps volume inside 0..1 and toggles mute', () => {
+    const { get } = setup();
+    get().setVolume(1.4);
+    expect(get().volume).toBe(1);
+    get().setVolume(0.3);
+    expect(get().volume).toBe(0.3);
+    get().toggleMute();
+    expect(get().muted).toBe(true);
+    get().toggleMute();
+    expect(get().muted).toBe(false);
+  });
+
+  it('minimize and expand keep the dragged position', () => {
+    const { get } = setup();
+    get().playTrack(a);
+    get().minimize();
+    expect(get().view).toBe('minimized');
+    get().setMinimizedPosition({ x: 0.8, y: 0.1 });
+    get().expand();
+    expect(get().view).toBe('bar');
+    get().minimize();
+    expect(get().minimizedPosition).toEqual({ x: 0.8, y: 0.1 });
+  });
+});
+
+describe('closing the player', () => {
+  it('stops playback and clears the song, Up next and the minimized position', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b] } });
+    get().addToUpNext(c);
+    get().minimize();
+    get().setMinimizedPosition({ x: 0.5, y: 0.5 });
+    get().close();
+    expect(get().current).toBeNull();
+    expect(get().playing).toBe(false);
+    expect(get().queued).toEqual([]);
+    expect(get().list).toEqual([]);
+    expect(get().listName).toBeNull();
+    expect(get().view).toBe('closed');
+    expect(get().minimizedPosition).toBeNull();
+    expect(get().playback).toBeNull();
+  });
+
+  it('a song played after closing has no history to go back to', () => {
+    const { get } = setup();
+    get().playTrack(a);
+    get().close();
+    get().playTrack(b);
+    const { playbackId } = get().playback!;
+    get().previous();
+    expect(get().current?.id).toBe(b.id);
+    expect(get().playback?.playbackId).not.toBe(playbackId);
+  });
+});
+
+describe('listen progress', () => {
+  it('describes the current playback of the current song', () => {
+    const { get } = setup();
+    get().playTrack(track(7, 95));
+    expect(get().playback).toMatchObject({ songId: 7, durationSec: 95, listenedSec: 0 });
+
+    get().reportDuration(96.4);
+    expect(get().playback?.durationSec).toBe(96.4);
+  });
+
+  it('counts seconds actually played; seeking forward adds nothing', () => {
+    const { get, advance } = setup();
+    get().playTrack(a);
+    get().reportTime(0);
+    for (let s = 1; s <= 10; s++) {
+      advance(1);
+      get().reportTime(s);
+    }
+    advance(0.25);
+    get().reportTime(199);
+    expect(get().playback?.listenedSec).toBeCloseTo(10, 0);
+  });
+
+  it('does not advance while paused', () => {
+    const { get, advance } = setup();
+    get().playTrack(a);
+    get().reportTime(0);
+    advance(4);
+    get().reportTime(4);
+    get().pause();
+    advance(30);
+    get().reportTime(60);
+    expect(get().playback?.listenedSec).toBeCloseTo(4, 5);
+
+    get().resume();
+    get().reportTime(60);
+    advance(1);
+    get().reportTime(61);
+    expect(get().playback?.listenedSec).toBeCloseTo(5, 5);
+  });
+
+  it('repeat one starts a new playback with nothing listened', () => {
+    const { get, advance } = setup();
+    get().playTrack(a);
+    get().cycleRepeat();
+    get().cycleRepeat();
+    get().reportTime(0);
+    advance(5);
+    get().reportTime(5);
+    const { playbackId } = get().playback!;
+    get().ended();
+    expect(get().playback?.playbackId).not.toBe(playbackId);
+    expect(get().playback?.listenedSec).toBe(0);
+    expect(get().playback?.songId).toBe(a.id);
+  });
+
+  it('a new song starts a new playback', () => {
+    const { get } = setup();
+    get().playTrack(a, { list: { name: 'Post', tracks: [a, b] } });
+    const { playbackId } = get().playback!;
+    get().next();
+    expect(get().playback).toMatchObject({ songId: b.id, listenedSec: 0 });
+    expect(get().playback?.playbackId).not.toBe(playbackId);
+  });
+});
