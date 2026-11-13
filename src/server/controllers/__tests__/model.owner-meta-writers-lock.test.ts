@@ -158,6 +158,24 @@ describe('setting the showcase collection', () => {
     expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
   });
 
+  // The locked re-check only guards the meta write; the add runs before it.
+  it('refuses an owner on a model a content wipe kept before adding it anywhere', async () => {
+    for (const db of [dbMock.dbRead, dbMock.dbWrite])
+      db.model.findFirst.mockResolvedValue({ id: MODEL, userId: OWNER, meta: KEPT } as never);
+    await expect(
+      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(saveItemInCollections).not.toHaveBeenCalled();
+  });
+
+  it('refuses the showcase when the add writes nothing', async () => {
+    saveItemInCollections.mockResolvedValueOnce(null as never);
+    await expect(
+      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
   it('leaves a model already in the collection alone', async () => {
     dbMock.dbWrite.collectionItem.findFirst.mockResolvedValueOnce({ id: 1 } as never);
     await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER });

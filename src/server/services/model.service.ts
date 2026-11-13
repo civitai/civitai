@@ -4724,7 +4724,8 @@ export const upsertModel = async (
         ).catch(() => undefined);
     }
 
-    // The model is already saved, so a refused add is returned only after the follow-ups below run.
+    // The model is already saved: a refused add puts the previous showcase back, and is returned
+    // only after the follow-ups below run.
     let showcaseAddError: unknown;
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
@@ -4733,8 +4734,27 @@ export const upsertModel = async (
           collectionId: modelMeta.showcaseCollectionId,
           userId,
           isModerator,
-        }).catch((error) => {
+        }).catch(async (error) => {
           showcaseAddError = error;
+          const previous = (beforeUpdate.meta as ModelMeta | null)?.showcaseCollectionId ?? null;
+          await updateModelById({
+            id,
+            data: {},
+            meta: (stored) =>
+              ({
+                ...stored,
+                ...(stored?.showcaseCollectionId === modelMeta.showcaseCollectionId && {
+                  showcaseCollectionId: previous,
+                }),
+              } as ModelMeta),
+          }).catch((revertError) =>
+            logToAxiom({
+              type: 'error',
+              name: 'revert-model-showcase-collection',
+              error: revertError,
+              message: revertError.message,
+            })
+          );
         });
       } else {
         saveItemInCollections({
@@ -6887,9 +6907,11 @@ async function addModelToShowcaseCollection({
     select: { id: true },
   });
   if (existing) return;
-  await saveItemInCollections({
+  const status = await saveItemInCollections({
     input: { collections: [{ collectionId }], modelId, type: 'Model', userId, isModerator },
   });
+  if (status !== 'added')
+    throw throwBadRequestError('The model could not be added to that collection');
 }
 
 export async function setModelShowcaseCollection({
@@ -6897,12 +6919,9 @@ export async function setModelShowcaseCollection({
   collectionId,
   userId,
   isModerator,
-  modelAlreadyInCollection,
 }: SetModelCollectionShowcaseInput & {
   userId: number;
   isModerator?: boolean;
-  /** The caller wrote the item itself (in a transaction a replica read may not see yet). */
-  modelAlreadyInCollection?: boolean;
 }) {
   const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
@@ -6911,7 +6930,7 @@ export async function setModelShowcaseCollection({
   if (!isModerator && isRemovedWithOwner(model.meta)) throw removedWithOwnerEditError();
 
   // Add first so a refused add leaves the showcase unchanged.
-  if (collectionId != null && !modelAlreadyInCollection)
+  if (collectionId != null)
     await addModelToShowcaseCollection({ modelId: id, collectionId, userId, isModerator });
 
   const updated = await updateModelById({
@@ -7066,7 +7085,6 @@ export async function migrateResourceToCollection({
     id: modelId,
     userId: model.userId,
     isModerator,
-    modelAlreadyInCollection: true,
   });
 
   // Bust caches

@@ -242,6 +242,31 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
     expect(submitModelTextModeration).toHaveBeenCalledTimes(1);
   });
 
+  it('update branch: a refused showcase add puts the previous showcase back', async () => {
+    mockUpdateReturning('Old Name', 'Old description');
+    // Once the edit is written, the stored row carries the new showcase.
+    mockDbWrite.model.findUnique.mockImplementation((async () =>
+      mockDbWrite.model.update.mock.calls.length > 0
+        ? { ...storedModel, meta: { showcaseCollectionId: 9 } }
+        : storedModel) as never);
+    vi.mocked(saveItemInCollections).mockRejectedValueOnce(new Error('Collection type mismatch'));
+
+    await expect(
+      upsert({
+        id: MODEL_ID,
+        userId: OWNER_ID,
+        name: 'Old Name',
+        meta: { showcaseCollectionId: 9 },
+      } as never)
+    ).rejects.toThrow('Collection type mismatch');
+
+    const lastMeta = mockDbWrite.model.update.mock.calls.at(-1)?.[0].data.meta as {
+      showcaseCollectionId?: number | null;
+    };
+    expect(mockDbWrite.model.update.mock.calls.length).toBeGreaterThan(1);
+    expect(lastMeta.showcaseCollectionId).toBeNull();
+  });
+
   it('update branch: submits the POST-update name/description, not the stored pre-update ones', async () => {
     mockUpdateReturning('PERSISTED Name', 'PERSISTED description');
 
