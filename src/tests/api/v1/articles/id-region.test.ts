@@ -78,6 +78,8 @@ describe('GET /api/v1/articles/[id] by region', () => {
     ['an R article', article(R)],
     ['an X article', article(X)],
     ['a PG article with an R image in its body', article(PG, [PG, R])],
+    ['a PG|R article', article(PG | R)],
+    ['a PG article with a PG|R image in its body', article(PG, [PG | R])],
     ['an unrated article', article(0)],
     ['a PG article with an unrated image in its body', article(PG, [0])],
   ])('404s %s in a restricted region and serves it elsewhere', async (_, value) => {

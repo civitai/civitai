@@ -131,6 +131,22 @@ describe('GET /api/v1/model-versions/by-hash/[hash] by region', () => {
     }
   );
 
+  it('serves a PG|R version in both regions, as by id, and caches neither', async () => {
+    const { elsewhere, restricted } = await bothRegions(version(PG | R));
+
+    expect(elsewhere.statusCode).toBe(200);
+    expect(restricted.statusCode).toBe(200);
+    for (const { cacheControl } of [elsewhere, restricted])
+      expect(cacheControl).not.toMatch(/public|s-maxage/);
+  });
+
+  it('404s an unrated version in both regions', async () => {
+    const { elsewhere, restricted } = await bothRegions(version(0));
+
+    expect(elsewhere.statusCode).toBe(404);
+    expect(restricted.statusCode).toBe(404);
+  });
+
   it('serves an SFW version in both regions; elsewhere it stays publicly cached', async () => {
     const { elsewhere, restricted } = await bothRegions(version(PG | PG13));
 

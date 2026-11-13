@@ -28,9 +28,10 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
  * private article is INDISTINGUISHABLE from a non-existent one (both 404), so this
  * is not an existence oracle.
  *
- * Maturity: in a restricted region, an article above SFW (its own level, or any image in its
- * body) is the same 404 as a missing one, as on `/api/v1/posts/[id]`. The cover image is clamped to the region-narrowed PUBLIC browsing
- * ceiling (the SAME default the list endpoint uses, `publicBrowsingLevelsFlag`
+ * Maturity: in a restricted region, an article above SFW (its own level, or any connected image
+ * in its body) is the same 404 as a missing one, as on `/api/v1/posts/[id]`. The cover image is
+ * clamped to the region-narrowed PUBLIC browsing ceiling (the SAME default the list endpoint
+ * uses, `publicBrowsingLevelsFlag`
  * narrowed to `sfwBrowsingLevelsFlag` for restricted regions) — a cover above the
  * ceiling is dropped so an anonymous SFW caller never receives mature cover art.
  * `getArticleById` takes no browsing-level param, so the clamp is applied here as
@@ -79,9 +80,10 @@ export default MixedAuthEndpoint(async function handler(
     // pins published-only visibility for every caller (no owner-draft branch), so
     // the response is caller-independent.
     const article = await getArticleById({ id });
-    // A restricted region is served an article only when it and every image in its body are rated
-    // SFW; unrated fails closed. The images count too because a moderator's override sets the
-    // article's own level. Answered as the same 404 as a missing article.
+    // A restricted region is served an article only when it and every connected (Civitai-hosted)
+    // image in its body are rated SFW; unrated fails closed. The images count too because a
+    // moderator's override sets the article's own level. Answered as the same 404 as a missing
+    // article.
     if (restricted) {
       const levels = [article.nsfwLevel, ...(article.contentImages ?? []).map((i) => i.nsfwLevel)];
       if (!levels.every((level) => !!level && Flags.hasFlag(sfwBrowsingLevelsFlag, level)))
