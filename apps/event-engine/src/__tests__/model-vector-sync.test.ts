@@ -709,6 +709,16 @@ describe('version-delete lookup against the real query and client', () => {
       await pg.exec(`UPDATE "Model" SET availability = 'Private' WHERE id = 3`);
       expect(await syncModelIds([3], deps)).toMatchObject({ deleted: 1 });
       expect([...store.points.keys()]).toEqual([1]);
+
+      // The backfill applies the same filter, and purges a Private model's point written earlier.
+      const fresh = setup().store;
+      fresh.points.set(2, { id: 2, vector: [2], payload: {} as ModelPayload });
+      const backfillDeps = { pg, store: fresh, embedder } as unknown as ModelSyncDeps & {
+        store: FakeStore;
+      };
+      const run = await backfillModels({ from: 0, to: 10, page: 2 }, backfillDeps);
+      expect(run.complete).toBe(true);
+      expect([...fresh.points.keys()]).toEqual([1]);
     } finally {
       await pg.close();
     }
