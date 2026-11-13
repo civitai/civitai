@@ -11,6 +11,9 @@ type Executor = Kysely<DB> | Transaction<DB>;
  */
 export const RANK_BADGE_IDS = { Knight: 859, Templar: 860, Paladin: 4208 } as const;
 
+/** The Acolyte badge (the main app's `newOrderConfig.cosmetics.badgeIds` Acolyte entry), granted on joining. */
+export const ACOLYTE_BADGE_ID = 858;
+
 const SAVEPOINT = sql`grant_trophy_cosmetics`;
 
 /**
