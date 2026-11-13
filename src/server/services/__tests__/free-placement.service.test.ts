@@ -612,8 +612,9 @@ describe('the advisory locks have exactly one call site', () => {
   // approve gate's open-run check and the plan reservation. The only lock in its transaction.
   // blocks/review-autodeploy takes one platform-wide (0x72657631, 0) around the review build-slot
   // count and claim. The only lock in its transaction.
-  // app-hibernation/hibernation.repo takes one per user (0x48424e54) around a sleeping-app record's
-  // read-decide-write, then that user's User row FOR SHARE. The only advisory lock in its transaction.
+  // app-hibernation/hibernation.repo takes one per user (0x48424e54) as the first statement of its
+  // commit transaction, around the record, usage and User FOR SHARE reads, the decision and the upsert.
+  // The only advisory lock in its transaction, never nested inside another lock.
   const ALLOWED = [
     'services/access-token.service.ts',
     'services/app-hibernation/hibernation.repo.ts',
