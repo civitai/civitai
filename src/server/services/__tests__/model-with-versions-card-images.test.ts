@@ -12,6 +12,7 @@ import { runModelSearch } from '~/server/services/model-search.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import type * as SystemCache from '~/server/services/system-cache';
+import type { NextApiRequest, NextApiResponse } from 'next';
 
 /**
  * Card images on the REST model routes (`/api/v1/models`, `/api/v1/models/{id}`, and the block
@@ -54,6 +55,35 @@ vi.mock('~/server/common/model-helpers', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   createModelFileDownloadUrl: vi.fn(() => '/download'),
 }));
+// The REST handlers, with only their endpoint wrappers passed through: an anonymous caller, an
+// unrestricted region, a block token whose ceiling is every level.
+const { blockClaims } = vi.hoisted(() => ({ blockClaims: { current: undefined as unknown } }));
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, undefined),
+  PublicEndpoint: (handler: any) => (req: any, res: any) => handler(req, res),
+  handleEndpointError: (res: any, e: any) => res.status(500).json({ error: String(e?.stack ?? e) }),
+}));
+vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  withBlockScope: (handler: any) => (req: any, res: any) => {
+    if (blockClaims.current) req.blockClaims = blockClaims.current;
+    return handler(req, res);
+  },
+}));
+vi.mock('~/server/utils/region-blocking', () => ({
+  getRegion: () => ({ countryCode: 'US', regionCode: null, fullLocationCode: 'US' }),
+  isRegionRestricted: () => false,
+}));
+vi.mock('~/server/utils/pagination-helpers', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getNextPage: () => ({ baseUrl: { origin: 'https://civitai.com' }, nextPage: undefined }),
+  getPagination: () => ({ skip: 0 }),
+}));
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
+}));
+vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: any) => handler }));
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn().mockResolvedValue(false),
   FLIPT_FEATURE_FLAGS: {},
@@ -198,10 +228,12 @@ async function cardImages({
   browsingLevel,
   user,
   byId = false,
+  excludedTagIds,
 }: {
   browsingLevel: number;
   user?: Viewer;
   byId?: boolean;
+  excludedTagIds?: number[];
 }) {
   const { items } = await getModelsWithVersions({
     input: {
@@ -213,6 +245,7 @@ async function cardImages({
       hidden: false,
       take: 10,
       ...(byId && { ids: [MODEL], archived: true }),
+      ...(excludedTagIds && { excludedTagIds }),
     } as never,
     user,
     ...(byId && { ignoreBrowsingAddons: true }),
@@ -257,6 +290,13 @@ describe('REST card images and the browsing-settings exclusions', () => {
 
   it('applies them on a by-id lookup that skips them for finding the model', async () => {
     expect(await cardImages({ browsingLevel: allBrowsingLevelsFlag, byId: true })).toEqual([1, 4]);
+  });
+
+  it("applies a caller's own excluded tags too, with or without an addon rule", async () => {
+    const own = { browsingLevel: publicBrowsingLevelsFlag, excludedTagIds: [OTHER_TAG] };
+    expect(await cardImages(own)).toEqual([1, 2, 5]);
+    vi.mocked(getBrowsingSettingAddons).mockResolvedValue([]);
+    expect(await cardImages(own)).toEqual([1, 2, 3, 5, 6]);
   });
 
   // Controls: the filter is the addons', and owners and moderators keep theirs.
@@ -316,5 +356,87 @@ describe('the REST list and block catalogs (runModelSearch)', () => {
     expect(
       await servedImages({ browsingLevel: publicBrowsingLevelsFlag, nsfwImagePassthrough: false })
     ).toEqual([1, 2, 4, 5]);
+  });
+});
+
+// What each REST handler sends an anonymous caller, read off the response body.
+describe('the REST handlers, for an anonymous caller', () => {
+  function fakeRes() {
+    const res = {
+      statusCode: 200,
+      body: undefined as any,
+      headers: {} as Record<string, unknown>,
+      setHeader(k: string, v: unknown) {
+        res.headers[k] = v;
+        return res;
+      },
+      getHeader: (k: string) => res.headers[k],
+      status(code: number) {
+        res.statusCode = code;
+        return res;
+      },
+      json(b: unknown) {
+        res.body = b;
+        return res;
+      },
+      end: () => res,
+      send: () => res,
+    };
+    return res;
+  }
+
+  async function call(path: string, route: string, query: Record<string, unknown>) {
+    const { default: handler } = (await import(path)) as {
+      default: (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
+    };
+    const res = fakeRes();
+    await handler(
+      { method: 'GET', query, headers: { host: 'civitai.com' }, url: route } as never,
+      res as never
+    );
+    if (res.statusCode !== 200)
+      throw new Error(`${route}: ${res.statusCode} ${JSON.stringify(res.body)}`);
+    return res.body;
+  }
+
+  // Card images by their url (the edge url is stubbed to the stored one, `u<id>`).
+  const imageUrls = (model: { modelVersions: { images?: { url: string }[] }[] }) =>
+    model.modelVersions.flatMap((v) => (v.images ?? []).map((i) => i.url));
+
+  beforeEach(() => {
+    blockClaims.current = undefined;
+  });
+
+  it('GET /api/v1/models?nsfw=true', async () => {
+    const body = await call('~/pages/api/v1/models/index', '/api/v1/models', { nsfw: 'true' });
+    expect(imageUrls(body.items.find((m: { id: number }) => m.id === MODEL))).toEqual(['u1', 'u4']);
+  });
+
+  it('GET /api/v1/models/{id}', async () => {
+    const body = await call('~/pages/api/v1/models/[id]', `/api/v1/models/${MODEL}`, {
+      id: String(MODEL),
+    });
+    expect(imageUrls(body)).toEqual(['u1', 'u4']);
+  });
+
+  it('GET /api/v1/blocks/models, on a token whose ceiling is every level', async () => {
+    blockClaims.current = {
+      iss: 'civitai',
+      aud: 'civitai-app-block',
+      sub: 'anon',
+      iat: 0,
+      exp: 0,
+      jti: 'jti',
+      blockId: 'blk',
+      appId: 'app',
+      appBlockId: 'apb_test',
+      blockInstanceId: 'bki_test',
+      ctx: {},
+      scopes: [],
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      domain: 'red',
+    };
+    const body = await call('~/pages/api/v1/blocks/models', '/api/v1/blocks/models', {});
+    expect(imageUrls(body.items.find((m: { id: number }) => m.id === MODEL))).toEqual(['u1', 'u4']);
   });
 });
