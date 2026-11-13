@@ -10,7 +10,7 @@ const { rows, mockIngestImage } = vi.hoisted(() => {
   const rows: Record<string, unknown>[] = [];
   return {
     rows,
-    mockIngestImage: vi.fn(async () => true),
+    mockIngestImage: vi.fn(async (_input: { image: { id: number } }) => true),
   };
 });
 
@@ -35,10 +35,15 @@ vi.mock('~/env/server', () => ({
 
 import { ingestImages } from '~/server/jobs/image-ingestion';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-const mockDbRead = dbMock.dbRead;
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 const mockDbWrite = dbMock.dbWrite;
 dbMock.dbRead.jobQueue.findMany.mockImplementation(async () =>
-  rows.map((row) => ({ entityId: row.id }))
+  rows.map((row) => ({
+    entityId: row.id as number,
+    entityType: EntityType.Image,
+    type: JobQueueType.ImageScan,
+    createdAt: new Date(),
+  }))
 );
 dbMock.dbWrite.$queryRaw.mockImplementation(async () => rows);
 
@@ -74,9 +79,7 @@ const errorRow = (
 
 const run = async () => {
   await ingestImages.run({} as Parameters<typeof ingestImages.run>[0]).result;
-  const sent = mockIngestImage.mock.calls.map(
-    ([args]) => (args as unknown as { image: { id: number } }).image.id
-  );
+  const sent = mockIngestImage.mock.calls.map(([input]) => input.image.id);
   // Reads ids from the job's one prune statement; the cap test below is its positive control.
   const pruned = mockDbWrite.$executeRaw.mock.calls
     .filter(([strings]) =>

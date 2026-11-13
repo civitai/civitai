@@ -111,8 +111,8 @@ export function classifyImageScanFailure(input: {
   return ImageScanFailureClass.Unknown;
 }
 
-// Minutes after a failed submit before the cron re-sends it. Transient failures clear fastest,
-// and their bound is the per-run pull (IMAGE_SCANNING_MAX_PER_RUN), not this delay.
+// Minutes after a failed submit before the cron re-sends it. Transient failures usually clear
+// on a fresh submit, so they wait less.
 export const IMAGE_SCAN_TRANSIENT_RETRY_DELAY_MINUTES = 15;
 export const IMAGE_SCAN_ERROR_RETRY_DELAY_MINUTES = 60;
 
