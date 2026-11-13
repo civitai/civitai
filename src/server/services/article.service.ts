@@ -826,12 +826,21 @@ export const getArticleById = async ({
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);
     }
 
-    // Fetch connected images with ingestion status
+    // Fetch connected images with ingestion status, and what the body needs to guard each by level.
     const imageConnections = await dbRead.imageConnection.findMany({
       where: { entityId: id, entityType: ImageConnectionType.Article },
       include: {
         image: {
-          select: { id: true, url: true, ingestion: true },
+          select: {
+            id: true,
+            url: true,
+            ingestion: true,
+            nsfwLevel: true,
+            userId: true,
+            hash: true,
+            width: true,
+            height: true,
+          },
         },
       },
     });

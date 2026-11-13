@@ -2577,6 +2577,7 @@ model Tag {
   tagsOnImageVotes     TagsOnImageVote[]
   tagsOnPosts          TagsOnPost[]
   tagsOnArticles       TagsOnArticle[]
+  systemCategoryArticles Article[]        @relation("ArticleSystemCategory")
   tagsOnCollection     TagsOnCollection[]
   tagsOnImageComposite ImageTag[]
   tagsOnModelComposite ModelTag[]
@@ -6294,6 +6295,9 @@ model Article {
   // a column with a moderator-only setter, not a tag anyone can type.
   isOfficial       Boolean       @default(false)
   status           ArticleStatus @default(Draft)
+  // Assigned by the text scan's category call; the author's pick stays in TagsOnArticle.
+  systemCategoryId Int?
+  systemCategory   Tag?          @relation("ArticleSystemCategory", fields: [systemCategoryId], references: [id], onDelete: SetNull)
 
   reactions          ArticleReaction[]
   tags               TagsOnArticle[]
@@ -6309,6 +6313,7 @@ model Article {
   contentLinkHold    ArticleContentLinkHold?
 
   @@index([status, ingestion, nsfwLevel])
+  @@index([systemCategoryId])
 }
 
 /// Content urls of an article that linking created no Image row for yet: deferred until the
