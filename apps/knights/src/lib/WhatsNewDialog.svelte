@@ -8,20 +8,16 @@
   let {
     copy,
     message,
-    submitting,
     submit,
   }: {
     copy: WhatsNew;
     message: string | null;
-    submitting: boolean;
     submit: SubmitFunction;
   } = $props();
 
   let form = $state<HTMLFormElement>();
   // Escape and a click outside are the same answer as the button: it has been read.
-  const close = () => {
-    if (!submitting) form?.requestSubmit();
-  };
+  const close = () => form?.requestSubmit();
 </script>
 
 <div
@@ -68,7 +64,7 @@
       {:else if ANNOUNCEMENT_URL}
         <a class="announcement" href={ANNOUNCEMENT_URL} target="_blank" rel="noopener">Read the announcement</a>
       {/if}
-      <button type="submit" class="ov-primary" disabled={submitting} data-autofocus>Got it</button>
+      <button type="submit" class="ov-primary" data-autofocus>Got it</button>
     </form>
   </div>
 </div>

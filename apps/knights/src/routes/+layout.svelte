@@ -3,11 +3,11 @@
   import '../motion.css';
   import { afterNavigate, invalidate } from '$app/navigation';
   import { page } from '$app/state';
-  import type { SubmitFunction } from '@sveltejs/kit';
   import AppHeader from '$lib/AppHeader.svelte';
   import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
   import type { PlayerStatus } from '$lib/server/player-status';
   import type { WhatsNewItem } from '$lib/whats-new';
+  import { dismissWhatsNew, type DismissState } from '$lib/whats-new-dismiss';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -29,17 +29,8 @@
   let bare = $derived(page.route.id === '/');
   // /home and /play each load "What's new" and answer its `dismissWhatsNew` action; whichever opens first shows it.
   let whatsNew = $derived(page.data.whatsNew as { items: WhatsNewItem[] } | null | undefined);
-  let dismissingWhatsNew = $state(false);
-  const submitWhatsNew: SubmitFunction = () => {
-    dismissingWhatsNew = true;
-    return async ({ update }) => {
-      try {
-        await update();
-      } finally {
-        dismissingWhatsNew = false;
-      }
-    };
-  };
+  let whatsNewDismiss = $state<DismissState>({ hidden: false, message: null });
+  const submitWhatsNew = dismissWhatsNew(whatsNewDismiss);
   let fit = $derived(page.route.id === '/play');
 </script>
 
@@ -65,11 +56,10 @@
       {@render children()}
     </main>
   </div>
-  {#if whatsNew}
+  {#if whatsNew && !whatsNewDismiss.hidden}
     <WhatsNewDialog
       copy={whatsNew}
-      message={page.form?.whatsNewFailed ? page.form.message : null}
-      submitting={dismissingWhatsNew}
+      message={whatsNewDismiss.message ?? (page.form?.whatsNewFailed ? page.form.message : null)}
       submit={submitWhatsNew}
     />
   {/if}
