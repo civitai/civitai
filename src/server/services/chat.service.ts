@@ -1,7 +1,9 @@
 import dayjs from '~/shared/utils/dayjs';
 import { uniq } from 'lodash-es';
 import { find as findLinks } from 'linkifyjs';
-import { linkifyOptions } from '~/components/Chat/util';
+import { chatLinkifyOptions } from '~/components/Chat/util';
+import { serverDomainMap } from '~/server/utils/server-domain';
+import { getOwnHosts } from '~/utils/current-domain-href';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
@@ -656,7 +658,7 @@ export const createMessage = async ({
   ).catch(() => undefined);
 
   if (userId !== -1) {
-    const links = findLinks(content, linkifyOptions);
+    const links = findLinks(content, chatLinkifyOptions(getOwnHosts(serverDomainMap)));
     for (let { href } of links) {
       if (!href) continue;
       try {
