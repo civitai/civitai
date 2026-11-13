@@ -159,7 +159,7 @@ describe('previewTextScanEach', () => {
         ],
       },
     });
-    const results = await previewTextScanEach({
+    const { verdicts: results } = await previewTextScanEach({
       labels: ['nsfw'],
       fields: strings,
       waitSeconds: 10,
@@ -178,7 +178,13 @@ describe('previewTextScanEach', () => {
       },
     });
     expect(
-      await previewTextScanEach({ labels: ['nsfw'], fields: strings.slice(0, 3), waitSeconds: 10 })
+      (
+        await previewTextScanEach({
+          labels: ['nsfw'],
+          fields: strings.slice(0, 3),
+          waitSeconds: 10,
+        })
+      ).verdicts
     ).toEqual([
       { status: 'ok', output: { nsfw: { level: 'none', reason: '' } } },
       { status: 'unavailable' },
@@ -186,11 +192,45 @@ describe('previewTextScanEach', () => {
     ]);
   });
 
+  it('keeps the labels that parse when another label in the same step does not', async () => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValueOnce({
+      base: { id: 1, key: 'base', content: 'BASE PROMPT' },
+      'label:nsfw': { id: 2, key: 'label:nsfw', content: 'NSFW DEF' },
+      'label:csam': { id: 3, key: 'label:csam', content: 'CSAM DEF' },
+    });
+    mockSubmitWorkflow.mockResolvedValue({
+      data: {
+        id: 'wf-9',
+        status: 'succeeded',
+        steps: [
+          step(0, {
+            message: {
+              content: JSON.stringify({
+                nsfw: { level: 'bogus' },
+                csam: { detected: true, reason: 'r' },
+              }),
+            },
+          }),
+        ],
+      },
+    });
+    await expect(
+      previewTextScanEach({
+        labels: ['nsfw', 'csam'],
+        fields: strings.slice(0, 1),
+        waitSeconds: 10,
+      })
+    ).resolves.toEqual({
+      workflowId: 'wf-9',
+      verdicts: [{ status: 'partial', output: { csam: { detected: true, reason: 'r' } } }],
+    });
+  });
+
   it('marks a string too long for one step as too-long and still rates the others', async () => {
     mockSubmitWorkflow.mockResolvedValue({
       data: { status: 'succeeded', steps: [step(0, answer('none'))] },
     });
-    const results = await previewTextScanEach({
+    const { verdicts: results } = await previewTextScanEach({
       labels: ['nsfw'],
       fields: [{ heading: 'Word', text: 'x'.repeat(200_001) }, strings[0]],
       waitSeconds: 10,
@@ -203,7 +243,7 @@ describe('previewTextScanEach', () => {
   });
 
   it('gives no verdict to any string when a requested label has no prompt', async () => {
-    const results = await previewTextScanEach({
+    const { verdicts: results } = await previewTextScanEach({
       labels: ['nsfw', 'csam'],
       fields: strings.slice(0, 2),
       waitSeconds: 10,

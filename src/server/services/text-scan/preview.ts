@@ -104,6 +104,8 @@ export async function previewComFaceIntent(args: { fields: TextScanField[]; wait
 
 export type TextScanEachVerdict =
   | { status: 'ok'; output: TextScanOutput }
+  /** The step as a whole did not parse; `output` holds the labels that did on their own. */
+  | { status: 'partial'; output: TextScanOutput }
   | { status: 'refused' }
   /** Too long for one step, so it cannot be rated on its own. */
   | { status: 'too-long' }
@@ -121,10 +123,12 @@ export async function previewTextScanEach({
   labels: TextScanLabel[];
   fields: TextScanField[];
   waitSeconds: number;
-}): Promise<TextScanEachVerdict[]> {
-  const unavailable = (): TextScanEachVerdict[] =>
-    fields.map(() => ({ status: 'unavailable' as const }));
-  if (!fields.length) return [];
+}): Promise<{ workflowId: string | null; verdicts: TextScanEachVerdict[] }> {
+  const unavailable = () => ({
+    workflowId: null,
+    verdicts: fields.map((): TextScanEachVerdict => ({ status: 'unavailable' })),
+  });
+  if (!fields.length) return { workflowId: null, verdicts: [] };
   const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
 
   const segmentOf = new Map<number, number>();
@@ -161,10 +165,13 @@ export async function previewTextScanEach({
     });
     return unavailable();
   }
-  const tooLong = (): TextScanEachVerdict[] =>
-    fields.map((_, index) =>
-      segmentOf.has(index) ? { status: 'unavailable' } : { status: 'too-long' }
-    );
+  const tooLong = () => ({
+    workflowId: null,
+    verdicts: fields.map(
+      (_, index): TextScanEachVerdict =>
+        segmentOf.has(index) ? { status: 'unavailable' } : { status: 'too-long' }
+    ),
+  });
   if (!steps.length) return tooLong();
 
   const { data } = await submitWorkflow({
@@ -175,13 +182,21 @@ export async function previewTextScanEach({
   if (!data) return tooLong();
 
   const bySegment = textScanStepsBySegment(data.steps);
-  return fields.map((_, index): TextScanEachVerdict => {
+  const verdicts = fields.map((_, index): TextScanEachVerdict => {
     const segment = segmentOf.get(index);
     if (segment === undefined) return { status: 'too-long' };
     const step = bySegment.get(segment);
     if (!step || (step.status && step.status !== 'succeeded')) return { status: 'unavailable' };
     const parsed = parseTextScanStep(step, labels);
     if (parsed.ok) return { status: 'ok', output: parsed.output };
-    return parsed.reason === 'refused' ? { status: 'refused' } : { status: 'unavailable' };
+    if (parsed.reason === 'refused') return { status: 'refused' };
+    // One malformed label must not discard the others, a detection above all.
+    const output: TextScanOutput = {};
+    for (const label of labels) {
+      const one = parseTextScanStep(step, [label]);
+      if (one.ok) Object.assign(output, one.output);
+    }
+    return Object.keys(output).length ? { status: 'partial', output } : { status: 'unavailable' };
   });
+  return { workflowId: data.id ?? null, verdicts };
 }

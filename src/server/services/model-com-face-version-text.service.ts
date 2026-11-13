@@ -5,6 +5,9 @@ import { logToAxiom } from '~/server/logging/client';
 import type { TextScanEachVerdict } from '~/server/services/text-scan/preview';
 import { previewTextScanEach } from '~/server/services/text-scan/preview';
 import { getActiveTextScanPrompts, getTextScanConfig } from '~/server/services/text-scan/prompt';
+import { applyCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import { loadModelScanSubjects } from '~/server/services/text-scan/profiles/model.profile';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import type { TextScanField, TextScanLabel } from '~/server/services/text-scan/types';
 import { nsfwLevelFromName } from '~/server/services/text-scan/types';
@@ -130,11 +133,61 @@ type Verdict = 'shown' | 'hidden' | 'held';
 
 function verdictOf(result: TextScanEachVerdict): Verdict | null {
   if (result.status === 'refused' || result.status === 'too-long') return 'hidden';
-  if (result.status !== 'ok') return null;
+  if (result.status !== 'ok' && result.status !== 'partial') return null;
   const { nsfw, minor, poi, csam } = result.output;
+  if (minor?.detected || poi?.detected || csam?.detected) return 'held';
   if (!nsfw || !minor || !poi || !csam) return null;
-  if (minor.detected || poi.detected || csam.detected) return 'held';
   return nsfwLevelFromName[nsfw.level] <= NsfwLevel.PG13 ? 'shown' : 'hidden';
+}
+
+/** Where a string sits in the model's versions, so a hold can name it without its text. */
+const positionsOf = (
+  versions: { id: number; name: string; trainedWords: string[] }[],
+  text: string
+) =>
+  versions.flatMap((version) => [
+    ...(version.name === text ? [{ versionId: version.id, field: 'name' }] : []),
+    ...version.trainedWords.flatMap((word, index) =>
+      word === text ? [{ versionId: version.id, field: 'trainedWords', index }] : []
+    ),
+  ]);
+
+type CsamHit = { text: string; reason: string; workflowId: string };
+
+/**
+ * The hold a positive csam Model scan writes, written here directly so it does not depend on the
+ * Model scan's own mode or rollout. The held text is the model's whole scan subject.
+ */
+async function holdCsamHits(
+  modelId: number,
+  versions: { id: number; name: string; trainedWords: string[] }[],
+  hits: CsamHit[]
+) {
+  const subject = (await loadModelScanSubjects([modelId], { publicVersionsOnly: true })).get(
+    modelId
+  );
+  if (!subject) throw new Error('csam hit on a model with no scan subject');
+  const prompts = await getActiveTextScanPrompts();
+  const csamPromptId = prompts['label:csam']?.id;
+  await applyCsamHold({
+    entityType: 'Model',
+    entityId: modelId,
+    workflowId: hits[0].workflowId,
+    outcome: {
+      csam: { detected: true, reason: hits[0].reason },
+      triggeredLabels: ['csam'],
+      nsfwLevel: null,
+    },
+    subject: {
+      ...subject,
+      meta: {
+        ...subject.meta,
+        comVersionTextHits: hits.flatMap((hit) => positionsOf(versions, hit.text)),
+      },
+    },
+    textHash: textScanTextHash(subject),
+    ...(csamPromptId !== undefined && { promptIds: { csam: csamPromptId } }),
+  });
 }
 
 /**
@@ -154,19 +207,26 @@ export const comVersionTextVerdictSql = (versionId: number, verdicts: ComVersion
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
   `;
 
-export type RateResult = { status: 'complete' | 'partial' | 'unrated'; workflows: number };
+export type RateResult = {
+  status: 'complete' | 'partial' | 'unrated';
+  workflows: number;
+  /** Strings with a csam detection in this run. */
+  csamHits: number;
+};
 
 /**
  * Rates each name and trigger word of the model's .com-visible versions that has no verdict yet,
  * one step per string, at most `maxWorkflows` workflows. `partial`: the budget ran out first;
- * `unrated`: some string got no verdict.
+ * `unrated`: some string got no verdict. A csam detection is held before any verdict is written,
+ * so a failed hold leaves the strings unrated for the retry. `dryRun` rates and writes nothing.
  */
 export async function rateComFaceVersionText(
   modelId: number,
-  maxWorkflows = COM_VERSION_TEXT_WORKFLOWS_PER_RUN
+  maxWorkflows = COM_VERSION_TEXT_WORKFLOWS_PER_RUN,
+  { dryRun = false }: { dryRun?: boolean } = {}
 ): Promise<RateResult> {
   const versions = await readComVersions(modelId);
-  if (!versions.length) return { status: 'complete', workflows: 0 };
+  if (!versions.length) return { status: 'complete', workflows: 0, csamHits: 0 };
   const [stored, policy] = await Promise.all([
     readComVersionTextVerdicts(versions.map((version) => version.id)),
     getComVersionTextPolicy(),
@@ -192,22 +252,31 @@ export async function rateComFaceVersionText(
   const pending = [...unrated.values()];
   let workflows = 0;
   let rated = 0;
-  let csamHit = false;
+  const csamHits: CsamHit[] = [];
   while (pending.length && workflows < maxWorkflows) {
     const chunk = pending.splice(0, COM_VERSION_TEXT_STEPS_PER_WORKFLOW);
     workflows++;
-    const results = await previewTextScanEach({
+    const { workflowId, verdicts: results } = await previewTextScanEach({
       labels: COM_VERSION_TEXT_LABELS,
       fields: chunk,
       waitSeconds: WAIT_SECONDS,
     }).catch((error) => {
       log('error', 'rating failed', { modelId, error: errorMessage(error) });
-      return chunk.map((): TextScanEachVerdict => ({ status: 'unavailable' }));
+      return {
+        workflowId: null,
+        verdicts: chunk.map((): TextScanEachVerdict => ({ status: 'unavailable' })),
+      };
     });
     results.forEach((result, i) => {
       const verdict = verdictOf(result);
-      if (result.status === 'ok') {
-        if (result.output.csam?.detected) csamHit = true;
+      if (result.status === 'ok' || result.status === 'partial') {
+        const { csam } = result.output;
+        if (csam?.detected)
+          csamHits.push({
+            text: chunk[i].text as string,
+            reason: csam.reason,
+            workflowId: workflowId ?? '',
+          });
         for (const label of ['minor', 'poi'] as const)
           if (result.output[label]?.detected)
             log('info', 'version text detection', { modelId, label });
@@ -219,8 +288,16 @@ export async function rateComFaceVersionText(
     });
   }
 
-  if (csamHit) {
+  if (dryRun)
+    return {
+      status: pending.length ? 'partial' : 'complete',
+      workflows,
+      csamHits: csamHits.length,
+    };
+
+  if (csamHits.length) {
     log('info', 'csam hit', { modelId });
+    await holdCsamHits(modelId, versions, csamHits);
     scanEntityInBackground({ entityType: 'Model', entityId: modelId, force: true });
   }
 
@@ -244,8 +321,8 @@ export async function rateComFaceVersionText(
   }
 
   // A run that rated nothing backs off rather than coming straight back.
-  if (pending.length && rated) return { status: 'partial', workflows };
-  return { status: anyUnrated ? 'unrated' : 'complete', workflows };
+  if (pending.length && rated) return { status: 'partial', workflows, csamHits: csamHits.length };
+  return { status: anyUnrated ? 'unrated' : 'complete', workflows, csamHits: csamHits.length };
 }
 
 function sameVerdicts(a: ComVersionTextVerdicts | undefined, b: ComVersionTextVerdicts) {
@@ -307,7 +384,7 @@ export async function processComFaceVersionText(
       Math.min(left, COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN)
     ).catch((error) => {
       log('error', 'rating threw', { modelId, error: errorMessage(error) });
-      return { status: 'failed' as const, workflows: 0 };
+      return { status: 'failed' as const, workflows: 0, csamHits: 0 };
     });
     counts[result.status]++;
     counts.workflows += result.workflows;

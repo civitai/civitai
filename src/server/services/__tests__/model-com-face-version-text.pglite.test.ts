@@ -5,16 +5,46 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Preview from '~/server/services/text-scan/preview';
 import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 import type * as Submit from '~/server/services/text-scan/submit';
+import type * as CsamHold from '~/server/services/text-scan/actions/csam-hold';
+import type * as TextScanMode from '~/server/services/text-scan/mode';
+import type * as ModelProfile from '~/server/services/text-scan/profiles/model.profile';
+import type { TextScanSubject } from '~/server/services/text-scan/types';
 import type { TextScanEachVerdict } from '~/server/services/text-scan/preview';
 import type { TextScanField, TextScanOutput } from '~/server/services/text-scan/types';
 
 /** The .com version-text rater against real rows. Ids and strings are invented. */
 
-const previewTextScanEach = vi.fn<typeof Preview.previewTextScanEach>();
+const previewTextScanEach =
+  vi.fn<
+    (...args: Parameters<typeof Preview.previewTextScanEach>) => Promise<TextScanEachVerdict[]>
+  >();
 vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
   ...(await importOriginal<typeof Preview>()),
-  previewTextScanEach: (...args: Parameters<typeof Preview.previewTextScanEach>) =>
-    previewTextScanEach(...args),
+  previewTextScanEach: async (...args: Parameters<typeof Preview.previewTextScanEach>) => ({
+    workflowId: 'wf-1',
+    verdicts: await previewTextScanEach(...args),
+  }),
+}));
+const applyCsamHold = vi.fn<typeof CsamHold.applyCsamHold>();
+vi.mock('~/server/services/text-scan/actions/csam-hold', async (importOriginal) => ({
+  ...(await importOriginal<typeof CsamHold>()),
+  applyCsamHold: (...args: Parameters<typeof CsamHold.applyCsamHold>) => applyCsamHold(...args),
+}));
+const modelSubject: TextScanSubject = {
+  fields: [{ heading: 'Name', text: 'Model name' }],
+  declared: {},
+  userId: 101,
+};
+vi.mock('~/server/services/text-scan/profiles/model.profile', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelProfile>()),
+  loadModelScanSubjects: async (ids: number[]) => new Map(ids.map((id) => [id, modelSubject])),
+}));
+// The Model scan's own gates, closed or open per test; the hold must not depend on them.
+const gates = vi.hoisted(() => ({ mode: 'active', csamMode: 'review' }));
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanMode>()),
+  getTextScanMode: async () => gates.mode,
+  getTextScanCsamMode: async () => gates.csamMode,
 }));
 const promptIds = vi.hoisted(() => ({ nsfw: 2 }));
 vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
@@ -52,6 +82,8 @@ const {
   rateComFaceVersionText,
   sweepComFaceVersionText,
 } = await import('~/server/services/model-com-face-version-text.service');
+
+const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 
 const MODEL_ID = 7;
 
@@ -95,6 +127,10 @@ afterAll(() => db.close());
 
 beforeEach(async () => {
   previewTextScanEach.mockReset();
+  applyCsamHold.mockReset();
+  applyCsamHold.mockResolvedValue(undefined);
+  gates.mode = 'active';
+  gates.csamMode = 'review';
   promptIds.nsfw = 2;
   scanEntityInBackground.mockReset();
   rateWith({});
@@ -168,6 +204,13 @@ async function seed({
     ]);
 }
 
+const queued = async (modelId = MODEL_ID) =>
+  (
+    await rows<{ value: Record<string, unknown> }>(`SELECT value FROM "KeyValue" WHERE key = $1`, [
+      comVersionTextQueueKey(modelId),
+    ])
+  )[0]?.value;
+
 async function verdicts(versionId: number) {
   const [row] = await rows<{ value: Record<string, unknown> }>(
     `SELECT value FROM "KeyValue" WHERE key = $1`,
@@ -236,23 +279,79 @@ describe('rateComFaceVersionText', () => {
     });
   });
 
-  it('a csam detection queues a forced Model text scan', async () => {
-    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
-    rateWith({ alpha: ok({ csam: { detected: true, reason: '' } }) });
+  it.each([
+    ['Model text scan off or outside its rollout', 'off', 'review'],
+    ['Model text scan in shadow', 'shadow', 'review'],
+    ['csam mode not review', 'active', 'off'],
+  ])('a csam detection writes the Model csam hold with the %s', async (_, mode, csamMode) => {
+    gates.mode = mode;
+    gates.csamMode = csamMode;
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha', 'beta'] }] });
+    rateWith({ beta: ok({ csam: { detected: true, reason: 'r' } }) });
     await rateComFaceVersionText(MODEL_ID);
+
+    expect(applyCsamHold).toHaveBeenCalledTimes(1);
+    const [hold] = applyCsamHold.mock.calls[0];
+    expect(hold).toMatchObject({
+      entityType: 'Model',
+      entityId: MODEL_ID,
+      workflowId: 'wf-1',
+      outcome: { csam: { detected: true } },
+      textHash: textScanTextHash(modelSubject),
+      promptIds: { csam: 5 },
+    });
+    expect(hold.subject.fields).toEqual(modelSubject.fields);
+    expect(hold.subject.meta).toEqual({
+      comVersionTextHits: [{ versionId: 1, field: 'trainedWords', index: 1 }],
+    });
+    expect(JSON.stringify(hold.subject.meta)).not.toContain('beta');
     expect(scanEntityInBackground).toHaveBeenCalledWith({
       entityType: 'Model',
       entityId: MODEL_ID,
       force: true,
     });
-    expect(await verdicts(1)).toMatchObject({ held: ['alpha'] });
+    expect(await verdicts(1)).toMatchObject({ shown: ['v1', 'alpha'], held: ['beta'] });
   });
 
-  it('no csam detection queues no Model text scan', async () => {
+  it('no csam detection writes no hold', async () => {
     await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
     rateWith({ alpha: ok({ minor: { detected: true, reason: '' } }) });
     await rateComFaceVersionText(MODEL_ID);
+    expect(applyCsamHold).not.toHaveBeenCalled();
     expect(scanEntityInBackground).not.toHaveBeenCalled();
+  });
+
+  it('a csam detection in a step whose other labels did not parse is still held', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: { status: 'partial', output: { csam: { detected: true, reason: '' } } } });
+    await rateComFaceVersionText(MODEL_ID);
+    expect(applyCsamHold).toHaveBeenCalledTimes(1);
+    expect(await verdicts(1)).toMatchObject({ held: ['alpha'] });
+  });
+
+  it('a hold that fails writes no verdicts, so the strings are rated again', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: ok({ csam: { detected: true, reason: '' } }) });
+    applyCsamHold.mockRejectedValue(new Error('hold write failed'));
+    await queueComFaceVersionText(MODEL_ID);
+
+    const counts = await processComFaceVersionText(
+      new Date(Date.now() + COM_VERSION_TEXT_QUIET_MS)
+    );
+    expect(counts.failed).toBe(1);
+    expect(await verdicts(1)).toBeUndefined();
+    expect(await queued()).toMatchObject({ attempt: 1 });
+  });
+
+  it('a dry run rates and counts csam hits but writes nothing', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: ok({ csam: { detected: true, reason: '' } }) });
+    await expect(rateComFaceVersionText(MODEL_ID, 20, { dryRun: true })).resolves.toMatchObject({
+      csamHits: 1,
+    });
+    expect(applyCsamHold).not.toHaveBeenCalled();
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
+    expect(await verdicts(1)).toBeUndefined();
   });
 
   it('re-rates only text without a verdict: an owner swapping a hidden word gets the new word rated', async () => {
@@ -317,7 +416,7 @@ describe('rateComFaceVersionText', () => {
     previewTextScanEach.mockImplementation(async ({ fields }) =>
       fields.map((): TextScanEachVerdict => ({ status: 'unavailable' }))
     );
-    await expect(rateComFaceVersionText(MODEL_ID, 2)).resolves.toEqual({
+    await expect(rateComFaceVersionText(MODEL_ID, 2)).resolves.toMatchObject({
       status: 'unrated',
       workflows: 2,
     });
@@ -348,14 +447,14 @@ describe('rateComFaceVersionText', () => {
     const words = Array.from({ length: 45 }, (_, i) => `w${i}`);
     await seed({ versions: [{ id: 1, name: 'v1', words }] });
 
-    await expect(rateComFaceVersionText(MODEL_ID, 2)).resolves.toEqual({
+    await expect(rateComFaceVersionText(MODEL_ID, 2)).resolves.toMatchObject({
       status: 'partial',
       workflows: 2,
     });
     expect(previewTextScanEach.mock.calls.map(([{ fields }]) => fields.length)).toEqual([20, 20]);
     expect(await verdicts(1)).toMatchObject({ pending: true });
 
-    await expect(rateComFaceVersionText(MODEL_ID, 2)).resolves.toEqual({
+    await expect(rateComFaceVersionText(MODEL_ID, 2)).resolves.toMatchObject({
       status: 'complete',
       workflows: 1,
     });
@@ -364,14 +463,6 @@ describe('rateComFaceVersionText', () => {
 });
 
 describe('processComFaceVersionText', () => {
-  const queued = async (modelId = MODEL_ID) =>
-    (
-      await rows<{ value: Record<string, unknown> }>(
-        `SELECT value FROM "KeyValue" WHERE key = $1`,
-        [comVersionTextQueueKey(modelId)]
-      )
-    )[0]?.value;
-
   it('waits out the quiet period after an edit, then rates and leaves the queue', async () => {
     await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
     await queueComFaceVersionText(MODEL_ID);
