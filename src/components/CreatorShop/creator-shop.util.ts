@@ -217,7 +217,6 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to update pack'),
   });
 
-  // A creator's packs show on their manage view, their storefront and the community shop.
   const refreshMysteryPacks = async () => {
     await queryUtils.creatorShop.getMyMysteryPacks.invalidate();
     await queryUtils.mysteryBox.getForCreator.invalidate();

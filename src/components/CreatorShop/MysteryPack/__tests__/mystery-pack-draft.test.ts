@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { previewMysteryPack } from '../mystery-pack-draft';
 
-// The design's worked example: standard steepness, 10/5/2/1 items valued 500/1,000/3,000/10,000
-// (integer weights 8075/1615/258/52): the price may be 500 to 694.
+// Standard steepness, 10/5/2/1 items valued 500/1,000/3,000/10,000: weights 8075/1615/258/52, price 500 to 694.
 const ids = (from: number, n: number) => Array.from({ length: n }, (_, i) => from + i);
 const draft = { steepness: 'standard' as const, tiers: [ids(1, 10), ids(11, 5), ids(16, 2), [18]] };
 const values = new Map<number, number>([
@@ -27,7 +26,7 @@ describe('previewMysteryPack', () => {
   });
 
   it('names the worst-draw bound when it is the tighter one', () => {
-    // 500 cheapest item caps the price at 1,000 though the average is higher.
+    // Worst draw (2x the cheapest, 500) caps the price below the average.
     const rich = new Map(values);
     for (const id of ids(11, 5)) rich.set(id, 5000);
     for (const id of ids(16, 2)) rich.set(id, 9000);

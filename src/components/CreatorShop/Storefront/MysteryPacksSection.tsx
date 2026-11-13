@@ -10,11 +10,6 @@ import { trpc } from '~/utils/trpc';
 
 const PACK_COLOR = 'var(--mantine-color-violet-5)';
 
-/**
- * A creator's live mystery packs. Signed in, each is the box card with the viewer's own odds and
- * boxes; signed out, the catalog card with base odds. Nothing renders unless the viewer has the
- * creator pack flags (the server answers nothing without them too) or the creator has no live pack.
- */
 export function MysteryPacksSection({ ownerUserId }: { ownerUserId: number }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();

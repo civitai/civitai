@@ -10,17 +10,18 @@ import {
 } from '~/server/services/creator-mystery-pack.service';
 import { listHeldItems } from '~/server/services/item.service';
 import {
+  BOX_DEFINITION_SELECT,
   buildMysteryBoxView,
   getBoxCatalogForDisplay,
   getBoxTiers,
   mysteryBoxesHiddenIn,
   readBoxListings,
   SHOWN_BOX_STATUSES,
+  type BoxSeller,
   type MysteryBoxCatalogEntry,
   type MysteryBoxView,
 } from '~/server/services/mystery-box.service';
 
-/** The picker shows at most this many of a creator's cosmetics. */
 const CANDIDATE_LIMIT = 500;
 const CATALOG_LIMIT = 40;
 
@@ -30,9 +31,8 @@ export type MysteryPackCandidate = Pick<
 >;
 
 /**
- * Every cosmetic the creator made, each judged by the predicate submit, revise and approve use, so
- * the picker can grey out what a review would refuse and say why. `value` is null while it has a
- * problem.
+ * The creator's newest cosmetics, each judged by the predicate submit, revise and approve use;
+ * `value` is null while it has a problem.
  */
 export async function getMysteryPackCandidates({
   creatorId,
@@ -70,10 +70,8 @@ export type MyMysteryPack = {
   name: string;
   description: string | null;
   version: number;
-  /** The box's own status: draft (never approved), published or archived. */
   boxStatus: string;
   listing: { id: number; status: string; unitAmount: number } | null;
-  /** The edit waiting for review, if any. */
   pending: RevisionRow | null;
   /** What the editor opens with: the pending edit, else the last approved version. */
   proposal: MysteryPackProposal | null;
@@ -81,10 +79,7 @@ export type MyMysteryPack = {
   rejection: string | null;
 };
 
-/**
- * The creator's own packs with the state their manage view shows. Only the creator or a moderator
- * may read them: a draft or pending pack is not public. Primary DB: it follows a write.
- */
+/** Creator or moderator only (drafts aren't public). Reads the primary: it follows a write. */
 export async function getMyMysteryPacks({
   ownerId,
   viewer,
@@ -107,7 +102,7 @@ export async function getMyMysteryPacks({
       revisions: {
         where: { status: { in: ['pending', 'approved', 'rejected'] } },
         orderBy: { id: 'desc' },
-        take: 10,
+        take: 25,
         select: { id: true, status: true, baseVersion: true, proposal: true, note: true },
       },
     },
@@ -117,6 +112,7 @@ export async function getMyMysteryPacks({
     const revisions = box.revisions as unknown as RevisionRow[];
     const pending = revisions.find((r) => r.status === 'pending') ?? null;
     const approved = revisions.find((r) => r.status === 'approved') ?? null;
+    const base = (pending ?? approved)?.proposal;
     const newest = revisions[0];
     const listing = box.shopItems[0] ?? null;
     return {
@@ -127,52 +123,34 @@ export async function getMyMysteryPacks({
       boxStatus: box.status,
       listing,
       pending,
-      proposal: (pending ?? approved)?.proposal ?? null,
+      // A lowered price lives on the listing, so an edit of the tiers must start from it.
+      proposal: base
+        ? { ...base, price: pending ? base.price : listing?.unitAmount ?? base.price }
+        : null,
       rejection: newest?.status === 'rejected' ? newest.note : null,
     };
   });
 }
 
-export type CreatorMysteryPackEntry = MysteryBoxCatalogEntry & {
-  seller: { id: number; username: string | null };
-};
+export type CreatorMysteryPackEntry = MysteryBoxCatalogEntry & { seller: BoxSeller };
 
-/**
- * Live creator packs on sale, for a creator's storefront (`sellerId`) or the community shop. Nothing
- * unless the viewer has the flags and isn't in a hidden region; a banned or deleted seller's packs
- * don't show. Contents are by tier only: a pack has no teams, so base odds are the box's own.
- */
-export async function getCreatorMysteryPacks({
-  sellerId,
-  enabled,
-  countryCode,
-}: {
-  sellerId?: number;
-  /** `creatorMysteryPacksEnabled(features)` for the viewer. */
-  enabled: boolean;
-  countryCode: string | null | undefined;
-}): Promise<CreatorMysteryPackEntry[]> {
-  if (!enabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
-
-  const boxes = await dbRead.itemDefinition.findMany({
+/** Banned or deleted sellers' boxes are excluded. */
+function readSellerBoxes(statuses: string[], sellerId?: number) {
+  return dbRead.itemDefinition.findMany({
     where: {
       type: ITEM_TYPE.box,
-      status: ITEM_DEFINITION_STATUS.published,
+      status: { in: statuses },
       sellerId: sellerId ?? { not: null },
       seller: { bannedAt: null, deletedAt: null },
     },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      version: true,
-      status: true,
-      params: true,
-      seller: { select: { id: true, username: true } },
-    },
+    select: { ...BOX_DEFINITION_SELECT, seller: { select: { id: true, username: true } } },
     orderBy: { id: 'desc' },
     take: CATALOG_LIMIT,
   });
+}
+
+async function readLivePacks(sellerId?: number): Promise<CreatorMysteryPackEntry[]> {
+  const boxes = await readSellerBoxes([ITEM_DEFINITION_STATUS.published], sellerId);
   if (!boxes.length) return [];
   const boxIds = boxes.map((box) => box.id);
   const [{ onSale }, tiers] = await Promise.all([readBoxListings(boxIds), getBoxTiers(boxIds)]);
@@ -200,10 +178,45 @@ export async function getCreatorMysteryPacks({
   return entries.filter((entry): entry is CreatorMysteryPackEntry => entry !== null);
 }
 
+// The community list is the same for every viewer: share one read, in flight or recent, so a
+// cold pod or a version bump doesn't send each concurrent /shop view to the catalog query.
+const COMMUNITY_TTL_MS = 30_000;
+let community: { at: number; packs: Promise<CreatorMysteryPackEntry[]> } | undefined;
+const communityPacks = () => {
+  if (!community || Date.now() - community.at > COMMUNITY_TTL_MS) {
+    const packs = readLivePacks();
+    const entry = { at: Date.now(), packs };
+    community = entry;
+    packs.catch(() => {
+      if (community === entry) community = undefined;
+    });
+  }
+  return community.packs;
+};
+export const clearCommunityPacksCache = () => {
+  community = undefined;
+};
+
+/**
+ * Live packs on sale for one seller, or for every seller. Empty without the flags or in a hidden
+ * region.
+ */
+export async function getCreatorMysteryPacks({
+  sellerId,
+  enabled,
+  countryCode,
+}: {
+  sellerId?: number;
+  enabled: boolean;
+  countryCode: string | null | undefined;
+}): Promise<CreatorMysteryPackEntry[]> {
+  if (!enabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
+  return sellerId === undefined ? communityPacks() : readLivePacks(sellerId);
+}
+
 /**
  * One creator's packs as a signed-in viewer sees them: each on sale, or that they hold, with what is
- * left for them and their unopened boxes. A pack has no team, so there is one pool for everyone.
- * Nothing without the creator pack flag or in a hidden region; the odds page's own gates otherwise.
+ * left for them and their unopened boxes. A pack has no team, so there is one pool.
  */
 export async function getMysteryPackViewsForSeller({
   sellerId,
@@ -217,25 +230,7 @@ export async function getMysteryPackViewsForSeller({
   countryCode: string | null | undefined;
 }): Promise<MysteryBoxView[]> {
   if (!enabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
-  const boxes = await dbRead.itemDefinition.findMany({
-    where: {
-      type: ITEM_TYPE.box,
-      status: { in: SHOWN_BOX_STATUSES },
-      sellerId,
-      seller: { bannedAt: null, deletedAt: null },
-    },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      version: true,
-      status: true,
-      params: true,
-      seller: { select: { id: true, username: true } },
-    },
-    orderBy: { id: 'desc' },
-    take: CATALOG_LIMIT,
-  });
+  const boxes = await readSellerBoxes(SHOWN_BOX_STATUSES, sellerId);
   if (!boxes.length) return [];
   const boxIds = boxes.map((box) => box.id);
   const [{ onSale }, held, tiers] = await Promise.all([

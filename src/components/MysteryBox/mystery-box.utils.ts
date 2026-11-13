@@ -16,7 +16,6 @@ type OddsView<C extends OddsContent> = { tiers: MysteryBoxTier[]; contents: C[] 
 /** What a box says about itself when it has no description. */
 export const MYSTERY_BOX_FALLBACK_DESCRIPTION = "1 random hat you don't own yet.";
 
-/** What a creator's pack says about itself when its creator wrote no description. */
 export const MYSTERY_PACK_FALLBACK_DESCRIPTION = "1 random item you don't own yet.";
 
 /** Rarity colours for a tier with none of its own, rarest last. */
@@ -147,7 +146,6 @@ export function afterHeldOpen(view: HeldMysteryBox, result: MysteryBoxOpenResult
   };
 }
 
-/** What a box's rewards are called: a team box holds hats, a creator's pack holds the creator's items. */
 export const boxNoun = (view: Pick<MysteryBoxView, 'seller'>) => (view.seller ? 'item' : 'hat');
 
 export function boxEventOf(source: MysteryBoxSource, view?: MysteryBoxView | HeldMysteryBox) {

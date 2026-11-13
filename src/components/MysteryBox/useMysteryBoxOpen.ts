@@ -66,7 +66,6 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
       undefined,
       (counts) => counts && { ...counts, unopenedBoxes: Math.max(0, counts.unopenedBoxes + change) }
     );
-  // The source's own read, as a list of the box views it shows; nothing for the inventory's.
   const patchViews = (
     patch: (views: MysteryBoxView[] | undefined) => MysteryBoxView[] | undefined
   ) => {

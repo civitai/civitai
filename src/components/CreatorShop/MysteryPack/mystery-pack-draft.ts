@@ -14,9 +14,8 @@ import { COSMETIC_PRICE_FLOOR_MIN } from '~/server/schema/creator-shop.schema';
 export type MysteryPackDraft = { steepness: CreatorBoxSteepness; tiers: number[][] };
 
 /**
- * What the creator sees while building, from the same rules the server checks at submit and
- * approve (`creator-box-rules`), so a green preview is not refused for the layout or the price.
- * `values` holds each valid item's value; an item missing from it blocks the bounds.
+ * Preview from the server's own rules (`creator-box-rules`), so a green preview isn't refused at
+ * submit or approve. A value missing from `values` blocks the bounds.
  */
 export function previewMysteryPack(
   draft: MysteryPackDraft,
@@ -68,10 +67,7 @@ export function previewMysteryPack(
   };
 }
 
-/**
- * The shared check's reason, except when the price is over the allowed maximum: it names the
- * average even where the worst-draw bound is the tighter one, which would contradict the range shown.
- */
+/** The shared reason, except over the maximum: it always names the average, which contradicts the range shown when the worst-draw bound is tighter. */
 function priceMessage(price: number | undefined, bounds: CreatorBoxPriceBounds) {
   if (price === undefined) return 'Set a price';
   if (bounds.max >= bounds.min && price > bounds.max)

@@ -196,7 +196,6 @@ export const creatorShopRouter = router({
       stickersEnabled: ctx.features.stickers,
     });
   }),
-  // A creator's own packs; a moderator may name the creator.
   getMyMysteryPacks: creatorShopProcedure
     .input(z.object({ userId: z.number().int().positive().optional() }))
     .query(({ input, ctx }) => {

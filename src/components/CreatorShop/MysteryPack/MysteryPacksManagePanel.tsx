@@ -10,6 +10,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import { IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
@@ -21,7 +22,6 @@ import type { MyMysteryPack } from '~/server/services/creator-mystery-pack-read.
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
-/** What a creator is told about a pack: where it is in review and whether it is on sale. */
 export function mysteryPackStatus(pack: MyMysteryPack): { label: string; color: string } {
   if (pack.boxStatus === 'archived') return { label: 'Archived', color: 'gray' };
   switch (pack.listing?.status) {
@@ -40,7 +40,12 @@ export function mysteryPackStatus(pack: MyMysteryPack): { label: string; color: 
   }
 }
 
-/** The creator's mystery packs: build one, edit, withdraw a waiting edit, or lower a live price. */
+/** Only a live pack with no edit waiting, or one sent back, can be edited: the server refuses the rest. */
+const canEdit = (pack: MyMysteryPack) =>
+  !pack.pending &&
+  pack.boxStatus !== 'archived' &&
+  (pack.listing?.status === 'Published' || pack.listing?.status === 'RequestedChanges');
+
 export function MysteryPacksManagePanel({
   canBuild,
   userId,
@@ -55,6 +60,20 @@ export function MysteryPacksManagePanel({
     isError,
   } = trpc.creatorShop.getMyMysteryPacks.useQuery({ userId });
   const { withdrawMysteryPackRevision } = useMutateCreatorShop();
+  const withdraw = (pack: MyMysteryPack) =>
+    openConfirmModal({
+      title: pack.listing?.status === 'Published' ? 'Withdraw this edit?' : 'Withdraw this pack?',
+      children: (
+        <Text size="sm">
+          {pack.listing?.status === 'Published'
+            ? 'The live version keeps selling.'
+            : 'It has not been approved yet, so withdrawing archives it. The submission fee is not refunded.'}
+        </Text>
+      ),
+      labels: { confirm: 'Withdraw', cancel: 'Keep' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => withdrawMysteryPackRevision.mutate({ boxId: pack.boxId }),
+    });
 
   return (
     <Stack gap="md">
@@ -113,7 +132,7 @@ export function MysteryPacksManagePanel({
                 )}
                 {canBuild && (
                   <Group gap="xs">
-                    {pack.boxStatus !== 'archived' && pack.listing?.status !== 'Rejected' && (
+                    {canEdit(pack) && (
                       <Button
                         size="compact-md"
                         variant="light"
@@ -132,9 +151,9 @@ export function MysteryPacksManagePanel({
                         size="compact-md"
                         variant="default"
                         loading={withdrawMysteryPackRevision.isPending}
-                        onClick={() => withdrawMysteryPackRevision.mutate({ boxId: pack.boxId })}
+                        onClick={() => withdraw(pack)}
                       >
-                        Withdraw edit
+                        {live ? 'Withdraw edit' : 'Withdraw submission'}
                       </Button>
                     )}
                     {live && !pack.pending && pack.listing && (

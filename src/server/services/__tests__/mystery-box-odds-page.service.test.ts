@@ -94,7 +94,12 @@ type Box = {
   name: string;
   description: string | null;
   params: unknown;
-  seller?: { id: number; username: string | null } | null;
+  seller?: {
+    id: number;
+    username: string | null;
+    bannedAt?: Date | null;
+    deletedAt?: Date | null;
+  } | null;
 };
 type Listing = {
   id: number;
@@ -382,6 +387,16 @@ describe('who sees the odds page', () => {
       seller: { id: 77, username: 'testcreator' },
       price: 500,
     });
+  });
+
+  it("hides a banned or deleted seller's pack from everyone but moderators", async () => {
+    theBox().seller = { id: 77, username: 'testcreator', bannedAt: new Date() };
+    expect(await read({ creatorPacksEnabled: true })).toBeNull();
+    expect(
+      await read({ creatorPacksEnabled: true, viewer: { id: 5, isModerator: true } })
+    ).not.toBeNull();
+    theBox().seller = { id: 77, username: 'testcreator', deletedAt: new Date() };
+    expect(await read({ creatorPacksEnabled: true })).toBeNull();
   });
 
   it('shows a creator pack to nobody without the creator pack flag', async () => {

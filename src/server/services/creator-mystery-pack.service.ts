@@ -159,7 +159,7 @@ export function readContentRows(client: Tx, creatorId: number, where: Prisma.Sql
     WHERE ${where}`;
 }
 
-/** One content row's verdict and value: the predicate submit, revise and approve all use. */
+/** The predicate submit, revise and approve all share. */
 export function evaluateContentRow(
   row: ContentRow,
   { creatorId, stickersEnabled, now }: { creatorId: number; stickersEnabled: boolean; now: Date }

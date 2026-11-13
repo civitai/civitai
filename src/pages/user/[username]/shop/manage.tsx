@@ -52,7 +52,6 @@ function ManageShopPage() {
   });
   const showServicesTab =
     servicesEnabled || (isOwner && !!mine && (mine.items.length > 0 || mine.hiddenOffDomain > 0));
-  // Mystery packs are for the owner and moderators, and only with every flag they need.
   const showPacksTab = creatorMysteryPacksEnabled(features) && canManage;
   const showTabs = showServicesTab || showPacksTab;
   const queryTab = router.query.tab;

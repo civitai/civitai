@@ -56,11 +56,6 @@ const STEEPNESS_LABELS: Record<CreatorBoxSteepness, { label: string; hint: strin
 };
 const NOT_IN_PACK = '-1';
 
-/**
- * Builds a mystery pack from the creator's own items, or edits one: each item goes in a tier, the
- * creator picks how steep the odds are, and the odds and price bounds update as they build. The
- * server re-checks everything with the same rules at submit and at review.
- */
 export function MysteryPackComposerModal({ pack }: { pack?: MyMysteryPack }) {
   const dialog = useDialogContext();
   const isMobile = useIsMobile({ type: 'media' });
@@ -75,7 +70,6 @@ export function MysteryPackComposerModal({ pack }: { pack?: MyMysteryPack }) {
     proposal?.steepness ?? 'standard'
   );
   const [tierCount, setTierCount] = useState(proposal?.tiers.length ?? 3);
-  // Tier index by cosmetic id; an item not in the pack has no entry.
   const [assignment, setAssignment] = useState<Record<number, number>>(() =>
     Object.fromEntries(
       (proposal?.tiers ?? []).flatMap((tier, t) => tier.cosmeticIds.map((id) => [id, t]))
@@ -94,7 +88,6 @@ export function MysteryPackComposerModal({ pack }: { pack?: MyMysteryPack }) {
   }, [assignment, tierCount, steepness]);
   const chosen = draft.tiers.flat();
 
-  // An item the server would refuse has no value, so it blocks the bounds until it's removed.
   const values = useMemo(
     () =>
       new Map(
@@ -148,7 +141,7 @@ export function MysteryPackComposerModal({ pack }: { pack?: MyMysteryPack }) {
     });
   const changeTierCount = (next: number) => {
     setTierCount(next);
-    // An item in a removed tier drops out rather than silently moving to another.
+    // Drop items in removed tiers; don't clamp them into another tier.
     setAssignment((current) =>
       Object.fromEntries(Object.entries(current).filter(([, t]) => t < next))
     );

@@ -17,8 +17,7 @@ const COLOR = 'var(--mantine-color-violet-5)';
 
 /**
  * A mystery box for a viewer not on a team: its base odds, a link to its contents and odds page, and
- * what it takes to open one (signing in, or joining a team). A creator's pack (`seller`) has no
- * team, so it names its seller and sends the viewer to their shop to buy.
+ * what it takes to open one (signing in, or joining a team).
  */
 export function MysteryBoxCatalogCard({
   box,

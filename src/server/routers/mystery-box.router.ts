@@ -53,7 +53,7 @@ export const mysteryBoxRouter = router({
     .query(({ input, ctx }) =>
       getMysteryBoxCatalogForEvent({ ...input, ...publicMysteryBoxViewer(ctx) })
     ),
-  // Live creator packs, one creator's or the community's. Per viewer (flags, country), like the odds page.
+  // Per viewer (flags, country), like the odds page.
   getForCreator: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .use(noEdgeCache())
@@ -65,7 +65,6 @@ export const mysteryBoxRouter = router({
         countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
       })
     ),
-  // One creator's packs as the signed-in viewer sees them (their odds, their unopened boxes).
   getForSeller: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getSellerMysteryBoxesInput)

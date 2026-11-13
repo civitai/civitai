@@ -7,12 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
-/**
- * The storefront's Mystery packs section is for viewers with every creator pack flag: without
- * them it renders nothing AND asks the server for nothing, and with them it asks for the read
- * that matches whether the viewer is signed in.
- */
-
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,10 +14,10 @@ const { state, record } = vi.hoisted(() => {
   const state = {
     flags: {} as Record<string, boolean>,
     user: null as { id: number } | null,
-    asked: [] as { query: string; enabled: boolean | undefined }[],
+    asked: [] as { query: string; enabled: boolean | undefined; input: unknown }[],
   };
-  const record = (query: string) => (_: unknown, opts?: { enabled?: boolean }) => {
-    state.asked.push({ query, enabled: opts?.enabled });
+  const record = (query: string) => (input: unknown, opts?: { enabled?: boolean }) => {
+    state.asked.push({ query, enabled: opts?.enabled, input });
     return { data: undefined };
   };
   return { state, record };
@@ -88,6 +82,7 @@ describe('MysteryPacksSection', () => {
     state.user = { id: 5 };
     await render();
     expect(enabledQueries()).toEqual(['getForSeller']);
+    expect(state.asked.find((q) => q.enabled)?.input).toEqual({ sellerId: 77 });
 
     state.asked = [];
     state.user = null;
