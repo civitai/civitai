@@ -11086,7 +11086,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           );
         expect(err, call).toMatchObject({
           code: 'BAD_REQUEST',
-          message: 'a step input may not name an output destination',
+          message: 'a step input may not name an output destination or make its output public',
         });
         expect(mockSubmitWorkflow, call).not.toHaveBeenCalled();
       }

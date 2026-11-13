@@ -932,6 +932,54 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     }
   );
 
+  it.each([
+    ['an `engıne` twin', { engine: 'wan', engıne: 'kling', images: [ref('gen')] }],
+    [
+      'a `provıder` twin',
+      { engine: 'wan', provider: 'civitai', provıder: 'comfy', images: [ref('gen')] },
+    ],
+  ])('🔴 a twin spelled with a dotless ı still refuses videoGen media: %s', (_label, input) => {
+    mediaRefused([gen, step({ $type: 'videoGen', input })], 1);
+  });
+
+  it('🔴 a `tranſcode` step is still a transcode step and takes no references', () => {
+    const chat = step({ name: 'llm', $type: 'chatCompletion', input: { messages: [] } });
+    expect(
+      refusal([chat, step({ $type: 'tranſcode', input: { sourceUrl: ref('llm', 'output.text') } })])
+        .error
+    ).toBe('workflow step 1: a transcode step takes literal input only, no references');
+  });
+
+  it.each([{ public: true }, { opts: { Public: true } }])(
+    '🔴 refuses a step input that makes its output public: %j',
+    (extra) => {
+      expect(
+        refusal([step({ $type: 'transcode', input: { sourceUrl: 'https://a', ...extra } })]).error
+      ).toBe(`workflow step 0: ${WRITE_TARGET_ERROR}`);
+    }
+  );
+
+  it('🔴 an analyser with a non-object input takes no media references', () => {
+    const r = resolveBlockWorkflowGraph({
+      steps: [
+        gen,
+        step({
+          $type: 'repeat',
+          input: {
+            for: { $ref: '$arguments', path: 'items', as: 'it' },
+            template: {
+              $type: 'mediaCaptioning',
+              input: [{ prompt: ref('gen', 'output.images[0].url') }],
+            },
+          },
+        }),
+      ],
+      arguments: { items: [1] },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe(`workflow step 1: ${MEDIA_REF_ERROR}`);
+  });
+
   it('🔴 refuses any input key naming an output destination, at any depth and in any case', () => {
     for (const input of [
       { sourceUrl: 'https://a', destinationUrl: 'https://b' },

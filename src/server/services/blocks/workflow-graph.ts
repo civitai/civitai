@@ -77,6 +77,14 @@ export type BlockWorkflowGraphResult =
       error: string;
     };
 
+/**
+ * Case-fold for comparing keys and `$type`s: upper-casing first maps `ı` and `ſ`
+ * onto I and S, so a key the orchestrator may bind ignoring case cannot hide.
+ */
+function fold(text: string): string {
+  return text.toUpperCase().toLowerCase();
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -89,7 +97,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * string forwarded to a service this repo does not own.
  */
 export function isRepeatStepType(stepType: unknown): boolean {
-  return typeof stepType === 'string' && stepType.toLowerCase() === 'repeat';
+  return typeof stepType === 'string' && fold(stepType) === 'repeat';
 }
 
 /** True when every key of `object` is one of `allowed`, spelled exactly. */
@@ -199,7 +207,7 @@ export function repeatUnboundedProblem(
 
 /** `merge` reads other steps through `input.fields[*].$ref`, which is not a reference object. */
 export function isMergeStepType(stepType: unknown): boolean {
-  return typeof stepType === 'string' && stepType.toLowerCase() === 'merge';
+  return typeof stepType === 'string' && fold(stepType) === 'merge';
 }
 
 /** The refusal for a `merge` step whose sources cannot be read for certain. */
@@ -212,7 +220,7 @@ export const MERGE_SHAPE_ERROR =
  */
 function readMergeSources(input: unknown): Array<{ source: string; path: unknown }> | null {
   if (!isPlainObject(input)) return null;
-  if (Object.keys(input).some((key) => key !== 'fields' && key.toLowerCase() === 'fields')) {
+  if (Object.keys(input).some((key) => key !== 'fields' && fold(key) === 'fields')) {
     return null;
   }
   const { fields } = input;
@@ -220,7 +228,7 @@ function readMergeSources(input: unknown): Array<{ source: string; path: unknown
   const sources: Array<{ source: string; path: unknown }> = [];
   for (const field of Object.values(fields)) {
     if (!isPlainObject(field)) return null;
-    if (Object.keys(field).some((key) => key !== '$ref' && key.toLowerCase() === '$ref')) {
+    if (Object.keys(field).some((key) => key !== '$ref' && fold(key) === '$ref')) {
       return null;
     }
     // Without `reduce` the entry is a plain reference object, which the
@@ -382,10 +390,11 @@ export const MEDIA_REF_ERROR =
   'this step may only reference text fields of other steps (a prompt, a caption, tags…), not ' +
   'their media, urls or ids';
 
-export const WRITE_TARGET_ERROR = 'a step input may not name an output destination';
+export const WRITE_TARGET_ERROR =
+  'a step input may not name an output destination or make its output public';
 
 function lowerType(stepType: unknown) {
-  return typeof stepType === 'string' ? stepType.toLowerCase() : '';
+  return typeof stepType === 'string' ? fold(stepType) : '';
 }
 
 /** Whether `stepType` (with this literal `input`) may take a reference into media. */
@@ -409,7 +418,7 @@ export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
  * orchestrator binds is not something this repo can know, so the check refuses.
  */
 function hasRecasedTwin(object: Record<string, unknown>, key: string): boolean {
-  return Object.keys(object).some((k) => k !== key && k.toLowerCase() === key);
+  return Object.keys(object).some((k) => k !== key && fold(k) === key);
 }
 
 /** A reference path that ends on a text field (`TEXT_REF_LEAVES`), never on media. */
@@ -454,8 +463,7 @@ const TOO_DEEP = Symbol('too deep');
  * `WORKFLOW_INPUT_DEPTH_MAX` it returns `TOO_DEEP` rather than stop looking.
  */
 function findWriteTargetKey(value: unknown): string | typeof TOO_DEEP | null {
-  // Upper-casing folds `ı` and `ſ` onto I and S, so those spellings match too.
-  return findKey(value, (key) => key.toUpperCase().includes('DESTINATION'));
+  return findKey(value, (key) => fold(key).includes('destination') || fold(key) === 'public');
 }
 
 /** The first key at any depth that `matches`, `TOO_DEEP` past the depth limit, or `null`. */
@@ -481,7 +489,7 @@ function findKey(
   return null;
 }
 
-const isRefKey = (key: string) => key.toLowerCase() === '$ref';
+const isRefKey = (key: string) => fold(key) === '$ref';
 
 /**
  * Why a step input may not be submitted as-is: it names an output destination,
@@ -509,8 +517,8 @@ const RECASED_REF_ERROR = 'a reference key must be spelled "$ref", "path", "defa
  */
 function hasRecasedRefKey(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  if (!keys.some((key) => key.toLowerCase() === '$ref')) return false;
-  return keys.some((key) => REF_KEYS.has(key.toLowerCase()) && !REF_KEYS.has(key));
+  if (!keys.some(isRefKey)) return false;
+  return keys.some((key) => REF_KEYS.has(fold(key)) && !REF_KEYS.has(key));
 }
 
 type WalkState = { refs: number; loopVars: Set<string>; mediaRefsAllowed: boolean };
@@ -598,6 +606,9 @@ function checkStepInput(
     if (DESTINATION_STEP_TYPES.has(lowerType(stepType))) return DESTINATION_STEP_REF_ERROR;
   }
   state.mediaRefsAllowed = acceptsMediaRefs(stepType, input);
+  if (ANALYSER_TYPES.has(lowerType(stepType))) {
+    if (!isPlainObject(input)) state.mediaRefsAllowed = false;
+  }
   if (ANALYSER_TYPES.has(lowerType(stepType)) && isPlainObject(input)) {
     // An analyser takes media on its media field only; its free-text fields are text.
     for (const [key, value] of Object.entries(input)) {
