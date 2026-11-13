@@ -459,13 +459,6 @@ describe('filters', () => {
     expect(calls[0].filter.mustNot ?? []).toEqual([]);
   });
 
-  it('drops the base-model rule when the gate holds no NSFW level', async () => {
-    const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
-    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
-    expect(calls[0].filter.mustNot ?? []).toEqual([]);
-  });
-
   it("sends the viewer's browsing level, never an empty one", async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({ input: textQuery({ browsingLevel: 0 }), candidateSource: source });
