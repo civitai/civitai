@@ -427,6 +427,8 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
       });
       expect(buzz.refundTransaction).toHaveBeenCalledTimes(1);
       expect(locks.expiredWhileRunning()).toBe(0);
+      // One attempt, inside the budget the lock's transaction is sized for (buzz-charge-lock.ts).
+      expect(buzz.refundTransaction.mock.calls[0][3]).toEqual({ timeoutMs: 10_000, retries: 0 });
     });
   });
 

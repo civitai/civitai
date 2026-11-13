@@ -318,4 +318,16 @@ describe('a donation across an unknown outcome', () => {
     expect(ledger.charges()).toHaveLength(1);
     expect(donations).toHaveLength(1);
   });
+
+  it('refunds a failed record with one bounded attempt', async () => {
+    dbMock.dbWrite.donation.create.mockRejectedValueOnce(new Error('write failed') as never);
+
+    await expect(donate(KEY)).rejects.toThrow('Failed to create donation');
+
+    expect(ledger.refunds()).toHaveLength(1);
+    expect(buzz.refundMultiAccountTransaction.mock.calls[0][1]).toEqual({
+      timeoutMs: 10_000,
+      retries: 0,
+    });
+  });
 });
