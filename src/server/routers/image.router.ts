@@ -30,6 +30,7 @@ import {
   refreshImageResources,
 } from '~/server/services/image.service';
 import { getSongCoversForPlayer, setSongCover } from '~/server/services/post.service';
+import { getSongLyrics } from '~/server/services/track-lyrics.service';
 import {
   middleware,
   guardedProcedure,
@@ -252,6 +253,11 @@ export const imageRouter = router({
     // answer for 5 minutes.
     .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
     .query(({ input, ctx }) => getSongCoversForPlayer({ ...input, ctx })),
+  // Per viewer (visibility and the music flag), so no `edgeCacheIt`.
+  getSongLyrics: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getByIdSchema)
+    .query(({ input, ctx }) => getSongLyrics({ id: input.id, ctx })),
 
   updateAccetableMinor: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
