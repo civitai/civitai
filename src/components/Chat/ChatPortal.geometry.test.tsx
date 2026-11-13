@@ -13,6 +13,8 @@ import {
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { ChatPortal } from '~/components/Chat/ChatPortal';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+// globals.css declares `--header-height` from this; the test reads that one declaration.
+import { HEADER_HEIGHT_PX } from '~/shared/constants/app-layout.constants';
 
 vi.mock('next/router', () => ({
   useRouter: () => ({ isReady: false, query: {}, pathname: '/', replace: () => undefined }),
@@ -34,7 +36,6 @@ vi.mock('~/components/Chat/ChatWindow', async () => {
 // A notched phone's insets, which the harness otherwise reports as 0.
 const INSET_TOP = 20;
 const INSET_BOTTOM = 34;
-const HEADER = 60; // --header-height
 
 // `@sm:` is a container query against BaseLayout's ContainerProvider, as in the app.
 const ui = (
@@ -45,7 +46,6 @@ const ui = (
         height: '100vh',
         '--safe-area-inset-top': `${INSET_TOP}px`,
         '--safe-area-inset-bottom': `${INSET_BOTTOM}px`,
-        '--header-height': `${HEADER}px`,
       } as React.CSSProperties
     }
   >
@@ -74,7 +74,7 @@ describe('ChatPortal open window', () => {
     expect(b.width).toBe(PHONE_VIEWPORT.width);
     expect(getComputedStyle(win).borderTopLeftRadius).toBe('0px');
     expect(b.bottom, 'flush with the screen bottom').toBe(PHONE_VIEWPORT.height);
-    expect(b.top, 'meets the header').toBe(INSET_TOP + HEADER);
+    expect(b.top, 'meets the header').toBe(INSET_TOP + HEADER_HEIGHT_PX);
     const composer = box(win.querySelector('[data-composer]')!);
     expect(composer.bottom, 'composer clears the home indicator').toBeLessThanOrEqual(
       PHONE_VIEWPORT.height - INSET_BOTTOM
@@ -90,6 +90,6 @@ describe('ChatPortal open window', () => {
     expect(getComputedStyle(win).borderTopLeftRadius).not.toBe('0px');
     // Unchanged: lifted by the bottom inset, capped 1rem short of the header.
     expect(b.bottom).toBe(900 - INSET_BOTTOM);
-    expect(b.height).toBe(900 - INSET_TOP - INSET_BOTTOM - HEADER - 16);
+    expect(b.height).toBe(900 - INSET_TOP - INSET_BOTTOM - HEADER_HEIGHT_PX - 16);
   });
 });
