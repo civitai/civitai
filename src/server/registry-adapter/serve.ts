@@ -1,5 +1,5 @@
 /**
- * The HTTP binding of the source protocol (spec/registry.md @ 2709083, "Bindings" → "HTTP"):
+ * The HTTP binding of the registry protocol (the registry spec, "Bindings" → "HTTP"):
  * `GET /subscribe?schema=&cursor=&urn=&filter=` streaming `text/event-stream`, plus `/healthz`
  * for a process supervisor. Everything between request and events is the shared core
  * (`subscription.ts`); this file only maps the request in and the events and errors out.
