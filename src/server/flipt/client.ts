@@ -544,6 +544,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
   // Evaluated with the reporter's id.
   FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
+  // Hides civitai.com version text that has no passing verdict. Read only through
+  // `getComVersionTextHideMode`, where a flag that cannot be evaluated counts as ON.
+  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  COM_FACE_VERSION_TEXT_HIDE = 'com-face-version-text-hide',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

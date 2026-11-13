@@ -101,6 +101,14 @@ vi.mock('~/server/services/model-com-face-recheck.service', async (importOrigina
   queueComFaceRestore: mockQueueComFaceRestore,
 }));
 
+const { mockQueueComFaceVersionText } = vi.hoisted(() => ({
+  mockQueueComFaceVersionText: vi.fn(),
+}));
+vi.mock('~/server/services/model-com-face-version-text.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  queueComFaceVersionText: mockQueueComFaceVersionText,
+}));
+
 import { upsertModelVersion } from '~/server/services/model-version.service';
 
 const MODEL_ID = 42;
@@ -345,6 +353,7 @@ describe('upsertModelVersion — trigger-word edits queue the .com face re-check
     await edit({ name: 'renamed' });
 
     expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('queues it when an owner adds a version without trigger words', async () => {
@@ -379,6 +388,7 @@ describe('upsertModelVersion — trigger-word edits queue the .com face re-check
 
     expect(mockTx.modelVersion.create).toHaveBeenCalled();
     expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('does not queue it for a moderator’s change', async () => {
@@ -389,5 +399,6 @@ describe('upsertModelVersion — trigger-word edits queue the .com face re-check
 
     expect(mockTx.modelVersion.update).toHaveBeenCalled();
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+    expect(mockQueueComFaceVersionText).not.toHaveBeenCalled();
   });
 });

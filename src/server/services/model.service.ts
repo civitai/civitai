@@ -330,6 +330,7 @@ import {
   queueComFaceRecheck,
   queueComFaceRestore,
 } from '~/server/services/model-com-face-recheck.service';
+import { queueComFaceVersionText } from '~/server/services/model-com-face-version-text.service';
 import {
   isGenerationDisabled,
   toPublicApiVersionFlags,
@@ -4583,8 +4584,10 @@ export const upsertModel = async (
       (data.name !== undefined && data.name !== beforeUpdate.name) ||
       (data.description !== undefined && data.description !== beforeUpdate.description);
     const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
-    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
+    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged)) {
       await queueComFaceRecheck(id);
+      await queueComFaceVersionText(id);
+    }
     if (!isModerator && listingChanged) await queueComFaceRestore(id);
     if (heldVerdictApplied) {
       const { finishHeldVerdictApply } = await import(
