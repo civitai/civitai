@@ -32,7 +32,6 @@ const ARCHIVE_1 = Buffer.from('PK\x03\x04 first archive of the app');
 const ARCHIVE_2 = Buffer.from('PK\x03\x04 second archive, after a wake');
 const uploadKeyOf = (attemptId: string, app = APP, userId = USER) =>
   archiveObjectKeys(userId, app, attemptId);
-/** Every object one attempt can leave behind. */
 
 async function begin(w: World, attemptId: string, app = APP, userId = USER) {
   const r = await beginHibernation({ userId, app, attemptId }, w.deps);
@@ -360,6 +359,15 @@ describe('the flag off refuses every endpoint', () => {
 });
 
 describe('no public endpoint', () => {
+  it('a store that cannot presign answers not-configured, never limit, even for a user at the limit', async () => {
+    const w = world();
+    w.deps.limits = async () => ({ apps: 0, bytes: 0 });
+    (w.deps.store as { canPresign: boolean }).canPresign = false;
+    expect(await beginHibernation({ userId: USER, app: APP, attemptId: A1 }, w.deps)).toEqual({
+      kind: 'not-configured',
+    });
+  });
+
   it('begin answers not-configured and records no attempt when nothing can be presigned', async () => {
     const w = world();
     (w.deps.store as { canPresign: boolean }).canPresign = false;
@@ -537,6 +545,59 @@ describe('.env* secrets sealed by civitai, and wake tickets', () => {
       [row.objectKey, row.secretsObjectKey!].sort()
     );
   });
+
+  it('an account-closed refusal still burns the ticket: it never works again, even after reinstatement', async () => {
+    const w = world();
+    await committedWithSecrets(w);
+    const minted = await mintWakeTicket(USER, APP, w.deps);
+    if (minted.kind !== 'ok') throw new Error(minted.kind);
+    w.accounts.set(USER, 'banned');
+    expect(await restore(w, minted.ticket)).toEqual({ kind: 'account-closed' });
+    w.accounts.set(USER, 'active');
+    expect(await restore(w, minted.ticket)).toEqual({ kind: 'ticket' });
+    expect(w.reports.filter((r) => r.event === 'app-hibernation.secrets-released')).toEqual([]);
+  });
+
+  it.each([
+    ['blob vs a different blob', ENV, Buffer.from('.env\0SECRET=another-test-value\n')],
+    ['blob vs none', ENV, null],
+    ['none vs blob', null, ENV],
+  ])(
+    'a losing invocation with the same archive but different secrets (%s) gets the conflict, and its objects go',
+    async (_label, winnerBlob, loserBlob) => {
+      const w = world();
+      const { body } = await uploaded(w, A1, ARCHIVE_1);
+      const store = w.deps.store!;
+      const realHash = store.hash;
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let reached!: () => void;
+      const atGate = new Promise<void>((r) => (reached = r));
+      let calls = 0;
+      store.hash = async (key, max) => {
+        calls++;
+        if (calls === 1) {
+          reached();
+          await gate;
+        }
+        return realHash(key, max);
+      };
+      const withBlob = (blob: Buffer | null) =>
+        blob ? { ...body, secretsBlob: blob.toString('base64') } : body;
+      const loser = commitHibernation(withBlob(loserBlob), w.deps);
+      await atGate;
+      expect(await commitHibernation(withBlob(winnerBlob), w.deps)).toEqual({
+        kind: 'committed',
+        sha256: sha(ARCHIVE_1),
+      });
+      release();
+      expect(await loser).toEqual({ kind: 'mismatch', reason: 'attempt already committed' });
+      const row = rowOf(w);
+      expect(leftOf(w, A1).sort()).toEqual(
+        [row.objectKey, row.secretsObjectKey].filter((k): k is string => !!k).sort()
+      );
+    }
+  );
 
   it('a losing invocation whose content differs from the winner’s gets the conflict, and its objects go', async () => {
     const w = world();

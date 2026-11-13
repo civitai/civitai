@@ -232,7 +232,9 @@ export async function beginHibernation(
 ): Promise<BeginResult> {
   if (!(await enabledFor(deps, input.userId))) return { kind: 'disabled' };
   const cfg = configured(deps);
-  if (!cfg) return { kind: 'not-configured' };
+  // No public endpoint, no upload URL: a misconfigured store answers not-configured before any
+  // limit or account check, so it is never mistaken for a user at their limit.
+  if (!cfg || !cfg.store.canPresign) return { kind: 'not-configured' };
   // From the User row, not the session: a cached session can outlive a deletion or a ban.
   if ((await deps.repo.accountState(input.userId)) !== 'active') return { kind: 'account-closed' };
 
@@ -248,8 +250,6 @@ export async function beginHibernation(
   if (refusal)
     return { kind: 'limit', limit: refusal, oldest: await oldestOf(deps, input.userId, input.app) };
 
-  // No public endpoint, no upload URL: refuse before recording anything.
-  if (!cfg.store.canPresign) return { kind: 'not-configured' };
   const keys = archiveObjectKeys(input.userId, input.app, input.attemptId);
   const stored = await deps.attempts.claim(
     {
@@ -351,11 +351,33 @@ export async function commitHibernation(
     return result;
   };
 
+  const blob = input.secretsBlob === undefined ? null : Buffer.from(input.secretsBlob, 'base64');
+  /**
+   * Whether `winner` (a row this attempt already committed) holds exactly what THIS call carries:
+   * the same archive sha, and the same secrets, compared as PLAINTEXT. The sealed bytes cannot be
+   * compared: every seal uses a fresh data key and nonce, so two seals of one blob always differ.
+   * No secrets on both sides counts as the same; an unreadable winner's secrets does not.
+   */
+  const sameAsWinner = async (winner: HibernationRow): Promise<boolean> => {
+    if (winner.sha256 !== input.sha256) return false;
+    if (!winner.secretsObjectKey || !blob) return !winner.secretsObjectKey && !blob;
+    try {
+      const theirs = await decryptRowSecrets(winner, cfg.store, cfg.masterKeys);
+      return !!theirs && theirs.equals(new Uint8Array(blob));
+    } catch (err) {
+      deps.report('app-hibernation.winner-secrets-unreadable', {
+        ...context,
+        error: (err as Error)?.message,
+      });
+      return false;
+    }
+  };
+
   // A retry of a commit that already landed: answer from the row, before touching storage (the
   // uploads were deleted when it landed).
   const already = await deps.repo.get(attempt.userId, attempt.appKey);
   if (already && already.attemptId === attempt.attemptId) {
-    if (already.sha256 === input.sha256) return { kind: 'committed', sha256: input.sha256 };
+    if (await sameAsWinner(already)) return { kind: 'committed', sha256: input.sha256 };
     await discard(cfg.store, uploads, deps, context);
     return { kind: 'mismatch', reason: 'attempt already committed' };
   }
@@ -363,7 +385,6 @@ export async function commitHibernation(
   if ((await deps.repo.accountState(attempt.userId)) !== 'active')
     return refuse({ kind: 'account-closed' });
 
-  const blob = input.secretsBlob === undefined ? null : Buffer.from(input.secretsBlob, 'base64');
   if (blob && blob.length > MAX_SECRETS_BLOB_BYTES)
     return refuse({ kind: 'secrets-too-large', limit: MAX_SECRETS_BLOB_BYTES });
 
@@ -417,19 +438,24 @@ export async function commitHibernation(
   };
 
   // 2. Account, lineage and upsert, serialised per user and against an account deletion.
-  // `superseded` is set only when THIS invocation wrote the row.
-  type Outcome = { result: CommitResult; superseded?: string[] };
+  // `superseded` is set only when THIS invocation wrote the row; `winner` when another invocation
+  // of this attempt wrote it first (compared below, outside the transaction).
+  type Outcome = { result: CommitResult; superseded?: string[]; winner?: HibernationRow };
   const outcome = await deps.repo.commit<Outcome>(
     attempt.userId,
     attempt.appKey,
     (existing, usage, account) => {
       if (account !== 'active') return { result: { result: { kind: 'account-closed' } } };
       if (existing && existing.attemptId === attempt.attemptId) {
-        // Another invocation of THIS attempt landed first: it is the winner. Answer committed
-        // only for the same content; either way our own objects are deleted below.
-        return existing.sha256 === input.sha256
-          ? { result: { result: { kind: 'committed', sha256: input.sha256 } } }
-          : { result: { result: { kind: 'mismatch', reason: 'attempt already committed' } } };
+        // Another invocation of THIS attempt landed first: it is the winner. Whether it holds the
+        // same content (archive AND secrets) is decided below, outside the transaction; either
+        // way our own objects are deleted.
+        return {
+          result: {
+            result: { kind: 'mismatch', reason: 'attempt already committed' },
+            winner: existing,
+          },
+        };
       }
       // The live app must have been woken from the record it replaces, or it is a different app
       // that happens to share the key, and overwriting the record would lose the sleeping one.
@@ -455,10 +481,13 @@ export async function commitHibernation(
     await discard(cfg.store, [...outcome.superseded, ...uploads], deps, context);
     return result;
   }
-  if (result.kind === 'committed' || result.kind === 'mismatch') {
-    // We lost to another invocation of this attempt: its objects are the row's, ours go.
+  if (outcome.winner) {
+    // We lost to another invocation of this attempt: its objects are the row's, ours go. The
+    // receipt is ours to give only when it recorded exactly what we carry.
     await discard(cfg.store, [...uploads, ...mine], deps, context);
-    return result;
+    return (await sameAsWinner(outcome.winner))
+      ? { kind: 'committed', sha256: input.sha256 }
+      : result;
   }
   if (result.kind === 'limit')
     return refuse({ ...result, oldest: await oldestOf(deps, attempt.userId, attempt.appKey) });
@@ -549,9 +578,10 @@ export async function restoreSleepingAppSecrets(
   if (!(await enabledFor(deps, input.userId))) return { kind: 'disabled' };
   const cfg = configured(deps);
   if (!cfg) return { kind: 'not-configured' };
+  // The ticket is taken (and so burned) FIRST, before any refusal below: it never works twice.
+  const granted = await deps.tickets.take(ticketHash(input.ticket));
   // Re-checked at release: an account deleted or banned after the ticket was minted gets nothing.
   if ((await deps.repo.accountState(input.userId)) !== 'active') return { kind: 'account-closed' };
-  const granted = await deps.tickets.take(ticketHash(input.ticket));
   if (
     !granted ||
     granted.userId !== input.userId ||

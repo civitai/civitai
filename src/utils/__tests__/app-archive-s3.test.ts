@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { archiveStoreConfig, createArchiveStore } from '~/utils/app-archive-s3';
 
@@ -98,6 +98,35 @@ describe('archive store endpoints', () => {
       await expect(store.presignPut('archives/1/a/b.zip')).rejects.toThrow(/no public/);
     }
   );
+
+  it.each([
+    ['http://store-public.example.test', /not https/],
+    ['https://store-public.example.test:9000', /port/],
+    ['not a url', /not a URL/],
+  ])(
+    'a SET but rejected public endpoint (%s) is warned about, naming the variable',
+    (value, why) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        configWith({ APP_ARCHIVE_S3_ENDPOINT: IN_CLUSTER, APP_ARCHIVE_S3_PUBLIC_ENDPOINT: value });
+        const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+        expect(said).toMatch(/APP_ARCHIVE_S3_PUBLIC_ENDPOINT/);
+        expect(said).toMatch(why);
+      } finally {
+        warn.mockRestore();
+      }
+    }
+  );
+
+  it('an unset public endpoint is not warned about', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      configWith({ APP_ARCHIVE_S3_ENDPOINT: IN_CLUSTER });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 
   it('with no public endpoint, presigning refuses rather than falling back to the in-cluster one', async () => {
     const store = createArchiveStore(configWith({ APP_ARCHIVE_S3_ENDPOINT: IN_CLUSTER })!);

@@ -48,6 +48,22 @@ export type ArchiveStoreConfig = {
   secretAccessKey: string;
 };
 
+/** Why a SET public endpoint is unusable for presigning, or `null` when it is fine. */
+export function publicEndpointProblem(value: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    return 'it is not a URL';
+  }
+  if (u.protocol !== 'https:') return `it is not https (${u.protocol})`;
+  if (u.port !== '') return `it has a port (${u.port})`;
+  return null;
+}
+
+/** One warning per distinct value: the value is read on every request and does not change. */
+let warnedPublicEndpoint: string | null = null;
+
 /**
  * The store's settings, or `null` when this environment has no in-cluster endpoint, bucket or
  * key (every one is required). A public endpoint that is unset, or that the sandbox service would
@@ -66,8 +82,19 @@ export function archiveStoreConfig(): ArchiveStoreConfig | null {
   } catch {
     return null;
   }
+  const publicValue = env.APP_ARCHIVE_S3_PUBLIC_ENDPOINT;
+  const problem = publicValue ? publicEndpointProblem(publicValue) : null;
+  if (problem && publicValue && warnedPublicEndpoint !== publicValue) {
+    warnedPublicEndpoint = publicValue;
+    // Set but unusable is a misconfiguration, not "unset": say so once, loudly.
+    console.warn(
+      `[app-hibernation] APP_ARCHIVE_S3_PUBLIC_ENDPOINT is set but ignored because ${problem}; ` +
+        'the sandbox service accepts only https URLs with no port, so nothing will be presigned ' +
+        'and hibernation answers not_configured.'
+    );
+  }
   const publicStore = seedStoreConfig({
-    endpoint: env.APP_ARCHIVE_S3_PUBLIC_ENDPOINT,
+    endpoint: publicValue,
     bucket,
     accessKeyId,
     secretAccessKey,
