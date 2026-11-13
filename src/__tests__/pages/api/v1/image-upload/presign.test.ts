@@ -42,11 +42,16 @@ vi.mock('~/server/services/image-upload-action.service', async (importOriginal) 
 
 import imageUpload from '~/pages/api/v1/image-upload';
 import imageUploadMultipart from '~/pages/api/v1/image-upload/multipart';
+import { UPLOAD_KEY_UNRECORDED_MESSAGE } from '~/server/services/image-url-ownership';
 
 function makeRes() {
   const res = {
     statusCode: 0,
     body: {} as Record<string, string>,
+    headers: {} as Record<string, string>,
+    setHeader(k: string, v: string) {
+      this.headers[k] = v;
+    },
     status(code: number) {
       this.statusCode = code;
       return this;
@@ -85,7 +90,7 @@ describe('image upload presign routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body.id).toEqual(expect.any(String));
-    expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body.id);
+    expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body.id, 7);
     expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
       `system:upload-key-owner:${res.body.id}`,
       '7',
@@ -101,9 +106,42 @@ describe('image upload presign routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body.key).toEqual(expect.any(String));
-    expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body.key);
+    expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body.key, 7);
     expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
       `system:upload-key-owner:${res.body.key}`,
+      '7',
+      { EX: 30 * 24 * 60 * 60 }
+    );
+  });
+
+  it.each([
+    ['/api/v1/image-upload', imageUpload],
+    ['/api/v1/image-upload/multipart', imageUploadMultipart],
+  ])('%s hands out no key whose issue record could not be written', async (_, route) => {
+    redisMock.sysRedis.set
+      .mockRejectedValueOnce(new Error('down'))
+      .mockRejectedValueOnce(new Error('down'))
+      .mockRejectedValueOnce(new Error('down'));
+    const res = makeRes();
+    await route({ body: { size: 10 } } as NextApiRequest, res);
+
+    expect(res.statusCode).toBe(503);
+    expect(res.headers['Retry-After']).toBe('2');
+    expect(res.body).toEqual({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
+    expect(m.customPut).not.toHaveBeenCalled();
+    expect(m.multipartPut).not.toHaveBeenCalled();
+    expect(m.track).not.toHaveBeenCalled();
+  });
+
+  it('hands out the key once a write that failed is retried', async () => {
+    redisMock.sysRedis.set.mockRejectedValueOnce(new Error('blip'));
+    const res = makeRes();
+    await imageUpload({} as NextApiRequest, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(2);
+    expect(redisMock.sysRedis.set).toHaveBeenLastCalledWith(
+      `system:upload-key-owner:${res.body.id}`,
       '7',
       { EX: 30 * 24 * 60 * 60 }
     );

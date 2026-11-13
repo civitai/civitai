@@ -105,6 +105,7 @@ import {
 // asserted — the producer rides both signals, and a field that exists on the counter but
 // not in the event stream cannot be used to go and look at an individual rescue.
 import { logToAxiom } from '~/server/logging/client';
+import { UPLOAD_KEY_UNRECORDED_MESSAGE } from '~/server/services/image-url-ownership';
 
 /** Records the order in which the handler wrote a status vs destroyed the request. */
 type Trace = string[];
@@ -254,12 +255,28 @@ describe('image-upload relay', () => {
     expect(Buffer.from(buf).toString()).toBe('image-bytes');
     expect(opts).toEqual({ contentType: 'image/png' });
     // The upload-request IP is recorded against the key the store minted.
-    expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(req, res, 'server-minted-uuid');
+    expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(req, res, 'server-minted-uuid', 7);
     expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
       'system:upload-key-owner:server-minted-uuid',
       '7',
       { EX: 30 * 24 * 60 * 60 }
     );
+  });
+
+  it('returns no key whose issue record could not be written, and says to retry', async () => {
+    redisMock.sysRedis.set
+      .mockRejectedValueOnce(new Error('down'))
+      .mockRejectedValueOnce(new Error('down'))
+      .mockRejectedValueOnce(new Error('down'));
+    const res = makeRes();
+
+    await handler(makeReq([Buffer.from('image-bytes')]), res);
+
+    expect(res.statusCode).toBe(503);
+    expect(res.headers['Retry-After']).toBe('2');
+    expect(res.body).toEqual({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
+    expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(3);
+    expect(mockTrackImageUpload).not.toHaveBeenCalled();
   });
 
   it('reassembles a MULTI-CHUNK body in order', async () => {

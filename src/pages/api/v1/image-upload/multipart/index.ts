@@ -6,7 +6,10 @@ import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getMultipartPutUrl, getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { trackImageUpload } from '~/server/services/image-upload-action.service';
-import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
+import {
+  recordUploadKeyOwner,
+  refuseUnrecordedUploadKey,
+} from '~/server/services/image-url-ownership';
 
 export default async function imageUploadMultipart(req: NextApiRequest, res: NextApiResponse) {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
@@ -22,6 +25,8 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
     }
 
     const imageKey = randomUUID();
+    // Recorded before the key is presigned: a key with no issue record is refused on save.
+    if (!(await recordUploadKeyOwner(imageKey, userId))) return refuseUnrecordedUploadKey(res);
 
     const imageMime: string | undefined = req.body.mimeType;
     const fileExt: string | undefined = req.body.filename?.split('.').pop();
@@ -33,8 +38,7 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
 
     // Register in storage-resolver (fire-and-forget)
     registerMediaLocation(imageKey, backend, req.body.size ?? 0);
-    trackImageUpload(req, res, imageKey);
-    await recordUploadKeyOwner(imageKey, userId);
+    trackImageUpload(req, res, imageKey, userId);
 
     res.status(200).json({ ...result, backend });
   } catch (error) {

@@ -7,7 +7,10 @@ import {
   type ImageUploadRelayOutcome,
 } from '~/server/prom/image-upload-relay.metrics';
 import { trackImageUpload } from '~/server/services/image-upload-action.service';
-import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
+import {
+  recordUploadKeyOwner,
+  refuseUnrecordedUploadKey,
+} from '~/server/services/image-url-ownership';
 import {
   type ImageUploadRelaySession,
   createRelaySession,
@@ -270,8 +273,12 @@ async function completeSession(
     }
     // The TTL reaps it if this fails; the object is stored either way.
     await deleteRelaySession(sessionId).catch(() => undefined);
-    trackImageUpload(req, res, key);
-    await recordUploadKeyOwner(key, userId);
+    // The object is stored, but a key with no issue record is refused on save: retry instead.
+    if (!(await recordUploadKeyOwner(key, userId))) {
+      refuseUnrecordedUploadKey(res);
+      return 'owner_unrecorded';
+    }
+    trackImageUpload(req, res, key, userId);
     res.status(200).json({ id: key });
     try {
       await logToAxiom({

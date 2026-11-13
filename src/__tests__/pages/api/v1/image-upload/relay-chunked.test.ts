@@ -90,6 +90,7 @@ import {
   __resetImageUploadRelayMetricsForTest,
 } from '~/server/prom/image-upload-relay.metrics';
 import { IMAGE_UPLOAD_RELAY_PRODUCER_HEADER } from '~/utils/image-upload-relay-producer';
+import { UPLOAD_KEY_UNRECORDED_MESSAGE } from '~/server/services/image-url-ownership';
 
 /** Not a multiple of the piece size, so the last piece is short: 8 MiB + 1,234,567. */
 const FILE_SIZE = CHUNKED_RELAY_PIECE_BYTES + 1_234_567;
@@ -210,6 +211,7 @@ beforeEach(() => {
     backend: 'backblaze',
   }));
   mockAbort.mockResolvedValue(undefined);
+  mockRecordUploadKeyOwner.mockResolvedValue(true);
 
   redisMock.sysRedis.hSetMultiWithExpire.mockImplementation(
     async (key: string, fields: string[]) => {
@@ -308,7 +310,8 @@ describe('chunked image-upload relay', () => {
     expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(
       expect.anything(),
       done,
-      MINTED_KEY
+      MINTED_KEY,
+      OWNER
     );
     // Every key-issuing route records the owner; without it the key is refused on save.
     expect(mockRecordUploadKeyOwner).toHaveBeenCalledExactlyOnceWith(MINTED_KEY, OWNER);
@@ -320,6 +323,22 @@ describe('chunked image-upload relay', () => {
       success: 1,
       session_invalid: 1,
     });
+  });
+
+  it('returns no key whose issue record could not be written, and says to retry', async () => {
+    mockRecordUploadKeyOwner.mockResolvedValue(false);
+    const { session } = await start();
+    await sendPart(session, 1, CHUNKED_RELAY_PIECE_BYTES);
+    await sendPart(session, 2, LAST_PIECE);
+
+    const done = await call({ query: { action: 'complete', session } });
+    expect(done.statusCode).toBe(503);
+    expect(done.headers['Retry-After']).toBe('2');
+    expect(done.body).toEqual({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
+    expect(JSON.stringify(done.body)).not.toContain(MINTED_KEY);
+    expect(mockTrackImageUpload).not.toHaveBeenCalled();
+    expect(await outcomes()).toMatchObject({ owner_unrecorded: 1 });
+    expect((await outcomes()).success).toBeUndefined();
   });
 
   describe('session ownership', () => {
