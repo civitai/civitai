@@ -101,6 +101,7 @@ const MODEL = {
   userId: 5,
   status: Model3DStatus.Published,
   deletedAt: null,
+  nsfwLevel: 1,
   thumbnailImage: image(1),
   sourceImage: image(2),
   tags: [],
@@ -232,5 +233,56 @@ describe("a 3D model's source image", () => {
     ['a moderator', { id: 1, isModerator: true }],
   ])('is returned to %s whatever its state', async (_, user) => {
     expect(await sourceFor(user, { blockedFor: 'tos', nsfwLevel: 16 })).toBe(2);
+  });
+});
+
+describe("a 3D model's thumbnail and rating", () => {
+  const passing = {
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    blockedFor: null,
+    needsReview: null,
+    minor: false,
+    poi: false,
+  };
+  const rated = (nsfwLevel: number) =>
+    dbMock.dbRead.model3D.findUnique.mockImplementation((async (args: { select: Select }) =>
+      applySelect({ ...MODEL, nsfwLevel }, args.select)) as never);
+
+  it('leaves out a thumbnail the feed would not show, for another viewer, and keeps the source image', async () => {
+    dbMock.dbRead.image.findUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: number };
+    }) => (where.id === 1 ? { ...passing, blockedFor: 'tos' } : passing)) as never);
+    for (const user of [null, { id: 6 }]) {
+      const model = await getModel3DById({ id: 9, user: user as never });
+      expect(model.thumbnailImage).toBeNull();
+      expect(model.sourceImage?.id).toBe(2);
+    }
+    // Its owner and moderators keep it.
+    for (const user of [{ id: 5 }, { id: 1, isModerator: true }])
+      expect((await getModel3DById({ id: 9, user: user as never })).thumbnailImage?.id).toBe(1);
+  });
+
+  it.each([
+    ['rated above the viewer level', 4],
+    ['unrated', 0],
+  ])('is not found by another viewer when %s', async (_, level) => {
+    rated(level);
+    for (const user of [null, { id: 6 }])
+      await expect(
+        getModel3DById({ id: 9, user: user as never, browsingLevel: 1 })
+      ).rejects.toThrow(/No 3D model/);
+    for (const user of [{ id: 5 }, { id: 1, isModerator: true }])
+      expect((await getModel3DById({ id: 9, user: user as never, browsingLevel: 1 })).id).toBe(9);
+  });
+
+  it('is found by a viewer whose level includes its rating (control)', async () => {
+    rated(4);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...passing, nsfwLevel: 4 } as never);
+    expect(
+      (await getModel3DById({ id: 9, user: { id: 6 } as never, browsingLevel: 1 | 4 })).id
+    ).toBe(9);
   });
 });

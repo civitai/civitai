@@ -268,12 +268,16 @@ export const getModel3DById = async ({
     )
       throw throwNotFoundError(`No 3D model with id ${id}`);
 
-    // The source image is shown as the feed shows images: scanned, out of review, never blocked,
-    // not flagged, and within the viewer's level. Its owner and moderators see it regardless.
-    let sourceImage = model3d.sourceImage;
-    if (sourceImage && !isModerator && model3d.userId !== user?.id) {
+    // Anyone but its owner and moderators gets a model, and its images, as the feed shows them: a
+    // model rated within the viewer's level, and images scanned, out of review, never blocked, not
+    // flagged, within that level, and not a restricted model's mature image.
+    const levels = parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel));
+    const exempt = isModerator || model3d.userId === user?.id;
+    if (!exempt && !levels.includes(model3d.nsfwLevel))
+      throw throwNotFoundError(`No 3D model with id ${id}`);
+    const servable = async (imageId: number) => {
       const state = await dbRead.image.findUnique({
-        where: { id: sourceImage.id },
+        where: { id: imageId },
         select: {
           nsfwLevel: true,
           ingestion: true,
@@ -283,18 +287,25 @@ export const getModel3DById = async ({
           poi: true,
         },
       });
-      const shown =
+      return (
         !!state &&
         state.ingestion === 'Scanned' &&
         !state.blockedFor &&
         !state.needsReview &&
         !state.minor &&
         !state.poi &&
-        parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel)).includes(state.nsfwLevel) &&
-        // Nor a mature image of a restricted model, which the image feeds never show.
-        !(await restrictedMatureImageIds([sourceImage.id])).has(sourceImage.id);
-      if (!shown) sourceImage = null;
-    }
+        levels.includes(state.nsfwLevel) &&
+        !(await restrictedMatureImageIds([imageId])).has(imageId)
+      );
+    };
+    const sourceImage =
+      model3d.sourceImage && (exempt || (await servable(model3d.sourceImage.id)))
+        ? model3d.sourceImage
+        : null;
+    const thumbnailImage =
+      model3d.thumbnailImage && (exempt || (await servable(model3d.thumbnailImage.id)))
+        ? model3d.thumbnailImage
+        : null;
 
     // The signed-in user's own recommend (thumbs-up), so the detail page can
     // render the gold thumbs-up toggle in its correct state.
@@ -308,6 +319,7 @@ export const getModel3DById = async ({
     return {
       ...model3d,
       sourceImage,
+      thumbnailImage,
       tags: model3d.tags.map((t) => t.tag),
       userReview,
     };
