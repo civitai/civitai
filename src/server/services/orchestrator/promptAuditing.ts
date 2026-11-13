@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
@@ -12,7 +13,7 @@ import {
   type PromptOrigin,
 } from '~/server/services/orchestrator/prompt-origin';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwServiceUnavailableError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
 import {
   auditPromptEnriched,
@@ -70,6 +71,10 @@ const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const SEED_MAX_ROWS = 200;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
+
+// The 503 when the prompt check itself could not run (see auditPromptServer).
+const PROMPT_CHECK_UNAVAILABLE_MESSAGE =
+  'The prompt check is temporarily unavailable. Please try again in a moment.';
 
 // Shown for a regex refusal that names neither a trigger nor a reason (see classifyPromptServer).
 const UNSPECIFIED_REGEX_REFUSAL = 'Prompt failed the content audit';
@@ -343,6 +348,7 @@ export interface PromptClassification {
    * The external classifier's failure message when it threw. It fails OPEN — the verdict is then
    * computed as though it had not flagged — so this is the only trace that it did not actually
    * clear the text. Reporting it is the caller's job; this function records nothing.
+   * `auditPromptServer` refuses (503) any verdict carrying it that would otherwise let a submit through.
    */
   externalError: { message: string } | null;
 }
@@ -590,10 +596,30 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       });
     }
 
+    // 🔴 FAIL CLOSED when the external classifier could not answer. Whatever this audit would let
+    // through — a pass, or a soft block the user acknowledged — has then been checked by the word
+    // lists alone. It is refused as a retry-able 503: never submitted, never counted toward the
+    // user's blocks. A hard block, or an unacknowledged soft one, keeps its own refusal below.
+    // Not reached when the classifier is not configured (that returns "not flagged", no error).
+    if (
+      verdict.externalError &&
+      (verdict.outcome === 'pass' || (verdict.outcome === 'soft' && acknowledgedSoftBlock))
+    ) {
+      logToAxiom({
+        name: 'prompt-check-unavailable',
+        type: 'error',
+        userId,
+        message: verdict.externalError.message,
+      }).catch(() => undefined);
+      throw throwServiceUnavailableError(PROMPT_CHECK_UNAVAILABLE_MESSAGE);
+    }
+
     if (verdict.outcome !== 'pass') {
       throw { blockedFor: verdict.blockedFor, triggers: verdict.triggers, type: verdict.source };
     }
   } catch (e) {
+    // The fail-closed refusal above is not a verdict: pass it through untouched.
+    if (e instanceof TRPCError && e.code === 'SERVICE_UNAVAILABLE') throw e;
     const error = e as { blockedFor: string[]; triggers: PromptTrigger[]; type: string };
 
     const softBlock = isSoftBlock(error.triggers ?? []);
