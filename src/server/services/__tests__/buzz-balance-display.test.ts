@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBuzzClient } from '@civitai/buzz';
 import {
   BALANCE_STALE_MAX_MS,
@@ -12,6 +12,7 @@ import {
 
 let server: Server | undefined;
 afterEach(async () => {
+  vi.unstubAllEnvs();
   const s = server;
   server = undefined;
   if (s)
@@ -50,7 +51,21 @@ describe('header balance read', () => {
     expect(Date.now() - started).toBeLessThan(2_500);
   }, 10_000);
 
-  it('serves the last balance it read, in under 2.5s, while the service hangs', async () => {
+  it('does NOT serve a remembered balance by default: the fallback ships dark', async () => {
+    const mode = { current: 'ok' as 'ok' | 'hang', balance: 1234 };
+    const endpoint = await balanceService(mode);
+    const read = reader(endpoint);
+
+    await expect(read(7)).resolves.toEqual({ User: 1234 });
+    mode.current = 'hang';
+    const started = Date.now();
+    await expect(read(7)).rejects.toThrow();
+    // Still bounded with the fallback off.
+    expect(Date.now() - started).toBeLessThan(2_500);
+  }, 15_000);
+
+  it('serves the last balance it read, in under 2.5s, while the service hangs (flag on)', async () => {
+    vi.stubEnv('BUZZ_BALANCE_SERVE_STALE', 'true');
     const mode = { current: 'ok' as 'ok' | 'hang', balance: 1234 };
     const endpoint = await balanceService(mode);
     const read = reader(endpoint);
@@ -75,6 +90,7 @@ describe('header balance read', () => {
   });
 
   it('stops serving a remembered balance once it is older than the stale limit', async () => {
+    vi.stubEnv('BUZZ_BALANCE_SERVE_STALE', 'true');
     const mode = { current: 'ok' as 'ok' | 'hang', balance: 42 };
     const endpoint = await balanceService(mode);
     let clock = 1_000_000;
