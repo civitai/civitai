@@ -53,7 +53,7 @@ export const mysteryBoxRouter = router({
     .query(({ input, ctx }) =>
       getMysteryBoxCatalogForEvent({ ...input, ...publicMysteryBoxViewer(ctx) })
     ),
-  // Per viewer (flags, country), like the odds page.
+  // Per viewer: flags and country.
   getForCreator: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .use(noEdgeCache())

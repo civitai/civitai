@@ -8,14 +8,11 @@ import {
   type EvaluatedContent,
   type MysteryPackProposal,
 } from '~/server/services/creator-mystery-pack.service';
-import { listHeldItems } from '~/server/services/item.service';
 import {
   BOX_DEFINITION_SELECT,
-  buildMysteryBoxView,
-  getBoxCatalogForDisplay,
-  getBoxTiers,
+  buildBoxViews,
+  buildCatalogEntries,
   mysteryBoxesHiddenIn,
-  readBoxListings,
   SHOWN_BOX_STATUSES,
   type BoxSeller,
   type MysteryBoxCatalogEntry,
@@ -152,30 +149,11 @@ function readSellerBoxes(statuses: string[], sellerId?: number) {
 async function readLivePacks(sellerId?: number): Promise<CreatorMysteryPackEntry[]> {
   const boxes = await readSellerBoxes([ITEM_DEFINITION_STATUS.published], sellerId);
   if (!boxes.length) return [];
-  const boxIds = boxes.map((box) => box.id);
-  const [{ onSale }, tiers] = await Promise.all([readBoxListings(boxIds), getBoxTiers(boxIds)]);
-
-  const entries = await Promise.all(
-    boxes.map(async (box): Promise<CreatorMysteryPackEntry | null> => {
-      const listing = onSale(box.id);
-      if (!listing || !box.seller) return null;
-      const catalog = await getBoxCatalogForDisplay(box);
-      return {
-        boxDefinitionId: box.id,
-        name: box.name,
-        description: box.description,
-        unitAmount: listing.unitAmount,
-        pack: null,
-        tiers: tiers
-          .filter((tier) => tier.boxDefinitionId === box.id)
-          .map(({ boxDefinitionId: _box, ...tier }) => tier),
-        contents: catalog.map(({ contentId, tierId }) => ({ contentId, tierId, team: null })),
-        teams: [],
-        seller: box.seller,
-      };
-    })
-  );
-  return entries.filter((entry): entry is CreatorMysteryPackEntry => entry !== null);
+  const entries = await buildCatalogEntries(boxes, { teams: [], withPack: false });
+  return entries.flatMap((entry) => {
+    const seller = boxes.find((box) => box.id === entry.boxDefinitionId)?.seller;
+    return seller ? [{ ...entry, seller }] : [];
+  });
 }
 
 // The community list is the same for every viewer: share one read, in flight or recent, so a
@@ -232,36 +210,14 @@ export async function getMysteryPackViewsForSeller({
   if (!enabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
   const boxes = await readSellerBoxes(SHOWN_BOX_STATUSES, sellerId);
   if (!boxes.length) return [];
-  const boxIds = boxes.map((box) => box.id);
-  const [{ onSale }, held, tiers] = await Promise.all([
-    readBoxListings(boxIds),
-    listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
-    getBoxTiers(boxIds),
-  ]);
-  const views = await Promise.all(
-    boxes.map(async (box) => {
-      const listing = box.status === ITEM_DEFINITION_STATUS.published ? onSale(box.id) : undefined;
-      const heldBoxItemIds = held
-        .filter((item) => item.itemDefinitionId === box.id)
-        .map((item) => item.id.toString());
-      if (!listing && !heldBoxItemIds.length) return null;
-      const view = await buildMysteryBoxView(box, {
-        userId,
-        team: undefined,
-        tiers,
-        heldBoxItemIds,
-        listing: listing
-          ? {
-              shopItemId: listing.id,
-              title: listing.title,
-              unitAmount: listing.unitAmount,
-              availableTo: listing.availableTo,
-            }
-          : null,
-        packListing: null,
-      });
-      return box.seller ? { ...view, seller: box.seller } : view;
-    })
-  );
-  return views.filter((view): view is MysteryBoxView => view !== null);
+  const views = await buildBoxViews(boxes, {
+    userId,
+    team: undefined,
+    playable: true,
+    withPack: false,
+  });
+  return views.map((view) => {
+    const seller = boxes.find((box) => box.id === view.boxDefinitionId)?.seller;
+    return seller ? { ...view, seller } : view;
+  });
 }

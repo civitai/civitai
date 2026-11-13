@@ -3,20 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   hidden: vi.fn(),
-  listings: vi.fn(),
-  tiers: vi.fn(),
-  catalog: vi.fn(),
   held: vi.fn(),
-  build: vi.fn(),
 }));
 
 vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MysteryBoxService>()),
   mysteryBoxesHiddenIn: mocks.hidden,
-  readBoxListings: mocks.listings,
-  getBoxTiers: mocks.tiers,
-  getBoxCatalogForDisplay: mocks.catalog,
-  buildMysteryBoxView: mocks.build,
 }));
 vi.mock('~/server/services/item.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -24,6 +16,7 @@ vi.mock('~/server/services/item.service', async (importOriginal) => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { clearBoxCatalogDisplayCache } from '~/server/services/mystery-box.service';
 import {
   clearCommunityPacksCache,
   getCreatorMysteryPacks,
@@ -42,36 +35,74 @@ const BOX = {
   seller: { id: 77, username: 'testcreator' },
 };
 
+type Tier = {
+  boxDefinitionId: number;
+  id: number;
+  key: string;
+  name: string;
+  color: string | null;
+  weight: number;
+  sortOrder: number;
+};
+const tier = (boxDefinitionId: number, id: number, key: string, sortOrder: number): Tier => ({
+  boxDefinitionId,
+  id,
+  key,
+  name: key,
+  color: null,
+  weight: 1000,
+  sortOrder,
+});
+const listing = (itemDefinitionId: number) => ({
+  id: 5,
+  itemDefinitionId,
+  title: 'T',
+  unitAmount: 700,
+  availableQuantity: null,
+  availableFrom: null,
+  availableTo: null,
+  meta: null,
+});
+const content = (id: number, tierId: number) => ({
+  id,
+  tierId,
+  rewardDefinitionId: 100 + id,
+  reward: {
+    type: 'cosmetic',
+    cosmeticId: 1000 + id,
+    cosmetic: { name: `Item ${id}`, data: { url: `${id}.png` }, type: 'ContentDecoration' },
+  },
+});
+
+// The database the shared box readers query, so each caller runs the real listing, tier and
+// held-box rules.
+let world: { listings: ReturnType<typeof listing>[]; tiers: Tier[] };
+
 beforeEach(() => {
   clearCommunityPacksCache();
+  clearBoxCatalogDisplayCache();
   mocks.hidden.mockReset().mockResolvedValue(false);
-  mocks.listings.mockReset().mockResolvedValue({ onSale: () => ({ unitAmount: 700 }) });
-  mocks.tiers.mockReset().mockResolvedValue([
-    {
-      boxDefinitionId: 9,
-      id: 1,
-      key: 'common',
-      name: 'Common',
-      color: null,
-      weight: 8000,
-      sortOrder: 0,
-    },
-    {
-      boxDefinitionId: 9,
-      id: 2,
-      key: 'rare',
-      name: 'Rare',
-      color: null,
-      weight: 2000,
-      sortOrder: 1,
-    },
-  ]);
+  world = {
+    listings: [listing(BOX.id)],
+    tiers: [tier(BOX.id, 1, 'common', 0), tier(BOX.id, 2, 'rare', 1)],
+  };
+  const db = dbMock.dbRead;
+  const inIds = (filter: { in: number[] }, id: number) => filter.in.includes(id);
+  db.cosmeticShopItem.findMany
+    .mockReset()
+    .mockImplementation(async ({ where }: { where: { itemDefinitionId: { in: number[] } } }) =>
+      world.listings.filter((l) => inIds(where.itemDefinitionId, l.itemDefinitionId))
+    );
+  db.boxTier.findMany
+    .mockReset()
+    .mockImplementation(async ({ where }: { where: { boxDefinitionId: { in: number[] } } }) =>
+      world.tiers.filter((t) => inIds(where.boxDefinitionId, t.boxDefinitionId))
+    );
+  db.boxContent.findMany.mockReset().mockResolvedValue([content(1, 1), content(2, 2)]);
+  db.userCosmetic.findMany.mockReset().mockResolvedValue([]);
+  db.boxOpening.findMany.mockReset().mockResolvedValue([]);
   mocks.held.mockReset().mockResolvedValue([]);
-  mocks.catalog.mockReset().mockResolvedValue([
-    { contentId: 1, tierId: 1 },
-    { contentId: 2, tierId: 2 },
-  ]);
-  dbMock.dbRead.itemDefinition.findMany.mockReset().mockResolvedValue([BOX]);
+  db.itemDefinition.findMany.mockReset().mockResolvedValue([BOX]);
 });
 
 describe('getCreatorMysteryPacks', () => {
@@ -136,26 +167,8 @@ describe('getCreatorMysteryPacks', () => {
       BOX,
       { ...BOX, id: 10, name: 'Other', seller: { id: 78, username: 'other' } },
     ]);
-    mocks.tiers.mockResolvedValue([
-      {
-        boxDefinitionId: 9,
-        id: 1,
-        key: 'common',
-        name: 'Common',
-        color: null,
-        weight: 1,
-        sortOrder: 0,
-      },
-      {
-        boxDefinitionId: 10,
-        id: 5,
-        key: 'common',
-        name: 'Common',
-        color: null,
-        weight: 1,
-        sortOrder: 0,
-      },
-    ]);
+    world.listings = [listing(9), listing(10)];
+    world.tiers = [tier(9, 1, 'common', 0), tier(10, 5, 'common', 0)];
     const packs = await read();
     expect(packs.map((p) => [p.boxDefinitionId, p.tiers.map((t) => t.id)])).toEqual([
       [9, [1]],
@@ -164,7 +177,7 @@ describe('getCreatorMysteryPacks', () => {
   });
 
   it('leaves out a pack with nothing on sale', async () => {
-    mocks.listings.mockResolvedValue({ onSale: () => undefined });
+    world.listings = [];
     expect(await read()).toEqual([]);
   });
 });
@@ -276,12 +289,8 @@ describe('getMysteryPackViewsForSeller', () => {
       box(2, 'archived'),
       box(3, 'draft'),
     ]);
-    mocks.listings.mockResolvedValue({
-      onSale: (id: number) =>
-        id === 1 ? { id: 5, title: 'T', unitAmount: 700, availableTo: null } : undefined,
-    });
-    mocks.held.mockResolvedValue([{ id: 99n, itemDefinitionId: 2 }]);
-    mocks.build.mockImplementation(async (b: { id: number }) => ({ boxDefinitionId: b.id }));
+    world.listings = [listing(1)];
+    mocks.held.mockResolvedValue([{ id: BigInt(99), itemDefinitionId: 2 }]);
     const views = await getMysteryPackViewsForSeller({
       sellerId: 77,
       userId: 5,
@@ -289,8 +298,13 @@ describe('getMysteryPackViewsForSeller', () => {
       countryCode: 'US',
     });
     expect(views).toEqual([
-      { boxDefinitionId: 1, seller },
-      { boxDefinitionId: 2, seller },
+      expect.objectContaining({ boxDefinitionId: 1, seller, listing: expect.anything() }),
+      expect.objectContaining({
+        boxDefinitionId: 2,
+        seller,
+        listing: null,
+        heldBoxItemIds: ['99'],
+      }),
     ]);
   });
 

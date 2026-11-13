@@ -19,10 +19,10 @@ export const MYSTERY_BOX_FALLBACK_DESCRIPTION = "1 random hat you don't own yet.
 export const MYSTERY_PACK_FALLBACK_DESCRIPTION = "1 random item you don't own yet.";
 
 /** Rarity colours for a tier with none of its own, rarest last. */
-const FALLBACK_TIER_COLORS = ['#9ca3af', '#22c55e', '#3b82f6', '#f59e0b'];
+export const FALLBACK_TIER_COLORS = ['#9ca3af', '#22c55e', '#3b82f6', '#f59e0b'];
 
 /** A creator pack's tiers have fixed names (and no stored colour), so the colour follows the name. */
-const CREATOR_TIER_COLORS: Record<string, string> = {
+export const CREATOR_TIER_COLORS: Record<string, string> = {
   common: '#9ca3af',
   uncommon: '#22c55e',
   rare: '#3b82f6',

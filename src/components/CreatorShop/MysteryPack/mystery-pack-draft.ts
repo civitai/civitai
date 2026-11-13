@@ -67,7 +67,7 @@ export function previewMysteryPack(
   };
 }
 
-/** The shared reason, except over the maximum: it always names the average, which contradicts the range shown when the worst-draw bound is tighter. */
+/** The shared reason, except over the maximum: that one names the average, not the tighter worst-draw bound. */
 function priceMessage(price: number | undefined, bounds: CreatorBoxPriceBounds) {
   if (price === undefined) return 'Set a price';
   if (bounds.max >= bounds.min && price > bounds.max)
