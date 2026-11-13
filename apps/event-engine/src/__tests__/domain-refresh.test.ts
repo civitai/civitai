@@ -59,4 +59,43 @@ describe('refresh walk timers', () => {
       vi.useRealTimers();
     }
   });
+
+  test('a failed read keeps the cursor, and a read still running holds the next tick', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const cursors: number[] = [];
+      let calls = 0;
+      let release: () => void = () => {};
+      const pg = {
+        query: async (_sql: string, [cursor]: [number, number]) => {
+          cursors.push(cursor);
+          calls++;
+          if (calls === 1) throw new Error('replica blip');
+          if (calls === 2) await new Promise<void>((r) => (release = r));
+          return { rows: [{ id: cursor + 1 }, { id: cursor + 2 }] };
+        },
+      };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 2 })],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000); // fails
+      await vi.advanceTimersByTimeAsync(1000); // starts, and hangs
+      await vi.advanceTimersByTimeAsync(3000); // three ticks while it runs: skipped
+      expect(cursors).toEqual([0, 0]);
+      release();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added).toEqual([1, 2, 3, 4]);
+      expect(cursors).toEqual([0, 0, 2]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
