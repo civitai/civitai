@@ -2462,6 +2462,20 @@ export const REDIS_SYS_KEYS = {
      */
     SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
     /**
+     * APP HIBERNATE — one record per hibernation attempt, keyed
+     * `system:blocks:hibernation-attempt:${attemptId}`. JSON: the user, the app and the upload key
+     * civitai built. Written `SET NX` by `begin` (TTL `ATTEMPT_TTL_SECONDS`) and read by `commit`, so a commit can only land the objects its own `begin` named
+     * (`app-hibernation.service.ts`).
+     */
+    HIBERNATION_ATTEMPT: 'system:blocks:hibernation-attempt',
+    /**
+     * APP HIBERNATE — one-time wake tickets, keyed `system:blocks:hibernation-wake-ticket:${sha256
+     * of the ticket}` (the ticket itself is never stored). JSON: the user, the app and the archive
+     * sha256 it releases secrets for. Written by `mintWakeTicket` on a wake the user started (TTL
+     * `WAKE_TICKET_TTL_SECONDS`) and consumed with GETDEL by the secrets restore, so it redeems once.
+     */
+    HIBERNATION_WAKE_TICKET: 'system:blocks:hibernation-wake-ticket',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
