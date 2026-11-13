@@ -63,6 +63,12 @@ describe('/api/v1/images shared cache by region', () => {
     ['a model gallery above SFW', { modelId: '1', nsfw: 'X' }],
     ['a model gallery at nsfw=true', { modelId: '1', nsfw: 'true' }],
     ['a model gallery at an explicit mature level', { modelId: '1', browsingLevel: '28' }],
+    ['a model gallery at X only', { modelId: '1', browsingLevel: '8' }],
+    ['a model gallery at XXX only', { modelId: '1', browsingLevel: '16' }],
+    ['a model gallery at nsfw=Blocked', { modelId: '1', nsfw: 'Blocked' }],
+    ['a level wider than 32 bits', { modelId: '1', browsingLevel: String(2 ** 32 + 1) }],
+    ['a fractional level', { modelId: '1', browsingLevel: '1.5' }],
+    ['a negative level', { modelId: '1', browsingLevel: '-1' }],
     ['a feed above SFW', { nsfw: 'true' }],
     ['a post’s images above SFW', { postId: '5', nsfw: 'true' }],
   ])('is never shared-cached for %s, in either region', async (_, query) => {
