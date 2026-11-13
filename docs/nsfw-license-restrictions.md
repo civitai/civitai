@@ -1,107 +1,50 @@
-# NSFW License Restrictions
+# Mature content restrictions by base model
 
-## Overview
+Some base models may not be used for mature content (R, X and XXX), because the terms covering
+Civitai's use of them say so. The restriction is defined in one place:
+`matureRestricted` on the base model's record in `packages/civitai-shared/src/basemodel.constants.ts`.
 
-Implements license-based NSFW content restrictions for Civitai. Filters out R/X/XXX images linked to models with restrictive licenses, ensuring compliance with license terms that prohibit NSFW content.
-
-## Affected Base Models
-
-The following base models currently restrict NSFW content:
-
-- **SDXL Turbo**, **SVD/SVD XT**, **Stable Cascade**, **SD 3.x** models
-
-New licenses can be configured with different restriction patterns (e.g., only XXX content).
-
-## Implementation
-
-### License Configuration
-
-Each license defines restricted NSFW levels in `constants.ts`:
-
-```typescript
-type LicenseDetails = {
-  restrictedNsfwLevels?: NsfwLevel[]; // Define which NSFW levels are restricted
-};
-
-'sdxl turbo': {
-  name: 'Stability AI Non-Commercial Research Community License',
-  restrictedNsfwLevels: [NsfwLevel.X, NsfwLevel.XXX], // Restricts X and XXX content
-},
+```ts
+{
+  id: BM.Ideogram,
+  name: 'Ideogram 4.0',
+  // ...
+  matureRestricted: ['generation', 'models', 'images'],
+}
 ```
 
-### NSFW Level Values
+It is set per base model rather than per licence because the unit that differs is the base model:
+one licence can cover base models with different terms. Licences carry only their legal text and
+links.
 
-- **R (Restricted)**: Value 4
-- **X (Mature)**: Value 8
-- **XXX (Adult)**: Value 16
-- **Combined check**: `(nsfwLevel & 28) != 0` filters R, X and XXX levels
+## Surfaces
 
-### Filtering Logic
+| Surface | What it restricts | Where it is enforced |
+|---|---|---|
+| `generation` | Our generator caps output at PG-13 with mature content refused | `capsGenerationOutput` in `src/server/services/orchestrator/form-graph/output-restrictions.ts`, for the site generator and the App Blocks `textToImage` arm |
+| `models` | A model marked NSFW can't be published on the base model, and NSFW versions on it are hidden from model lists and search | the version form and submit, `model-version.service.ts`, `model.service.ts`, `pages/search/models.tsx` |
+| `images` | Posted images at a mature level that use the base model are flagged in the post editor and hidden | `hasImageLicenseViolation` (`src/utils/image-utils.ts`), the hourly `reconcile-restricted-images` job, semantic image search, the "SFW only" badge |
 
-Content is excluded when:
+A base model whose provider terms only bind our use of their API (most hosted image and video APIs)
+usually restricts `generation` alone: users can still post mature content they made elsewhere.
 
-1. Image has an NSFW level that is restricted by the license
-2. Image is linked to a model using a base model with license restrictions for that NSFW level
+## Helpers
 
-### Backend Implementation
+All readers go through these, never a copied list:
 
-**Dual Configuration System**: The system uses both database and code-based configuration for maximum flexibility:
+- `isMatureRestricted(baseModel, surface)`
+- `matureRestrictedBaseModels(surface)`
+- `MATURE_RESTRICTED_LEVELS`: the levels a restriction covers (R, X, XXX)
 
-- **Database Table**: `RestrictedBaseModels` table stores the actual restricted base models for efficient querying
-- **Constants Array**: `nsfwRestrictedBaseModels` array in `constants.ts` dynamically derives restricted models from license definitions
+## Hiding images is one-way
 
-**Materialized View for Performance**: The `RestrictedImagesByBaseModel` materialized view efficiently identifies images linked to restricted base models by joining image resources with model versions and the restricted base models table.
+`reconcile-restricted-images` sets `Image."modelRestricted"` on mature images whose resources use a
+base model restricting `images`. It never clears the flag, and image feeds, collections and the remix
+gallery exclude flagged mature images. Adding `images` to a base model therefore hides its existing
+mature images on the next hourly run: count them before shipping that change.
 
-**Automated Refresh Triggers**: The materialized view is automatically refreshed using optimized PostgreSQL triggers that monitor changes to relevant tables:
+## Generation
 
-- **ImageResourceNew Changes**: Triggers on INSERT/DELETE operations, only refreshing when changes involve restricted base models
-- **ModelVersion Changes**: Triggers on INSERT/UPDATE OF "baseModel"/DELETE operations when `baseModel` field changes to/from restricted values
-- **RestrictedBaseModels Changes**: Triggers on INSERT/UPDATE/DELETE operations to immediately refresh when the restricted models list changes
-
-**Model Service**: Filters NSFW models with restricted base models using validation during model creation and publishing to prevent NSFW models with restricted base models.
-
-**Model Version Service**: Validates during version creation and publishing through `upsertModelVersion()`, `publishModelVersionById()`, and `publishModelVersionsWithEarlyAccess()` functions.
-
-**Image Service**: Uses the materialized view for high-performance filtering in `getAllImages()` and related queries with LEFT JOIN + IS NULL pattern for optimal performance.
-
-**Image Scan Processing**: The `auditImageScanResults` function uses the materialized view to efficiently check for restricted base models and blocks NSFW images with restricted base models.
-
-The materialized view approach provides significant performance improvements over complex subqueries, reducing query execution time for image filtering operations.
-
-### Frontend Implementation
-
-**AddedImage Component**: Shows license violation alerts using `hasImageLicenseViolation()` utility:
-
-- Detects violations in real-time during image upload
-- Displays specific model and base model information
-- Non-blocking alerts that educate users
-
-**Post Editor**: Prevents publishing posts with violations and shows detailed tooltips with violation information.
-
-### Helper Functions
-
-- `getRestrictedNsfwLevelsForBaseModel(baseModel)`: Returns restricted levels for a base model
-- `isNsfwLevelRestrictedForBaseModel(baseModel, nsfwLevel)`: Checks if a specific level is restricted
-- `hasImageLicenseViolation(image)`: Utility for detecting violations in frontend components
-
-## Technical Architecture
-
-### Centralized Configuration Management
-
-- **Dual Configuration**: Both database table (`RestrictedBaseModels`) and constants array (`nsfwRestrictedBaseModels`) work together
-- **License-Driven**: The constants array automatically derives restricted models from license definitions in code
-- **Database Efficiency**: The `RestrictedBaseModels` table enables fast querying and materialized view joins
-- **Single Source of Truth**: License definitions in `constants.ts` remain the authoritative configuration
-- **Easy Maintenance**: Adding/removing restrictions only requires updating license definitions
-
-### Performance Optimization
-
-- **Pre-computed Results**: Materialized view eliminates expensive JOIN operations during query execution
-- **Selective Refresh**: Trigger logic ensures materialized view only refreshes when relevant data changes
-- **Indexed Access**: Materialized view includes proper indexing for optimal query performance
-- **Concurrent Operations**: Non-blocking refresh strategy maintains system availability
-
-### Intelligent Trigger System
-
-- **Conditional Logic**: Triggers only fire when changes involve restricted base models
-- **Multi-Table Monitoring**: Automatically handles changes to images, model versions, and restriction configuration
+A submit is capped when any of its resources (checkpoint or add-on) is on a base model restricting
+`generation`. A submit with no resources is decided by its ecosystem, and only when every base model
+in the ecosystem restricts generation: SDXL holds SDXL Turbo but is not restricted.
