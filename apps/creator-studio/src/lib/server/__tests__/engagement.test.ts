@@ -60,14 +60,17 @@ beforeAll(async () => {
     CREATE TABLE "ModelMetric" (
       "modelId" int PRIMARY KEY, "commentCount" int DEFAULT 0, "thumbsUpCount" int DEFAULT 0, "thumbsDownCount" int DEFAULT 0
     );
+    -- Inserted in the opposite of the expected display order, so a missing sort shows up.
     INSERT INTO "Model" VALUES
-      (10, ${ME}, 'downvoted', 'Published', false, 1),
+      (10, ${ME}, 'quiet', 'Published', false, 1),
       (11, ${ME}, 'commented', 'Published', false, 1),
-      (12, ${ME}, 'quiet', 'Published', false, 1),
-      (13, ${ME}, 'no metric row', 'Published', true, 28),
-      (14, ${ME}, 'draft', 'Draft', false, 1),
-      (15, ${OTHER}, 'someone else', 'Published', false, 1);
-    INSERT INTO "ModelMetric" VALUES (10, 1, 5, 4), (11, 3, 2, 0), (12, 0, 9, 0), (14, 9, 9, 9), (15, 9, 9, 9);
+      (12, ${ME}, 'downvoted, few comments', 'Published', false, 1),
+      (13, ${ME}, 'downvoted, many comments', 'Published', false, 1),
+      (14, ${ME}, 'no metric row', 'Published', true, 28),
+      (15, ${ME}, 'draft', 'Draft', false, 1),
+      (16, ${OTHER}, 'someone else', 'Published', false, 1);
+    INSERT INTO "ModelMetric" VALUES
+      (10, 0, 9, 0), (11, 3, 2, 0), (12, 1, 5, 4), (13, 5, 5, 4), (15, 9, 9, 9), (16, 9, 9, 9);
   `);
   holder.db = new Kysely({
     dialect: {
@@ -82,8 +85,8 @@ beforeAll(async () => {
 describe('getModelEngagement', () => {
   it('lists every published model of the creator, including ones with no comments, votes or metric row', async () => {
     const rows = await getModelEngagement({ userId: ME });
-    expect(rows.map((r) => r.modelId)).toEqual([10, 11, 12, 13]);
-    expect(rows.find((r) => r.modelId === 13)).toMatchObject({
+    expect(rows.map((r) => r.modelId).sort()).toEqual([10, 11, 12, 13, 14]);
+    expect(rows.find((r) => r.modelId === 14)).toMatchObject({
       comments: 0,
       upvotes: 0,
       downvotes: 0,
@@ -92,8 +95,14 @@ describe('getModelEngagement', () => {
     });
   });
 
-  it('sorts by downvotes then comments, so models needing attention stay on top', async () => {
+  it('sorts by downvotes, then comments, so models needing attention stay on top', async () => {
     const rows = await getModelEngagement({ userId: ME });
-    expect(rows.slice(0, 2).map((r) => r.modelId)).toEqual([10, 11]);
+    expect(rows.slice(0, 3).map((r) => r.modelId)).toEqual([13, 12, 11]);
+    expect(
+      rows
+        .slice(3)
+        .map((r) => r.modelId)
+        .sort()
+    ).toEqual([10, 14]);
   });
 });
