@@ -173,7 +173,8 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
 
   function saveSnapshot(changed: boolean) {
     const store = snapshotStore;
-    if (!store || liveData === undefined) return;
+    // Off (the default) means no writes either, not just no seeding.
+    if (!store || config.snapshotMaxAgeMs <= 0 || liveData === undefined) return;
     const now = Date.now();
     if (!changed && now - lastSaveAt < config.snapshotSaveIntervalMs) return;
     lastSaveAt = now;

@@ -115,7 +115,8 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
-// The last-known Flipt flag state in sysRedis: read only when this pod cannot reach Flipt at startup
+// The last-known Flipt flag state in sysRedis (DARK unless FLIPT_SNAPSHOT_MAX_AGE_MS is set; then
+// nothing is registered, read or written): read only when this pod cannot reach Flipt at startup
 // (so its default-on flags are not all OFF), kept current by healthy pods. Registered BEFORE the
 // block below, whose awaited gate is this process's first Flipt init. Dynamic for the same reason as
 // that block (keeps Flipt and sysRedis out of this module's static graph); never affects boot.

@@ -33,8 +33,11 @@ function parseCacheTtl(raw: string | undefined): number {
   return parseNonNegativeInt(raw, 10_000);
 }
 
-/** A seeded snapshot older than this is refused. 24h; `0` turns seeding off. */
-export const DEFAULT_SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/**
+ * The last-known snapshot ships DARK: `0` (the default) turns it off entirely, no reads and no
+ * writes. Set FLIPT_SNAPSHOT_MAX_AGE_MS (e.g. 86400000 for 24h) to turn it on.
+ */
+export const DEFAULT_SNAPSHOT_MAX_AGE_MS = 0;
 
 // Dev-only local overrides. Set FLIPT_LOCAL_OVERRIDES to short-circuit flag evaluation without
 // touching shared Flipt state (GitOps overwrites it). Format: comma-separated `flagKey=variantKey`
@@ -65,7 +68,8 @@ export type FliptTuning = {
   fetchTimeoutMs: number;
   /**
    * The oldest last-known snapshot a process that cannot reach Flipt at startup will evaluate from.
-   * `0` turns seeding off. Only used when the app passes a `snapshotStore`.
+   * `0` (the default) turns the snapshot off entirely: nothing is read or written. Only used when
+   * the app passes a `snapshotStore`.
    */
   snapshotMaxAgeMs: number;
   /** How often a process with live state re-saves an unchanged snapshot, so its age stays honest. */

@@ -10,8 +10,9 @@ type SnapshotKey = `${typeof REDIS_SYS_KEYS.FLIPT.SNAPSHOT}:${string}`;
  * unreachable evaluates the state its siblings are serving instead of `false` for every flag
  * (which turns the default-on flags OFF on that pod alone).
  *
- * Read ONLY when this pod's own Flipt init fails, and only if the stored copy is at most
- * FLIPT_SNAPSHOT_MAX_AGE_MS old (24h by default; `0` turns this off — nothing is read or written).
+ * DARK by default: with FLIPT_SNAPSHOT_MAX_AGE_MS unset or `0` no store is registered, so nothing
+ * is read or written. When set (e.g. 86400000 for 24h) it is read ONLY when this pod's own Flipt
+ * init fails, and only if the stored copy is at most that old.
  * Pods with live state keep it current; createKvSnapshotStore documents the write rate.
  *
  * Its own module, registered from instrumentation.node.ts, because ~/server/flipt/client is in
