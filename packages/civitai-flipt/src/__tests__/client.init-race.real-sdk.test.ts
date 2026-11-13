@@ -76,6 +76,10 @@ describe('real SDK: a client that arrives after the init timeout', () => {
     expect(await c.isEnabled('f')).toBe(false); // the 50ms timeout won
     await wait(600); // the late client arrives (init fetch + refresh, 150ms each) and is closed
     const afterInit = flipt.seen.requests;
+    // The late client really was built: its init fetch and the refresh after it both reached the
+    // server (a lower bound, so an extra request does not fail this). Without this, the
+    // no-polls check below would also pass for a client that never fetched at all.
+    expect(afterInit).toBeGreaterThanOrEqual(2);
     await wait(2300); // two poll intervals
     expect(flipt.seen.requests).toBe(afterInit);
   });
