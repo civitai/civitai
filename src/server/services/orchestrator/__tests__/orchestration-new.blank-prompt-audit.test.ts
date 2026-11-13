@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 
 /**
  * `generateFromGraph` must hand an empty prompt + non-empty negative prompt to the audit.
@@ -189,11 +190,7 @@ describe('generateFromGraph — the prompt audit gate', () => {
  * still rethrown unchanged. The flagged-prompt case above is the positive control (it does scan).
  */
 describe('generateFromGraph — the audit unable to run', () => {
-  const unavailable = () =>
-    new TRPCError({
-      code: 'SERVICE_UNAVAILABLE',
-      message: 'The prompt check is temporarily unavailable. Please try again in a moment.',
-    });
+  const unavailable = () => new PromptCheckUnavailableError();
   const submitRaw = () =>
     generateFromGraph({
       input: img2img('a cat', 'blurry'),

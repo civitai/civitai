@@ -133,6 +133,7 @@ import {
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
+import { readModelsWithVersionsStats } from '~/server/services/hot-reads-11.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
@@ -6626,17 +6627,10 @@ export async function getModelsWithVersions({
   // });
 
   const next = await nextCoverageEnabled();
+  const modelIds = items.map(({ id }) => id);
+  const { vaeLinkedRows, metrics, versionMetrics, versionMetaRows } =
+    await readModelsWithVersionsStats({ modelIds, modelVersionIds });
   // Get VAE version IDs from linked components
-  const allMvIds = items.flatMap(({ modelVersions }) => modelVersions.map((v) => v.id));
-  const vaeLinkedRows = allMvIds.length
-    ? await dbRead.recommendedResource.findMany({
-        where: {
-          sourceId: { in: allMvIds },
-          settings: { path: ['isLinkedComponent'], equals: true },
-        },
-        select: { sourceId: true, resourceId: true, settings: true },
-      })
-    : [];
   const vaeMap = new Map<number, number>();
   for (const row of vaeLinkedRows) {
     const s = row.settings as Record<string, unknown>;
@@ -6648,15 +6642,6 @@ export async function getModelsWithVersions({
   const vaeFiles = vaeIds.length ? await getVaeFiles({ vaeIds }) : [];
 
   const groupedFiles = await getFilesForModelVersionCache(modelVersionIds);
-
-  const modelIds = items.map(({ id }) => id);
-  const metrics = await dbRead.modelMetric.findMany({
-    where: { modelId: { in: modelIds } },
-  });
-
-  const versionMetrics = await dbRead.modelVersionMetric.findMany({
-    where: { modelVersionId: { in: modelVersionIds } },
-  });
 
   // Creator Controls metric privacy for the v1 public API. Only download + tipped
   // are exposed today (no generation count in v1 stats), so we gate what exists.
@@ -6678,12 +6663,6 @@ export async function getModelsWithVersions({
 
   // Version-level meta isn't carried by dataForModelsCache, so fetch it to honor the
   // version-OR-model-OR-user precedence for v1 version stats (a version-only hide).
-  const versionMetaRows = modelVersionIds.length
-    ? await dbRead.modelVersion.findMany({
-        where: { id: { in: modelVersionIds } },
-        select: { id: true, meta: true },
-      })
-    : [];
   const versionMetaMap = new Map<number, unknown>(versionMetaRows.map((v) => [v.id, v.meta]));
 
   function getStatsForModel(modelId: number, hidden: HiddenModelMetrics) {
