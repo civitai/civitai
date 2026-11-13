@@ -770,6 +770,8 @@ export const upsertModel3D = async ({
 
     if (!isModerator) {
       const locked = new Set(existing.lockedProperties ?? []);
+      // A rating lock was judged on the current thumbnail, so it pins that too.
+      if (locked.has('nsfwLevel')) locked.add('thumbnailImageId');
       for (const key of locked) delete (data as Record<string, unknown>)[key];
       // Non-mods can't change lockedProperties either.
       lockedProperties = undefined;
@@ -777,14 +779,22 @@ export const upsertModel3D = async ({
   }
 
   // Moderators included: the thumbnail must be one of the model owner's images.
+  let thumbnailNsfwLevel: number | undefined;
   if (data.thumbnailImageId != null) {
     const ownerId = existing?.userId ?? user.id;
     const image = await dbWrite.image.findUnique({
       where: { id: data.thumbnailImageId },
-      select: { userId: true },
+      select: { userId: true, nsfwLevel: true },
     });
     if (image?.userId !== ownerId) throw throwBadRequestError('Invalid thumbnail image.');
+    thumbnailNsfwLevel = image.nsfwLevel;
+  } else if (data.thumbnailImageId === null) {
+    thumbnailNsfwLevel = 0;
   }
+  // Rate from the new thumbnail in the same write, as updateModel3DNsfwLevels would, so a
+  // published model is never served at the previous thumbnail's level while the job is queued.
+  const ratingLocked = (lockedProperties ?? existing?.lockedProperties ?? []).includes('nsfwLevel');
+  const nsfwLevel = ratingLocked ? undefined : thumbnailNsfwLevel;
 
   // nsfwLevel is derived from the thumbnail; the image-scan path only re-derives when the image changes.
   const queueNsfwRecomputeOnThumbnailChange = async (
@@ -804,6 +814,7 @@ export const upsertModel3D = async ({
     generationParams: (generationParams as Prisma.InputJsonValue) ?? undefined,
     meta: (meta as Prisma.InputJsonValue) ?? undefined,
     lockedProperties,
+    ...(nsfwLevel !== undefined && { nsfwLevel }),
   } as Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput;
 
   try {

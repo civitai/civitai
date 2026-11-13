@@ -33,13 +33,14 @@ beforeEach(() => {
   db.model3D.findUnique.mockResolvedValue({ id: MODEL_ID, userId: owner.id, lockedProperties: [] });
   db.image.findUnique.mockReset();
   db.image.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
-    where.id in images ? { userId: images[where.id] } : null
+    where.id in images ? { userId: images[where.id], nsfwLevel: 4 } : null
   );
   db.model3D.update.mockReset();
   db.model3D.update.mockResolvedValue({ id: MODEL_ID });
   db.model3D.create.mockReset();
   db.model3D.create.mockResolvedValue({ id: MODEL_ID });
   enqueueJobs.mockReset();
+  db.$transaction.mockImplementation(async (cb: (t: unknown) => unknown) => cb(db));
 });
 
 const queuedRatingFor = () =>
@@ -126,11 +127,13 @@ describe('upsertModel3D thumbnail ownership', () => {
   });
 
   it('queues a rating recompute when the thumbnail is set or cleared, and only then', async () => {
+    const tx = new Proxy(db, {});
+    db.$transaction.mockImplementation(async (cb: (t: unknown) => unknown) => cb(tx));
     await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
     expect(queuedRatingFor()).toEqual([expect.objectContaining({ entityId: MODEL_ID })]);
     // Inside the write's transaction, so a failed enqueue rolls the save back instead of
     // reporting failure for a committed row.
-    expect(enqueueJobs.mock.calls[0][1]).toBe(db);
+    expect(enqueueJobs.mock.calls[0][1]).toBe(tx);
 
     enqueueJobs.mockClear();
     await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: null }, user: owner });
@@ -158,5 +161,39 @@ describe('upsertModel3D thumbnail ownership', () => {
     db.model3D.update.mockClear();
     await upsertModel3D({ input: locked, user: moderator });
     expect(written().lockedProperties).toEqual(['nsfwLevel']);
+  });
+
+  it('rates the model from the new thumbnail in the same write, unless the rating is locked', async () => {
+    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
+    expect(written().nsfwLevel).toBe(4);
+
+    db.model3D.update.mockClear();
+    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: null }, user: owner });
+    expect(written().nsfwLevel).toBe(0);
+
+    db.model3D.update.mockClear();
+    await upsertModel3D({ input: { ...base, id: MODEL_ID }, user: owner });
+    expect(written()).not.toHaveProperty('nsfwLevel');
+  });
+
+  // A moderator's rating lock pins nsfwLevel, so the thumbnail it was judged on is pinned too.
+  it('keeps the thumbnail of a model whose rating a moderator locked, unless a moderator changes it', async () => {
+    db.model3D.findUnique.mockResolvedValue({
+      id: MODEL_ID,
+      userId: owner.id,
+      lockedProperties: ['nsfwLevel'],
+    });
+    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
+    expect(written()).not.toHaveProperty('thumbnailImageId');
+    expect(written()).not.toHaveProperty('nsfwLevel');
+    expect(queuedRatingFor()).toHaveLength(0);
+
+    db.model3D.update.mockClear();
+    await upsertModel3D({
+      input: { ...base, id: MODEL_ID, thumbnailImageId: 11 },
+      user: moderator,
+    });
+    expect(written().thumbnailImageId).toBe(11);
+    expect(written()).not.toHaveProperty('nsfwLevel');
   });
 });
