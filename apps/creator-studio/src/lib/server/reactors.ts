@@ -204,14 +204,11 @@ const notMetricExcluded = (ids: number[]) =>
   ids.length ? sql`AND NOT (rr."userId" = ANY(${ids}::int[]))` : sql``;
 
 /**
- * Who left a thumbs-up review on any version of the caller's model: the "Like" list of a reactor page, one row per
- * user however many versions they liked, dated by their latest. Returns null when the model is not the caller's, or
- * a moderator took it down (as `ownsListableContent` does for a blocked image); one the owner deleted or unpublished
- * still lists.
+ * Who left a thumbs-up on any version of the caller's model, one row per user. Null when the model is not theirs or a
+ * moderator took it down, as for a blocked image; one the owner deleted or unpublished still lists.
  *
- * Keyset-paged on `userId` like `getReactors`: each version is a backward range scan of the
- * `(modelVersionId, userId)` unique index, and the per-version top pages merge into the global one. `ResourceReview`
- * has no index on `modelId` and none on `createdAt` for thumbs-only rows, so like-time order would sort every review.
+ * Paged on `userId` per version because `ResourceReview` has no index on `modelId`, nor on `createdAt` for
+ * thumbs-only rows: like-time order would sort every review of the model.
  */
 export async function getModelLikers(
   db: typeof dbRead,
@@ -225,8 +222,8 @@ export async function getModelLikers(
   `.execute(db);
   if (!owned.rows.length) return null;
 
-  // The site's own thumbs-up total, which the metrics job counts with the same review filters. An exact count here
-  // reads every review of the model: 11-23 s cold on a model with 60-145k of them.
+  // The site's own thumbs-up total: an exact count would read every review of the model, which a large one cannot
+  // afford per page view.
   const [metric, notCounted] = await Promise.all([
     sql<{ thumbsUpCount: number }>`
       SELECT "thumbsUpCount" FROM "ModelMetric" WHERE "modelId" = ${modelId}
