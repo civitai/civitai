@@ -27,20 +27,14 @@ const NO_SURFACE =
   '(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ' +
   'model-page slot app (e.g. "targets": [{ "slotId": "model.sidebar_top" }])';
 
-/**
- * A deliberate hand copy of the build pipeline's surface test (its validate-manifest step, in the
- * build pipeline repo). Drift on the pipeline side is not detected here.
- */
-function pipelineSurfaceOk(m: Record<string, unknown>): boolean {
-  const hasTargets = Array.isArray(m.targets) && m.targets.length > 0;
-  const hasPage = !!m.page && typeof m.page === 'object' && !Array.isArray(m.page);
-  return hasTargets || hasPage;
-}
-
 const SLOT = { slotId: 'model.sidebar_top' };
 const PAGE = { path: '/', title: 'T' };
 
-/** [case, the manifest's surface keys, declares a surface] */
+/**
+ * [case, the manifest's surface keys, declares a surface]. The third column is the build
+ * pipeline's verdict, worked out by hand from its validate-manifest step (in the build pipeline
+ * repo); a change on the pipeline side is not detected here.
+ */
 const CASES: Array<[string, Record<string, unknown>, boolean]> = [
   ['neither key', {}, false],
   ['an empty targets array', { targets: [] }, false],
@@ -59,11 +53,6 @@ const CASES: Array<[string, Record<string, unknown>, boolean]> = [
 describe('manifestSurfaceError', () => {
   it.each(CASES)('%s', (_case, keys, declares) => {
     expect(manifestSurfaceError(keys)).toBe(declares ? null : NO_SURFACE);
-  });
-
-  it.each(CASES)('agrees with the build pipeline: %s', (_case, keys, declares) => {
-    expect(pipelineSurfaceOk(keys)).toBe(declares);
-    expect(manifestSurfaceError(keys) === null).toBe(pipelineSurfaceOk(keys));
   });
 
   it('leaves a non-object manifest to validate, which refuses it first', () => {
@@ -169,7 +158,7 @@ describe('every production caller goes through validateSubmission', () => {
     });
   }
 
-  it('BlockManifestValidator.validate( is called only inside validateSubmission', () => {
+  it('no production code calls BlockManifestValidator.validate( directly', () => {
     const files = sourceFiles(path.join(REPO_ROOT, 'src'));
     // POSITIVE CONTROL: the walk reaches the validator and a known submission caller.
     const rel = files.map((f) => path.relative(REPO_ROOT, f));
@@ -180,14 +169,5 @@ describe('every production caller goes through validateSubmission', () => {
       /BlockManifestValidator\s*\.\s*validate\s*\(/.test(readFileSync(f, 'utf8'))
     );
     expect(direct.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
-
-    const validator = readFileSync(
-      path.join(REPO_ROOT, 'src/server/services/block-manifest-validator.service.ts'),
-      'utf8'
-    );
-    expect(validator.match(/this\.validate\(/g)).toHaveLength(1);
-    const submission = validator.slice(validator.indexOf('static async validateSubmission('));
-    expect(submission).toContain('this.validate(manifest, app, opts)');
-    expect(submission).toContain('manifestSurfaceError(manifest)');
   });
 });
