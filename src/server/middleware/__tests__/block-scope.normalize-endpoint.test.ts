@@ -352,8 +352,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // this file's docblock calls the easy one to ship unnoticed.
       'gated-images',
       'generation-resources',
-      // `v1/blocks/generation-samplers.ts` — the per-family sampler catalog. No
-      // parameters at all, so no `:seg` position. Added deliberately with the route.
+      // `v1/blocks/generation-samplers.ts` takes no parameters, so no `:seg` position.
       'generation-samplers',
       'get',
       'goods',

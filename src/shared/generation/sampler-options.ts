@@ -1,37 +1,20 @@
 /**
- * The sampler choices the on-site generator offers, per model family, read from the REAL
- * generation graph — for App Blocks (`GET /api/v1/blocks/generation-samplers`).
+ * The generator's sampler options per model family, read from the REAL generation graph by
+ * probing the hub per family (as `images-limit.ts` does), for App Blocks.
  *
- * WHY THIS EXISTS
- * ---------------
- * A block's `textToImage` body takes `params.sampler` as a free string, and which names are
- * valid depends on the family: SD-family graphs take `samplers` from generation.constants
- * ('Euler a', 'DPM++ 2M Karras', …), Chroma has its own five, Anima and the Klein/Z-Image
- * bases take ComfyUI names ('euler_ancestral', 'dpm++2m', …), and most families have no
- * sampler control at all. A name the family does not offer is not refused: `selectDef`'s input
- * transform replaces it with the family default, so a block that guesses gets a different
- * sampler with no error. An app that copied a list would drift the first time a graph changed.
+ * Why not a copied list: `selectDef` silently replaces an unknown sampler with the family
+ * default, so a stale copy fails with no error.
  *
- * So this INSTANTIATES the generation hub per family — the same probe `images-limit.ts` uses —
- * and reads the `sampler` field the form renders from. `ImageGenerationForm` passes that
- * field's `meta.options` straight to its select, so `options` here is the drop-down the
- * generator shows, in its order, with its labels. `default` is the field's resolved value on a
- * fresh store, i.e. what the generator preselects.
+ * An UNDETERMINED probe must never be reported as "no sampler" (`null`) — that would tell an app
+ * to hide a control the generator shows; such a family is left out instead.
  *
- * KEYING. The block submit path derives the graph's `ecosystem` from the checkpoint's base
- * model (`getEcosystem(checkpointBaseModel).key` in `buildImageWorkflowInput`), so families are
- * keyed by that ecosystem key, and `baseModels` maps every base model name onto it through the
- * same `getEcosystem` — an app holding a checkpoint's `baseModel` (every picker result carries
- * it) looks up `ecosystems[baseModels[baseModel]]`.
+ * Families are keyed by the ecosystem key the block submit path uses
+ * (`getEcosystem(checkpointBaseModel).key`); `baseModels` maps base model names onto it. In a
+ * model-locked ecosystem a version can select a graph variant with a different sampler field;
+ * those versions are in `byModelVersion`.
  *
- * VERSION-DEPENDENT FAMILIES. In a model-locked ecosystem the version picks a graph variant,
- * and the variant can change the sampler field (measured: HiDream's Full variant offers
- * `UniPC`; its Fast and Dev variants have no sampler control). `sampler` describes the family's
- * default version; every listed version whose answer differs is in `byModelVersion`, keyed by
- * version id. Both are derived from the hub's own version list, nothing is named here.
- *
- * NEUTRAL CONTEXT: probed under `PROBE_CTX` (free tier, no flags, no gate rules), so nothing
- * per-user can reach the answer. It is static per process and memoized.
+ * Probed under `PROBE_CTX` (free tier, no flags, no gate rules), so nothing per-user reaches the
+ * memoized answer.
  */
 
 import { getAllVersionIds, type VersionGroup } from '~/shared/form-graph/generation/checkpoint';
