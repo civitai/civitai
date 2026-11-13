@@ -193,7 +193,12 @@ describe('hide-lost-original-images', () => {
       },
     });
     await run(options(), GONE, deps);
-    expect(logged.filter((e) => e.hidden).map((e) => e.id)).toEqual([2, 3]);
+    expect(
+      logged
+        .filter((e) => e.hidden)
+        .map((e) => e.id)
+        .sort()
+    ).toEqual([2, 3]);
     expect(actedOn(logged, false).map((e) => e.id)).toEqual([2, 3]);
     expect(actedOn(logged, true).map((e) => e.id)).toEqual([1, 2, 3]);
   });
@@ -598,6 +603,46 @@ describe('hide-lost-original-images', () => {
     });
     await expect(run(options(), GONE, deps)).rejects.toThrow(/before this chunk was HEADed/);
     expect(targetHeads).toEqual([]);
+  });
+
+  it('undo restores a row that became an article cover or reported, but not one under a safety hold', async () => {
+    const { deps } = makeDeps();
+    await run(options(), GONE, deps);
+    await db.exec(`
+      INSERT INTO "Article" VALUES (1, NULL);
+      INSERT INTO "Report" VALUES (1, 'Pending');
+      INSERT INTO "ImageReport" VALUES (2, 1);
+      UPDATE "Image" SET minor = true WHERE id = 3;
+    `);
+    const restored = await undo(
+      GONE.map((id) => ({ id, prior: 'Scanned' })),
+      options({ undo: true }),
+      deps
+    );
+    expect(restored).toBe(2);
+    expect([await ingestion(1), await ingestion(2), await ingestion(3)]).toEqual([
+      'Scanned',
+      'Scanned',
+      'NotFound',
+    ]);
+  });
+
+  it('hands the owner ids to the cache step, for hide and for undo', async () => {
+    const seen: (number | undefined)[] = [];
+    const { deps } = makeDeps({
+      propagate: async (t) => {
+        seen.push(...t.map((x) => x.userId));
+      },
+    });
+    await run(options(), GONE, deps);
+    expect(seen.sort()).toEqual([10, 10, 11]);
+    seen.length = 0;
+    await undo(
+      GONE.map((id) => ({ id, prior: 'Scanned' })),
+      options({ undo: true }),
+      deps
+    );
+    expect(seen.sort()).toEqual([10, 10, 11]);
   });
 
   it('reports how many control images vouched for the HEADs', async () => {

@@ -118,7 +118,7 @@ export function parseArgs(argv: string[]): RunOptions {
  * A pending item in a collection is held too: collection-ai-review rejects an item whose image is
  * NotFound, which would tell the owner and which undo does not reverse.
  */
-const holdReasonSql = Prisma.sql`(CASE
+const safetyHoldSql = Prisma.sql`(CASE
   WHEN i."needsReview" IS NOT NULL THEN 'needs-review'
   WHEN i."blockedFor" IS NOT NULL THEN 'blocked-for'
   WHEN i."tosViolation" THEN 'tos'
@@ -126,6 +126,13 @@ const holdReasonSql = Prisma.sql`(CASE
   WHEN i.poi THEN 'poi'
   WHEN COALESCE(${captureImageHeldSql('i')}, TRUE) THEN 'image-hold'
   WHEN COALESCE(${ownerHeldSql(Prisma.sql`i."userId"`)}, TRUE) THEN 'owner-hold'
+END)`;
+
+/**
+ * Where a hide would be seen or break something other than public reads. Skipped on a hide, but not
+ * a reason to refuse an undo: restoring such an image is what an undo is for.
+ */
+const linkageSql = Prisma.sql`(CASE
   WHEN EXISTS (
     SELECT 1 FROM "CollectionItem" ci WHERE ci."imageId" = i.id AND ci.status = 'REVIEW'
   ) THEN 'pending-collection-item'
@@ -147,6 +154,8 @@ const holdReasonSql = Prisma.sql`(CASE
   THEN 'crucible-image'
 END)`;
 
+const holdReasonSql = Prisma.sql`COALESCE(${safetyHoldSql}, ${linkageSql})`;
+
 /** Why a row is left alone, or NULL when it may be hidden. Over `"Image" i`. */
 export const skipReasonSql = Prisma.sql`(CASE
   WHEN i.ingestion <> 'Scanned'::"ImageIngestionStatus" THEN 'not-scanned'
@@ -166,8 +175,9 @@ export function hideSql(ids: number[], urls: string[]) {
   return Prisma.sql`
     UPDATE "Image" i
     SET ingestion = 'NotFound'::"ImageIngestionStatus"
-    WHERE i.id = ANY(${ids}::int[]) AND i.url = ANY(${urls}::text[]) AND ${skipReasonSql} IS NULL
-    RETURNING i.id, i."postId"
+    WHERE (i.id, i.url) IN (SELECT * FROM unnest(${ids}::int[], ${urls}::text[]))
+      AND ${skipReasonSql} IS NULL
+    RETURNING i.id, i."postId", i."userId"
   `;
 }
 
@@ -176,15 +186,15 @@ export function undoSql(ids: number[], prior: string) {
     UPDATE "Image" i
     SET ingestion = ${prior}::"ImageIngestionStatus"
     WHERE i.id = ANY(${ids}::int[]) AND i.ingestion = 'NotFound'::"ImageIngestionStatus"
-      AND ${holdReasonSql} IS NULL
-    RETURNING i.id, i."postId"
+      AND ${safetyHoldSql} IS NULL
+    RETURNING i.id, i."postId", i."userId"
   `;
 }
 
 /** Rows of the log that still carry the state a propagation is owed for. */
 export function owedSql(ids: number[], state: string) {
   return Prisma.sql`
-    SELECT i.id, i."postId" FROM "Image" i
+    SELECT i.id, i."postId", i."userId" FROM "Image" i
     WHERE i.id = ANY(${ids}::int[]) AND i.ingestion = ${state}::"ImageIngestionStatus"
   `;
 }
@@ -224,7 +234,7 @@ export function controlSql(targets: number[]) {
 export type LogEntry = { id: number; prior: string; hidden?: true };
 
 export type HeadResult = 'present' | 'missing';
-export type Touched = { id: number; postId: number | null };
+export type Touched = { id: number; postId: number | null; userId?: number };
 
 export type Deps = {
   query: <T>(sql: Prisma.Sql) => Promise<T[]>;
@@ -560,6 +570,7 @@ async function main() {
     '~/server/services/image.service'
   );
   const { bustCachesForPosts } = await import('~/server/services/post.service');
+  const { userImageVideoCountCaches } = await import('~/server/redis/caches');
 
   const backend = await getImageUploadBackend();
   const logFile = options.logFile as string;
@@ -588,6 +599,11 @@ async function main() {
         ...new Set(touched.map((t) => t.postId).filter((p): p is number => p != null)),
       ];
       if (postIds.length) await bustCachesForPosts(postIds);
+      // The profile image/video counts include only Scanned images, so they move with a hide or undo.
+      const userIds = [
+        ...new Set(touched.map((t) => t.userId).filter((u): u is number => u != null)),
+      ];
+      if (userIds.length) await userImageVideoCountCaches.bust(userIds);
     },
     appendLog: (entries) =>
       appendDurable(logFile, entries.map((e) => JSON.stringify(e)).join('\n') + '\n'),
@@ -598,6 +614,8 @@ async function main() {
     now: () => Date.now(),
   };
 
+  // A --log that is not one of ours throws here, before anything is appended to it.
+  readLog(logFile);
   const acted = () => actedOn(readLog(logFile), options.includeUnconfirmed);
   if (options.rebust) await rebust(acted(), options.rebust, options, deps);
   else if (options.undo) await undo(acted(), options, deps);
