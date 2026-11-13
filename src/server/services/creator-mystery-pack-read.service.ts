@@ -158,6 +158,7 @@ async function readLivePacks(sellerId?: number): Promise<CreatorMysteryPackEntry
 
 // The community list is the same for every viewer: share one read, in flight or recent, so a
 // cold pod or a version bump doesn't send each concurrent /shop view to the catalog query.
+// Per process on purpose: sharing the in-flight read is the point, which fetchThroughCache (Redis) and createTtlMemo don't do.
 const COMMUNITY_TTL_MS = 30_000;
 let community: { at: number; packs: Promise<CreatorMysteryPackEntry[]> } | undefined;
 const communityPacks = () => {
