@@ -145,6 +145,82 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toEqual(['https://cdn/ok.png']);
   });
 
+  describe('blocked outputs', () => {
+    // A videoGen output reports `available: true` even when the orchestrator has blocked it.
+    const videoWorkflow = (video: Record<string, unknown>) =>
+      fakeWorkflow({
+        steps: [
+          {
+            $type: 'videoGen',
+            name: BLOCK_STEP_NAME,
+            status: 'succeeded',
+            metadata: {},
+            output: { video: { id: 'v1', type: 'video', available: true, ...video } },
+          },
+        ],
+      });
+    const CSAM_RULE = 'Potentially ToS violating content detected';
+
+    it('CONTROL: a clean video surfaces on the snapshot and the projection', () => {
+      const wf = videoWorkflow({ url: 'https://cdn/clean.mp4', nsfwLevel: 'pg' });
+      expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/clean.mp4']);
+      expect(projectAppWorkflow(wf as never).images.map((i) => i.url)).toEqual([
+        'https://cdn/clean.mp4',
+      ]);
+    });
+
+    it('never surfaces an available blob that carries a block reason', () => {
+      const wf = videoWorkflow({
+        url: 'https://cdn/blocked.mp4',
+        nsfwLevel: 'na',
+        blockedReason: CSAM_RULE,
+      });
+      const snap = snapshotFromWorkflow(wf as never);
+      expect(snap.imageUrls ?? []).toEqual([]);
+      expect(JSON.stringify(snap)).not.toContain('blocked.mp4');
+      const projected = projectAppWorkflow(wf as never);
+      expect(projected.images).toEqual([]);
+      expect(JSON.stringify(projected)).not.toContain('blocked.mp4');
+    });
+
+    it('never surfaces a blocked image on a native step either', () => {
+      const wf = fakeWorkflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            name: 's1',
+            status: 'succeeded',
+            metadata: {},
+            output: {
+              images: [
+                { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+                {
+                  id: 'b2',
+                  url: 'https://cdn/blocked.png',
+                  available: true,
+                  type: 'image',
+                  nsfwLevel: 'na',
+                  blockedReason: CSAM_RULE,
+                },
+              ],
+            },
+          },
+        ],
+      });
+      expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/ok.png']);
+      expect(projectAppWorkflow(wf as never).images.map((i) => i.url)).toEqual([
+        'https://cdn/ok.png',
+      ]);
+    });
+
+    it("reads blockedReason 'none' (any case) as not blocked", () => {
+      for (const blockedReason of ['none', 'None', 'NONE']) {
+        const wf = videoWorkflow({ url: 'https://cdn/ok.mp4', nsfwLevel: 'pg', blockedReason });
+        expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/ok.mp4']);
+      }
+    });
+  });
+
   it('emits a non-empty sentinel workflowId when an orchestrator id is absent', () => {
     // The block SDK validator drops snapshots with an empty workflowId, which
     // strands ESTIMATE_RESULT until the 120s timeout (gotcha #55), so the

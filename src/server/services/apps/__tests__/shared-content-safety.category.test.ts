@@ -3,6 +3,8 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { assertSharedTextSafe, SharedContentBlockedError } from '../shared-content-safety';
+import { TRPCError } from '@trpc/server';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const throwOnBlockedUserContent = vi.hoisted(() =>
   vi.fn(async (..._a: unknown[]): Promise<void> => undefined)
@@ -16,8 +18,11 @@ vi.mock('~/utils/metadata/audit', () => ({
   includesMinor: () => false,
   includesPoi: () => false,
 }));
+const auditPromptServer = vi.hoisted(() =>
+  vi.fn(async (..._a: unknown[]): Promise<void> => undefined)
+);
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
-  auditPromptServer: vi.fn(async () => ({ success: true })),
+  auditPromptServer,
 }));
 
 /**
@@ -163,6 +168,65 @@ describe('assertSharedTextSafe — how a blocklist rejection is classified', () 
     const error = await assertSharedTextSafe(input).catch((e) => e);
 
     expect(error).toBeInstanceOf(SharedContentBlockedError);
+    expect(isEscalatedServerFault(error)).toBe(false);
+  });
+});
+
+/**
+ * The platform audit's retry-able 503 (the external classifier unavailable, or the audit's own
+ * reads failing) means the text was never judged. It must not become an `audit` block, which the
+ * router turns into a Report row and a content-block alert, and charges.
+ */
+describe('assertSharedTextSafe — the platform audit unable to run', () => {
+  const input = { title: 'A listing', body: 'some text', userId: 1 };
+  const unavailable = () =>
+    new TRPCError({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'The prompt check is temporarily unavailable. Please try again in a moment.',
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetEnv();
+    throwOnBlockedUserContent.mockResolvedValue(undefined);
+    getBlocklistData.mockResolvedValue([]);
+    auditPromptServer.mockResolvedValue(undefined);
+  });
+
+  it('is refused as unchecked and escalated, never as an audit block', async () => {
+    auditPromptServer.mockRejectedValueOnce(unavailable());
+
+    const error = await assertSharedTextSafe(input).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SharedContentBlockedError);
+    expect((error as SharedContentBlockedError).category).toBe('link');
+    expect((error as SharedContentBlockedError).unchecked).toBe(true);
+    expect(isEscalatedServerFault(error)).toBe(true);
+    expect((error as SharedContentBlockedError).message).toBe(
+      'Content could not be reviewed right now. Please try again.'
+    );
+  });
+
+  it('PROMPT_CHECK_FAIL_CLOSED off: it is an audit block again, as before', async () => {
+    setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
+    auditPromptServer.mockRejectedValueOnce(unavailable());
+
+    const error = await assertSharedTextSafe(input).catch((e) => e);
+
+    expect((error as SharedContentBlockedError).category).toBe('audit');
+    expect((error as SharedContentBlockedError).unchecked).toBe(false);
+    expect(isEscalatedServerFault(error)).toBe(false);
+  });
+
+  it.each([
+    ['a content refusal (BAD_REQUEST)', () => new TRPCError({ code: 'BAD_REQUEST', message: 'x' })],
+    ['a plain Error', () => new Error('x')],
+  ])('CONTROL: %s is still an audit block', async (_name, make) => {
+    auditPromptServer.mockRejectedValueOnce(make());
+
+    const error = await assertSharedTextSafe(input).catch((e) => e);
+
+    expect((error as SharedContentBlockedError).category).toBe('audit');
     expect(isEscalatedServerFault(error)).toBe(false);
   });
 });

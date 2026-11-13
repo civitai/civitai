@@ -203,7 +203,7 @@ export async function searchSemanticImages({
   let correctedRefusal: QueryRefusal | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
-      const result = await candidateSource({ query, filter, offset, limit });
+      const result = await candidateSource({ query, filter, offset, limit, sort: input.sort });
       // The service embeds its spelling correction, not the text audited above.
       if (correctedRefusal === undefined && result.correctedQuery !== undefined)
         correctedRefusal =

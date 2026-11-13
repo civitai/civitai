@@ -27,10 +27,15 @@ export const isExternalChatLink = (href: string) => {
   return !!url && constants.chat.externalHosts.includes(url.hostname);
 };
 
+// The URL parser folds "\" and dot segments into "//"; reject a leading "//" (another host).
+// The "\" check is kept as defence in depth.
+const isSameSitePath = (path: string) => path === '/' || /^\/[^/\\]/.test(path);
+
 const civitaiChatLinkPath = (href: string) => {
   const url = parseChatLink(href);
   if (!url || !constants.chat.civHosts.includes(url.hostname)) return null;
-  return `${url.pathname}${url.search}${url.hash}` || '/';
+  const path = `${url.pathname}${url.search}${url.hash}` || '/';
+  return isSameSitePath(path) ? path : null;
 };
 
 export const getLinkHref = (href: string | undefined) => {

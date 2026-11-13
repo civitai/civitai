@@ -27,7 +27,7 @@ import {
 } from '~/server/logging/client';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
-import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
 import {
   imageTrainingRouterInputSchema,
   imageTrainingRouterWhatIfSchema,
@@ -481,18 +481,7 @@ export const orchestratorRouter = router({
       }
 
       // Check generation status early
-      if (status.mode === 'disabled' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
-      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
+      assertGenerationStatusAllows(status, { isModerator: ctx.user.isModerator, tier: userTier });
 
       const result = await generateFromGraph({
         input: formInput,
@@ -597,18 +586,7 @@ export const orchestratorRouter = router({
         });
       }
 
-      if (status.mode === 'disabled' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
-      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
+      assertGenerationStatusAllows(status, { isModerator: ctx.user.isModerator, tier: userTier });
 
       // Rides alongside the graph input rather than inside it — it is not a graph node.
       const { downloadPriority, acceptBoostRequired, ...graphInput } = (input ?? {}) as Record<

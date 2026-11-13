@@ -146,10 +146,9 @@ async function moderatePrompt(
         // this await — and since it runs inline on every generation submission
         // (`generateFromGraph` → `auditPromptServer`), that parks the whole tRPC request
         // off-CPU for minutes (observed ~194s api-primary tail during a moderation 503/504
-        // wave). The call is already FAIL-SOFT (the caller catches and proceeds with
-        // flagged:false) and the local regex audit still gates regardless, so aborting a
-        // slow call only drops the secondary external layer for that one request — it does
-        // not weaken the primary block. Abort → throws → caller's existing catch fails soft.
+        // wave). Abort → throws → `auditPromptServer` refuses that one submit with a
+        // retry-able 503 (it fails CLOSED on a classifier error), so a slow gateway costs a
+        // bounded wait and a refusal, never an unmoderated submit.
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: {

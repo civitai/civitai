@@ -827,6 +827,46 @@ describe('the search service call', () => {
     );
   });
 
+  it('asks the service for newest first only when the caller picks it', async () => {
+    const sent = stubService(() =>
+      Response.json({ query: 'fox', corrected: 'fox', changes: [], hits: [] })
+    );
+    await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox', sort: 'newest' }),
+      user: VIEWER,
+    });
+    await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox' }),
+      user: VIEWER,
+    });
+    await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox', sort: 'relevance' }),
+      user: VIEWER,
+    });
+
+    expect(sent[0].body).toMatchObject({ collection: 'images', query: 'fox', sort: 'newest' });
+    // Relevance, picked or by default, sends the request as it always has: no sort field at all.
+    expect(Object.keys(sent[1].body).sort()).toEqual([
+      'collection',
+      'filter',
+      'limit',
+      'offset',
+      'query',
+    ]);
+    expect(sent[2].body).toEqual(sent[1].body);
+    // Newest changes the order only: the filter is the one relevance sends.
+    expect(sent[0].body.filter).toEqual(sent[1].body.filter);
+  });
+
+  it('keeps "more like this" in similarity order whatever the sort', async () => {
+    const sent = stubService(() => Response.json({ result: { points: [{ id: 101 }] } }));
+    await searchSemanticImages({ input: input({ imageId: ANCHOR, sort: 'newest' }), user: VIEWER });
+    await searchSemanticImages({ input: input({ imageId: ANCHOR }), user: VIEWER });
+
+    expect(sent[0].url).toBe('http://search.test/qdrant/collections/images/points/query');
+    expect(sent[0].body).toEqual(sent[1].body);
+  });
+
   it('reports no correction when the service changed nothing', async () => {
     stubService(() => Response.json({ query: 'fox', corrected: 'fox', changes: [], hits: [] }));
     const result = await searchSemanticImages({

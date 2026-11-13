@@ -26,7 +26,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -34,7 +34,7 @@ import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import {
-  GENERATION_TIP_FILTER,
+  TRANSACTION_TYPE_FILTER_OPTIONS,
   filterTransactionsByDisplayType,
   formatSignedAmount,
   getServerTransactionType,
@@ -48,22 +48,6 @@ import type {
   BuzzTransactionDetails,
   GetUserBuzzTransactionsMultiSchema,
 } from '~/server/schema/buzz.schema';
-
-const transactionTypes = [
-  TransactionType[TransactionType.Tip],
-  TransactionType[TransactionType.Reward],
-  TransactionType[TransactionType.Generation],
-  TransactionType[TransactionType.Refund],
-  TransactionType[TransactionType.Training],
-  TransactionType[TransactionType.Purchase],
-  TransactionType[TransactionType.Bounty],
-  TransactionType[TransactionType.Sell],
-  TransactionType[TransactionType.Compensation],
-  GENERATION_TIP_FILTER,
-  TransactionType[TransactionType.Donation],
-  TransactionType[TransactionType.Bid],
-  TransactionType[TransactionType.Redeemable],
-];
 
 function safeJsonParse(body: string): { error?: string } {
   try {
@@ -258,7 +242,7 @@ export default function UserTransactions() {
             name="type"
             placeholder="Select a type"
             value={typeChoice}
-            data={transactionTypes}
+            data={TRANSACTION_TYPE_FILTER_OPTIONS}
             onChange={(value) => {
               setTypeChoice(value);
               setFilters((current) => ({ ...current, type: getServerTransactionType(value) }));
