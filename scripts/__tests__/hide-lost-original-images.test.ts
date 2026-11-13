@@ -33,6 +33,39 @@ import {
   type RunOptions,
 } from '../oneoffs/hide-lost-original-images';
 
+// Written out by hand from schema.full.prisma (every relation to Image that shows it as a display
+// asset), NOT derived from the script's own list: deleting a surface from the script must fail here.
+const EXPECTED_REFS: [reason: string, table: string, column: string][] = [
+  ['user-picture', 'User', 'profilePictureId'],
+  ['profile-cover', 'UserProfile', 'coverImageId'],
+  ['profile-cover', 'UserProfile', 'sfwCoverImageId'],
+  ['app-sub-listing-asset', 'app_sub_listings', 'image_id'],
+  ['app-sub-listing-asset', 'app_sub_listings', 'pending_image_id'],
+  ['announcement-cover', 'Announcement', 'coverId'],
+  ['cosmetic-shop-section', 'CosmeticShopSection', 'imageId'],
+  ['collection-cover', 'Collection', 'imageId'],
+  ['club-image', 'Club', 'coverImageId'],
+  ['club-image', 'Club', 'headerImageId'],
+  ['club-image', 'Club', 'avatarId'],
+  ['club-tier-cover', 'ClubTier', 'coverImageId'],
+  ['club-post-cover', 'ClubPost', 'coverImageId'],
+  ['reward-cover', 'PurchasableReward', 'coverImageId'],
+  ['challenge-cover', 'Challenge', 'coverImageId'],
+  ['challenge-winner', 'ChallengeWinner', 'imageId'],
+  ['challenge-event-cover', 'ChallengeEvent', 'coverImageId'],
+  ['comic-project-image', 'ComicProject', 'coverImageId'],
+  ['comic-project-image', 'ComicProject', 'heroImageId'],
+  ['comic-reference-image', 'ComicReferenceImage', 'imageId'],
+  ['comic-panel', 'ComicPanel', 'imageId'],
+  ['model3d-image', 'Model3D', 'thumbnailImageId'],
+  ['model3d-image', 'Model3D', 'sourceImageId'],
+  ['storyline-image', 'Storyline', 'coverImageId'],
+  ['storyline-image', 'Storyline', 'heroImageId'],
+  ['storyline-image', 'Storyline', 'sparkImageId'],
+  ['storyline-cover-upload', 'StorylineCoverUpload', 'imageId'],
+];
+const REF_TABLES = [...new Set(EXPECTED_REFS.map(([, table]) => table))];
+
 let db: PGlite;
 
 beforeAll(async () => {
@@ -62,6 +95,13 @@ beforeAll(async () => {
 
 const GONE = [1, 2, 3];
 
+beforeAll(async () => {
+  for (const table of REF_TABLES) {
+    const columns = EXPECTED_REFS.filter(([, t]) => t === table).map(([, , c]) => `"${c}" int`);
+    await db.exec(`CREATE TABLE "${table}" (${columns.join(', ')})`);
+  }
+});
+
 beforeEach(async () => {
   await db.exec(`
     TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry", "Report", "ImageReport", "Article", app_listings, app_listing_screenshots;
@@ -69,6 +109,7 @@ beforeEach(async () => {
       (1,'gone-1',10,100),(2,'gone-2',10,100),(3,'gone-3',11,101),
       (900,'live-900',12,102),(901,'live-901',12,102);
   `);
+  for (const table of REF_TABLES) await db.exec(`TRUNCATE "${table}"`);
 });
 
 const query: Deps['query'] = async <T>(sql: Prisma.Sql) => {
@@ -433,6 +474,8 @@ describe('hide-lost-original-images', () => {
   it('refuses a log line that is not an entry, unless it is the torn last line', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hide-test-'));
     const log = path.join(dir, 'log');
+    fs.writeFileSync(log, 'not a log');
+    expect(() => readLog(log)).toThrow();
     fs.writeFileSync(log, 'null\n{"id":2,"prior":"Scanned"}\n');
     expect(() => readLog(log)).toThrow();
     fs.writeFileSync(log, '{"id":2,"prior":"Blocked"}\n{"id":3,"prior":"Scanned"}\n');
@@ -643,6 +686,26 @@ describe('hide-lost-original-images', () => {
       deps
     );
     expect(seen.sort()).toEqual([10, 10, 11]);
+  });
+
+  // One case per surface and per column: another entity shows the image, so a hide would break it
+  // there without telling the owner (Moderation Lead's rule).
+  it.each(EXPECTED_REFS)(
+    'leaves an image alone that is shown as %s (%s.%s)',
+    async (reason, table, column) => {
+      await db.exec(`INSERT INTO "${table}" ("${column}") VALUES (1)`);
+      const { deps } = makeDeps();
+      const counts = await run(options(), GONE, deps);
+      expect(await ingestion(1)).toBe('Scanned');
+      expect(counts[`skipped:${reason}`]).toBe(1);
+      expect(counts.hidden).toBe(2);
+    }
+  );
+
+  it('does not call ids unread under --limit no-row', async () => {
+    const { deps } = makeDeps();
+    const counts = await run(options({ limit: 1, chunk: 1 }), GONE, deps);
+    expect(counts['no-row']).toBeUndefined();
   });
 
   it('reports how many control images vouched for the HEADs', async () => {

@@ -132,7 +132,60 @@ END)`;
  * Where a hide would be seen or break something other than public reads. Skipped on a hide, but not
  * a reason to refuse an undo: restoring such an image is what an undo is for.
  */
-const linkageSql = Prisma.sql`(CASE
+export const DISPLAY_REFS: { reason: string; table: string; columns: string[] }[] = [
+  { reason: 'user-picture', table: 'User', columns: ['profilePictureId'] },
+  { reason: 'profile-cover', table: 'UserProfile', columns: ['coverImageId', 'sfwCoverImageId'] },
+  {
+    reason: 'app-sub-listing-asset',
+    table: 'app_sub_listings',
+    columns: ['image_id', 'pending_image_id'],
+  },
+  { reason: 'announcement-cover', table: 'Announcement', columns: ['coverId'] },
+  { reason: 'cosmetic-shop-section', table: 'CosmeticShopSection', columns: ['imageId'] },
+  { reason: 'collection-cover', table: 'Collection', columns: ['imageId'] },
+  { reason: 'club-image', table: 'Club', columns: ['coverImageId', 'headerImageId', 'avatarId'] },
+  { reason: 'club-tier-cover', table: 'ClubTier', columns: ['coverImageId'] },
+  { reason: 'club-post-cover', table: 'ClubPost', columns: ['coverImageId'] },
+  { reason: 'reward-cover', table: 'PurchasableReward', columns: ['coverImageId'] },
+  { reason: 'challenge-cover', table: 'Challenge', columns: ['coverImageId'] },
+  { reason: 'challenge-winner', table: 'ChallengeWinner', columns: ['imageId'] },
+  { reason: 'challenge-event-cover', table: 'ChallengeEvent', columns: ['coverImageId'] },
+  {
+    reason: 'comic-project-image',
+    table: 'ComicProject',
+    columns: ['coverImageId', 'heroImageId'],
+  },
+  { reason: 'comic-reference-image', table: 'ComicReferenceImage', columns: ['imageId'] },
+  { reason: 'comic-panel', table: 'ComicPanel', columns: ['imageId'] },
+  { reason: 'model3d-image', table: 'Model3D', columns: ['thumbnailImageId', 'sourceImageId'] },
+  {
+    reason: 'storyline-image',
+    table: 'Storyline',
+    columns: ['coverImageId', 'heroImageId', 'sparkImageId'],
+  },
+  { reason: 'storyline-cover-upload', table: 'StorylineCoverUpload', columns: ['imageId'] },
+];
+
+/**
+ * One arm per surface that shows the image as a display asset. Names are constants from the list
+ * above, never input. Each reads only the rows that name one of `ids`, so a table is scanned once per
+ * statement, not once per image.
+ */
+const displayRefArms = (ids: number[]) =>
+  Prisma.join(
+    DISPLAY_REFS.map((ref) => {
+      const sub = ref.columns.map(
+        (c) =>
+          Prisma.sql`SELECT t.${Prisma.raw(`"${c}"`)} FROM ${Prisma.raw(
+            `"${ref.table}"`
+          )} t WHERE t.${Prisma.raw(`"${c}"`)} = ANY(${ids}::int[])`
+      );
+      return Prisma.sql`WHEN i.id IN (${Prisma.join(sub, ' UNION ')}) THEN ${ref.reason}`;
+    }),
+    '\n  '
+  );
+
+const linkageSql = (ids: number[]) => Prisma.sql`(CASE
   WHEN EXISTS (
     SELECT 1 FROM "CollectionItem" ci WHERE ci."imageId" = i.id AND ci.status = 'REVIEW'
   ) THEN 'pending-collection-item'
@@ -152,19 +205,20 @@ const linkageSql = Prisma.sql`(CASE
     SELECT 1 FROM "Crucible" cr WHERE cr."imageId" = i.id OR cr."heroImageId" = i.id
   ) OR EXISTS (SELECT 1 FROM "CrucibleEntry" ce WHERE ce."imageId" = i.id)
   THEN 'crucible-image'
+  ${displayRefArms(ids)}
 END)`;
 
-const holdReasonSql = Prisma.sql`COALESCE(${safetyHoldSql}, ${linkageSql})`;
+const holdReasonSql = (ids: number[]) => Prisma.sql`COALESCE(${safetyHoldSql}, ${linkageSql(ids)})`;
 
 /** Why a row is left alone, or NULL when it may be hidden. Over `"Image" i`. */
-export const skipReasonSql = Prisma.sql`(CASE
+export const skipReasonSql = (ids: number[]) => Prisma.sql`(CASE
   WHEN i.ingestion <> 'Scanned'::"ImageIngestionStatus" THEN 'not-scanned'
-  ELSE ${holdReasonSql}
+  ELSE ${holdReasonSql(ids)}
 END)`;
 
 export function selectSql(ids: number[]) {
   return Prisma.sql`
-    SELECT i.id, i.url, i."postId", i.ingestion::text AS prior, ${skipReasonSql} AS skip
+    SELECT i.id, i.url, i."postId", i.ingestion::text AS prior, ${skipReasonSql(ids)} AS skip
     FROM "Image" i
     WHERE i.id = ANY(${ids}::int[])
   `;
@@ -176,7 +230,7 @@ export function hideSql(ids: number[], urls: string[]) {
     UPDATE "Image" i
     SET ingestion = 'NotFound'::"ImageIngestionStatus"
     WHERE (i.id, i.url) IN (SELECT * FROM unnest(${ids}::int[], ${urls}::text[]))
-      AND ${skipReasonSql} IS NULL
+      AND ${skipReasonSql(ids)} IS NULL
     RETURNING i.id, i."postId", i."userId"
   `;
 }
@@ -407,7 +461,8 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
     } else hidden += batch.length;
     if (i + options.chunk < ids.length) await deps.sleep(options.pauseMs);
   }
-  counts['no-row'] = ids.filter((id) => !seen.has(id)).length;
+  // Only meaningful when every chunk was read; --limit stops the loop early.
+  if (hidden < options.limit) counts['no-row'] = ids.filter((id) => !seen.has(id)).length;
   counts[options.apply ? 'hidden' : 'would-hide'] = hidden;
   for (const [k, v] of Object.entries(counts)) deps.log(`${k}: ${v}`);
   return counts;
@@ -532,7 +587,8 @@ export function readLog(file: string): LogEntry[] {
         throw new Error('log line is not an entry');
       return [entry];
     } catch (e) {
-      if (n === lines.length - 1) return [];
+      // Only a torn tail after at least one good line; a file that starts with junk is not our log.
+      if (n === lines.length - 1 && n > 0) return [];
       throw e;
     }
   });
