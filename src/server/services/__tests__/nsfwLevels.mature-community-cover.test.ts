@@ -20,10 +20,10 @@ beforeEach(() => {
 });
 
 describe('updateModelNsfwLevels: a model turned mature', () => {
-  it("re-checks the covers of mature models whose .com cover is someone else's image", async () => {
+  it('re-checks the covers of the mature models it recomputed', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([
-      { id: 1, communityComCover: true },
-      { id: 2, communityComCover: false },
+      { id: 1, nsfw: true },
+      { id: 2, nsfw: false },
     ]);
 
     await updateModelNsfwLevels([1, 2]);
@@ -31,11 +31,18 @@ describe('updateModelNsfwLevels: a model turned mature', () => {
     expect(dropInvalidCommunityCovers).toHaveBeenCalledWith([1]);
   });
 
-  it('skips the re-check when no mature model has a community .com cover', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 2, communityComCover: false }]);
+  it('skips the re-check when no recomputed model is mature', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 2, nsfw: false }]);
 
     await updateModelNsfwLevels([2]);
 
     expect(dropInvalidCommunityCovers).not.toHaveBeenCalled();
+  });
+
+  it('still finishes the recompute when the re-check fails', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1, nsfw: true }]);
+    dropInvalidCommunityCovers.mockRejectedValue(new Error('showcase table missing'));
+
+    await expect(updateModelNsfwLevels([1])).resolves.toBeUndefined();
   });
 });
