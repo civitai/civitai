@@ -65,17 +65,14 @@ const payee = (overrides: Record<string, unknown> = {}, userId = USER_ID) => ({
 
 function arrange(storedRow: Stored, tipaltiPayee: unknown) {
   dbMock.dbWrite.userPaymentConfiguration.findUnique.mockResolvedValue(storedRow);
-  dbMock.dbWrite.userPaymentConfiguration.update.mockImplementation(async ({ data }) => ({
-    ...storedRow,
-    ...data,
-  }));
+  dbMock.dbWrite.userPaymentConfiguration.updateMany.mockResolvedValue({ count: 1 });
   getPayeeByRefCode.mockResolvedValue(tipaltiPayee);
 }
 
 const run = (dryRun: boolean, userIds = [USER_ID]) =>
   resyncTipaltiPayees({ userIds, dryRun, actorId: 1 });
 
-const update = dbMock.dbWrite.userPaymentConfiguration.update;
+const update = dbMock.dbWrite.userPaymentConfiguration.updateMany;
 const writtenData = () => update.mock.calls[0][0].data;
 
 describe('resyncTipaltiPayees', () => {
@@ -106,9 +103,15 @@ describe('resyncTipaltiPayees', () => {
     const [row] = await run(false);
 
     expect(row).toMatchObject({ applied: true, direction: 'enable' });
+    // Conditional on the state the comparison used, so a webhook in between wins.
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { userId: USER_ID, tipaltiAccountId: `${PAYEE_ID}-${USER_ID}` },
+        where: {
+          userId: USER_ID,
+          tipaltiAccountId: `${PAYEE_ID}-${USER_ID}`,
+          tipaltiAccountStatus: 'Active',
+          tipaltiPaymentsEnabled: false,
+        },
       })
     );
     expect(trackModActivity).toHaveBeenCalledWith(1, {
@@ -175,16 +178,31 @@ describe('resyncTipaltiPayees', () => {
     expect(bust).not.toHaveBeenCalled();
   });
 
-  it('refuses when a webhook changed the row during the Tipalti read', async () => {
+  it('refuses, and tells no one, when a webhook changes the row between the read and the write', async () => {
+    // Every read still sees the old row; only the conditional write finds it moved.
     arrange(stored(false), payee());
-    dbMock.dbWrite.userPaymentConfiguration.findUnique
-      .mockResolvedValueOnce(stored(false))
-      .mockResolvedValueOnce(stored(true));
+    update.mockResolvedValue({ count: 0 });
 
     const [row] = await run(false);
 
-    expect(row.refused).toMatch(/changed/);
-    expect(update).not.toHaveBeenCalled();
+    expect(row).toMatchObject({
+      refused: 'Stored state changed during the Tipalti read; re-run',
+      applied: false,
+    });
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(trackModActivity).not.toHaveBeenCalled();
+    expect(bust).not.toHaveBeenCalled();
+  });
+
+  it('a status-only move to Blocked sends the rejection notification', async () => {
+    arrange(stored(false, 'Active'), payee({ status: 'Blocked', isPayable: false }));
+
+    const [row] = await run(false);
+
+    expect(row).toMatchObject({ applied: true, direction: null });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, type: 'creators-program-rejected-tipalti' })
+    );
   });
 
   it('refuses a user with no Tipalti account without calling Tipalti', async () => {
@@ -201,7 +219,7 @@ describe('resyncTipaltiPayees', () => {
     dbMock.dbWrite.userPaymentConfiguration.findUnique.mockImplementation(async ({ where }) =>
       stored(false, 'Active', where.userId)
     );
-    update.mockImplementation(async ({ data }) => ({ ...stored(false, 'Active', other), ...data }));
+    update.mockResolvedValue({ count: 1 });
     getPayeeByRefCode
       .mockRejectedValueOnce(new Error('timeout'))
       .mockResolvedValueOnce(payee({}, other));

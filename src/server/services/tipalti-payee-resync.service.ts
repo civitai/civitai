@@ -6,7 +6,10 @@ import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { userCashCache } from '~/server/services/creator-program.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
+import {
+  TipaltiStaleWriteError,
+  updateByTipaltiAccount,
+} from '~/server/services/user-payment-configuration.service';
 
 export const TIPALTI_RESYNC_MAX_USERS = 50;
 
@@ -162,16 +165,6 @@ export async function resyncTipaltiPayees({
     if (payableChanges) row.direction = payee.isPayable ? 'enable' : 'disable';
     if (!row.wouldChange || dryRun) continue;
 
-    // The Tipalti read can take seconds; a webhook landing meanwhile wins over this older snapshot.
-    const current = await dbWrite.userPaymentConfiguration.findUnique({ where: { userId } });
-    if (
-      current?.tipaltiAccountStatus !== config.tipaltiAccountStatus ||
-      current?.tipaltiPaymentsEnabled !== config.tipaltiPaymentsEnabled
-    ) {
-      row.refused = 'Stored state changed during the Tipalti read; re-run';
-      continue;
-    }
-
     try {
       await updateByTipaltiAccount({
         userId,
@@ -179,6 +172,11 @@ export async function resyncTipaltiPayees({
         tipaltiAccountId: config.tipaltiAccountId,
         tipaltiAccountStatus: payee.status,
         tipaltiPaymentsEnabled: payee.isPayable,
+        // The Tipalti read can take seconds; a webhook landing meanwhile wins over this snapshot.
+        expect: {
+          tipaltiAccountStatus: config.tipaltiAccountStatus,
+          tipaltiPaymentsEnabled: config.tipaltiPaymentsEnabled,
+        },
       });
       row.applied = true;
       await trackModActivity(actorId, {
@@ -189,6 +187,10 @@ export async function resyncTipaltiPayees({
       // withdrawCash reads its ready/pending status from this cache (TTL one day).
       await userCashCache.bust(userId);
     } catch (error) {
+      if (error instanceof TipaltiStaleWriteError) {
+        row.refused = 'Stored state changed during the Tipalti read; re-run';
+        continue;
+      }
       row.error = row.applied ? 'Written, but the cash cache bust failed' : 'Write failed';
       logResyncError(actorId, userId, row.applied ? 'cache-bust' : 'write', error);
     }
