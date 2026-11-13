@@ -31,6 +31,11 @@ const { mockGetVaeFiles, mockGetImages, mockGetPaidAccess, mockFindUnique, mockF
     mockFileFindFirst: vi.fn(),
   }));
 
+// The showcase exclusions are covered in showcase-exclusions.test.ts; here every image passes them.
+vi.mock('~/server/services/blocked-browsing-tags.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getShowcaseImageFilter: async () => () => true,
+}));
 vi.mock('~/server/db/client', () => {
   const stub = {
     modelVersion: { findUnique: mockFindUnique },

@@ -37,6 +37,11 @@ import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { getShowcaseImageFilter } from '~/server/services/blocked-browsing-tags.service';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { logToAxiom } from '~/server/logging/client';
 import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
 import {
@@ -184,6 +189,34 @@ export default MixedAuthEndpoint(async function handler(
   }
 });
 
+/** A version's showcase at `browsingLevel`, with the tags its exclusions read. */
+export const getVersionShowcaseImages = (modelVersionIds: number[], browsingLevel: number) =>
+  getImagesForModelVersion({
+    modelVersionIds,
+    include: ['meta', 'tags'],
+    imagesPerVersion: 10,
+    browsingLevel,
+  });
+
+const aboveSfw = (nsfwLevel: number) => (nsfwLevel & ~sfwBrowsingLevelsFlag) !== 0;
+
+/**
+ * Whether a caller in a region served only SFW levels could get a different body than one served
+ * every level: the version or a showcase image is above SFW, or the exclusions resolved at the two
+ * levels keep different images.
+ */
+export async function showcaseVariesByRegion(
+  versionNsfwLevel: number,
+  images: AsyncReturnType<typeof getImagesForModelVersion>
+) {
+  if (aboveSfw(versionNsfwLevel) || images.some((image) => aboveSfw(image.nsfwLevel))) return true;
+  const [withinSfw, withinAll] = await Promise.all([
+    getShowcaseImageFilter({ browsingLevel: sfwBrowsingLevelsFlag }),
+    getShowcaseImageFilter({ browsingLevel: allBrowsingLevelsFlag }),
+  ]);
+  return images.some((image) => withinSfw(image) !== withinAll(image));
+}
+
 export async function prepareModelVersionResponse(
   modelVersion: ModelVersionApiReturn & { vaeId?: number | null },
   baseUrl: URL,
@@ -193,7 +226,9 @@ export async function prepareModelVersionResponse(
   // The .com face, as the API v1 model list resolves it: for a caller served only safe levels.
   showSfwFace = false,
   // `isRedCapableHost` of the request: decides which training datasets are offered.
-  redCapable = false
+  redCapable = false,
+  // `apiBrowsingLevel` of the request: the showcase's levels, and the level its exclusions resolve at.
+  browsingLevel = sfwBrowsingLevelsFlag
 ) {
   // `availability` and the owner only decide visibility; they are not part of the response.
   const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
@@ -216,11 +251,8 @@ export async function prepareModelVersionResponse(
   const primaryFile = getPrimaryFile(castedFiles);
   if (!primaryFile) return null;
 
-  images ??= await getImagesForModelVersion({
-    modelVersionIds: [version.id],
-    include: ['meta'],
-    imagesPerVersion: 10,
-  });
+  images ??= await getVersionShowcaseImages([version.id], browsingLevel);
+  images = images.filter(await getShowcaseImageFilter({ browsingLevel }));
   images = (
     await holdShowcaseImages(
       { [version.id]: { images } },
@@ -314,7 +346,7 @@ export async function prepareModelVersionResponse(
           }))
       : [],
     images: includeImages
-      ? images.map(({ url, id, userId, name, modelVersionId, ...image }) => ({
+      ? images.map(({ url, id, userId, name, modelVersionId, tags, ...image }) => ({
           url: getEdgeUrl(url, {
             original: true,
             name: id.toString(),
@@ -352,19 +384,26 @@ export async function resModelVersionDetails(
   const baseUrl = new URL(
     isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
   );
-  const showSfwFace = showsSfwFace(apiBrowsingLevel(req));
+  const browsingLevel = apiBrowsingLevel(req);
+  const showSfwFace = showsSfwFace(browsingLevel);
+  const images = await getVersionShowcaseImages([modelVersion.id], browsingLevel);
   const body = await prepareModelVersionResponse(
     modelVersion,
     baseUrl,
-    undefined,
+    images,
     undefined,
     showSfwFace,
-    isRedCapableHost(req.headers.host)
+    isRedCapableHost(req.headers.host),
+    browsingLevel
   );
   if (!body) return res.status(404).json({ error: 'Missing model file' });
   // Only its owner or a moderator gets here with a Private version: never let a cache keep it.
-  // Nor a response showing the .com face: it varies by region, which the shared cache doesn't key on.
-  if (isPrivateModelVersion(modelVersion) || (showSfwFace && modelVersion.model.sfwName != null))
+  // Nor a response that varies by region, which the shared cache doesn't key on.
+  if (
+    isPrivateModelVersion(modelVersion) ||
+    (showSfwFace && modelVersion.model.sfwName != null) ||
+    (await showcaseVariesByRegion(modelVersion.nsfwLevel, images))
+  )
     res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json(body);
 }

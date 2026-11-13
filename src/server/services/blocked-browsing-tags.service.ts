@@ -124,3 +124,34 @@ export async function enforceBlockedBrowsingTagsForModels(
   applyAddonExclusions(input, resolved, viewer, opts);
   return { emptyResult: false };
 }
+
+type ShowcaseImage = {
+  userId?: number;
+  poi?: boolean | null;
+  minor?: boolean | null;
+  tags?: number[] | null;
+};
+
+/**
+ * The browsing-settings exclusions (tags, poi, minor) resolved at `browsingLevel` for `viewer`, as a
+ * filter over showcase images. Resolved onto a target of its own, which names no owner, so none of
+ * the tag exclusions are skipped; the viewer's own images pass.
+ */
+export async function getShowcaseImageFilter({
+  browsingLevel,
+  viewer = {},
+  excludedTagIds,
+}: {
+  browsingLevel?: number;
+  viewer?: Viewer;
+  excludedTagIds?: number[];
+}) {
+  const rules: AddonTarget = { browsingLevel };
+  await enforceBlockedBrowsingTagsForModels(rules, viewer);
+  const excluded = new Set([...(rules.excludedTagIds ?? []), ...(excludedTagIds ?? [])]);
+  return (image: ShowcaseImage) =>
+    (!!viewer.id && image.userId === viewer.id) ||
+    (!(rules.disablePoi && image.poi) &&
+      !(rules.disableMinor && image.minor) &&
+      !(image.tags ?? []).some((tagId) => excluded.has(tagId)));
+}
