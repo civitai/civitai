@@ -79,7 +79,9 @@ beforeAll(async () => {
       id int PRIMARY KEY, username text, "deletedAt" timestamp, "bannedAt" timestamp,
       "profilePictureId" int, settings jsonb NOT NULL DEFAULT '{}'
     );
-    CREATE TABLE "Image" (id int PRIMARY KEY, ingestion text, "nsfwLevel" int, url text);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, ingestion text, "nsfwLevel" int, url text, "needsReview" text
+    );
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int, status text, mode text, "deletedAt" timestamp
@@ -205,6 +207,23 @@ describe('Creator Studio "Who liked" a model', () => {
       [62, 'unscanned', null, false],
       [61, 'nsfw', null, false],
       [60, 'safe', 'safe.jpg', true],
+    ]);
+  });
+
+  it('hides an avatar held for CSAM review and keeps one held for another review', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, ingestion, "nsfwLevel", url, "needsReview") VALUES
+        (1, 'Scanned', 1, 'csam.jpg', 'csam'), (2, 'Scanned', 1, 'minor.jpg', 'minor'),
+        (3, 'Scanned', 1, 'clean.jpg', NULL);
+      INSERT INTO "User" (id, username, "profilePictureId") VALUES (70, 'a', 1), (71, 'b', 2), (72, 'c', 3);
+      INSERT INTO "ResourceReview" ("userId", "modelVersionId", recommended) VALUES
+        (70, ${V1}, true), (71, ${V1}, true), (72, ${V2}, true);
+    `);
+    const page = await likers();
+    expect(page?.reactors.map((r) => [r.userId, r.image])).toEqual([
+      [72, 'clean.jpg'],
+      [71, 'minor.jpg'],
+      [70, null],
     ]);
   });
 
