@@ -4584,9 +4584,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
 
   // (6b) Supersede any OTHER request still 'pending' for this slug so the queue
   // reflects that the slug is now approved. Scoped to NOT touch the row we just
-  // approved. This is NOT what stops the webhook from parking this approve's own
-  // commit as a second request: a row the webhook writes after this update would
-  // survive it, and one did. The webhook recognises the commit itself from its
+  // approved. This does not stop the webhook from parking this approve's own
+  // commit as a second request, because a row the webhook writes after this
+  // update survives it. The webhook recognises that commit by its
   // `Publish-Request` trailer and pusher (git-push.ts ownApproveCommitRequest).
   await dbWrite.appBlockPublishRequest.updateMany({
     where: { slug: request.slug, status: 'pending', NOT: { id: request.id } },

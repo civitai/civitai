@@ -1,0 +1,36 @@
+// The guard's overlay is positioned against this box, so it takes the size the bare img had:
+// the article's data-width moves here from the img (RichTextEditorComponent.module.scss).
+.root {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+
+  &[data-width='33'] {
+    max-width: 33%;
+  }
+
+  &[data-width='50'] {
+    max-width: 50%;
+  }
+
+  &[data-width='75'] {
+    max-width: 75%;
+  }
+
+  @media (max-width: 640px) {
+    &[data-width='33'],
+    &[data-width='50'] {
+      max-width: 60%;
+    }
+  }
+}
+
+.placeholder {
+  position: relative;
+  overflow: hidden;
+  max-width: 100%;
+  max-height: 80vh;
+  border-radius: var(--mantine-radius-md);
+  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-5));
+}

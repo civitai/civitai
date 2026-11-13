@@ -1508,8 +1508,8 @@ describe('blocks.submitWorkflow', () => {
     // NOTHING on real traffic: no shipped client sends one (the SDK has zero
     // occurrences; the live tipping block hand-rolls its POST). Meanwhile the actual
     // double-charge is server-side and unconditional — `submitWorkflow` calls
-    // `submitWorkflowWithRetry` with maxAttempts=3 and no per-attempt timeout on the
-    // real submit, and that wrapper's own doc says it adds NO idempotency key: "the
+    // `submitWorkflowWithRetry` with maxAttempts=3 (5xx, network and timed-out attempts
+    // retried) on the real submit, and that wrapper's own doc says it adds NO idempotency key: "the
     // CALLER must set `body.externalId`". So the server now MINTS one when the client
     // sends none.
     it('🔴 UNKEYED submit MINTS a server-side externalId (a client key is NOT the gate)', async () => {

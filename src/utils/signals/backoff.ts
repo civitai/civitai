@@ -1,3 +1,5 @@
+import { backoffDelay } from '~/utils/backoff';
+
 // Every logged-in tab holds a signals connection, so when the hub goes down they all lose it in the
 // same instant. A retry schedule that is fixed, or the same for every client, keeps them in lockstep
 // for the whole outage: a hub that hung for ~45 min once drew hub connects up ~200x and
@@ -23,8 +25,7 @@ export function getBackoffDelay(
   { baseMs, capMs, minMs }: BackoffConfig,
   random: () => number = Math.random
 ) {
-  // Clamp the exponent too: 2^attempt overflows to Infinity long before an outage ends.
-  const ceiling = Math.min(capMs, baseMs * 2 ** Math.min(Math.max(attempt, 0), 30));
+  const ceiling = backoffDelay(Math.max(attempt, 0), { baseMs, maxMs: capMs });
   return Math.round(minMs + random() * Math.max(ceiling - minMs, 0));
 }
 

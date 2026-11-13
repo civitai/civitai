@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createBuzzClient } from './client';
 
-// The reward cap-release path passes `{ timeoutMs, retries: 0 }` to a read that otherwise
-// has no deadline and retries every error class four times, inside a mutation a user is
-// waiting on. The app-side suite mocks this whole module, so nothing there can see whether
+// The reward cap-release path passes `{ timeoutMs, retries: 0 }` to a read inside a mutation a
+// user is waiting on, tighter than the client's read defaults. The app-side suite mocks this whole module, so nothing there can see whether
 // those options reach `fetch` at all - which is what this file is for.
 //
 // `opts?.retries ?? retries` is the line that matters most: written with `||` instead, a
@@ -29,18 +28,27 @@ describe('per-call read options reach the transport', () => {
     json: async () => ({ date: '2026-09-21T10:00:00Z' }),
   });
 
-  it('attaches an abort signal when a timeout is given, and none when it is not', async () => {
+  it('attaches an abort signal with or without a per-call timeout, and none when switched off', async () => {
     const client = createBuzzClient({ endpoint: ENDPOINT });
     fetchMock.mockResolvedValue(ok());
 
     await client.getTransactionByExternalId('abc', { timeoutMs: 1000, retries: 0 });
     await client.getTransactionByExternalId('abc');
+    vi.stubEnv('BUZZ_CLIENT_UNBOUNDED', 'true');
+    try {
+      await client.getTransactionByExternalId('abc');
+    } finally {
+      vi.unstubAllEnvs();
+    }
 
     expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
-    expect(fetchMock.mock.calls[1][1]?.signal).toBeUndefined();
+    // The default read bound: a caller passing nothing is no longer unbounded.
+    expect(fetchMock.mock.calls[1][1].signal).toBeInstanceOf(AbortSignal);
+    // The off-switch restores the old unbounded wait.
+    expect(fetchMock.mock.calls[2][1]?.signal).toBeUndefined();
   });
 
-  it('makes exactly one attempt for retries: 0, and the default four without it', async () => {
+  it('makes exactly one attempt for retries: 0, and the default two without it', async () => {
     const client = createBuzzClient({ endpoint: ENDPOINT });
     fetchMock.mockRejectedValue(new Error('buzz is unwell'));
 
@@ -52,8 +60,8 @@ describe('per-call read options reach the transport', () => {
 
     fetchMock.mockClear();
     await expect(client.getTransactionByExternalId('abc')).rejects.toThrow('buzz is unwell');
-    // The budget a caller passing nothing still gets - the number the bound exists to avoid.
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    // The read default: one retry, not the three it used to be.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   // Creator Services reads the prefix listing while holding an auto-renewing lock.
@@ -65,7 +73,7 @@ describe('per-call read options reach the transport', () => {
     await client.listMultiTransactions({ externalTransactionIdPrefix: 'p' });
 
     expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
-    expect(fetchMock.mock.calls[1][1]?.signal).toBeUndefined();
+    expect(fetchMock.mock.calls[1][1].signal).toBeInstanceOf(AbortSignal);
   });
 
   it('keeps allow404 when per-call options are passed', async () => {

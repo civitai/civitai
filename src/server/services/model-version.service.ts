@@ -101,11 +101,7 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import {
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { imagesMetricsSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
   assertPaidAccessInput,
@@ -1607,14 +1603,36 @@ async function purgeModelVersionByHashCache(hashes: string[]) {
   await purgeCache({ urls });
 }
 
-// Resolve a version's file hashes then purge the by-hash edge cache. Used by
-// publish/unpublish where the ModelFile/ModelFileHash rows still exist. The
+/**
+ * Purge the edge-cached public API bodies that carry a model's showcase, once its minor or SFW-only
+ * flag or its held gallery level changes: by-hash for every file of its versions, and the model and
+ * version by-id URLs. The origin's model response goes first, so the edge cannot refill from it.
+ * URLs with a query string are left to their TTL.
+ */
+export async function purgePublicModelShowcaseEdgeCache(
+  modelId: number,
+  modelVersionIds: number[]
+) {
+  await bustPublicModelResponseCache(modelId);
+  await purgeModelVersionByHashCacheById(modelVersionIds);
+  const origin = getBaseUrl();
+  await purgeCache({
+    urls: [
+      `${origin}/api/v1/models/${modelId}`,
+      ...modelVersionIds.map((id) => `${origin}/api/v1/model-versions/${id}`),
+    ],
+  });
+}
+
+// Resolve versions' file hashes then purge the by-hash edge cache. Used by the
+// showcase purge and publish/unpublish, where the ModelFile/ModelFileHash rows still exist. The
 // delete path can't use this (the cascade removes the rows), so it snapshots
 // the hashes inside the transaction and calls purgeModelVersionByHashCache
 // directly.
-async function purgeModelVersionByHashCacheById(modelVersionId: number) {
+async function purgeModelVersionByHashCacheById(modelVersionIds: number[]) {
+  if (!modelVersionIds.length) return;
   const hashes = await dbRead.modelFileHash.findMany({
-    where: { file: { modelVersionId } },
+    where: { file: { modelVersionId: { in: modelVersionIds } } },
     select: { hash: true },
   });
   await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
@@ -2012,9 +2030,6 @@ export const publishModelVersionsWithEarlyAccess = async ({
         // await modelsSearchIndex.queueUpdate([
         //   { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
         // ]);
-        // await imagesSearchIndex.queueUpdate(
-        //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
-        // );
         // await imagesMetricsSearchIndex.queueUpdate(
         //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
         // );
@@ -2278,7 +2293,7 @@ export const publishModelVersionById = async ({
   // freshly-published version starts resolving by-hash immediately instead of
   // serving the stale not-found until the edge cache TTL expires.
   try {
-    await purgeModelVersionByHashCacheById(version.id);
+    await purgeModelVersionByHashCacheById([version.id]);
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -2292,9 +2307,6 @@ export const publishModelVersionById = async ({
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
-    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
@@ -2472,9 +2484,6 @@ export const unpublishModelVersionById = async ({
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
-    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
@@ -2488,7 +2497,7 @@ export const unpublishModelVersionById = async ({
   // Best-effort: evict the by-hash single-lookup endpoint so an unpublished
   // version stops resolving by-hash before the edge cache TTL expires.
   try {
-    await purgeModelVersionByHashCacheById(version.id);
+    await purgeModelVersionByHashCacheById([version.id]);
   } catch (error) {
     logToAxiom({
       type: 'error',

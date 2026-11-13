@@ -246,6 +246,31 @@ describe('GET /api/v1/articles/[id] (detail)', () => {
     expect(args.isModerator).toBeUndefined();
   });
 
+  it('keeps contentImages to the documented id, url and ingestion', async () => {
+    mockGetArticleById.mockResolvedValue({
+      id: 3,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      contentImages: [
+        {
+          id: 5,
+          url: 'u',
+          ingestion: 'Scanned',
+          nsfwLevel: 16,
+          userId: 7,
+          hash: 'h',
+          width: 1,
+          height: 1,
+        },
+      ],
+    });
+    const { req, res } = createMocks({ query: { id: '3' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getJSONData().contentImages).toEqual([{ id: 5, url: 'u', ingestion: 'Scanned' }]);
+  });
+
   it('SECURITY: a private/unpublished article (service throws NOT_FOUND) 404s for an anonymous caller', async () => {
     mockGetArticleById.mockRejectedValue(
       new TRPCError({ code: 'NOT_FOUND', message: 'No article with id 99' })

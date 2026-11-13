@@ -58,3 +58,7 @@ export const storefrontSectionId = (key: CreatorShopSectionKey) => `shop-${key}`
 
 /** A service card's element id; the moderator reports link to it as `/shop#service-<id>`. */
 export const serviceCardId = (offeringId: number) => `service-${offeringId}`;
+
+/** An offering's card on its seller's storefront. */
+export const serviceStorefrontHref = (username: string, offeringId: number) =>
+  `/user/${username}/shop#${serviceCardId(offeringId)}`;

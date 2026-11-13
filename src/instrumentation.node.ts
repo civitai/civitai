@@ -115,6 +115,17 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
+// The last-known Flipt flag state in sysRedis (DARK unless FLIPT_SNAPSHOT_MAX_AGE_MS is set; then
+// nothing is registered, read or written): read only when this pod cannot reach Flipt at startup
+// (so its default-on flags are not all OFF), kept current by healthy pods. Registered BEFORE the
+// block below, whose awaited gate is this process's first Flipt init. Dynamic for the same reason as
+// that block (keeps Flipt and sysRedis out of this module's static graph); never affects boot.
+try {
+  (await import('~/server/flipt/snapshot-store')).registerFliptSnapshotStore();
+} catch (err) {
+  console.error('[instrumentation.node] flipt snapshot store not registered:', err);
+}
+
 // Arm the redis command metrics behind the `redis-command-metrics-batched` Flipt flag (dark until
 // it is on). Independent of OTEL: both metrics are prom-client. Dynamic, to keep the Flipt client out
 // of this module's static graph; a failure here must never affect boot — both metrics then keep
@@ -331,11 +342,14 @@ if (!OTEL_ENABLED) {
     // The previous form listened on SIGTERM only and awaited NEITHER promise, so the
     // final batch raced process termination — immaterial while this pipeline carried one
     // record per boot, a real loss path the moment it carries traffic. registerOtelShutdown
-    // adds SIGINT, awaits both shutdowns, and is idempotent across a second signal.
+    // adds SIGINT, awaits the flush and both shutdowns, and is idempotent across signals.
     //
-    // The log line below is deliberate: whether the framework installs its own SIGTERM
-    // handler that exits before ours runs is NOT answerable by any test we can write, so
-    // its presence (or absence) in a terminating process's final output is the check.
+    // Both servers this runs in (Next's start-server and scripts/trpc-server/server.cjs)
+    // install their own SIGTERM/SIGINT handler that drains and then calls process.exit().
+    // On the signal registerOtelShutdown only flushes; it holds that exit while it shuts
+    // both down, for at most OTEL_SHUTDOWN_EXIT_HOLD_MS. The framework's graceful shutdown
+    // is unchanged, and records from before the signal and from the drain are exported.
+    // If the shutdown runs out the cap, it logs "telemetry flush still running" first.
     registerOtelShutdown([loggerProvider, sdk], {
       log: (message) => console.log(`[instrumentation.node] ${message}`),
       onError: (reason) => console.error('[instrumentation.node] OTEL shutdown error:', reason),

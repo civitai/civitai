@@ -803,6 +803,19 @@ export async function releaseExport({
   return { ok: true, userId: row.userId, expiresAt: link.expiresAt };
 }
 
+async function countQueued() {
+  const rows = await dbWrite.$queryRaw<{ n: number }[]>(
+    Prisma.sql`SELECT count(*)::int AS n FROM "PersonalDataExport" WHERE status = 'queued'`
+  );
+  return rows[0]?.n ?? 0;
+}
+
+function safeErrorLabel(e: unknown): string {
+  if (!(e instanceof Error)) return 'unknown error';
+  const code = (e as { code?: unknown }).code;
+  return typeof code === 'string' || typeof code === 'number' ? `${e.name} (${code})` : e.name;
+}
+
 /** One job tick: recover abandoned builds, then build queued exports one at a time. */
 export async function runPersonalDataExports({
   maxPerRun = 1,
@@ -823,7 +836,19 @@ export async function runPersonalDataExports({
       message: `Legal notice retry failed: ${errorMessage(e)}`,
     }).catch(() => undefined)
   );
-  const deps = await resolveDeps();
+  let deps: Awaited<ReturnType<typeof resolveExportDeps>>;
+  try {
+    deps = await resolveDeps();
+  } catch (e) {
+    // Name and code only: a driver error can quote the connection string, which has credentials.
+    const queued = await countQueued();
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message: `deps failed, ${queued} export(s) waiting: ${safeErrorLabel(e)}`,
+    }).catch(() => undefined);
+    return { built: 0, skipped: 'deps-failed' as const };
+  }
   if ('missing' in deps) {
     const queued = await dbWrite.$queryRaw<{ n: number }[]>(
       Prisma.sql`SELECT count(*)::int AS n FROM "PersonalDataExport" WHERE status = 'queued'`
