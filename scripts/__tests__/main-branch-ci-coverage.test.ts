@@ -272,11 +272,10 @@ describe('CI coverage for commits on main', () => {
   // for main, so with cancel-in-progress a PR push would cancel main's run and
   // main would sit with no verdict, the failure this file exists for.
   //
-  // Keying on `github.ref` IS allowed, and is what lint.yml and windows-dev-env
-  // use since 2026-10: a newer commit on main cancels the older one's run. The
-  // newest run checks a tree containing every older commit, so main keeps a
-  // verdict; intermediate commits show `cancelled`. That trade was made to stop
-  // per-commit main runs queueing behind PRs under a concurrent-job limit.
+  // Keying on `github.ref` IS allowed, and is what lint.yml, apps.yml,
+  // moderator-boot.yml and windows-dev-env use: one group for `main`, so per-commit
+  // main runs do not pile up behind PRs under a concurrent-job limit. windows-dev-env
+  // cancels the older main run; the other three queue on push (next test).
   // `github.sha` (one group per commit, nothing cancels) also passes.
   it('never lets a PR run cancel the run for a commit on main', () => {
     for (const { file, doc } of workflows) {
@@ -291,4 +290,20 @@ describe('CI coverage for commits on main', () => {
       ).toBe(true);
     }
   });
+
+  // On `main` these QUEUE instead of cancelling. `main` takes a push every few minutes on a busy
+  // day, faster than these runs take, so cancel-in-progress left most push runs `cancelled`
+  // with no verdict (lint: 1,185 of 1,549, 2026-10-30..11-13); replaying the same pushes with
+  // queueing used about the same runner time and finished 873 lint runs instead of 364. PR runs
+  // still cancel their PR's stale run. A literal `true` here brings the no-verdict bursts back.
+  it.each(['lint.yml', 'apps.yml', 'moderator-boot.yml'])(
+    '%s queues push runs on main and cancels only non-push runs',
+    (file) => {
+      const doc = workflows.find((w) => w.file === file)?.doc;
+      expect(doc, `${file} not found`).toBeDefined();
+      expect(String(doc?.concurrency?.['cancel-in-progress'] ?? '').replace(/\s+/g, ' ')).toBe(
+        "${{ github.event_name != 'push' }}"
+      );
+    }
+  );
 });
