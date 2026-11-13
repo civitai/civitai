@@ -7,18 +7,18 @@ import { NsfwLevel } from '~/server/common/enums';
  * the caller's; the defaults are the feed query's.
  */
 
-/** `storylineRootVisibleText` with any publication time: a scheduled chapter 1 counts. */
-const storylineRootReadyText = ({ rc = 'rc', rp = 'rp', ru = 'ru' } = {}) =>
+/** Chapter 1 shown to readers, with `published` as the publication test on its post `rp`. */
+const storylineRootText = ({ rc = 'rc', rp = 'rp', ru = 'ru' }, published: string) =>
   `(${rp}.id IS NOT NULL AND ${rc}."removedAt" IS NULL
   AND ${rp}."tosViolation" = false AND ${ru}."bannedAt" IS NULL AND ${ru}."deletedAt" IS NULL
-  AND ${rp}."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND ${rp}."publishedAt" IS NOT NULL)`;
+  AND ${rp}."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND ${published})`;
 
 /**
  * `getStorylineRootHiddenReason` is null: chapter 1 `rc`, its post `rp` and that post's author
  * `ru`. Change it with that function.
  */
 export const storylineRootVisibleText = ({ rc = 'rc', rp = 'rp', ru = 'ru' } = {}) =>
-  `(${storylineRootReadyText({ rc, rp, ru })} AND ${rp}."publishedAt" < now())`;
+  storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" < now()`);
 
 /**
  * Which storylines the semantic search may return: the public feed's gates for a reader who is
@@ -36,7 +36,8 @@ export const storylineSemanticEligibleText = ({
   ru = 'ru',
 } = {}) =>
   `(${st}."tosViolation" = false AND ${u}."bannedAt" IS NULL AND ${u}."deletedAt" IS NULL
-  AND ${storylineRootReadyText({ rc, rp, ru })} AND ${rp}.availability = 'Public')`;
+  AND ${storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" IS NOT NULL`)}
+  AND ${rp}.availability = 'Public')`;
 
 /**
  * The level `isStorylineOutsideLevel` judges a storyline `st` by: chapter 1's post `rp` (the
