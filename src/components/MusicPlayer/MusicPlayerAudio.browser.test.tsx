@@ -140,6 +140,23 @@ describe('the global player audio element', () => {
     expect(useMusicPlayheadStore.getState().currentTime).toBe(0);
   });
 
+  test('a song restored after a reload loads paused at its saved position', async () => {
+    await renderWithProviders(<MusicPlayerAudio />);
+    player().restore({ track: track(1), positionSec: 64 });
+
+    expect(audio().getAttribute('src')).toBe(track(1).url);
+    expect(audio().currentTime).toBe(64);
+    expect(useMusicPlayheadStore.getState().currentTime).toBe(64);
+    expect(play).not.toHaveBeenCalled();
+    expect(audio().paused).toBe(true);
+
+    // Play continues from there; the next song starts from 0:00.
+    player().resume();
+    expect(audio().currentTime).toBe(64);
+    player().playTrack(track(2));
+    expect(useMusicPlayheadStore.getState().currentTime).toBe(0);
+  });
+
   test('a song that fails to load leaves the player not playing, without throwing', async () => {
     await renderWithProviders(<MusicPlayerAudio />);
     player().playTrack(track(1));

@@ -473,3 +473,50 @@ describe('playing from a list', () => {
     expect(get().current).toBeNull();
   });
 });
+
+describe('restoring the last song after a reload', () => {
+  it('shows the bar with the song paused at the saved position', () => {
+    const { get } = setup();
+    get().restore({ track: a, positionSec: 42 });
+    expect(get().current?.id).toBe(a.id);
+    expect(get().playing).toBe(false);
+    expect(get().view).toBe('bar');
+    expect(get().playback).toMatchObject({ songId: a.id, listenedSec: 0, startAtSec: 42 });
+    expect(get().queued).toEqual([]);
+    expect(get().list).toEqual([]);
+  });
+
+  it('keeps the saved position inside the song', () => {
+    const { get } = setup();
+    get().restore({ track: track(9, 100), positionSec: 250 });
+    expect(get().playback?.startAtSec).toBe(100);
+    get().close();
+    get().restore({ track: a, positionSec: -3 });
+    expect(get().playback?.startAtSec).toBe(0);
+  });
+
+  it('previous restarts a song restored more than 3 s in', () => {
+    const { get } = setup();
+    get().restore({ track: a, positionSec: 42 });
+    const { playbackId } = get().playback!;
+    get().previous();
+    expect(get().current?.id).toBe(a.id);
+    expect(get().playback?.playbackId).not.toBe(playbackId);
+    expect(get().playback?.startAtSec).toBe(0);
+  });
+
+  it('does not replace a song the listener already started', () => {
+    const { get } = setup();
+    get().playTrack(b);
+    get().restore({ track: a, positionSec: 42 });
+    expect(get().current?.id).toBe(b.id);
+    expect(get().playing).toBe(true);
+  });
+
+  it('a song played after it starts from the beginning', () => {
+    const { get } = setup();
+    get().restore({ track: a, positionSec: 42 });
+    get().playTrack(b);
+    expect(get().playback?.startAtSec).toBe(0);
+  });
+});

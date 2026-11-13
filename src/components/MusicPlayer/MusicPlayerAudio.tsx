@@ -45,10 +45,12 @@ function apply(media: HTMLAudioElement, state: MusicPlayerState, prev?: MusicPla
 
   const started = !prev || state.playback?.playbackId !== prev.playback?.playbackId;
   if (started) {
+    // 0, or where a song restored after a reload was; set before the load, it is where it starts.
+    const startAt = state.playback?.startAtSec ?? 0;
     const url = resolveEdgeUrl(track.url, { type: 'audio' }).url;
     if (media.getAttribute('src') !== url) media.src = url;
-    else media.currentTime = 0;
-    useMusicPlayheadStore.setState({ currentTime: 0, duration: track.durationSec });
+    if (startAt || media.currentTime) media.currentTime = startAt;
+    useMusicPlayheadStore.setState({ currentTime: startAt, duration: track.durationSec });
   }
 
   if (started || state.playing !== prev?.playing) {

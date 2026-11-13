@@ -30,6 +30,8 @@ export type MusicPlayback = {
   songId: number;
   durationSec: number;
   listenedSec: number;
+  /** Where in the song this playback starts: 0, or the saved spot of a song restored after a reload. */
+  startAtSec: number;
 };
 
 /**
@@ -37,6 +39,9 @@ export type MusicPlayback = {
  * in its order, the position of the one that was clicked, and the name Up next shows it under.
  */
 export type MusicList = { name: string; tracks: MusicTrack[]; index: number };
+
+/** What `restore` brings back after a reload: the last song and where it was. */
+export type RestoredMusicTrack = { track: MusicTrack; positionSec: number };
 
 type HistoryEntry = { track: MusicTrack; from: MusicUpNextSection };
 
@@ -79,6 +84,8 @@ type PlayerActions = {
    * <name>". The one call any surface that shows songs in a list makes.
    */
   playFromList: (list: MusicList) => void;
+  /** Loads the last song paused at its saved position, unless a song is already loaded. */
+  restore: (restored: RestoredMusicTrack) => void;
   resume: () => void;
   pause: () => void;
   togglePlay: () => void;
@@ -168,14 +175,15 @@ export function createMusicPlayerStore({
     return out;
   };
 
-  const newPlayback = (track: MusicTrack): MusicPlayback => {
-    position = 0;
+  const newPlayback = (track: MusicTrack, startAtSec = 0): MusicPlayback => {
+    position = startAtSec;
     lastSample = null;
     return {
       playbackId: nextPlaybackId++,
       songId: track.id,
       durationSec: track.durationSec,
       listenedSec: 0,
+      startAtSec,
     };
   };
 
@@ -272,6 +280,19 @@ export function createMusicPlayerStore({
         const track = tracks[index];
         if (track) startFrom(track, { name, after: tracks.slice(index + 1) });
       },
+      restore: ({ track, positionSec }) => {
+        if (get().current) return;
+        const startAt = Math.max(0, Math.min(positionSec, track.durationSec || positionSec));
+        set({
+          current: track,
+          currentFrom: 'list',
+          playing: false,
+          error: false,
+          view: 'bar',
+          playback: newPlayback(track, startAt),
+        });
+      },
+
       resume: () => {
         if (!get().current) return;
         lastSample = null;
