@@ -49,6 +49,8 @@ export type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
+  /** Items at the top of the menu, before the general ones. */
+  leadingMenuItems?: React.ReactNode;
   noDelete?: boolean;
   /** Images in the post a `context="post"` card stands for; shown in the delete confirmation. */
   postImageCount?: number;
@@ -56,7 +58,14 @@ export type ImageContextMenuProps = {
 };
 
 export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: boolean }) {
-  const { image, context = 'image', additionalMenuItems, disableDelete, postImageCount } = props;
+  const {
+    image,
+    context = 'image',
+    additionalMenuItems,
+    leadingMenuItems,
+    disableDelete,
+    postImageCount,
+  } = props;
   const { isOwner, isModerator } = useImageContext();
   const features = useFeatureFlags();
   const { id: imageId, postId, user, userId } = image;
@@ -97,6 +106,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
   return (
     <>
       {additionalMenuItemsBefore?.(image)}
+      {leadingMenuItems}
       {/* GENERAL */}
       {isOwner && (
         <>

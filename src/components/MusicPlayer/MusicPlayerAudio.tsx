@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { claimPlayback } from '~/components/Audio/exclusive-playback';
 import { resolveEdgeUrl } from '~/client-utils/edge-url';
 import type { MusicPlayerState } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
@@ -79,7 +80,8 @@ export function MusicPlayerAudio() {
       ref={ref}
       preload="auto"
       className="hidden"
-      onPlay={() => {
+      onPlay={(e) => {
+        claimPlayback(e.currentTarget);
         if (!store().playing) store().resume();
       }}
       onPause={(e) => {

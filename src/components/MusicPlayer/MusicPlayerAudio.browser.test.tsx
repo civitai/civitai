@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { MusicPlayerAudio, seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
+import { SongPreviewPlayer } from '~/components/Post/EditV2/PostImageCards/SongPreviewPlayer';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
@@ -223,5 +224,26 @@ describe('the global player audio element', () => {
     // The title component is live: it re-renders when what it shows changes.
     await userEvent.click(page.getByRole('button'));
     await expect.element(page.getByText('hidden')).toBeVisible();
+  });
+
+  test('one sound at a time: the global player and a song preview pause each other', async () => {
+    await renderWithProviders(
+      <>
+        <MusicPlayerAudio />
+        <SongPreviewPlayer src={urlFor(9)} duration={10} />
+      </>
+    );
+    const preview = (name: string) => page.getByRole('button', { name, exact: true });
+
+    await preview('Play').click();
+    await expect.element(preview('Pause')).toBeInTheDocument();
+
+    act(() => player().playTrack(track(1)));
+    expect(player().playing).toBe(true);
+    await expect.element(preview('Play')).toBeInTheDocument();
+
+    await preview('Play').click();
+    await expect.element(preview('Pause')).toBeInTheDocument();
+    expect(player().playing).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import type { PointerEvent, SyntheticEvent } from 'react';
 import { useRef, useState } from 'react';
+import { claimPlayback } from '~/components/Audio/exclusive-playback';
 import { clampPlaybackTime, playbackProgress, timeFromPointer } from '~/utils/audio-player';
 
 /**
@@ -59,7 +60,10 @@ export function useMediaPlayback<T extends HTMLMediaElement = HTMLMediaElement>(
   };
 
   const mediaEvents = {
-    onPlay: () => setPlaying(true),
+    onPlay: (e: SyntheticEvent<HTMLMediaElement>) => {
+      claimPlayback(e.currentTarget);
+      setPlaying(true);
+    },
     onPause: () => setPlaying(false),
     onEnded: () => setPlaying(false),
     onTimeUpdate: (e: SyntheticEvent<HTMLMediaElement>) =>
