@@ -125,6 +125,9 @@ export const serverSchema = z
     // (~OS-keepalive minutes) per request without this. Bounds the request handler and
     // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
     REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
+    // On: an upload route answers 503 instead of handing out a key whose issue record could not
+    // be written. Off: the key is handed out and the save-time ownership check decides.
+    UPLOAD_KEY_REFUSE_UNRECORDED: zc.booleanString.default(false),
     // Bound on the sys client's node-redis command queue. The sys client has no
     // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
     // (minutes), during which every authenticated request enqueues a MULTI that never
