@@ -23,6 +23,15 @@
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import {
+    DISMISS_FAILED,
+    closeNotice,
+    noticeKey,
+    noticeShowing,
+    settleNotice,
+    syncNotice,
+    type NoticeState,
+  } from './level-notice';
+  import {
     MAX_EXCLUDED,
     createItemBuffer,
     createSerialQueue,
@@ -71,6 +80,15 @@
   const whatsNew = whatsNewView();
   let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
+  // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
+  // given right after "Onward" still records the card it appeared with.
+  const notice = $state<NoticeState>({ closed: null });
+  let sentNotice = $derived(data.progress?.kind === 'level' ? noticeKey(data.progress) : null);
+  $effect(() => {
+    const key = sentNotice;
+    untrack(() => syncNotice(notice, key));
+  });
+  let levelToastShowing = $derived(noticeShowing(sentNotice, notice));
 
   // Header-menu dialogs (feedback, restart career) don't set `dialogOpen`; the reason picker is this page's own.
   const headerDialogOpen = () =>
@@ -188,6 +206,22 @@
       } finally {
         submitting = false;
         picked = null;
+      }
+    };
+  };
+
+  // Not through `submitting`: the answers stay live while the dismissal is in flight.
+  const submitDismissProgress: SubmitFunction = () => {
+    const key = sentNotice;
+    if (key) closeNotice(notice, key);
+    return async ({ result, update }) => {
+      const stored = result.type === 'success' || result.type === 'redirect';
+      if (key) settleNotice(notice, key, stored);
+      // An unanswered post would otherwise render the error page over the round.
+      if (result.type === 'error') {
+        await applyAction({ type: 'failure', status: 500, data: { message: DISMISS_FAILED, progressFailed: true } });
+      } else {
+        await update();
       }
     };
   };
@@ -517,13 +551,12 @@
 {/snippet}
 
 {#snippet levelToast(floating: boolean)}
-  {#if levelNotice}
+  {#if levelNotice && levelToastShowing}
     <LevelToast
       level={levelNotice.milestoneLevel ?? levelNotice.level}
       xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
       message={form?.progressFailed ? form.message : null}
-      {submitting}
-      {submit}
+      submit={submitDismissProgress}
       {floating}
       milestone={levelNotice.milestone ?? null}
       gold={levelNotice.levelGold ?? 0}

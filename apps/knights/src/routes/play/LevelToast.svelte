@@ -8,7 +8,6 @@
     level,
     xpToNext,
     message,
-    submitting,
     submit,
     floating = true,
     milestone = null,
@@ -18,7 +17,6 @@
     /** XP still needed for the next level, when it is known for this level. */
     xpToNext: number | null;
     message: string | null;
-    submitting: boolean;
     submit: SubmitFunction;
     /** Over the top of the image stage; otherwise it sits in the page flow. */
     floating?: boolean;
@@ -37,7 +35,7 @@
     {#if message}<p class="notice" role="alert">{message}</p>{/if}
   </div>
   <form method="POST" action="?/dismissProgress" use:enhance={submit}>
-    <button type="submit" class="dismiss" disabled={submitting}>Onward</button>
+    <button type="submit" class="dismiss">Onward</button>
   </form>
 </section>
 
