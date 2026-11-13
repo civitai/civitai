@@ -58,3 +58,76 @@ export function splitCsv(
   flush();
   return { chunks, rows: records.length };
 }
+
+const RESULT_KEYS = [
+  'inserted',
+  'updated',
+  'unchanged',
+  'refused',
+  'moderated',
+  'retired',
+] as const;
+type ResultKey = (typeof RESULT_KEYS)[number];
+
+/** One chunk's answer from `POST /admin/yesno-import`; `result` is absent on a dry run. */
+export type ChunkResponse = {
+  read: number;
+  toImport: number;
+  skipped: Record<string, number>;
+  result?: Partial<Record<ResultKey, number>>;
+};
+
+export type ImportTotals = {
+  read: number;
+  toImport: number;
+  skipped: Record<string, number>;
+} & Record<ResultKey, number>;
+
+export const emptyTotals = (): ImportTotals => ({
+  read: 0,
+  toImport: 0,
+  inserted: 0,
+  updated: 0,
+  unchanged: 0,
+  refused: 0,
+  moderated: 0,
+  retired: 0,
+  skipped: {},
+});
+
+export function addChunk(totals: ImportTotals, chunk: ChunkResponse): ImportTotals {
+  const next: ImportTotals = {
+    ...totals,
+    read: totals.read + chunk.read,
+    toImport: totals.toImport + chunk.toImport,
+    skipped: { ...totals.skipped },
+  };
+  for (const key of RESULT_KEYS) next[key] += chunk.result?.[key] ?? 0;
+  for (const [reason, n] of Object.entries(chunk.skipped))
+    next.skipped[reason] = (next.skipped[reason] ?? 0) + n;
+  return next;
+}
+
+/** The order `toYesNoRows` declares its skip reasons in; a reason it adds later goes last. */
+const SKIP_ORDER = [
+  'inactive',
+  'bad-id',
+  'bad-image',
+  'bad-axis',
+  'bad-kind',
+  'bad-question',
+  'duplicate',
+];
+const rank = (reason: string) => {
+  const at = SKIP_ORDER.indexOf(reason);
+  return at === -1 ? SKIP_ORDER.length : at;
+};
+
+/** "9 (inactive 2, bad-image 4, ...)", or "0" when nothing was skipped. */
+export function skippedText(skipped: Record<string, number>): string {
+  const reasons = Object.entries(skipped)
+    .filter(([, n]) => n > 0)
+    .sort(([a], [b]) => rank(a) - rank(b));
+  const total = reasons.reduce((sum, [, n]) => sum + n, 0);
+  return total === 0 ? '0' : `${total} (${reasons.map(([r, n]) => `${r} ${n}`).join(', ')})`;
+}

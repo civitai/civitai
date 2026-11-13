@@ -4,6 +4,7 @@ import { parseCsv } from './csv';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   isModeratedSql,
+  MODERATION_META_KEY,
   MODERATOR_RETIRED,
   REWORD_OF_META_KEY,
   YESNO_QUESTION_MAX,
@@ -301,9 +302,11 @@ export async function importYesNo(
   return result;
 }
 
-const sameMeta = (a: unknown, b: Record<string, string>) =>
-  JSON.stringify(Object.entries((a ?? {}) as Record<string, string>).sort()) ===
-  JSON.stringify(Object.entries(b).sort());
+/** The file never carries the moderation record a moderator's action merges into `meta`, so it is left out of the comparison. */
+const sameMeta = (a: unknown, b: Record<string, string>) => {
+  const { [MODERATION_META_KEY]: _moderation, ...stored } = (a ?? {}) as Record<string, unknown>;
+  return JSON.stringify(Object.entries(stored).sort()) === JSON.stringify(Object.entries(b).sort());
+};
 
 async function countModerated(db: Kysely<DB>, skipped: YesNoRow[]): Promise<number> {
   const found = await db
