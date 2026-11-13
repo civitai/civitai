@@ -69,7 +69,10 @@ export const ServicesRow = ({
   offerings,
   href,
 }: {
-  offerings: (ComponentProps<typeof ServiceOfferingCard>['offering'] & { id: number })[];
+  offerings: (ComponentProps<typeof ServiceOfferingCard>['offering'] & {
+    id: number;
+    slotsOpen?: number | null;
+  })[];
   href: string;
 }) => {
   const [columns, setColumns] = useState(1);
@@ -88,14 +91,7 @@ export const ServicesRow = ({
     >
       {offerings.slice(0, columns).map((offering) => (
         <div key={offering.id} style={{ margin: 8 }}>
-          <ServiceOfferingCard
-            offering={offering}
-            footer={
-              <Button component={Link} href={href} color="yellow" size="xs" mt="sm" fullWidth>
-                View service
-              </Button>
-            }
-          />
+          <ServiceOfferingCard offering={offering} slotsOpen={offering.slotsOpen} href={href} />
         </div>
       ))}
     </div>

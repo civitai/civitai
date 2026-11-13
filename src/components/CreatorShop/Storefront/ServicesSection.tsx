@@ -4,7 +4,6 @@ import { openDealsOnOffering } from '~/components/CreatorShop/Services/deals/dea
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
 import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import { ServiceSlotsBadge } from '~/components/CreatorShop/Services/ServiceSlotsBadge';
 import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
 import { sectionIcons, storefrontSectionId } from '~/components/CreatorShop/section-meta';
 import { ServiceCardAnchor } from '~/components/CreatorShop/Storefront/ServiceCardAnchor';
@@ -59,11 +58,11 @@ export function ServicesSection({
             <ServiceCardAnchor key={offering.id} offeringId={offering.id}>
               <ServiceOfferingCard
                 offering={offering}
+                slotsOpen={offering.slotsOpen}
                 footer={
-                  <Group justify="space-between" mt="sm">
-                    <ServiceSlotsBadge slotsOpen={offering.slotsOpen} />
+                  <Group justify="flex-end">
                     {isOwner && (
-                      <Group gap={4} ml="auto">
+                      <Group gap={4}>
                         <Button component={NextLink} href={manageHref} size="xs" variant="default">
                           Manage
                         </Button>
@@ -82,7 +81,7 @@ export function ServicesSection({
                       </Group>
                     )}
                     {!isOwner && (
-                      <Group gap={4} ml="auto">
+                      <Group gap={4}>
                         <ReportServiceButton offeringId={offering.id} />
                         {shopPublished && (
                           <LoginRedirect reason="perform-action">
