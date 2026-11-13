@@ -112,16 +112,18 @@ const WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS = 8_000;
 
 // Bounds for a REAL (non-whatIf) submit. Unbounded, an orchestrator that accepts the connection
 // and never answers parks the request for as long as the socket lives, and the retry loop does it
-// up to three times. 30s per attempt is ~6x the observed submit p99 (~4.7s), so a healthy but slow
-// submit is not cut off; the 60s deadline caps the whole call, retries and backoff included. A
-// timed-out attempt may still have been accepted and charged, so the loop only retries one when
-// the body carries an idempotency key (`externalId`), and the error tells the user to check their
-// queue before retrying. `ORCHESTRATOR_SUBMIT_BOUNDS=off` is the off-switch (read per call).
+// up to three times. The generate submit's p99 was measured at ~1.5s over one day and ~13.7s over
+// seven, so 30s per attempt sits above the tail; the trade-off is that the rare slower-than-30s
+// success now ends as a 503 instead. The 60s deadline caps the whole call, retries and backoff
+// included. A timed-out attempt may still have been accepted and charged, so the loop only retries
+// one when the body carries an idempotency key (`externalId`); a generate submit's error tells the
+// user to check their queue before retrying. `ORCHESTRATOR_SUBMIT_BOUNDS=off` is the off-switch
+// (read per call).
 const SUBMIT_ATTEMPT_TIMEOUT_MS = 30_000;
 const SUBMIT_DEADLINE_MS = 60_000;
 
-// A real submit's 503: it may have been accepted before the failure, so a blind re-click could be
-// a second charge. Keeps the "temporarily unavailable" wording of the generic message.
+// The generate submit's 503: it may have been accepted before the failure, so a blind re-click
+// could be a second charge. Keeps the "temporarily unavailable" wording of the generic message.
 const SUBMIT_MAY_BE_QUEUED_MESSAGE =
   'Generation services are temporarily unavailable. Your request may already be queued — check your queue before retrying.';
 
@@ -357,9 +359,13 @@ export async function submitWorkflow({
   // whatIf is a side-effect-free cost estimate and passes `query:{whatif:true}`;
   // generate passes no whatif. The two get different bounds (see the constants above).
   const isWhatif = (query as { whatif?: boolean } | undefined)?.whatif === true;
-  const unavailableMessage = isWhatif
-    ? ORCHESTRATOR_UNAVAILABLE_MESSAGE
-    : SUBMIT_MAY_BE_QUEUED_MESSAGE;
+  // The queue wording is only for the generation form's submit, where the user has a queue to
+  // check. Every other caller (training, scans, comics, resource loads, presets) keeps the same
+  // bounds below but the generic copy.
+  const unavailableMessage =
+    !isWhatif && clampSubmitSource(source) === 'generate'
+      ? SUBMIT_MAY_BE_QUEUED_MESSAGE
+      : ORCHESTRATOR_UNAVAILABLE_MESSAGE;
   const bounds = isWhatif
     ? { perAttemptTimeoutMs: WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS }
     : submitBoundsDisabled()
