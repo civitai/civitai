@@ -43,7 +43,6 @@ const row = (id: number, overrides: Partial<Row> = {}): Row => ({
   textNsfw: false,
   ingestion: CrucibleIngestionStatus.Scanned,
   userId: 1,
-  image: { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.PG },
   takenDownAt: null,
   ...overrides,
   image: {

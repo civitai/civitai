@@ -36,8 +36,13 @@ const HOUR = 60 * 60 * 1000;
 describe('isCrucibleHiddenByScan', () => {
   const crucible = (
     ingestion: CrucibleIngestionStatus,
-    cover: ImageIngestionStatus | null = ImageIngestionStatus.Scanned
-  ) => ({ userId: CREATOR, ingestion, image: cover ? { ingestion: cover } : null });
+    cover: ImageIngestionStatus | null = ImageIngestionStatus.Scanned,
+    review: { needsReview?: string | null; tosViolation?: boolean } = {}
+  ) => ({
+    userId: CREATOR,
+    ingestion,
+    image: cover ? { ingestion: cover, needsReview: null, tosViolation: false, ...review } : null,
+  });
 
   it('shows a crucible whose text and cover both passed', () => {
     expect(isCrucibleHiddenByScan(crucible(CrucibleIngestionStatus.Scanned), { viewerId: 9 })).toBe(
@@ -55,6 +60,18 @@ describe('isCrucibleHiddenByScan', () => {
     ],
     ['cover blocked', crucible(CrucibleIngestionStatus.Scanned, ImageIngestionStatus.Blocked)],
     ['no cover', crucible(CrucibleIngestionStatus.Scanned, null)],
+    [
+      'cover in review',
+      crucible(CrucibleIngestionStatus.Scanned, ImageIngestionStatus.Scanned, {
+        needsReview: 'minor',
+      }),
+    ],
+    [
+      'cover marked a ToS violation',
+      crucible(CrucibleIngestionStatus.Scanned, ImageIngestionStatus.Scanned, {
+        tosViolation: true,
+      }),
+    ],
   ])('hides it from everyone else with %s', (_, row) => {
     expect(isCrucibleHiddenByScan(row, { viewerId: 9 })).toBe(true);
     expect(isCrucibleHiddenByScan(row, {})).toBe(true);
@@ -64,6 +81,12 @@ describe('isCrucibleHiddenByScan', () => {
     const pending = crucible(CrucibleIngestionStatus.Pending, ImageIngestionStatus.Pending);
     expect(isCrucibleHiddenByScan(pending, { viewerId: CREATOR })).toBe(false);
     expect(isCrucibleHiddenByScan(pending, { viewerId: 9, isModerator: true })).toBe(false);
+    const inReview = crucible(CrucibleIngestionStatus.Scanned, ImageIngestionStatus.Scanned, {
+      needsReview: 'minor',
+      tosViolation: true,
+    });
+    expect(isCrucibleHiddenByScan(inReview, { viewerId: CREATOR })).toBe(false);
+    expect(isCrucibleHiddenByScan(inReview, { viewerId: 9, isModerator: true })).toBe(false);
   });
 });
 

@@ -19,6 +19,7 @@ import {
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import {
   crucibleCoverListedWhere,
+  crucibleCoverScanSelect,
   crucibleScannedSql,
 } from '~/server/services/crucible-visibility.sql';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -276,7 +277,7 @@ const crucibleStartNotificationSelect = {
   name: true,
   textNsfw: true,
   ingestion: true,
-  image: { select: { ingestion: true } },
+  image: { select: crucibleCoverScanSelect },
 } satisfies Prisma.CrucibleSelect;
 
 /** Call only from the write that moved the crucible out of Pending, so it is sent once. */
@@ -605,10 +606,18 @@ type CrucibleVisibilityRow = {
   nsfwLevel: number;
   textNsfw: boolean;
   ingestion: CrucibleIngestionStatus;
-  image: { ingestion: ImageIngestionStatus } | null;
+  image: {
+    ingestion: ImageIngestionStatus;
+    needsReview: string | null;
+    tosViolation: boolean;
+  } | null;
 };
 
-/** Until its text and cover pass their scans, only its creator and moderators see a crucible. */
+/**
+ * Until its text and cover pass their scans, and while its cover is in review or marked a ToS
+ * violation, only its creator and moderators see a crucible. List surfaces apply the same cover
+ * rule (crucibleCoverListedWhere).
+ */
 export const isCrucibleHiddenByScan = (
   crucible: Omit<CrucibleVisibilityRow, 'nsfwLevel' | 'textNsfw'>,
   { viewerId, isModerator }: CrucibleViewer
@@ -616,7 +625,9 @@ export const isCrucibleHiddenByScan = (
   !isModerator &&
   crucible.userId !== viewerId &&
   (crucible.ingestion !== CrucibleIngestionStatus.Scanned ||
-    crucible.image?.ingestion !== ImageIngestionStatus.Scanned);
+    crucible.image?.ingestion !== ImageIngestionStatus.Scanned ||
+    crucible.image.needsReview != null ||
+    crucible.image.tosViolation);
 
 /** A moderator's takedown hides the crucible from everyone else, its owner included. */
 export const isCrucibleTakenDownForViewer = (
@@ -648,7 +659,7 @@ export const assertCrucibleVisible = async (crucibleId: number, viewer: Crucible
       textNsfw: true,
       ingestion: true,
       takenDownAt: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   if (
@@ -781,7 +792,7 @@ export const updateCrucible = async ({
       buzzTransactionId: true,
       seedTransactionId: true,
       ingestion: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   if (!crucible) throw throwNotFoundError('Crucible not found');
@@ -1369,7 +1380,7 @@ export const getCrucibleEntries = async ({
       ingestion: true,
       takenDownAt: true,
       prizePositions: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
@@ -1800,7 +1811,7 @@ export const createCrucibleEntryPost = async ({
       ingestion: true,
       takenDownAt: true,
       textNsfw: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   const viewer = { viewerId: userId, isGreen, isModerator, blockedCreatorIds };
@@ -2062,7 +2073,7 @@ export const submitEntry = async ({
         ingestion: true,
         takenDownAt: true,
         textNsfw: true,
-        image: { select: { ingestion: true } },
+        image: { select: crucibleCoverScanSelect },
         _count: {
           select: { entries: true },
         },
@@ -2977,7 +2988,7 @@ export const getJudgingProgress = async ({
       nsfwLevel: true,
       ingestion: true,
       takenDownAt: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
@@ -3038,7 +3049,7 @@ export const getJudgingStatuses = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
@@ -3147,7 +3158,7 @@ export const getJudgingPair = async ({
       ingestion: true,
       takenDownAt: true,
       minViewSeconds: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
@@ -3589,7 +3600,7 @@ export const getCrucibleRequiredModels = async ({
       ingestion: true,
       takenDownAt: true,
       allowedResources: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   if (
@@ -3632,7 +3643,7 @@ export const getCrucibleMinVotesToPlace = async ({
       startAt: true,
       endAt: true,
       timeAdjustedPlacement: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   if (
@@ -3724,7 +3735,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       ingestion: true,
       textNsfw: true,
       userId: true, // Crucible creator for notification
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
       status: true,
       entryFee: true,
       seededPrizePool: true,
@@ -4300,7 +4311,7 @@ export const voidUnscannedCrucibles = async (now = new Date()): Promise<number[]
       ingestion: true,
       startAt: true,
       updatedAt: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
     orderBy: { startAt: 'asc' },
     take: 100,
@@ -5470,7 +5481,7 @@ export const getUserActiveCrucibles = async ({
             select: {
               url: true,
               nsfwLevel: true,
-              ingestion: true,
+              ...crucibleCoverScanSelect,
             },
           },
           _count: {

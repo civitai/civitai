@@ -29,7 +29,7 @@ type Over = {
   takenDownAt?: string;
   /** The cover's ingestion, or false for no cover. */
   cover?: false | string;
-  /** The cover's needsReview and tosViolation. */
+  /** SQL values for the cover's needsReview, tosViolation, e.g. `'Minor', false`. Default: not held. */
   review?: string;
 };
 

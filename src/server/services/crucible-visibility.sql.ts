@@ -32,3 +32,10 @@ export const crucibleSemanticEligibleWhere: Prisma.Sql[] = [
   Prisma.sql`c.status <> ${CrucibleStatus.Cancelled}::"CrucibleStatus"`,
   Prisma.sql`c."takenDownAt" IS NULL`,
 ];
+
+/** The cover fields isCrucibleHiddenByScan reads: select them wherever it is called. */
+export const crucibleCoverScanSelect = {
+  ingestion: true,
+  needsReview: true,
+  tosViolation: true,
+} satisfies Prisma.ImageSelect;
