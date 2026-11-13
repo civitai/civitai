@@ -1896,7 +1896,9 @@ export const getModelsWithImagesAndModelVersions = async ({
     number,
     { modelVersionId: number; images: ImagesForModelVersions[] }
   > = {};
-  const { excludedTagIds, status } = input;
+  const { status } = input;
+  // As getModelsRaw resolved them: the viewer's own plus the browsing-settings tags.
+  const { excludedTagIds } = rawInput;
   if (!!modelVersionIds.length) {
     if (input.pending) {
       const images = await getImagesForModelVersion({
