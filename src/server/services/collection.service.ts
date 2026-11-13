@@ -1063,9 +1063,10 @@ export const saveItemInCollections = async ({
     canAccessUserChallenges?: boolean;
   };
 }) => {
-  const itemKey = Object.keys(inputToCollectionType).find((key) =>
-    input.hasOwnProperty(key)
-  ) as keyof typeof inputToCollectionType;
+  // By value, not key presence: `{ modelId: undefined, imageId: 5 }` passes the schema refine.
+  const itemKey = (
+    Object.keys(inputToCollectionType) as (keyof typeof inputToCollectionType)[]
+  ).find((key) => input[key] != null);
   if (!itemKey) throw throwBadRequestError(`We don't know the type of thing you're adding`);
   // Safeguard against duppes.
   upsertCollectionItems = uniqBy(upsertCollectionItems, 'collectionId');
@@ -1844,6 +1845,14 @@ export const upsertCollection = async ({
 
   if (imageId) await assertImagesVisibleToViewer({ ids: [imageId], userId, isModerator });
 
+  const hasInitialItem = [
+    collectionItem.modelId,
+    collectionItem.articleId,
+    collectionItem.postId,
+    collectionItem.model3dId,
+    imageId,
+  ].some((id) => id != null);
+
   // TODO allow cover image
   const collection = await dbWrite.collection.create({
     select: {
@@ -1877,7 +1886,11 @@ export const upsertCollection = async ({
           ],
         },
       },
-      items: { create: { ...collectionItem, imageId, addedById: userId } },
+      // The edit modal creates with no item; an unconditional create wrote an entity-less row that
+      // counted toward itemCount and the per-user cap.
+      ...(hasInitialItem && {
+        items: { create: { ...collectionItem, imageId, addedById: userId } },
+      }),
       tags: tags
         ? {
             create: tags.map((tag) => {

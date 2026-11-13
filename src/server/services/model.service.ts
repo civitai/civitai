@@ -4737,14 +4737,7 @@ export const upsertModel = async (
             userId,
             isModerator,
           },
-        }).catch((error) =>
-          logToAxiom({
-            type: 'error',
-            name: 'save-model-showcase-collection',
-            error,
-            message: error.message,
-          })
-        );
+        });
       } else {
         saveItemInCollections({
           input: {
@@ -6879,14 +6872,26 @@ export async function setModelShowcaseCollection({
   collectionId,
   userId,
   isModerator,
+  modelAlreadyInCollection,
 }: SetModelCollectionShowcaseInput & {
   userId: number;
   isModerator?: boolean;
+  /** The caller wrote the item itself (in a transaction a replica read may not see yet). */
+  modelAlreadyInCollection?: boolean;
 }) {
-  const model = await getModel({ id, select: { id: true, userId: true } });
+  const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
   if (model.userId !== userId && !isModerator)
     throw throwAuthorizationError('You are not allowed to set this model collection showcase');
+  if (!isModerator && isRemovedWithOwner(model.meta)) throw removedWithOwnerEditError();
+
+  // A showcase the model isn't in shows a collection that doesn't list it. Add first so a refused
+  // add leaves the showcase unchanged; an existing item is a no-op.
+  if (collectionId != null && !modelAlreadyInCollection) {
+    await saveItemInCollections({
+      input: { collections: [{ collectionId }], modelId: id, type: 'Model', userId, isModerator },
+    });
+  }
 
   const updated = await updateModelById({
     id,
@@ -7040,6 +7045,7 @@ export async function migrateResourceToCollection({
     id: modelId,
     userId: model.userId,
     isModerator,
+    modelAlreadyInCollection: true,
   });
 
   // Bust caches

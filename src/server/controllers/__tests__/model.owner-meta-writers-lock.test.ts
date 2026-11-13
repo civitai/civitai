@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type * as ModeratorEndpoint from '~/server/utils/moderator-endpoint';
+import type * as CollectionService from '~/server/services/collection.service';
+
+const saveItemInCollections = vi.fn(async (_: unknown) => 'added');
+vi.mock('~/server/services/collection.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CollectionService>()),
+  saveItemInCollections: (args: unknown) => saveItemInCollections(args),
+}));
 
 // The moderator routes' auth is not what this file tests: their handlers are called directly.
 vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
@@ -120,6 +127,33 @@ it('drops the archive stamps, and keeps what was written since, when an owner un
   await changeModelModifierHandler({ input: { id: MODEL, mode: null }, ctx: ctx() });
 
   expect(written()).toEqual({ note: 1, ...WRITTEN_SINCE });
+});
+
+describe('setting the showcase collection', () => {
+  it('adds the model to the collection it shows', async () => {
+    await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER });
+    expect(saveItemInCollections).toHaveBeenCalledWith({
+      input: expect.objectContaining({
+        collections: [{ collectionId: 9 }],
+        modelId: MODEL,
+        type: 'Model',
+        userId: OWNER,
+      }),
+    });
+  });
+
+  it('returns a refused add and leaves the showcase unset', async () => {
+    saveItemInCollections.mockRejectedValueOnce(new Error('Collection type mismatch'));
+    await expect(
+      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
+    ).rejects.toThrow('Collection type mismatch');
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('adds nothing when the showcase is cleared', async () => {
+    await setModelShowcaseCollection({ id: MODEL, collectionId: null, userId: OWNER });
+    expect(saveItemInCollections).not.toHaveBeenCalled();
+  });
 });
 
 it('stores a cleared showcase as null', async () => {

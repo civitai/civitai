@@ -171,3 +171,63 @@ describe('Model3D collection ownership', () => {
     });
   });
 });
+
+describe('which item a collection save writes', () => {
+  it('keys on the id that has a value, not one present as undefined', async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([collectionRow({ type: 'Image' })]);
+    mockDbRead.$queryRaw.mockResolvedValue([{ ...permissionRow, type: 'Image' }]);
+    mockDbRead.image.findMany.mockResolvedValue([{ id: 5, userId: USER_ID }] as never);
+
+    await saveItemInCollections({
+      input: {
+        modelId: undefined,
+        imageId: 5,
+        userId: USER_ID,
+        collections: [{ collectionId: COLLECTION_ID }],
+      },
+    } as never).catch(() => undefined);
+
+    expect(mockDbRead.collectionItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ imageId: 5 }) })
+    );
+    expect(mockDbRead.collectionItem.findMany.mock.calls[0][0]?.where).not.toHaveProperty(
+      'modelId'
+    );
+  });
+
+  it('refuses a save with no item id', async () => {
+    await expect(
+      saveItemInCollections({
+        input: {
+          modelId: undefined,
+          userId: USER_ID,
+          collections: [{ collectionId: COLLECTION_ID }],
+        },
+      } as never)
+    ).rejects.toThrow("We don't know the type of thing you're adding");
+  });
+});
+
+describe('creating a collection', () => {
+  const create = (item: Record<string, unknown>) =>
+    upsertCollection({
+      input: { name: 'Mine', type: 'Model', userId: USER_ID, ...item },
+    } as never);
+
+  beforeEach(() => {
+    mockDbWrite.collection.create.mockResolvedValue({ id: COLLECTION_ID } as never);
+  });
+
+  it('writes no item when created without one', async () => {
+    await create({}).catch(() => undefined);
+    expect(mockDbWrite.collection.create).toHaveBeenCalled();
+    expect(mockDbWrite.collection.create.mock.calls[0][0].data.items).toBeUndefined();
+  });
+
+  it('writes the item it was created with', async () => {
+    await create({ modelId: 5 }).catch(() => undefined);
+    expect(mockDbWrite.collection.create.mock.calls[0][0].data.items).toEqual({
+      create: expect.objectContaining({ modelId: 5, addedById: USER_ID }),
+    });
+  });
+});
