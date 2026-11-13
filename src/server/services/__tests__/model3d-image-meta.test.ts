@@ -112,6 +112,8 @@ const MODEL = {
     ecosystem: 'PolyGen',
     prompt: 'a chair',
     seed: 42,
+    sourceImageId: 1234,
+    storageKey: '3d/0b9c2f1e-source.jpeg',
     images: ['https://image.civitai.com/source.jpeg'],
     sourceImageUrl: 'https://image.civitai.com/source.jpeg',
     texturePrompt: 'https://image.civitai.com/texture.jpeg',
