@@ -44,6 +44,7 @@ const EXAMPLE_PATHS: Record<string, string[]> = {
   '/api/live': ['/api/live?token=x'],
   '/api/health': ['/api/health'],
   '/api/ready': ['/api/ready'],
+  '/api/readyz': ['/api/readyz'],
   '/api/metrics': ['/api/metrics'],
 };
 
