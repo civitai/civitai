@@ -67,51 +67,88 @@ type KeyedChargeInput = Parameters<typeof createBuzzTransaction>[0] & {
   externalTransactionId: string;
 };
 
+/** The old answer to a clean "insufficient funds" from the ledger, kept for that case. */
+export const CHARGE_DECLINED_MESSAGE = 'Unable to charge this payment';
+
 /**
  * Charges under `externalTransactionId`, once. Resolves with the ledger transaction id when the
  * ledger holds the charge, whether this call moved the money or an earlier attempt under the same
- * id did. A failure that provably moved nothing is rethrown. Any other failure is an unknown
- * outcome, resolved by resending the same write once (see `resendBuzzTransaction`: the ledger
- * answers an id it holds with that transaction's id and moves nothing). A resend that also fails,
- * or that the ledger answers with no transaction, is `PAYMENT_OUTCOME_UNKNOWN_MESSAGE`.
+ * id did.
  *
- * `reusable`: the id may have been sent by an earlier request (it derives from a client key). The
- * ledger then answers 200 with whatever it holds under the id, including a charge a failed earlier
- * attempt refunded, so that is checked and refused with a 400: the client starts a new action
- * with a new key. An id minted for this call alone has no earlier charge to have been refunded.
+ * `reusable`: the id may have been sent by an earlier request (it derives from a client key).
+ * - The id is looked up FIRST. Held, that is this action's charge: the flow continues from it
+ *   without the app's balance pre-check, which would otherwise read the balance the charge already
+ *   spent and refuse a retry whose money moved.
+ * - The ledger answers a held id with whatever it holds, including a charge a failed earlier
+ *   attempt refunded, so that is checked and refused with a 400: the client starts a new action
+ *   with a new key.
+ *
+ * Not held (or not reusable): charged. A failure that provably moved nothing is rethrown. Any other
+ * failure is an unknown outcome, resolved by resending the same write once (see
+ * `resendBuzzTransaction`). A resend that also fails, or that the ledger answers with no
+ * transaction, is `PAYMENT_OUTCOME_UNKNOWN_MESSAGE`. A first send answered cleanly with no
+ * transaction is the ledger's "insufficient funds": a 400, `declinedMessage`.
+ *
+ * `timeoutMs` bounds every write, for a caller holding a lock (buzz-charge-lock.ts).
  */
 export async function chargeByExternalId(
   input: KeyedChargeInput,
-  { reusable }: { reusable: boolean }
+  {
+    reusable,
+    timeoutMs,
+    declinedMessage = CHARGE_DECLINED_MESSAGE,
+  }: { reusable: boolean; timeoutMs?: number; declinedMessage?: string }
 ): Promise<{ transactionId: string }> {
   const context = {
     externalTransactionId: input.externalTransactionId,
     userId: input.fromAccountId,
     amount: input.amount,
   };
+  const opts = timeoutMs ? { timeoutMs } : undefined;
+  const { insufficientFundsErrorMsg: _message, ...transaction } = input;
 
-  let transactionId: string | null | undefined;
-  try {
-    ({ transactionId } = await createBuzzTransaction(input));
-  } catch (error) {
-    if (chargeWasDeclined(error)) throw error;
+  // Resends the same write: the ledger answers a held id with its transaction, moving nothing.
+  const resend = async (reason: string, error?: unknown) => {
+    let resent: string | null | undefined;
     try {
-      const { insufficientFundsErrorMsg: _message, ...transaction } = input;
-      ({ transactionId } = await resendBuzzTransaction(transaction));
+      ({ transactionId: resent } = await (opts
+        ? resendBuzzTransaction(transaction, opts)
+        : resendBuzzTransaction(transaction)));
     } catch (resendError) {
-      throw paymentOutcomeUnknown(context, 'resend failed after unknown outcome', {
-        error,
-        resendError,
-      });
+      throw paymentOutcomeUnknown(context, `resend failed: ${reason}`, { error, resendError });
     }
+    // No id: the ledger holds nothing under it and the balance is short; after an unknown
+    // outcome the first send may still be committing, so that is not "not charged" either.
+    if (!resent) throw paymentOutcomeUnknown(context, `resend returned no transaction: ${reason}`);
+    return resent;
+  };
+
+  let transactionId: string | undefined;
+  if (reusable) {
+    let held: unknown;
+    try {
+      held = await getTransactionByExternalId(input.externalTransactionId);
+    } catch (lookupError) {
+      throw paymentOutcomeUnknown(context, 'lookup before charging failed', { lookupError });
+    }
+    if (held) transactionId = await resend('held before charging');
   }
-  // A 200 with no id is the ledger's "insufficient funds" for an id it does not hold; after an
-  // unknown outcome the first write may still be committing, so that is not "not charged" either.
-  if (!transactionId) throw paymentOutcomeUnknown(context, 'ledger returned no transaction id');
+
+  if (!transactionId) {
+    let sent: { transactionId: string | null };
+    try {
+      // Without a deadline, called exactly as every other caller calls it.
+      sent = await (opts ? createBuzzTransaction(input, opts) : createBuzzTransaction(input));
+    } catch (error) {
+      if (chargeWasDeclined(error)) throw error;
+      sent = { transactionId: await resend('unknown outcome', error) };
+    }
+    if (!sent.transactionId) throw throwBadRequestError(declinedMessage);
+    transactionId = sent.transactionId;
+  }
   if (!reusable) return { transactionId };
 
-  // A resend of an id the ledger holds answers 200 with that transaction, which may be one a
-  // failed earlier attempt had refunded (the refund's id is the ledger's, `refund-<transactionId>`).
+  // The refund's id is the ledger's: `refund-<transactionId>`.
   let refund: unknown;
   try {
     refund = await getTransactionByExternalId(`refund-${transactionId}`);

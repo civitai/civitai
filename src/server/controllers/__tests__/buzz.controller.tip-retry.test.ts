@@ -3,6 +3,7 @@ import {
   createFakeBuzzLedger,
   insufficientFunds,
 } from '~/server/services/__tests__/buzz-ledger.fake';
+import { createFakeAdvisoryLocks, settle } from '~/server/services/__tests__/charge-lock.fake';
 
 /**
  * An on-site tip whose batch write ends with an unknown outcome (the ledger committed, the
@@ -79,6 +80,7 @@ const imageTip = (idempotencyKey?: string, amount = 100) =>
   });
 
 let ledger: ReturnType<typeof createFakeBuzzLedger>;
+let locks = createFakeAdvisoryLocks();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -91,6 +93,9 @@ beforeEach(() => {
   // Reset, not just cleared: a once-queued answer a test never reached must not leak.
   for (const fn of Object.values(buzz)) fn.mockReset();
   ledger = createFakeBuzzLedger();
+  locks = createFakeAdvisoryLocks();
+  dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => Promise<unknown>) =>
+    locks.transaction(cb, {})) as never);
   buzz.createBuzzTransactionMany.mockImplementation(ledger.createBuzzTransactionMany);
   buzz.getTransactionByExternalId.mockImplementation(ledger.getTransactionByExternalId);
 });
@@ -192,5 +197,47 @@ describe('on-site tip across an unknown outcome', () => {
 
     await expect(imageTip()).rejects.toThrow('timeout');
     expect(buzz.createBuzzTransactionMany).toHaveBeenCalledTimes(1);
+  });
+
+  // The first send moved the Buzz and spent the balance: the retry is answered from the moved
+  // legs, not refused as "insufficient funds" (a 400 the client reads as "start a new tip").
+  it('a retry whose balance the first send spent is answered from the moved legs', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await expect(imageTip(KEY)).rejects.toThrow();
+    ledger.clearFaults();
+    mockGetUserBuzzAccount.mockResolvedValue([{ balance: 0 }]);
+
+    const result = await imageTip(KEY);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(result).toMatchObject({ deduped: true });
+  });
+
+  it('still refuses a short balance for legs not yet moved', async () => {
+    mockGetUserBuzzAccount.mockResolvedValue([{ balance: 99 }]);
+
+    await expect(imageTip(KEY)).rejects.toThrow(/enough funds/);
+    expect(ledger.charges()).toHaveLength(0);
+  });
+
+  it('takes the lock on the tip id', async () => {
+    await imageTip(KEY);
+    expect(locks.taken()).toEqual([`tip:${TIPPER}:${KEY}:100:Image:77`]);
+  });
+
+  it('two requests with one key in flight: the Buzz moves once and the tip is recorded once', async () => {
+    ledger.queueFault('hang');
+    const first = imageTip(KEY);
+    await settle();
+    const second = imageTip(KEY);
+    await settle();
+    ledger.releaseHung();
+    const results = await Promise.all([first, second]);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(mockUpsertBuzzTip).toHaveBeenCalledTimes(1);
+    expect(mockUpdateEntityMetric).toHaveBeenCalledTimes(1);
+    expect(results[1]).toMatchObject({ deduped: true });
   });
 });

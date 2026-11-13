@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeBuzzLedger, insufficientFunds } from './buzz-ledger.fake';
+import { createFakeAdvisoryLocks, settle } from './charge-lock.fake';
 
 /**
  * A donation whose charge ends with an unknown outcome (the ledger committed, the response was
@@ -12,6 +13,7 @@ const { buzz, prefixRefund } = vi.hoisted(() => ({
   buzz: {
     createMultiAccountBuzzTransaction: vi.fn(),
     refundMultiAccountTransaction: vi.fn(),
+    getMultiAccountTransactionsByPrefix: vi.fn(),
   },
   prefixRefund: { getPrefixRefundState: vi.fn() },
 }));
@@ -34,6 +36,7 @@ const OTHER_KEY = '0e9d8c7b-6a5f-4e3d-8c2b-1a0f9e8d7c6b';
 let ledger: ReturnType<typeof createFakeBuzzLedger>;
 let donations: { buzzTransactionId: string; userId: number; amount: number }[];
 let clock = 1_700_000_000_000;
+let locks = createFakeAdvisoryLocks();
 
 const donate = (idempotencyKey?: string, amount = 500) =>
   donateToGoal({
@@ -73,6 +76,16 @@ beforeEach(() => {
       ) ?? null) as never
   );
 
+  // The keyed path records on the lock's transaction.
+  locks = createFakeAdvisoryLocks();
+  dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => Promise<unknown>) =>
+    locks.transaction(cb, {
+      donation: {
+        create: (args: unknown) => dbMock.dbWrite.donation.create(args as never),
+        findFirst: (args: unknown) => dbMock.dbWrite.donation.findFirst(args as never),
+      },
+    })) as never);
+
   // Reset, not just cleared: a once-queued answer a test never reached must not leak.
   for (const fn of Object.values(buzz)) fn.mockReset();
   ledger = createFakeBuzzLedger();
@@ -80,6 +93,9 @@ beforeEach(() => {
     ledger.createMultiAccountBuzzTransaction
   );
   buzz.refundMultiAccountTransaction.mockImplementation(ledger.refundMultiAccountTransaction);
+  buzz.getMultiAccountTransactionsByPrefix.mockImplementation(
+    ledger.getMultiAccountTransactionsByPrefix
+  );
   prefixRefund.getPrefixRefundState.mockImplementation(ledger.getPrefixRefundState);
   // Each attempt is a later moment, as it is for a donor pressing donate again.
   vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1000));
@@ -176,5 +192,56 @@ describe('a donation across an unknown outcome', () => {
     expect(ledger.charges()[0].externalTransactionId).toBe(
       `donation-k-${GOAL_ID}-${DONOR}-500-${KEY}-0`
     );
+  });
+
+  // The first charge landed and spent the balance; the ledger checks the balance before it looks
+  // at the ids, so only a lookup first can tell the retry its money already moved.
+  it('a retry whose balance the first charge spent records the donation from that charge', async () => {
+    ledger.setBalance(DONOR, 500);
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await expect(donate(KEY)).rejects.toThrow();
+    ledger.clearFaults();
+    expect(ledger.balanceOf(DONOR)).toBe(0);
+
+    await donate(KEY);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(donations).toHaveLength(1);
+  });
+
+  it('takes the lock on the donation prefix', async () => {
+    await donate(KEY);
+    expect(locks.taken()).toEqual([`donation-k-${GOAL_ID}-${DONOR}-500-${KEY}`]);
+  });
+
+  it('two requests with one key in flight: one charge, one donation', async () => {
+    ledger.queueFault('hang');
+    const first = donate(KEY);
+    await settle();
+    const second = donate(KEY);
+    await settle();
+    ledger.releaseHung();
+    await Promise.all([first, second]);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(donations).toHaveLength(1);
+  });
+
+  it('the first request refund after a failed record never reverses a charge the second recorded', async () => {
+    let failRecord!: (error: Error) => void;
+    dbMock.dbWrite.donation.create.mockImplementationOnce(
+      (() => new Promise((_, reject) => (failRecord = reject))) as never
+    );
+    const first = donate(KEY).catch((e: unknown) => e);
+    while (!failRecord) await settle();
+    const second = donate(KEY).catch((e: unknown) => e);
+    await settle();
+    failRecord(new Error('write failed'));
+
+    expect(await first).toMatchObject({ message: 'Failed to create donation' });
+    expect(await second).toMatchObject({ code: 'BAD_REQUEST', message: PAYMENT_REFUNDED_MESSAGE });
+    expect(ledger.refunds()).toHaveLength(1);
+    expect(donations).toHaveLength(0);
   });
 });

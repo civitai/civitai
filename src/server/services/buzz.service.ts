@@ -886,8 +886,11 @@ async function postBuzzTransaction(
  * No balance pre-check: the balance it would read may already reflect the first send's charge.
  * A 200 with a null id is the ledger's "insufficient funds" for an id it does not hold.
  */
-export async function resendBuzzTransaction(input: PostBuzzTransactionInput) {
-  return postBuzzTransaction(input);
+export async function resendBuzzTransaction(
+  input: PostBuzzTransactionInput,
+  opts?: BuzzWriteOptions
+) {
+  return postBuzzTransaction(input, opts);
 }
 
 export async function upsertBuzzTip({
@@ -977,7 +980,9 @@ export async function createBuzzTransactionMany(
     fromAccountId: number;
     externalTransactionId: string;
     fromAccountType?: BuzzAccountType;
-  })[]
+  })[],
+  // Per-call write overrides, e.g. the deadline a caller holding a lock needs.
+  opts?: BuzzWriteOptions
 ) {
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
@@ -985,7 +990,7 @@ export async function createBuzzTransactionMany(
     (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId && t.amount > 0
   );
 
-  const result = await buzzService.createTransactions(validTransactions);
+  const result = await buzzService.createTransactions(validTransactions, opts);
 
   // The batch endpoint only reports successes + conflicts. A `conflict` is the idempotency guard
   // (a duplicate externalTransactionId — the money already moved), so it's benign. But an
@@ -1204,9 +1209,11 @@ export async function completeStripeBuzzTransaction({
 export async function refundTransaction(
   transactionId: string,
   description?: string,
-  details?: MixedObject
+  details?: MixedObject,
+  // A refund made while holding a charge-key lock needs a deadline (see buzz-charge-lock.ts).
+  opts?: BuzzWriteOptions
 ) {
-  return buzzService.refundTransaction(transactionId, { description, details });
+  return buzzService.refundTransaction(transactionId, { description, details }, opts);
 }
 
 /**

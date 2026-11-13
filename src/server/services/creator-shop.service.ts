@@ -76,7 +76,7 @@ import {
 } from '~/server/services/buzz.service';
 import {
   assertQuotedFee,
-  chargeSubmissionFee,
+  withSubmissionFee,
   getCreatorShopSubmissionFee,
 } from '~/server/services/creator-shop-fees.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -628,28 +628,27 @@ export const submitCreatorShopItem = async ({
   const normalizedSlug = slug?.trim().toLowerCase();
   await validateStickerCosmetic({ type: cosmeticType, data: { slug: normalizedSlug } });
 
-  // Charge the (non-refundable) submission fee; refunded only if the write fails.
+  // The (non-refundable) submission fee.
   const submissionFee = await getCreatorShopSubmissionFee(cosmeticType);
   assertQuotedFee(quotedFee, submissionFee);
-  const feeTx = await chargeSubmissionFee({
-    kind: 'item',
-    userId,
-    buzzType: buzzType as BuzzSpendType,
-    amount: submissionFee,
-    description: `Creator Shop submission fee - ${name}`,
-    idempotencyKey,
-  });
-  const feeTxId = feeTx.transactionId;
-  if (!feeTxId) throw throwBadRequestError('Unable to charge the submission fee');
-
-  try {
-    // Captured out of the transaction so the hash can be queued after it commits
-    // — the request is a network round-trip and has no business inside a write
-    // transaction, and a cosmetic that exists without a hash is invisible to
-    // review. This path is why 228 of the 231 unhashed cosmetics on 2026-08-14
-    // were creator submissions.
-    let submittedCosmeticId: number | undefined;
-    const created = await dbWrite.$transaction(async (tx) => {
+  // Captured out of the transaction so the hash can be queued after it commits
+  // — the request is a network round-trip and has no business inside a write
+  // transaction, and a cosmetic that exists without a hash is invisible to
+  // review. This path is why 228 of the 231 unhashed cosmetics on 2026-08-14
+  // were creator submissions.
+  let submittedCosmeticId: number | undefined;
+  // The fee is charged and the listing written together; refunded only if the write fails.
+  const created = await withSubmissionFee(
+    {
+      kind: 'item',
+      userId,
+      buzzType: buzzType as BuzzSpendType,
+      amount: submissionFee,
+      description: `Creator Shop submission fee - ${name}`,
+      refundDescription: 'Creator Shop submission failed',
+      idempotencyKey,
+    },
+    async (tx, feeTxId) => {
       const cosmetic = await tx.cosmetic.create({
         data: {
           name,
@@ -698,16 +697,12 @@ export const submitCreatorShopItem = async ({
         },
         select: creatorShopItemSelect,
       });
-    });
+    }
+  );
 
-    if (submittedCosmeticId)
-      queueCosmeticPerceptualHash({ id: submittedCosmeticId, url: imageUrl });
+  if (submittedCosmeticId) queueCosmeticPerceptualHash({ id: submittedCosmeticId, url: imageUrl });
 
-    return created;
-  } catch (error) {
-    await refundTransaction(feeTxId, 'Creator Shop submission failed');
-    throw error;
-  }
+  return created;
 };
 
 // Load an item and assert the caller may manage it (its creator, or a moderator). From the primary:

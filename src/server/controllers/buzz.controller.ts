@@ -30,6 +30,7 @@ import {
   previewMultiAccountTransaction,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
+import { CHARGE_WRITE_TIMEOUT_MS, withChargeKeyLock } from '~/server/services/buzz-charge-lock';
 import { chargeWasDeclined, paymentOutcomeUnknown } from '~/server/services/buzz-keyed-charge';
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
 import { getImageById } from '~/server/services/image.service';
@@ -242,16 +243,6 @@ export async function createBuzzTipTransactionHandler({
     if (amount <= 0) {
       throw throwBadRequestError('Could not split the amount between users');
     }
-    // Confirm user funds:
-    const userAccount = await getUserBuzzAccount({
-      accountId: fromAccountId,
-      accountType: input.fromAccountType ?? 'yellow',
-    });
-
-    if ((userAccount[0]?.balance ?? 0) < finalAmount) {
-      throw throwInsufficientFundsError();
-    }
-
     // The base of every transaction's `externalTransactionId` (`${sharedId}-${toAccountId}`).
     // With a client idempotency key, DERIVE it deterministically so a retry collides
     // on the ledger's unique constraint (money moves once — see the param doc). The
@@ -287,113 +278,141 @@ export async function createBuzzTipTransactionHandler({
       externalTransactionId: `${sharedId}-${toAccountId}`,
     }));
 
-    // With a key, a leg already on the ledger moved on an earlier call. Buzz reports a replayed
-    // leg in `transactions` (with the existing id) today and in `conflicts` once it stops
-    // pre-checking duplicates, so the batch response alone cannot say which legs are new. The
-    // endpoint's idempotency claim keeps a same-key call from running concurrently with this one.
-    const alreadyMoved = new Set<string>();
-    if (keyed) {
-      const existing = await Promise.all(
-        transactions.map((t) => getTransactionByExternalId(t.externalTransactionId))
-      );
-      transactions.forEach((t, i) => {
-        if (existing[i]) alreadyMoved.add(t.externalTransactionId);
-      });
-    }
-
-    // Now, create all transactions. With a key, a send whose outcome is unknown (timeout, reset,
-    // 5xx) is resolved by looking its legs up rather than reported as a failure the user retries.
-    const data = await createBuzzTransactionMany(transactions).catch((error) => {
-      if (!keyed) throw error;
-      return resolveFailedTipBatch(transactions, alreadyMoved, error, ctx.user.id);
-    });
-
-    // ── LEDGER CONFLICT = MONEY ALREADY MOVED (audit 🔴-2) ───────────────────────
-    // `createBuzzTransactionMany` returns `{ transactions, conflicts }`, and a
-    // `conflict` is the ledger REJECTING a duplicate `externalTransactionId`: that
-    // transaction debited NOTHING on this call because an earlier call already moved
-    // the money. The three side effects below (`upsertBuzzTip`, the `tip-received`
-    // notification — keyed by a fresh uuid so it has no dedup of its own — and the
-    // Image Buzz metric) are all NON-idempotent, so firing them for a conflicted
-    // transaction credits a SECOND tip for money that moved ONCE: a phantom tip.
-    //
-    // 🔴 This state is only REACHABLE because of the deterministic
-    // `externalTransactionId` introduced alongside `idempotencyKey` — with the
-    // legacy per-call `crypto.randomUUID()` id `conflicts` was always empty here, which is why
-    // ignoring it was previously (accidentally) safe. Concretely: tip N to X on
-    // image A with key K → wait past the 10-min Redis sentinel → same K, same
-    // recipient, DIFFERENT entityId (the derivation deliberately ignores the entity)
-    // → byte-identical ledger id → conflict, zero Buzz moves, yet image B would get
-    // +N Buzz, a BuzzTip row, and a 200.
-    //
-    // Matching is by `externalTransactionId` (what the batch endpoint reports as a
-    // conflict), with a COUNT belt: if the ledger reported ZERO successes then
-    // nothing moved on this call regardless of how the conflict identifiers are
-    // shaped on the wire. Both signals agree on the full-replay case above; the belt
-    // is what keeps the fail direction safe (never fire a side effect for money that
-    // did not move) if the identifier shape ever changes.
-    const conflictedIds = new Set([...data.conflicts, ...alreadyMoved]);
-    const settled =
-      data.transactions.length === 0
-        ? []
-        : transactions.filter((t) => !conflictedIds.has(t.externalTransactionId));
-    // Buzz that did NOT move on this call because the ledger deduped it. 0 on every
-    // non-conflicting tip → this whole block is inert for today's traffic.
-    const dedupedAmount = (transactions.length - settled.length) * amount;
-    const deduped = settled.length === 0 && dedupedAmount > 0;
-
-    if (settled.length > 0) {
-      if (entityType && entityId) {
-        // TODO: We might wanna notify contributors, but hardly a priority right now imho.
-        await upsertBuzzTip({
-          ...settled[0],
-          // The total that ACTUALLY moved on this call (a partially-deduped batch
-          // must not record the conflicted legs again).
-          amount: settled.length * amount,
-          entityType: entityType as string,
-          entityId: entityId as number,
+    // With a key, the rest runs under the key's lock (buzz-charge-lock.ts): a second request with
+    // the same key waits for this one's legs and side effects, then sees them as already moved.
+    // Every Buzz write under the lock has a deadline.
+    const writeOpts = keyed ? { timeoutMs: CHARGE_WRITE_TIMEOUT_MS } : undefined;
+    const settle = async () => {
+      // With a key, a leg already on the ledger moved on an earlier call. Buzz reports a replayed
+      // leg in `transactions` (with the existing id) today and in `conflicts` once it stops
+      // pre-checking duplicates, so the batch response alone cannot say which legs are new.
+      // Looked up BEFORE the balance check: a leg that already moved spent the balance this check
+      // reads, and refusing its retry as "insufficient funds" tells the client to start a new tip.
+      const alreadyMoved = new Set<string>();
+      if (keyed) {
+        const existing = await Promise.all(
+          transactions.map((t) => getTransactionByExternalId(t.externalTransactionId))
+        );
+        transactions.forEach((t, i) => {
+          if (existing[i]) alreadyMoved.add(t.externalTransactionId);
         });
-      } else {
-        const toAccountId = settled[0].toAccountId;
-        const description = settled[0].description;
-        if (toAccountId !== 0) {
-          const fromUser = await dbWrite.user.findUnique({
-            where: { id: fromAccountId },
-            select: { username: true },
-          });
+      }
 
-          await createNotification({
-            type: 'tip-received',
-            userId: toAccountId,
-            category: NotificationCategory.Buzz,
-            key: `tip-received:${crypto.randomUUID()}`,
-            details: {
-              amount: amount,
-              user: fromUser?.username,
-              fromUserId: fromAccountId,
-              message: description,
-              toAccountType: input.toAccountType,
-            },
+      // Confirm user funds for the legs still to move:
+      const owed = finalAmount - alreadyMoved.size * amount;
+      if (owed > 0) {
+        const userAccount = await getUserBuzzAccount({
+          accountId: fromAccountId,
+          accountType: input.fromAccountType ?? 'yellow',
+        });
+        if ((userAccount[0]?.balance ?? 0) < owed) {
+          throw throwInsufficientFundsError();
+        }
+      }
+
+      // Now, create all transactions. With a key, a send whose outcome is unknown (timeout, reset,
+      // 5xx) is resolved by resending it rather than reported as a failure the user retries.
+      const data = await (writeOpts
+        ? createBuzzTransactionMany(transactions, writeOpts)
+        : createBuzzTransactionMany(transactions)
+      ).catch((error) => {
+        if (!keyed) throw error;
+        return resolveFailedTipBatch(transactions, alreadyMoved, error, ctx.user.id, writeOpts);
+      });
+
+      // ── LEDGER CONFLICT = MONEY ALREADY MOVED (audit 🔴-2) ───────────────────────
+      // `createBuzzTransactionMany` returns `{ transactions, conflicts }`, and a
+      // `conflict` is the ledger REJECTING a duplicate `externalTransactionId`: that
+      // transaction debited NOTHING on this call because an earlier call already moved
+      // the money. The three side effects below (`upsertBuzzTip`, the `tip-received`
+      // notification — keyed by a fresh uuid so it has no dedup of its own — and the
+      // Image Buzz metric) are all NON-idempotent, so firing them for a conflicted
+      // transaction credits a SECOND tip for money that moved ONCE: a phantom tip.
+      //
+      // 🔴 This state is only REACHABLE because of the deterministic
+      // `externalTransactionId` introduced alongside `idempotencyKey` — with the
+      // legacy per-call `crypto.randomUUID()` id `conflicts` was always empty here, which is why
+      // ignoring it was previously (accidentally) safe. Concretely: tip N to X on
+      // image A with key K → wait past the 10-min Redis sentinel → same K, same
+      // recipient, DIFFERENT entityId (the derivation deliberately ignores the entity)
+      // → byte-identical ledger id → conflict, zero Buzz moves, yet image B would get
+      // +N Buzz, a BuzzTip row, and a 200.
+      //
+      // Matching is by `externalTransactionId` (what the batch endpoint reports as a
+      // conflict), with a COUNT belt: if the ledger reported ZERO successes then
+      // nothing moved on this call regardless of how the conflict identifiers are
+      // shaped on the wire. Both signals agree on the full-replay case above; the belt
+      // is what keeps the fail direction safe (never fire a side effect for money that
+      // did not move) if the identifier shape ever changes.
+      const conflictedIds = new Set([...data.conflicts, ...alreadyMoved]);
+      const settled =
+        data.transactions.length === 0
+          ? []
+          : transactions.filter((t) => !conflictedIds.has(t.externalTransactionId));
+      // Buzz that did NOT move on this call because the ledger deduped it. 0 on every
+      // non-conflicting tip → this whole block is inert for today's traffic.
+      const dedupedAmount = (transactions.length - settled.length) * amount;
+      const deduped = settled.length === 0 && dedupedAmount > 0;
+
+      if (settled.length > 0) {
+        if (entityType && entityId) {
+          // TODO: We might wanna notify contributors, but hardly a priority right now imho.
+          await upsertBuzzTip({
+            ...settled[0],
+            // The total that ACTUALLY moved on this call (a partially-deduped batch
+            // must not record the conflicted legs again).
+            amount: settled.length * amount,
+            entityType: entityType as string,
+            entityId: entityId as number,
+          });
+        } else {
+          const toAccountId = settled[0].toAccountId;
+          const description = settled[0].description;
+          if (toAccountId !== 0) {
+            const fromUser = await dbWrite.user.findUnique({
+              where: { id: fromAccountId },
+              select: { username: true },
+            });
+
+            await createNotification({
+              type: 'tip-received',
+              userId: toAccountId,
+              category: NotificationCategory.Buzz,
+              key: `tip-received:${crypto.randomUUID()}`,
+              details: {
+                amount: amount,
+                user: fromUser?.username,
+                fromUserId: fromAccountId,
+                message: description,
+                toAccountType: input.toAccountType,
+              },
+            });
+          }
+        }
+
+        if (entityType === 'Image' && !!entityId) {
+          await updateEntityMetric({
+            ctx,
+            entityType: 'Image',
+            entityId,
+            metricType: 'Buzz',
+            // Only the Buzz that actually moved on this call.
+            amount: settled.length * amount,
           });
         }
       }
 
-      if (entityType === 'Image' && !!entityId) {
-        await updateEntityMetric({
-          ctx,
-          entityType: 'Image',
-          entityId,
-          metricType: 'Buzz',
-          // Only the Buzz that actually moved on this call.
-          amount: settled.length * amount,
-        });
-      }
-    }
+      // `deduped` / `dedupedAmount` are ADDITIVE (the on-site tRPC caller ignores
+      // them). The App Blocks tip endpoint reads `dedupedAmount` to refund the daily
+      // tip-cap reservation it burned for Buzz that never moved — see tip.ts.
+      return { ...data, deduped, dedupedAmount };
+    };
 
-    // `deduped` / `dedupedAmount` are ADDITIVE (the on-site tRPC caller ignores
-    // them). The App Blocks tip endpoint reads `dedupedAmount` to refund the daily
-    // tip-cap reservation it burned for Buzz that never moved — see tip.ts.
-    return { ...data, deduped, dedupedAmount };
+    return keyed
+      ? await withChargeKeyLock(sharedId, { userId: fromAccountId, amount: finalAmount }, () =>
+          settle()
+        )
+      : await settle();
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -411,14 +430,17 @@ export async function resolveFailedTipBatch(
   transactions: Parameters<typeof createBuzzTransactionMany>[0],
   alreadyMoved: Set<string>,
   error: unknown,
-  userId: number
+  userId: number,
+  opts?: { timeoutMs: number }
 ): Promise<{ transactions: string[]; conflicts: string[] }> {
   if (chargeWasDeclined(error)) throw error;
   const sent = transactions.filter((t) => !alreadyMoved.has(t.externalTransactionId));
   const context = { externalTransactionId: sent[0]?.externalTransactionId ?? '', userId };
   let resent: { transactions: string[]; conflicts: string[] };
   try {
-    resent = await createBuzzTransactionMany(transactions);
+    resent = await (opts
+      ? createBuzzTransactionMany(transactions, opts)
+      : createBuzzTransactionMany(transactions));
   } catch (resendError) {
     throw paymentOutcomeUnknown(context, 'tip resend failed after unknown outcome', {
       error,

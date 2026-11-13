@@ -23,10 +23,9 @@ import {
   packPriceFloor,
   type PackMemberPricing,
 } from '~/server/schema/creator-shop.schema';
-import { refundTransaction } from '~/server/services/buzz.service';
 import {
   assertQuotedFee,
-  chargeSubmissionFee,
+  withSubmissionFee,
   getCreatorShopFees,
 } from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
@@ -251,19 +250,18 @@ export const submitCreatorShopPack = async ({
 
   const submissionFee = (await getCreatorShopFees()).pack;
   assertQuotedFee(quotedFee, submissionFee);
-  const feeTx = await chargeSubmissionFee({
-    kind: 'pack',
-    userId,
-    buzzType: buzzType as BuzzSpendType,
-    amount: submissionFee,
-    description: `Creator Shop pack submission fee - ${name}`,
-    idempotencyKey,
-  });
-  const feeTxId = feeTx.transactionId;
-  if (!feeTxId) throw throwBadRequestError('Unable to charge the submission fee');
-
-  try {
-    return await dbWrite.$transaction(async (tx) => {
+  // The fee is charged and the pack written together; refunded only if the write fails.
+  return withSubmissionFee(
+    {
+      kind: 'pack',
+      userId,
+      buzzType: buzzType as BuzzSpendType,
+      amount: submissionFee,
+      description: `Creator Shop pack submission fee - ${name}`,
+      refundDescription: 'Creator Shop pack submission failed',
+      idempotencyKey,
+    },
+    async (tx, feeTxId) => {
       const item = await tx.cosmeticShopItem.create({
         data: {
           cosmeticId: null,
@@ -304,11 +302,8 @@ export const submitCreatorShopPack = async ({
       });
 
       return item;
-    });
-  } catch (error) {
-    await refundTransaction(feeTxId, 'Creator Shop pack submission failed');
-    throw error;
-  }
+    }
+  );
 };
 
 export const updateCreatorShopPack = async ({

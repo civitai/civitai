@@ -4,7 +4,10 @@ import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import type { CreatorCosmeticType, CreatorShopFees } from '~/server/schema/creator-shop.schema';
 import { normalizeCreatorShopFees } from '~/server/schema/creator-shop.schema';
+import type { Prisma } from '@prisma/client';
+import { CHARGE_WRITE_TIMEOUT_MS, withChargeKeyLock } from '~/server/services/buzz-charge-lock';
 import { chargeByExternalId } from '~/server/services/buzz-keyed-charge';
+import { refundTransaction } from '~/server/services/buzz.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -60,47 +63,87 @@ export const SUBMISSION_ALREADY_COMPLETED_MESSAGE =
   'This submission was already completed. Reload to see it, or start a new submission.';
 
 /**
- * Charges a submission fee once per submission: see chargeByExternalId. With a key, the charge the
- * ledger answers may be one an earlier request under the same key already turned into a listing
- * (that request's response was lost, or the client reused the key for other content). That charge
- * paid for that listing, so this submission is refused rather than listed on it.
+ * Charges a submission fee once per submission and runs `write` (the listing's inserts) against it,
+ * refunding the fee if `write` fails. `write` gets the transaction its inserts must use and the
+ * fee's ledger transaction id.
+ *
+ * Without a key (a client from before keys): charged under a new id, then `write` in its own
+ * transaction, as before.
+ *
+ * With a key, all of it runs under the key's lock (buzz-charge-lock.ts), in the transaction `write`
+ * gets, so a second request with the same key waits and then sees this one's listing or refund:
+ * - the charge is chargeByExternalId's: a fee the ledger already holds under the key is this
+ *   submission's, continued from without a balance check; a refunded one is refused;
+ * - a held fee already recorded on a listing paid for that listing (the same content after a lost
+ *   response, or other content under a reused key), so this submission is refused, not listed on it.
  */
-export async function chargeSubmissionFee({
-  kind,
-  userId,
-  buzzType,
-  amount,
-  description,
-  idempotencyKey,
-}: {
-  kind: SubmissionFeeKind;
-  userId: number;
-  buzzType: BuzzSpendType;
-  amount: number;
-  description: string;
-  idempotencyKey: string | undefined;
-}) {
-  const charge = await chargeByExternalId(
-    {
-      fromAccountId: userId,
-      fromAccountType: buzzType,
-      toAccountId: 0,
-      amount,
-      type: TransactionType.Purchase,
-      description,
-      externalTransactionId: submissionFeeTransactionId(kind, userId, idempotencyKey),
-    },
-    { reusable: idempotencyKey !== undefined }
-  );
-  if (idempotencyKey === undefined) return charge;
+export async function withSubmissionFee<T>(
+  {
+    kind,
+    userId,
+    buzzType,
+    amount,
+    description,
+    refundDescription,
+    idempotencyKey,
+  }: {
+    kind: SubmissionFeeKind;
+    userId: number;
+    buzzType: BuzzSpendType;
+    amount: number;
+    description: string;
+    refundDescription: string;
+    idempotencyKey: string | undefined;
+  },
+  write: (tx: Prisma.TransactionClient, feeTxId: string) => Promise<T>
+): Promise<T> {
+  const externalTransactionId = submissionFeeTransactionId(kind, userId, idempotencyKey);
+  const fee = {
+    fromAccountId: userId,
+    fromAccountType: buzzType,
+    toAccountId: 0,
+    amount,
+    type: TransactionType.Purchase,
+    description,
+    externalTransactionId,
+  };
+  const declinedMessage = 'Unable to charge the submission fee';
 
-  // Item, pack and mystery pack listings all record their fee here (CosmeticShopItem.meta).
-  const listed = await dbWrite.cosmeticShopItem.findFirst({
-    where: { meta: { path: ['submissionTxId'], equals: charge.transactionId } },
-    select: { id: true },
+  if (idempotencyKey === undefined) {
+    const { transactionId } = await chargeByExternalId(fee, { reusable: false, declinedMessage });
+    try {
+      return await dbWrite.$transaction((tx) => write(tx, transactionId));
+    } catch (error) {
+      await refundTransaction(transactionId, refundDescription);
+      throw error;
+    }
+  }
+
+  return withChargeKeyLock(externalTransactionId, { userId, amount }, async (tx) => {
+    const { transactionId } = await chargeByExternalId(fee, {
+      reusable: true,
+      timeoutMs: CHARGE_WRITE_TIMEOUT_MS,
+      declinedMessage,
+    });
+
+    // Item, pack and mystery pack listings all record their fee here (CosmeticShopItem.meta).
+    const listed = await tx.cosmeticShopItem.findFirst({
+      where: { meta: { path: ['submissionTxId'], equals: transactionId } },
+      select: { id: true },
+    });
+    if (listed) throw throwBadRequestError(SUBMISSION_ALREADY_COMPLETED_MESSAGE);
+
+    try {
+      return await write(tx, transactionId);
+    } catch (error) {
+      // Under the lock: a second request waiting on this key sees the refund, never a charge
+      // this request is about to reverse.
+      await refundTransaction(transactionId, refundDescription, undefined, {
+        timeoutMs: CHARGE_WRITE_TIMEOUT_MS,
+      });
+      throw error;
+    }
   });
-  if (listed) throw throwBadRequestError(SUBMISSION_ALREADY_COMPLETED_MESSAGE);
-  return charge;
 }
 
 export type CreatorShopFeesInput = {
