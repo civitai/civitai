@@ -23,7 +23,11 @@ import { createStrike } from '~/server/services/strike.service';
 import { clearUserProfileFields, toggleBan } from '~/server/services/user.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 import type { EntityType } from '~/shared/utils/prisma/enums';
-import { ArticleStatus, StrikeReason } from '~/shared/utils/prisma/enums';
+import {
+  ArticleStatus,
+  ServiceOfferingIngestionStatus,
+  StrikeReason,
+} from '~/shared/utils/prisma/enums';
 
 /** What a moderator can do with a pending csam hold. `dismiss` is "do nothing". */
 export const CSAM_HOLD_DECISIONS = [
@@ -55,6 +59,7 @@ const REMOVABLE_ENTITY_TYPES = [
   'Post',
   'Model',
   'Article',
+  'ServiceOffering',
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
   (REMOVABLE_ENTITY_TYPES as readonly string[]).includes(type);
@@ -195,6 +200,13 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
       await tracker.article({ type: 'Unpublish', articleId: entityId, nsfw: false });
       return;
     }
+    case 'ServiceOffering':
+      // Hidden, not deleted: the offering and its text stay for the record.
+      await dbWrite.serviceOffering.updateMany({
+        where: { id: entityId, ingestion: { not: ServiceOfferingIngestionStatus.Blocked } },
+        data: { ingestion: ServiceOfferingIngestionStatus.Blocked },
+      });
+      return;
   }
 }
 

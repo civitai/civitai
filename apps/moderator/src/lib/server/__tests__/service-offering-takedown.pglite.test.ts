@@ -242,12 +242,23 @@ describe('releasing a held service offering from the report queue', () => {
     expect(await release()).toMatchObject({
       ingestion: 'Blocked',
       changed: false,
-      csamHoldPending: true,
+      csamHeld: true,
     });
     expect(recordModActivity).not.toHaveBeenCalled();
 
     await pg.query(`UPDATE "TextScanHold" SET status = 'Dismissed'`);
     expect(await release()).toMatchObject({ ingestion: 'Scanned', changed: true });
+  });
+
+  it('leaves a held offering hidden for good once its csam hold was decided as a removal', async () => {
+    await hold();
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, status, "updatedAt")
+       VALUES ('ServiceOffering', $1, 'csam', 'h', 'text', 'r', 'Confirmed', now())`,
+      [OFFERING]
+    );
+    expect(await release()).toMatchObject({ ingestion: 'Blocked', changed: false, csamHeld: true });
+    expect(recordModActivity).not.toHaveBeenCalled();
   });
 
   it('leaves a held offering edited since the moderator read it', async () => {

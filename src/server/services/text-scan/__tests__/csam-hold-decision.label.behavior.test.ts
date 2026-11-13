@@ -109,6 +109,44 @@ const labels = async () =>
   ).rows;
 
 describe('the csam hold decision record, against the real label store', () => {
+  it('removes a held service offering by keeping it hidden, bans its author and records csam', async () => {
+    dbMock.dbWrite.textScanHold.findFirst.mockResolvedValueOnce({
+      id: 12,
+      status: 'Pending',
+      entityType: 'ServiceOffering',
+      entityId: 55,
+      userId: 900,
+      text: 'held text',
+      textHash: 'h',
+      meta: null,
+    });
+    await decideCsamHold({
+      holdId: 12,
+      textHash: 'h',
+      decision: 'remove_ban_report',
+      actor: { id: 7 },
+      tracker: tracker as never,
+    });
+
+    expect(dbMock.dbWrite.serviceOffering.updateMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).toHaveBeenCalledWith({
+      where: { id: 55, ingestion: { not: 'Blocked' } },
+      data: { ingestion: 'Blocked' },
+    });
+    expect(dbMock.dbWrite.serviceOffering.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.serviceOffering.delete).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.serviceOffering.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.toggleBan).toHaveBeenCalledWith(expect.objectContaining({ id: 900 }));
+    expect(await labels()).toEqual([
+      {
+        value: 'csam',
+        reason: 'remove_ban_report',
+        subjectType: 'service_offering_text',
+        subjectId: '55',
+      },
+    ]);
+  });
+
   it('records a removal as a csam label with the action as its reason', async () => {
     await decide('remove', 'gone');
     expect(await labels()).toEqual([

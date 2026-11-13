@@ -198,9 +198,9 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!offering) return fail(410, { error: 'That service no longer exists.', gone: true });
-    if (offering.csamHoldPending)
+    if (offering.csamHeld)
       return fail(409, {
-        error: 'That service has a pending hold in the CSAM queue. Decide it there first.',
+        error: 'That service is held in the CSAM queue: release is not available here.',
       });
     // Reloads, so the moderator reads the current text before trying again.
     if (!offering.changed)

@@ -75,6 +75,7 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'Post',
   'Model',
   'Article',
+  'ServiceOffering',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
 
