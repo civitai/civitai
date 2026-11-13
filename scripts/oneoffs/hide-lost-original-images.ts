@@ -447,6 +447,7 @@ async function main() {
     throw new Error('unset LOGGING (prisma query logging prints the target ids)');
   const { dbWrite } = await import('~/server/db/client');
   const { getImageUploadBackend, headObject } = await import('~/utils/s3-utils');
+  const { sleep } = await import('~/server/utils/concurrency-helpers');
   const { isEdgeUrlPassthrough } = await import('~/shared/utils/edge-url-passthrough');
   const { SearchIndexUpdateQueueAction } = await import('~/server/common/enums');
   const { queueImageSearchIndexUpdate, invalidateManyImageExistence } = await import(
@@ -458,7 +459,6 @@ async function main() {
   const logFile = options.logFile as string;
   const deps: Deps = {
     query: <T>(sql: Prisma.Sql) => dbWrite.$queryRaw<T[]>(sql),
-    // headObject answers absent only for a 404; anything else is unknown, which fails closed here.
     head: async (url) => {
       const head = await headObject(backend.bucket, url, backend.s3, {
         abortSignal: AbortSignal.timeout(10_000),
@@ -485,7 +485,9 @@ async function main() {
     },
     appendLog: (entries) =>
       appendDurable(logFile, entries.map((e) => JSON.stringify(e)).join('\n') + '\n'),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: async (ms) => {
+      await sleep(ms);
+    },
     log: (line) => console.log(line),
     now: () => Date.now(),
   };

@@ -4,10 +4,12 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as LegalHold from '~/server/services/legal-hold.service';
 
 // The real hold predicates have their own suites; here a held image is one listed in "ImageHeld",
 // a held owner one listed in "OwnerHeld".
-vi.mock('~/server/services/legal-hold.service', () => ({
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHold>()),
   captureImageHeldSql: (alias: string) =>
     Prisma.sql`(${Prisma.raw(alias)}.id IN (SELECT "imageId" FROM "ImageHeld"))`,
   // Owner 13 stands for a predicate that comes back NULL: the script must read that as held.
@@ -398,6 +400,16 @@ describe('hide-lost-original-images', () => {
   it('aborts when a quantile of the targets has no live image to vouch for it', async () => {
     const { deps } = makeDeps();
     await expect(run(options(), [...GONE, 1000], deps)).rejects.toThrow(/control failed/);
+    expect(await ingestion(1)).toBe('Scanned');
+  });
+
+  it('refuses to trust the HEADs when one control image is missing and another present', async () => {
+    await db.exec(`INSERT INTO "Image" (id, url, "userId") VALUES (950, 'live-950', 12)`);
+    const { deps } = makeDeps({
+      head: async (url) => (url === 'live-950' || url.startsWith('gone-') ? 'missing' : 'present'),
+    });
+    // Targets spread over the id range, so the control samples live-900 (present) and live-950 (missing).
+    await expect(run(options(), [...GONE, 940], deps)).rejects.toThrow(/control failed/);
     expect(await ingestion(1)).toBe('Scanned');
   });
 
