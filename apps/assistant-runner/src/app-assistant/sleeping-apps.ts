@@ -85,7 +85,7 @@ export class CivitaiSleepingApps {
       );
       if (status === 200 && Array.isArray(answer?.apps))
         return (answer.apps as unknown[]).filter(isSleepingApp);
-      // The flag is off for the user: the everyday answer, not worth a line.
+      // The flag off for the user is the usual answer: not logged.
       if (status === 404 && answer?.code === 'disabled') return null;
       log.warn(
         { status, code: typeof answer?.code === 'string' ? answer.code : undefined },

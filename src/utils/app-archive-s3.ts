@@ -39,10 +39,10 @@ export const ARCHIVE_PREFIX = 'archives/';
 /** How long the sandbox service has to upload an archive (or the secrets blob) after `begin`. */
 export const ARCHIVE_PUT_TTL_SECONDS = 15 * 60;
 /**
- * How long a wake's presigned GET of an archive is valid: the wake ticket's lifetime
- * (`WAKE_TICKET_TTL_SECONDS`), so a seed and its ticket expire together.
+ * How long a wake's seed lives: both its presigned GET of the archive and its one-time wake ticket,
+ * so the two expire together.
  */
-export const ARCHIVE_GET_TTL_SECONDS = 10 * 60;
+export const WAKE_TTL_SECONDS = 10 * 60;
 export type ArchiveStoreConfig = {
   /** In-cluster: civitai's own calls. http or https, any port. */
   endpoint: string;
@@ -236,7 +236,7 @@ export function createArchiveStore(
         throw new Error('presigned archive URL is not on the public https endpoint');
       return url;
     },
-    async presignGet(key, ttlSeconds = ARCHIVE_GET_TTL_SECONDS) {
+    async presignGet(key, ttlSeconds = WAKE_TTL_SECONDS) {
       if (!presigner || !publicEndpoint)
         throw new Error('no public archive endpoint: nothing can be presigned');
       const url = await getSignedUrl(presigner, new GetObjectCommand({ Bucket, Key: key }), {

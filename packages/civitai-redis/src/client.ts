@@ -2472,7 +2472,7 @@ export const REDIS_SYS_KEYS = {
      * APP HIBERNATE — one-time wake tickets, keyed `system:blocks:hibernation-wake-ticket:${sha256
      * of the ticket}` (the ticket itself is never stored). JSON: the user, the app and the archive
      * sha256 it releases secrets for. Written by `mintWakeTicket` on a wake the user started (TTL
-     * `WAKE_TICKET_TTL_SECONDS`) and consumed with GETDEL by the secrets restore, so it redeems once.
+     * `WAKE_TTL_SECONDS`) and consumed with GETDEL by the secrets restore, so it redeems once.
      */
     HIBERNATION_WAKE_TICKET: 'system:blocks:hibernation-wake-ticket',
     /**

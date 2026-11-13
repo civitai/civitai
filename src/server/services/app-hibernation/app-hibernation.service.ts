@@ -10,6 +10,7 @@ import {
   archiveObjectKeys,
   keptObjectKeys,
   userArchivePrefix,
+  WAKE_TTL_SECONDS,
 } from '~/utils/app-archive-s3';
 import type { SleepingAppLimits } from '~/server/services/blocks/user-app-caps.service';
 import type {
@@ -59,8 +60,6 @@ export const MAX_SECRETS_BLOB_BYTES = 64 * 1024;
 const MAX_SEALED_BYTES = MAX_SECRETS_BLOB_BYTES + 64;
 /** How long a `begin` is remembered for its `commit` (and for a retried commit). */
 export const ATTEMPT_TTL_SECONDS = 24 * 60 * 60;
-/** How long a wake ticket can be redeemed for the secrets, once. */
-export const WAKE_TICKET_TTL_SECONDS = 10 * 60;
 /**
  * An archive object no row references is swept once it is this old. Longer than an attempt lives
  * ({@link ATTEMPT_TTL_SECONDS}), so no commit can still be about to record it.
@@ -521,7 +520,7 @@ export type MintWakeTicketResult =
 /**
  * A one-time ticket releasing one sleeping app's secrets to the sandbox service, for the archive
  * the wake restores; the ticket goes to the sandbox service with the seed and is redeemed once,
- * within {@link WAKE_TICKET_TTL_SECONDS}, by `/api/internal/app-hibernation/secrets`.
+ * within {@link WAKE_TTL_SECONDS}, by `/api/internal/app-hibernation/secrets`.
  *
  * Refused unless the account is active, read from its `User` row (`deletedAt` / `bannedAt`), as
  * begin and commit do. Does not check who called it: call it only from the signed-in user's own
@@ -537,16 +536,12 @@ export async function mintWakeTicket(
   const row = await deps.repo.get(userId, app);
   if (!row) return { kind: 'not-found' };
   const ticket = randomBytes(32).toString('base64url');
-  await deps.tickets.put(
-    ticketHash(ticket),
-    { userId, app, sha256: row.sha256 },
-    WAKE_TICKET_TTL_SECONDS
-  );
+  await deps.tickets.put(ticketHash(ticket), { userId, app, sha256: row.sha256 }, WAKE_TTL_SECONDS);
   return {
     kind: 'ok',
     ticket,
     sha256: row.sha256,
-    expiresAt: new Date(deps.now().getTime() + WAKE_TICKET_TTL_SECONDS * 1000).toISOString(),
+    expiresAt: new Date(deps.now().getTime() + WAKE_TTL_SECONDS * 1000).toISOString(),
   };
 }
 

@@ -25,7 +25,6 @@ async function service() {
 const NO_SUCH_APP = 'No sleeping app by that name';
 
 export const appHibernationRouter = router({
-  /** Every sleeping app of the viewer, most recently put to sleep first. */
   listMine: sleepingAppsProcedure.meta({ blockApiKeys: true }).query(async ({ ctx }) => {
     const { svc, deps } = await service();
     return svc.listSleepingApps(ctx.user.id, deps);

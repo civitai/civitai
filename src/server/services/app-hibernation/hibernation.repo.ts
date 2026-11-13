@@ -44,7 +44,6 @@ export type AccountState = 'active' | 'deleted' | 'banned' | 'missing';
 export type CommitDecision<T> = { write?: HibernationRow; result: T };
 
 export interface HibernationRepo {
-  /** The user's sleeping apps, most recently put to sleep first. */
   list(userId: number): Promise<HibernationRow[]>;
   get(userId: number, appKey: string): Promise<HibernationRow | null>;
   /**

@@ -22,7 +22,6 @@ import dayjs from '~/shared/utils/dayjs';
 
 export const SLEEPING_STATUS = 'Sleeping';
 
-/** A sleeping app's status line. */
 export function sleepingLine(app: SleepingApp): string {
   const used = app.lastActivityAt ?? app.hibernatedAt;
   return `${SLEEPING_STATUS} · last used ${dayjs(used).fromNow()}`;
@@ -46,7 +45,6 @@ export function confirmDeleteOldest(oldest: string, then: string, onConfirm: () 
   });
 }
 
-/** One sleeping app in the list: Wake, and Delete app in its menu. */
 export function SleepingAppRow({
   app,
   waking,

@@ -317,7 +317,6 @@ export function AppAssistantWorkspace({
   );
   const sandboxes = useSandboxes(sandboxClient);
   const apps = sandboxes.list.data ?? [];
-  // APP HIBERNATE: the user's sleeping apps. A live sandbox always wins over a record of its app.
   const sleepingList = trpc.appHibernation.listMine.useQuery(undefined, {
     enabled: hibernate && !!sandboxClient,
     refetchInterval: 60_000,
@@ -476,7 +475,6 @@ export function AppAssistantWorkspace({
       },
     });
   };
-  // Wakes a sleeping app (set below): shared by the list's Wake and the assistant's wake_app.
   const wakeRef = useRef<(app: string) => Promise<WakeResult>>(() =>
     Promise.reject(new WakeSeedError('Not ready', 'unavailable'))
   );
@@ -554,8 +552,6 @@ export function AppAssistantWorkspace({
   const utils = trpc.useUtils();
   const trpcUtils = useRef(utils);
   trpcUtils.current = utils;
-  // civitai's seed and one-time wake ticket (minted from this signed-in user's own request), then
-  // the seeded create; the sleeping list is read again either way.
   // Read only when a wake runs: with the flag off nothing here touches the wake at all.
   wakeRef.current = async (app: string) => {
     try {
@@ -690,7 +686,6 @@ export function AppAssistantWorkspace({
         remoteRunner,
         () => {
           const app = live.current.active?.app ?? null;
-          // App hibernate: the runner's instructions say a woken app needs its dependencies again.
           return hibernate && app && wokenApps.current.has(app) ? { app, woken: true } : { app };
         },
         () => runnerCredentials
@@ -710,7 +705,6 @@ export function AppAssistantWorkspace({
       if (isKeepLimitResult(result))
         setSlot((shown) => shown ?? { message: lastSent.current, deleting: false, error: null });
       else if (hibernate) {
-        // App hibernate's limits: a kept app to delete, or the oldest sleeping app.
         const card = limitCardOf(result);
         if (card)
           setSlot(
@@ -1367,8 +1361,6 @@ export function AppAssistantWorkspace({
       // A chat that cannot ask it again now gives it back to the user to send instead.
       if (!(chat.canSend && (await chat.askAgain()))) chat.giveBack(message);
     });
-  // APP HIBERNATE: Wake, Put to sleep and deleting a sleeping app, from the list; and the limit
-  // card's delete of the oldest sleeping app. Unreachable with the flag off.
   type AppIssue = {
     app: string;
     action: 'wake' | 'sleep' | 'delete';
@@ -1435,7 +1427,6 @@ export function AppAssistantWorkspace({
     setAppIssue(null);
     deleteSleepingApp(app, 'user').catch((error) => setAppIssue({ app, action: 'delete', error }));
   };
-  /** The issue's offer to delete the oldest sleeping app, then the wake or sleep again. */
   const deleteOldestThenRetry = async (oldest: string) => {
     const issue = appIssue;
     // 🔴 Never the app being woken, nor any app awake now (checked again as it runs).
@@ -1451,7 +1442,6 @@ export function AppAssistantWorkspace({
     if (target) sleepByHand(target);
     else setAppIssue(null);
   };
-  /** The limit card's delete of the oldest sleeping app; then the request carries on by itself. */
   const freeSleepingSlot = async (oldest: string) => {
     // 🔴 Never an app awake now (checked again as it runs).
     if (!safeOldest(oldest, { live: liveAppKeys() })) return;

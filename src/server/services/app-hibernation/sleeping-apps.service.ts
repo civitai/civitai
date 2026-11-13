@@ -1,17 +1,16 @@
 import {
-  WAKE_TICKET_TTL_SECONDS,
   mintWakeTicket,
   type HibernationDeps,
 } from '~/server/services/app-hibernation/app-hibernation.service';
 import type { HibernationRow } from '~/server/services/app-hibernation/hibernation.repo';
+import { WAKE_TTL_SECONDS } from '~/utils/app-archive-s3';
 
 /**
  * APP HIBERNATE — what the signed-in user does with their OWN sleeping apps: list them, wake one
  * (the seed the sandbox service restores from, with a one-time wake ticket), delete one. Every
  * function acts on the `userId` its caller passes, which must be the signed-in user's own id: the
  * page's tRPC procedures (`app-hibernation.router.ts`) and the server runner's routes
- * (`sleeping-apps-route.ts`, the user its run grant names). The `app-hibernate` flag is checked by
- * those callers; {@link getWakeSeed} also checks it again through {@link mintWakeTicket}.
+ * (`src/server/services/app-assistant/runner-sleeping-apps.ts`, the user its run grant names).
  */
 
 /**
@@ -39,7 +38,6 @@ const toSleepingApp = (row: HibernationRow): SleepingApp => ({
   hibernatedAt: row.hibernatedAt.toISOString(),
 });
 
-/** The user's sleeping apps, most recently put to sleep first. */
 export async function listSleepingApps(
   userId: number,
   deps: Pick<HibernationDeps, 'repo'>
@@ -74,9 +72,8 @@ export type WakeSeedResult =
 const WAKE_SEED_TRIES = 2;
 
 /**
- * The seed for waking one of the user's sleeping apps. The ticket is minted HERE only (and by the
- * runner route, for the run's own user): {@link mintWakeTicket} binds it to the record's sha256, and
- * the presigned GET is of that same record, so the sandbox service's download check and its
+ * The seed for waking one of the user's sleeping apps. {@link mintWakeTicket} binds the ticket to
+ * the record's sha256, and the presigned GET is of that same record, so the sandbox service's download check and its
  * secrets redemption agree on one archive. A commit landing between the two reads is retried once,
  * then answered `changed`.
  */
@@ -98,7 +95,7 @@ export async function getWakeSeed(
       kind: 'ok',
       seed: {
         app,
-        url: await store.presignGet(row.objectKey, WAKE_TICKET_TTL_SECONDS),
+        url: await store.presignGet(row.objectKey, WAKE_TTL_SECONDS),
         sha256: row.sha256,
         bytes: row.bytes,
         ticket: minted.ticket,
