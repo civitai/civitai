@@ -11,12 +11,8 @@ const READ_DEADLINE_MS = 2000;
 export const TRAINING_STATUS_UNKNOWN_MESSAGE =
   'Training is temporarily unavailable. Please try again in a few minutes.';
 
-// The last status this process read. The "training paused" flag is a moderator control on a paid
-// submit, so a failed read must not turn an operator's "paused" back into "available". No age
-// bound, and that is a trade-off, not a guarantee: a pod cut off from sys-redis keeps serving its
-// last-known value for as long as the outage lasts, so a pause (or an un-pause) a moderator saves
-// meanwhile, through a process that can still reach sys-redis, is not seen by the cut-off pod
-// until its reads succeed again.
+// Last status this process read. No age bound: a pod cut off from sys-redis keeps serving it, so a
+// pause or un-pause saved meanwhile is not seen until reads succeed.
 let lastKnown: TrainingServiceStatus | undefined;
 
 async function readRaw(): Promise<unknown> {
@@ -38,14 +34,13 @@ async function readRaw(): Promise<unknown> {
 
 /** The same sys-redis value the main app's `training.getStatus` serves. On a failed or slow read
  *  it answers with the last status this process read and, when there is none, treats training as
- *  paused with TRAINING_STATUS_UNKNOWN_MESSAGE (TRAINING_STATUS_FAIL_CLOSED=off: "available"). A stored value that is not valid JSON still reads
- *  as the schema default (available): that is a bad value, not an outage. */
+ *  paused (TRAINING_STATUS_FAIL_CLOSED=off: "available"). A stored value that is not valid JSON
+ *  still reads as the schema default (available): that is a bad value, not an outage. */
 export async function getTrainingServiceStatus(): Promise<TrainingServiceStatus> {
   let raw: unknown;
   try {
     raw = await readRaw();
   } catch (err) {
-    // TRAINING_STATUS_FAIL_CLOSED=off (or 0 / false) restores the previous fail-open read.
     const failOpen = isEnvSwitchOff(env.TRAINING_STATUS_FAIL_CLOSED);
     void logToAxiom({
       name: 'training-studio-status-read',

@@ -31,6 +31,7 @@ import type { SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import {
   useImageFeedSearchQuery,
+  useSearchPeriod,
   useSemanticImageFeed,
 } from '~/components/Image/Infinite/useImageFeedSearch';
 import type { ImageGetInfinite } from '~/types/router';
@@ -88,13 +89,16 @@ function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const query = useImageFeedSearchQuery();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
   const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
-  return <ImagesFeed {...props} feedSearch={{ query, refusal, profanityMatches }} />;
+  const period = useSearchPeriod(!!query);
+  return <ImagesFeed {...props} feedSearch={{ query, refusal, profanityMatches, period }} />;
 }
 
 type FeedSearch = {
   query?: string;
   refusal?: SearchRefusal;
   profanityMatches: string[];
+  /** The saved feed period while `useSearchPeriod` is still writing it. */
+  period?: MetricTimeframe;
 };
 
 function ImagesFeed({
@@ -115,7 +119,13 @@ function ImagesFeed({
   const features = useFeatureFlags();
   const imageFilters = useImageFilters(filterType);
   const { query: rawSearchQuery, ...computedFilters } = removeEmpty({
-    ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
+    ...(disableStoreFilters
+      ? filterOverrides
+      : {
+          ...imageFilters,
+          ...(feedSearch?.period && { period: feedSearch.period }),
+          ...filterOverrides,
+        }),
     withTags,
   });
   const refusal = rawSearchQuery ? feedSearch?.refusal : undefined;
