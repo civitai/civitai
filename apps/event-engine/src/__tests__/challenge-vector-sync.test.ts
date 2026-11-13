@@ -18,7 +18,7 @@ describe('challenge payload, against the real query', () => {
         "nsfwLevel" int, "modelVersionIds" int[], "eventId" int, "visibleAt" timestamp,
         "createdById" int, "coverImageId" int, ingestion text);
       INSERT INTO "User" VALUES (7, 'someone');
-      INSERT INTO "Image" VALUES (70, 6, false, 'Scanned'), (80, 1, false, 'Scanned');
+      INSERT INTO "Image" VALUES (70, 6, false, 'Scanned'), (80, NULL, false, 'Scanned');
       INSERT INTO "ChallengeEvent" VALUES (3, 'Winter <i>Fest</i>');
       INSERT INTO "Challenge" VALUES
         (1, 'Neon  Dreams', 'Neon', 'Come <b>glow</b>', '<p>Bright cities</p>', 'Active', 'User',
@@ -53,8 +53,13 @@ describe('challenge payload, against the real query', () => {
       expect(docs.get(1)?.search_text).toBe(
         'Title: Neon Dreams\nTheme: Neon\nInvitation: Come glow\nDescription: Bright cities\nEvent: Winter Fest'
       );
-      // A system challenge has no creator.
-      expect(docs.get(3)).toMatchObject({ userId: null, username: null, eventId: null });
+      // A system challenge has no creator; an unrated cover matches no browsing level.
+      expect(docs.get(3)).toMatchObject({
+        userId: null,
+        username: null,
+        eventId: null,
+        coverNsfwLevel: [],
+      });
     } finally {
       await pg.close();
     }

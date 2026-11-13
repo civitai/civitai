@@ -7,7 +7,11 @@ import {
   type ParitySpec,
 } from '~/__tests__/eligibility-parity';
 import { CHALLENGE_ELIGIBLE_SQL } from '../../../../apps/event-engine/src/vector-sync/challenges/source';
-import { challengeSemanticEligibleWhere } from '~/server/services/challenge-visibility.sql';
+import { startPglitePrisma } from '~/__tests__/pglite-prisma';
+import {
+  challengeScanGates,
+  challengeSemanticEligibleWhere,
+} from '~/server/services/challenge-visibility.sql';
 
 const SCHEMA = `
   CREATE TYPE "ChallengeStatus" AS ENUM ('Scheduled', 'Active', 'Completing', 'Completed', 'Cancelled');
@@ -85,5 +89,51 @@ describe('challenge semantic search eligibility', () => {
       copy: COPY.replace(`\n  AND c.status <> 'Cancelled'`, ''),
     });
     expect(result.copy).toEqual({ missing: [], extra: ['notCancelled'] });
+  });
+});
+
+// The feed's own view of the same gates: a creator still sees their pending challenges, and only
+// their own. The parity test above covers the viewer-less form the index keeps.
+describe("the feed's scan gates for a viewer", () => {
+  const CREATOR = 7;
+  const owned = (
+    id: number,
+    owner: number,
+    over: { ingestion?: string; cover?: false | string }
+  ) => {
+    const cover = over.cover ?? `false, 'Scanned'`;
+    return [
+      ...(cover === false ? [] : [`INSERT INTO "Image" VALUES (${id}, ${cover})`]),
+      `INSERT INTO "Challenge" VALUES (${id}, 'Active', 'User', '${over.ingestion ?? 'Scanned'}',
+        ${cover === false ? 'NULL' : id}, ${owner})`,
+    ].join(';\n');
+  };
+  const rows = {
+    ownPending: owned(1, CREATOR, { ingestion: 'Pending' }),
+    ownPoiCover: owned(2, CREATOR, { cover: `true, 'Scanned'` }),
+    ownUnscannedCover: owned(3, CREATOR, { cover: `false, 'Pending'` }),
+    ownNoCover: owned(4, CREATOR, { cover: false }),
+    otherPending: owned(5, 8, { ingestion: 'Pending' }),
+    otherPoiCover: owned(6, 8, { cover: `true, 'Scanned'` }),
+    otherUnscannedCover: owned(7, 8, { cover: `false, 'Pending'` }),
+  };
+
+  it('lets a creator through every gate but the cover itself, for their own challenges only', async () => {
+    const harness = await startPglitePrisma(
+      SCHEMA.replace(`"coverImageId" int\n`, `"coverImageId" int, "createdById" int\n`)
+    );
+    try {
+      for (const sql of Object.values(rows)) await harness.pg.exec(sql);
+      const visible = async (viewerId?: number) =>
+        (
+          await harness.prisma.$queryRaw<{ id: number }[]>`
+            SELECT c.id FROM "Challenge" c
+            WHERE ${Prisma.join(challengeScanGates(viewerId), ' AND ')} ORDER BY c.id`
+        ).map((r) => r.id);
+      expect(await visible(CREATOR)).toEqual([1, 2, 3]);
+      expect(await visible()).toEqual([]);
+    } finally {
+      await harness.stop();
+    }
   });
 });

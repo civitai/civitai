@@ -4,7 +4,8 @@ import { Prisma } from '@prisma/client';
  * The scan and cover gates a public challenge list applies to challenge `c`. The viewer's own
  * challenges pass each gate, so a creator can preview a pending one. Without a viewer, they are
  * the part of public visibility that holds for everyone: the challenge search index keeps exactly
- * these, and the per-viewer and time gates are applied at query time.
+ * these, and the per-viewer and time gates are applied at query time. The detail page applies
+ * the same rules in TypeScript (getChallengeDetail, isChallengeHiddenByPoiCover).
  */
 export function challengeScanGates(viewerId?: number): Prisma.Sql[] {
   const own = (sql: Prisma.Sql) =>
